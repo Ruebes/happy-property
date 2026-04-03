@@ -1,0 +1,1395 @@
+{
+  "app": {
+    "name": "Happy Property",
+    "copyright": "© {{year}} Happy Property. All rights reserved."
+  },
+
+  "common": {
+    "loading":   "Loading …",
+    "save":      "Save",
+    "cancel":    "Cancel",
+    "delete":    "Delete",
+    "edit":      "Edit",
+    "add":       "Add",
+    "upload":    "Upload",
+    "download":  "Download",
+    "search":    "Search",
+    "filter":    "Filter",
+    "back":      "Back",
+    "next":      "Next",
+    "confirm":   "Confirm",
+    "close":     "Close",
+    "yes":       "Yes",
+    "no":        "No",
+    "all":       "All",
+    "na":        "–",
+    "required":  "Required",
+    "refresh":   "Refresh",
+    "retry":     "Try again",
+    "optional":  "Optional",
+    "actions":   "Actions",
+    "noResults": "No entries found."
+  },
+
+  "nav": {
+    "dashboard":  "Dashboard",
+    "documents":  "Documents",
+    "calendar":   "Calendar",
+    "properties": "Properties",
+    "contracts":  "Contracts",
+    "bookings":   "Bookings",
+    "income":     "Income",
+    "logout":     "Sign out",
+    "settings":   "Settings",
+    "profile":    "Profile"
+  },
+
+  "login": {
+    "title":               "Welcome back",
+    "subtitle":            "Sign in to Happy Property",
+    "email":               "Email address",
+    "emailPlaceholder":    "your@email.com",
+    "password":            "Password",
+    "passwordPlaceholder": "••••••••",
+    "submit":              "Sign in",
+    "loading":             "Signing in …",
+    "forgotPassword":      "Forgot password?",
+    "error":               "Invalid email address or password.",
+    "forgotTitle":         "Reset password",
+    "forgotSubtitle":      "We'll send you a link to reset your password.",
+    "forgotHint":          "Enter your email address and we'll send you a link to set a new password.",
+    "forgotSend":          "Send reset link",
+    "forgotError":         "Could not send email. Please check the address.",
+    "forgotSentSubtitle":  "Check your inbox",
+    "forgotSentTitle":     "Email on its way!",
+    "forgotSentDesc":      "We sent a link to {{email}}. Click it to reset your password.",
+    "forgotSentSpam":      "Nothing there? Check your spam folder. The link is valid for 60 minutes.",
+    "backToLogin":         "Back to login"
+  },
+
+  "roles": {
+    "admin":            "Admin",
+    "verwalter":        "Manager",
+    "eigentuemer":      "Owner",
+    "feriengast":       "Holiday Guest",
+    "admin_desc":       "Full access · all properties, users & settings",
+    "verwalter_desc":   "Read & write access to all property data",
+    "eigentuemer_desc": "Sees only own properties & documents",
+    "feriengast_desc":  "Holiday stay · check-in, house rules & messages"
+  },
+
+  "dashboard": {
+    "greeting": "Hello",
+    "admin": {
+      "subtitle":          "Admin overview · Full access to all areas & roles",
+      "statsTitle":        "Key metrics",
+      "quickActions":      "Quick Actions",
+      "rolesOverview":     "Roles & Access Rights",
+      "propertiesTitle":   "Properties",
+      "shortterm":         "Short-term",
+      "longterm":          "Long-term",
+      "customers":         "Clients (Owners)",
+      "active":            "active",
+      "newThisWeek":       "new this week",
+      "allUsers":          "All Users",
+      "openTasks":         "Open Tasks",
+      "recentActivity":    "Recent Activity",
+      "noActivity":        "No activity yet.",
+      "tasksTitle":        "Tasks",
+      "noTasks":           "All tasks done!",
+      "taskBankChange":    "Bank details changed",
+      "taskExpiresOn":     "expires on",
+      "taskCreatedAt":     "created on",
+      "btnConfirm":        "Confirm",
+      "btnView":           "View",
+      "actionNewUser":     "New User",
+      "actionNewProperty": "New Property",
+      "actionAllUsers":    "All Users",
+      "actionAllProperties": "All Properties",
+      "actions": {
+        "newProperty":  "Add new property",
+        "manageUsers":  "Manage users",
+        "calendar":     "Open calendar",
+        "allContracts": "All contracts"
+      }
+    },
+    "verwalter": {
+      "subtitle":           "Manager overview · All properties & tenants",
+      "quickActions":       "Quick Actions",
+      "todayLabel":         "Today",
+      "checkinsToday":      "Today's Check-ins",
+      "occupied":           "Currently Occupied",
+      "checkoutsToday":     "Today's Check-outs",
+      "noCheckins":         "No check-ins today",
+      "noOccupied":         "No occupied properties",
+      "noCheckouts":        "No check-outs today",
+      "newBooking":         "New Booking",
+      "newInvoice":         "Upload Invoice",
+      "pendingTasks":       "Pending Tasks",
+      "houseRulesPending":  "House rules pending",
+      "expiringContracts":  "Contracts expiring (30 days)",
+      "unreadMessages":     "Unread messages",
+      "sendReminder":       "Send reminder",
+      "viewContract":       "View contract",
+      "reply":              "Reply",
+      "weekCalendar":       "Week overview",
+      "noTasks":            "No pending tasks.",
+      "invoiceModal": {
+        "title":     "Upload Invoice",
+        "property":  "Property",
+        "docTitle":  "Title / Description",
+        "creditor":  "Issuer",
+        "amountGross": "Gross amount (€)",
+        "file":      "File (PDF)",
+        "upload":    "Upload",
+        "uploading": "Uploading …",
+        "success":   "Invoice uploaded successfully."
+      },
+      "actions": {
+        "properties": "Manage properties",
+        "calendar":   "Open calendar",
+        "users":      "Manage users"
+      }
+    },
+    "eigentuemer": {
+      "subtitle":             "Owner portal · Your properties & income",
+      "privacyTitle":         "Data Privacy & Access",
+      "privacyDesc":          "You can only see your own properties and documents. Other owners' data is completely hidden.",
+      "allPropertiesTitle":   "My Properties",
+      "noProperties":         "No properties assigned to you yet.",
+      "viewAll":              "View all",
+      "returnComingSoon":     "Coming soon",
+      "returnComingSoonHint": "Return calculation will be available soon."
+    }
+  },
+
+  "eigentuemer": {
+    "propertiesTitle": "My Properties",
+    "propertiesEmpty": "No properties assigned to you yet.",
+    "propertiesHint":  "Once a property manager assigns a property to you, it will appear here."
+  },
+
+  "stats": {
+    "users":       "Users",
+    "properties":  "Properties",
+    "contracts":   "Contracts",
+    "documents":   "Documents",
+    "income":      "Total income",
+    "vacation":    "Holiday rentals",
+    "today":       "Today",
+    "occupied":    "Currently occupied",
+    "future":      "Upcoming",
+    "bookings":    "Bookings",
+    "activeContracts": "Active Contracts",
+    "pending":         "Pending",
+    "myProperties":    "My Properties",
+    "avgReturn":       "Avg. Return"
+  },
+
+  "quickActions": {
+    "addProperty":        "Add property",
+    "addPropertyDesc":    "Create a new property",
+    "uploadDocument":     "Upload document",
+    "uploadDocumentDesc": "PDF, invoice, contract",
+    "createContract":     "Create contract",
+    "createContractDesc": "Lease agreement with signature link"
+  },
+
+  "properties": {
+    "title":         "Properties",
+    "add":           "Add property",
+    "edit":          "Edit property",
+    "projectName":   "Project name",
+    "unitNumber":    "Unit number",
+    "type":          "Type",
+    "types": {
+      "villa":     "Villa",
+      "apartment": "Apartment",
+      "studio":    "Studio"
+    },
+    "bedrooms":       "Bedrooms",
+    "bedroomsStudio": "Studio (0)",
+    "size":           "Size (sqm)",
+    "street":         "Street",
+    "houseNumber":    "House number",
+    "zip":            "ZIP code",
+    "city":           "City",
+    "description":    "Description",
+    "images":         "Images",
+    "rentalType":     "Rental type",
+    "rental": {
+      "longterm":  "Long-term rental",
+      "shortterm": "Short-term rental"
+    },
+    "owner":     "Owner",
+    "createdBy": "Created by",
+    "createdAt": "Created at",
+    "columns": {
+      "name":       "Property",
+      "type":       "Type",
+      "location":   "Location",
+      "rentalType": "Rental",
+      "owner":      "Owner",
+      "actions":    "Actions"
+    },
+    "empty": "No properties found.",
+    "form": {
+      "step1":  "Basic info",
+      "step2":  "Address",
+      "step3":  "Images",
+      "step4":  "Owner",
+      "save":   "Save property",
+      "saving": "Saving …"
+    },
+    "purchasePrice": {
+      "title":   "Purchase price",
+      "gross":   "Purchase price (gross)",
+      "net":     "Purchase price (net, calculated)",
+      "netHint": "Net = Gross ÷ (1 + VAT/100)",
+      "vat":     "VAT rate (%)"
+    },
+    "ownerSelect":   "Select owner",
+    "ownerNone":     "No owners found.",
+    "ownerModal": {
+      "title":       "Create new owner",
+      "firstName":   "First name",
+      "lastName":    "Last name",
+      "tempPw":      "Temporary password (please share with the person)",
+      "copyPw":      "Copy",
+      "submit":      "Create owner",
+      "submitting":  "Creating …",
+      "success":     "Owner created successfully. Please share the credentials with the person.",
+      "errorExists":    "This email address is already registered.",
+      "addressStreet":  "Street + house number",
+      "addressZip":     "Zip code",
+      "addressCity":    "City",
+      "addressCountry": "Country"
+    },
+    "deleteConfirm": "Really delete this property? This action cannot be undone.",
+    "imageUpload": {
+      "title": "Upload images",
+      "dropzone": "Drag images here or click to select",
+      "dropzoneActive": "Drop here …",
+      "hint": "JPG, PNG, WEBP · max. 10 MB per image",
+      "remove": "Remove",
+      "uploading": "Uploading images …",
+      "uploadError": "Upload failed: {{name}}",
+      "count_one": "{{count}} image",
+      "count_other": "{{count}} images"
+    },
+    "furnishedYes": "Furnished",
+    "furnishedNo":  "Unfurnished"
+  },
+
+  "documents": {
+    "title":       "Documents",
+    "upload":      "Upload document",
+    "type":        "Document type",
+    "titleField":  "Title",
+    "file":        "File (PDF)",
+    "property":    "Property",
+    "uploadedBy":  "Uploaded by",
+    "uploadedAt":  "Uploaded at",
+    "amountNet":   "Net amount",
+    "amountGross": "Gross amount",
+    "creditor":    "Creditor / Issuer",
+    "types": {
+      "mietvertrag": "Lease agreement",
+      "rechnung":    "Invoice",
+      "sonstiges":   "Other"
+    },
+    "columns": {
+      "title":    "Title",
+      "type":     "Type",
+      "property": "Property",
+      "date":     "Date",
+      "amount":   "Amount",
+      "actions":  "Actions"
+    },
+    "empty":       "No documents found.",
+    "downloadPdf": "Download PDF",
+    "viewPdf":     "View PDF",
+    "filterAll": "All types",
+    "selectProperty": "Select property",
+    "uploading": "Uploading …",
+    "fileTooLarge": "File too large (max. 50 MB)",
+    "wrongType": "Only PDF files allowed",
+    "deleteConfirm": "Really delete this document?"
+  },
+
+  "contracts": {
+    "title":         "Lease contracts",
+    "add":           "Create contract",
+    "edit":          "Edit contract",
+    "tenantName":    "Tenant name",
+    "tenantEmail":   "Tenant email",
+    "startDate":     "Start date",
+    "endDate":       "End date",
+    "monthlyRent":   "Monthly rent",
+    "status":        "Status",
+    "signatureLink": "Signature link",
+    "copyLink":      "Copy link",
+    "linkCopied":    "Link copied!",
+    "signedAt":      "Signed at",
+    "statuses": {
+      "draft":  "Draft",
+      "sent":   "Sent",
+      "signed": "Signed"
+    },
+    "columns": {
+      "tenant":   "Tenant",
+      "property": "Property",
+      "period":   "Period",
+      "rent":     "Rent/month",
+      "status":   "Status",
+      "actions":  "Actions"
+    },
+    "empty": "No contracts found."
+  },
+
+  "bookings": {
+    "title":        "Bookings",
+    "guest":        "Guest",
+    "add":          "Add booking",
+    "checkIn":      "Check-in",
+    "checkOut":     "Check-out",
+    "source":       "Source",
+    "nights_one":   "{{count}} night",
+    "nights_other": "{{count}} nights",
+    "sources": {
+      "airbnb":  "Airbnb",
+      "booking": "Booking.com",
+      "vrbo":    "VRBO",
+      "manual":  "Manual"
+    },
+    "columns": {
+      "property": "Property",
+      "checkIn":  "Check-in",
+      "checkOut": "Check-out",
+      "source":   "Source",
+      "nights":   "Nights",
+      "actions":  "Actions"
+    },
+    "empty": "No bookings found."
+  },
+
+  "income": {
+    "title":       "Income",
+    "add":         "Add income entry",
+    "amount":      "Amount",
+    "period":      "Period",
+    "periodStart": "From",
+    "periodEnd":   "To",
+    "type":        "Type",
+    "source":      "Source",
+    "notes":       "Notes",
+    "types": {
+      "longterm":  "Long-term rental",
+      "shortterm": "Short-term rental"
+    },
+    "sources": {
+      "manual":  "Manual",
+      "airbnb":  "Airbnb",
+      "booking": "Booking.com"
+    },
+    "columns": {
+      "property": "Property",
+      "amount":   "Amount",
+      "period":   "Period",
+      "source":   "Source",
+      "type":     "Type",
+      "actions":  "Actions"
+    },
+    "empty": "No income entries found."
+  },
+
+  "sign": {
+    "header":        "Lease agreement for signing",
+    "tenant":        "Tenant",
+    "email":         "Email",
+    "startDate":     "Start date",
+    "endDate":       "End date",
+    "monthlyRent":   "Monthly rent",
+    "viewPdf":       "View contract document (PDF)",
+    "checkboxLabel": "I have read the lease agreement and agree to all terms. By clicking \"Sign now\" I declare my legally binding consent.",
+    "submit":        "✍️  Sign now",
+    "signing":       "Signing …",
+    "legalNote":     "Digital signature pursuant to eIDAS Regulation (simple electronic signature)",
+    "notFound": {
+      "title": "Contract not found",
+      "desc":  "This signature link is invalid or has expired."
+    },
+    "signError": {
+      "title": "Error signing contract"
+    },
+    "alreadySigned": {
+      "title":        "Contract already signed",
+      "desc":         "This lease agreement for {{project}} has already been digitally signed.",
+      "descWithUnit": "This lease agreement for {{project}} – Unit {{unit}} has already been digitally signed."
+    },
+    "success": {
+      "title":     "Successfully signed!",
+      "desc":      "The lease agreement for {{project}} has been successfully signed digitally.",
+      "emailNote": "A copy will be sent to {{email}} by email."
+    }
+  },
+
+  "calendar": {
+    "title":          "Calendar",
+    "today":          "Today",
+    "week":           "Week",
+    "month":          "Month",
+    "year":           "Year",
+    "day":            "Day",
+    "newBooking":     "+ New Booking",
+    "allProperties":  "All Properties",
+    "noBookings":     "No bookings in this period",
+    "source": {
+      "manual":       "Happy Property",
+      "airbnb":       "Airbnb",
+      "booking_com":  "Booking.com",
+      "longterm":     "Long-term rental",
+      "ownerStay":    "Owner stay"
+    },
+    "status": {
+      "confirmed":    "Confirmed",
+      "cancelled":    "Cancelled",
+      "pending":      "Pending"
+    },
+    "detail": {
+      "title":        "Booking details",
+      "nights_one":   "1 night",
+      "nights_other": "{{count}} nights",
+      "rulesAgreed":  "House rules accepted ✓",
+      "rulesPending": "House rules pending",
+      "contact":      "Contact guest",
+      "edit":         "Edit",
+      "cancel":       "Cancel booking",
+      "cancelConfirm":"Really cancel this booking?",
+      "cancelDesc":   "The guest will be notified. This action cannot be undone.",
+      "cancelYes":    "Yes, cancel",
+      "cancelled":    "Booking cancelled"
+    },
+    "modal": {
+      "title":            "Create new booking",
+      "step1":            "Property & Period",
+      "step2":            "Guest Data",
+      "step3":            "Check-in Info",
+      "step4":            "Confirmation",
+      "property":         "Property",
+      "propertyHint":     "Short-term rentals only",
+      "checkIn":          "Check-in date",
+      "checkOut":         "Check-out date",
+      "nights":           "Nights",
+      "pricePerNight":    "Price per night (€)",
+      "cleaningFee":      "Cleaning fee (€)",
+      "cleaningFeePh":    "e.g. 80",
+      "totalPrice":       "Total price",
+      "available":        "✓ Period available",
+      "unavailable":      "✗ Period not available",
+      "checking":         "Checking availability …",
+      "firstName":        "First name",
+      "lastName":         "Last name",
+      "email":            "Email address",
+      "phone":            "Phone",
+      "nationality":      "Nationality",
+      "language":         "Language",
+      "guestCount":       "Number of guests",
+      "existingGuest":    "Existing guest",
+      "newGuest":         "New guest – profile will be created",
+      "checkinTime":      "Check-in time",
+      "checkoutTime":     "Check-out time",
+      "keyHandover":      "Key handover",
+      "keyHandoverPh":    "Description of key handover …",
+      "wifiName":         "WiFi name",
+      "wifiPassword":     "WiFi password",
+      "parkingInfo":      "Parking info",
+      "parkingPh":        "Parking description …",
+      "emergencyContact": "Emergency contact",
+      "houseRules":       "House rules",
+      "houseRulesPh":     "House rules for this stay …",
+      "sendConfirmation": "Send booking confirmation by email to guest",
+      "sendInvitation":   "Send guest portal invitation",
+      "summary":          "Summary",
+      "create":           "Create booking",
+      "creating":         "Creating …",
+      "created":          "Booking created successfully",
+      "errorOverlap":     "The selected period is already booked.",
+      "errorMissing":     "Please fill in all required fields.",
+      "errorDates":       "Check-out must be after check-in.",
+      "noProperties":        "No properties available.",
+      "guestSection":        "Guest information",
+      "pricingSection":      "Pricing",
+      "checkinSection":      "Check-in details",
+      "confirmSection":      "Confirm booking",
+      "pricePerNightGross":  "Price/night gross (€)",
+      "vatRate":             "VAT (%)",
+      "pricePerNightNet":    "Net (auto)",
+      "vatLabel":            "VAT:",
+      "cleaningFeeGross":    "Cleaning gross (€)",
+      "cleaningFeeNet":      "Cleaning net (auto)",
+      "totalGross":          "Total gross",
+      "totalNet":            "Total net",
+      "guestToggleFromData": "Select from contacts",
+      "guestToggleNew":      "New guest",
+      "guestSearch":         "Search guest …",
+      "guestFromData":       "Data from contacts",
+      "clearSelection":      "Clear selection",
+      "ownerStayBadge":      "🏠 Owner stay – free of charge",
+      "ownerTaxTitle":       "Tax advisory warning",
+      "ownerTaxBody":        "{{name}} has already used this property for {{used}} nights in {{year}}. With this booking ({{new}} nights) the total would be {{total}} nights.",
+      "ownerTaxHint":        "Using a property for more than 14 days per year for personal use can jeopardise the input tax deduction entitlement (VAT refund) for that property.",
+      "ownerTaxAdvice":      "Please discuss this with your tax advisor.",
+      "ownerTaxProceed":     "Book anyway",
+      "ownerTaxAbort":       "Cancel"
+    }
+  },
+
+  "dates": {
+    "locale":      "en-US",
+    "format":      "MM/DD/YYYY",
+    "formatShort": "MM/DD/YY",
+    "months": {
+      "1": "January",   "2": "February", "3": "March",
+      "4": "April",     "5": "May",      "6": "June",
+      "7": "July",      "8": "August",   "9": "September",
+      "10": "October",  "11": "November","12": "December"
+    },
+    "monthsShort": {
+      "1": "Jan", "2": "Feb", "3": "Mar",
+      "4": "Apr", "5": "May", "6": "Jun",
+      "7": "Jul", "8": "Aug", "9": "Sep",
+      "10": "Oct", "11": "Nov", "12": "Dec"
+    },
+    "weekdays": {
+      "1": "Monday",    "2": "Tuesday",  "3": "Wednesday",
+      "4": "Thursday",  "5": "Friday",   "6": "Saturday",  "7": "Sunday"
+    },
+    "weekdaysShort": {
+      "1": "Mon", "2": "Tue", "3": "Wed",
+      "4": "Thu", "5": "Fri", "6": "Sat", "7": "Sun"
+    }
+  },
+
+  "errors": {
+    "required":           "{{field}} is required.",
+    "invalidEmail":       "Please enter a valid email address.",
+    "networkError":       "Network error. Please try again.",
+    "serverError":        "Server error. Please contact support.",
+    "notFound":           "The requested resource was not found.",
+    "unauthorized":       "You are not authorized to perform this action.",
+    "uploadFailed":       "Upload failed. Please try again.",
+    "deleteFailed":       "Delete failed. Please try again.",
+    "saveFailed":         "Save failed. Please try again.",
+    "invalidCredentials": "Invalid email address or password."
+  },
+
+  "success": {
+    "saved":    "Successfully saved.",
+    "deleted":  "Successfully deleted.",
+    "uploaded": "Successfully uploaded.",
+    "updated":  "Successfully updated.",
+    "copied":   "Copied to clipboard."
+  },
+
+  "profile": {
+    "title":              "My Profile",
+    "subtitle":           "Update your contact details and bank information.",
+    "fullName":           "Full name",
+    "email":              "Email address",
+    "phone":              "Phone number",
+    "role":               "Role",
+    "language":           "Language",
+    "save":               "Save changes",
+    "saved":              "Profile saved successfully.",
+    "readonlyHint":       "Name, email and role can only be changed by an admin.",
+    "changePassword":     "Change password",
+    "changePasswordHint": "You don't need to enter your current password.",
+    "newPassword":        "New password",
+    "confirmPassword":    "Confirm password",
+    "changePasswordBtn":  "Save password",
+    "passwordChanged":    "Password changed successfully.",
+    "passwordTooShort":   "Password must be at least 8 characters.",
+    "passwordMismatch":   "Passwords do not match."
+  },
+
+  "setPassword": {
+    "title":           "Set your password",
+    "subtitle":        "Welcome to Happy Property! Please set your personal password.",
+    "info":            "You were invited. Please set a secure password for your account.",
+    "titleReset":      "New password",
+    "subtitleReset":   "Set a new password for your account.",
+    "infoReset":       "You requested a password reset. Please enter your new password.",
+    "newPassword":     "New password",
+    "confirmPassword": "Confirm password",
+    "minLength":       "At least 8 characters",
+    "submit":          "Set password",
+    "submitting":      "Saving …",
+    "success":         "Password set successfully!",
+    "redirecting":     "Redirecting …",
+    "expiredTitle": "Link expired",
+    "expiredDesc":  "This link is no longer valid (60 min). Please request a new reset link.",
+    "error": {
+      "tooShort":  "Password must be at least 8 characters.",
+      "mismatch":  "Passwords do not match.",
+      "failed":    "Could not set password. Please try again."
+    }
+  },
+
+  "owner": {
+    "bank": {
+      "title":         "Bank details",
+      "iban":          "IBAN",
+      "bic":           "BIC",
+      "holder":        "Account holder",
+      "masked":        "Masked",
+      "noIban":        "No IBAN on file",
+      "changeWarning": "Changes to bank details will be automatically reported to all managers and must be confirmed."
+    }
+  },
+
+  "notifications": {
+    "bankChanged": "Bank details of {{name}} have changed – please review",
+    "oldIban":     "Old IBAN",
+    "newIban":     "New IBAN",
+    "changedAt":   "Changed at",
+    "confirm":     "Confirm",
+    "details":     "Details"
+  },
+
+  "pdf": {
+    "generatedBy": "Generated by Happy Property",
+    "generatedAt": "Generated on {{date}}",
+    "page":        "Page {{page}} of {{total}}",
+    "contract": {
+      "title":     "Lease Agreement",
+      "header":    "LEASE AGREEMENT",
+      "tenant":    "Tenant",
+      "landlord":  "Landlord",
+      "property":  "Property",
+      "period":    "Rental period",
+      "rent":      "Monthly rent",
+      "signature": "Signature",
+      "date":      "Date",
+      "signedOn":  "Signed on {{date}}"
+    },
+    "statement": {
+      "title":       "Income Overview",
+      "header":      "INCOME STATEMENT",
+      "period":      "Period",
+      "totalIncome": "Total income",
+      "byProperty":  "By property",
+      "byMonth":     "By month"
+    }
+  },
+
+  "propertyDetail": {
+    "back":     "Back to overview",
+    "notFound": "Property not found.",
+    "edit":     "Edit property",
+    "gallery": {
+      "noImages": "No images uploaded yet",
+      "counter":  "{{current}} / {{total}}"
+    },
+    "tabs": {
+      "overview":  "Overview",
+      "contracts": "Contracts",
+      "invoices":  "Invoices",
+      "income":    "Income",
+      "images":    "Images"
+    },
+    "overview": {
+      "basicData":     "Basic info",
+      "address":       "Address",
+      "noAddress":     "No address on record",
+      "location":      "Location",
+      "openInMaps":    "Open in Google Maps →",
+      "description":   "Description",
+      "noDescription": "No description available.",
+      "ownerInfo":     "Owner",
+      "editOwner":     "Edit owner",
+      "purchaseData":  "Purchase price",
+      "createdAt":     "Created on"
+    },
+    "contracts": {
+      "activeContracts":    "Active contracts",
+      "documents":          "Tenancy agreement documents",
+      "noContracts":        "No contracts found.",
+      "noDocs":             "No tenancy agreement documents found.",
+      "uploadBtn":          "Upload agreement",
+      "uploadTitle":        "New tenancy agreement",
+      "tenant":             "Tenant",
+      "tenantPlaceholder":  "Jane Doe",
+      "signLink":           "Signature link",
+      "copyLink":           "Copy link",
+      "linkCopied":         "Copied!"
+    },
+    "invoices": {
+      "uploadBtn":              "Upload invoice",
+      "uploadTitle":            "New invoice",
+      "editTitle":              "Edit invoice",
+      "replacePdf":             "optional, replace PDF",
+      "empty":                  "No invoices found.",
+      "total":                  "Total (gross)",
+      "vat":                    "VAT",
+      "saved":                  "Invoice saved.",
+      "statusCol":              "Status",
+      "invoiceNumber":          "Invoice number",
+      "invoiceDate":            "Invoice date",
+      "dueDate":                "Due date",
+      "paidAt":                 "Paid on",
+      "vatRate":                "VAT rate",
+      "netAmount":              "Net amount",
+      "grossAmount":            "Gross amount",
+      "description":            "Description / Service",
+      "descriptionPlaceholder": "Type of service …",
+      "creditorIban":           "Creditor IBAN",
+      "notes":                  "Notes",
+      "notesPlaceholder":       "Internal notes …",
+      "pdfPreview":             "PDF Preview",
+      "openPdf":                "Open PDF",
+      "downloadPdf":            "Download PDF",
+      "noFile":                 "No PDF attached",
+      "aiAnalyzing":            "Analysing invoice …",
+      "aiFilled":               "Filled by AI – please review",
+      "aiError":                "Automatic recognition not possible – please fill in manually",
+      "status": {
+        "open":    "Open",
+        "overdue": "Overdue",
+        "paid":    "Paid"
+      }
+    },
+    "income": {
+      "comingSoon":     "Income",
+      "comingSoonHint": "This feature will be available soon."
+    },
+    "images": {
+      "dropHint":      "Drag images here or click to select",
+      "uploadBtn":     "Upload images",
+      "deleteConfirm": "Really delete this image? This action cannot be undone."
+    }
+  },
+
+  "users": {
+    "title":    "User Management",
+    "newUser":  "New User",
+    "editUser": "Edit User",
+    "total":    "users total",
+    "noResults":"No users found.",
+    "search":   "Search by name or email …",
+    "table": {
+      "name":    "Name",
+      "email":   "E-Mail",
+      "role":    "Role",
+      "phone":   "Phone",
+      "status":  "Status",
+      "created": "Created"
+    },
+    "filter": {
+      "all": "All roles"
+    },
+    "sections": {
+      "master":   "Master data",
+      "address":  "Address",
+      "password": "Password"
+    },
+    "form": {
+      "firstName":       "First name",
+      "lastName":        "Last name",
+      "email":           "E-Mail",
+      "role":            "Role",
+      "phone":           "Phone",
+      "language":        "Language",
+      "street":          "Street + house number",
+      "zip":             "ZIP",
+      "city":            "City",
+      "country":         "Country",
+      "tempPassword":    "Temporary password",
+      "copy":            "Copy",
+      "passwordHint":    "Share this password securely with the new user.",
+      "addressRequired": "Required for owners."
+    },
+    "actions": {
+      "create":        "Create",
+      "resetPassword": "Reset password",
+      "deactivate":    "Deactivate",
+      "activate":      "Activate"
+    },
+    "status": {
+      "active":   "Active",
+      "inactive": "Inactive"
+    },
+    "properties": {
+      "title":          "Assigned properties",
+      "none":           "No properties assigned.",
+      "assign":         "Assign",
+      "remove":         "Remove",
+      "assigned":       "Property assigned.",
+      "selectToAssign": "Select property …"
+    },
+    "invite": {
+      "emailSent": "Invitation email will be sent automatically",
+      "emailHint": "The user will receive an email with a link to activate their account and set their own password."
+    },
+    "delete": {
+      "title":         "Delete user",
+      "irreversible":  "This action cannot be undone. The user will immediately lose access.",
+      "cannotSelf":    "You cannot delete your own account.",
+      "lastAdmin":     "At least one admin must exist. Assign the admin role to another user first.",
+      "hasProperties": "{{count}} property/properties are assigned to this user.",
+      "reassignFirst": "Please assign a new owner to all properties first.",
+      "confirm":       "Delete permanently"
+    },
+    "success": {
+      "created":       "User created – invitation email sent.",
+      "updated":       "User saved.",
+      "deleted":       "User has been deleted.",
+      "deactivated":   "User has been deactivated.",
+      "activated":     "User has been activated.",
+      "passwordReset": "Password has been reset."
+    },
+    "errors": {
+      "firstNameRequired": "First name is required.",
+      "lastNameRequired":  "Last name is required.",
+      "emailRequired":     "E-Mail is required.",
+      "streetRequired":    "Street is required for owners.",
+      "zipRequired":       "ZIP is required for owners.",
+      "cityRequired":      "City is required for owners."
+    }
+  },
+
+  "guest": {
+    "nav": {
+      "booking":      "My Booking",
+      "checkin":      "Check-in Info",
+      "houseRules":   "House Rules",
+      "confirmation": "Booking Confirmation",
+      "messages":     "Messages",
+      "profile":      "Profile",
+      "guestPortal":  "Guest Portal"
+    },
+    "noBooking": {
+      "title": "No booking found",
+      "desc":  "You have no active booking at the moment."
+    },
+    "dashboard": {
+      "subtitle": "Here you'll find all the info about your stay."
+    },
+    "booking": {
+      "upcoming":                "Upcoming",
+      "active":                  "Active",
+      "completed":               "Completed",
+      "total":                   "Total price",
+      "countdown_one":           "1 day until check-in",
+      "countdown_other":         "{{count}} days until check-in",
+      "todayCheckin":            "Today is your check-in day! Welcome! 🎉",
+      "created":                 "Booking successfully created.",
+      "guestData":               "Guest data",
+      "period":                  "Booking period",
+      "pricePerNight":           "Price per night",
+      "cancellationPlaceholder": "Cancellation policy …",
+      "houseRulesPlaceholder":   "House rules for this property …"
+    },
+    "checkin": {
+      "hint":          "All the important info for your stay.",
+      "view":          "View details",
+      "checkinTime":   "Check-in time",
+      "checkoutTime":  "Check-out time",
+      "keyHandover":   "Key handover",
+      "parking":       "Parking",
+      "emergency":     "Emergency contact",
+      "navigateBtn":   "Navigate to check-in"
+    },
+    "map": {
+      "title":         "Location",
+      "navigateBtn":   "Start navigation",
+      "appleMaps":     "Apple Maps",
+      "openInMaps":    "Open in Maps"
+    },
+    "houseRules": {
+      "subtitle":     "Please read and confirm the house rules before your stay.",
+      "agreedTitle":  "House rules accepted",
+      "agreedAt":     "Accepted on",
+      "pendingTitle": "House rules not yet confirmed",
+      "pendingDesc":  "Please read and accept the house rules before your stay.",
+      "rules":        "House Rules",
+      "noRules":      "No house rules on file.",
+      "checkboxLabel":"I have read and accept all house rules.",
+      "legalNote":    "Your consent will be recorded with date, time and IP address.",
+      "submitBtn":    "Accept house rules",
+      "acceptedToast":"House rules accepted successfully!",
+      "agreed":       "Accepted ✓",
+      "pendingShort": "Pending!",
+      "view":         "View",
+      "confirm":      "Confirm now"
+    },
+    "messages": {
+      "subtitle":    "Direct messages with your property manager.",
+      "empty":       "No messages yet. Feel free to write!",
+      "verwalter":   "Manager",
+      "placeholder": "Type a message …",
+      "send":        "Send",
+      "hint":        "Communicate directly with your manager.",
+      "open":        "Open chat"
+    },
+    "confirmation": {
+      "hint":          "Download your booking confirmation as PDF.",
+      "download":      "Download PDF",
+      "title":         "Booking Confirmation",
+      "guest":         "Guest",
+      "period":        "Stay period",
+      "price":         "Price breakdown",
+      "cleaningFee":   "Cleaning fee",
+      "total":         "Total",
+      "cancellation":  "Cancellation policy",
+      "autoGenerated": "Automatically generated booking confirmation"
+    },
+    "profile": {
+      "nationality": "Nationality"
+    }
+  },
+  "crm": {
+    "title": "CRM",
+    "nav": {
+      "dashboard": "Dashboard",
+      "pipeline":  "Pipeline",
+      "leads":     "All Leads",
+      "templates": "Email Templates",
+      "archived":  "Archived",
+      "projects":  "Projects",
+      "settings":   "Settings",
+      "developers": "Manage Developers",
+      "whatsapp":   "WhatsApp Templates",
+      "calendar":   "Calendar"
+    },
+    "newLead": "+ New Lead",
+    "lead": {
+      "firstName": "First Name",
+      "lastName":  "Last Name",
+      "email":     "Email",
+      "phone":     "Phone",
+      "whatsapp":  "WhatsApp",
+      "country":   "Country",
+      "language":  "Language",
+      "source":    "Source",
+      "status":    "Status",
+      "assignedTo":"Assigned to",
+      "notes":     "Notes",
+      "createDeal":"Create deal immediately?"
+    },
+    "sources": {
+      "meta":       "META Ads",
+      "google":     "Google",
+      "empfehlung": "Referral",
+      "sonstiges":  "Other"
+    },
+    "statuses": {
+      "new":               "New",
+      "contacted":         "Contacted",
+      "qualified":         "Qualified",
+      "registered":        "Registered",
+      "property_selection":"Property Selection",
+      "financing":         "Financing",
+      "sold":              "Sold",
+      "archived":          "Archived"
+    },
+    "deal": {
+      "phase":            "Phase",
+      "developer":        "Developer",
+      "financingRequired":"Financing required",
+      "googleDriveUrl":   "Google Drive Link",
+      "commissionAmount": "Commission amount (€)"
+    },
+    "phases": {
+      "erstkontakt":       "First Contact",
+      "termin_gebucht":    "Appointment Booked",
+      "no_show":           "No Show",
+      "finanzierung_de":   "Financing Germany",
+      "finanzierung_cy":   "Financing Cyprus",
+      "registrierung":     "Registration",
+      "immobilienauswahl": "Property Selection",
+      "kaufvertrag":       "Purchase Contract",
+      "anzahlung":         "Deposit",
+      "provision_erhalten":"Commission Received",
+      "deal_verloren":     "Deal Lost",
+      "archiviert":        "Archived"
+    },
+    "phaseIcons": {
+      "erstkontakt":       "📥",
+      "termin_gebucht":    "📅",
+      "no_show":           "❌",
+      "finanzierung_de":   "🏦",
+      "finanzierung_cy":   "🌍",
+      "registrierung":     "📋",
+      "immobilienauswahl": "🏠",
+      "kaufvertrag":       "📝",
+      "anzahlung":         "✅",
+      "provision_erhalten":"🎉",
+      "deal_verloren":     "🚫",
+      "archiviert":        "📦"
+    },
+    "dealTitle": "Deal",
+    "activity": {
+      "title":   "Activities",
+      "new":     "New Activity",
+      "type":    "Type",
+      "types": {
+        "call":     "📞 Call",
+        "email":    "📧 Email",
+        "whatsapp": "📱 WhatsApp",
+        "note":     "📝 Note",
+        "meeting":  "🤝 Meeting",
+        "task":     "✅ Task"
+      },
+      "direction": "Direction",
+      "inbound":   "Inbound",
+      "outbound":  "Outbound",
+      "subject":   "Subject",
+      "content":   "Content",
+      "save":      "Save Activity",
+      "phaseChanged": "Phase changed: {{from}} → {{to}}"
+    },
+    "task": {
+      "title":       "Tasks",
+      "new":         "New Task",
+      "titleField":  "Title",
+      "description": "Description",
+      "dueAt":       "Due at",
+      "assignTo":    "Assign to",
+      "complete":    "Mark as done",
+      "overdue":     "Overdue",
+      "openTasks":   "Open Tasks",
+      "noTasks":     "No open tasks.",
+      "save":        "Save Task",
+      "noTasksToday":"No tasks today."
+    },
+    "email": {
+      "send":           "Send Email",
+      "template":       "Choose Template",
+      "subject":        "Subject",
+      "body":           "Message",
+      "sending":        "Sending…",
+      "sent":           "Email sent!",
+      "selectTemplate": "Select template…"
+    },
+    "template": {
+      "title":    "Email Templates",
+      "new":      "+ New Template",
+      "name":     "Template Name",
+      "subject":  "Subject",
+      "body":     "Content",
+      "category": "Category",
+      "categories": {
+        "general":   "General",
+        "project":   "Project",
+        "followup":  "Follow-up",
+        "noshow":    "No Show",
+        "lawyer":    "Lawyer",
+        "financing": "Financing"
+      },
+      "language":     "Language",
+      "edit":         "Edit",
+      "delete":       "Delete",
+      "save":         "Save",
+      "cancel":       "Cancel",
+      "placeholders": "Placeholders: {{vorname}}, {{nachname}}, {{projektname}}, {{preis}}, {{termin_datum}}, {{berater_name}}"
+    },
+    "dashboard": {
+      "title":               "CRM Dashboard",
+      "totalLeads":          "Total Leads",
+      "newThisWeek":         "New this week",
+      "dealsPerPhase":       "Deals per Phase",
+      "conversionRate":      "Conversion Rate",
+      "commissionThisWeek":  "Commission this week",
+      "commissionThisMonth": "Commission this month",
+      "commissionThisYear":  "Commission this year",
+      "avgDealDuration":     "Avg. Deal Duration (days)",
+      "openTasksToday":      "Open Tasks Today",
+      "recentActivities":    "Recent Activities",
+      "noActivities":        "No activities yet."
+    },
+    "filter": {
+      "assignee": "Assignee",
+      "source":   "Source",
+      "property": "Property",
+      "search":   "Search by name or email…",
+      "all":      "All"
+    },
+    "detail": {
+      "tabs": {
+        "overview":   "Overview",
+        "activities": "Activities",
+        "emails":     "Emails",
+        "tasks":      "Tasks",
+        "documents":  "Documents"
+      },
+      "overview": {
+        "masterData":    "Master Data",
+        "activeDeal":    "Active Deal",
+        "nextTask":      "Next Task",
+        "linkedProperty":"Linked Property",
+        "noDeal":        "No active deal.",
+        "noTask":        "No open task.",
+        "noProperty":    "No property linked."
+      },
+      "actions": {
+        "sendEmail":          "Send Email",
+        "addTask":            "Add Task",
+        "addNote":            "Add Note",
+        "sendNoShow":         "Request New Appointment",
+        "sendRegistration":   "Send Registration",
+        "notifyFinancing":    "Notify Partner",
+        "notifyLawyer":       "Notify Lawyer",
+        "requestCommission":  "Request Commission",
+        "closeDeal":          "Close Deal",
+        "createOwnerAccount": "Create Owner Account",
+        "archive":            "Archive"
+      }
+    },
+    "documents": {
+      "driveUrl":            "Google Drive Link",
+      "driveUrlPlaceholder": "https://drive.google.com/…",
+      "saveDriveUrl":        "Save Link",
+      "upload":              "Upload Document",
+      "noDocuments":         "No documents yet."
+    },
+    "pipeline": {
+      "title":     "Sales Pipeline",
+      "noDeals":   "No deals in this phase.",
+      "lastContact":"Last Contact",
+      "property":  "Property",
+      "dragHint":  "Drag card to change phase"
+    },
+    "archived": {
+      "title":      "Archived Deals",
+      "noArchived": "No archived deals.",
+      "archivedAt": "Archived at"
+    },
+    "allLeads": {
+      "title":   "All Leads",
+      "noLeads": "No leads found."
+    },
+    "modal": {
+      "newLead":  "Create New Lead",
+      "editLead": "Edit Lead"
+    },
+    "actions": {
+      "edit":       "Edit",
+      "delete":     "Delete",
+      "viewDetail": "View Details",
+      "save":       "Save",
+      "cancel":     "Cancel",
+      "confirm":    "Confirm"
+    },
+    "phaseSaved":          "Phase saved",
+    "leadSaved":           "Lead saved",
+    "leadDeleted":         "Lead deleted",
+    "dealSaved":           "Deal updated",
+    "activitySaved":       "Activity saved",
+    "taskSaved":           "Task saved",
+    "taskCompleted":       "Task marked as done",
+    "driveSaved":          "Drive link saved",
+    "notified":            "Notification sent",
+    "dealClosed":          "Deal closed",
+    "archivedSuccess":     "Deal archived",
+    "registrationSent":    "Registration sent",
+    "whatsappSent":        "📱 WhatsApp sent",
+    "sendWhatsapp":        "Send WhatsApp",
+    "whatsappPreview":     "WhatsApp Preview",
+    "sending":             "Sending…",
+    "sendNow":             "Send now",
+    "commissionWhatsapp":  "Commission via WhatsApp",
+    "financingNotified":   "Financing partner notified",
+    "lawyerNotified":      "Lawyer notified",
+    "commissionRequested": "Commission requested",
+    "webhookSent":         "Webhook sent",
+    "webhookError":        "Webhook error",
+    "deleteConfirm":       "Really delete this lead?",
+    "project": {
+      "title":          "Projects",
+      "new":            "+ New Project",
+      "edit":           "Edit Project",
+      "delete":         "Delete Project",
+      "name":           "Project Name",
+      "developer":      "Developer",
+      "status":         "Status",
+      "completion":     "Planned Completion",
+      "descriptionDe":  "Description (German)",
+      "descriptionEn":  "Description (English)",
+      "equipment":      "Equipment List",
+      "location":       "Location / Address",
+      "images":         "Images",
+      "videoUrl":       "Video URL (YouTube/Vimeo)",
+      "units":          "Units / Apartments",
+      "save":           "Save Project",
+      "cancel":         "Cancel",
+      "tabs": {
+        "basic":    "Basic Data",
+        "location": "Location",
+        "media":    "Media",
+        "units":    "Units"
+      },
+      "statuses": {
+        "available":          "Available",
+        "under_construction": "Under Construction",
+        "sold_out":           "Sold Out",
+        "completed":          "Completed"
+      },
+      "noProjects":          "No projects yet.",
+      "unitsAvailable":      "{{count}} available",
+      "search":              "Search by name, developer or location…",
+      "allStatuses":         "All Statuses",
+      "confirmDelete":       "Really delete this project?",
+      "dropImages":          "Drag images here or click to upload",
+      "uploading":           "Uploading…",
+      "imagesUploaded":      "Images",
+      "mainImage":           "Main Image",
+      "deleteImage":         "Delete image",
+      "openInMaps":          "Open in Google Maps",
+      "enterLocationFirst":  "Enter a location to show the map.",
+      "invalidVideoUrl":     "Invalid video URL (YouTube or Vimeo)",
+      "saveFirstForUnits":   "Save the project first, then add units."
+    },
+    "unit": {
+      "title":      "Unit",
+      "number":     "Unit No.",
+      "type":       "Type",
+      "bedrooms":   "Bedrooms",
+      "sizeSqm":    "Size (m²)",
+      "priceNet":   "Net Price (€)",
+      "status":     "Status",
+      "floor":      "Floor",
+      "notes":      "Notes",
+      "save":       "Save Unit",
+      "new":        "+ Add Unit",
+      "types": {
+        "villa":     "Villa",
+        "apartment": "Apartment",
+        "studio":    "Studio"
+      },
+      "statuses": {
+        "available":          "Available",
+        "reserved":           "Reserved",
+        "sold":               "Sold",
+        "under_construction": "Under Construction"
+      }
+    },
+    "dealProject": {
+      "title":        "Selected Projects",
+      "select":       "Select Projects",
+      "modal": {
+        "title":       "Which projects interest {{name}}?",
+        "units":       "Unit(s)",
+        "priceNet":    "Net Price (€)",
+        "notes":       "Remarks",
+        "save":        "Save",
+        "cancel":      "Cancel"
+      },
+      "empty":        "No projects selected yet.",
+      "edit":         "Edit",
+      "remove":       "Remove"
+    },
+    "developer": {
+      "title":   "Developers",
+      "new":     "+ New Developer",
+      "name":    "Name",
+      "website": "Website",
+      "notes":   "Notes",
+      "save":    "Save",
+      "cancel":  "Cancel",
+      "noData":  "No developers yet."
+    },
+
+    "calendar": {
+      "title":          "Calendar",
+      "newAppointment": "+ New Appointment",
+      "connectGoogle":  "Connect Google",
+      "googleConnected":"Google connected ✓",
+      "disconnectGoogle":"Disconnect",
+      "today":          "Today",
+      "month":          "Month",
+      "week":           "Week",
+      "day":            "Day",
+      "noAppointments": "No appointments",
+      "past":           "Past",
+      "joinZoom":       "Join Zoom",
+      "viewMaps":       "Open in Maps",
+      "linkedLead":     "Linked Lead",
+      "duration":       "Duration",
+      "googleEvent":    "Google Calendar",
+      "deleteAppt":     "Delete appointment",
+      "apptDeleted":    "Appointment deleted",
+      "days":           ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    },
+
+    "appointment": {
+      "newTitle":       "New Appointment",
+      "titleLabel":     "Title",
+      "titlePlaceholder":"e.g. Initial Zoom Call, Property Tour…",
+      "dateLabel":      "Date",
+      "timeFrom":       "From",
+      "timeTo":         "To",
+      "typeLabel":      "Type",
+      "zoom":           "📹 Zoom",
+      "inperson":       "📍 In Person",
+      "phone":          "📞 Phone",
+      "zoomLink":       "Zoom Link",
+      "generateZoom":   "Generate Zoom Meeting",
+      "generating":     "Creating…",
+      "zoomGenerated":  "✅ Zoom Meeting created",
+      "manualLink":     "Or enter link manually:",
+      "password":       "Password",
+      "address":        "Address",
+      "mapsLink":       "Google Maps Link",
+      "generateMaps":   "Generate Maps Link",
+      "phoneNumber":    "Phone Number",
+      "linkLead":       "Link Lead (optional)",
+      "searchLead":     "Search lead…",
+      "linkedLead":     "Lead already linked",
+      "noLeadLink":     "No lead linked",
+      "saveToGoogle":   "Save to Google Calendar",
+      "sendInvite":     "Send email invitation",
+      "create":         "Create Appointment",
+      "creating":       "Creating…",
+      "created":        "✅ Appointment created",
+      "summary":        "Summary",
+      "description":    "Description",
+      "stepBase":       "Basics",
+      "stepDetails":    "Details",
+      "stepLead":       "Lead",
+      "stepConfirm":    "Confirm",
+      "next":           "Next →",
+      "back":           "← Back"
+    },
+
+    "tab": {
+      "appointments": "Appointments"
+    },
+
+    "settings": {
+      "integrations":           "Integrations",
+      "integrationsHint":       "Connect Google Calendar and Zoom with the CRM.",
+      "googleCalendar":         "Google Calendar",
+      "googleConnected":        "Connected",
+      "googleNotConnected":     "Not connected",
+      "googleNotConfigured":    "VITE_GOOGLE_CLIENT_ID not set",
+      "connectGoogle":          "Connect",
+      "disconnectGoogle":       "Disconnect",
+      "googleConnectedToast":   "✅ Google Calendar connected",
+      "googleDisconnectedToast":"Google Calendar disconnected",
+      "googleConnectError":     "Connection failed",
+      "zoomHint":               "Configure Zoom API Keys as Supabase Secrets.",
+      "zoomDocs":               "API Docs →"
+    }
+  },
+
+  "adminView": {
+    "label":      "View:",
+    "crm":        "CRM",
+    "verwaltung": "Management",
+    "current":    "Currently viewing: {{view}}",
+    "nav": {
+      "users": "Users"
+    }
+  }
+}
