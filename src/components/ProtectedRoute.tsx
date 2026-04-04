@@ -13,7 +13,7 @@ export default function ProtectedRoute({ children, allowedRoles, skipPasswordChe
   const { session, profile, loading, needsPasswordSetup } = useAuth()
   const location = useLocation()
 
-  if (loading) {
+  if (loading && !profile) {
     return (
       <div className="min-h-screen flex items-center justify-center"
            style={{ backgroundColor: 'var(--color-bg)' }}>
