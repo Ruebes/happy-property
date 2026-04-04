@@ -70,9 +70,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Verhindert, dass ein abgebrochener/veralteter fetchProfile-Call
   // einen neuen State überschreibt.
   const fetchIdRef = useRef(0)
-  // Aktuellen State synchron lesbar machen (für onAuthStateChange ohne Closure-Stale-Problem)
-  const stateRef = useRef(state)
-  useEffect(() => { stateRef.current = state })
+  // Nach dem ersten Auth-Check true → loading darf danach NIE mehr true werden
+  const initializedRef = useRef(false)
 
   // ── Profil laden mit 3 Versuchen ────────────────────────────
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {
@@ -130,24 +129,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        // Gleicher User, Profil bereits geladen (z.B. Tab-Wechsel, Token-Refresh via SIGNED_IN):
-        // Nur Session/User aktualisieren – kein fetchProfile, kein Spinner.
-        if (
-          session?.user?.id &&
-          stateRef.current.profile !== null &&
-          stateRef.current.user?.id === session.user.id
-        ) {
-          setState(s => ({ ...s, user: session.user, session }))
-          return
-        }
-
         // Eigene fetch-ID merken – falls ein neuer Event kommt, werden
         // veraltete Profil-Ergebnisse verworfen.
         const myId = ++fetchIdRef.current
 
-        // loading: true setzen während Profil geladen wird – verhindert
-        // dass Login.tsx mit null-Profil zu falschem Dashboard navigiert
-        setState(s => ({ ...s, loading: s.profile === null, user: session?.user ?? null, session }))
+        // loading nur beim ERSTEN Auth-Check (noch nicht initialisiert).
+        // Nach initializedRef.current = true → NIE mehr loading: true setzen.
+        setState(s => ({ ...s, loading: !initializedRef.current, user: session?.user ?? null, session }))
 
         try {
           const profile = session?.user ? await fetchProfile(session.user.id) : null
@@ -160,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             event === 'PASSWORD_RECOVERY'
           )
 
+          initializedRef.current = true
           setState({
             user:  session?.user ?? null,
             session,
@@ -170,6 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch {
           if (myId !== fetchIdRef.current) return
           // Bei Fehler: Session trotzdem behalten → kein unerwarteter Logout
+          initializedRef.current = true
           setState(s => ({
             ...s,
             user:    session?.user ?? null,
