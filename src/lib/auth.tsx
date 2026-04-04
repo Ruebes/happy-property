@@ -70,6 +70,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Verhindert, dass ein abgebrochener/veralteter fetchProfile-Call
   // einen neuen State überschreibt.
   const fetchIdRef = useRef(0)
+  // Aktuellen State synchron lesbar machen (für onAuthStateChange ohne Closure-Stale-Problem)
+  const stateRef = useRef(state)
+  useEffect(() => { stateRef.current = state })
 
   // ── Profil laden mit 3 Versuchen ────────────────────────────
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {
@@ -124,6 +127,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (event === 'SIGNED_OUT') {
           try { localStorage.removeItem('happy-property-auth') } catch { /* ignore */ }
           setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
+          return
+        }
+
+        // Gleicher User, Profil bereits geladen (z.B. Tab-Wechsel, Token-Refresh via SIGNED_IN):
+        // Nur Session/User aktualisieren – kein fetchProfile, kein Spinner.
+        if (
+          session?.user?.id &&
+          stateRef.current.profile !== null &&
+          stateRef.current.user?.id === session.user.id
+        ) {
+          setState(s => ({ ...s, user: session.user, session }))
           return
         }
 
