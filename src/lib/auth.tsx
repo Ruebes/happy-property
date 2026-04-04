@@ -133,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // loading: true setzen während Profil geladen wird – verhindert
         // dass Login.tsx mit null-Profil zu falschem Dashboard navigiert
-        setState(s => ({ ...s, loading: true, user: session?.user ?? null, session }))
+        setState(s => ({ ...s, loading: s.profile === null, user: session?.user ?? null, session }))
 
         try {
           const profile = session?.user ? await fetchProfile(session.user.id) : null
