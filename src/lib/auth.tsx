@@ -106,6 +106,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log('[AUTH EVENT]', event,
+          'loading:', state.loading,
+          'profile:', !!state.profile,
+          'initialized:', initializedRef.current)
+
         // Token-Refresh: nur Session/User aktualisieren, kein Profil-Reload
         if (event === 'TOKEN_REFRESHED') {
           setState(s => ({ ...s, user: session?.user ?? null, session }))
@@ -135,7 +140,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // loading nur beim ERSTEN Auth-Check (noch nicht initialisiert).
         // Nach initializedRef.current = true → NIE mehr loading: true setzen.
-        setState(s => ({ ...s, loading: !initializedRef.current, user: session?.user ?? null, session }))
+        const newLoading = !initializedRef.current
+        console.log('[AUTH STATE SET]', { loading: newLoading, initialized: initializedRef.current })
+        setState(s => ({ ...s, loading: newLoading, user: session?.user ?? null, session }))
 
         try {
           const profile = session?.user ? await fetchProfile(session.user.id) : null
