@@ -13,7 +13,21 @@ export default function ProtectedRoute({ children, allowedRoles, skipPasswordChe
   const { session, profile, loading, needsPasswordSetup } = useAuth()
   const location = useLocation()
 
-  if (loading && !profile) {
+  // Profil geladen → IMMER Inhalt zeigen, niemals Spinner
+  if (profile) {
+    // Passwort-Setup erzwingen (Einladungsflow)
+    if (needsPasswordSetup && !skipPasswordCheck && location.pathname !== '/set-password') {
+      return <Navigate to="/set-password" replace />
+    }
+    // Falsche Rolle → eigenes Dashboard
+    if (!allowedRoles.includes(profile.role)) {
+      return <Navigate to={roleToPath(profile.role)} replace />
+    }
+    return <>{children}</>
+  }
+
+  // Noch kein Profil: nur beim absoluten Erstladen (kein user, loading läuft)
+  if (loading && !session) {
     return (
       <div className="min-h-screen flex items-center justify-center"
            style={{ backgroundColor: 'var(--color-bg)' }}>
@@ -26,15 +40,6 @@ export default function ProtectedRoute({ children, allowedRoles, skipPasswordChe
   // Nicht eingeloggt → Login
   if (!session) return <Navigate to="/login" replace />
 
-  // Passwort-Setup erzwingen (Einladungsflow)
-  if (needsPasswordSetup && !skipPasswordCheck && location.pathname !== '/set-password') {
-    return <Navigate to="/set-password" replace />
-  }
-
-  // Falsche Rolle → eigenes Dashboard
-  if (profile && !allowedRoles.includes(profile.role)) {
-    return <Navigate to={roleToPath(profile.role)} replace />
-  }
-
+  // Session vorhanden aber Profil lädt noch → Inhalt trotzdem zeigen
   return <>{children}</>
 }
