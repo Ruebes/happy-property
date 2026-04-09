@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -58,6 +58,7 @@ const sourceLabel: Record<string, string> = {
 
 export default function AllLeads() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   useAuth()
 
   const [leads, setLeads] = useState<Lead[]>([])
@@ -248,7 +249,7 @@ export default function AllLeads() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filteredLeads.map(lead => (
-                    <tr key={lead.id} className="hover:bg-gray-50">
+                    <tr key={lead.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => navigate(`/admin/crm/leads/${lead.id}`)}>
                       <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">
                         {lead.first_name} {lead.last_name}
                       </td>
@@ -269,13 +270,14 @@ export default function AllLeads() {
                         <div className="flex items-center gap-3">
                           <Link
                             to={`/admin/crm/leads/${lead.id}`}
+                            onClick={e => e.stopPropagation()}
                             className="text-sm font-medium hover:underline"
                             style={{ color: '#ff795d' }}
                           >
                             Details
                           </Link>
                           <button
-                            onClick={() => handleDelete(lead.id)}
+                            onClick={(e) => { e.stopPropagation(); handleDelete(lead.id) }}
                             className="text-sm text-red-500 hover:text-red-700"
                           >
                             Löschen

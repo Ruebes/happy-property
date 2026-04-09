@@ -960,7 +960,8 @@
       "settings":   "Settings",
       "developers": "Manage Developers",
       "whatsapp":   "WhatsApp Templates",
-      "calendar":   "Calendar"
+      "calendar":    "Calendar",
+      "statistics":  "Statistics"
     },
     "newLead": "+ New Lead",
     "lead": {

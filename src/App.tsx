@@ -30,6 +30,7 @@ import CrmProjects     from './pages/admin/crm/Projects'
 import CrmSettings          from './pages/admin/crm/Settings'
 import CrmWhatsappTemplates from './pages/admin/crm/settings/WhatsappTemplates'
 import CrmCalendar          from './pages/admin/crm/Calendar'
+import Statistics           from './pages/admin/crm/Statistics'
 
 // Verwalter-Seiten
 import VerwalterBookings from './pages/verwaltung/Bookings'
@@ -134,6 +135,11 @@ export default function App() {
           <Route path="/admin/crm/calendar" element={
             <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
               <CrmCalendar />
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/crm/statistics" element={
+            <ProtectedRoute allowedRoles={['admin']}>
+              <Statistics />
             </ProtectedRoute>
           } />
 

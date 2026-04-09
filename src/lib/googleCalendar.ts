@@ -32,6 +32,7 @@ declare global {
           initTokenClient: (config: {
             client_id: string
             scope: string
+            prompt?: string
             callback: (response: { access_token?: string; error?: string }) => void
           }) => { requestAccessToken: () => void }
           revoke: (token: string, cb: () => void) => void
@@ -75,6 +76,31 @@ export function hasGoogleToken(): boolean {
 function saveToken(token: string) {
   const expires_at = Date.now() + 55 * 60 * 1000 // 55 minutes
   localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expires_at }))
+}
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleTokenRefresh(clientId: string) {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  // Refresh nach 50 Minuten (5 Minuten vor Ablauf)
+  refreshTimer = setTimeout(() => {
+    const client = window.google?.accounts?.oauth2?.initTokenClient({
+      client_id: clientId,
+      scope: SCOPES,
+      prompt: '',  // Kein Popup – silent refresh
+      callback: (resp: { access_token?: string; error?: string }) => {
+        if (resp.access_token) {
+          saveToken(resp.access_token)
+          scheduleTokenRefresh(clientId)
+          if (gapiReady) {
+            (window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
+              .setToken({ access_token: resp.access_token })
+          }
+        }
+      },
+    })
+    client?.requestAccessToken()
+  }, 50 * 60 * 1000)
 }
 
 function getToken(): string | null {
@@ -124,6 +150,7 @@ export async function initGoogleAuth(): Promise<void> {
   if (storedToken) {
     ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
       .setToken({ access_token: storedToken })
+    if (clientId) scheduleTokenRefresh(clientId)
   }
 }
 
@@ -162,6 +189,8 @@ export function signInGoogle(): Promise<void> {
             ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
               .setToken({ access_token: resp.access_token })
           }
+          const cId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string
+          scheduleTokenRefresh(cId)
           resolve()
         } else {
           reject(new Error('No access_token in response'))

@@ -87,10 +87,11 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
   // CRM-Einzel-Links (ohne Settings-Gruppe)
   const crmTopItems = [
-    { to: '/admin/crm',          key: 'crm.nav.pipeline'  },
-    { to: '/admin/crm/leads',    key: 'crm.nav.leads'     },
-    { to: '/admin/crm/projects', key: 'crm.nav.projects'  },
-    { to: '/admin/crm/calendar', key: 'crm.nav.calendar'  },
+    { to: '/admin/crm',               key: 'crm.nav.pipeline'   },
+    { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
+    { to: '/admin/crm/projects',      key: 'crm.nav.projects'   },
+    { to: '/admin/crm/calendar',      key: 'crm.nav.calendar'   },
+    { to: '/admin/crm/statistics',    key: 'crm.nav.statistics' },
   ]
 
   // CRM Settings-Untermenü-Einträge

@@ -54,9 +54,24 @@ interface ProjectModalProps {
   onSaved: () => void
 }
 
+function parseGoogleMapsLocation(input: string): string {
+  const coordMatch = input.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
+  if (coordMatch) return `${coordMatch[1]},${coordMatch[2]}`
+  const qMatch = input.match(/[?&]q=([^&]+)/)
+  if (qMatch) return decodeURIComponent(qMatch[1])
+  if (input.startsWith('http')) return input
+  return input
+}
+
 function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   const { t } = useTranslation()
   const [saving, setSaving]       = useState(false)
+  const [developers, setDevelopers] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    supabase.from('crm_developers').select('id, name').order('name')
+      .then(({ data }) => setDevelopers(data ?? []))
+  }, [])
   const [activeTab, setActiveTab] = useState<'basic' | 'location' | 'media'>('basic')
   const [form, setForm] = useState<ProjectForm>({
     name:            project?.name ?? '',
@@ -192,9 +207,13 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('crm.project.developer', 'Entwickler / Developer')}
                   </label>
-                  <input value={form.developer} onChange={e => up('developer', e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                    placeholder="z.B. Limassol Developers Ltd." />
+                  <select value={form.developer} onChange={e => up('developer', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
+                    <option value="">— Developer wählen —</option>
+                    {developers.map(d => (
+                      <option key={d.id} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -254,6 +273,9 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 <input value={form.location} onChange={e => up('location', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                   placeholder="z.B. Paphos, Zypern" />
+                <p className="text-xs text-gray-400 mt-1">
+                  {t('crm.project.locationHint', 'Adresse oder Google Maps Link eingeben.')}
+                </p>
               </div>
 
               {form.location && (
@@ -264,7 +286,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                       width="100%"
                       height="280"
                       loading="lazy"
-                      src={`https://maps.google.com/maps?q=${encodeURIComponent(form.location)}&output=embed&z=14`}
+                      src={`https://maps.google.com/maps?q=${encodeURIComponent(parseGoogleMapsLocation(form.location))}&output=embed&z=14`}
                       style={{ border: 0 }}
                     />
                   </div>
@@ -516,7 +538,8 @@ export default function Projects() {
               return (
                 <div
                   key={p.id}
-                  className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow"
+                  className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => setEditProject(p)}
                 >
                   {/* Image */}
                   <div className="h-44 bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
@@ -564,13 +587,13 @@ export default function Projects() {
                     {/* Actions */}
                     <div className="flex gap-2 pt-1">
                       <button
-                        onClick={() => setEditProject(p)}
+                        onClick={(e) => { e.stopPropagation(); setEditProject(p) }}
                         className="flex-1 text-center text-xs py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
                       >
                         {t('crm.project.edit', 'Bearbeiten')}
                       </button>
                       <button
-                        onClick={() => handleDelete(p.id)}
+                        onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}
                         className="text-xs py-1.5 px-3 rounded-lg border border-red-100 text-red-400 hover:bg-red-50 transition-colors"
                       >
                         ✕
