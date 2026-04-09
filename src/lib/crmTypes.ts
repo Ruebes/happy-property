@@ -8,10 +8,10 @@ export type ActivityType = 'call' | 'email' | 'whatsapp' | 'note' | 'meeting' | 
 export type DealPhase =
   | 'erstkontakt'
   | 'termin_gebucht'
+  | 'registrierung'
   | 'no_show'
   | 'finanzierung_de'
   | 'finanzierung_cy'
-  | 'registrierung'
   | 'immobilienauswahl'
   | 'kaufvertrag'
   | 'anzahlung'
@@ -94,9 +94,9 @@ export interface EmailTemplate {
 
 // Ordered pipeline phases (no 'archiviert' in kanban; 'deal_verloren' last = red column)
 export const DEAL_PHASES: DealPhase[] = [
-  'erstkontakt', 'termin_gebucht', 'no_show',
+  'erstkontakt', 'termin_gebucht', 'registrierung', 'no_show',
   'finanzierung_de', 'finanzierung_cy',
-  'registrierung', 'immobilienauswahl',
+  'immobilienauswahl',
   'kaufvertrag', 'anzahlung', 'provision_erhalten',
   'deal_verloren',
 ]
