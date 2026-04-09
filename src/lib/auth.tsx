@@ -42,7 +42,6 @@ interface AuthContextValue extends AuthState {
 export function roleToPath(role: UserRole | undefined): string {
   switch (role) {
     case 'admin': {
-      // Letzte Admin-Ansicht aus localStorage wiederherstellen
       const saved = localStorage.getItem('admin_view')
       return saved === 'verwaltung' ? '/admin/dashboard' : '/admin/crm'
     }
@@ -67,13 +66,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({
     user: null, session: null, profile: null, loading: true, needsPasswordSetup: false,
   })
-  // Verhindert, dass ein abgebrochener/veralteter fetchProfile-Call
-  // einen neuen State überschreibt.
-  const fetchIdRef = useRef(0)
-  // Nach dem ersten Auth-Check true → loading darf danach NIE mehr true werden
-  const initializedRef = useRef(false)
 
-  // ── Profil laden mit 3 Versuchen ────────────────────────────
+  // Verhindert veraltete fetchProfile-Calls beim State-Update
+  const fetchIdRef = useRef(0)
+  // Nach dem ersten Auth-Event nie mehr loading:true setzen
+  const readyRef = useRef(false)
+
+  // ── Profil laden ────────────────────────────────────────────
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {
     try {
       const { data, error } = await supabase
@@ -99,81 +98,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Sicherheitsnetz: nach 5 s loading beenden, damit kein ewiger Spinner
+    // Sicherheitsnetz: nach 8 s loading beenden
     const timeout = setTimeout(() => {
       setState(s => s.loading ? { ...s, loading: false } : s)
-    }, 5_000)
+      readyRef.current = true
+    }, 8_000)
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('[AUTH EVENT]', event,
-          'loading:', state.loading,
-          'profile:', !!state.profile,
-          'initialized:', initializedRef.current)
 
-        // Token-Refresh: nur Session/User aktualisieren, kein Profil-Reload
+        // TOKEN_REFRESHED: nur Session silent aktualisieren
         if (event === 'TOKEN_REFRESHED') {
-          setState(s => ({ ...s, user: session?.user ?? null, session }))
+          setState(s => ({ ...s, session, user: session?.user ?? null }))
           return
         }
 
-        // Token-Refresh fehlgeschlagen → Session ist tot, sofort abmelden.
-        // 'TOKEN_REFRESH_FAILED' existiert in neueren Supabase SDK-Versionen.
+        // SIGNED_OUT: alles leeren
+        if (event === 'SIGNED_OUT') {
+          readyRef.current = true
+          setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
+          return
+        }
+
+        // TOKEN_REFRESH_FAILED: session ist tot
         if ((event as string) === 'TOKEN_REFRESH_FAILED') {
-          try { localStorage.removeItem('happy-property-auth') } catch { /* ignore */ }
+          readyRef.current = true
           setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
           window.location.replace('/login')
           return
         }
 
-        // Explizites Abmelden: React-State leeren + Storage-Key entfernen
-        // (Supabase löscht seinen eigenen Key, wir stellen sicher dass nichts cached bleibt)
-        if (event === 'SIGNED_OUT') {
-          try { localStorage.removeItem('happy-property-auth') } catch { /* ignore */ }
-          setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
-          return
-        }
-
-        // Eigene fetch-ID merken – falls ein neuer Event kommt, werden
-        // veraltete Profil-Ergebnisse verworfen.
+        // Erstes Laden: Spinner anzeigen und Profil laden
         const myId = ++fetchIdRef.current
+        setState(s => ({ ...s, loading: true, session, user: session?.user ?? null }))
 
-        // loading nur beim ERSTEN Auth-Check (noch nicht initialisiert).
-        // Nach initializedRef.current = true → NIE mehr loading: true setzen.
-        const newLoading = !initializedRef.current
-        console.log('[AUTH STATE SET]', { loading: newLoading, initialized: initializedRef.current })
-        setState(s => ({ ...s, loading: newLoading, user: session?.user ?? null, session }))
+        const profile = session?.user ? await fetchProfile(session.user.id) : null
+        if (myId !== fetchIdRef.current) return
 
-        try {
-          const profile = session?.user ? await fetchProfile(session.user.id) : null
+        const needsPasswordSetup = !!(
+          session?.user?.user_metadata?.needs_password_setup === true ||
+          event === 'PASSWORD_RECOVERY'
+        )
 
-          // Veralteter Call? Neuere Anfrage lief durch → ignorieren
-          if (myId !== fetchIdRef.current) return
-
-          const needsPasswordSetup = !!(
-            session?.user?.user_metadata?.needs_password_setup === true ||
-            event === 'PASSWORD_RECOVERY'
-          )
-
-          initializedRef.current = true
-          setState({
-            user:  session?.user ?? null,
-            session,
-            profile,
-            loading: false,
-            needsPasswordSetup,
-          })
-        } catch {
-          if (myId !== fetchIdRef.current) return
-          // Bei Fehler: Session trotzdem behalten → kein unerwarteter Logout
-          initializedRef.current = true
-          setState(s => ({
-            ...s,
-            user:    session?.user ?? null,
-            session,
-            loading: false,
-          }))
-        }
+        readyRef.current = true
+        setState({
+          user: session?.user ?? null,
+          session,
+          profile,
+          loading: false,
+          needsPasswordSetup,
+        })
       }
     )
 
@@ -181,17 +155,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timeout)
       subscription.unsubscribe()
     }
-  }, [])
-
-  // ── Netzwerk-Reconnect ────────────────────────────────────────────────────
-  // Supabase autoRefreshToken: true übernimmt Token-Refresh vollständig.
-  // Manuelle Handler (visibilitychange, focus, online+refreshSession) lösen
-  // TOKEN_REFRESHED aus → onAuthStateChange → loading: true → Spinner.
-  // Daher: keine aktiven Handler, nur leerer online-Listener als Platzhalter.
-  useEffect(() => {
-    const handleOnline = () => { /* Supabase refresht automatisch */ }
-    window.addEventListener('online', handleOnline)
-    return () => window.removeEventListener('online', handleOnline)
   }, [])
 
   async function signIn(email: string, password: string) {
@@ -203,8 +166,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await supabase.auth.signOut()
   }
 
-  // Passwort setzen + needs_password_setup Flag löschen
-  // Gibt die Rolle zurück, damit SetPassword.tsx direkt navigieren kann
   async function updatePassword(newPassword: string): Promise<{ error: string | null; role?: UserRole }> {
     const { error } = await supabase.auth.updateUser({
       password: newPassword,
@@ -212,13 +173,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
     if (error) return { error: error.message }
 
-    // Session explizit neu laden – USER_UPDATED-Event ist async und könnte
-    // den State zu spät oder mit Race Condition aktualisieren
     const { data: { session: fresh } } = await supabase.auth.getSession()
     if (fresh?.user) {
       const freshProfile = await fetchProfile(fresh.user.id)
-      // Laufenden USER_UPDATED-Handler invalidieren, damit er nicht
-      // unseren frisch gesetzten State überschreibt
       fetchIdRef.current++
       setState({
         user:               fresh.user,
@@ -230,15 +187,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { error: null, role: freshProfile?.role }
     }
 
-    // Fallback falls keine Session vorhanden (sollte nicht passieren)
     setState(s => ({ ...s, needsPasswordSetup: false }))
     return { error: null }
   }
 
-  // Passwort-Reset-E-Mail
   async function resetPasswordEmail(email: string): Promise<{ error: string | null }> {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      // Direkt auf /set-password, damit getSetupMode() 'recovery' erkennt
       redirectTo: `${window.location.origin}/set-password`,
     })
     return { error: error?.message ?? null }
