@@ -1,35 +1,26 @@
-import { createClient } from 'jsr:@supabase/supabase-js@2'
-
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// ── Zoom JWT ──────────────────────────────────────────────────────────────────
-// Generates a short-lived JWT for Zoom JWT App authentication.
-async function generateZoomJWT(apiKey: string, apiSecret: string): Promise<string> {
-  const enc = new TextEncoder()
-
-  const header  = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-
-  const payload = btoa(JSON.stringify({
-    iss: apiKey,
-    exp: Math.floor(Date.now() / 1000) + 90,
-  })).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-
-  const key = await crypto.subtle.importKey(
-    'raw', enc.encode(apiSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false, ['sign']
+// ── Server-to-Server OAuth Token ─────────────────────────────────────────────
+async function getZoomToken(accountId: string, clientId: string, clientSecret: string): Promise<string> {
+  const resp = await fetch(
+    `https://zoom.us/oauth/token?grant_type=account_credentials&account_id=${encodeURIComponent(accountId)}`,
+    {
+      method:  'POST',
+      headers: {
+        'Authorization': `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+        'Content-Type':  'application/x-www-form-urlencoded',
+      },
+    }
   )
-
-  const sigRaw = await crypto.subtle.sign('HMAC', key, enc.encode(`${header}.${payload}`))
-
-  const sig = btoa(String.fromCharCode(...new Uint8Array(sigRaw)))
-    .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
-
-  return `${header}.${payload}.${sig}`
+  if (!resp.ok) {
+    const body = await resp.text()
+    throw new Error(`Zoom Token Fehler (${resp.status}): ${body}`)
+  }
+  const { access_token } = await resp.json() as { access_token: string }
+  return access_token
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -38,24 +29,45 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
+  const accountId    = Deno.env.get('ZOOM_ACCOUNT_ID')
+  const clientId     = Deno.env.get('ZOOM_CLIENT_ID')
+  const clientSecret = Deno.env.get('ZOOM_CLIENT_SECRET')
+
+  if (!accountId || !clientId || !clientSecret) {
+    return new Response(
+      JSON.stringify({ error: 'Zoom nicht konfiguriert. Bitte ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID und ZOOM_CLIENT_SECRET als Supabase Secrets setzen.' }),
+      { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
   try {
-    const { title, start_time, duration_minutes } = await req.json() as {
-      title:             string
-      start_time:        string   // ISO 8601
+    const body = await req.json() as {
+      check?:            boolean
+      title?:            string
+      start_time?:       string
       duration_minutes?: number
     }
 
-    const zoomApiKey    = Deno.env.get('ZOOM_API_KEY')
-    const zoomApiSecret = Deno.env.get('ZOOM_API_SECRET')
-
-    if (!zoomApiKey || !zoomApiSecret) {
+    // ── Check-only: verify credentials without creating a meeting ────────────
+    if (body.check) {
+      await getZoomToken(accountId, clientId, clientSecret)
       return new Response(
-        JSON.stringify({ error: 'Zoom API nicht konfiguriert. Bitte ZOOM_API_KEY und ZOOM_API_SECRET als Supabase Secrets setzen.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ configured: true }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    const token = await generateZoomJWT(zoomApiKey, zoomApiSecret)
+    // ── Create meeting ────────────────────────────────────────────────────────
+    const { title, start_time, duration_minutes } = body
+
+    if (!title || !start_time) {
+      return new Response(
+        JSON.stringify({ error: 'title und start_time sind Pflichtfelder.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const token = await getZoomToken(accountId, clientId, clientSecret)
 
     const zoomRes = await fetch('https://api.zoom.us/v2/users/me/meetings', {
       method:  'POST',
@@ -65,7 +77,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         topic:      title,
-        type:       2,            // scheduled meeting
+        type:       2,
         start_time,
         duration:   duration_minutes ?? 60,
         settings: {
@@ -73,6 +85,7 @@ Deno.serve(async (req) => {
           participant_video: true,
           join_before_host:  true,
           waiting_room:      false,
+          auto_recording:    'none',
         },
       }),
     })
@@ -92,26 +105,13 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Optional: log to Supabase (fire-and-forget)
-    try {
-      const supabase = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-      )
-      await supabase.from('activities').insert({
-        type:      'meeting',
-        direction: 'outbound',
-        subject:   `Zoom Meeting erstellt: ${title}`,
-        content:   `join_url: ${meeting.join_url}`,
-      })
-    } catch { /* non-fatal */ }
-
     return new Response(
       JSON.stringify({
-        meeting_id: meeting.id,
+        success:    true,
+        meeting_id: String(meeting.id),
         join_url:   meeting.join_url,
         start_url:  meeting.start_url,
-        password:   meeting.password,
+        password:   meeting.password ?? '',
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

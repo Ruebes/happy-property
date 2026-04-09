@@ -114,6 +114,9 @@ export default function Settings() {
   const [googleInit, setGoogleInit]             = useState(false)
   const [googleLoading, setGoogleLoading]       = useState(false)
 
+  // ── Zoom integration state ────────────────────────────────────────────────
+  const [zoomConfigured, setZoomConfigured] = useState<boolean | null>(null)
+
   useEffect(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
     if (!clientId) { setGoogleInit(true); return }
@@ -123,6 +126,14 @@ export default function Settings() {
         setGoogleConnected(hasGoogleToken())
       })
       .catch(() => setGoogleInit(true))
+  }, [])
+
+  useEffect(() => {
+    supabase.functions.invoke('create-zoom-meeting', { body: { check: true } })
+      .then(({ data, error }) => {
+        setZoomConfigured(!error && data?.configured === true)
+      })
+      .catch(() => setZoomConfigured(false))
   }, [])
 
   const handleGoogleConnect = async () => {
@@ -384,22 +395,37 @@ export default function Settings() {
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-lg">📹</div>
               <div>
-                <p className="text-sm font-medium text-gray-900">Zoom</p>
-                <p className="text-xs mt-0.5">
-                  <span className="text-gray-400">
-                    {t('crm.settings.zoomHint', 'Zoom API Keys als Supabase Secrets konfigurieren.')}
-                  </span>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-gray-900">Zoom</p>
+                  {zoomConfigured === null && (
+                    <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin" />
+                  )}
+                  {zoomConfigured === true && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700">
+                      {t('crm.settings.connected', 'Verbunden')}
+                    </span>
+                  )}
+                  {zoomConfigured === false && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-500">
+                      {t('crm.settings.notConnected', 'Nicht verbunden')}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {zoomConfigured
+                    ? t('crm.settings.zoomConfigured', 'ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET gesetzt.')
+                    : t('crm.settings.zoomHint', 'ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID und ZOOM_CLIENT_SECRET als Supabase Secrets setzen.')}
                 </p>
               </div>
             </div>
             <a
-              href="https://developers.zoom.us/docs/api/"
+              href="https://marketplace.zoom.us/develop/create"
               target="_blank"
               rel="noreferrer"
               className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500
                          hover:border-blue-200 hover:text-blue-500 transition-colors"
             >
-              {t('crm.settings.zoomDocs', 'API Docs →')}
+              {t('crm.settings.zoomSetup', 'Zoom App →')}
             </a>
           </div>
         </div>

@@ -98,9 +98,13 @@ export default function AppointmentModal({
 
   // ── Step 2: Details ───────────────────────────────────────────
 
-  // Zoom (manual entry only)
+  // Zoom
   const [zoomLink, setZoomLink]         = useState('')
   const [zoomPassword, setZoomPassword] = useState('')
+  const [zoomMeetingId, setZoomMeetingId] = useState<string | null>(null)
+  const [zoomGenerating, setZoomGenerating] = useState(false)
+  const [zoomGenerated, setZoomGenerated]   = useState(false)
+  const [zoomError, setZoomError]           = useState('')
 
   // In-person
   const [location, setLocation]     = useState('')
@@ -163,6 +167,35 @@ export default function AppointmentModal({
     setLocationUrl(`https://www.google.com/maps/search/${encodeURIComponent(location)}`)
   }
 
+  // ── Generate Zoom Meeting via Edge Function ───────────────────
+  async function handleGenerateZoom() {
+    if (!date || !von) return
+    setZoomGenerating(true)
+    setZoomError('')
+    try {
+      const start_time = new Date(`${date}T${von}`).toISOString()
+      const [vonH, vonM] = von.split(':').map(Number)
+      const [bisH, bisM] = bis.split(':').map(Number)
+      const duration_minutes = Math.max(30, (bisH * 60 + bisM) - (vonH * 60 + vonM))
+
+      const { data, error } = await supabase.functions.invoke('create-zoom-meeting', {
+        body: { title: title || t('crm.appt.defaultZoomTitle', 'Beratungsgespräch'), start_time, duration_minutes },
+      })
+      if (error) throw new Error(error.message)
+      if (data?.error) throw new Error(data.error)
+
+      setZoomLink(data.join_url ?? '')
+      setZoomPassword(data.password ?? '')
+      setZoomMeetingId(data.meeting_id ?? null)
+      setZoomGenerated(true)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setZoomError(msg)
+    } finally {
+      setZoomGenerating(false)
+    }
+  }
+
   // ── handleCreate ──────────────────────────────────────────────
   async function handleCreate() {
     setSaving(true)
@@ -186,7 +219,7 @@ export default function AppointmentModal({
           end_time,
           lead_id:         selectedLeadId || null,
           zoom_link:       zoomLink || null,
-          zoom_meeting_id: null,
+          zoom_meeting_id: zoomMeetingId || null,
           location:        location || null,
           location_url:    locationUrl || null,
           phone_number:    phoneNumber || null,
@@ -406,33 +439,115 @@ export default function AppointmentModal({
             <>
               {apptType === 'zoom' && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {t('crm.appt.zoomLink', 'Zoom Link')}
-                    </label>
-                    <input
-                      type="text"
-                      value={zoomLink}
-                      onChange={e => setZoomLink(e.target.value)}
-                      placeholder="https://zoom.us/j/..."
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      {t('crm.appt.zoomLinkHint', 'Zoom Meeting im Zoom-Portal anlegen und Link hier eintragen.')}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {t('crm.appt.zoomPassword', 'Passwort')}
-                    </label>
-                    <input
-                      type="text"
-                      value={zoomPassword}
-                      onChange={e => setZoomPassword(e.target.value)}
-                      placeholder={t('crm.appt.optional', 'optional')}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
-                    />
-                  </div>
+                  {/* ── Auto-generate button ── */}
+                  {!zoomGenerated && (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => void handleGenerateZoom()}
+                        disabled={zoomGenerating || !date || !von}
+                        className="w-full py-2.5 rounded-lg text-sm font-medium text-white flex items-center justify-center gap-2 disabled:opacity-50 transition-opacity"
+                        style={{ backgroundColor: '#ff795d' }}
+                      >
+                        {zoomGenerating && (
+                          <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        )}
+                        {zoomGenerating
+                          ? t('crm.appt.zoomGenerating', 'Erstelle Zoom Meeting…')
+                          : t('crm.appt.zoomGenerate', '📹 Zoom Meeting generieren')}
+                      </button>
+                      {(!date || !von) && (
+                        <p className="text-xs text-gray-400 mt-1">
+                          {t('crm.appt.zoomNeedsDate', 'Datum und Uhrzeit in Schritt 1 setzen.')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* ── Success state ── */}
+                  {zoomGenerated && (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+                      <p className="text-sm font-semibold text-green-700">
+                        ✅ {t('crm.appt.zoomCreated', 'Meeting erstellt!')}
+                      </p>
+                      <div>
+                        <p className="text-xs text-gray-500 mb-1">🔗 {t('crm.appt.zoomJoinUrl', 'Join URL')}</p>
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={zoomLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="flex-1 text-xs text-blue-600 underline break-all"
+                          >
+                            {zoomLink}
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => void navigator.clipboard.writeText(zoomLink)}
+                            className="shrink-0 text-xs px-2 py-1 border border-gray-200 rounded hover:bg-gray-50"
+                          >
+                            {t('common.copy', 'Kopieren')}
+                          </button>
+                        </div>
+                      </div>
+                      {zoomPassword && (
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">🔑 {t('crm.appt.zoomPassword', 'Passwort')}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="flex-1 text-sm font-mono text-gray-700">{zoomPassword}</span>
+                            <button
+                              type="button"
+                              onClick={() => void navigator.clipboard.writeText(zoomPassword)}
+                              className="shrink-0 text-xs px-2 py-1 border border-gray-200 rounded hover:bg-gray-50"
+                            >
+                              {t('common.copy', 'Kopieren')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => { setZoomGenerated(false); setZoomLink(''); setZoomPassword(''); setZoomMeetingId(null) }}
+                        className="text-xs text-gray-400 hover:text-gray-600 underline"
+                      >
+                        {t('crm.appt.zoomReset', 'Neues Meeting generieren')}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* ── Error fallback → manual input ── */}
+                  {zoomError && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        ⚠️ {t('crm.appt.zoomNotAvailable', 'Zoom nicht verfügbar – Link manuell eintragen.')}
+                        <span className="block text-amber-500 mt-0.5">{zoomError}</span>
+                      </p>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          {t('crm.appt.zoomLink', 'Zoom Link')}
+                        </label>
+                        <input
+                          type="text"
+                          value={zoomLink}
+                          onChange={e => setZoomLink(e.target.value)}
+                          placeholder="https://zoom.us/j/..."
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          {t('crm.appt.zoomPassword', 'Passwort')}
+                        </label>
+                        <input
+                          type="text"
+                          value={zoomPassword}
+                          onChange={e => setZoomPassword(e.target.value)}
+                          placeholder={t('crm.appt.optional', 'optional')}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
 
