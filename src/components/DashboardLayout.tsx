@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
-import { useAuth, ROLE_META } from '../lib/auth'
+import { useAuth, ROLE_META, type UserRole } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import LanguageSwitcher from './LanguageSwitcher'
 
@@ -20,8 +20,21 @@ export default function DashboardLayout({ children, basePath }: Props) {
   const location    = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
 
-  const roleColor = profile ? ROLE_META[profile.role].color : ''
-  const isAdmin   = profile?.role === 'admin'
+  // ── Profil-Cache in localStorage ─────────────────────────────────────────
+  // Wenn profile kurz null ist (Tab-Wechsel, Neuladen), bleiben Nav und
+  // Avatar-Initiale korrekt angezeigt.
+  if (profile?.full_name) localStorage.setItem('cached_user_name', profile.full_name)
+  if (profile?.role)      localStorage.setItem('cached_user_role', profile.role)
+
+  const effectiveRole = profile?.role
+    ?? (localStorage.getItem('cached_user_role') as UserRole | null)
+    ?? null
+  const effectiveName = profile?.full_name
+    ?? localStorage.getItem('cached_user_name')
+    ?? null
+
+  const roleColor = effectiveRole ? ROLE_META[effectiveRole].color : ''
+  const isAdmin   = effectiveRole === 'admin'
 
   // ── Admin view: derived from URL, saved to localStorage ──────────────────
   const adminView: AdminView = (() => {
@@ -312,10 +325,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
 
-            {profile && (
+            {effectiveRole && (
               <span className={`hidden sm:inline text-xs font-semibold font-body
                                px-2.5 py-1 rounded-full ${roleColor}`}>
-                {t(`roles.${profile.role}`)}
+                {t(`roles.${effectiveRole}`)}
               </span>
             )}
 
@@ -331,10 +344,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
                            text-white text-xs font-bold font-body shrink-0"
                 style={{ backgroundColor: 'var(--color-highlight)' }}
               >
-                {profile?.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                {effectiveName?.charAt(0)?.toUpperCase() ?? '?'}
               </span>
               <span className="max-w-[120px] truncate">
-                {profile?.full_name || profile?.email}
+                {effectiveName || profile?.email}
               </span>
             </Link>
 
