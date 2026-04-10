@@ -74,7 +74,7 @@ export function hasGoogleToken(): boolean {
 }
 
 function saveToken(token: string) {
-  const expires_at = Date.now() + 55 * 60 * 1000 // 55 minutes
+  const expires_at = Date.now() + 50 * 60 * 1000 // 50 Minuten (10 Min Puffer vor Google 1h Limit)
   localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expires_at }))
 }
 
@@ -204,9 +204,47 @@ export function signInGoogle(): Promise<void> {
 export function signOutGoogle(): void {
   const token = getToken()
   localStorage.removeItem(TOKEN_KEY)
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
   if (token && window.google?.accounts?.oauth2) {
     window.google.accounts.oauth2.revoke(token, () => { /* noop */ })
   }
+}
+
+// ── Silent Token Refresh ──────────────────────────────────────────────────────
+// Versucht einen Access Token OHNE Popup zu erneuern (prompt: '').
+// Funktioniert solange der Browser eine aktive Google-Session hat.
+// Gibt true zurück wenn erfolgreich, false wenn der User sich neu verbinden muss.
+export function refreshGoogleToken(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
+    if (!clientId) { resolve(false); return }
+
+    try {
+      const client = window.google?.accounts?.oauth2?.initTokenClient({
+        client_id: clientId,
+        scope:     SCOPES,
+        prompt:    '',   // Kein Popup – nur wenn Google-Session aktiv
+        callback:  (resp: { access_token?: string; error?: string }) => {
+          if (resp.access_token) {
+            saveToken(resp.access_token)
+            if (gapiReady) {
+              ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
+                .setToken({ access_token: resp.access_token })
+            }
+            scheduleTokenRefresh(clientId)
+            resolve(true)
+          } else {
+            // Kein Token → User muss sich manuell neu verbinden
+            localStorage.removeItem(TOKEN_KEY)
+            resolve(false)
+          }
+        },
+      })
+      client?.requestAccessToken()
+    } catch {
+      resolve(false)
+    }
+  })
 }
 
 // ── Calendar operations ───────────────────────────────────────────────────────
@@ -270,8 +308,15 @@ export async function listGoogleEvents(
   timeMin: string,
   timeMax: string,
 ): Promise<GoogleCalendarEvent[]> {
-  const token = getToken()
-  if (!token) return []
+  let token = getToken()
+
+  // Token abgelaufen → silent refresh versuchen
+  if (!token) {
+    const refreshed = await refreshGoogleToken()
+    if (!refreshed) return []       // Muss manuell neu verbinden
+    token = getToken()
+    if (!token) return []
+  }
 
   try {
     // Schritt 1: Alle Kalender des Users laden

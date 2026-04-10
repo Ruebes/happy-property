@@ -10,6 +10,7 @@ import {
   signInGoogle,
   signOutGoogle,
   hasGoogleToken,
+  refreshGoogleToken,
   listGoogleEvents,
 } from '../../../lib/googleCalendar'
 import type { GoogleCalendarEvent } from '../../../lib/googleCalendar'
@@ -175,6 +176,23 @@ export default function CrmCalendar() {
       .catch(() => {})
   }, [])
 
+  // ── Proaktiver Token-Refresh alle 45 Minuten ──────────────────
+  // Erneuert den Access Token im Hintergrund bevor er abläuft.
+  // Falls der silent refresh fehlschlägt (z.B. Google-Session abgelaufen),
+  // wird der "Mit Google verbinden" Button wieder angezeigt.
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (!hasGoogleToken()) return   // Schon abgelaufen oder nicht verbunden
+      const ok = await refreshGoogleToken()
+      if (!ok) {
+        setGoogleConnected(false)
+        setGoogleEvents([])
+      }
+    }, 45 * 60 * 1000) // alle 45 Minuten
+
+    return () => clearInterval(interval)
+  }, [])
+
   // ── Range for current view ────────────────────────────────────
   function getRange(): { start: Date; end: Date } {
     if (view === 'month') return getMonthRange(currentDate)
@@ -199,16 +217,16 @@ export default function CrmCalendar() {
   }, [])
 
   // ── Fetch Google events ───────────────────────────────────────
+  // listGoogleEvents() versucht bei abgelaufenem Token einen silent refresh.
+  // Gibt [] zurück wenn der User sich neu verbinden muss → googleConnected auf false.
   const fetchGoogleEvents = useCallback(async (rangeStart: Date, rangeEnd: Date) => {
     if (!googleConnected) return
-    // Token abgelaufen seit dem letzten Laden? → "Connect" Button wieder zeigen
-    if (!hasGoogleToken()) {
-      setGoogleConnected(false)
-      setGoogleEvents([])
-      return
-    }
     try {
       const events = await listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString())
+      // Leeres Ergebnis UND Token jetzt ungültig → User muss sich neu verbinden
+      if (events.length === 0 && !hasGoogleToken()) {
+        setGoogleConnected(false)
+      }
       setGoogleEvents(events)
     } catch {
       setGoogleEvents([])
