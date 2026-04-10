@@ -14,10 +14,10 @@ interface Props {
 type AdminView = 'crm' | 'verwaltung'
 
 export default function DashboardLayout({ children, basePath }: Props) {
-  const { t }       = useTranslation()
-  const { profile } = useAuth()
-  const navigate    = useNavigate()
-  const location    = useLocation()
+  const { t }              = useTranslation()
+  const { user, profile }  = useAuth()
+  const navigate           = useNavigate()
+  const location           = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
 
   // ── Profil-Cache in localStorage ─────────────────────────────────────────
@@ -29,8 +29,19 @@ export default function DashboardLayout({ children, basePath }: Props) {
   const effectiveRole = profile?.role
     ?? (localStorage.getItem('cached_user_role') as UserRole | null)
     ?? null
-  const effectiveName = profile?.full_name
+
+  // Initialen: zuerst vollen Namen aufteilen (AB), Fallback auf E-Mail, dann '?'
+  const initials = profile?.full_name
+    ?.split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    || user?.email?.[0]?.toUpperCase()
+    || '?'
+
+  const displayName = profile?.full_name
     ?? localStorage.getItem('cached_user_name')
+    ?? user?.email
     ?? null
 
   const roleColor = effectiveRole ? ROLE_META[effectiveRole].color : ''
@@ -344,10 +355,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
                            text-white text-xs font-bold font-body shrink-0"
                 style={{ backgroundColor: 'var(--color-highlight)' }}
               >
-                {effectiveName?.charAt(0)?.toUpperCase() ?? '?'}
+                {initials}
               </span>
               <span className="max-w-[120px] truncate">
-                {effectiveName || profile?.email}
+                {displayName}
               </span>
             </Link>
 

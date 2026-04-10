@@ -49,8 +49,6 @@ import Buchung             from './pages/feriengast/Buchung'
 import Nachrichten         from './pages/feriengast/Nachrichten'
 import FeriengastProfil    from './pages/feriengast/Profil'
 
-const ALL_ROLES = ['admin', 'verwalter', 'eigentuemer'] as const
-
 export default function App() {
   return (
     <BrowserRouter>
@@ -61,175 +59,63 @@ export default function App() {
           <Route path="/"            element={<Navigate to="/login" replace />} />
           <Route path="/login"       element={<Login />} />
           <Route path="/sign/:token" element={<Sign />} />
-
-          {/* ── Passwort setzen (öffentlich – Token im URL-Hash ist die Authentifizierung) ── */}
           <Route path="/set-password" element={<SetPassword />} />
-
-          {/* ── Profil (alle Rollen) ── */}
-          <Route path="/profile" element={
-            <ProtectedRoute allowedRoles={[...ALL_ROLES]}>
-              <Profile />
-            </ProtectedRoute>
-          } />
-          {/* Alte Eigentümer-Profil-URL → neue universelle Seite */}
+          {/* Alte Eigentümer-Profil-URL → universelle Seite */}
           <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
 
-          {/* ── Admin ── */}
-          <Route path="/admin/dashboard" element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminDashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/users" element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <AdminUsers />
-            </ProtectedRoute>
-          } />
+          {/* ── Admin only ── */}
+          <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+            <Route path="/admin/dashboard"             element={<AdminDashboard />} />
+            <Route path="/admin/users"                 element={<AdminUsers />} />
+            <Route path="/admin/crm/statistics"        element={<Statistics />} />
+            <Route path="/admin/crm/settings/whatsapp" element={<CrmWhatsappTemplates />} />
+            <Route path="/admin/properties/:id"        element={<PropertyDetail />} />
+          </Route>
 
-          {/* ── CRM (Admin + Verwalter) ── */}
-          <Route path="/admin/crm" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmPipeline />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/dashboard" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmDashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/leads" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmAllLeads />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/leads/:id" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmLeadDetail />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/templates" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmTemplates />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/archived" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmArchived />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/projects" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmProjects />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/settings" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmSettings />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/settings/whatsapp" element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <CrmWhatsappTemplates />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/calendar" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <CrmCalendar />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/crm/statistics" element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <Statistics />
-            </ProtectedRoute>
-          } />
+          {/* ── Admin + Verwalter (CRM + Verwaltung) ── */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter']} />}>
+            <Route path="/admin/crm"             element={<CrmPipeline />} />
+            <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
+            <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
+            <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetail />} />
+            <Route path="/admin/crm/templates"   element={<CrmTemplates />} />
+            <Route path="/admin/crm/archived"    element={<CrmArchived />} />
+            <Route path="/admin/crm/projects"    element={<CrmProjects />} />
+            <Route path="/admin/crm/settings"    element={<CrmSettings />} />
+            <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
+            <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />
+            <Route path="/verwalter/properties/:id" element={<PropertyDetail />} />
+          </Route>
 
           {/* ── Verwalter ── */}
-          <Route path="/verwalter/dashboard" element={
-            <ProtectedRoute allowedRoles={['verwalter']}>
-              <VerwalterDashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/verwaltung/bookings" element={
-            <ProtectedRoute allowedRoles={['admin', 'verwalter']}>
-              <VerwalterBookings />
-            </ProtectedRoute>
-          } />
+          <Route element={<ProtectedRoute allowedRoles={['verwalter']} />}>
+            <Route path="/verwalter/dashboard" element={<VerwalterDashboard />} />
+          </Route>
 
           {/* ── Eigentümer ── */}
-          <Route path="/eigentuemer/dashboard" element={
-            <ProtectedRoute allowedRoles={['eigentuemer']}>
-              <EigentuemerDashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/eigentuemer/properties" element={
-            <ProtectedRoute allowedRoles={['eigentuemer']}>
-              <EigentuemerProperties />
-            </ProtectedRoute>
-          } />
+          <Route element={<ProtectedRoute allowedRoles={['eigentuemer']} />}>
+            <Route path="/eigentuemer/dashboard"      element={<EigentuemerDashboard />} />
+            <Route path="/eigentuemer/properties"     element={<EigentuemerProperties />} />
+            <Route path="/eigentuemer/properties/:id" element={<PropertyDetail />} />
+          </Route>
 
-          {/* ── Gemeinsame geschützte Seiten ── */}
-          <Route path="/objekte" element={
-            <ProtectedRoute allowedRoles={[...ALL_ROLES]}>
-              <Objekte />
-            </ProtectedRoute>
-          } />
-          <Route path="/admin/properties/:id" element={
-            <ProtectedRoute allowedRoles={['admin']}>
-              <PropertyDetail />
-            </ProtectedRoute>
-          } />
-          <Route path="/verwalter/properties/:id" element={
-            <ProtectedRoute allowedRoles={['verwalter']}>
-              <PropertyDetail />
-            </ProtectedRoute>
-          } />
-          <Route path="/eigentuemer/properties/:id" element={
-            <ProtectedRoute allowedRoles={['eigentuemer']}>
-              <PropertyDetail />
-            </ProtectedRoute>
-          } />
-          <Route path="/dokumente" element={
-            <ProtectedRoute allowedRoles={[...ALL_ROLES]}>
-              <Dokumente />
-            </ProtectedRoute>
-          } />
-          <Route path="/kalender" element={
-            <ProtectedRoute allowedRoles={[...ALL_ROLES]}>
-              <Kalender />
-            </ProtectedRoute>
-          } />
+          {/* ── Admin + Verwalter + Eigentümer (gemeinsame Seiten) ── */}
+          <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'eigentuemer']} />}>
+            <Route path="/profile"    element={<Profile />} />
+            <Route path="/objekte"    element={<Objekte />} />
+            <Route path="/dokumente"  element={<Dokumente />} />
+            <Route path="/kalender"   element={<Kalender />} />
+          </Route>
 
           {/* ── Feriengast ── */}
-          <Route path="/feriengast/dashboard" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <FeriengastDashboard />
-            </ProtectedRoute>
-          } />
-          <Route path="/feriengast/checkin" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <CheckinInfo />
-            </ProtectedRoute>
-          } />
-          <Route path="/feriengast/hausregeln" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <Hausregeln />
-            </ProtectedRoute>
-          } />
-          <Route path="/feriengast/buchung" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <Buchung />
-            </ProtectedRoute>
-          } />
-          <Route path="/feriengast/nachrichten" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <Nachrichten />
-            </ProtectedRoute>
-          } />
-          <Route path="/feriengast/profil" element={
-            <ProtectedRoute allowedRoles={['feriengast']}>
-              <FeriengastProfil />
-            </ProtectedRoute>
-          } />
+          <Route element={<ProtectedRoute allowedRoles={['feriengast']} />}>
+            <Route path="/feriengast/dashboard"  element={<FeriengastDashboard />} />
+            <Route path="/feriengast/checkin"    element={<CheckinInfo />} />
+            <Route path="/feriengast/hausregeln" element={<Hausregeln />} />
+            <Route path="/feriengast/buchung"    element={<Buchung />} />
+            <Route path="/feriengast/nachrichten" element={<Nachrichten />} />
+            <Route path="/feriengast/profil"     element={<FeriengastProfil />} />
+          </Route>
 
           {/* ── Fallback ── */}
           <Route path="*" element={<Navigate to="/login" replace />} />

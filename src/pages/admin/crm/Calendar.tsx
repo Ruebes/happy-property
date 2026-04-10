@@ -201,6 +201,12 @@ export default function CrmCalendar() {
   // ── Fetch Google events ───────────────────────────────────────
   const fetchGoogleEvents = useCallback(async (rangeStart: Date, rangeEnd: Date) => {
     if (!googleConnected) return
+    // Token abgelaufen seit dem letzten Laden? → "Connect" Button wieder zeigen
+    if (!hasGoogleToken()) {
+      setGoogleConnected(false)
+      setGoogleEvents([])
+      return
+    }
     try {
       const events = await listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString())
       setGoogleEvents(events)

@@ -45,9 +45,9 @@ export function roleToPath(role: UserRole | undefined): string {
       const saved = localStorage.getItem('admin_view')
       return saved === 'verwaltung' ? '/admin/dashboard' : '/admin/crm'
     }
-    case 'verwalter':   return '/verwalter/dashboard'
-    case 'feriengast':  return '/feriengast/dashboard'
-    default:            return '/eigentuemer/dashboard'
+    case 'verwalter':  return '/verwalter/dashboard'
+    case 'feriengast': return '/feriengast/dashboard'
+    default:           return '/eigentuemer/dashboard'
   }
 }
 
@@ -67,10 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: null, session: null, profile: null, loading: true, needsPasswordSetup: false,
   })
 
-  // Verhindert veraltete fetchProfile-Calls beim State-Update
+  // Verhindert veraltete fetchProfile-Resultate bei schnell aufeinander-
+  // folgenden Auth-Events (z.B. INITIAL_SESSION → SIGNED_IN).
   const fetchIdRef = useRef(0)
-  // Nach dem ersten Auth-Event nie mehr loading:true setzen
-  const readyRef = useRef(false)
 
   // ── Profil laden ────────────────────────────────────────────
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {
@@ -98,16 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Sicherheitsnetz: nach 8 s loading beenden
-    const timeout = setTimeout(() => {
-      setState(s => s.loading ? { ...s, loading: false } : s)
-      readyRef.current = true
-    }, 8_000)
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
 
-        // TOKEN_REFRESHED: nur Session silent aktualisieren
+        // TOKEN_REFRESHED: Session silent aktualisieren – kein Profil-Reload
+        // nötig, da Supabase autoRefreshToken alles selbst handhabt.
         if (event === 'TOKEN_REFRESHED') {
           setState(s => ({ ...s, session, user: session?.user ?? null }))
           return
@@ -115,47 +109,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // SIGNED_OUT: alles leeren
         if (event === 'SIGNED_OUT') {
-          readyRef.current = true
+          fetchIdRef.current++
           setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
           return
         }
 
-        // TOKEN_REFRESH_FAILED: session ist tot
-        if ((event as string) === 'TOKEN_REFRESH_FAILED') {
-          readyRef.current = true
-          setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
-          window.location.replace('/login')
-          return
-        }
-
-        // Erstes Laden: Spinner anzeigen und Profil laden
+        // Alle anderen Events (INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY …):
+        // Profil laden und State setzen. fetchIdRef verhindert Race Conditions.
         const myId = ++fetchIdRef.current
         setState(s => ({ ...s, loading: true, session, user: session?.user ?? null }))
 
         const profile = session?.user ? await fetchProfile(session.user.id) : null
-        if (myId !== fetchIdRef.current) return
+        if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
 
         const needsPasswordSetup = !!(
           session?.user?.user_metadata?.needs_password_setup === true ||
           event === 'PASSWORD_RECOVERY'
         )
 
-        readyRef.current = true
         setState({
-          user: session?.user ?? null,
+          user:               session?.user ?? null,
           session,
           profile,
-          loading: false,
+          loading:            false,
           needsPasswordSetup,
         })
       }
     )
 
-    return () => {
-      clearTimeout(timeout)
-      subscription.unsubscribe()
-    }
+    return () => subscription.unsubscribe()
   }, [])
+
+  // ── Auth-Aktionen ────────────────────────────────────────────
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password })

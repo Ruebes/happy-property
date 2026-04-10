@@ -1,43 +1,34 @@
-import { Navigate, useLocation } from 'react-router-dom'
-import type { ReactNode } from 'react'
-import { useAuth, roleToPath, type UserRole } from '../lib/auth'
+import { Navigate, Outlet } from 'react-router-dom'
+import { useAuth } from '../lib/auth'
 
 interface Props {
-  children:          ReactNode
-  allowedRoles:      UserRole[]
-  skipPasswordCheck?: boolean
+  allowedRoles?: string[]
 }
 
-export default function ProtectedRoute({ children, allowedRoles, skipPasswordCheck }: Props) {
-  const { user, profile, loading, needsPasswordSetup } = useAuth()
-  const location = useLocation()
+export default function ProtectedRoute({ allowedRoles }: Props) {
+  const { user, profile, loading } = useAuth()
 
-  // Noch nicht initialisiert → Spinner
+  // Absolutes Erstladen: noch keine Session bekannt → Spinner
   if (loading && !user) {
     return (
-      <div className="min-h-screen flex items-center justify-center"
+      <div className="flex items-center justify-center h-screen"
            style={{ backgroundColor: 'var(--color-bg)' }}>
-        <div className="w-8 h-8 border-4 rounded-full animate-spin"
-             style={{ borderColor: '#e5e7eb', borderTopColor: 'var(--color-highlight)' }} />
+        <div className="animate-spin rounded-full h-8 w-8
+                        border-b-2 border-orange-500" />
       </div>
     )
   }
 
   // Nicht eingeloggt → Login
-  if (!user) return <Navigate to="/login" replace />
-
-  // Profil noch nicht geladen → Inhalt zeigen (kein Spinner)
-  if (!profile) return <>{children}</>
-
-  // Passwort-Setup erzwingen
-  if (needsPasswordSetup && !skipPasswordCheck && location.pathname !== '/set-password') {
-    return <Navigate to="/set-password" replace />
+  if (!user) {
+    return <Navigate to="/login" replace />
   }
 
-  // Falsche Rolle → eigenes Dashboard
-  if (!allowedRoles.includes(profile.role)) {
-    return <Navigate to={roleToPath(profile.role)} replace />
+  // Falsche Rolle → Login (Profil muss geladen sein für den Check)
+  if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
+    return <Navigate to="/login" replace />
   }
 
-  return <>{children}</>
+  // Eingeloggt – Inhalt immer zeigen (auch wenn Profil noch lädt)
+  return <Outlet />
 }
