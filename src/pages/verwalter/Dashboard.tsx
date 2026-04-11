@@ -37,15 +37,18 @@ export default function VerwalterDashboard() {
   // ── Fetch stats ───────────────────────────────────────────
   const fetchStats = useCallback(async () => {
     setStatsLoading(true)
-    const [propRes, docRes] = await Promise.all([
-      supabase.from('properties').select('*', { count: 'exact', head: true }),
-      supabase.from('documents').select('*', { count: 'exact', head: true }),
-    ])
-    setStats({
-      properties: propRes.count ?? 0,
-      documents:  docRes.count  ?? 0,
-    })
-    setStatsLoading(false)
+    try {
+      const [propRes, docRes] = await Promise.all([
+        supabase.from('properties').select('*', { count: 'exact', head: true }),
+        supabase.from('documents').select('*', { count: 'exact', head: true }),
+      ])
+      setStats({
+        properties: propRes.count ?? 0,
+        documents:  docRes.count  ?? 0,
+      })
+    } finally {
+      setStatsLoading(false)
+    }
   }, [])
 
   // ── Fetch pending bank change notifications ───────────────

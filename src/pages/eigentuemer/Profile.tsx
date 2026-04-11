@@ -84,25 +84,28 @@ export default function EigentuemerProfile() {
   const fetchProfile = useCallback(async () => {
     if (!profile) return
     setLoading(true)
-    const { data: row } = await supabase
-      .from('profiles')
-      .select('full_name, email, phone, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder')
-      .eq('id', profile.id)
-      .single()
-    if (row) {
-      const d = row as ProfileData
-      setData(d)
-      setPhone(d.phone ?? '')
-      setLanguage(d.language ?? 'de')
-      setStreet(d.address_street ?? '')
-      setZip(d.address_zip ?? '')
-      setCity(d.address_city ?? '')
-      setCountry(d.address_country ?? 'Deutschland')
-      setIban(d.iban ?? '')
-      setBic(d.bic ?? '')
-      setBankHolder(d.bank_account_holder ?? '')
+    try {
+      const { data: row } = await supabase
+        .from('profiles')
+        .select('full_name, email, phone, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder')
+        .eq('id', profile.id)
+        .single()
+      if (row) {
+        const d = row as ProfileData
+        setData(d)
+        setPhone(d.phone ?? '')
+        setLanguage(d.language ?? 'de')
+        setStreet(d.address_street ?? '')
+        setZip(d.address_zip ?? '')
+        setCity(d.address_city ?? '')
+        setCountry(d.address_country ?? 'Deutschland')
+        setIban(d.iban ?? '')
+        setBic(d.bic ?? '')
+        setBankHolder(d.bank_account_holder ?? '')
+      }
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [profile])
 
   useEffect(() => { fetchProfile() }, [fetchProfile])
