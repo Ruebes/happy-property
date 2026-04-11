@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject } from '../../../lib/crmTypes'
+import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
@@ -12,7 +12,7 @@ import AppointmentModal from '../../../components/crm/AppointmentModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 
-type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments'
+type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled'
 
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
@@ -42,6 +42,8 @@ export default function LeadDetail() {
   const [savingReg, setSavingReg] = useState(false)
   const [appointments, setAppointments] = useState<CrmAppointment[]>([])
   const [showApptModal, setShowApptModal] = useState(false)
+  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>([])
+  const [cancellingMsg, setCancellingMsg] = useState<string | null>(null)
 
   // WhatsApp preview (no_show)
   const [showWaPreview, setShowWaPreview] = useState(false)
@@ -171,6 +173,14 @@ export default function LeadDetail() {
         .eq('lead_id', id)
         .order('start_time', { ascending: true })
       setAppointments((apptData ?? []) as unknown as CrmAppointment[])
+
+      // Fetch scheduled messages for this lead
+      const { data: schedData } = await supabase
+        .from('scheduled_messages')
+        .select('*')
+        .eq('lead_id', id)
+        .order('scheduled_at', { ascending: true })
+      setScheduledMessages((schedData ?? []) as unknown as ScheduledMessage[])
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
@@ -181,6 +191,14 @@ export default function LeadDetail() {
   useEffect(() => {
     fetchAll()
   }, [fetchAll])
+
+  // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
+  const triggerScheduleMessage = (event_type: string) => {
+    if (!id) return
+    supabase.functions.invoke('schedule-message', {
+      body: { lead_id: id, deal_id: deal?.id ?? null, event_type },
+    }).catch(e => console.warn('[LeadDetail] schedule-message failed:', e))
+  }
 
   // ── Webhook ─────────────────────────────────────────────────────
   const sendWebhook = async (event: string, extra?: Record<string, unknown>) => {
@@ -228,6 +246,8 @@ export default function LeadDetail() {
     if (PHASE_WEBHOOK_EVENTS[phase]) {
       await sendWebhook(PHASE_WEBHOOK_EVENTS[phase]!)
     }
+    // Automations-Queue befüllen (fire-and-forget)
+    triggerScheduleMessage(phase)
     setSaving(false)
     await fetchAll()
   }
@@ -268,6 +288,9 @@ export default function LeadDetail() {
         },
         lead_id: id,
       }).catch(e => console.warn('[WhatsApp] registration failed:', e))
+
+      // Automations-Queue befüllen (fire-and-forget)
+      triggerScheduleMessage('registrierung')
 
       setShowRegistrationModal(false)
       showToast(t('crm.registrationSent', 'Registrierung gesendet'))
@@ -611,6 +634,27 @@ export default function LeadDetail() {
       showToast('❌ Fehler')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // ── Cancel scheduled message ────────────────────────────────────
+  const handleCancelScheduledMsg = async (msgId: string) => {
+    setCancellingMsg(msgId)
+    try {
+      await supabase
+        .from('scheduled_messages')
+        .update({ status: 'cancelled' })
+        .eq('id', msgId)
+        .eq('status', 'pending')
+      setScheduledMessages(prev =>
+        prev.map(m => m.id === msgId ? { ...m, status: 'cancelled' } : m)
+      )
+      showToast('✋ Nachricht abgebrochen')
+    } catch (err) {
+      console.error('[LeadDetail] cancelScheduledMsg:', err)
+      showToast('❌ Fehler')
+    } finally {
+      setCancellingMsg(null)
     }
   }
 
@@ -1156,6 +1200,10 @@ export default function LeadDetail() {
                 { id: 'emails',       label: t('crm.tab.emails',        'E-Mails') },
                 { id: 'tasks',        label: t('crm.tab.tasks',         'Aufgaben') },
                 { id: 'documents',    label: t('crm.tab.documents',     'Dokumente') },
+                {
+                  id: 'scheduled',
+                  label: `⚡ ${t('crm.tab.scheduled', 'Geplant')}${scheduledMessages.filter(m => m.status === 'pending').length ? ` (${scheduledMessages.filter(m => m.status === 'pending').length})` : ''}`,
+                },
               ] as { id: TabId; label: string }[]).map((tab) => (
                 <button
                   key={tab.id}
@@ -1795,6 +1843,113 @@ export default function LeadDetail() {
                 <p className="text-xs text-gray-400">
                   {t('crm.driveNote', 'Für Dokument-Uploads bitte Google Drive nutzen.')}
                 </p>
+              </div>
+            )}
+
+            {/* ── Tab: Geplante Nachrichten ─────────────────────────────── */}
+            {activeTab === 'scheduled' && (
+              <div className="p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-800">
+                      ⚡ {t('crm.tab.scheduled', 'Geplante Nachrichten')}
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {t('crm.scheduledHint', 'Automatisch geplante E-Mails und WhatsApp-Nachrichten.')}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => triggerScheduleMessage('lead_created')}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                    title="Automationsregeln für diesen Lead manuell auslösen"
+                  >
+                    ▶ Manuell auslösen
+                  </button>
+                </div>
+
+                {scheduledMessages.length === 0 ? (
+                  <div className="text-center py-12 text-gray-400 text-sm">
+                    {t('crm.noScheduled', 'Keine geplanten Nachrichten.')}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {scheduledMessages.map(msg => {
+                      const statusStyle: Record<string, string> = {
+                        pending:    'bg-yellow-100 text-yellow-700',
+                        processing: 'bg-blue-100  text-blue-700',
+                        sent:       'bg-green-100 text-green-700',
+                        cancelled:  'bg-gray-100  text-gray-500',
+                        failed:     'bg-red-100   text-red-700',
+                      }
+                      const statusLabel: Record<string, string> = {
+                        pending:    'Ausstehend',
+                        processing: 'Wird gesendet',
+                        sent:       'Gesendet',
+                        cancelled:  'Abgebrochen',
+                        failed:     'Fehlgeschlagen',
+                      }
+                      const typeLabel: Record<string, string> = {
+                        email:    '📧 E-Mail',
+                        whatsapp: '📱 WhatsApp',
+                        both:     '📧 + 📱',
+                      }
+                      return (
+                        <div
+                          key={msg.id}
+                          className="bg-gray-50 rounded-xl border border-gray-100 px-4 py-3 flex items-center gap-3"
+                        >
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${statusStyle[msg.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {statusLabel[msg.status] ?? msg.status}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 text-xs text-gray-600">
+                              <span>{typeLabel[msg.type]}</span>
+                              <span className="text-gray-300">·</span>
+                              <span>
+                                📅 {new Date(msg.scheduled_at).toLocaleString('de-DE', {
+                                  day: '2-digit', month: '2-digit', year: 'numeric',
+                                  hour: '2-digit', minute: '2-digit',
+                                })}
+                              </span>
+                              {msg.sent_at && (
+                                <>
+                                  <span className="text-gray-300">·</span>
+                                  <span className="text-green-600">
+                                    ✓ {new Date(msg.sent_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                            {msg.email_subject && (
+                              <p className="text-xs text-gray-500 mt-0.5 truncate">
+                                {msg.email_subject}
+                              </p>
+                            )}
+                            {msg.whatsapp_text && (
+                              <p className="text-xs text-gray-400 mt-0.5 truncate">
+                                💬 {msg.whatsapp_text.slice(0, 80)}{msg.whatsapp_text.length > 80 ? '…' : ''}
+                              </p>
+                            )}
+                            {msg.error_message && (
+                              <p className="text-xs text-red-500 mt-0.5">⚠ {msg.error_message}</p>
+                            )}
+                          </div>
+                          {msg.status === 'pending' && (
+                            <button
+                              onClick={() => handleCancelScheduledMsg(msg.id)}
+                              disabled={cancellingMsg === msg.id}
+                              className="flex-shrink-0 text-xs px-3 py-1.5 rounded-lg border border-gray-200
+                                         text-gray-500 hover:border-red-300 hover:text-red-500
+                                         transition-colors disabled:opacity-50"
+                            >
+                              {cancellingMsg === msg.id ? '…' : 'Abbrechen'}
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

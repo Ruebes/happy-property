@@ -104,6 +104,11 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
         created_by: profile?.id ?? null,
       })
 
+      // Automations-Queue: lead_created (fire-and-forget)
+      supabase.functions.invoke('schedule-message', {
+        body: { lead_id: newLeadId, deal_id: newDealId, event_type: 'lead_created' },
+      }).catch(e => console.warn('[LeadModal] schedule-message failed:', e))
+
       onSaved()
       onClose()
     } catch (err) {
@@ -439,6 +444,13 @@ export default function Pipeline() {
     fetchStaff()
   }, [fetchDeals, fetchStaff])
 
+  // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
+  const triggerScheduleMessage = (lead_id: string, deal_id: string | null, event_type: string) => {
+    supabase.functions.invoke('schedule-message', {
+      body: { lead_id, deal_id, event_type },
+    }).catch(e => console.warn('[Pipeline] schedule-message failed:', e))
+  }
+
   const sendWebhook = async (
     event: string,
     deal: Deal,
@@ -530,6 +542,9 @@ export default function Pipeline() {
       setProjectModalDeal({ ...deal, phase: targetPhase })
     }
 
+    // Automations-Queue befüllen (fire-and-forget)
+    triggerScheduleMessage(deal.lead_id, deal.id, targetPhase)
+
     showToastMsg(t('crm.phaseSaved', 'Phase gespeichert'))
   }
 
@@ -571,6 +586,9 @@ export default function Pipeline() {
         },
         lead_id: deal.lead_id,
       }).catch(e => console.warn('[WhatsApp] registration failed:', e))
+
+      // Automations-Queue befüllen (fire-and-forget)
+      triggerScheduleMessage(deal.lead_id, deal.id, 'registrierung')
 
       setRegistrationDeal(null)
       showToastMsg(t('crm.registrationSent', 'Registrierung gesendet'))

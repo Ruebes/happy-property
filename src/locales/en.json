@@ -959,7 +959,8 @@
       "projects":  "Projects",
       "settings":   "Settings",
       "developers": "Manage Developers",
-      "whatsapp":   "WhatsApp Templates",
+      "whatsapp":    "WhatsApp Templates",
+      "automation":  "Automation",
       "calendar":    "Calendar",
       "statistics":  "Statistics"
     },

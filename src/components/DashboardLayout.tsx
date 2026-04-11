@@ -121,8 +121,11 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // CRM Settings-Untermenü-Einträge
   const crmSettingsItems = [
     { to: '/admin/crm/settings',             key: 'crm.nav.developers' },
-    { to: '/admin/crm/templates',            key: 'crm.nav.templates'  },
-    ...(isAdmin ? [{ to: '/admin/crm/settings/whatsapp', key: 'crm.nav.whatsapp' }] : []),
+    { to: '/admin/crm/templates',            key: 'crm.nav.templates'   },
+    ...(isAdmin ? [
+      { to: '/admin/crm/settings/whatsapp',    key: 'crm.nav.whatsapp'    },
+      { to: '/admin/crm/settings/automation',  key: 'crm.nav.automation'  },
+    ] : []),
   ]
 
   // ── Sign out ─────────────────────────────────────────────────────────────

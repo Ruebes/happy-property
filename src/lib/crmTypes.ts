@@ -204,6 +204,43 @@ export const PROJECT_STATUS_COLORS: Record<ProjectStatus, string> = {
   completed:          'bg-blue-100 text-blue-700',
 }
 
+// ── Automation System Types ───────────────────────────────────────────────────
+
+export interface AutomationRule {
+  id:                   string
+  name:                 string
+  description:          string | null
+  event_type:           string
+  delay_minutes:        number
+  message_type:         'email' | 'whatsapp' | 'both'
+  email_template_id:    string | null
+  whatsapp_event_type:  string | null
+  is_active:            boolean
+  created_at:           string
+  updated_at:           string
+}
+
+export type ScheduledMessageStatus = 'pending' | 'processing' | 'sent' | 'cancelled' | 'failed'
+
+export interface ScheduledMessage {
+  id:             string
+  lead_id:        string
+  deal_id:        string | null
+  type:           'email' | 'whatsapp' | 'both'
+  event_type:     string
+  status:         ScheduledMessageStatus
+  scheduled_at:   string
+  sent_at:        string | null
+  email_subject:  string | null
+  email_body:     string | null
+  whatsapp_text:  string | null
+  error_message:  string | null
+  rule_id:        string | null
+  created_at:     string
+  // joined
+  lead?: { first_name: string; last_name: string; email: string } | null
+}
+
 // ── CRM Appointment Types ─────────────────────────────────────────────────────
 
 export type AppointmentType = 'zoom' | 'inperson' | 'phone'
