@@ -82,12 +82,14 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleTokenRefresh(clientId: string) {
   if (refreshTimer) clearTimeout(refreshTimer)
-  // Refresh nach 50 Minuten (5 Minuten vor Ablauf)
+  // Refresh nach 45 Minuten (15 Min vor Ablauf) – silent, kein Popup
   refreshTimer = setTimeout(() => {
+    // Kein Token mehr (z.B. nach Logout) → kein Refresh nötig
+    if (!localStorage.getItem(TOKEN_KEY)) return
     const client = window.google?.accounts?.oauth2?.initTokenClient({
       client_id: clientId,
       scope: SCOPES,
-      prompt: '',  // Kein Popup – silent refresh
+      prompt: '',
       callback: (resp: { access_token?: string; error?: string }) => {
         if (resp.access_token) {
           saveToken(resp.access_token)
@@ -97,10 +99,23 @@ function scheduleTokenRefresh(clientId: string) {
               .setToken({ access_token: resp.access_token })
           }
         }
+        // Kein Token im Response → localStorage-Eintrag entfernen
+        // (nächster Kalender-Besuch zeigt "Verbinden"-Button)
+        else {
+          localStorage.removeItem(TOKEN_KEY)
+        }
       },
     })
     client?.requestAccessToken()
-  }, 50 * 60 * 1000)
+  }, 45 * 60 * 1000)
+}
+
+// Exportiert damit Calendar.tsx beim Unmount den Timer löschen kann
+export function cancelGoogleTokenRefresh() {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
 }
 
 function getToken(): string | null {

@@ -11,6 +11,7 @@ import {
   signOutGoogle,
   hasGoogleToken,
   refreshGoogleToken,
+  cancelGoogleTokenRefresh,
   listGoogleEvents,
 } from '../../../lib/googleCalendar'
 import type { GoogleCalendarEvent } from '../../../lib/googleCalendar'
@@ -165,32 +166,44 @@ export default function CrmCalendar() {
   const [selectedGoogleEvt, setSelectedGoogleEvt] = useState<GoogleCalendarEvent | null>(null)
 
   // ── Google init ───────────────────────────────────────────────
+  // cancelled-Flag verhindert setState nach Unmount (z.B. wenn User die
+  // Seite wechselt bevor die Google-Scripts geladen haben).
   useEffect(() => {
+    let cancelled = false
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
     if (!clientId) return
     initGoogleAuth()
       .then(() => {
+        if (cancelled) return
         setGoogleInitialized(true)
         setGoogleConnected(hasGoogleToken())
       })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   // ── Proaktiver Token-Refresh alle 45 Minuten ──────────────────
   // Erneuert den Access Token im Hintergrund bevor er abläuft.
   // Falls der silent refresh fehlschlägt (z.B. Google-Session abgelaufen),
   // wird der "Mit Google verbinden" Button wieder angezeigt.
+  // clearInterval beim Unmount verhindert Timer-Leaks auf anderen Seiten.
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (!hasGoogleToken()) return   // Schon abgelaufen oder nicht verbunden
+      if (!hasGoogleToken()) return
       const ok = await refreshGoogleToken()
       if (!ok) {
         setGoogleConnected(false)
         setGoogleEvents([])
       }
-    }, 45 * 60 * 1000) // alle 45 Minuten
-
+    }, 45 * 60 * 1000)
     return () => clearInterval(interval)
+  }, [])
+
+  // ── Cleanup beim Verlassen der Seite ────────────────────────
+  // Verhindert dass der 45-Min-Timer auf anderen Seiten feuert
+  // (der localStorage-basierte Token bleibt erhalten).
+  useEffect(() => {
+    return () => { cancelGoogleTokenRefresh() }
   }, [])
 
   // ── Range for current view ────────────────────────────────────
