@@ -124,6 +124,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/templates',            key: 'crm.nav.templates'   },
     ...(isAdmin ? [
       { to: '/admin/crm/settings/whatsapp',    key: 'crm.nav.whatsapp'    },
+      { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
       { to: '/admin/crm/settings/automation',  key: 'crm.nav.automation'  },
     ] : []),
   ]

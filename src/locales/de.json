@@ -960,6 +960,7 @@
       "settings":   "Einstellungen",
       "developers": "Developer verwalten",
       "whatsapp":    "WhatsApp Templates",
+      "documents":   "Dokumente",
       "automation":  "Automation",
       "calendar":    "Kalender",
       "statistics":  "Statistiken"
@@ -1382,6 +1383,52 @@
       "googleConnectError":     "Verbindung fehlgeschlagen",
       "zoomHint":               "Zoom API Keys als Supabase Secrets konfigurieren.",
       "zoomDocs":               "API Docs →"
+    }
+  },
+
+  "docs": {
+    "title":    "Workflow Dokumente",
+    "subtitle": "Diese Dokumente werden automatisch in E-Mails mitgesendet",
+    "infoTitle": "Wie funktioniert die automatische Anhang-Funktion?",
+    "infoText":  "Wenn du eine E-Mail mit der passenden Kategorie sendest, wird das neueste aktive Dokument dieser Kategorie automatisch angehängt. Stelle sicher, dass pro Kategorie genau ein Dokument aktiv ist.",
+    "dropHint": "PDF hierher ziehen oder klicken",
+    "dropNow":  "Loslassen zum Hochladen",
+    "dropSub":  "Nur PDF · Max. 10 MB",
+    "onlyPdf":  "Nur PDF-Dateien sind erlaubt.",
+    "tooLarge": "Datei zu groß. Maximum: 10 MB",
+    "empty":         "Noch keine Dokumente. Ziehe eine PDF in die Upload-Zone.",
+    "emptyCategory": "Keine Dokumente in dieser Kategorie.",
+    "preview":       "Vorschau",
+    "previewError":  "Vorschau konnte nicht geladen werden",
+    "replace":       "Ersetzen",
+    "deleted":       "Dokument gelöscht",
+    "active":        "Aktiv – wird mitgesendet",
+    "inactive":      "Inaktiv",
+    "deleteConfirm": "Dokument wirklich löschen?",
+    "statusTitle":   "Status pro Kategorie",
+    "none":          "kein",
+    "multipleActive": "aktiv!",
+    "cat": {
+      "all":      "Alle",
+      "finDE":    "Finanzierung DE",
+      "finCY":    "Finanzierung CY",
+      "welcome":  "Willkommen",
+      "contract": "Kaufvertrag",
+      "misc":     "Sonstiges"
+    },
+    "upload": {
+      "title":        "Dokument hochladen",
+      "name":         "Name",
+      "namePlaceholder": "z.B. Finanzierungsantrag DE",
+      "nameRequired": "Name ist Pflicht",
+      "description":  "Beschreibung",
+      "descPlaceholder": "Kurze Beschreibung des Dokuments",
+      "category":     "Kategorie",
+      "categoryHint": "Das Dokument wird automatisch bei passenden E-Mails angehängt.",
+      "submit":       "Hochladen",
+      "uploading":    "Wird hochgeladen…",
+      "success":      "Dokument erfolgreich hochgeladen",
+      "failed":       "Upload fehlgeschlagen"
     }
   },
 

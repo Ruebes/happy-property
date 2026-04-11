@@ -30,6 +30,7 @@ import CrmProjects     from './pages/admin/crm/Projects'
 import CrmSettings          from './pages/admin/crm/Settings'
 import CrmWhatsappTemplates from './pages/admin/crm/settings/WhatsappTemplates'
 import CrmAutomationRules  from './pages/admin/crm/settings/AutomationRules'
+import CrmDocuments        from './pages/admin/crm/settings/Documents'
 import CrmCalendar          from './pages/admin/crm/Calendar'
 import Statistics           from './pages/admin/crm/Statistics'
 
@@ -70,7 +71,8 @@ export default function App() {
             <Route path="/admin/users"                 element={<AdminUsers />} />
             <Route path="/admin/crm/statistics"        element={<Statistics />} />
             <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
-            <Route path="/admin/crm/settings/automation" element={<CrmAutomationRules />} />
+            <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
+            <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />
             <Route path="/admin/properties/:id"        element={<PropertyDetail />} />
           </Route>
 

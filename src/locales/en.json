@@ -960,6 +960,7 @@
       "settings":   "Settings",
       "developers": "Manage Developers",
       "whatsapp":    "WhatsApp Templates",
+      "documents":   "Documents",
       "automation":  "Automation",
       "calendar":    "Calendar",
       "statistics":  "Statistics"
@@ -1382,6 +1383,52 @@
       "googleConnectError":     "Connection failed",
       "zoomHint":               "Configure Zoom API Keys as Supabase Secrets.",
       "zoomDocs":               "API Docs →"
+    }
+  },
+
+  "docs": {
+    "title":    "Workflow Documents",
+    "subtitle": "These documents are automatically attached to emails",
+    "infoTitle": "How does the automatic attachment feature work?",
+    "infoText":  "When you send an email with the matching category, the latest active document for that category is automatically attached. Make sure exactly one document per category is active.",
+    "dropHint": "Drag PDF here or click",
+    "dropNow":  "Release to upload",
+    "dropSub":  "PDF only · Max. 10 MB",
+    "onlyPdf":  "Only PDF files are allowed.",
+    "tooLarge": "File too large. Maximum: 10 MB",
+    "empty":         "No documents yet. Drag a PDF into the upload zone.",
+    "emptyCategory": "No documents in this category.",
+    "preview":       "Preview",
+    "previewError":  "Preview could not be loaded",
+    "replace":       "Replace",
+    "deleted":       "Document deleted",
+    "active":        "Active – will be attached",
+    "inactive":      "Inactive",
+    "deleteConfirm": "Really delete this document?",
+    "statusTitle":   "Status per category",
+    "none":          "none",
+    "multipleActive": "active!",
+    "cat": {
+      "all":      "All",
+      "finDE":    "Financing DE",
+      "finCY":    "Financing CY",
+      "welcome":  "Welcome",
+      "contract": "Purchase Contract",
+      "misc":     "Miscellaneous"
+    },
+    "upload": {
+      "title":        "Upload Document",
+      "name":         "Name",
+      "namePlaceholder": "e.g. Financing Application DE",
+      "nameRequired": "Name is required",
+      "description":  "Description",
+      "descPlaceholder": "Short description of the document",
+      "category":     "Category",
+      "categoryHint": "The document will be automatically attached to matching emails.",
+      "submit":       "Upload",
+      "uploading":    "Uploading…",
+      "success":      "Document uploaded successfully",
+      "failed":       "Upload failed"
     }
   },
 
