@@ -247,15 +247,26 @@ export default function CrmCalendar() {
   }, [googleConnected])
 
   // ── Reload on view / date change ──────────────────────────────
-  // googleInitialized als Dependency: sobald initGoogleAuth() fertig ist
-  // und ein Token im localStorage liegt, werden Google-Events sofort geladen
-  // (ohne dass der User erneut auf "Verbinden" klicken muss).
+  // Zwei getrennte Effects: Termine und Google-Events werden unabhängig
+  // geladen. So löst ein Google-Status-Wechsel (googleInitialized /
+  // googleConnected) keinen erneuten Supabase-Fetch (und Spinner) aus.
+
+  // Effect 1: CRM-Termine – nur bei Ansicht- oder Datumswechsel
   useEffect(() => {
     const { start, end } = getRange()
     void fetchAppointments(start, end)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, currentDate, fetchAppointments])
+
+  // Effect 2: Google-Events – auch wenn Google-Status sich ändert
+  // googleInitialized: sobald initGoogleAuth() fertig ist und ein Token
+  // vorliegt, werden Events sofort ohne erneuten Login geladen.
+  useEffect(() => {
+    if (!googleInitialized) return
+    const { start, end } = getRange()
     void fetchGoogleEvents(start, end)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, currentDate, googleConnected, googleInitialized, fetchAppointments, fetchGoogleEvents])
+  }, [view, currentDate, googleConnected, googleInitialized, fetchGoogleEvents])
 
   // ── Navigation ────────────────────────────────────────────────
   function handlePrev() {

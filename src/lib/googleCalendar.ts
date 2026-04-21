@@ -229,10 +229,18 @@ export function signOutGoogle(): void {
 // Versucht einen Access Token OHNE Popup zu erneuern (prompt: '').
 // Funktioniert solange der Browser eine aktive Google-Session hat.
 // Gibt true zurück wenn erfolgreich, false wenn der User sich neu verbinden muss.
+// Timeout nach 10s: verhindert dauerhaftes Hängen wenn GIS-Callback nicht feuert
+// (z.B. bei Browser-Throttling im Hintergrund-Tab).
 export function refreshGoogleToken(): Promise<boolean> {
   return new Promise((resolve) => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
     if (!clientId) { resolve(false); return }
+
+    // Sicherheits-Timeout: nach 10s aufgeben
+    const timeoutId = setTimeout(() => {
+      console.warn('[googleCalendar] refreshGoogleToken Timeout (10s) – reconnect required')
+      resolve(false)
+    }, 10_000)
 
     try {
       const client = window.google?.accounts?.oauth2?.initTokenClient({
@@ -240,6 +248,7 @@ export function refreshGoogleToken(): Promise<boolean> {
         scope:     SCOPES,
         prompt:    '',   // Kein Popup – nur wenn Google-Session aktiv
         callback:  (resp: { access_token?: string; error?: string }) => {
+          clearTimeout(timeoutId)
           if (resp.access_token) {
             saveToken(resp.access_token)
             if (gapiReady) {
@@ -257,6 +266,7 @@ export function refreshGoogleToken(): Promise<boolean> {
       })
       client?.requestAccessToken()
     } catch {
+      clearTimeout(timeoutId)
       resolve(false)
     }
   })

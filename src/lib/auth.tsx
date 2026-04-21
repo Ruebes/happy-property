@@ -9,6 +9,30 @@ import {
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
 
+// ── Profil-Cache ──────────────────────────────────────────────────────────────
+// Speichert das zuletzt geladene Profil im localStorage, damit beim Reload
+// kein Spinner erscheint (sofortige Anzeige aus Cache, stille Hintergrund-
+// Aktualisierung von Supabase).
+const PROFILE_CACHE_KEY = 'hp_profile_cache'
+
+function getCachedProfile(userId: string): Profile | null {
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as Profile
+    if (p.id !== userId) return null  // anderer User – Cache nicht verwenden
+    return p
+  } catch { return null }
+}
+
+function setCachedProfile(profile: Profile | null) {
+  if (profile) {
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profile))
+  } else {
+    localStorage.removeItem(PROFILE_CACHE_KEY)
+  }
+}
+
 // ── Rollen ─────────────────────────────────────────────────────
 export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast'
 
@@ -72,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchIdRef = useRef(0)
 
   // ── Profil laden ────────────────────────────────────────────
+  // Retry mit reduziertem Delay (400ms × Versuch) für schnellere Reaktion.
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {
     try {
       const { data, error } = await supabase
@@ -81,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .single()
       if (error || !data) {
         if (attempt < 3) {
-          await new Promise(r => setTimeout(r, attempt * 800))
+          await new Promise(r => setTimeout(r, attempt * 400))
           return fetchProfile(userId, attempt + 1)
         }
         return null
@@ -89,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return data as Profile
     } catch {
       if (attempt < 3) {
-        await new Promise(r => setTimeout(r, attempt * 800))
+        await new Promise(r => setTimeout(r, attempt * 400))
         return fetchProfile(userId, attempt + 1)
       }
       return null
@@ -107,30 +132,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
-        // SIGNED_OUT: alles leeren
+        // SIGNED_OUT: alles leeren und Cache invalidieren
         if (event === 'SIGNED_OUT') {
           fetchIdRef.current++
+          setCachedProfile(null)
           setState({ user: null, session: null, profile: null, loading: false, needsPasswordSetup: false })
           return
         }
 
         // Alle anderen Events (INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY …):
-        // Profil laden und State setzen. fetchIdRef verhindert Race Conditions.
-        const myId = ++fetchIdRef.current
-        setState(s => ({ ...s, loading: true, session, user: session?.user ?? null }))
-
-        const profile = session?.user ? await fetchProfile(session.user.id) : null
-        if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
-
+        // 1. Sofort aus Cache setzen → kein Spinner bei bekanntem User
+        // 2. Profil im Hintergrund frisch laden → State + Cache aktualisieren
+        const cachedProfile = session?.user ? getCachedProfile(session.user.id) : null
         const needsPasswordSetup = !!(
           session?.user?.user_metadata?.needs_password_setup === true ||
           event === 'PASSWORD_RECOVERY'
         )
+        const myId = ++fetchIdRef.current
+
+        // Wenn Cache vorhanden: sofort ohne Spinner anzeigen
+        setState({
+          loading:            !cachedProfile,
+          session,
+          user:               session?.user ?? null,
+          profile:            cachedProfile,
+          needsPasswordSetup,
+        })
+
+        // Frisches Profil im Hintergrund laden
+        const freshProfile = session?.user ? await fetchProfile(session.user.id) : null
+        if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
+
+        // Cache aktualisieren
+        setCachedProfile(freshProfile)
 
         setState({
           user:               session?.user ?? null,
           session,
-          profile,
+          profile:            freshProfile,
           loading:            false,
           needsPasswordSetup,
         })
@@ -161,6 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: { session: fresh } } = await supabase.auth.getSession()
     if (fresh?.user) {
       const freshProfile = await fetchProfile(fresh.user.id)
+      setCachedProfile(freshProfile)
       fetchIdRef.current++
       setState({
         user:               fresh.user,
