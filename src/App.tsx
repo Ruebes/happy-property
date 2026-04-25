@@ -26,7 +26,8 @@ import CrmLeadDetail from './pages/admin/crm/LeadDetail'
 import CrmAllLeads   from './pages/admin/crm/AllLeads'
 import CrmTemplates  from './pages/admin/crm/Templates'
 import CrmArchived   from './pages/admin/crm/Archived'
-import CrmProjects     from './pages/admin/crm/Projects'
+import CrmProjects       from './pages/admin/crm/Projects'
+import CrmProjectDetail  from './pages/admin/crm/ProjectDetail'
 import CrmSettings          from './pages/admin/crm/Settings'
 import CrmWhatsappTemplates from './pages/admin/crm/settings/WhatsappTemplates'
 import CrmAutomationRules  from './pages/admin/crm/settings/AutomationRules'
@@ -84,7 +85,8 @@ export default function App() {
             <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetail />} />
             <Route path="/admin/crm/templates"   element={<CrmTemplates />} />
             <Route path="/admin/crm/archived"    element={<CrmArchived />} />
-            <Route path="/admin/crm/projects"    element={<CrmProjects />} />
+            <Route path="/admin/crm/projects"       element={<CrmProjects />} />
+            <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetail />} />
             <Route path="/admin/crm/settings"    element={<CrmSettings />} />
             <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
             <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />

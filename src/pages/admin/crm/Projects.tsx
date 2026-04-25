@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import type { CrmProject, ProjectStatus } from '../../../lib/crmTypes'
@@ -439,6 +440,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
 
 export default function Projects() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const [projects, setProjects]         = useState<CrmProject[]>([])
   const [loading, setLoading]           = useState(true)
   const [filterStatus, setFilterStatus] = useState('')
@@ -587,10 +589,17 @@ export default function Projects() {
                     {/* Actions */}
                     <div className="flex gap-2 pt-1">
                       <button
-                        onClick={(e) => { e.stopPropagation(); setEditProject(p) }}
-                        className="flex-1 text-center text-xs py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); navigate(`/admin/crm/projects/${p.id}`) }}
+                        className="flex-1 text-center text-xs py-1.5 rounded-lg font-medium text-white transition-colors"
+                        style={{ backgroundColor: '#ff795d' }}
                       >
-                        {t('crm.project.edit', 'Bearbeiten')}
+                        🏠 Wohnungen
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setEditProject(p) }}
+                        className="text-xs py-1.5 px-3 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                      >
+                        ✏️
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}

@@ -168,20 +168,63 @@ export interface CrmProject {
   units?:      CrmProjectUnit[]
 }
 
+export type UnitRentalType = 'short' | 'long'
+export type UnitDocType   = 'kaufvertrag' | 'zahlungsbeleg' | 'grundriss' | 'sonstiges'
+
 export interface CrmProjectUnit {
+  id:             string
+  project_id:     string
+  unit_number:    string
+  block:          string | null
+  type:           UnitType
+  bedrooms:       number
+  bathrooms:      number
+  size_sqm:       number | null
+  terrace_sqm:    number | null
+  price_net:      number | null
+  price_gross:    number | null
+  vat_rate:       number
+  status:         UnitStatus
+  floor:          number | null
+  notes:          string | null
+  property_id:    string | null
+  is_furnished:   boolean
+  handover_date:  string | null
+  rental_type:    UnitRentalType | null
+  verwalter_id:   string | null
+  is_completed:   boolean
+  created_at:     string
+  updated_at:     string
+  // joined
+  verwalter?: { id: string; full_name: string } | null
+}
+
+export interface CrmUnitDocument {
   id:          string
+  unit_id:     string
   project_id:  string
-  unit_number: string
-  type:        UnitType
-  bedrooms:    number
-  size_sqm:    number | null
-  price_net:   number | null
-  status:      UnitStatus
-  floor:       number | null
+  name:        string
+  file_path:   string
+  file_name:   string
+  file_size:   number | null
+  doc_type:    UnitDocType
   notes:       string | null
-  property_id: string | null
+  uploaded_by: string | null
   created_at:  string
-  updated_at:  string
+}
+
+export interface CrmUnitPayment {
+  id:                string
+  unit_id:           string
+  project_id:        string
+  description:       string | null
+  amount:            number
+  due_date:          string | null
+  paid_date:         string | null
+  is_paid:           boolean
+  payment_reference: string | null
+  created_at:        string
+  updated_at:        string
 }
 
 export interface DealProject {
