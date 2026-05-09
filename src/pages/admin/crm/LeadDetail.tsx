@@ -844,6 +844,9 @@ export default function LeadDetail() {
         notes:         unitEditForm.notes.trim()       || null,
       }
 
+      let savedUnitId: string | null = null
+      let existingPropertyId: string | null = null
+
       if (unitEditData) {
         // ── UPDATE existing unit ────────────────────────────────────
         const { error } = await supabase
@@ -851,6 +854,8 @@ export default function LeadDetail() {
           .update(unitPayload)
           .eq('id', unitEditData.id)
         if (error) throw error
+        savedUnitId = unitEditData.id
+        existingPropertyId = unitEditData.property_id ?? null
         // update pickedUnit in-memory so card refreshes immediately
         if (pickedUnit?.unit.id === unitEditData.id) {
           setPickedUnit(prev => prev ? { ...prev, unit: { ...prev.unit, ...unitPayload } } : null)
@@ -864,12 +869,11 @@ export default function LeadDetail() {
           .select()
           .single()
         if (error) throw error
+        savedUnitId = (newUnit as CrmProjectUnit).id
+        existingPropertyId = (newUnit as CrmProjectUnit).property_id ?? null
         if (newUnit && deal) {
-          // unit_id immer speichern; property_id wenn vorhanden
-          const dealUpdate: Record<string, unknown> = { unit_id: (newUnit as CrmProjectUnit).id }
-          if ((newUnit as CrmProjectUnit).property_id) {
-            dealUpdate.property_id = (newUnit as CrmProjectUnit).property_id
-          }
+          const dealUpdate: Record<string, unknown> = { unit_id: savedUnitId }
+          if (existingPropertyId) dealUpdate.property_id = existingPropertyId
           await supabase.from('deals').update(dealUpdate).eq('id', deal.id)
           const projectName = dealProjects.find(dp => dp.project_id === unitEditProjectId)?.project?.name ?? ''
           setPickedUnit({ unit: newUnit as CrmProjectUnit, projectName })
@@ -888,6 +892,56 @@ export default function LeadDetail() {
         await fetchAll()
       }
 
+      // ── Sync properties-Eintrag für Eigentümer-Portal ─────────────
+      if (savedUnitId && profile?.id) {
+        const ownerProfile = await getEigentuemerProfile()
+        if (ownerProfile) {
+          const projectId  = unitEditData?.project_id ?? unitEditProjectId
+          const dp         = dealProjects.find(d => d.project_id === projectId)
+          const projectName = dp?.project?.name ?? ''
+          const location   = dp?.project?.location ?? null
+          const rentalType: 'shortterm' | 'longterm' =
+            unitEditForm.rental_type === 'long' ? 'longterm' : 'shortterm'
+
+          const propData = {
+            project_name:  projectName,
+            unit_number:   unitEditForm.unit_number.trim() || null,
+            type:          unitEditForm.type as 'villa' | 'apartment' | 'studio',
+            bedrooms:      parseInt(unitEditForm.bedrooms) || 0,
+            size_sqm:      unitEditForm.size_sqm ? parseFloat(unitEditForm.size_sqm) : null,
+            is_furnished:  unitEditForm.is_furnished,
+            rental_type:   rentalType,
+            city:          location,
+            purchase_price_net:  unitEditForm.price_net   ? parseFloat(unitEditForm.price_net)   : null,
+            purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
+          }
+
+          if (existingPropertyId) {
+            // Bestehenden properties-Eintrag aktualisieren
+            await supabase.from('properties').update(propData).eq('id', existingPropertyId)
+          } else {
+            // Neuen properties-Eintrag anlegen + verknüpfen
+            const { data: newProp } = await supabase
+              .from('properties')
+              .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
+              .select('id')
+              .single()
+            if (newProp) {
+              const newPropId = (newProp as { id: string }).id
+              await supabase.from('crm_project_units')
+                .update({ property_id: newPropId })
+                .eq('id', savedUnitId)
+              if (deal) {
+                await supabase.from('deals')
+                  .update({ property_id: newPropId })
+                  .eq('id', deal.id)
+              }
+            }
+          }
+        }
+      }
+      // ──────────────────────────────────────────────────────────────
+
       showToast('✅ Einheit gespeichert')
       setShowUnitEdit(false)
       // Kein Portalzugang → Portal-Dialog öffnen
@@ -902,16 +956,21 @@ export default function LeadDetail() {
     }
   }
 
-  // ── Portal-Zugangs-Check ─────────────────────────────────────────
-  async function checkCustomerPortalAccess(): Promise<boolean> {
-    if (!lead?.email) return false
+  // ── Eigentümer-Profil des Kunden abrufen ─────────────────────────
+  async function getEigentuemerProfile(): Promise<{ id: string } | null> {
+    if (!lead?.email) return null
     const { data } = await supabase
       .from('profiles')
       .select('id')
       .eq('email', lead.email)
       .eq('role', 'eigentuemer')
       .maybeSingle()
-    return !!data
+    return data as { id: string } | null
+  }
+
+  // ── Portal-Zugangs-Check ─────────────────────────────────────────
+  async function checkCustomerPortalAccess(): Promise<boolean> {
+    return !!(await getEigentuemerProfile())
   }
 
   // ── Unit-Edit öffnen + Portal-Check im Hintergrund ───────────────
