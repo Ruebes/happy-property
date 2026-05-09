@@ -128,6 +128,9 @@ export default function LeadDetail() {
   // Unit picker project pre-filter (when activated from a deal_project card)
   const [unitPickerProjectId, setUnitPickerProjectId] = useState<string | null>(null)
 
+  // Unit edit: project context for CREATE mode (when no crm_project_unit exists yet)
+  const [unitEditProjectId, setUnitEditProjectId] = useState<string | null>(null)
+
   // ── Toast helper ────────────────────────────────────────────────
   const showToast = (msg: string) => {
     setToast(msg)
@@ -813,10 +816,10 @@ export default function LeadDetail() {
   }
 
   async function handleSaveUnit() {
-    if (!unitEditData) return
+    if (!unitEditForm.unit_number.trim()) return
     setSavingUnit(true)
     try {
-      const { error } = await supabase.from('crm_project_units').update({
+      const unitPayload = {
         unit_number:   unitEditForm.unit_number.trim(),
         block:         unitEditForm.block.trim()       || null,
         type:          unitEditForm.type as CrmProjectUnit['type'],
@@ -833,32 +836,52 @@ export default function LeadDetail() {
         rental_type:   (unitEditForm.rental_type || null) as CrmProjectUnit['rental_type'],
         handover_date: unitEditForm.handover_date      || null,
         notes:         unitEditForm.notes.trim()       || null,
-      }).eq('id', unitEditData.id)
-      if (error) throw error
-      // update pickedUnit in-memory so card refreshes immediately
-      if (pickedUnit?.unit.id === unitEditData.id) {
-        setPickedUnit(prev => prev ? {
-          ...prev,
-          unit: { ...prev.unit,
-            unit_number:  unitEditForm.unit_number.trim(),
-            block:        unitEditForm.block.trim() || null,
-            type:         unitEditForm.type as CrmProjectUnit['type'],
-            floor:        unitEditForm.floor ? parseInt(unitEditForm.floor) : null,
-            bedrooms:     parseInt(unitEditForm.bedrooms)  || 0,
-            bathrooms:    parseInt(unitEditForm.bathrooms) || 0,
-            size_sqm:     unitEditForm.size_sqm    ? parseFloat(unitEditForm.size_sqm)    : null,
-            terrace_sqm:  unitEditForm.terrace_sqm ? parseFloat(unitEditForm.terrace_sqm) : null,
-            price_net:    unitEditForm.price_net   ? parseFloat(unitEditForm.price_net)   : null,
-            price_gross:  unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
-            vat_rate:     parseFloat(unitEditForm.vat_rate) || 0,
-            status:       unitEditForm.status as CrmProjectUnit['status'],
-            is_furnished: unitEditForm.is_furnished,
-            rental_type:  (unitEditForm.rental_type || null) as CrmProjectUnit['rental_type'],
-            handover_date: unitEditForm.handover_date || null,
-            notes:        unitEditForm.notes.trim() || null,
-          },
-        } : null)
       }
+
+      if (unitEditData) {
+        // ── UPDATE existing unit ────────────────────────────────────
+        const { error } = await supabase
+          .from('crm_project_units')
+          .update(unitPayload)
+          .eq('id', unitEditData.id)
+        if (error) throw error
+        // update pickedUnit in-memory so card refreshes immediately
+        if (pickedUnit?.unit.id === unitEditData.id) {
+          setPickedUnit(prev => prev ? { ...prev, unit: { ...prev.unit, ...unitPayload } } : null)
+        }
+      } else {
+        // ── CREATE new unit (Aktivieren ohne bestehende crm_project_unit) ──
+        if (!unitEditProjectId) throw new Error('Kein Projekt ausgewählt')
+        const { data: newUnit, error } = await supabase
+          .from('crm_project_units')
+          .insert({ ...unitPayload, project_id: unitEditProjectId })
+          .select()
+          .single()
+        if (error) throw error
+        if (newUnit && deal) {
+          // unit_id immer speichern; property_id wenn vorhanden
+          const dealUpdate: Record<string, unknown> = { unit_id: (newUnit as CrmProjectUnit).id }
+          if ((newUnit as CrmProjectUnit).property_id) {
+            dealUpdate.property_id = (newUnit as CrmProjectUnit).property_id
+          }
+          await supabase.from('deals').update(dealUpdate).eq('id', deal.id)
+          const projectName = dealProjects.find(dp => dp.project_id === unitEditProjectId)?.project?.name ?? ''
+          setPickedUnit({ unit: newUnit as CrmProjectUnit, projectName })
+        }
+        // Aktivität loggen
+        await supabase.from('activities').insert({
+          lead_id:      id,
+          deal_id:      deal?.id ?? null,
+          type:         'note',
+          direction:    'outbound',
+          subject:      'Einheit angelegt & aktiviert',
+          content:      `Neue Einheit Nr. ${unitEditForm.unit_number.trim()} wurde angelegt und dem Lead zugewiesen.`,
+          created_by:   profile?.id ?? null,
+          completed_at: new Date().toISOString(),
+        })
+        await fetchAll()
+      }
+
       showToast('✅ Einheit gespeichert')
       setShowUnitEdit(false)
       // Kein Portalzugang → Portal-Dialog öffnen
@@ -944,9 +967,37 @@ export default function LeadDetail() {
         .maybeSingle()
       if (data) { openUnitEdit(data as CrmProjectUnit); return }
     }
-    // 4. Noch keine Einheit → Picker öffnen
-    setUnitPickerProjectId(projectId)
-    setShowUnitPicker(true)
+    // 4. Noch keine Einheit → direkt CREATE-Modus öffnen (kein Picker)
+    const dp = dealProjects.find(d => d.project_id === projectId)
+    setUnitEditData(null)
+    setUnitEditProjectId(projectId)
+    setUnitEditForm({
+      unit_number:   dp?.unit_numbers ?? '',
+      block:         '',
+      type:          'apartment',
+      floor:         '',
+      bedrooms:      '0',
+      bathrooms:     '0',
+      size_sqm:      '',
+      terrace_sqm:   '',
+      price_net:     dp?.price_net != null ? String(dp.price_net) : '',
+      price_gross:   '',
+      vat_rate:      '0',
+      status:        'sold',
+      is_furnished:  false,
+      rental_type:   '',
+      handover_date: '',
+      notes:         dp?.notes ?? '',
+    })
+    setPortalAccessChecked(false)
+    setCustomerHasAccess(false)
+    setShowUnitEdit(true)
+    setCheckingAccess(true)
+    checkCustomerPortalAccess().then(hasAccess => {
+      setCustomerHasAccess(hasAccess)
+      setPortalAccessChecked(true)
+      setCheckingAccess(false)
+    })
   }
 
   // ── Unit assignment ──────────────────────────────────────────────
@@ -2770,7 +2821,7 @@ export default function LeadDetail() {
       )}
 
       {/* ── Einheit bearbeiten Modal ─────────────────────────────────── */}
-      {showUnitEdit && unitEditData && (
+      {showUnitEdit && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
 
@@ -2778,10 +2829,13 @@ export default function LeadDetail() {
             <div className="px-6 pt-5 pb-3 flex-shrink-0 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-gray-900">✏️ Einheit bearbeiten</h2>
+                  <h2 className="text-lg font-bold text-gray-900">
+                    {unitEditData ? '✏️ Einheit bearbeiten' : '➕ Neue Einheit anlegen'}
+                  </h2>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Projekt-Einheit Nr. {unitEditData.unit_number}
-                    {unitEditData.block ? ` · Block ${unitEditData.block}` : ''}
+                    {unitEditData
+                      ? `Einheit Nr. ${unitEditData.unit_number}${unitEditData.block ? ` · Block ${unitEditData.block}` : ''}`
+                      : (dealProjects.find(dp => dp.project_id === unitEditProjectId)?.project?.name ?? 'Projekt')}
                   </p>
                 </div>
                 <button onClick={() => setShowUnitEdit(false)}
