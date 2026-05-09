@@ -98,6 +98,18 @@ export default function LeadDetail() {
     projectName: string
   } | null>(null)
 
+  // Unit edit modal
+  const [showUnitEdit,  setShowUnitEdit]  = useState(false)
+  const [unitEditData,  setUnitEditData]  = useState<CrmProjectUnit | null>(null)
+  const [savingUnit,    setSavingUnit]    = useState(false)
+  const [unitEditForm,  setUnitEditForm]  = useState({
+    unit_number: '', block: '', type: 'apartment', floor: '',
+    bedrooms: '', bathrooms: '', size_sqm: '', terrace_sqm: '',
+    price_net: '', price_gross: '', vat_rate: '0',
+    status: 'available', is_furnished: false, rental_type: '',
+    handover_date: '', notes: '',
+  })
+
   // Portal access (always accessible)
   const [portalOpen,       setPortalOpen]       = useState(false)
   const [portalEmail,      setPortalEmail]       = useState('')
@@ -789,6 +801,112 @@ export default function LeadDetail() {
     }
   }
 
+  // ── Deal-Project löschen ────────────────────────────────────────
+  async function handleDeleteDealProject(dpId: string) {
+    await supabase.from('deal_projects').delete().eq('id', dpId)
+    showToast('Projekt entfernt')
+    await fetchAll()
+  }
+
+  // ── Unit-Edit öffnen ─────────────────────────────────────────────
+  function openUnitEdit(unit: CrmProjectUnit) {
+    setUnitEditData(unit)
+    setUnitEditForm({
+      unit_number:   unit.unit_number,
+      block:         unit.block         ?? '',
+      type:          unit.type,
+      floor:         unit.floor         != null ? String(unit.floor)        : '',
+      bedrooms:      String(unit.bedrooms),
+      bathrooms:     String(unit.bathrooms),
+      size_sqm:      unit.size_sqm      != null ? String(unit.size_sqm)     : '',
+      terrace_sqm:   unit.terrace_sqm   != null ? String(unit.terrace_sqm)  : '',
+      price_net:     unit.price_net     != null ? String(unit.price_net)    : '',
+      price_gross:   unit.price_gross   != null ? String(unit.price_gross)  : '',
+      vat_rate:      String(unit.vat_rate ?? 0),
+      status:        unit.status,
+      is_furnished:  unit.is_furnished,
+      rental_type:   unit.rental_type   ?? '',
+      handover_date: unit.handover_date ? unit.handover_date.slice(0, 10)  : '',
+      notes:         unit.notes         ?? '',
+    })
+    setShowUnitEdit(true)
+  }
+
+  async function handleSaveUnit() {
+    if (!unitEditData) return
+    setSavingUnit(true)
+    try {
+      const { error } = await supabase.from('crm_project_units').update({
+        unit_number:   unitEditForm.unit_number.trim(),
+        block:         unitEditForm.block.trim()       || null,
+        type:          unitEditForm.type as CrmProjectUnit['type'],
+        floor:         unitEditForm.floor              ? parseInt(unitEditForm.floor)          : null,
+        bedrooms:      parseInt(unitEditForm.bedrooms) || 0,
+        bathrooms:     parseInt(unitEditForm.bathrooms)|| 0,
+        size_sqm:      unitEditForm.size_sqm           ? parseFloat(unitEditForm.size_sqm)     : null,
+        terrace_sqm:   unitEditForm.terrace_sqm        ? parseFloat(unitEditForm.terrace_sqm)  : null,
+        price_net:     unitEditForm.price_net          ? parseFloat(unitEditForm.price_net)    : null,
+        price_gross:   unitEditForm.price_gross        ? parseFloat(unitEditForm.price_gross)  : null,
+        vat_rate:      parseFloat(unitEditForm.vat_rate) || 0,
+        status:        unitEditForm.status as CrmProjectUnit['status'],
+        is_furnished:  unitEditForm.is_furnished,
+        rental_type:   (unitEditForm.rental_type || null) as CrmProjectUnit['rental_type'],
+        handover_date: unitEditForm.handover_date      || null,
+        notes:         unitEditForm.notes.trim()       || null,
+      }).eq('id', unitEditData.id)
+      if (error) throw error
+      // update pickedUnit in-memory so card refreshes immediately
+      if (pickedUnit?.unit.id === unitEditData.id) {
+        setPickedUnit(prev => prev ? {
+          ...prev,
+          unit: { ...prev.unit,
+            unit_number:  unitEditForm.unit_number.trim(),
+            block:        unitEditForm.block.trim() || null,
+            type:         unitEditForm.type as CrmProjectUnit['type'],
+            floor:        unitEditForm.floor ? parseInt(unitEditForm.floor) : null,
+            bedrooms:     parseInt(unitEditForm.bedrooms)  || 0,
+            bathrooms:    parseInt(unitEditForm.bathrooms) || 0,
+            size_sqm:     unitEditForm.size_sqm    ? parseFloat(unitEditForm.size_sqm)    : null,
+            terrace_sqm:  unitEditForm.terrace_sqm ? parseFloat(unitEditForm.terrace_sqm) : null,
+            price_net:    unitEditForm.price_net   ? parseFloat(unitEditForm.price_net)   : null,
+            price_gross:  unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
+            vat_rate:     parseFloat(unitEditForm.vat_rate) || 0,
+            status:       unitEditForm.status as CrmProjectUnit['status'],
+            is_furnished: unitEditForm.is_furnished,
+            rental_type:  (unitEditForm.rental_type || null) as CrmProjectUnit['rental_type'],
+            handover_date: unitEditForm.handover_date || null,
+            notes:        unitEditForm.notes.trim() || null,
+          },
+        } : null)
+      }
+      setShowUnitEdit(false)
+      showToast('✅ Einheit gespeichert')
+    } catch (err) {
+      console.error('[LeadDetail] saveUnit:', err)
+      showToast('❌ Fehler beim Speichern')
+    } finally {
+      setSavingUnit(false)
+    }
+  }
+
+  // ── Aktivieren: unit schon zugewiesen → edit; sonst → picker ────
+  async function handleActivateProject(projectId: string) {
+    if (deal?.property_id) {
+      const { data: unitData } = await supabase
+        .from('crm_project_units')
+        .select('*')
+        .eq('property_id', deal.property_id)
+        .eq('project_id', projectId)
+        .maybeSingle()
+      if (unitData) {
+        openUnitEdit(unitData as CrmProjectUnit)
+        return
+      }
+    }
+    setUnitPickerProjectId(projectId)
+    setShowUnitPicker(true)
+  }
+
   // ── Unit assignment ──────────────────────────────────────────────
   async function handleUnitAssign(unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location'>) {
     setShowUnitPicker(false)
@@ -1312,12 +1430,28 @@ export default function LeadDetail() {
 
                       {/* Show assigned property from deal (already saved in DB) */}
                       {deal.property && !pickedUnit && (
-                        <div className="bg-white rounded-lg px-3 py-2 text-sm flex items-center gap-2">
-                          <span className="text-green-500">✅</span>
-                          <span className="font-medium text-gray-800">{deal.property.project_name}</span>
-                          {deal.property.unit_number && (
-                            <span className="text-gray-400">· Nr. {deal.property.unit_number}</span>
-                          )}
+                        <div className="bg-white rounded-lg px-3 py-2 text-sm flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-green-500">✅</span>
+                            <span className="font-medium text-gray-800 truncate">{deal.property.project_name}</span>
+                            {deal.property.unit_number && (
+                              <span className="text-gray-400 shrink-0">· Nr. {deal.property.unit_number}</span>
+                            )}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const { data } = await supabase
+                                .from('crm_project_units')
+                                .select('*')
+                                .eq('property_id', deal.property_id!)
+                                .maybeSingle()
+                              if (data) openUnitEdit(data as CrmProjectUnit)
+                              else showToast('Keine verknüpfte Einheit gefunden')
+                            }}
+                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                          >
+                            ✏️ Bearbeiten
+                          </button>
                         </div>
                       )}
 
@@ -1328,9 +1462,17 @@ export default function LeadDetail() {
                             <span className="text-xs font-semibold text-[#ff795d] uppercase tracking-wide">
                               Zugewiesene Einheit
                             </span>
-                            <span className="text-[10px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
-                              ✅ Als Verkauft markiert
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
+                                ✅ Als Verkauft markiert
+                              </span>
+                              <button
+                                onClick={() => openUnitEdit(pickedUnit.unit)}
+                                className="text-[11px] px-2.5 py-0.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
+                              >
+                                ✏️ Bearbeiten
+                              </button>
+                            </div>
                           </div>
                           <p className="text-sm font-bold text-gray-900">
                             {pickedUnit.projectName}
@@ -1787,20 +1929,26 @@ export default function LeadDetail() {
                           {dealProjects.map(dp => (
                             <div key={dp.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50 text-sm">
                               <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className="font-medium text-gray-900">
+                                <div className="font-medium text-gray-900 truncate">
                                   🏗 {dp.project?.name ?? '–'}
                                 </div>
-                                <button
-                                  onClick={() => {
-                                    setUnitPickerProjectId(dp.project?.id ?? null)
-                                    setShowUnitPicker(true)
-                                  }}
-                                  className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg font-medium text-white"
-                                  style={{ backgroundColor: '#ff795d' }}
-                                  title="Wohnung aus diesem Projekt auswählen und Käufer aktivieren"
-                                >
-                                  🔑 Aktivieren
-                                </button>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => handleActivateProject(dp.project?.id ?? '')}
+                                    className="text-[11px] px-2.5 py-1 rounded-lg font-medium text-white"
+                                    style={{ backgroundColor: '#ff795d' }}
+                                    title="Wohnung auswählen und Käufer aktivieren"
+                                  >
+                                    🔑 Aktivieren
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteDealProject(dp.id)}
+                                    className="text-[11px] px-2 py-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 border border-gray-200"
+                                    title="Projekt aus Auswahl entfernen"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
                               </div>
                               {dp.project?.location && (
                                 <div className="text-xs text-gray-500 mb-1">📍 {dp.project.location}</div>
@@ -2575,6 +2723,192 @@ export default function LeadDetail() {
                   : portalSuccess
                     ? '✓ Gesendet'
                     : '📧 Zugang erstellen & senden'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Einheit bearbeiten Modal ─────────────────────────────────── */}
+      {showUnitEdit && unitEditData && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+
+            {/* Header */}
+            <div className="px-6 pt-5 pb-3 flex-shrink-0 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">✏️ Einheit bearbeiten</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    Projekt-Einheit Nr. {unitEditData.unit_number}
+                    {unitEditData.block ? ` · Block ${unitEditData.block}` : ''}
+                  </p>
+                </div>
+                <button onClick={() => setShowUnitEdit(false)}
+                  className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-4 overflow-y-auto flex-1 space-y-4">
+
+              {/* Basis */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Einheitsnummer *</label>
+                  <input value={unitEditForm.unit_number}
+                    onChange={e => setUnitEditForm(f => ({ ...f, unit_number: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Block</label>
+                  <input value={unitEditForm.block}
+                    onChange={e => setUnitEditForm(f => ({ ...f, block: e.target.value }))}
+                    placeholder="z.B. A"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Typ</label>
+                  <select value={unitEditForm.type}
+                    onChange={e => setUnitEditForm(f => ({ ...f, type: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
+                    <option value="apartment">Wohnung</option>
+                    <option value="villa">Villa</option>
+                    <option value="studio">Studio</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Status</label>
+                  <select value={unitEditForm.status}
+                    onChange={e => setUnitEditForm(f => ({ ...f, status: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
+                    <option value="available">Verfügbar</option>
+                    <option value="reserved">Reserviert</option>
+                    <option value="sold">Verkauft</option>
+                    <option value="under_construction">Im Bau</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Etage</label>
+                  <input type="number" value={unitEditForm.floor}
+                    onChange={e => setUnitEditForm(f => ({ ...f, floor: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              {/* Flächen */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Wohnfläche (m²)</label>
+                  <input type="number" value={unitEditForm.size_sqm}
+                    onChange={e => setUnitEditForm(f => ({ ...f, size_sqm: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Terrassenfläche (m²)</label>
+                  <input type="number" value={unitEditForm.terrace_sqm}
+                    onChange={e => setUnitEditForm(f => ({ ...f, terrace_sqm: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              {/* Zimmer */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Schlafzimmer</label>
+                  <input type="number" value={unitEditForm.bedrooms}
+                    onChange={e => setUnitEditForm(f => ({ ...f, bedrooms: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Badezimmer</label>
+                  <input type="number" value={unitEditForm.bathrooms}
+                    onChange={e => setUnitEditForm(f => ({ ...f, bathrooms: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              {/* Preise */}
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Nettpreis (€)</label>
+                  <input type="number" value={unitEditForm.price_net}
+                    onChange={e => setUnitEditForm(f => ({ ...f, price_net: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Bruttopreis (€)</label>
+                  <input type="number" value={unitEditForm.price_gross}
+                    onChange={e => setUnitEditForm(f => ({ ...f, price_gross: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">MwSt. (%)</label>
+                  <input type="number" value={unitEditForm.vat_rate}
+                    onChange={e => setUnitEditForm(f => ({ ...f, vat_rate: e.target.value }))}
+                    placeholder="0"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              {/* Extras */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Vermietungsart</label>
+                  <select value={unitEditForm.rental_type}
+                    onChange={e => setUnitEditForm(f => ({ ...f, rental_type: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
+                    <option value="">– keine –</option>
+                    <option value="short">🏖 Kurzzeitvermietung</option>
+                    <option value="long">🏠 Langzeitvermietung</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Übergabedatum</label>
+                  <input type="date" value={unitEditForm.handover_date}
+                    onChange={e => setUnitEditForm(f => ({ ...f, handover_date: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="is_furnished" checked={unitEditForm.is_furnished}
+                  onChange={e => setUnitEditForm(f => ({ ...f, is_furnished: e.target.checked }))}
+                  className="w-4 h-4 rounded" />
+                <label htmlFor="is_furnished" className="text-sm text-gray-700 cursor-pointer">
+                  Möbliert
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Notizen</label>
+                <textarea rows={2} value={unitEditForm.notes}
+                  onChange={e => setUnitEditForm(f => ({ ...f, notes: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none" />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+              <button onClick={() => setShowUnitEdit(false)}
+                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
+                Abbrechen
+              </button>
+              <button onClick={handleSaveUnit} disabled={savingUnit || !unitEditForm.unit_number.trim()}
+                className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                style={{ backgroundColor: '#ff795d' }}>
+                {savingUnit && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                {savingUnit ? 'Speichert…' : '✓ Speichern'}
               </button>
             </div>
           </div>
