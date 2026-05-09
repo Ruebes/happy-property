@@ -663,7 +663,8 @@ export default function PropertyDetail() {
   const [ownerSaving, setOwnerSaving]   = useState(false)
   const [ownerError, setOwnerError]     = useState('')
 
-  const canEdit = profile?.role === 'admin' || profile?.role === 'verwalter'
+  const canEdit       = profile?.role === 'admin' || profile?.role === 'verwalter'
+  const isEigentuemer = profile?.role === 'eigentuemer'
   const basePath = `/${profile?.role ?? 'eigentuemer'}/dashboard`
 
   // ── Fetch property ───────────────────────────────────────
@@ -2373,7 +2374,7 @@ export default function PropertyDetail() {
                   )}
                 </div>
 
-                {/* Zahlungsbeleg */}
+                {/* Zahlungsbeleg — Eigentümer kann selbst hochladen */}
                 <div>
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     Zahlungsbeleg
@@ -2396,7 +2397,7 @@ export default function PropertyDetail() {
                         </button>
                       )}
                     </div>
-                  ) : canEdit ? (
+                  ) : (canEdit || isEigentuemer) ? (
                     <>
                       <input
                         type="file"
@@ -2412,11 +2413,12 @@ export default function PropertyDetail() {
                       <button
                         onClick={() => payReceiptRef.current[pay.id]?.click()}
                         disabled={uploadingPayId === pay.id && uploadingPayType === 'receipt'}
-                        className="text-xs text-gray-400 hover:text-hp-highlight transition-colors disabled:opacity-50 font-body"
+                        className="text-xs font-medium transition-colors disabled:opacity-50 font-body"
+                        style={{ color: 'var(--color-highlight)' }}
                       >
                         {uploadingPayId === pay.id && uploadingPayType === 'receipt'
                           ? '↑ Wird hochgeladen…'
-                          : '+ Hochladen'}
+                          : '↑ Beleg hochladen'}
                       </button>
                     </>
                   ) : (

@@ -147,7 +147,86 @@ DO $$ BEGIN
   END IF;
 END $$;
 
--- ── 5. deals.unit_id (aus 20260509_deals_unit_id.sql) ────────────────────────
+-- ── 5. Eigentümer darf Zahlungsbeleg hochladen (UPDATE auf receipt-Felder) ───
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename='crm_unit_payments' AND policyname='unit_payments_owner_upload_receipt'
+  ) THEN
+    CREATE POLICY "unit_payments_owner_upload_receipt" ON crm_unit_payments
+      FOR UPDATE TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1
+          FROM   crm_project_units u
+          JOIN   properties        p ON p.id = u.property_id
+          WHERE  u.id        = crm_unit_payments.unit_id
+            AND  p.owner_id = auth.uid()
+        )
+      )
+      WITH CHECK (
+        EXISTS (
+          SELECT 1
+          FROM   crm_project_units u
+          JOIN   properties        p ON p.id = u.property_id
+          WHERE  u.id        = crm_unit_payments.unit_id
+            AND  p.owner_id = auth.uid()
+        )
+      );
+  END IF;
+END $$;
+
+-- ── 6. Storage-Policy: Eigentümer darf in unit-documents hochladen ────────────
+-- Im Supabase Dashboard: Storage → unit-documents → Policies → New policy
+-- ODER via SQL (storage schema):
+
+INSERT INTO storage.buckets (id, name, public)
+  VALUES ('unit-documents', 'unit-documents', false)
+  ON CONFLICT (id) DO NOTHING;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND policyname = 'unit_docs_eigentuemer_insert'
+  ) THEN
+    CREATE POLICY "unit_docs_eigentuemer_insert" ON storage.objects
+      FOR INSERT TO authenticated
+      WITH CHECK (
+        bucket_id = 'unit-documents'
+        AND EXISTS (
+          SELECT 1
+          FROM   crm_project_units u
+          JOIN   properties        p ON p.id = u.property_id
+          WHERE  u.id::text = split_part(name, '/', 2)
+            AND  p.owner_id = auth.uid()
+        )
+      );
+  END IF;
+END $$;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'storage' AND tablename = 'objects'
+      AND policyname = 'unit_docs_eigentuemer_select'
+  ) THEN
+    CREATE POLICY "unit_docs_eigentuemer_select" ON storage.objects
+      FOR SELECT TO authenticated
+      USING (
+        bucket_id = 'unit-documents'
+        AND EXISTS (
+          SELECT 1
+          FROM   crm_project_units u
+          JOIN   properties        p ON p.id = u.property_id
+          WHERE  u.id::text = split_part(name, '/', 2)
+            AND  p.owner_id = auth.uid()
+        )
+      );
+  END IF;
+END $$;
+
+-- ── 7. deals.unit_id (aus 20260509_deals_unit_id.sql) ────────────────────────
 
 ALTER TABLE deals
   ADD COLUMN IF NOT EXISTS unit_id UUID REFERENCES crm_project_units(id) ON DELETE SET NULL;
