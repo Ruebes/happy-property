@@ -238,18 +238,26 @@ export default function ProjectDetail() {
       setVerwalters((verwRes.data ?? []) as Verwalter[])
 
       // ── Kundenzuordnung: welcher Lead ist welcher Einheit zugewiesen? ──────
+      // Fehler ignorieren falls deals.unit_id noch nicht in der DB existiert
       if (fetchedUnits.length > 0) {
-        const unitIds = fetchedUnits.map(u => u.id)
-        const { data: dealsData } = await supabase
-          .from('deals')
-          .select('unit_id, lead:lead_id(id, first_name, last_name)')
-          .in('unit_id', unitIds)
-          .neq('phase', 'archiviert')
-        const map: Record<string, UnitLead> = {}
-        for (const d of (dealsData ?? []) as unknown as Array<{ unit_id: string; lead: UnitLead }>) {
-          if (d.unit_id && d.lead) map[d.unit_id] = d.lead
+        try {
+          const unitIds = fetchedUnits.map(u => u.id)
+          const { data: dealsData, error: dealsErr } = await supabase
+            .from('deals')
+            .select('unit_id, lead:lead_id(id, first_name, last_name)')
+            .in('unit_id', unitIds)
+            .neq('phase', 'archiviert')
+          if (!dealsErr && dealsData) {
+            const map: Record<string, UnitLead> = {}
+            for (const d of dealsData as unknown as Array<{ unit_id: string; lead: UnitLead }>) {
+              if (d.unit_id && d.lead) map[d.unit_id] = d.lead
+            }
+            setUnitLeadMap(map)
+          }
+        } catch {
+          // deals.unit_id Spalte fehlt noch — Kundenzuordnung deaktiviert
+          setUnitLeadMap({})
         }
-        setUnitLeadMap(map)
       } else {
         setUnitLeadMap({})
       }
