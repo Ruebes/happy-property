@@ -131,6 +131,11 @@ export default function LeadDetail() {
   // Unit edit: project context for CREATE mode (when no crm_project_unit exists yet)
   const [unitEditProjectId, setUnitEditProjectId] = useState<string | null>(null)
 
+  // Unit selection step (choose existing unit or create new)
+  const [showUnitSelect, setShowUnitSelect]       = useState(false)
+  const [unitSelectProjectId, setUnitSelectProjectId] = useState<string | null>(null)
+  const [unitSelectUnits, setUnitSelectUnits]     = useState<CrmProjectUnit[]>([])
+
   // ── Toast helper ────────────────────────────────────────────────
   const showToast = (msg: string) => {
     setToast(msg)
@@ -967,7 +972,21 @@ export default function LeadDetail() {
         .maybeSingle()
       if (data) { openUnitEdit(data as CrmProjectUnit); return }
     }
-    // 4. Noch keine Einheit → direkt CREATE-Modus öffnen (kein Picker)
+    // 4. Noch keine Einheit → Verfügbare Units im Projekt prüfen
+    const { data: availableUnits } = await supabase
+      .from('crm_project_units')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('status', 'available')
+      .order('unit_number')
+    if (availableUnits && availableUnits.length > 0) {
+      // Vorhandene verfügbare Units zur Auswahl anbieten
+      setUnitSelectProjectId(projectId)
+      setUnitSelectUnits(availableUnits as CrmProjectUnit[])
+      setShowUnitSelect(true)
+      return
+    }
+    // Keine verfügbaren Units → direkt CREATE-Modus öffnen
     const dp = dealProjects.find(d => d.project_id === projectId)
     setUnitEditData(null)
     setUnitEditProjectId(projectId)
@@ -1554,6 +1573,12 @@ export default function LeadDetail() {
                               Zugewiesene Einheit
                             </span>
                             <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => navigate(`/admin/crm/projects/${unitSelectProjectId ?? dealProjects.find(dp => dp.project?.name === pickedUnit?.projectName)?.project_id ?? ''}`)}
+                                className="text-[10px] text-gray-400 hover:text-[#ff795d] transition-colors"
+                              >
+                                🏗 Zum Projekt →
+                              </button>
                               <span className="text-[10px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
                                 ✅ Als Verkauft markiert
                               </span>
@@ -2020,8 +2045,15 @@ export default function LeadDetail() {
                           {dealProjects.map(dp => (
                             <div key={dp.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50 text-sm">
                               <div className="flex items-start justify-between gap-2 mb-1">
-                                <div className="font-medium text-gray-900 truncate">
-                                  🏗 {dp.project?.name ?? '–'}
+                                <div className="font-medium text-gray-900 truncate min-w-0">
+                                  {dp.project ? (
+                                    <button
+                                      onClick={() => navigate(`/admin/crm/projects/${dp.project_id}`)}
+                                      className="hover:text-[#ff795d] hover:underline text-left truncate"
+                                    >
+                                      🏗 {dp.project.name}
+                                    </button>
+                                  ) : '–'}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <button
@@ -2814,6 +2846,108 @@ export default function LeadDetail() {
                   : portalSuccess
                     ? '✓ Gesendet'
                     : '📧 Zugang erstellen & senden'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Einheit-Auswahl Modal (vorhandene Units bei Aktivieren) ── */}
+      {showUnitSelect && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-3 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">🏠 Wohnung auswählen</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  {dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project?.name ?? 'Projekt'}
+                  {' – '}Verfügbare Einheiten
+                </p>
+              </div>
+              <button
+                onClick={() => setShowUnitSelect(false)}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >✕</button>
+            </div>
+
+            {/* Unit list */}
+            <div className="px-4 py-3 space-y-2 max-h-72 overflow-y-auto">
+              {unitSelectUnits.map(unit => (
+                <button
+                  key={unit.id}
+                  onClick={() => {
+                    setShowUnitSelect(false)
+                    const proj = dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project
+                    if (proj) handleUnitAssign(unit, proj as Pick<CrmProject, 'id' | 'name' | 'location'>)
+                  }}
+                  className="w-full text-left border border-gray-200 rounded-xl px-4 py-3
+                             hover:border-[#ff795d] hover:bg-orange-50 transition-colors"
+                >
+                  <div className="font-semibold text-gray-900 text-sm">
+                    {unit.block ? `Block ${unit.block} · ` : ''}Nr. {unit.unit_number}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-3">
+                    {unit.size_sqm != null && <span>📐 {unit.size_sqm} m²</span>}
+                    {unit.bedrooms > 0 && <span>🛏 {unit.bedrooms} SZ</span>}
+                    {unit.floor != null && <span>Etage {unit.floor}</span>}
+                    {(unit.price_gross ?? unit.price_net) != null && (
+                      <span className="font-semibold text-gray-700">
+                        💶 {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(unit.price_gross ?? unit.price_net ?? 0)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+              <button
+                onClick={() => {
+                  setShowUnitSelect(false)
+                  const dp = dealProjects.find(d => d.project_id === unitSelectProjectId)
+                  setUnitEditData(null)
+                  setUnitEditProjectId(unitSelectProjectId)
+                  setUnitEditForm({
+                    unit_number:   dp?.unit_numbers ?? '',
+                    block:         '',
+                    type:          'apartment',
+                    floor:         '',
+                    bedrooms:      '0',
+                    bathrooms:     '0',
+                    size_sqm:      '',
+                    terrace_sqm:   '',
+                    price_net:     dp?.price_net != null ? String(dp.price_net) : '',
+                    price_gross:   '',
+                    vat_rate:      '0',
+                    status:        'sold',
+                    is_furnished:  false,
+                    rental_type:   '',
+                    handover_date: '',
+                    notes:         dp?.notes ?? '',
+                  })
+                  setPortalAccessChecked(false)
+                  setCustomerHasAccess(false)
+                  setShowUnitEdit(true)
+                  setCheckingAccess(true)
+                  checkCustomerPortalAccess().then(hasAccess => {
+                    setCustomerHasAccess(hasAccess)
+                    setPortalAccessChecked(true)
+                    setCheckingAccess(false)
+                  })
+                }}
+                className="flex-1 py-2.5 text-sm font-medium border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
+              >
+                + Neue Einheit anlegen
+              </button>
+              <button
+                onClick={() => setShowUnitSelect(false)}
+                className="px-4 py-2.5 text-sm text-gray-500 rounded-xl hover:bg-gray-50"
+              >
+                Abbrechen
               </button>
             </div>
           </div>

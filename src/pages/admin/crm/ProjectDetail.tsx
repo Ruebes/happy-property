@@ -99,11 +99,13 @@ const EMPTY_PAY = {
 // ── UnitCard ──────────────────────────────────────────────────────────────────
 
 function UnitCard({
-  unit, onClick, customer,
+  unit, onClick, customer, onCustomerClick, onAssignCustomer,
 }: {
   unit: CrmProjectUnit
   onClick: () => void
   customer?: UnitLead
+  onCustomerClick?: () => void
+  onAssignCustomer?: () => void
 }) {
   const price = unit.price_gross ?? unit.price_net
   return (
@@ -163,13 +165,29 @@ function UnitCard({
           {unit.is_furnished && <p>🛋️ Möbliert</p>}
         </div>
 
-        {/* Customer badge — shown when unit is linked to a lead via deals */}
-        {customer && (
-          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5">
-            <span className="text-[10px]">👤</span>
-            <span className="text-[10px] font-semibold text-gray-700 truncate">
-              {customer.first_name} {customer.last_name}
-            </span>
+        {/* Customer badge — clickable → LeadDetail */}
+        {customer ? (
+          <div className="mt-3 pt-2.5 border-t border-gray-100">
+            <button
+              onClick={e => { e.stopPropagation(); onCustomerClick?.() }}
+              className="flex items-center gap-1.5 w-full text-left hover:text-[#ff795d] transition-colors group"
+            >
+              <span className="text-[10px]">👤</span>
+              <span className="text-[10px] font-semibold text-gray-700 truncate group-hover:text-[#ff795d]">
+                {customer.first_name} {customer.last_name}
+              </span>
+              <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
+            </button>
+          </div>
+        ) : unit.status !== 'sold' && (
+          <div className="mt-3 pt-2.5 border-t border-gray-100">
+            <button
+              onClick={e => { e.stopPropagation(); onAssignCustomer?.() }}
+              className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-[#ff795d] transition-colors"
+            >
+              <span>👤</span>
+              <span>Kunden zuweisen</span>
+            </button>
           </div>
         )}
       </div>
@@ -217,6 +235,16 @@ export default function ProjectDetail() {
   })
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Customer assignment ──────────────────────────────────────────────────────
+  const [showAssignModal,  setShowAssignModal]  = useState(false)
+  const [assigningUnit,    setAssigningUnit]    = useState<CrmProjectUnit | null>(null)
+  const [assignLeadQuery,  setAssignLeadQuery]  = useState('')
+  const [assignLeadResults, setAssignLeadResults] = useState<Array<{
+    id: string; first_name: string; last_name: string; email: string; deal_id: string | null
+  }>>([])
+  const [assignLeadSearching, setAssignLeadSearching] = useState(false)
+  const [assignLeadSaving,    setAssignLeadSaving]    = useState(false)
 
   // ── Fetch project + units ────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -267,6 +295,71 @@ export default function ProjectDetail() {
   }, [projectId])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── Search leads for assignment ──────────────────────────────────────────────
+  async function searchLeadsForAssign(query: string) {
+    if (!query.trim() || query.trim().length < 2) { setAssignLeadResults([]); return }
+    setAssignLeadSearching(true)
+    try {
+      const { data } = await supabase
+        .from('leads')
+        .select('id, first_name, last_name, email')
+        .or(`first_name.ilike.%${query.trim()}%,last_name.ilike.%${query.trim()}%,email.ilike.%${query.trim()}%`)
+        .limit(8)
+      // For each lead, find their active deal
+      const leads = (data ?? []) as Array<{id: string; first_name: string; last_name: string; email: string}>
+      if (leads.length === 0) { setAssignLeadResults([]); return }
+      const { data: dealData } = await supabase
+        .from('deals')
+        .select('id, lead_id, phase')
+        .in('lead_id', leads.map(l => l.id))
+        .neq('phase', 'archiviert')
+      const dealByLead: Record<string, string> = {}
+      for (const d of (dealData ?? []) as Array<{id: string; lead_id: string; phase: string}>) {
+        dealByLead[d.lead_id] = d.id
+      }
+      setAssignLeadResults(leads.map(l => ({
+        ...l, deal_id: dealByLead[l.id] ?? null,
+      })))
+    } finally { setAssignLeadSearching(false) }
+  }
+
+  async function handleAssignLeadToUnit(leadId: string, dealId: string | null) {
+    if (!assigningUnit) return
+    setAssignLeadSaving(true)
+    try {
+      if (dealId) {
+        const { error } = await supabase
+          .from('deals')
+          .update({ unit_id: assigningUnit.id })
+          .eq('id', dealId)
+        if (error) throw error
+      }
+      // Mark unit as reserved
+      await supabase.from('crm_project_units')
+        .update({ status: 'reserved' })
+        .eq('id', assigningUnit.id)
+      // Log activity
+      await supabase.from('activities').insert({
+        lead_id:      leadId,
+        deal_id:      dealId,
+        type:         'note',
+        direction:    'outbound',
+        subject:      'Wohnung zugewiesen',
+        content:      `Einheit Nr. ${assigningUnit.unit_number} (Projekt: ${project?.name ?? ''}) wurde diesem Lead zugewiesen.`,
+        created_by:   profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      showToast('✅ Kunde zugewiesen')
+      setShowAssignModal(false)
+      setAssigningUnit(null)
+      setAssignLeadQuery('')
+      setAssignLeadResults([])
+      await fetchData()
+    } catch (err) {
+      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+    } finally { setAssignLeadSaving(false) }
+  }
 
   // ── Fetch payments / documents for open unit ────────────────────────────────
   const fetchPayments = useCallback(async (unitId: string) => {
@@ -385,8 +478,21 @@ export default function ProjectDetail() {
         const { error } = await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
         if (error) throw error
       } else {
-        const { error } = await supabase.from('crm_project_units').insert(payload)
+        const { data: newUnit, error } = await supabase
+          .from('crm_project_units')
+          .insert(payload)
+          .select()
+          .single()
         if (error) throw error
+        // Offer customer assignment for non-sold units
+        if (newUnit && form.status !== 'sold') {
+          await fetchData()
+          showToast('✅ Einheit angelegt')
+          setShowModal(false)
+          setAssigningUnit(newUnit as CrmProjectUnit)
+          setShowAssignModal(true)
+          return
+        }
       }
       await fetchData()
       showToast(editUnit ? '✅ Einheit aktualisiert' : '✅ Einheit angelegt')
@@ -630,7 +736,14 @@ export default function ProjectDetail() {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {bUnits.map(u => (
-                  <UnitCard key={u.id} unit={u} onClick={() => openEdit(u)} customer={unitLeadMap[u.id] ?? undefined} />
+                  <UnitCard
+                    key={u.id}
+                    unit={u}
+                    onClick={() => openEdit(u)}
+                    customer={unitLeadMap[u.id] ?? undefined}
+                    onCustomerClick={() => navigate(`/admin/crm/leads/${unitLeadMap[u.id]?.id}`)}
+                    onAssignCustomer={() => { setAssigningUnit(u); setShowAssignModal(true) }}
+                  />
                 ))}
               </div>
             </div>
@@ -1391,6 +1504,94 @@ export default function ProjectDetail() {
                 style={{ backgroundColor: '#ff795d' }}
               >
                 {portalSending ? 'Wird gesendet…' : portalSuccess ? '✓ Gesendet' : '📧 Zugang senden'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ── Kunden-Zuweisungs-Modal ─────────────────────────────────────── */}
+      {showAssignModal && assigningUnit && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-lg"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-5 pb-3 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">👤 Kunden zuweisen</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Einheit {assigningUnit.block ? `Block ${assigningUnit.block} · ` : ''}Nr. {assigningUnit.unit_number}
+                </p>
+              </div>
+              <button
+                onClick={() => { setShowAssignModal(false); setAssignLeadQuery(''); setAssignLeadResults([]) }}
+                className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+              >✕</button>
+            </div>
+
+            <div className="px-6 py-4 space-y-3">
+              {/* Search input */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={assignLeadQuery}
+                  onChange={e => { setAssignLeadQuery(e.target.value); searchLeadsForAssign(e.target.value) }}
+                  placeholder="Name oder E-Mail suchen…"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm
+                             focus:outline-none focus:border-[#ff795d] pr-8"
+                  autoFocus
+                />
+                {assignLeadSearching && (
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4
+                                   border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin" />
+                )}
+              </div>
+
+              {/* Results */}
+              {assignLeadResults.length > 0 && (
+                <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                  {assignLeadResults.map(lead => (
+                    <button
+                      key={lead.id}
+                      onClick={() => handleAssignLeadToUnit(lead.id, lead.deal_id)}
+                      disabled={assignLeadSaving}
+                      className="w-full text-left border border-gray-100 rounded-xl px-4 py-3
+                                 hover:border-[#ff795d] hover:bg-orange-50 transition-colors
+                                 disabled:opacity-50"
+                    >
+                      <div className="font-medium text-gray-900 text-sm">
+                        {lead.first_name} {lead.last_name}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
+                        <span>{lead.email}</span>
+                        {!lead.deal_id && (
+                          <span className="text-yellow-600 font-medium">⚠ Kein aktiver Deal</span>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {assignLeadQuery.length >= 2 && !assignLeadSearching && assignLeadResults.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-4">
+                  Keine Leads gefunden.
+                </p>
+              )}
+
+              {assignLeadQuery.length < 2 && (
+                <p className="text-xs text-gray-400 text-center py-2">
+                  Mindestens 2 Zeichen eingeben…
+                </p>
+              )}
+            </div>
+
+            <div className="px-6 pb-5">
+              <button
+                onClick={() => { setShowAssignModal(false); setAssignLeadQuery(''); setAssignLeadResults([]) }}
+                className="w-full py-2.5 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50"
+              >
+                Später zuweisen
               </button>
             </div>
           </div>
