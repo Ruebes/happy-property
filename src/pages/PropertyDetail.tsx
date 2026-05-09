@@ -646,6 +646,9 @@ export default function PropertyDetail() {
   const [unitPayments,     setUnitPayments]     = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [unitPayLoading,   setUnitPayLoading]   = useState(false)
+  // CRM images
+  const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
+  const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
   const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
   const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
@@ -726,17 +729,21 @@ export default function PropertyDetail() {
       // Find the CRM unit linked to this property
       const { data: unitData } = await supabase
         .from('crm_project_units')
-        .select('id')
+        .select('id, project_id, images')
         .eq('property_id', id)
         .maybeSingle()
       if (!unitData) {
         setLinkedUnitId(null)
         setUnitPayments([])
         setUnitKaufvertraege([])
+        setCrmProjectImages([])
+        setCrmUnitImages([])
         return
       }
       setLinkedUnitId(unitData.id)
-      const [paysRes, docsRes] = await Promise.all([
+      setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
+
+      const [paysRes, docsRes, projRes] = await Promise.all([
         supabase
           .from('crm_unit_payments')
           .select('*')
@@ -748,16 +755,22 @@ export default function PropertyDetail() {
           .eq('unit_id', unitData.id)
           .eq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
+        supabase
+          .from('crm_projects')
+          .select('images')
+          .eq('id', (unitData as { project_id: string }).project_id)
+          .maybeSingle(),
       ])
       setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
       setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
+      setCrmProjectImages((projRes.data as { images?: string[] } | null)?.images ?? [])
     } finally {
       setUnitPayLoading(false)
     }
   }, [id])
 
   useEffect(() => {
-    if (activeTab === 'purchases' || activeTab === 'contracts') {
+    if (activeTab === 'purchases' || activeTab === 'contracts' || activeTab === 'images') {
       fetchUnitPayments()
     }
   }, [activeTab, fetchUnitPayments])
@@ -2145,12 +2158,45 @@ export default function PropertyDetail() {
 
   // ── Tab 5: Bilder ─────────────────────────────────────
   function renderImages() {
-    const allImages = property!.images ?? []
+    const ownImages = property!.images ?? []
+
+    // Helper: image grid (read-only)
+    function ImageGrid({ images, emptyText }: { images: string[]; emptyText: string }) {
+      if (images.length === 0) return (
+        <p className="text-sm text-gray-400 font-body text-center py-6">{emptyText}</p>
+      )
+      return (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+          {images.map((url, i) => (
+            <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
+              <img src={url} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
+                   onClick={() => window.open(url, '_blank')} />
+            </div>
+          ))}
+        </div>
+      )
+    }
 
     return (
-      <div className="space-y-5">
+      <div className="space-y-8">
 
-        {/* Upload zone (canEdit only) */}
+        {/* ── Projektbilder ────────────────────────────────── */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+            🏗 Projektbilder
+          </h3>
+          <ImageGrid images={crmProjectImages} emptyText="Noch keine Projektbilder vorhanden." />
+        </div>
+
+        {/* ── Wohnungsbilder ───────────────────────────────── */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+            🏠 Wohnungsbilder
+          </h3>
+          <ImageGrid images={crmUnitImages} emptyText="Noch keine Wohnungsbilder vorhanden." />
+        </div>
+
+        {/* ── Admin-Upload + eigene Fotos (nur Admin/Verwalter sieht Upload) ── */}
         {canEdit && (
           <div>
             <div
@@ -2222,30 +2268,35 @@ export default function PropertyDetail() {
           </div>
         )}
 
-        {/* Existing images grid */}
-        {allImages.length === 0 ? (
-          <div className="text-center py-12 text-gray-400 font-body">
-            <div className="text-4xl mb-2">🖼️</div>
-            <p className="text-sm">{t('propertyDetail.gallery.noImages')}</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {allImages.map((url, i) => (
-              <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
-                <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
-                {canEdit && (
-                  <button
-                    onClick={() => setDeleteImgUrl(url)}
-                    className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors
-                               flex items-center justify-center opacity-0 group-hover:opacity-100">
-                    <span className="bg-red-600 text-white text-xs font-semibold font-body
-                                     px-3 py-1.5 rounded-lg shadow">
-                      {t('common.delete')}
-                    </span>
-                  </button>
-                )}
+        {/* Existing property images (admin-managed) */}
+        {canEdit && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              📁 Weitere Fotos
+            </h3>
+            {ownImages.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 font-body">
+                <div className="text-4xl mb-2">🖼️</div>
+                <p className="text-sm">{t('propertyDetail.gallery.noImages')}</p>
               </div>
-            ))}
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {ownImages.map((url, i) => (
+                  <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
+                    <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                    <button
+                      onClick={() => setDeleteImgUrl(url)}
+                      className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors
+                                 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      <span className="bg-red-600 text-white text-xs font-semibold font-body
+                                       px-3 py-1.5 rounded-lg shadow">
+                        {t('common.delete')}
+                      </span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -2505,7 +2556,7 @@ export default function PropertyDetail() {
       count: rechnungCount || undefined },
     { key: 'income',     label: t('propertyDetail.tabs.income') },
     { key: 'images',     label: t('propertyDetail.tabs.images'),
-      count: (p.images?.length || 0) || undefined },
+      count: ((p.images?.length || 0) + crmProjectImages.length + crmUnitImages.length) || undefined },
     { key: 'purchases',  label: 'Payment Plan',
       count: unitPayments.length || undefined },
   ]
