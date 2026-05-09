@@ -6,7 +6,7 @@ import { supabase } from '../lib/supabase'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
-import type { CrmUnitPayment } from '../lib/crmTypes'
+import type { CrmUnitPayment, CrmUnitDocument } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
 interface OwnerProfile {
@@ -641,9 +641,10 @@ export default function PropertyDetail() {
   // Toast
   const [toast, setToast] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
 
-  // Kaufunterlagen tab
+  // Payment Plan tab
   const [linkedUnitId,     setLinkedUnitId]     = useState<string | null>(null)
   const [unitPayments,     setUnitPayments]     = useState<CrmUnitPayment[]>([])
+  const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [unitPayLoading,   setUnitPayLoading]   = useState(false)
   const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
@@ -717,7 +718,7 @@ export default function PropertyDetail() {
     fetchContracts()
   }, [fetchProperty, fetchDocs, fetchContracts])
 
-  // ── Fetch unit payments (Kaufunterlagen) ─────────────────
+  // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {
     if (!id) return
     setUnitPayLoading(true)
@@ -731,22 +732,32 @@ export default function PropertyDetail() {
       if (!unitData) {
         setLinkedUnitId(null)
         setUnitPayments([])
+        setUnitKaufvertraege([])
         return
       }
       setLinkedUnitId(unitData.id)
-      const { data: pays } = await supabase
-        .from('crm_unit_payments')
-        .select('*')
-        .eq('unit_id', unitData.id)
-        .order('due_date', { ascending: true, nullsFirst: true })
-      setUnitPayments((pays ?? []) as CrmUnitPayment[])
+      const [paysRes, docsRes] = await Promise.all([
+        supabase
+          .from('crm_unit_payments')
+          .select('*')
+          .eq('unit_id', unitData.id)
+          .order('due_date', { ascending: true, nullsFirst: true }),
+        supabase
+          .from('crm_unit_documents')
+          .select('*')
+          .eq('unit_id', unitData.id)
+          .eq('doc_type', 'kaufvertrag')
+          .order('created_at', { ascending: false }),
+      ])
+      setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
+      setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
     } finally {
       setUnitPayLoading(false)
     }
   }, [id])
 
   useEffect(() => {
-    if (activeTab === 'purchases') {
+    if (activeTab === 'purchases' || activeTab === 'contracts') {
       fetchUnitPayments()
     }
   }, [activeTab, fetchUnitPayments])
@@ -1728,6 +1739,51 @@ export default function PropertyDetail() {
             </div>
           )}
         </div>
+
+        {/* ── Kaufvertrag (aus CRM) ─────────────────────────── */}
+        {unitKaufvertraege.length > 0 && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              📝 Kaufvertrag
+            </h3>
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+              <table className="w-full text-sm font-body">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Dokument</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Datum</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Aktionen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unitKaufvertraege.map((doc, i) => (
+                    <tr key={doc.id}
+                        className={`hover:bg-gray-50 transition-colors ${i < unitKaufvertraege.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                      <td className="px-4 py-3 font-medium text-hp-black">
+                        {doc.name}
+                        {doc.notes && <div className="text-xs text-gray-400 mt-0.5">{doc.notes}</div>}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">{fmtDate(doc.created_at)}</td>
+                      <td className="px-4 py-3">
+                        <button
+                          onClick={async () => {
+                            const { data } = await supabase.storage
+                              .from('unit-documents')
+                              .createSignedUrl(doc.file_path, 300)
+                            if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                          }}
+                          className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
+                                     text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                          PDF öffnen
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -2444,13 +2500,13 @@ export default function PropertyDetail() {
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'overview',   label: t('propertyDetail.tabs.overview') },
     { key: 'contracts',  label: t('propertyDetail.tabs.contracts'),
-      count: (contracts.length + mietvertragCount) || undefined },
+      count: (contracts.length + mietvertragCount + unitKaufvertraege.length) || undefined },
     { key: 'invoices',   label: t('propertyDetail.tabs.invoices'),
       count: rechnungCount || undefined },
     { key: 'income',     label: t('propertyDetail.tabs.income') },
     { key: 'images',     label: t('propertyDetail.tabs.images'),
       count: (p.images?.length || 0) || undefined },
-    { key: 'purchases',  label: t('propertyDetail.tabs.purchases'),
+    { key: 'purchases',  label: 'Payment Plan',
       count: unitPayments.length || undefined },
   ]
 
