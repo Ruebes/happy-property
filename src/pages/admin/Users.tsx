@@ -289,7 +289,9 @@ export default function AdminUsers() {
     setFormError('')
     try {
       const full_name = `${form.firstName.trim()} ${form.lastName.trim()}`
-      const redirectTo = `${window.location.origin}/login`
+      const redirectTo = form.role === 'eigentuemer'
+        ? 'https://portal.happy-property.com/login'
+        : `${window.location.origin}/login`
 
       // 1. Invite → sends branded "Konto aktivieren" email automatically
       const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(
