@@ -14,6 +14,8 @@ type ModalTab = 'grunddaten' | 'zahlungen' | 'dokumente' | 'verwaltung'
 
 interface Verwalter { id: string; full_name: string }
 
+type UnitLead = { id: string; first_name: string; last_name: string } | null
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmtPrice(v: number | null | undefined): string {
@@ -97,10 +99,11 @@ const EMPTY_PAY = {
 // ── UnitCard ──────────────────────────────────────────────────────────────────
 
 function UnitCard({
-  unit, onClick,
+  unit, onClick, customer,
 }: {
   unit: CrmProjectUnit
   onClick: () => void
+  customer?: UnitLead
 }) {
   const price = unit.price_gross ?? unit.price_net
   return (
@@ -159,6 +162,16 @@ function UnitCard({
           {unit.verwalter && <p>👤 {unit.verwalter.full_name}</p>}
           {unit.is_furnished && <p>🛋️ Möbliert</p>}
         </div>
+
+        {/* Customer badge — shown when unit is linked to a lead via deals */}
+        {customer && (
+          <div className="mt-3 pt-2.5 border-t border-gray-100 flex items-center gap-1.5">
+            <span className="text-[10px]">👤</span>
+            <span className="text-[10px] font-semibold text-gray-700 truncate">
+              {customer.first_name} {customer.last_name}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -172,10 +185,14 @@ export default function ProjectDetail() {
   const { profile } = useAuth()
 
   // ── Core data ────────────────────────────────────────────────────────────────
-  const [project,    setProject]    = useState<CrmProject | null>(null)
-  const [units,      setUnits]      = useState<CrmProjectUnit[]>([])
-  const [verwalters, setVerwalters] = useState<Verwalter[]>([])
-  const [loading,    setLoading]    = useState(true)
+  const [project,      setProject]      = useState<CrmProject | null>(null)
+  const [units,        setUnits]        = useState<CrmProjectUnit[]>([])
+  const [verwalters,   setVerwalters]   = useState<Verwalter[]>([])
+  const [unitLeadMap,  setUnitLeadMap]  = useState<Record<string, UnitLead>>({})
+  const [loading,      setLoading]      = useState(true)
+  const [toast,        setToast]        = useState('')
+
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3500) }
 
   // ── Modal ────────────────────────────────────────────────────────────────────
   const [showModal, setShowModal] = useState(false)
@@ -216,8 +233,26 @@ export default function ProjectDetail() {
         supabase.from('profiles').select('id, full_name').eq('role', 'verwalter').order('full_name'),
       ])
       if (projRes.data) setProject(projRes.data as CrmProject)
-      setUnits((unitsRes.data ?? []) as CrmProjectUnit[])
+      const fetchedUnits = (unitsRes.data ?? []) as CrmProjectUnit[]
+      setUnits(fetchedUnits)
       setVerwalters((verwRes.data ?? []) as Verwalter[])
+
+      // ── Kundenzuordnung: welcher Lead ist welcher Einheit zugewiesen? ──────
+      if (fetchedUnits.length > 0) {
+        const unitIds = fetchedUnits.map(u => u.id)
+        const { data: dealsData } = await supabase
+          .from('deals')
+          .select('unit_id, lead:lead_id(id, first_name, last_name)')
+          .in('unit_id', unitIds)
+          .neq('phase', 'archiviert')
+        const map: Record<string, UnitLead> = {}
+        for (const d of (dealsData ?? []) as unknown as Array<{ unit_id: string; lead: UnitLead }>) {
+          if (d.unit_id && d.lead) map[d.unit_id] = d.lead
+        }
+        setUnitLeadMap(map)
+      } else {
+        setUnitLeadMap({})
+      }
     } finally {
       setLoading(false)
     }
@@ -314,7 +349,7 @@ export default function ProjectDetail() {
   async function handleSaveUnit() {
     if (!form.unit_number.trim() || !projectId) return
     setSaving(true)
-    const wasNotSold = editUnit ? editUnit.status !== 'sold' : false
+    const wasNotSold = editUnit ? editUnit.status !== 'sold' : true   // new units: always offer portal if sold
     const isNowSold  = form.status === 'sold'
     try {
       const payload = {
@@ -339,18 +374,24 @@ export default function ProjectDetail() {
         rental_type:  form.rental_type  || null,
       }
       if (editUnit) {
-        await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
+        const { error } = await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
+        if (error) throw error
       } else {
-        await supabase.from('crm_project_units').insert(payload)
+        const { error } = await supabase.from('crm_project_units').insert(payload)
+        if (error) throw error
       }
       await fetchData()
+      showToast(editUnit ? '✅ Einheit aktualisiert' : '✅ Einheit angelegt')
       setShowModal(false)
-      // If status just changed to 'sold' → offer to send portal access
+      // If status is 'sold' → offer to send portal access
       if (wasNotSold && isNowSold) {
         setPortalSuccess(false)
         setPortalError('')
         setShowPortalDialog(true)
       }
+    } catch (err) {
+      console.error('[ProjectDetail] saveUnit:', err)
+      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
     } finally { setSaving(false) }
   }
 
@@ -506,6 +547,13 @@ export default function ProjectDetail() {
   return (
     <DashboardLayout basePath="/admin/crm">
 
+      {/* Toast */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 bg-gray-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg">
+          {toast}
+        </div>
+      )}
+
       {/* ── Page header ── */}
       <div className="mb-6">
         <button
@@ -574,7 +622,7 @@ export default function ProjectDetail() {
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {bUnits.map(u => (
-                  <UnitCard key={u.id} unit={u} onClick={() => openEdit(u)} />
+                  <UnitCard key={u.id} unit={u} onClick={() => openEdit(u)} customer={unitLeadMap[u.id] ?? undefined} />
                 ))}
               </div>
             </div>
