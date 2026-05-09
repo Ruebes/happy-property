@@ -116,7 +116,7 @@ export default function Templates() {
     portal:    '🔑 Portal-Zugang',
   }
 
-  const PORTAL_PLACEHOLDERS = '{{name}} · {{email}} · {{password}} · {{login_url}}'
+  const PORTAL_PLACEHOLDERS = '{{vorname}} · {{name}} · {{email}} · {{password}} · {{login_url}}'
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -231,7 +231,8 @@ export default function Templates() {
                   {form.category === 'portal' && (
                     <div className="mt-2 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 space-y-1">
                       <p className="font-semibold">Portal-Vorlage – Platzhalter:</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> → Vollständiger Name des Käufers</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{vorname}}'}</code> → Vorname des Käufers</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> → Vollständiger Name</p>
                       <p><code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> → E-Mail-Adresse</p>
                       <p><code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> → Temporäres Passwort (automatisch generiert)</p>
                       <p><code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code> → Link zur Anmeldung</p>

@@ -971,18 +971,20 @@ export default function LeadDetail() {
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
-      const name  = lead ? `${lead.first_name} ${lead.last_name}`.trim() : ''
-      const email = lead?.email ?? ''
-      const subst = (s: string) => s
-        .replace(/\{\{name\}\}/g,  name)
-        .replace(/\{\{email\}\}/g, email)
+      const firstName = lead?.first_name ?? ''
+      const name      = lead ? `${lead.first_name} ${lead.last_name}`.trim() : ''
+      const email     = lead?.email ?? ''
+      const subst     = (s: string) => s
+        .replace(/\{\{vorname\}\}/g, firstName)
+        .replace(/\{\{name\}\}/g,    name)
+        .replace(/\{\{email\}\}/g,   email)
       if (data) {
         setPortalSubject(subst(data.subject))
         setPortalMessage(subst(data.body))
       } else {
-        setPortalSubject('Ihr Zugang zum Happy Property Portal')
+        setPortalSubject('Dein Zugang zum Happy Property Portal')
         setPortalMessage(
-          `Guten Tag ${name},\n\nIhr Zugang zum Happy Property Eigentümer-Portal wurde eingerichtet.\n\nIm Portal haben Sie Zugriff auf Ihre Immobiliendaten, Kaufunterlagen und Zahlungsübersichten.\n\nMit freundlichen Grüßen\nSven Rüprich\nHappy Property`
+          `Hallo ${firstName},\n\ndein Zugang zum Happy Property Eigentümer-Portal ist jetzt eingerichtet.\n\nIm Portal findest du deine Immobiliendaten, Kaufunterlagen und Zahlungsübersichten.\n\nViele Grüße\nSven Rüprich\nHappy Property`
         )
       }
     } finally {

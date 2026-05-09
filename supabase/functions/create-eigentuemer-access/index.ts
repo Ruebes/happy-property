@@ -32,6 +32,7 @@ function generatePassword(): string {
 // ── Platzhalter ersetzen ─────────────────────────────────────────────────────
 function replacePlaceholders(text: string, vars: Record<string, string>): string {
   return text
+    .replace(/\{\{vorname\}\}/g,   vars.vorname   ?? '')
     .replace(/\{\{name\}\}/g,      vars.name      ?? '')
     .replace(/\{\{email\}\}/g,     vars.email     ?? '')
     .replace(/\{\{password\}\}/g,  vars.password  ?? '')
@@ -65,21 +66,22 @@ function buildWelcomeEmail(params: {
   customMessage?: string
 }): { subject: string; html: string } {
   const { fullName, email, password, appUrl, customSubject, customMessage } = params
-  const subject = customSubject?.trim() || 'Ihr Zugang zum Happy Property Portal'
+  const firstName = fullName.split(' ')[0]
+  const subject   = customSubject?.trim() || 'Dein Zugang zum Happy Property Portal'
 
   // Benutzerdefinierter oder Standard-Nachrichtentext
   let bodyHtml: string
   if (customMessage?.trim()) {
-    const vars = { name: fullName, email, password, login_url: `${appUrl}/login` }
+    const vars = { vorname: firstName, name: fullName, email, password, login_url: `${appUrl}/login` }
     bodyHtml = textToHtml(replacePlaceholders(customMessage, vars))
   } else {
     bodyHtml = `
       <p style="margin:0 0 16px;font-size:16px;color:#374151;">
-        Guten Tag, <strong>${fullName}</strong>,
+        Hallo <strong>${firstName}</strong>,
       </p>
       <p style="margin:0 0 24px;font-size:15px;color:#6b7280;line-height:1.6;">
-        Ihr Zugang zum Happy Property Eigentümer-Portal wurde eingerichtet.
-        Sie können sich ab sofort mit folgenden Zugangsdaten anmelden:
+        dein Zugang zum Happy Property Eigentümer-Portal ist jetzt eingerichtet.
+        Du kannst dich ab sofort mit folgenden Zugangsdaten anmelden:
       </p>`
   }
 
@@ -286,7 +288,7 @@ Deno.serve(async (req: Request) => {
           to:      email,
           subject,
           html,
-          content: `Guten Tag ${full_name},\n\nIhre Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändern Sie Ihr Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
+          content: `Hallo ${full_name.split(' ')[0]},\n\ndeine Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändere dein Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
         })
         console.log(`[create-eigentuemer-access] ✓ E-Mail gesendet an: ${email}`)
       } finally {
