@@ -57,6 +57,14 @@ export default function LeadDetail() {
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // Stammdaten edit
+  const [editingLead, setEditingLead] = useState(false)
+  const [leadForm, setLeadForm] = useState({
+    first_name: '', last_name: '', email: '', phone: '', whatsapp: '',
+    country: '', source: 'sonstiges', language: 'de', notes: '', assigned_to: '',
+  })
+  const [savingLead, setSavingLead] = useState(false)
+
   // Activity form
   const [actForm, setActForm] = useState({ type: 'note', direction: 'outbound', subject: '', content: '' })
   const [savingAct, setSavingAct] = useState(false)
@@ -720,6 +728,52 @@ export default function LeadDetail() {
     } catch (err) {
       console.error('[LeadDetail] saveImmoNotes:', err)
       showToast('❌ Fehler')
+    }
+  }
+
+  // ── Stammdaten speichern ────────────────────────────────────────
+  const openLeadEdit = () => {
+    if (!lead) return
+    setLeadForm({
+      first_name:  lead.first_name,
+      last_name:   lead.last_name,
+      email:       lead.email,
+      phone:       lead.phone       ?? '',
+      whatsapp:    lead.whatsapp    ?? '',
+      country:     lead.country     ?? '',
+      source:      lead.source,
+      language:    lead.language,
+      notes:       lead.notes       ?? '',
+      assigned_to: lead.assigned_to ?? '',
+    })
+    setEditingLead(true)
+  }
+
+  const handleSaveLead = async () => {
+    if (!lead || !leadForm.first_name.trim() || !leadForm.email.trim()) return
+    setSavingLead(true)
+    try {
+      const { error } = await supabase.from('leads').update({
+        first_name:  leadForm.first_name.trim(),
+        last_name:   leadForm.last_name.trim(),
+        email:       leadForm.email.trim(),
+        phone:       leadForm.phone.trim()     || null,
+        whatsapp:    leadForm.whatsapp.trim()  || null,
+        country:     leadForm.country.trim()   || null,
+        source:      leadForm.source,
+        language:    leadForm.language,
+        notes:       leadForm.notes.trim()     || null,
+        assigned_to: leadForm.assigned_to      || null,
+      }).eq('id', lead.id)
+      if (error) throw error
+      setEditingLead(false)
+      showToast('✅ Stammdaten gespeichert')
+      await fetchAll()
+    } catch (err) {
+      console.error('[LeadDetail] saveLead:', err)
+      showToast('❌ Fehler beim Speichern')
+    } finally {
+      setSavingLead(false)
     }
   }
 
@@ -1459,62 +1513,208 @@ export default function LeadDetail() {
               <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
                 {/* Stammdaten */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                    {t('crm.masterData', 'Stammdaten')}
-                  </h3>
-                  <dl className="space-y-2 text-sm">
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.name', 'Name')}</dt>
-                      <dd className="text-gray-900 font-medium">{lead.first_name} {lead.last_name}</dd>
-                    </div>
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.lead.email', 'E-Mail')}</dt>
-                      <dd><a href={`mailto:${lead.email}`} className="text-orange-500 hover:underline">{lead.email}</a></dd>
-                    </div>
-                    {lead.phone && (
-                      <div className="flex gap-2">
-                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.phone', 'Telefon')}</dt>
-                        <dd><a href={`tel:${lead.phone}`} className="text-orange-500 hover:underline">{lead.phone}</a></dd>
-                      </div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+                      {t('crm.masterData', 'Stammdaten')}
+                    </h3>
+                    {!editingLead && (
+                      <button
+                        onClick={openLeadEdit}
+                        className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                      >
+                        ✏️ Bearbeiten
+                      </button>
                     )}
-                    {lead.whatsapp && (
+                  </div>
+
+                  {/* ── Ansichtsmodus ── */}
+                  {!editingLead && (
+                    <dl className="space-y-2 text-sm">
                       <div className="flex gap-2">
-                        <dt className="text-gray-500 w-28 flex-shrink-0">WhatsApp</dt>
-                        <dd className="text-gray-900">{lead.whatsapp}</dd>
+                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.name', 'Name')}</dt>
+                        <dd className="text-gray-900 font-medium">{lead.first_name} {lead.last_name}</dd>
                       </div>
-                    )}
-                    {lead.country && (
                       <div className="flex gap-2">
-                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.country', 'Land')}</dt>
-                        <dd className="text-gray-900">{lead.country}</dd>
+                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.lead.email', 'E-Mail')}</dt>
+                        <dd><a href={`mailto:${lead.email}`} className="text-orange-500 hover:underline">{lead.email}</a></dd>
                       </div>
-                    )}
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.source', 'Quelle')}</dt>
-                      <dd>
-                        <span
-                          className="px-2 py-0.5 rounded-full text-xs font-medium"
-                          style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}
+                      {lead.phone && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.phone', 'Telefon')}</dt>
+                          <dd><a href={`tel:${lead.phone}`} className="text-orange-500 hover:underline">{lead.phone}</a></dd>
+                        </div>
+                      )}
+                      {lead.whatsapp && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">WhatsApp</dt>
+                          <dd className="text-gray-900">{lead.whatsapp}</dd>
+                        </div>
+                      )}
+                      {lead.country && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.country', 'Land')}</dt>
+                          <dd className="text-gray-900">{lead.country}</dd>
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.source', 'Quelle')}</dt>
+                        <dd>
+                          <span
+                            className="px-2 py-0.5 rounded-full text-xs font-medium"
+                            style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}
+                          >
+                            {t(`crm.sources.${lead.source}`, lead.source)}
+                          </span>
+                        </dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.language', 'Sprache')}</dt>
+                        <dd className="text-gray-900">{lead.language.toUpperCase()}</dd>
+                      </div>
+                      {lead.assignee && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.assignedTo', 'Zuständig')}</dt>
+                          <dd className="text-gray-900">{lead.assignee.full_name}</dd>
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.createdAt', 'Erstellt')}</dt>
+                        <dd className="text-gray-900">{formatDate(lead.created_at)}</dd>
+                      </div>
+                      {lead.notes && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.notes', 'Notizen')}</dt>
+                          <dd className="text-gray-900 whitespace-pre-wrap">{lead.notes}</dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+
+                  {/* ── Bearbeitungsmodus ── */}
+                  {editingLead && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Vorname *</label>
+                          <input
+                            value={leadForm.first_name}
+                            onChange={e => setLeadForm(f => ({ ...f, first_name: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Nachname</label>
+                          <input
+                            value={leadForm.last_name}
+                            onChange={e => setLeadForm(f => ({ ...f, last_name: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">E-Mail *</label>
+                        <input
+                          type="email"
+                          value={leadForm.email}
+                          onChange={e => setLeadForm(f => ({ ...f, email: e.target.value }))}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Telefon</label>
+                          <input
+                            value={leadForm.phone}
+                            onChange={e => setLeadForm(f => ({ ...f, phone: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                            placeholder="+43 …"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">WhatsApp</label>
+                          <input
+                            value={leadForm.whatsapp}
+                            onChange={e => setLeadForm(f => ({ ...f, whatsapp: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                            placeholder="+43 …"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Land</label>
+                        <input
+                          value={leadForm.country}
+                          onChange={e => setLeadForm(f => ({ ...f, country: e.target.value }))}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                          placeholder="z.B. Deutschland"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Quelle</label>
+                          <select
+                            value={leadForm.source}
+                            onChange={e => setLeadForm(f => ({ ...f, source: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
+                          >
+                            <option value="meta">Meta</option>
+                            <option value="google">Google</option>
+                            <option value="empfehlung">Empfehlung</option>
+                            <option value="sonstiges">Sonstiges</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Sprache</label>
+                          <select
+                            value={leadForm.language}
+                            onChange={e => setLeadForm(f => ({ ...f, language: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
+                          >
+                            <option value="de">Deutsch</option>
+                            <option value="en">English</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Zuständig</label>
+                        <select
+                          value={leadForm.assigned_to}
+                          onChange={e => setLeadForm(f => ({ ...f, assigned_to: e.target.value }))}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
                         >
-                          {t(`crm.sources.${lead.source}`, lead.source)}
-                        </span>
-                      </dd>
-                    </div>
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.language', 'Sprache')}</dt>
-                      <dd className="text-gray-900">{lead.language.toUpperCase()}</dd>
-                    </div>
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.createdAt', 'Erstellt')}</dt>
-                      <dd className="text-gray-900">{formatDate(lead.created_at)}</dd>
-                    </div>
-                    {lead.notes && (
-                      <div className="flex gap-2">
-                        <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.notes', 'Notizen')}</dt>
-                        <dd className="text-gray-900 whitespace-pre-wrap">{lead.notes}</dd>
+                          <option value="">— Niemand —</option>
+                          {staff.map(s => (
+                            <option key={s.id} value={s.id}>{s.full_name}</option>
+                          ))}
+                        </select>
                       </div>
-                    )}
-                  </dl>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">Notizen</label>
+                        <textarea
+                          rows={3}
+                          value={leadForm.notes}
+                          onChange={e => setLeadForm(f => ({ ...f, notes: e.target.value }))}
+                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none"
+                        />
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          onClick={() => setEditingLead(false)}
+                          className="flex-1 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
+                        >
+                          Abbrechen
+                        </button>
+                        <button
+                          onClick={handleSaveLead}
+                          disabled={savingLead || !leadForm.first_name.trim() || !leadForm.email.trim()}
+                          className="flex-1 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
+                          style={{ backgroundColor: '#ff795d' }}
+                        >
+                          {savingLead ? 'Speichert…' : '✓ Speichern'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Deal + Tasks + Property */}
