@@ -642,10 +642,13 @@ export default function PropertyDetail() {
   const [toast, setToast] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
 
   // Payment Plan tab
-  const [linkedUnitId,     setLinkedUnitId]     = useState<string | null>(null)
-  const [unitPayments,     setUnitPayments]     = useState<CrmUnitPayment[]>([])
+  const [linkedUnitId,      setLinkedUnitId]      = useState<string | null>(null)
+  const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
-  const [unitPayLoading,   setUnitPayLoading]   = useState(false)
+  const [eigentuemerDocs,   setEigentuemerDocs]   = useState<CrmUnitDocument[]>([])
+  const [unitPayLoading,    setUnitPayLoading]    = useState(false)
+  const [eigDocUploading,   setEigDocUploading]   = useState(false)
+  const eigDocRef = useRef<HTMLInputElement | null>(null)
   // CRM images + project location
   const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
@@ -694,26 +697,36 @@ export default function PropertyDetail() {
   const fetchDocs = useCallback(async () => {
     if (!id) return
     setDocsLoading(true)
-    const { data } = await supabase
-      .from('documents')
-      .select('id, type, title, file_url, amount_net, amount_gross, creditor, uploaded_at, invoice_number, invoice_date, due_date, paid_at, description, creditor_iban, notes, vat_rate')
-      .eq('property_id', id)
-      .order('uploaded_at', { ascending: false })
-    setDocs((data as DocRecord[]) ?? [])
-    setDocsLoading(false)
+    try {
+      const { data } = await supabase
+        .from('documents')
+        .select('id, type, title, file_url, amount_net, amount_gross, creditor, uploaded_at, invoice_number, invoice_date, due_date, paid_at, description, creditor_iban, notes, vat_rate')
+        .eq('property_id', id)
+        .order('uploaded_at', { ascending: false })
+      setDocs((data as DocRecord[]) ?? [])
+    } catch (err) {
+      console.error('[PropertyDetail] fetchDocs:', err)
+    } finally {
+      setDocsLoading(false)
+    }
   }, [id])
 
   // ── Fetch contracts ──────────────────────────────────────
   const fetchContracts = useCallback(async () => {
     if (!id) return
     setContractsLoading(true)
-    const { data } = await supabase
-      .from('contracts')
-      .select('id, tenant_name, tenant_email, start_date, end_date, monthly_rent, status, signature_token, signed_at')
-      .eq('property_id', id)
-      .order('start_date', { ascending: false })
-    setContracts((data as ContractRecord[]) ?? [])
-    setContractsLoading(false)
+    try {
+      const { data } = await supabase
+        .from('contracts')
+        .select('id, tenant_name, tenant_email, start_date, end_date, monthly_rent, status, signature_token, signed_at')
+        .eq('property_id', id)
+        .order('start_date', { ascending: false })
+      setContracts((data as ContractRecord[]) ?? [])
+    } catch (err) {
+      console.error('[PropertyDetail] fetchContracts:', err)
+    } finally {
+      setContractsLoading(false)
+    }
   }, [id])
 
   useEffect(() => {
@@ -744,7 +757,7 @@ export default function PropertyDetail() {
       setLinkedUnitId(unitData.id)
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
 
-      const [paysRes, docsRes, projRes] = await Promise.all([
+      const [paysRes, docsRes, ownDocsRes, projRes] = await Promise.all([
         supabase
           .from('crm_unit_payments')
           .select('*')
@@ -757,6 +770,12 @@ export default function PropertyDetail() {
           .eq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
         supabase
+          .from('crm_unit_documents')
+          .select('*')
+          .eq('unit_id', unitData.id)
+          .neq('doc_type', 'kaufvertrag')
+          .order('created_at', { ascending: false }),
+        supabase
           .from('crm_projects')
           .select('images, latitude, longitude, name, location')
           .eq('id', (unitData as { project_id: string }).project_id)
@@ -764,6 +783,7 @@ export default function PropertyDetail() {
       ])
       setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
       setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
+      setEigentuemerDocs((ownDocsRes.data ?? []) as CrmUnitDocument[])
       const proj = projRes.data as { images?: string[]; latitude?: number; longitude?: number; name?: string; location?: string } | null
       setCrmProjectImages(proj?.images ?? [])
       if (proj?.latitude && proj?.longitude) {
@@ -1228,6 +1248,45 @@ export default function PropertyDetail() {
       ? { invoice_path: null, invoice_filename: null, invoice_filesize: null }
       : { receipt_path: null, receipt_filename: null, receipt_filesize: null }
     await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+    await fetchUnitPayments()
+  }
+
+  // ── Eigentümer: eigenes Dokument hochladen ────────────────
+  async function handleUploadEigDoc(file: File) {
+    if (!linkedUnitId || !profile?.id) return
+    setEigDocUploading(true)
+    try {
+      const ext  = file.name.split('.').pop() ?? 'pdf'
+      const path = `unit-documents/${linkedUnitId}/eig-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('unit-documents').upload(path, file, { upsert: false })
+      if (upErr) throw upErr
+      const { error: dbErr } = await supabase.from('crm_unit_documents').insert({
+        unit_id:     linkedUnitId,
+        project_id:  (await supabase.from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()).data?.project_id,
+        name:        file.name.replace(/\.[^.]+$/, ''),
+        file_path:   path,
+        file_name:   file.name,
+        file_size:   file.size,
+        doc_type:    'zahlungsbeleg',
+        uploaded_by: profile.id,
+      })
+      if (dbErr) throw dbErr
+      await fetchUnitPayments()
+      setToast({ msg: 'Dokument hochgeladen ✓', type: 'success' })
+    } catch (err) {
+      console.error('[PropertyDetail] eigDoc upload:', err)
+      setToast({ msg: 'Upload fehlgeschlagen.', type: 'error' })
+    } finally {
+      setEigDocUploading(false)
+      if (eigDocRef.current) eigDocRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteEigDoc(doc: CrmUnitDocument) {
+    if (!window.confirm(`„${doc.name}" löschen?`)) return
+    await supabase.storage.from('unit-documents').remove([doc.file_path])
+    await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
     await fetchUnitPayments()
   }
 
@@ -1825,6 +1884,100 @@ export default function PropertyDetail() {
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {/* ── Meine Unterlagen (Eigentümer-Upload) ──────────── */}
+        {(isEigentuemer || canEdit) && linkedUnitId && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body">
+                📎 Meine Unterlagen
+              </h3>
+              <div>
+                <input
+                  ref={eigDocRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) handleUploadEigDoc(file)
+                    if (e.target) e.target.value = ''
+                  }}
+                />
+                <button
+                  onClick={() => eigDocRef.current?.click()}
+                  disabled={eigDocUploading}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold
+                             font-body text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                  style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  {eigDocUploading ? (
+                    <>
+                      <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                      Hochladen…
+                    </>
+                  ) : (
+                    <><span className="text-sm">+</span> Dokument hochladen</>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {eigentuemerDocs.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 font-body">
+                <div className="text-3xl mb-2">📎</div>
+                <p className="text-sm">Noch keine eigenen Dokumente hochgeladen.</p>
+                <p className="text-xs mt-1 text-gray-300">
+                  Hier kannst du Reservierungen, Zahlungsbelege und weitere Unterlagen ablegen.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                <table className="w-full text-sm font-body">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Dokument</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Datum</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Aktionen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eigentuemerDocs.map((doc, i) => (
+                      <tr key={doc.id}
+                          className={`hover:bg-gray-50 transition-colors ${i < eigentuemerDocs.length - 1 ? 'border-b border-gray-50' : ''}`}>
+                        <td className="px-4 py-3 font-medium text-hp-black">
+                          {doc.name}
+                          {doc.notes && <div className="text-xs text-gray-400 mt-0.5">{doc.notes}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">{fmtDate(doc.created_at)}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={async () => {
+                                const { data } = await supabase.storage
+                                  .from('unit-documents')
+                                  .createSignedUrl(doc.file_path, 300)
+                                if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                              }}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
+                                         text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                              Öffnen
+                            </button>
+                            <button
+                              onClick={() => handleDeleteEigDoc(doc)}
+                              className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
+                                         text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
+                              ✕
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>

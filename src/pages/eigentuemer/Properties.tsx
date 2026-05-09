@@ -31,6 +31,7 @@ export default function EigentuemerProperties() {
   const [properties, setProperties] = useState<PropertyCard[]>([])
   const [loading,    setLoading]    = useState(true)
   const [search,     setSearch]     = useState('')
+  const [crmImages,  setCrmImages]  = useState<Record<string, string>>({}) // property_id → first CRM project image
 
   // ── Fetch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -47,7 +48,27 @@ export default function EigentuemerProperties() {
           .order('project_name')
 
         if (cancelled) return
-        setProperties((data ?? []) as PropertyCard[])
+        const propList = (data ?? []) as PropertyCard[]
+        setProperties(propList)
+
+        // Fetch CRM project images for properties without own images
+        const noImgIds = propList.filter(p => !p.images?.length).map(p => p.id)
+        if (noImgIds.length > 0) {
+          const { data: unitData } = await supabase
+            .from('crm_project_units')
+            .select('property_id, project:crm_projects(images)')
+            .in('property_id', noImgIds)
+          if (!cancelled && unitData) {
+            const imgMap: Record<string, string> = {}
+            for (const u of unitData) {
+              const imgs = (u.project as { images?: string[] } | null)?.images
+              if (imgs?.length && u.property_id && !imgMap[u.property_id]) {
+                imgMap[u.property_id] = imgs[0]
+              }
+            }
+            setCrmImages(imgMap)
+          }
+        }
       } catch (err) {
         console.error('[Eigentuemer/Properties] load:', err)
       } finally {
@@ -128,9 +149,9 @@ export default function EigentuemerProperties() {
 
               {/* Bild */}
               <div className="relative h-44 bg-gray-100 overflow-hidden">
-                {p.images?.[0] ? (
+                {(p.images?.[0] || crmImages[p.id]) ? (
                   <img
-                    src={p.images[0]}
+                    src={p.images?.[0] ?? crmImages[p.id]}
                     alt={p.project_name}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 ) : (

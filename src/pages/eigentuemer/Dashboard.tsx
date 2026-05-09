@@ -27,6 +27,7 @@ export default function EigentuemerDashboard() {
   const [bookingCount,  setBookingCount]  = useState<number | null>(null)
   const [docCount,      setDocCount]      = useState<number | null>(null)
   const [loading,       setLoading]       = useState(true)
+  const [crmImages,     setCrmImages]     = useState<Record<string, string>>({}) // property_id → first CRM project image
 
   // ── Fetch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -55,7 +56,26 @@ export default function EigentuemerDashboard() {
 
         const propIds = propList.map(p => p.id)
 
-        // 2. Buchungen + Dokumente parallel zählen
+        // 2a. CRM-Projektbilder für Properties ohne eigene Bilder holen
+        const noImgIds = propList.filter(p => !p.images?.length).map(p => p.id)
+        if (noImgIds.length > 0) {
+          const { data: unitData } = await supabase
+            .from('crm_project_units')
+            .select('property_id, project:crm_projects(images)')
+            .in('property_id', noImgIds)
+          if (!cancelled && unitData) {
+            const imgMap: Record<string, string> = {}
+            for (const u of unitData) {
+              const imgs = (u.project as { images?: string[] } | null)?.images
+              if (imgs?.length && u.property_id && !imgMap[u.property_id]) {
+                imgMap[u.property_id] = imgs[0]
+              }
+            }
+            setCrmImages(imgMap)
+          }
+        }
+
+        // 2b. Buchungen + Dokumente parallel zählen
         const [bookRes, docRes] = await Promise.all([
           supabase
             .from('bookings')
@@ -204,8 +224,8 @@ export default function EigentuemerDashboard() {
 
                 {/* Thumbnail oder Placeholder */}
                 <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-gray-100 flex items-center justify-center">
-                  {p.images?.[0] ? (
-                    <img src={p.images[0]} alt={p.project_name}
+                  {(p.images?.[0] || crmImages[p.id]) ? (
+                    <img src={p.images?.[0] ?? crmImages[p.id]} alt={p.project_name}
                          className="w-full h-full object-cover" />
                   ) : (
                     <span className="text-xl">{TYPE_ICON[p.type] ?? '🏠'}</span>
