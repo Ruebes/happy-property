@@ -4,11 +4,21 @@ import { supabase } from '../../lib/supabase'
 import type { CrmProject } from '../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../lib/crmTypes'
 
+interface AvailableUnit {
+  id: string
+  unit_number: string
+  price_net: number | null
+  size_sqm: number | null
+  bedrooms: number
+  status: string
+}
+
 interface SelectedProjectEntry {
   project: CrmProject
   unit_numbers: string
   price_net: string
   notes: string
+  selected_unit_id: string | null   // direkt gewählte Unit
 }
 
 interface ProjectSelectionModalProps {
@@ -38,7 +48,7 @@ export default function ProjectSelectionModal({
       const [projRes, existRes] = await Promise.all([
         supabase
           .from('crm_projects')
-          .select('*, units:crm_project_units(id,unit_number,price_net,status)')
+          .select('*, units:crm_project_units(id,unit_number,price_net,size_sqm,bedrooms,status)')
           .neq('status', 'sold_out')
           .order('name'),
         supabase
@@ -76,8 +86,19 @@ export default function ProjectSelectionModal({
     setSelected(prev => {
       const exists = prev.find(e => e.project.id === project.id)
       if (exists) return prev.filter(e => e.project.id !== project.id)
-      return [...prev, { project, unit_numbers: '', price_net: '', notes: '' }]
+      return [...prev, { project, unit_numbers: '', price_net: '', notes: '', selected_unit_id: null }]
     })
+  }
+
+  const selectUnit = (projectId: string, unit: AvailableUnit) => {
+    setSelected(prev => prev.map(e =>
+      e.project.id === projectId ? {
+        ...e,
+        unit_numbers:     unit.unit_number,
+        price_net:        unit.price_net != null ? String(unit.price_net) : e.price_net,
+        selected_unit_id: e.selected_unit_id === unit.id ? null : unit.id,
+      } : e
+    ))
   }
 
   const updateEntry = (projectId: string, field: 'unit_numbers' | 'price_net' | 'notes', value: string) => {
@@ -152,7 +173,7 @@ export default function ProjectSelectionModal({
             filtered.map(project => {
               const isSelected = selected.some(e => e.project.id === project.id)
               const entry = selected.find(e => e.project.id === project.id)
-              const availableUnits = (project.units ?? []).filter((u: {status: string}) => u.status === 'available')
+              const availableUnits = ((project.units ?? []) as AvailableUnit[]).filter(u => u.status === 'available')
 
               return (
                 <div key={project.id}
@@ -182,7 +203,52 @@ export default function ProjectSelectionModal({
 
                   {/* Expanded form when selected */}
                   {isSelected && entry && (
-                    <div className="px-3 pb-3 space-y-2 border-t border-orange-200 pt-3">
+                    <div className="px-3 pb-3 space-y-3 border-t border-orange-200 pt-3">
+
+                      {/* Verfügbare Units direkt auswählen */}
+                      {availableUnits.length > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-gray-500 mb-1.5">
+                            Verfügbare Einheiten auswählen:
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {availableUnits.map(unit => {
+                              const isChosen = entry.selected_unit_id === unit.id
+                              return (
+                                <button
+                                  key={unit.id}
+                                  type="button"
+                                  onClick={() => selectUnit(project.id, unit)}
+                                  className={`px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors text-left ${
+                                    isChosen
+                                      ? 'border-orange-400 bg-orange-500 text-white'
+                                      : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 hover:bg-orange-50'
+                                  }`}
+                                >
+                                  <span className="font-bold">Nr. {unit.unit_number}</span>
+                                  {(unit.size_sqm != null || unit.bedrooms > 0) && (
+                                    <span className={`ml-1.5 ${isChosen ? 'text-white/80' : 'text-gray-400'}`}>
+                                      {unit.size_sqm != null && `${unit.size_sqm} m²`}
+                                      {unit.size_sqm != null && unit.bedrooms > 0 && ' · '}
+                                      {unit.bedrooms > 0 && `${unit.bedrooms} SZ`}
+                                    </span>
+                                  )}
+                                  {unit.price_net != null && (
+                                    <span className={`block text-[10px] mt-0.5 ${isChosen ? 'text-white/70' : 'text-gray-400'}`}>
+                                      € {unit.price_net.toLocaleString('de-DE')} netto
+                                    </span>
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {availableUnits.length === 0 && (
+                        <p className="text-xs text-gray-400 italic">Keine verfügbaren Einheiten im Projekt.</p>
+                      )}
+
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="text-xs text-gray-500 block mb-1">
