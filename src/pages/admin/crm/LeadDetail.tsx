@@ -99,16 +99,20 @@ export default function LeadDetail() {
   } | null>(null)
 
   // Unit edit modal
-  const [showUnitEdit,  setShowUnitEdit]  = useState(false)
-  const [unitEditData,  setUnitEditData]  = useState<CrmProjectUnit | null>(null)
-  const [savingUnit,    setSavingUnit]    = useState(false)
-  const [unitEditForm,  setUnitEditForm]  = useState({
+  const [showUnitEdit,        setShowUnitEdit]        = useState(false)
+  const [unitEditData,        setUnitEditData]        = useState<CrmProjectUnit | null>(null)
+  const [savingUnit,          setSavingUnit]          = useState(false)
+  const [unitEditForm,        setUnitEditForm]        = useState({
     unit_number: '', block: '', type: 'apartment', floor: '',
     bedrooms: '', bathrooms: '', size_sqm: '', terrace_sqm: '',
     price_net: '', price_gross: '', vat_rate: '0',
     status: 'available', is_furnished: false, rental_type: '',
     handover_date: '', notes: '',
   })
+  // Portal-Zugangs-Check (wird beim Öffnen des Unit-Edit-Modals geprüft)
+  const [portalAccessChecked, setPortalAccessChecked] = useState(false)
+  const [customerHasAccess,   setCustomerHasAccess]   = useState(false)
+  const [checkingAccess,      setCheckingAccess]      = useState(false)
 
   // Portal access (always accessible)
   const [portalOpen,       setPortalOpen]       = useState(false)
@@ -808,30 +812,6 @@ export default function LeadDetail() {
     await fetchAll()
   }
 
-  // ── Unit-Edit öffnen ─────────────────────────────────────────────
-  function openUnitEdit(unit: CrmProjectUnit) {
-    setUnitEditData(unit)
-    setUnitEditForm({
-      unit_number:   unit.unit_number,
-      block:         unit.block         ?? '',
-      type:          unit.type,
-      floor:         unit.floor         != null ? String(unit.floor)        : '',
-      bedrooms:      String(unit.bedrooms),
-      bathrooms:     String(unit.bathrooms),
-      size_sqm:      unit.size_sqm      != null ? String(unit.size_sqm)     : '',
-      terrace_sqm:   unit.terrace_sqm   != null ? String(unit.terrace_sqm)  : '',
-      price_net:     unit.price_net     != null ? String(unit.price_net)    : '',
-      price_gross:   unit.price_gross   != null ? String(unit.price_gross)  : '',
-      vat_rate:      String(unit.vat_rate ?? 0),
-      status:        unit.status,
-      is_furnished:  unit.is_furnished,
-      rental_type:   unit.rental_type   ?? '',
-      handover_date: unit.handover_date ? unit.handover_date.slice(0, 10)  : '',
-      notes:         unit.notes         ?? '',
-    })
-    setShowUnitEdit(true)
-  }
-
   async function handleSaveUnit() {
     if (!unitEditData) return
     setSavingUnit(true)
@@ -879,8 +859,12 @@ export default function LeadDetail() {
           },
         } : null)
       }
-      setShowUnitEdit(false)
       showToast('✅ Einheit gespeichert')
+      setShowUnitEdit(false)
+      // Kein Portalzugang → Portal-Dialog öffnen
+      if (portalAccessChecked && !customerHasAccess) {
+        await openPortal()
+      }
     } catch (err) {
       console.error('[LeadDetail] saveUnit:', err)
       showToast('❌ Fehler beim Speichern')
@@ -889,20 +873,78 @@ export default function LeadDetail() {
     }
   }
 
-  // ── Aktivieren: unit schon zugewiesen → edit; sonst → picker ────
+  // ── Portal-Zugangs-Check ─────────────────────────────────────────
+  async function checkCustomerPortalAccess(): Promise<boolean> {
+    if (!lead?.email) return false
+    const { data } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', lead.email)
+      .eq('role', 'eigentuemer')
+      .maybeSingle()
+    return !!data
+  }
+
+  // ── Unit-Edit öffnen + Portal-Check im Hintergrund ───────────────
+  function openUnitEdit(unit: CrmProjectUnit) {
+    setUnitEditData(unit)
+    setUnitEditForm({
+      unit_number:   unit.unit_number,
+      block:         unit.block         ?? '',
+      type:          unit.type,
+      floor:         unit.floor         != null ? String(unit.floor)        : '',
+      bedrooms:      String(unit.bedrooms),
+      bathrooms:     String(unit.bathrooms),
+      size_sqm:      unit.size_sqm      != null ? String(unit.size_sqm)     : '',
+      terrace_sqm:   unit.terrace_sqm   != null ? String(unit.terrace_sqm)  : '',
+      price_net:     unit.price_net     != null ? String(unit.price_net)    : '',
+      price_gross:   unit.price_gross   != null ? String(unit.price_gross)  : '',
+      vat_rate:      String(unit.vat_rate ?? 0),
+      status:        unit.status,
+      is_furnished:  unit.is_furnished,
+      rental_type:   unit.rental_type   ?? '',
+      handover_date: unit.handover_date ? unit.handover_date.slice(0, 10)  : '',
+      notes:         unit.notes         ?? '',
+    })
+    setPortalAccessChecked(false)
+    setCustomerHasAccess(false)
+    setShowUnitEdit(true)
+    // Portal-Zugangs-Check asynchron im Hintergrund
+    setCheckingAccess(true)
+    checkCustomerPortalAccess().then(hasAccess => {
+      setCustomerHasAccess(hasAccess)
+      setPortalAccessChecked(true)
+      setCheckingAccess(false)
+    })
+  }
+
+  // ── Aktivieren: unit_id → edit; sonst picker ─────────────────────
   async function handleActivateProject(projectId: string) {
+    // 1. deal.unit_id (persistiert nach Reload — zuverlässigste Quelle)
+    if (deal?.unit_id) {
+      const { data } = await supabase
+        .from('crm_project_units')
+        .select('*')
+        .eq('id', deal.unit_id)
+        .maybeSingle()
+      if (data) { openUnitEdit(data as CrmProjectUnit); return }
+    }
+    // 2. in-memory pickedUnit (nur solange Seite nicht neu geladen)
+    if (pickedUnit) {
+      openUnitEdit(pickedUnit.unit)
+      return
+    }
+    // 3. deal.property_id Fallback
     if (deal?.property_id) {
-      const { data: unitData } = await supabase
+      const { data } = await supabase
         .from('crm_project_units')
         .select('*')
         .eq('property_id', deal.property_id)
         .eq('project_id', projectId)
         .maybeSingle()
-      if (unitData) {
-        openUnitEdit(unitData as CrmProjectUnit)
-        return
-      }
+      if (data) { openUnitEdit(data as CrmProjectUnit); return }
     }
+    // 4. Noch keine Einheit → Picker öffnen
     setUnitPickerProjectId(projectId)
     setShowUnitPicker(true)
   }
@@ -913,30 +955,26 @@ export default function LeadDetail() {
     setPickedUnit({ unit, projectName: project.name })
 
     try {
-      // 1. Mark unit as sold
-      await supabase
-        .from('crm_project_units')
-        .update({ status: 'sold' })
-        .eq('id', unit.id)
+      // 1. Einheit als verkauft markieren
+      await supabase.from('crm_project_units').update({ status: 'sold' }).eq('id', unit.id)
 
-      // 2. If unit has a linked property, attach it to the deal
-      if (unit.property_id && deal) {
-        await supabase
-          .from('deals')
-          .update({ property_id: unit.property_id })
-          .eq('id', deal.id)
+      // 2. unit_id immer speichern; property_id wenn vorhanden
+      if (deal) {
+        const dealUpdate: Record<string, unknown> = { unit_id: unit.id }
+        if (unit.property_id) dealUpdate.property_id = unit.property_id
+        await supabase.from('deals').update(dealUpdate).eq('id', deal.id)
       }
 
-      // 3. Activity log
+      // 3. Aktivität loggen
       const unitLabel = `${project.name}${unit.block ? ` · Block ${unit.block}` : ''} · Nr. ${unit.unit_number}`
       await supabase.from('activities').insert({
-        lead_id:     id,
-        deal_id:     deal?.id ?? null,
-        type:        'note',
-        direction:   'outbound',
-        subject:     'Wohnung zugewiesen',
-        content:     `${unitLabel} wurde dem Lead zugewiesen und als Verkauft markiert.`,
-        created_by:  profile?.id ?? null,
+        lead_id:      id,
+        deal_id:      deal?.id ?? null,
+        type:         'note',
+        direction:    'outbound',
+        subject:      'Wohnung zugewiesen',
+        content:      `${unitLabel} wurde dem Lead zugewiesen und als Verkauft markiert.`,
+        created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
 
@@ -945,8 +983,8 @@ export default function LeadDetail() {
       console.error('[LeadDetail] handleUnitAssign:', err)
     }
 
-    // 4. Open portal dialog (fetches template + pre-fills)
-    await openPortal()
+    // 4. Unit-Edit öffnen (Portal-Check läuft darin automatisch)
+    openUnitEdit(unit)
   }
 
   // ── Portal access send ───────────────────────────────────────────
@@ -2901,17 +2939,43 @@ export default function LeadDetail() {
             </div>
 
             {/* Footer */}
-            <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
-              <button onClick={() => setShowUnitEdit(false)}
-                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
-                Abbrechen
-              </button>
-              <button onClick={handleSaveUnit} disabled={savingUnit || !unitEditForm.unit_number.trim()}
-                className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
-                style={{ backgroundColor: '#ff795d' }}>
-                {savingUnit && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                {savingUnit ? 'Speichert…' : '✓ Speichern'}
-              </button>
+            <div className="px-6 pb-4 border-t border-gray-100 flex-shrink-0 space-y-3 pt-4">
+
+              {/* Portal-Zugangs-Status */}
+              {checkingAccess && (
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-[#ff795d] rounded-full animate-spin" />
+                  Prüfe Portalzugang…
+                </div>
+              )}
+              {portalAccessChecked && customerHasAccess && (
+                <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-2.5 text-xs text-green-700 flex items-center gap-2">
+                  <span>✅</span>
+                  <span><strong>{lead?.first_name}</strong> hat bereits Portalzugang — kein erneuter Versand nötig.</span>
+                </div>
+              )}
+              {portalAccessChecked && !customerHasAccess && (
+                <div className="bg-orange-50 border border-orange-100 rounded-xl px-4 py-2.5 text-xs text-orange-700 flex items-center gap-2">
+                  <span>📧</span>
+                  <span>Nach dem Speichern wird der Portalzugang-Dialog geöffnet.</span>
+                </div>
+              )}
+
+              <div className="flex gap-3">
+                <button onClick={() => setShowUnitEdit(false)}
+                  className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
+                  Abbrechen
+                </button>
+                <button onClick={handleSaveUnit} disabled={savingUnit || !unitEditForm.unit_number.trim()}
+                  className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
+                  style={{ backgroundColor: '#ff795d' }}>
+                  {savingUnit && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                  {savingUnit ? 'Speichert…'
+                    : portalAccessChecked && !customerHasAccess
+                      ? '✓ Speichern & Portalzugang senden'
+                      : '✓ Speichern'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

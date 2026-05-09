@@ -43,6 +43,7 @@ export interface Deal {
   id:                           string
   lead_id:                      string
   property_id:                  string | null
+  unit_id:                      string | null   // direkte CRM-Einheit
   phase:                        DealPhase
   developer:                    string | null
   registration_sent_at:         string | null
