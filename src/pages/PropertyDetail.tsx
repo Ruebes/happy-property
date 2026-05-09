@@ -646,9 +646,10 @@ export default function PropertyDetail() {
   const [unitPayments,     setUnitPayments]     = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [unitPayLoading,   setUnitPayLoading]   = useState(false)
-  // CRM images
+  // CRM images + project location
   const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
+  const [crmProjectCoords, setCrmProjectCoords] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
   const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
@@ -757,23 +758,29 @@ export default function PropertyDetail() {
           .order('created_at', { ascending: false }),
         supabase
           .from('crm_projects')
-          .select('images')
+          .select('images, latitude, longitude, name, location')
           .eq('id', (unitData as { project_id: string }).project_id)
           .maybeSingle(),
       ])
       setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
       setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
-      setCrmProjectImages((projRes.data as { images?: string[] } | null)?.images ?? [])
+      const proj = projRes.data as { images?: string[]; latitude?: number; longitude?: number; name?: string; location?: string } | null
+      setCrmProjectImages(proj?.images ?? [])
+      if (proj?.latitude && proj?.longitude) {
+        setCrmProjectCoords({ lat: proj.latitude, lng: proj.longitude, name: proj.name ?? proj.location ?? '' })
+      } else if (proj?.location) {
+        setCrmProjectCoords({ lat: 0, lng: 0, name: proj.location })
+      } else {
+        setCrmProjectCoords(null)
+      }
     } finally {
       setUnitPayLoading(false)
     }
   }, [id])
 
   useEffect(() => {
-    if (activeTab === 'purchases' || activeTab === 'contracts' || activeTab === 'images') {
-      fetchUnitPayments()
-    }
-  }, [activeTab, fetchUnitPayments])
+    fetchUnitPayments()
+  }, [fetchUnitPayments])
 
   // ── Generic doc upload ───────────────────────────────────
   async function uploadDoc(
@@ -1294,15 +1301,38 @@ export default function PropertyDetail() {
 
         {/* ── Lage (Google Maps) ────────────────────────── */}
         {(() => {
+          // 1. Vollständige Adresse aus properties
           const parts = [
             [p.street, p.house_number].filter(Boolean).join(' '),
             [p.zip, p.city].filter(Boolean).join(' '),
           ].filter(Boolean)
-          if (parts.length < 2) return null        // Adresse unvollständig → ausblenden
-          const address  = parts.join(', ')
-          const encoded  = encodeURIComponent(address)
-          const embedUrl = `https://maps.google.com/maps?q=${encoded}&output=embed&z=15`
-          const mapsUrl  = `https://maps.google.com/maps?q=${encoded}`
+          const hasFullAddress = parts.length >= 2
+
+          let embedUrl: string
+          let mapsUrl:  string
+          let label:    string
+
+          if (hasFullAddress) {
+            const address = parts.join(', ')
+            const enc     = encodeURIComponent(address)
+            embedUrl = `https://maps.google.com/maps?q=${enc}&output=embed&z=15`
+            mapsUrl  = `https://maps.google.com/maps?q=${enc}`
+            label    = address
+          } else if (crmProjectCoords) {
+            // 2. Fallback: CRM-Projektkoordinaten oder Standortname
+            if (crmProjectCoords.lat !== 0) {
+              embedUrl = `https://maps.google.com/maps?q=${crmProjectCoords.lat},${crmProjectCoords.lng}&output=embed&z=15`
+              mapsUrl  = `https://maps.google.com/maps?q=${crmProjectCoords.lat},${crmProjectCoords.lng}`
+            } else {
+              const enc = encodeURIComponent(crmProjectCoords.name)
+              embedUrl  = `https://maps.google.com/maps?q=${enc}&output=embed&z=13`
+              mapsUrl   = `https://maps.google.com/maps?q=${enc}`
+            }
+            label = crmProjectCoords.name
+          } else {
+            return null   // Keine Standortdaten vorhanden
+          }
+
           return (
             <div>
               <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
@@ -1317,7 +1347,7 @@ export default function PropertyDetail() {
                   allowFullScreen
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
-                  title={address}
+                  title={label}
                 />
               </div>
               <a
