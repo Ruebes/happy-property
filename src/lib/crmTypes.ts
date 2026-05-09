@@ -194,6 +194,7 @@ export interface CrmProjectUnit {
   rental_type:    UnitRentalType | null
   verwalter_id:   string | null
   is_completed:   boolean
+  images:         string[]
   created_at:     string
   updated_at:     string
   // joined

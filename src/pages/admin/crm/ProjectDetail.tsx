@@ -10,7 +10,7 @@ import type {
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
-type ModalTab = 'grunddaten' | 'zahlungen' | 'dokumente' | 'verwaltung'
+type ModalTab = 'grunddaten' | 'bilder' | 'zahlungen' | 'dokumente' | 'verwaltung'
 
 interface Verwalter { id: string; full_name: string }
 
@@ -114,11 +114,18 @@ function UnitCard({
                  hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer overflow-hidden"
       onClick={onClick}
     >
-      {/* Status colour bar */}
-      <div
-        className="h-1.5"
-        style={{ backgroundColor: unit.is_completed ? '#22c55e' : STATUS_BAR[unit.status] }}
-      />
+      {/* Unit image thumbnail (if available) */}
+      {unit.images?.length > 0 ? (
+        <div className="h-28 overflow-hidden">
+          <img src={unit.images[0]} alt={unit.unit_number} className="w-full h-full object-cover" />
+        </div>
+      ) : (
+        /* Status colour bar */
+        <div
+          className="h-1.5"
+          style={{ backgroundColor: unit.is_completed ? '#22c55e' : STATUS_BAR[unit.status] }}
+        />
+      )}
 
       <div className="p-4">
         {/* Header row */}
@@ -195,6 +202,29 @@ function UnitCard({
   )
 }
 
+// ── Unit image helpers ────────────────────────────────────────────────────────
+
+const UNIT_IMG_BUCKET = 'unit-images'
+
+async function uploadUnitImage(file: File, unitId: string): Promise<string | null> {
+  const ext  = file.name.split('.').pop() ?? 'jpg'
+  const path = `units/${unitId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  const { error } = await supabase.storage
+    .from(UNIT_IMG_BUCKET)
+    .upload(path, file, { cacheControl: '3600', upsert: false })
+  if (error) return null
+  const { data } = supabase.storage.from(UNIT_IMG_BUCKET).getPublicUrl(path)
+  return data.publicUrl
+}
+
+async function deleteUnitImage(url: string) {
+  const marker = `/${UNIT_IMG_BUCKET}/`
+  const idx = url.indexOf(marker)
+  if (idx === -1) return
+  const path = url.slice(idx + marker.length)
+  await supabase.storage.from(UNIT_IMG_BUCKET).remove([path])
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ProjectDetail() {
@@ -218,6 +248,11 @@ export default function ProjectDetail() {
   const [tab,       setTab]       = useState<ModalTab>('grunddaten')
   const [saving,    setSaving]    = useState(false)
   const [form,      setForm]      = useState({ ...EMPTY_FORM })
+
+  // ── Unit Images ──────────────────────────────────────────────────────────────
+  const [unitImages,        setUnitImages]        = useState<string[]>([])
+  const [uploadingUnitImg,  setUploadingUnitImg]  = useState(false)
+  const unitImgInputRef = useRef<HTMLInputElement>(null)
 
   // ── Payments ─────────────────────────────────────────────────────────────────
   const [payments,   setPayments]   = useState<CrmUnitPayment[]>([])
@@ -392,6 +427,7 @@ export default function ProjectDetail() {
     setForm({ ...EMPTY_FORM })
     setPayments([])
     setDocuments([])
+    setUnitImages([])
     setTab('grunddaten')
     setShowModal(true)
   }
@@ -418,6 +454,7 @@ export default function ProjectDetail() {
       verwalter_id: unit.verwalter_id ?? '',
       rental_type:  unit.rental_type  ?? '',
     })
+    setUnitImages(unit.images ?? [])
     setTab('grunddaten')
     setShowModal(true)
     fetchPayments(unit.id)
@@ -430,6 +467,53 @@ export default function ProjectDetail() {
     setPendingFile(null)
     setEditPayId(null)
     setPayForm({ ...EMPTY_PAY })
+  }
+
+  // ── Unit image upload / delete ───────────────────────────────────────────────
+  async function handleUploadUnitImages(files: FileList) {
+    if (!editUnit && !form.unit_number.trim()) return
+    setUploadingUnitImg(true)
+    try {
+      // If new unit: we don't have an id yet → save first, then upload
+      // For existing units upload immediately
+      const unitId = editUnit?.id
+      if (!unitId) {
+        showToast('⚠ Bitte erst Wohnung speichern, dann Bilder hochladen')
+        return
+      }
+      const newUrls: string[] = []
+      for (let i = 0; i < files.length; i++) {
+        const url = await uploadUnitImage(files[i], unitId)
+        if (url) newUrls.push(url)
+      }
+      if (newUrls.length === 0) { showToast('❌ Upload fehlgeschlagen'); return }
+      const updated = [...unitImages, ...newUrls]
+      const { error } = await supabase.from('crm_project_units')
+        .update({ images: updated })
+        .eq('id', unitId)
+      if (error) throw error
+      setUnitImages(updated)
+      showToast(`✅ ${newUrls.length} Bild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+      await fetchData()
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+    } finally {
+      setUploadingUnitImg(false)
+      if (unitImgInputRef.current) unitImgInputRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteUnitImage(url: string) {
+    if (!editUnit) return
+    const updated = unitImages.filter(u => u !== url)
+    await deleteUnitImage(url)
+    const { error } = await supabase.from('crm_project_units')
+      .update({ images: updated })
+      .eq('id', editUnit.id)
+    if (!error) {
+      setUnitImages(updated)
+      await fetchData()
+    }
   }
 
   // ── Price auto-calculation ───────────────────────────────────────────────────
@@ -473,6 +557,7 @@ export default function ProjectDetail() {
         is_completed: form.is_completed,
         verwalter_id: form.verwalter_id || null,
         rental_type:  form.rental_type  || null,
+        images:       unitImages,
       }
       if (editUnit) {
         const { error } = await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
@@ -773,6 +858,7 @@ export default function ProjectDetail() {
             <div className="flex border-b border-gray-100 px-6 overflow-x-auto">
               {([
                 { id: 'grunddaten',  label: 'Grunddaten' },
+                { id: 'bilder',      label: `Bilder${unitImages.length > 0 ? ` (${unitImages.length})` : ''}` },
                 { id: 'zahlungen',   label: `Zahlungen${payments.length > 0 ? ` (${payments.length})` : ''}` },
                 { id: 'dokumente',   label: `Dokumente${documents.length > 0 ? ` (${documents.length})` : ''}` },
                 { id: 'verwaltung',  label: 'Verwaltung' },
@@ -989,6 +1075,56 @@ export default function ProjectDetail() {
                       onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     />
                   </div>
+                </div>
+              )}
+
+              {/* ── Bilder ───────────────────────────────────────────────────── */}
+              {tab === 'bilder' && editUnit && (
+                <div className="space-y-4">
+                  {/* Upload button */}
+                  <div>
+                    <input
+                      type="file"
+                      ref={unitImgInputRef}
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={e => { if (e.target.files?.length) handleUploadUnitImages(e.target.files) }}
+                    />
+                    <button
+                      onClick={() => unitImgInputRef.current?.click()}
+                      disabled={uploadingUnitImg}
+                      className="w-full border-2 border-dashed border-gray-200 rounded-xl py-6 text-sm text-gray-400
+                                 hover:border-[#ff795d] hover:text-[#ff795d] transition-colors disabled:opacity-50"
+                    >
+                      {uploadingUnitImg ? '⏳ Wird hochgeladen…' : '📷 Bilder hochladen (mehrere möglich)'}
+                    </button>
+                  </div>
+
+                  {/* Image grid */}
+                  {unitImages.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-4">Noch keine Bilder hochgeladen.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-3">
+                      {unitImages.map((url, idx) => (
+                        <div key={url} className="relative group rounded-xl overflow-hidden aspect-video bg-gray-100">
+                          <img src={url} alt={`Bild ${idx + 1}`} className="w-full h-full object-cover" />
+                          <button
+                            onClick={() => handleDeleteUnitImage(url)}
+                            className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs
+                                       flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity
+                                       hover:bg-red-600"
+                          >✕</button>
+                          {idx === 0 && (
+                            <span className="absolute bottom-1 left-1 text-[10px] bg-black/50 text-white px-1.5 py-0.5 rounded-full">
+                              Titelbild
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400">Das erste Bild wird als Vorschau auf der Einheitskarte verwendet.</p>
                 </div>
               )}
 

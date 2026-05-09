@@ -135,6 +135,7 @@ export default function LeadDetail() {
   const [showUnitSelect, setShowUnitSelect]       = useState(false)
   const [unitSelectProjectId, setUnitSelectProjectId] = useState<string | null>(null)
   const [unitSelectUnits, setUnitSelectUnits]     = useState<CrmProjectUnit[]>([])
+  const [unitSelectProject, setUnitSelectProject] = useState<{ id: string; name: string; location: string | null } | null>(null)
 
   // ── Toast helper ────────────────────────────────────────────────
   const showToast = (msg: string) => {
@@ -981,8 +982,13 @@ export default function LeadDetail() {
       .order('unit_number')
     if (availableUnits && availableUnits.length > 0) {
       // Vorhandene verfügbare Units zur Auswahl anbieten
+      const dp = dealProjects.find(d => d.project_id === projectId)
       setUnitSelectProjectId(projectId)
       setUnitSelectUnits(availableUnits as CrmProjectUnit[])
+      setUnitSelectProject(dp?.project
+        ? { id: dp.project.id, name: dp.project.name, location: dp.project.location ?? null }
+        : { id: projectId, name: dp?.project?.name ?? 'Projekt', location: null }
+      )
       setShowUnitSelect(true)
       return
     }
@@ -2880,8 +2886,13 @@ export default function LeadDetail() {
                   key={unit.id}
                   onClick={() => {
                     setShowUnitSelect(false)
-                    const proj = dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project
-                    if (proj) handleUnitAssign(unit, proj as Pick<CrmProject, 'id' | 'name' | 'location'>)
+                    // unitSelectProject wird beim Öffnen gesetzt — kein Nachschlagen nötig
+                    const proj = unitSelectProject ?? dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project
+                    handleUnitAssign(unit, {
+                      id:       proj?.id       ?? unitSelectProjectId ?? '',
+                      name:     proj?.name     ?? 'Projekt',
+                      location: (proj as { location?: string | null } | null)?.location ?? null,
+                    })
                   }}
                   className="w-full text-left border border-gray-200 rounded-xl px-4 py-3
                              hover:border-[#ff795d] hover:bg-orange-50 transition-colors"
