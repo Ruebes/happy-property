@@ -5,7 +5,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type { EmailTemplate } from '../../../lib/crmTypes'
 
-const CATEGORIES = ['general', 'project', 'followup', 'noshow', 'lawyer', 'financing'] as const
+const CATEGORIES = ['general', 'project', 'followup', 'noshow', 'lawyer', 'financing', 'portal'] as const
 type Category = typeof CATEGORIES[number]
 
 const LANGUAGES = ['de', 'en'] as const
@@ -107,13 +107,16 @@ export default function Templates() {
   }
 
   const categoryLabel: Record<Category, string> = {
-    general: 'Allgemein',
-    project: 'Projekt',
-    followup: 'Follow-up',
-    noshow: 'No-Show',
-    lawyer: 'Anwalt',
+    general:   'Allgemein',
+    project:   'Projekt',
+    followup:  'Follow-up',
+    noshow:    'No-Show',
+    lawyer:    'Anwalt',
     financing: 'Finanzierung',
+    portal:    '🔑 Portal-Zugang',
   }
+
+  const PORTAL_PLACEHOLDERS = '{{name}} · {{email}} · {{password}} · {{login_url}}'
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -220,7 +223,21 @@ export default function Templates() {
                     onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y"
                   />
-                  <p className="text-xs text-gray-400 mt-1">{t('crm.template.placeholders')}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    {form.category === 'portal'
+                      ? `Platzhalter: ${PORTAL_PLACEHOLDERS}`
+                      : t('crm.template.placeholders')}
+                  </p>
+                  {form.category === 'portal' && (
+                    <div className="mt-2 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+                      <p className="font-semibold">Portal-Vorlage – Platzhalter:</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> → Vollständiger Name des Käufers</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> → E-Mail-Adresse</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> → Temporäres Passwort (automatisch generiert)</p>
+                      <p><code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code> → Link zur Anmeldung</p>
+                      <p className="text-blue-500 mt-1">Die Zugangsdaten werden automatisch als formatierter Block nach Ihrem Text angehängt.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Category */}

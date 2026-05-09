@@ -4,9 +4,10 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage } from '../../../lib/crmTypes'
+import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
+import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
@@ -81,6 +82,27 @@ export default function LeadDetail() {
   const [immoNotes, setImmoNotes]       = useState('')
   const [kaufNotes, setKaufNotes]       = useState('')
   const [provNotes, setProvNotes]       = useState('')
+
+  // Unit picker + assignment
+  const [showUnitPicker, setShowUnitPicker] = useState(false)
+  const [pickedUnit, setPickedUnit] = useState<{
+    unit: CrmProjectUnit
+    projectName: string
+  } | null>(null)
+
+  // Portal access (always accessible)
+  const [portalOpen,       setPortalOpen]       = useState(false)
+  const [portalEmail,      setPortalEmail]       = useState('')
+  const [portalName,       setPortalName]        = useState('')
+  const [portalSubject,    setPortalSubject]     = useState('')
+  const [portalMessage,    setPortalMessage]     = useState('')
+  const [loadingPortalTpl, setLoadingPortalTpl] = useState(false)
+  const [portalSending,    setPortalSending]     = useState(false)
+  const [portalSuccess,    setPortalSuccess]     = useState(false)
+  const [portalError,      setPortalError]       = useState('')
+
+  // Unit picker project pre-filter (when activated from a deal_project card)
+  const [unitPickerProjectId, setUnitPickerProjectId] = useState<string | null>(null)
 
   // ── Toast helper ────────────────────────────────────────────────
   const showToast = (msg: string) => {
@@ -713,6 +735,130 @@ export default function LeadDetail() {
     }
   }
 
+  // ── Unit assignment ──────────────────────────────────────────────
+  async function handleUnitAssign(unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location'>) {
+    setShowUnitPicker(false)
+    setPickedUnit({ unit, projectName: project.name })
+
+    try {
+      // 1. Mark unit as sold
+      await supabase
+        .from('crm_project_units')
+        .update({ status: 'sold' })
+        .eq('id', unit.id)
+
+      // 2. If unit has a linked property, attach it to the deal
+      if (unit.property_id && deal) {
+        await supabase
+          .from('deals')
+          .update({ property_id: unit.property_id })
+          .eq('id', deal.id)
+      }
+
+      // 3. Activity log
+      const unitLabel = `${project.name}${unit.block ? ` · Block ${unit.block}` : ''} · Nr. ${unit.unit_number}`
+      await supabase.from('activities').insert({
+        lead_id:     id,
+        deal_id:     deal?.id ?? null,
+        type:        'note',
+        direction:   'outbound',
+        subject:     'Wohnung zugewiesen',
+        content:     `${unitLabel} wurde dem Lead zugewiesen und als Verkauft markiert.`,
+        created_by:  profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+
+      await fetchAll()
+    } catch (err) {
+      console.error('[LeadDetail] handleUnitAssign:', err)
+    }
+
+    // 4. Open portal dialog (fetches template + pre-fills)
+    await openPortal()
+  }
+
+  // ── Portal access send ───────────────────────────────────────────
+  async function openPortal() {
+    if (lead) {
+      setPortalEmail(lead.email)
+      setPortalName(`${lead.first_name} ${lead.last_name}`.trim())
+    }
+    setPortalSuccess(false)
+    setPortalError('')
+    setPortalOpen(true)
+
+    // Vorlage der Kategorie 'portal' laden und Platzhalter vorausfüllen
+    setLoadingPortalTpl(true)
+    try {
+      const lang = lead?.language ?? 'de'
+      const { data } = await supabase
+        .from('email_templates')
+        .select('subject, body')
+        .eq('category', 'portal')
+        .eq('language', lang)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const name  = lead ? `${lead.first_name} ${lead.last_name}`.trim() : ''
+      const email = lead?.email ?? ''
+      const subst = (s: string) => s
+        .replace(/\{\{name\}\}/g,  name)
+        .replace(/\{\{email\}\}/g, email)
+      if (data) {
+        setPortalSubject(subst(data.subject))
+        setPortalMessage(subst(data.body))
+      } else {
+        setPortalSubject('Ihr Zugang zum Happy Property Portal')
+        setPortalMessage(
+          `Guten Tag ${name},\n\nIhr Zugang zum Happy Property Eigentümer-Portal wurde eingerichtet.\n\nIm Portal haben Sie Zugriff auf Ihre Immobiliendaten, Kaufunterlagen und Zahlungsübersichten.\n\nMit freundlichen Grüßen\nSven Rüprich\nHappy Property`
+        )
+      }
+    } finally {
+      setLoadingPortalTpl(false)
+    }
+  }
+
+  async function sendPortalAccess() {
+    if (!portalEmail.trim() || !portalName.trim()) return
+    setPortalSending(true)
+    setPortalError('')
+    try {
+      const { error } = await supabase.functions.invoke('create-eigentuemer-access', {
+        body: {
+          email:          portalEmail.trim(),
+          full_name:      portalName.trim(),
+          custom_subject: portalSubject.trim() || undefined,
+          custom_message: portalMessage.trim() || undefined,
+        },
+      })
+      if (error) throw error
+
+      // Activity log
+      await supabase.from('activities').insert({
+        lead_id:     id,
+        deal_id:     deal?.id ?? null,
+        type:        'email',
+        direction:   'outbound',
+        subject:     'Portal-Zugangsdaten gesendet',
+        content:     `Eigentümer-Portalzugang wurde an ${portalEmail.trim()} erstellt und per E-Mail zugestellt.`,
+        created_by:  profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+
+      setPortalSuccess(true)
+      showToast('✅ Portalzugang erfolgreich gesendet')
+      setTimeout(() => {
+        setPortalOpen(false)
+        setPortalSuccess(false)
+      }, 4000)
+      await fetchAll()
+    } catch (err) {
+      setPortalError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setPortalSending(false)
+    }
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────
   const initials = lead ? `${lead.first_name[0] ?? ''}${lead.last_name[0] ?? ''}`.toUpperCase() : ''
 
@@ -844,6 +990,13 @@ export default function LeadDetail() {
                   className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium"
                 >
                   📝 {t('crm.addNote', 'Notiz')}
+                </button>
+                <button
+                  onClick={openPortal}
+                  className="px-3 py-1.5 text-sm rounded-lg font-medium text-white"
+                  style={{ backgroundColor: '#ff795d' }}
+                >
+                  🔑 Portalzugang
                 </button>
               </div>
             </div>
@@ -1061,7 +1214,9 @@ export default function LeadDetail() {
 
                 {/* kaufvertrag */}
                 {deal.phase === 'kaufvertrag' && (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
+
+                    {/* Google Drive + Anwalt */}
                     <div className="flex flex-wrap gap-3 items-end">
                       <div className="flex-1 min-w-[260px]">
                         <label className="block text-xs text-gray-500 mb-1">{t('crm.googleDriveUrl', 'Google Drive URL')}</label>
@@ -1082,6 +1237,85 @@ export default function LeadDetail() {
                         📝 {t('crm.notifyLawyer', 'Anwalt informieren')}
                       </button>
                     </div>
+
+                    {/* ── Wohnungszuweisung ──────────────────────────── */}
+                    <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-gray-800">🏠 Wohnung zuweisen</p>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Spezifische Einheit auswählen, aktivieren und Käufer-Portalzugang senden.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setShowUnitPicker(true)}
+                          className="px-3 py-1.5 text-xs font-medium text-white rounded-lg shrink-0"
+                          style={{ backgroundColor: '#ff795d' }}
+                        >
+                          {pickedUnit ?? deal.property ? '✏️ Ändern' : '+ Auswählen'}
+                        </button>
+                      </div>
+
+                      {/* Show assigned property from deal (already saved in DB) */}
+                      {deal.property && !pickedUnit && (
+                        <div className="bg-white rounded-lg px-3 py-2 text-sm flex items-center gap-2">
+                          <span className="text-green-500">✅</span>
+                          <span className="font-medium text-gray-800">{deal.property.project_name}</span>
+                          {deal.property.unit_number && (
+                            <span className="text-gray-400">· Nr. {deal.property.unit_number}</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Show freshly picked unit (before page reload) */}
+                      {pickedUnit && (
+                        <div className="bg-white rounded-xl p-3 space-y-2 border border-orange-100">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-[#ff795d] uppercase tracking-wide">
+                              Zugewiesene Einheit
+                            </span>
+                            <span className="text-[10px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
+                              ✅ Als Verkauft markiert
+                            </span>
+                          </div>
+                          <p className="text-sm font-bold text-gray-900">
+                            {pickedUnit.projectName}
+                            {pickedUnit.unit.block ? ` · Block ${pickedUnit.unit.block}` : ''}
+                            {` · Nr. ${pickedUnit.unit.unit_number}`}
+                          </p>
+                          <div className="grid grid-cols-3 gap-x-4 gap-y-0.5 text-[11px] text-gray-600">
+                            {pickedUnit.unit.size_sqm != null && (
+                              <span>📐 {pickedUnit.unit.size_sqm} m²</span>
+                            )}
+                            {pickedUnit.unit.bedrooms > 0 && (
+                              <span>🛏 {pickedUnit.unit.bedrooms} SZ</span>
+                            )}
+                            {pickedUnit.unit.bathrooms > 0 && (
+                              <span>🚿 {pickedUnit.unit.bathrooms} Bad</span>
+                            )}
+                            {pickedUnit.unit.price_gross != null && (
+                              <span className="font-semibold text-gray-800 col-span-3">
+                                💶{' '}
+                                {new Intl.NumberFormat('de-DE', {
+                                  style: 'currency', currency: 'EUR', maximumFractionDigits: 0,
+                                }).format(pickedUnit.unit.price_gross)} Brutto
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Portal access button */}
+                      <button
+                        onClick={openPortal}
+                        className="w-full py-2 text-xs font-medium text-white rounded-lg"
+                        style={{ backgroundColor: '#ff795d' }}
+                      >
+                        📧 Portalzugang erstellen & senden
+                      </button>
+                    </div>
+
+                    {/* Kaufvertrag notes */}
                     <div>
                       <label className="block text-xs text-gray-500 mb-1">
                         {t('crm.phaseNote.kaufvertrag', 'Bemerkungen zum Kaufvertrag')}
@@ -1154,10 +1388,11 @@ export default function LeadDetail() {
                         📱 {t('crm.commissionWhatsapp', 'Provision via WhatsApp')}
                       </button>
                       <button
-                        onClick={() => navigate('/admin/users')}
-                        className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200"
+                        onClick={openPortal}
+                        className="px-4 py-2 rounded-lg text-sm font-medium text-white"
+                        style={{ backgroundColor: '#ff795d' }}
                       >
-                        👤 {t('crm.createOwnerAccount', 'Eigentümer-Account anlegen')}
+                        🔑 {t('crm.sendPortalAccess', 'Portalzugang senden')}
                       </button>
                       <button
                         onClick={handleArchive}
@@ -1351,8 +1586,21 @@ export default function LeadDetail() {
                         <div className="space-y-2">
                           {dealProjects.map(dp => (
                             <div key={dp.id} className="border border-gray-100 rounded-xl p-3 bg-gray-50 text-sm">
-                              <div className="font-medium text-gray-900 mb-1">
-                                🏗 {dp.project?.name ?? '–'}
+                              <div className="flex items-start justify-between gap-2 mb-1">
+                                <div className="font-medium text-gray-900">
+                                  🏗 {dp.project?.name ?? '–'}
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    setUnitPickerProjectId(dp.project?.id ?? null)
+                                    setShowUnitPicker(true)
+                                  }}
+                                  className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg font-medium text-white"
+                                  style={{ backgroundColor: '#ff795d' }}
+                                  title="Wohnung aus diesem Projekt auswählen und Käufer aktivieren"
+                                >
+                                  🔑 Aktivieren
+                                </button>
                               </div>
                               {dp.project?.location && (
                                 <div className="text-xs text-gray-500 mb-1">📍 {dp.project.location}</div>
@@ -1982,6 +2230,155 @@ export default function LeadDetail() {
           onClose={() => setShowApptModal(false)}
           onCreated={() => { setShowApptModal(false); fetchAll() }}
         />
+      )}
+
+      {/* ── Wohnungs-Picker ─────────────────────────────────────────── */}
+      {showUnitPicker && lead && (
+        <UnitPickerModal
+          leadName={`${lead.first_name} ${lead.last_name}`}
+          preselectedProjectId={unitPickerProjectId}
+          onClose={() => { setShowUnitPicker(false); setUnitPickerProjectId(null) }}
+          onSelect={handleUnitAssign}
+        />
+      )}
+
+      {/* ── Portal-Zugang Dialog ─────────────────────────────────────── */}
+      {portalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-6 pt-6 pb-3 flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-bold text-gray-900">🔑 Portalzugang senden</h2>
+                <button
+                  onClick={() => { setPortalOpen(false); setPortalSuccess(false); setPortalError('') }}
+                  className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Eigentümer-Account erstellen und Zugangsdaten per E-Mail senden.
+                Das Passwort wird automatisch generiert und als formatierter Block angehängt.
+              </p>
+            </div>
+
+            {/* Body — scrollable */}
+            <div className="px-6 py-3 space-y-3 overflow-y-auto flex-1">
+
+              {/* Empfänger */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">E-Mail *</label>
+                  <input
+                    type="email"
+                    value={portalEmail}
+                    onChange={e => setPortalEmail(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
+                               focus:outline-none focus:border-[#ff795d]"
+                    placeholder="kunde@example.com"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Vollständiger Name *</label>
+                  <input
+                    value={portalName}
+                    onChange={e => setPortalName(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
+                               focus:outline-none focus:border-[#ff795d]"
+                    placeholder="Max Mustermann"
+                  />
+                </div>
+              </div>
+
+              {/* Template loading indicator */}
+              {loadingPortalTpl && (
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-[#ff795d] rounded-full animate-spin" />
+                  Vorlage wird geladen…
+                </div>
+              )}
+
+              {/* Subject */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Betreff</label>
+                <input
+                  type="text"
+                  value={portalSubject}
+                  onChange={e => setPortalSubject(e.target.value)}
+                  disabled={loadingPortalTpl}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
+                             focus:outline-none focus:border-[#ff795d] disabled:opacity-50"
+                  placeholder="Ihr Zugang zum Happy Property Portal"
+                />
+              </div>
+
+              {/* Message */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Nachricht</label>
+                <textarea
+                  rows={7}
+                  value={portalMessage}
+                  onChange={e => setPortalMessage(e.target.value)}
+                  disabled={loadingPortalTpl}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
+                             focus:outline-none focus:border-[#ff795d] resize-y disabled:opacity-50
+                             font-mono leading-relaxed"
+                  placeholder="Nachrichtentext…"
+                />
+                <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-600 space-y-0.5">
+                  <p className="font-semibold">Verfügbare Platzhalter:</p>
+                  <p>
+                    <code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> ·{' '}
+                    <code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> ·{' '}
+                    <code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> ·{' '}
+                    <code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code>
+                  </p>
+                  <p className="text-blue-400">Zugangsdaten werden automatisch als formatierter Block angehängt.</p>
+                </div>
+              </div>
+
+              {portalError && (
+                <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{portalError}</p>
+              )}
+              {portalSuccess && (
+                <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 font-medium">
+                  ✅ Zugangsdaten wurden erfolgreich per E-Mail gesendet!
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+              <button
+                onClick={() => { setPortalOpen(false); setPortalSuccess(false); setPortalError('') }}
+                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200
+                           rounded-xl hover:bg-gray-50"
+              >
+                Schließen
+              </button>
+              <button
+                onClick={sendPortalAccess}
+                disabled={!portalEmail.trim() || !portalName.trim() || portalSending || portalSuccess || loadingPortalTpl}
+                className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50
+                           flex items-center justify-center gap-2"
+                style={{ backgroundColor: '#ff795d' }}
+              >
+                {portalSending && (
+                  <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                )}
+                {portalSending
+                  ? 'Wird gesendet…'
+                  : portalSuccess
+                    ? '✓ Gesendet'
+                    : '📧 Zugang erstellen & senden'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </DashboardLayout>
   )

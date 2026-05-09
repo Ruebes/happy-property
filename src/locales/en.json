@@ -694,9 +694,10 @@
     "tabs": {
       "overview":  "Overview",
       "contracts": "Contracts",
-      "invoices":  "Invoices",
+      "invoices":  "Expenses",
       "income":    "Income",
-      "images":    "Images"
+      "images":    "Images",
+      "purchases": "Purchase Documents"
     },
     "overview": {
       "basicData":     "Basic info",

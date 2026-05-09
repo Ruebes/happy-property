@@ -694,9 +694,10 @@
     "tabs": {
       "overview":  "Übersicht",
       "contracts": "Verträge",
-      "invoices":  "Rechnungen",
+      "invoices":  "Ausgaben",
       "income":    "Einnahmen",
-      "images":    "Bilder"
+      "images":    "Bilder",
+      "purchases": "Kaufunterlagen"
     },
     "overview": {
       "basicData":     "Grunddaten",

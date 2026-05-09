@@ -1,0 +1,313 @@
+// Edge Function: create-eigentuemer-access
+// Erstellt einen neuen Eigentümer-Account und sendet die Zugangsdaten per E-Mail.
+//
+// Request body:
+//   { email: string, full_name: string, unit_id?: string }
+//
+// ── Deployment ──
+//   supabase functions deploy create-eigentuemer-access --no-verify-jwt
+//
+// ── Secrets ──
+//   SMTP_USER  = sven@happy-property.com
+//   SMTP_PASS  = [Ionos Passwort]
+//   APP_URL    = https://happy-property.app  (oder Produktions-URL)
+
+import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
+// ── Zufälliges Passwort (12 Zeichen, alphanumerisch + Sonderzeichen) ──────────
+function generatePassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$'
+  const arr   = new Uint8Array(12)
+  crypto.getRandomValues(arr)
+  return Array.from(arr).map(b => chars[b % chars.length]).join('')
+}
+
+// ── Platzhalter ersetzen ─────────────────────────────────────────────────────
+function replacePlaceholders(text: string, vars: Record<string, string>): string {
+  return text
+    .replace(/\{\{name\}\}/g,      vars.name      ?? '')
+    .replace(/\{\{email\}\}/g,     vars.email     ?? '')
+    .replace(/\{\{password\}\}/g,  vars.password  ?? '')
+    .replace(/\{\{login_url\}\}/g, vars.login_url ?? '')
+}
+
+// Plaintext → HTML-Absätze
+function textToHtml(text: string): string {
+  return text
+    .split('\n')
+    .map(line =>
+      line.trim() === ''
+        ? '<br>'
+        : `<p style="margin:0 0 8px;font-size:15px;color:#374151;line-height:1.6;">${
+            line
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;')
+          }</p>`
+    )
+    .join('\n')
+}
+
+// ── Willkommens-E-Mail HTML ───────────────────────────────────────────────────
+function buildWelcomeEmail(params: {
+  fullName:      string
+  email:         string
+  password:      string
+  appUrl:        string
+  customSubject?: string
+  customMessage?: string
+}): { subject: string; html: string } {
+  const { fullName, email, password, appUrl, customSubject, customMessage } = params
+  const subject = customSubject?.trim() || 'Ihr Zugang zum Happy Property Portal'
+
+  // Benutzerdefinierter oder Standard-Nachrichtentext
+  let bodyHtml: string
+  if (customMessage?.trim()) {
+    const vars = { name: fullName, email, password, login_url: `${appUrl}/login` }
+    bodyHtml = textToHtml(replacePlaceholders(customMessage, vars))
+  } else {
+    bodyHtml = `
+      <p style="margin:0 0 16px;font-size:16px;color:#374151;">
+        Guten Tag, <strong>${fullName}</strong>,
+      </p>
+      <p style="margin:0 0 24px;font-size:15px;color:#6b7280;line-height:1.6;">
+        Ihr Zugang zum Happy Property Eigentümer-Portal wurde eingerichtet.
+        Sie können sich ab sofort mit folgenden Zugangsdaten anmelden:
+      </p>`
+  }
+
+  const html = `
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,Helvetica,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0"
+             style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+        <!-- Header -->
+        <tr>
+          <td style="background:#ff795d;padding:32px 40px;text-align:center;">
+            <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:700;letter-spacing:-0.5px;">
+              Happy Property
+            </h1>
+            <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:14px;">
+              Ihr persönliches Eigentümer-Portal
+            </p>
+          </td>
+        </tr>
+        <!-- Body -->
+        <tr>
+          <td style="padding:40px 40px 32px;">
+            ${bodyHtml}
+
+            <!-- Credentials box -->
+            <table width="100%" cellpadding="0" cellspacing="0"
+                   style="background:#f3f4f6;border-radius:12px;padding:24px;margin-bottom:24px;">
+              <tr>
+                <td>
+                  <p style="margin:0 0 12px;font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;">
+                    Ihre Zugangsdaten
+                  </p>
+                  <table cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td style="padding:4px 0;font-size:14px;color:#6b7280;width:110px;">Benutzername:</td>
+                      <td style="padding:4px 0;font-size:14px;color:#111827;font-weight:600;">${email}</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:4px 0;font-size:14px;color:#6b7280;">Passwort:</td>
+                      <td style="padding:4px 8px;font-size:15px;color:#111827;font-weight:700;
+                                 background:#fff;border-radius:6px;letter-spacing:0.5px;font-family:monospace;">
+                        ${password}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0 0 24px;font-size:14px;color:#ef4444;font-weight:500;">
+              ⚠️ Bitte ändern Sie Ihr Passwort direkt nach dem ersten Login.
+            </p>
+
+            <!-- CTA Button -->
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td align="center">
+                  <a href="${appUrl}/login"
+                     style="display:inline-block;background:#ff795d;color:#ffffff;
+                            font-size:15px;font-weight:600;padding:14px 36px;
+                            border-radius:12px;text-decoration:none;letter-spacing:-0.2px;">
+                    Jetzt anmelden →
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:32px 0 0;font-size:13px;color:#9ca3af;line-height:1.5;">
+              Im Portal haben Sie Zugriff auf Ihre Immobiliendaten, Kaufunterlagen
+              und Zahlungsübersichten.
+            </p>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="padding:24px 40px;border-top:1px solid #f3f4f6;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#d1d5db;">
+              © ${new Date().getFullYear()} Happy Property · Bei Fragen antworten Sie einfach auf diese E-Mail.
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`
+  return { subject, html }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers: CORS })
+  }
+
+  try {
+    const { email, full_name, custom_subject, custom_message } = await req.json() as {
+      email:           string
+      full_name:       string
+      custom_subject?: string   // optionaler Betreff (aus Template)
+      custom_message?: string   // optionaler E-Mail-Text mit Platzhaltern
+    }
+
+    if (!email || !full_name) {
+      return new Response(
+        JSON.stringify({ error: 'email und full_name sind Pflichtfelder' }),
+        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const supabaseUrl        = Deno.env.get('SUPABASE_URL')!
+    const serviceRoleKey     = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const smtpUser           = Deno.env.get('SMTP_USER') ?? ''
+    const smtpPass           = Deno.env.get('SMTP_PASS') ?? ''
+    const appUrl             = Deno.env.get('APP_URL') ?? 'https://happy-property.app'
+
+    const adminClient = createClient(supabaseUrl, serviceRoleKey)
+
+    // ── 1. Passwort generieren ─────────────────────────────────────────────────
+    const password = generatePassword()
+    console.log(`[create-eigentuemer-access] Erstelle Account für: ${email}`)
+
+    // ── 2. Auth-User erstellen (oder vorhandenen wiederverwenden) ─────────────
+    let userId: string
+
+    // Prüfen ob User bereits existiert
+    const { data: existingUsers } = await adminClient.auth.admin.listUsers()
+    const existingUser = existingUsers?.users?.find(u => u.email === email)
+
+    if (existingUser) {
+      // Passwort aktualisieren + needs_password_setup setzen
+      const { error: updateErr } = await adminClient.auth.admin.updateUserById(
+        existingUser.id,
+        {
+          password,
+          user_metadata: {
+            ...existingUser.user_metadata,
+            full_name,
+            needs_password_setup: true,
+          },
+        }
+      )
+      if (updateErr) throw updateErr
+      userId = existingUser.id
+      console.log(`[create-eigentuemer-access] Bestehenden User aktualisiert: ${userId}`)
+    } else {
+      // Neuen User anlegen
+      const { data: newUserData, error: createErr } = await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name,
+          needs_password_setup: true,
+        },
+      })
+      if (createErr) throw createErr
+      userId = newUserData.user.id
+      console.log(`[create-eigentuemer-access] Neuer User erstellt: ${userId}`)
+    }
+
+    // ── 3. Profil anlegen / aktualisieren ─────────────────────────────────────
+    const { error: profileErr } = await adminClient.from('profiles').upsert({
+      id:                   userId,
+      email,
+      full_name,
+      role:                 'eigentuemer',
+      is_active:            true,
+      language:             'de',
+    }, { onConflict: 'id' })
+
+    if (profileErr) {
+      console.warn('[create-eigentuemer-access] Profil-Upsert Fehler:', profileErr.message)
+      // Nicht fatal – User existiert, Profil kann manuell angelegt werden
+    }
+
+    // ── 4. Willkommens-E-Mail senden ──────────────────────────────────────────
+    const { subject, html } = buildWelcomeEmail({
+      fullName:      full_name,
+      email,
+      password,
+      appUrl,
+      customSubject: custom_subject,
+      customMessage: custom_message,
+    })
+
+    if (smtpUser && smtpPass) {
+      const client = new SMTPClient({
+        connection: {
+          hostname: 'smtp.ionos.de',
+          port:     465,
+          tls:      true,
+          auth: { username: smtpUser, password: smtpPass },
+        },
+      })
+      try {
+        await client.send({
+          from:    `Sven Rüprich <sven@happy-property.com>`,
+          to:      email,
+          subject,
+          html,
+          content: `Guten Tag ${full_name},\n\nIhre Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändern Sie Ihr Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
+        })
+        console.log(`[create-eigentuemer-access] ✓ E-Mail gesendet an: ${email}`)
+      } finally {
+        await client.close()
+      }
+    } else {
+      console.warn(`[create-eigentuemer-access] SMTP nicht konfiguriert – simulierter Versand an: ${email}`)
+      console.log(`[create-eigentuemer-access] Passwort (dev): ${password}`)
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, userId }),
+      { headers: { ...CORS, 'Content-Type': 'application/json' } }
+    )
+
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[create-eigentuemer-access] Fehler:', msg)
+    return new Response(
+      JSON.stringify({ error: msg }),
+      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }
+    )
+  }
+})

@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
+import type { CrmUnitPayment } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
 interface OwnerProfile {
@@ -81,7 +82,7 @@ interface ContractRecord {
   signed_at: string | null
 }
 
-type TabKey = 'overview' | 'contracts' | 'invoices' | 'income' | 'images'
+type TabKey = 'overview' | 'contracts' | 'invoices' | 'income' | 'images' | 'purchases'
 
 type InvoiceSortField = 'date' | 'creditor' | 'amount'
 
@@ -640,6 +641,15 @@ export default function PropertyDetail() {
   // Toast
   const [toast, setToast] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
 
+  // Kaufunterlagen tab
+  const [linkedUnitId,     setLinkedUnitId]     = useState<string | null>(null)
+  const [unitPayments,     setUnitPayments]     = useState<CrmUnitPayment[]>([])
+  const [unitPayLoading,   setUnitPayLoading]   = useState(false)
+  const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
+  const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
+  const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
+  const payReceiptRef = useRef<Record<string, HTMLInputElement | null>>({})
+
   // Owner accordion
   const [ownerOpen, setOwnerOpen]       = useState(false)
   const [showIban, setShowIban]         = useState(false)
@@ -705,6 +715,40 @@ export default function PropertyDetail() {
     fetchDocs()
     fetchContracts()
   }, [fetchProperty, fetchDocs, fetchContracts])
+
+  // ── Fetch unit payments (Kaufunterlagen) ─────────────────
+  const fetchUnitPayments = useCallback(async () => {
+    if (!id) return
+    setUnitPayLoading(true)
+    try {
+      // Find the CRM unit linked to this property
+      const { data: unitData } = await supabase
+        .from('crm_project_units')
+        .select('id')
+        .eq('property_id', id)
+        .maybeSingle()
+      if (!unitData) {
+        setLinkedUnitId(null)
+        setUnitPayments([])
+        return
+      }
+      setLinkedUnitId(unitData.id)
+      const { data: pays } = await supabase
+        .from('crm_unit_payments')
+        .select('*')
+        .eq('unit_id', unitData.id)
+        .order('due_date', { ascending: true, nullsFirst: true })
+      setUnitPayments((pays ?? []) as CrmUnitPayment[])
+    } finally {
+      setUnitPayLoading(false)
+    }
+  }, [id])
+
+  useEffect(() => {
+    if (activeTab === 'purchases') {
+      fetchUnitPayments()
+    }
+  }, [activeTab, fetchUnitPayments])
 
   // ── Generic doc upload ───────────────────────────────────
   async function uploadDoc(
@@ -1107,6 +1151,55 @@ export default function PropertyDetail() {
     )
   }
 
+  // ── Kaufunterlagen: file helpers ─────────────────────
+  async function openUnitPaymentFile(filePath: string) {
+    const { data } = await supabase.storage
+      .from('unit-documents')
+      .createSignedUrl(filePath, 300)
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+  }
+
+  async function handleUploadPaymentFile(
+    payId:   string,
+    type:    'invoice' | 'receipt',
+    file:    File,
+  ) {
+    if (!linkedUnitId) return
+    setUploadingPayId(payId)
+    setUploadingPayType(type)
+    try {
+      const ext  = file.name.split('.').pop() ?? 'pdf'
+      const path = `unit-documents/${linkedUnitId}/pay-${type}-${Date.now()}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('unit-documents').upload(path, file, { upsert: false })
+      if (upErr) throw upErr
+      const update = type === 'invoice'
+        ? { invoice_path: path, invoice_filename: file.name, invoice_filesize: file.size }
+        : { receipt_path: path, receipt_filename: file.name, receipt_filesize: file.size }
+      await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+      await fetchUnitPayments()
+    } catch (err) {
+      console.error('[PropertyDetail] upload payment file:', err)
+      setToast({ msg: 'Upload fehlgeschlagen.', type: 'error' })
+    } finally {
+      setUploadingPayId(null)
+      setUploadingPayType(null)
+    }
+  }
+
+  async function handleRemovePaymentFile(payId: string, type: 'invoice' | 'receipt') {
+    const pay = unitPayments.find(p => p.id === payId)
+    if (!pay) return
+    const path = type === 'invoice' ? pay.invoice_path : pay.receipt_path
+    if (path) await supabase.storage.from('unit-documents').remove([path])
+    const update = type === 'invoice'
+      ? { invoice_path: null, invoice_filename: null, invoice_filesize: null }
+      : { receipt_path: null, receipt_filename: null, receipt_filesize: null }
+    await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+    await fetchUnitPayments()
+  }
+
+  // ─────────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════
   // TAB CONTENT
   // ═══════════════════════════════════════════════════════
@@ -2129,6 +2222,216 @@ export default function PropertyDetail() {
     )
   }
 
+  // ── Tab 6: Kaufunterlagen ─────────────────────────────
+  function renderPurchases() {
+    if (unitPayLoading) return (
+      <div className="flex justify-center py-20">
+        <span className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: 'var(--color-highlight)', borderTopColor: 'transparent' }} />
+      </div>
+    )
+    if (!linkedUnitId) return (
+      <div className="text-center py-20 text-gray-400">
+        <p className="text-4xl mb-3">📋</p>
+        <p className="text-sm font-medium">Keine Kaufdaten verknüpft.</p>
+        <p className="text-xs mt-1 text-gray-300">
+          Im CRM die Einheit mit dieser Immobilie verknüpfen.
+        </p>
+      </div>
+    )
+    if (unitPayments.length === 0) return (
+      <div className="text-center py-20 text-gray-400">
+        <p className="text-4xl mb-3">📋</p>
+        <p className="text-sm">Noch keine Zahlungsraten eingetragen.</p>
+      </div>
+    )
+    const totalAmount = unitPayments.reduce((s, p) => s + p.amount, 0)
+    const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
+    const outstanding = totalAmount - totalPaid
+    const pct         = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0
+
+    return (
+      <div className="space-y-6">
+
+        {/* KPI cards */}
+        <div className="grid grid-cols-3 gap-4">
+          <div className="bg-blue-50 rounded-2xl p-4 text-center">
+            <p className="text-xs text-blue-500 font-medium font-body mb-1">Gesamtbetrag</p>
+            <p className="text-lg font-bold text-blue-800">{fmtCurrency(totalAmount)}</p>
+          </div>
+          <div className="bg-green-50 rounded-2xl p-4 text-center">
+            <p className="text-xs text-green-500 font-medium font-body mb-1">Bezahlt</p>
+            <p className="text-lg font-bold text-green-800">{fmtCurrency(totalPaid)}</p>
+          </div>
+          <div className={`rounded-2xl p-4 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
+            <p className={`text-xs font-medium font-body mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+              Ausstehend
+            </p>
+            <p className={`text-lg font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
+              {fmtCurrency(outstanding)}
+            </p>
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div>
+          <div className="flex justify-between text-xs text-gray-400 mb-1.5 font-body">
+            <span>{Math.round(pct)}% bezahlt</span>
+            <span>{fmtCurrency(totalPaid)} / {fmtCurrency(totalAmount)}</span>
+          </div>
+          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500"
+              style={{ width: `${pct}%`, backgroundColor: '#22c55e' }}
+            />
+          </div>
+        </div>
+
+        {/* Payment rows */}
+        <div className="space-y-3">
+          {unitPayments.map(pay => (
+            <div
+              key={pay.id}
+              className={`rounded-2xl border p-4 ${
+                pay.is_paid ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
+              }`}
+            >
+              {/* Header row */}
+              <div className="flex items-start justify-between gap-4 mb-3">
+                <div className="flex items-center gap-3">
+                  <span className={`text-xl shrink-0 ${pay.is_paid ? 'text-green-500' : 'text-gray-300'}`}>
+                    {pay.is_paid ? '✅' : '⬜'}
+                  </span>
+                  <div>
+                    <p className="text-sm font-semibold text-hp-black font-body">
+                      {pay.description ?? '—'}
+                    </p>
+                    <div className="flex flex-wrap gap-x-2 text-xs text-gray-400 mt-0.5 font-body">
+                      {pay.due_date   && <span>Fällig: {fmtDate(pay.due_date)}</span>}
+                      {pay.paid_date  && <span>· Bezahlt: {fmtDate(pay.paid_date)}</span>}
+                      {pay.payment_reference && <span>· {pay.payment_reference}</span>}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-base font-bold text-hp-black shrink-0 font-body">
+                  {fmtCurrency(pay.amount)}
+                </span>
+              </div>
+
+              {/* Invoice + Receipt */}
+              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
+
+                {/* Rechnung */}
+                <div>
+                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
+                    Rechnung
+                  </p>
+                  {pay.invoice_path ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => openUnitPaymentFile(pay.invoice_path!)}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body"
+                      >
+                        📄 {pay.invoice_filename ?? 'Öffnen'}
+                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => handleRemovePaymentFile(pay.id, 'invoice')}
+                          className="text-gray-300 hover:text-red-500 text-xs leading-none"
+                          title="Entfernen"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ) : canEdit ? (
+                    <>
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        className="hidden"
+                        ref={el => { payInvoiceRef.current[pay.id] = el }}
+                        onChange={e => {
+                          const file = e.target.files?.[0]
+                          if (file) handleUploadPaymentFile(pay.id, 'invoice', file)
+                          if (e.target) e.target.value = ''
+                        }}
+                      />
+                      <button
+                        onClick={() => payInvoiceRef.current[pay.id]?.click()}
+                        disabled={uploadingPayId === pay.id && uploadingPayType === 'invoice'}
+                        className="text-xs text-gray-400 hover:text-hp-highlight transition-colors disabled:opacity-50 font-body"
+                        style={{ '--color-highlight': 'var(--color-highlight)' } as React.CSSProperties}
+                      >
+                        {uploadingPayId === pay.id && uploadingPayType === 'invoice'
+                          ? '↑ Wird hochgeladen…'
+                          : '+ Hochladen'}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-300 font-body">—</span>
+                  )}
+                </div>
+
+                {/* Zahlungsbeleg */}
+                <div>
+                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
+                    Zahlungsbeleg
+                  </p>
+                  {pay.receipt_path ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => openUnitPaymentFile(pay.receipt_path!)}
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body"
+                      >
+                        📄 {pay.receipt_filename ?? 'Öffnen'}
+                      </button>
+                      {canEdit && (
+                        <button
+                          onClick={() => handleRemovePaymentFile(pay.id, 'receipt')}
+                          className="text-gray-300 hover:text-red-500 text-xs leading-none"
+                          title="Entfernen"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ) : canEdit ? (
+                    <>
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        className="hidden"
+                        ref={el => { payReceiptRef.current[pay.id] = el }}
+                        onChange={e => {
+                          const file = e.target.files?.[0]
+                          if (file) handleUploadPaymentFile(pay.id, 'receipt', file)
+                          if (e.target) e.target.value = ''
+                        }}
+                      />
+                      <button
+                        onClick={() => payReceiptRef.current[pay.id]?.click()}
+                        disabled={uploadingPayId === pay.id && uploadingPayType === 'receipt'}
+                        className="text-xs text-gray-400 hover:text-hp-highlight transition-colors disabled:opacity-50 font-body"
+                      >
+                        {uploadingPayId === pay.id && uploadingPayType === 'receipt'
+                          ? '↑ Wird hochgeladen…'
+                          : '+ Hochladen'}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-300 font-body">—</span>
+                  )}
+                </div>
+
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   // ═══════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════
@@ -2145,6 +2448,8 @@ export default function PropertyDetail() {
     { key: 'income',     label: t('propertyDetail.tabs.income') },
     { key: 'images',     label: t('propertyDetail.tabs.images'),
       count: (p.images?.length || 0) || undefined },
+    { key: 'purchases',  label: t('propertyDetail.tabs.purchases'),
+      count: unitPayments.length || undefined },
   ]
 
   return (
@@ -2227,6 +2532,7 @@ export default function PropertyDetail() {
         {activeTab === 'invoices'  && renderInvoices()}
         {activeTab === 'income'    && renderIncome()}
         {activeTab === 'images'    && renderImages()}
+        {activeTab === 'purchases' && renderPurchases()}
       </div>
 
       {/* Invoice Modal */}

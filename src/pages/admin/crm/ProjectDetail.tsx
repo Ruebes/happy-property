@@ -314,6 +314,8 @@ export default function ProjectDetail() {
   async function handleSaveUnit() {
     if (!form.unit_number.trim() || !projectId) return
     setSaving(true)
+    const wasNotSold = editUnit ? editUnit.status !== 'sold' : false
+    const isNowSold  = form.status === 'sold'
     try {
       const payload = {
         project_id:   projectId,
@@ -343,6 +345,12 @@ export default function ProjectDetail() {
       }
       await fetchData()
       setShowModal(false)
+      // If status just changed to 'sold' → offer to send portal access
+      if (wasNotSold && isNowSold) {
+        setPortalSuccess(false)
+        setPortalError('')
+        setShowPortalDialog(true)
+      }
     } finally { setSaving(false) }
   }
 
@@ -391,6 +399,37 @@ export default function ProjectDetail() {
       paid_date: !pay.is_paid ? new Date().toISOString().slice(0, 10) : null,
     }).eq('id', pay.id)
     if (editUnit) await fetchPayments(editUnit.id)
+  }
+
+  // ── Portal access ────────────────────────────────────────────────────────────
+  const [portalEmail,   setPortalEmail]   = useState('')
+  const [portalName,    setPortalName]    = useState('')
+  const [portalSending, setPortalSending] = useState(false)
+  const [portalSuccess, setPortalSuccess] = useState(false)
+  const [portalError,   setPortalError]   = useState('')
+
+  // Dialog shown after saving a unit that was changed TO 'sold'
+  const [showPortalDialog, setShowPortalDialog] = useState(false)
+
+  async function sendPortalAccess(email: string, name: string) {
+    if (!email.trim() || !name.trim()) return
+    setPortalSending(true)
+    setPortalError('')
+    try {
+      const { error } = await supabase.functions.invoke('create-eigentuemer-access', {
+        body: { email: email.trim(), full_name: name.trim() },
+      })
+      if (error) throw error
+      setPortalSuccess(true)
+      setPortalEmail('')
+      setPortalName('')
+      setTimeout(() => setPortalSuccess(false), 6000)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setPortalError(`Fehler: ${msg}`)
+    } finally {
+      setPortalSending(false)
+    }
   }
 
   // ── Document CRUD ────────────────────────────────────────────────────────────
@@ -1151,6 +1190,47 @@ export default function ProjectDetail() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Portal-Zugang */}
+                  <div className="bg-blue-50 rounded-xl p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-800">🔑 Käufer / Portalzugang</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Zugangsdaten erstellen und per E-Mail versenden.
+                        Tipp: Wohnung auf „Verkauft" setzen → Zugang wird automatisch angeboten.
+                      </p>
+                    </div>
+                    <input
+                      className="w-full rounded-xl border border-blue-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
+                      placeholder="E-Mail des Käufers *"
+                      type="email"
+                      value={portalEmail}
+                      onChange={e => setPortalEmail(e.target.value)}
+                    />
+                    <input
+                      className="w-full rounded-xl border border-blue-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
+                      placeholder="Vollständiger Name *"
+                      value={portalName}
+                      onChange={e => setPortalName(e.target.value)}
+                    />
+                    {portalError && (
+                      <p className="text-xs text-red-600">{portalError}</p>
+                    )}
+                    {portalSuccess && (
+                      <p className="text-xs text-green-600 font-medium">
+                        ✅ Zugangsdaten wurden erfolgreich gesendet!
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => sendPortalAccess(portalEmail, portalName)}
+                      disabled={!portalEmail.trim() || !portalName.trim() || portalSending}
+                      className="w-full py-2 text-xs font-medium text-white rounded-xl disabled:opacity-50"
+                      style={{ backgroundColor: '#ff795d' }}
+                    >
+                      {portalSending ? 'Wird gesendet…' : '📧 Zugang erstellen & senden'}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -1185,6 +1265,77 @@ export default function ProjectDetail() {
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {/* Portal-Zugang Dialog (auto-shown when unit set to Verkauft)          */}
+      {/* ══════════════════════════════════════════════════════════════════════ */}
+      {showPortalDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-6 pb-2">
+              <div className="flex items-center gap-3 mb-1">
+                <span className="text-3xl">🎉</span>
+                <h2 className="text-lg font-bold text-gray-900">Wohnung verkauft!</h2>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Möchten Sie dem Käufer jetzt den Zugang zum Eigentümer-Portal senden?
+              </p>
+            </div>
+
+            <div className="px-6 py-4 space-y-3">
+              <input
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:border-[#ff795d]"
+                placeholder="E-Mail des Käufers *"
+                type="email"
+                value={portalEmail}
+                onChange={e => setPortalEmail(e.target.value)}
+              />
+              <input
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:border-[#ff795d]"
+                placeholder="Vollständiger Name *"
+                value={portalName}
+                onChange={e => setPortalName(e.target.value)}
+              />
+              {portalError && (
+                <p className="text-xs text-red-600">{portalError}</p>
+              )}
+              {portalSuccess && (
+                <p className="text-xs text-green-600 font-medium">
+                  ✅ Zugangsdaten wurden erfolgreich gesendet!
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                onClick={() => {
+                  setShowPortalDialog(false)
+                  setPortalEmail('')
+                  setPortalName('')
+                  setPortalError('')
+                  setPortalSuccess(false)
+                }}
+                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50"
+              >
+                Später
+              </button>
+              <button
+                onClick={async () => {
+                  await sendPortalAccess(portalEmail, portalName)
+                }}
+                disabled={!portalEmail.trim() || !portalName.trim() || portalSending || portalSuccess}
+                className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50"
+                style={{ backgroundColor: '#ff795d' }}
+              >
+                {portalSending ? 'Wird gesendet…' : portalSuccess ? '✓ Gesendet' : '📧 Zugang senden'}
+              </button>
             </div>
           </div>
         </div>

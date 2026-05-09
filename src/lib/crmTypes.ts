@@ -87,7 +87,7 @@ export interface EmailTemplate {
   name:      string
   subject:   string
   body:      string
-  category:  'general' | 'project' | 'followup' | 'noshow' | 'lawyer' | 'financing'
+  category:  'general' | 'project' | 'followup' | 'noshow' | 'lawyer' | 'financing' | 'portal'
   language:  'de' | 'en'
   created_at: string
 }
@@ -223,6 +223,14 @@ export interface CrmUnitPayment {
   paid_date:         string | null
   is_paid:           boolean
   payment_reference: string | null
+  // invoice file (Rechnung)
+  invoice_path:      string | null
+  invoice_filename:  string | null
+  invoice_filesize:  number | null
+  // receipt file (Zahlungsbeleg)
+  receipt_path:      string | null
+  receipt_filename:  string | null
+  receipt_filesize:  number | null
   created_at:        string
   updated_at:        string
 }
