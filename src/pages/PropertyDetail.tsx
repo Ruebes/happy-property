@@ -622,6 +622,7 @@ export default function PropertyDetail() {
 
   // Payment Plan tab
   const [linkedUnitId,      setLinkedUnitId]      = useState<string | null>(null)
+  const [linkedProjectId,   setLinkedProjectId]   = useState<string | null>(null)
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [eigentuemerDocs,   setEigentuemerDocs]   = useState<CrmUnitDocument[]>([])
@@ -732,8 +733,8 @@ export default function PropertyDetail() {
   useEffect(() => {
     fetchProperty()
     fetchDocs()
-    fetchContracts()
-  }, [fetchProperty, fetchDocs, fetchContracts])
+    if (canEdit) fetchContracts()
+  }, [fetchProperty, fetchDocs, fetchContracts, canEdit])
 
   // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {
@@ -748,6 +749,7 @@ export default function PropertyDetail() {
         .maybeSingle()
       if (!unitData) {
         setLinkedUnitId(null)
+        setLinkedProjectId(null)
         setUnitPayments([])
         setUnitKaufvertraege([])
         setCrmProjectImages([])
@@ -755,6 +757,7 @@ export default function PropertyDetail() {
         return
       }
       setLinkedUnitId(unitData.id)
+      setLinkedProjectId((unitData as { project_id: string }).project_id)
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
 
       const [paysRes, docsRes, ownDocsRes, projRes] = await Promise.all([
@@ -1198,12 +1201,9 @@ export default function PropertyDetail() {
 
   // ── Verträge: Dokument hochladen → crm_unit_documents ────
   async function handleUploadContractDoc() {
-    if (!linkedUnitId || !profile?.id || !contractDocFile) return
+    if (!linkedUnitId || !linkedProjectId || !profile?.id || !contractDocFile) return
     setContractDocSaving(true)
     try {
-      const { data: unitRow } = await supabase
-        .from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()
-      if (!unitRow) throw new Error('Unit not found')
       const ext  = contractDocFile.name.split('.').pop() ?? 'pdf'
       const path = `unit-documents/${linkedUnitId}/doc-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage
@@ -1214,7 +1214,7 @@ export default function PropertyDetail() {
                     : contractDocName.trim() || contractDocFile.name.replace(/\.[^.]+$/, '')
       const { error: dbErr } = await supabase.from('crm_unit_documents').insert({
         unit_id:     linkedUnitId,
-        project_id:  unitRow.project_id,
+        project_id:  linkedProjectId,
         name:        docName,
         file_path:   path,
         file_name:   contractDocFile.name,
@@ -2455,8 +2455,16 @@ export default function PropertyDetail() {
       </div>
     )
 
-    const totalAmount = unitPayments.reduce((s, p) => s + p.amount, 0)
-    const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
+    // Progressive disclosure: show row N only when row N-1 has invoice uploaded
+    const visiblePayments = unitPayments.filter((_, idx) => {
+      if (idx === 0) return true
+      return !!unitPayments[idx - 1].invoice_path
+    })
+
+    // KPIs only count rows that have a confirmed invoice (amount known)
+    const invoicedPayments = unitPayments.filter(p => p.invoice_path)
+    const totalAmount = invoicedPayments.reduce((s, p) => s + p.amount, 0)
+    const totalPaid   = invoicedPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
     const outstanding = totalAmount - totalPaid
     const pct         = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0
 
@@ -2552,49 +2560,51 @@ export default function PropertyDetail() {
 
         {/* ── Zahlungsraten ──────────────────────────────────── */}
         <div className="space-y-3">
-          {unitPayments.length === 0 && (
+          {visiblePayments.length === 0 && (
             <div className="text-center py-10 text-gray-400 font-body">
               <p className="text-3xl mb-2">📋</p>
-              <p className="text-sm">Noch keine Rechnungen hochgeladen.</p>
+              <p className="text-sm">Noch keine Einträge vorhanden.</p>
               <p className="text-xs mt-1 text-gray-300">
-                Lade die erste Rechnung hoch, um den Zahlungsplan zu starten.
+                Admin legt Raten an; lade dann jeweils die Rechnung hoch.
               </p>
             </div>
           )}
 
-          {unitPayments.map(pay => (
+          {visiblePayments.map(pay => (
             <div key={pay.id}
                  className={`rounded-2xl border p-4 ${pay.is_paid ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'}`}>
 
               {/* Header */}
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {/* Bezahlt-Toggle */}
-                  {pay.is_paid ? (
-                    <button
-                      onClick={() => handleUnmarkAsPaid(pay.id)}
-                      className="text-xl shrink-0 leading-none" title="Als unbezahlt markieren">✅</button>
-                  ) : markingPaidId === pay.id ? (
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <input
-                        type="date" autoFocus
-                        value={markingPaidDate}
-                        onChange={e => setMarkingPaidDate(e.target.value)}
-                        className="text-xs border border-green-300 rounded-lg px-2 py-1 focus:outline-none font-body w-32"
-                      />
+                  {/* Bezahlt-Toggle — nur wenn Rechnung vorhanden */}
+                  {pay.invoice_path && (
+                    pay.is_paid ? (
                       <button
-                        onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
-                        className="text-xs bg-green-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-green-600">
-                        ✓
-                      </button>
-                      <button onClick={() => setMarkingPaidId(null)}
-                              className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => { setMarkingPaidId(pay.id); setMarkingPaidDate(new Date().toISOString().split('T')[0]) }}
-                      className="w-5 h-5 rounded border-2 border-gray-300 shrink-0 hover:border-green-400 transition-colors"
-                      title="Als bezahlt markieren" />
+                        onClick={() => handleUnmarkAsPaid(pay.id)}
+                        className="text-xl shrink-0 leading-none" title="Als unbezahlt markieren">✅</button>
+                    ) : markingPaidId === pay.id ? (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="date" autoFocus
+                          value={markingPaidDate}
+                          onChange={e => setMarkingPaidDate(e.target.value)}
+                          className="text-xs border border-green-300 rounded-lg px-2 py-1 focus:outline-none font-body w-32"
+                        />
+                        <button
+                          onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
+                          className="text-xs bg-green-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-green-600">
+                          ✓
+                        </button>
+                        <button onClick={() => setMarkingPaidId(null)}
+                                className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setMarkingPaidId(pay.id); setMarkingPaidDate(new Date().toISOString().split('T')[0]) }}
+                        className="w-5 h-5 rounded border-2 border-gray-300 shrink-0 hover:border-green-400 transition-colors"
+                        title="Als bezahlt markieren" />
+                    )
                   )}
 
                   <div className="flex-1 min-w-0">
@@ -2607,42 +2617,44 @@ export default function PropertyDetail() {
                   </div>
                 </div>
 
-                {/* Betrag: inline editierbar, rot/grün */}
+                {/* Betrag: nur anzeigen wenn Rechnung hochgeladen; inline editierbar, rot/grün */}
                 <div className="flex items-center gap-1.5 shrink-0 group">
-                  {editingPayId === pay.id ? (
-                    <>
-                      <div className="relative">
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">€</span>
-                        <input
-                          type="number" min="0" step="0.01" autoFocus
-                          value={editingAmount}
-                          onChange={e => setEditingAmount(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') handleSaveEditedAmount(pay.id)
-                            if (e.key === 'Escape') setEditingPayId(null)
-                          }}
-                          className="w-28 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
-                        />
-                      </div>
-                      <button onClick={() => handleSaveEditedAmount(pay.id)}
-                              className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
-                      <button onClick={() => setEditingPayId(null)}
-                              className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`text-base font-bold font-body ${pay.is_paid ? 'text-green-600' : 'text-red-500'}`}>
-                        {fmtCurrency(pay.amount)}
-                      </span>
-                      <button
-                        onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
-                        className="text-gray-200 group-hover:text-gray-400 text-xs transition-colors" title="Betrag bearbeiten">✎</button>
-                      {(canEdit || isEigentuemer) && (
+                  {pay.invoice_path && (
+                    editingPayId === pay.id ? (
+                      <>
+                        <div className="relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">€</span>
+                          <input
+                            type="number" min="0" step="0.01" autoFocus
+                            value={editingAmount}
+                            onChange={e => setEditingAmount(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') handleSaveEditedAmount(pay.id)
+                              if (e.key === 'Escape') setEditingPayId(null)
+                            }}
+                            className="w-28 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
+                          />
+                        </div>
+                        <button onClick={() => handleSaveEditedAmount(pay.id)}
+                                className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
+                        <button onClick={() => setEditingPayId(null)}
+                                className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`text-base font-bold font-body ${pay.is_paid ? 'text-green-600' : 'text-red-500'}`}>
+                          {fmtCurrency(pay.amount)}
+                        </span>
                         <button
-                          onClick={() => handleDeletePaymentEntry(pay.id)}
-                          className="text-gray-200 group-hover:text-red-300 text-xs transition-colors" title="Löschen">🗑</button>
-                      )}
-                    </>
+                          onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
+                          className="text-gray-200 group-hover:text-gray-400 text-xs transition-colors" title="Betrag bearbeiten">✎</button>
+                      </>
+                    )
+                  )}
+                  {(canEdit || isEigentuemer) && (
+                    <button
+                      onClick={() => handleDeletePaymentEntry(pay.id)}
+                      className="text-gray-200 group-hover:text-red-300 text-xs transition-colors" title="Löschen">🗑</button>
                   )}
                 </div>
               </div>
