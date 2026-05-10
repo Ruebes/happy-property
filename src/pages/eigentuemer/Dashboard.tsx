@@ -215,54 +215,57 @@ export default function EigentuemerDashboard() {
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
-            {properties.slice(0, 5).map(p => {
-              const imgSrc = p.images?.[0] ?? crmImages[p.id] ?? null
-              return (
-                <Link
-                  key={p.id}
-                  to={`/eigentuemer/properties/${p.id}`}
-                  className="flex items-center gap-5 px-6 py-4 hover:bg-gray-50/70 transition-colors group">
-
-                  {/* Großes Bild */}
-                  <div className="w-20 h-16 rounded-xl overflow-hidden shrink-0 bg-gray-100 flex items-center justify-center">
-                    {imgSrc ? (
-                      <img src={imgSrc} alt={p.project_name}
-                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
-                    ) : (
-                      <span className="text-2xl">{TYPE_ICON[p.type] ?? '🏠'}</span>
-                    )}
-                  </div>
-
-                  {/* Name + Details */}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-hp-black font-body text-sm truncate">
-                      {p.project_name}
-                      {p.unit_number && (
-                        <span className="ml-1.5 text-gray-400 font-normal text-xs">· {p.unit_number}</span>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5">
+              {properties.slice(0, 4).map(p => {
+                const imgSrc = p.images?.[0] ?? crmImages[p.id] ?? null
+                return (
+                  <Link
+                    key={p.id}
+                    to={`/eigentuemer/properties/${p.id}`}
+                    className="group rounded-2xl border border-gray-100 overflow-hidden
+                               hover:border-hp-highlight hover:shadow-md transition-all">
+                    {/* Bild */}
+                    <div className="relative h-44 bg-gray-100 overflow-hidden">
+                      {imgSrc ? (
+                        <img src={imgSrc} alt={p.project_name}
+                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <span className="text-5xl text-gray-300">{TYPE_ICON[p.type] ?? '🏠'}</span>
+                        </div>
                       )}
-                    </p>
-                    <p className="text-xs text-gray-400 font-body mt-0.5">
-                      📍 {p.city || '—'}
-                    </p>
-                    <span className="inline-block mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
-                      {t(`properties.rental.${p.rental_type}`)}
-                    </span>
-                  </div>
-
-                  <span className="text-gray-300 group-hover:text-gray-400 transition-colors">›</span>
+                      <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5
+                                       rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
+                        {t(`properties.rental.${p.rental_type}`)}
+                      </span>
+                    </div>
+                    {/* Info */}
+                    <div className="p-3">
+                      <p className="font-semibold text-hp-black font-body text-sm truncate">
+                        {p.project_name}
+                        {p.unit_number && (
+                          <span className="ml-1.5 text-gray-400 font-normal text-xs">· {p.unit_number}</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-400 font-body mt-0.5">📍 {p.city || '—'}</p>
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
+            {properties.length > 4 && (
+              <div className="px-5 pb-5">
+                <Link
+                  to="/eigentuemer/properties"
+                  className="block w-full py-2.5 text-center text-xs font-medium font-body
+                             rounded-xl border border-gray-200 text-gray-500
+                             hover:border-hp-highlight hover:text-hp-black transition-colors">
+                  + {properties.length - 4} weitere anzeigen
                 </Link>
-              )
-            })}
-
-            {properties.length > 5 && (
-              <Link
-                to="/eigentuemer/properties"
-                className="block px-6 py-4 text-center text-xs font-medium font-body text-gray-400 hover:text-hp-black transition-colors">
-                + {properties.length - 5} weitere → {t('dashboard.eigentuemer.viewAll')}
-              </Link>
+              </div>
             )}
-          </div>
+          </>
         )}
       </div>
 

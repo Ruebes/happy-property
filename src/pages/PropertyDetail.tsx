@@ -1189,19 +1189,28 @@ export default function PropertyDetail() {
 
   // ── Payment Plan: bezahlt markieren / entmarkieren ───────
   async function handleMarkAsPaid(payId: string, date: string) {
-    await supabase.from('crm_unit_payments')
+    const { error } = await supabase.from('crm_unit_payments')
       .update({ is_paid: true, paid_date: date || new Date().toISOString().split('T')[0] })
       .eq('id', payId)
+    if (error) {
+      setToast({ msg: 'Speichern fehlgeschlagen. Bitte erneut versuchen.', type: 'error' })
+      return
+    }
     setMarkingPaidId(null)
     setMarkingPaidDate('')
     await fetchUnitPayments()
+    setToast({ msg: 'Als bezahlt markiert ✓' })
   }
 
   async function handleUnmarkAsPaid(payId: string) {
     if (!window.confirm('Bezahlt-Markierung aufheben?')) return
-    await supabase.from('crm_unit_payments')
+    const { error } = await supabase.from('crm_unit_payments')
       .update({ is_paid: false, paid_date: null })
       .eq('id', payId)
+    if (error) {
+      setToast({ msg: 'Speichern fehlgeschlagen.', type: 'error' })
+      return
+    }
     await fetchUnitPayments()
   }
 
@@ -2582,103 +2591,65 @@ export default function PropertyDetail() {
 
           {visiblePayments.map(pay => (
             <div key={pay.id}
-                 className={`rounded-2xl border p-4 ${pay.is_paid ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'}`}>
+                 className={`rounded-2xl border overflow-hidden ${pay.is_paid ? 'border-green-200' : 'border-gray-100'}`}>
 
-              {/* Header */}
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div className="flex items-center gap-3 flex-1 min-w-0">
-                  {/* Bezahlt-Toggle — nur wenn Rechnung vorhanden */}
-                  {pay.invoice_path && (
-                    pay.is_paid ? (
-                      <button
-                        onClick={() => handleUnmarkAsPaid(pay.id)}
-                        className="text-xl shrink-0 leading-none" title="Als unbezahlt markieren">✅</button>
-                    ) : markingPaidId === pay.id ? (
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <input
-                          type="date" autoFocus
-                          value={markingPaidDate}
-                          onChange={e => setMarkingPaidDate(e.target.value)}
-                          className="text-xs border border-green-300 rounded-lg px-2 py-1 focus:outline-none font-body w-32"
-                        />
-                        <button
-                          onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
-                          className="text-xs bg-green-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-green-600">
-                          ✓
-                        </button>
-                        <button onClick={() => setMarkingPaidId(null)}
-                                className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => { setMarkingPaidId(pay.id); setMarkingPaidDate(new Date().toISOString().split('T')[0]) }}
-                        className="w-5 h-5 rounded border-2 border-gray-300 shrink-0 hover:border-green-400 transition-colors"
-                        title="Als bezahlt markieren" />
-                    )
-                  )}
+              {/* ── Header: Titel + Betrag ─────────────────── */}
+              <div className={`flex items-center justify-between gap-3 px-4 py-3
+                ${pay.is_paid ? 'bg-green-50' : 'bg-white'}`}>
+                <p className="text-sm font-semibold text-hp-black font-body">{cleanDesc(pay.description)}</p>
 
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-hp-black font-body">{cleanDesc(pay.description)}</p>
-                    {pay.paid_date && (
-                      <p className="text-xs text-green-600 font-body mt-0.5">
-                        Bezahlt am {fmtDate(pay.paid_date)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Betrag: nur anzeigen wenn Rechnung hochgeladen; bei Betrag=0 sofort editierbar */}
+                {/* Betrag: nur wenn Rechnung vorhanden; bei 0 direkt Eingabefeld */}
                 <div className="flex items-center gap-1.5 shrink-0 group">
                   {pay.invoice_path && (
                     (editingPayId === pay.id || pay.amount === 0) ? (
-                      <>
+                      <div className="flex items-center gap-1">
                         <div className="relative">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">€</span>
                           <input
                             type="number" min="0" step="0.01"
-                            autoFocus={editingPayId === pay.id}
+                            autoFocus={editingPayId === pay.id || pay.amount === 0}
                             value={editingPayId === pay.id ? editingAmount : ''}
-                            placeholder="Betrag"
+                            placeholder="Betrag eingeben"
                             onFocus={() => { if (editingPayId !== pay.id) { setEditingPayId(pay.id); setEditingAmount('') } }}
                             onChange={e => setEditingAmount(e.target.value)}
                             onKeyDown={e => {
                               if (e.key === 'Enter') handleSaveEditedAmount(pay.id)
                               if (e.key === 'Escape') setEditingPayId(null)
                             }}
-                            className="w-28 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
+                            className="w-36 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
                           />
                         </div>
-                        {editingPayId === pay.id && <>
-                          <button onClick={() => handleSaveEditedAmount(pay.id)}
-                                  className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
-                          <button onClick={() => setEditingPayId(null)}
-                                  className="text-xs text-gray-400 hover:text-gray-600">✕</button>
-                        </>}
-                      </>
+                        {editingPayId === pay.id && (
+                          <>
+                            <button onClick={() => handleSaveEditedAmount(pay.id)}
+                                    className="text-xs text-green-600 hover:text-green-800 font-semibold px-1">✓</button>
+                            <button onClick={() => setEditingPayId(null)}
+                                    className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                          </>
+                        )}
+                      </div>
                     ) : (
-                      <>
-                        <span className={`text-base font-bold font-body ${pay.is_paid ? 'text-green-600' : 'text-red-500'}`}>
+                      <div className="flex items-center gap-1 group">
+                        <span className={`text-base font-bold font-body ${pay.is_paid ? 'text-green-700' : 'text-red-500'}`}>
                           {fmtCurrency(pay.amount)}
                         </span>
                         <button
                           onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
-                          className="text-gray-200 group-hover:text-gray-400 text-xs transition-colors" title="Betrag bearbeiten">✎</button>
-                      </>
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity" title="Betrag bearbeiten">✎</button>
+                      </div>
                     )
                   )}
                   {(canEdit || isEigentuemer) && (
                     <button
                       onClick={() => handleDeletePaymentEntry(pay.id)}
-                      className="text-gray-200 group-hover:text-red-300 text-xs transition-colors" title="Löschen">🗑</button>
+                      className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs transition-opacity ml-1" title="Eintrag löschen">🗑</button>
                   )}
                 </div>
               </div>
 
-              {/* Rechnung + Zahlungsbeleg */}
-              <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
-
-                {/* Rechnung vom Developer */}
-                <div>
+              {/* ── Dokumente: Rechnung + Zahlungsbeleg ─────── */}
+              <div className="grid grid-cols-2 gap-0 border-t border-gray-100">
+                <div className="px-4 py-3 border-r border-gray-100">
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     Rechnung
                   </p>
@@ -2695,9 +2666,7 @@ export default function PropertyDetail() {
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
                 </div>
-
-                {/* Zahlungsbeleg */}
-                <div>
+                <div className="px-4 py-3">
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     Zahlungsbeleg
                   </p>
@@ -2715,6 +2684,65 @@ export default function PropertyDetail() {
                   )}
                 </div>
               </div>
+
+              {/* ── Zahlungsstatus — nur wenn Rechnung vorhanden ── */}
+              {pay.invoice_path && (
+                <div className={`border-t px-4 py-3 ${pay.is_paid ? 'border-green-200 bg-green-50' : 'border-gray-100 bg-gray-50/60'}`}>
+                  {pay.is_paid ? (
+                    /* BEZAHLT */
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">✅</span>
+                        <div>
+                          <p className="text-sm font-semibold text-green-700 font-body">Bezahlt</p>
+                          {pay.paid_date && (
+                            <p className="text-xs text-green-600 font-body">am {fmtDate(pay.paid_date)}</p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleUnmarkAsPaid(pay.id)}
+                        className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
+                        Rückgängig
+                      </button>
+                    </div>
+                  ) : markingPaidId === pay.id ? (
+                    /* DATUM EINGEBEN */
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-gray-600 font-body">Wann wurde die Zahlung überwiesen?</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="date" autoFocus
+                          value={markingPaidDate}
+                          onChange={e => setMarkingPaidDate(e.target.value)}
+                          className="flex-1 text-sm border border-green-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-300 font-body"
+                        />
+                        <button
+                          onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
+                          className="px-4 py-2 rounded-xl text-sm font-semibold text-white font-body
+                                     hover:opacity-90 transition-opacity flex items-center gap-1.5"
+                          style={{ backgroundColor: '#22c55e' }}>
+                          ✓ Speichern
+                        </button>
+                        <button
+                          onClick={() => setMarkingPaidId(null)}
+                          className="px-3 py-2 rounded-xl text-sm text-gray-500 border border-gray-200 hover:bg-gray-100 font-body">
+                          Abbrechen
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* NOCH NICHT BEZAHLT */
+                    <button
+                      onClick={() => { setMarkingPaidId(pay.id); setMarkingPaidDate(new Date().toISOString().split('T')[0]) }}
+                      className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border-2
+                                 border-dashed border-green-200 text-sm font-semibold text-green-600
+                                 hover:bg-green-50 hover:border-green-400 transition-colors font-body">
+                      ✓ Als bezahlt markieren
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
