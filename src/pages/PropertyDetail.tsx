@@ -1051,9 +1051,20 @@ export default function PropertyDetail() {
       const { error: upErr } = await supabase.storage
         .from('unit-documents').upload(path, file, { upsert: false })
       if (upErr) throw upErr
-      const update = type === 'invoice'
+
+      const update: Record<string, unknown> = type === 'invoice'
         ? { invoice_path: path, invoice_filename: file.name, invoice_filesize: file.size }
         : { receipt_path: path, receipt_filename: file.name, receipt_filesize: file.size }
+
+      // Rechnung-PDF → KI liest Betrag aus und überschreibt den vordefinierten Wert
+      if (type === 'invoice' && file.type === 'application/pdf') {
+        try {
+          const result = await analyzeInvoicePDF(file)
+          const amount = result?.amount_gross ?? result?.amount_net
+          if (amount) update.amount = parseFloat(String(amount))
+        } catch { /* silent – amount stays as-is */ }
+      }
+
       await supabase.from('crm_unit_payments').update(update).eq('id', payId)
       await fetchUnitPayments()
     } catch (err) {
@@ -1116,14 +1127,9 @@ export default function PropertyDetail() {
   }
 
   async function handleAddPayment() {
-    if (!linkedUnitId || !profile?.id) return
+    if (!linkedUnitId || !linkedProjectId || !profile?.id) return
     setAddPaySaving(true)
     try {
-      // get project_id
-      const { data: unitRow } = await supabase
-        .from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()
-      if (!unitRow) throw new Error('Unit not found')
-
       let invoicePath: string | null = null
       let invoiceFilename: string | null = null
       let invoiceFilesize: number | null = null
@@ -1142,7 +1148,7 @@ export default function PropertyDetail() {
       const amount = parseFloat(addPayAmount.replace(',', '.')) || 0
       await supabase.from('crm_unit_payments').insert({
         unit_id:          linkedUnitId,
-        project_id:       unitRow.project_id,
+        project_id:       linkedProjectId,
         description:      addPayDesc.trim() || nextPaymentLabel(),
         amount,
         due_date:         addPayDueDate || null,
@@ -2461,12 +2467,16 @@ export default function PropertyDetail() {
       return !!unitPayments[idx - 1].invoice_path
     })
 
-    // KPIs only count rows that have a confirmed invoice (amount known)
-    const invoicedPayments = unitPayments.filter(p => p.invoice_path)
-    const totalAmount = invoicedPayments.reduce((s, p) => s + p.amount, 0)
-    const totalPaid   = invoicedPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
-    const outstanding = totalAmount - totalPaid
-    const pct         = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0
+    // Gesamtbetrag = Bruttokaufpreis der Immobilie (fix, immer sichtbar)
+    const grossTotal  = property!.purchase_price_gross ?? 0
+    const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
+    const outstanding = grossTotal - totalPaid
+    const pct         = grossTotal > 0 ? Math.min((totalPaid / grossTotal) * 100, 100) : 0
+
+    // Beschreibung: Prozentzahl entfernen ("1. Rate - 20%" → "1. Rate")
+    function cleanDesc(s: string | null | undefined): string {
+      return (s ?? '—').replace(/\s*[-–]\s*\d+(\.\d+)?%.*$/, '').trim()
+    }
 
     // ── Helper: Datei-Aktionen (öffnen / download / löschen) ──
     function FileActions({
@@ -2523,13 +2533,13 @@ export default function PropertyDetail() {
     return (
       <div className="space-y-6">
 
-        {/* KPI cards — nur wenn Daten vorhanden */}
-        {unitPayments.length > 0 && (
+        {/* KPI cards — immer sichtbar wenn CRM-Unit verknüpft */}
+        {grossTotal > 0 && (
           <>
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-blue-50 rounded-2xl p-4 text-center">
                 <p className="text-xs text-blue-500 font-medium font-body mb-1">Gesamtbetrag</p>
-                <p className="text-lg font-bold text-blue-800">{fmtCurrency(totalAmount)}</p>
+                <p className="text-lg font-bold text-blue-800">{fmtCurrency(grossTotal)}</p>
               </div>
               <div className="bg-green-50 rounded-2xl p-4 text-center">
                 <p className="text-xs text-green-500 font-medium font-body mb-1">Bezahlt</p>
@@ -2548,7 +2558,7 @@ export default function PropertyDetail() {
             <div>
               <div className="flex justify-between text-xs text-gray-400 mb-1.5 font-body">
                 <span>{Math.round(pct)}% bezahlt</span>
-                <span>{fmtCurrency(totalPaid)} / {fmtCurrency(totalAmount)}</span>
+                <span>{fmtCurrency(totalPaid)} / {fmtCurrency(grossTotal)}</span>
               </div>
               <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div className="h-full rounded-full transition-all duration-500"
@@ -2608,7 +2618,7 @@ export default function PropertyDetail() {
                   )}
 
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-hp-black font-body">{pay.description ?? '—'}</p>
+                    <p className="text-sm font-semibold text-hp-black font-body">{cleanDesc(pay.description)}</p>
                     {pay.paid_date && (
                       <p className="text-xs text-green-600 font-body mt-0.5">
                         Bezahlt am {fmtDate(pay.paid_date)}
@@ -2617,16 +2627,19 @@ export default function PropertyDetail() {
                   </div>
                 </div>
 
-                {/* Betrag: nur anzeigen wenn Rechnung hochgeladen; inline editierbar, rot/grün */}
+                {/* Betrag: nur anzeigen wenn Rechnung hochgeladen; bei Betrag=0 sofort editierbar */}
                 <div className="flex items-center gap-1.5 shrink-0 group">
                   {pay.invoice_path && (
-                    editingPayId === pay.id ? (
+                    (editingPayId === pay.id || pay.amount === 0) ? (
                       <>
                         <div className="relative">
                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">€</span>
                           <input
-                            type="number" min="0" step="0.01" autoFocus
-                            value={editingAmount}
+                            type="number" min="0" step="0.01"
+                            autoFocus={editingPayId === pay.id}
+                            value={editingPayId === pay.id ? editingAmount : ''}
+                            placeholder="Betrag"
+                            onFocus={() => { if (editingPayId !== pay.id) { setEditingPayId(pay.id); setEditingAmount('') } }}
                             onChange={e => setEditingAmount(e.target.value)}
                             onKeyDown={e => {
                               if (e.key === 'Enter') handleSaveEditedAmount(pay.id)
@@ -2635,10 +2648,12 @@ export default function PropertyDetail() {
                             className="w-28 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
                           />
                         </div>
-                        <button onClick={() => handleSaveEditedAmount(pay.id)}
-                                className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
-                        <button onClick={() => setEditingPayId(null)}
-                                className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                        {editingPayId === pay.id && <>
+                          <button onClick={() => handleSaveEditedAmount(pay.id)}
+                                  className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
+                          <button onClick={() => setEditingPayId(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                        </>}
                       </>
                     ) : (
                       <>

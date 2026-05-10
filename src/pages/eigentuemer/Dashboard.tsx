@@ -187,9 +187,9 @@ export default function EigentuemerDashboard() {
       </div>
 
       {/* ── Meine Immobilien ──────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mb-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-          <h2 className="font-semibold text-hp-black font-body">
+      <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-50">
+          <h2 className="font-semibold text-hp-black font-body text-base">
             {t('dashboard.eigentuemer.allPropertiesTitle')}
           </h2>
           {properties.length > 0 && (
@@ -203,78 +203,67 @@ export default function EigentuemerDashboard() {
         </div>
 
         {loading ? (
-          <div className="flex items-center gap-2 justify-center py-10 text-gray-400 font-body text-sm">
+          <div className="flex items-center gap-2 justify-center py-16 text-gray-400 font-body text-sm">
             <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
             {t('common.loading')}
           </div>
         ) : properties.length === 0 ? (
-          <div className="text-center py-10 px-6">
-            <div className="text-4xl mb-3">🏠</div>
+          <div className="text-center py-16 px-6">
+            <div className="text-5xl mb-4">🏠</div>
             <p className="text-sm font-semibold text-gray-500 font-body">
               {t('dashboard.eigentuemer.noProperties')}
             </p>
           </div>
         ) : (
           <div className="divide-y divide-gray-50">
-            {properties.slice(0, 5).map(p => (
-              <Link
-                key={p.id}
-                to={`/eigentuemer/properties/${p.id}`}
-                className="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50/70 transition-colors">
+            {properties.slice(0, 5).map(p => {
+              const imgSrc = p.images?.[0] ?? crmImages[p.id] ?? null
+              return (
+                <Link
+                  key={p.id}
+                  to={`/eigentuemer/properties/${p.id}`}
+                  className="flex items-center gap-5 px-6 py-4 hover:bg-gray-50/70 transition-colors group">
 
-                {/* Thumbnail oder Placeholder */}
-                <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-gray-100 flex items-center justify-center">
-                  {(p.images?.[0] || crmImages[p.id]) ? (
-                    <img src={p.images?.[0] ?? crmImages[p.id]} alt={p.project_name}
-                         className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-xl">{TYPE_ICON[p.type] ?? '🏠'}</span>
-                  )}
-                </div>
-
-                {/* Name + Ort */}
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-hp-black font-body text-sm truncate">
-                    {p.project_name}
-                    {p.unit_number && (
-                      <span className="ml-1 text-gray-400 font-normal">· {p.unit_number}</span>
+                  {/* Großes Bild */}
+                  <div className="w-20 h-16 rounded-xl overflow-hidden shrink-0 bg-gray-100 flex items-center justify-center">
+                    {imgSrc ? (
+                      <img src={imgSrc} alt={p.project_name}
+                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                    ) : (
+                      <span className="text-2xl">{TYPE_ICON[p.type] ?? '🏠'}</span>
                     )}
-                  </p>
-                  <p className="text-xs text-gray-400 font-body mt-0.5">
-                    {p.city || '—'} ·{' '}
-                    {t(`properties.rental.${p.rental_type}`)}
-                  </p>
-                </div>
+                  </div>
 
-                <span className="text-gray-300 text-sm">›</span>
-              </Link>
-            ))}
+                  {/* Name + Details */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-hp-black font-body text-sm truncate">
+                      {p.project_name}
+                      {p.unit_number && (
+                        <span className="ml-1.5 text-gray-400 font-normal text-xs">· {p.unit_number}</span>
+                      )}
+                    </p>
+                    <p className="text-xs text-gray-400 font-body mt-0.5">
+                      📍 {p.city || '—'}
+                    </p>
+                    <span className="inline-block mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                      {t(`properties.rental.${p.rental_type}`)}
+                    </span>
+                  </div>
+
+                  <span className="text-gray-300 group-hover:text-gray-400 transition-colors">›</span>
+                </Link>
+              )
+            })}
 
             {properties.length > 5 && (
               <Link
                 to="/eigentuemer/properties"
-                className="block px-5 py-3 text-center text-xs font-medium font-body text-gray-400 hover:text-hp-black transition-colors">
-                + {properties.length - 5} {t('common.noResults').replace('Keine Einträge vorhanden.', 'weitere …')}
-                &nbsp;{t('dashboard.eigentuemer.viewAll')}
+                className="block px-6 py-4 text-center text-xs font-medium font-body text-gray-400 hover:text-hp-black transition-colors">
+                + {properties.length - 5} weitere → {t('dashboard.eigentuemer.viewAll')}
               </Link>
             )}
           </div>
         )}
-      </div>
-
-      {/* ── Datenschutz-Banner ────────────────────────────── */}
-      <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="text-3xl">🔒</div>
-          <div>
-            <h3 className="font-semibold font-body text-hp-black mb-1">
-              {t('dashboard.eigentuemer.privacyTitle')}
-            </h3>
-            <p className="text-sm text-gray-500 font-body">
-              {t('dashboard.eigentuemer.privacyDesc')}
-            </p>
-          </div>
-        </div>
       </div>
 
     </DashboardLayout>
