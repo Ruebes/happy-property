@@ -86,20 +86,6 @@ type TabKey = 'overview' | 'contracts' | 'invoices' | 'income' | 'images' | 'pur
 
 type InvoiceSortField = 'date' | 'creditor' | 'amount'
 
-interface DocUploadForm {
-  type: DocType
-  title: string
-  file: File | null
-  amount_net: string
-  amount_gross: string
-  creditor: string
-}
-
-const EMPTY_DOC_FORM: DocUploadForm = {
-  type: 'sonstiges', title: '', file: null,
-  amount_net: '', amount_gross: '', creditor: '',
-}
-
 const MAX_PDF = 50 * 1024 * 1024
 
 function sanitize(name: string) {
@@ -610,13 +596,6 @@ export default function PropertyDetail() {
   const [docs, setDocs]               = useState<DocRecord[]>([])
   const [docsLoading, setDocsLoading] = useState(false)
 
-  // Contract tab: upload PDF as mietvertrag document
-  const [showContractForm, setShowContractForm]     = useState(false)
-  const [contractForm, setContractForm]             = useState<DocUploadForm>({ ...EMPTY_DOC_FORM, type: 'mietvertrag' })
-  const [contractUploading, setContractUploading]   = useState(false)
-  const [contractError, setContractError]           = useState('')
-  const contractFileRef = useRef<HTMLInputElement>(null)
-
   // Invoice tab: modal state + sort + accordion
   const [invoiceModalOpen,   setInvoiceModalOpen]   = useState(false)
   const [invoiceModalDoc,    setInvoiceModalDoc]     = useState<DocRecord | null>(null)
@@ -647,8 +626,6 @@ export default function PropertyDetail() {
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [eigentuemerDocs,   setEigentuemerDocs]   = useState<CrmUnitDocument[]>([])
   const [unitPayLoading,    setUnitPayLoading]    = useState(false)
-  const [eigDocUploading,   setEigDocUploading]   = useState(false)
-  const eigDocRef = useRef<HTMLInputElement | null>(null)
   // CRM images + project location
   const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
@@ -669,6 +646,17 @@ export default function PropertyDetail() {
   // Payment Plan: Betrag inline editieren
   const [editingPayId,    setEditingPayId]    = useState<string | null>(null)
   const [editingAmount,   setEditingAmount]   = useState('')
+  // Payment Plan: als bezahlt markieren
+  const [markingPaidId,   setMarkingPaidId]   = useState<string | null>(null)
+  const [markingPaidDate, setMarkingPaidDate] = useState('')
+
+  // Verträge: Doc-Upload (crm_unit_documents)
+  const [contractDocType,   setContractDocType]   = useState<'kaufvertrag' | 'mietvertrag' | 'sonstige'>('kaufvertrag')
+  const [contractDocName,   setContractDocName]   = useState('')
+  const [contractDocFile,   setContractDocFile]   = useState<File | null>(null)
+  const [contractDocSaving, setContractDocSaving] = useState(false)
+  const [showContractDoc,   setShowContractDoc]   = useState(false)
+  const contractDocRef = useRef<HTMLInputElement | null>(null)
 
   // Owner accordion
   const [ownerOpen, setOwnerOpen]       = useState(false)
@@ -813,46 +801,6 @@ export default function PropertyDetail() {
   useEffect(() => {
     fetchUnitPayments()
   }, [fetchUnitPayments])
-
-  // ── Generic doc upload ───────────────────────────────────
-  async function uploadDoc(
-    form: DocUploadForm,
-    setUploading: (v: boolean) => void,
-    setError: (v: string) => void,
-    resetForm: () => void,
-  ) {
-    if (!profile || !id || !form.title || !form.file) return
-    setUploading(true)
-    setError('')
-    const rand = Math.random().toString(36).slice(2, 8)
-    const path = `${id}/${Date.now()}-${rand}-${sanitize(form.file.name)}`
-    try {
-      const { error: sErr } = await supabase.storage
-        .from('documents').upload(path, form.file, { upsert: true })
-      if (sErr) throw new Error(sErr.message)
-      const { error: dErr } = await supabase.from('documents').insert({
-        property_id:  id,
-        uploaded_by:  profile.id,
-        type:         form.type,
-        title:        form.title.trim(),
-        file_url:     path,
-        amount_net:   form.amount_net   ? parseFloat(form.amount_net.replace(',', '.'))   : null,
-        amount_gross: form.amount_gross ? parseFloat(form.amount_gross.replace(',', '.'))  : null,
-        creditor:     form.creditor.trim() || null,
-      })
-      if (dErr) {
-        await supabase.storage.from('documents').remove([path])
-        throw new Error(dErr.message)
-      }
-      resetForm()
-      setToast({ msg: t('success.uploaded') })
-      fetchDocs()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('errors.uploadFailed'))
-    } finally {
-      setUploading(false)
-    }
-  }
 
   async function openDoc(filePath: string) {
     const { data, error } = await supabase.storage
@@ -1050,143 +998,6 @@ export default function PropertyDetail() {
     return <span className="ml-1" style={{ color: 'var(--color-highlight)' }}>{invoiceSortDir === 'asc' ? '↑' : '↓'}</span>
   }
 
-  // ── PDF upload sub-form ───────────────────────────────────
-  function renderDocUploadForm({
-    form, setForm, uploading, error, fileRef, onSubmit, onCancel, titleKey,
-  }: {
-    form: DocUploadForm
-    setForm: React.Dispatch<React.SetStateAction<DocUploadForm>>
-    uploading: boolean
-    error: string
-    fileRef: React.RefObject<HTMLInputElement>
-    onSubmit: () => void
-    onCancel: () => void
-    titleKey: string
-  }) {
-    function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-      const file = e.target.files?.[0]
-      if (!file) return
-      if (file.type !== 'application/pdf') {
-        setForm(f => ({ ...f, file: null }))
-        e.target.value = ''
-        return
-      }
-      if (file.size > MAX_PDF) {
-        e.target.value = ''
-        return
-      }
-      setForm(f => ({ ...f, file, title: f.title || file.name.replace(/\.pdf$/i, '').replace(/[-_]/g, ' ') }))
-    }
-
-    return (
-      <div className="mt-3 bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-4">
-        <p className="text-sm font-semibold text-hp-black font-body">{t(titleKey)}</p>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm font-medium text-hp-black font-body mb-1.5">
-              {t('documents.titleField')} <span className="text-red-500">*</span>
-            </label>
-            <input className={inputCls} style={focusRing()}
-              value={form.title}
-              onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
-              placeholder={t('documents.titleField')} />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-hp-black font-body mb-1.5">
-              {t('documents.creditor')}
-            </label>
-            <input className={inputCls} style={focusRing()}
-              value={form.creditor}
-              onChange={e => setForm(f => ({ ...f, creditor: e.target.value }))}
-              placeholder={form.type === 'mietvertrag' ? t('propertyDetail.contracts.tenantPlaceholder') : 'Stadtwerke …'} />
-          </div>
-        </div>
-
-        {form.type === 'rechnung' && (
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-500 font-body mb-1">
-                {t('documents.amountGross')}
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
-                <input type="number" min="0" step="0.01"
-                  className={`${inputCls} pl-7`} style={focusRing()}
-                  value={form.amount_gross}
-                  onChange={e => setForm(f => ({ ...f, amount_gross: e.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 font-body mb-1">
-                {t('documents.amountNet')}
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
-                <input type="number" min="0" step="0.01"
-                  className={`${inputCls} pl-7`} style={focusRing()}
-                  value={form.amount_net}
-                  onChange={e => setForm(f => ({ ...f, amount_net: e.target.value }))} />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* PDF drop zone */}
-        <div>
-          <label className="block text-sm font-medium text-hp-black font-body mb-1.5">
-            {t('documents.file')} <span className="text-red-500">*</span>
-          </label>
-          <div
-            onClick={() => fileRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-4 cursor-pointer transition
-                        ${form.file
-                          ? 'border-green-300 bg-green-50'
-                          : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white'}`}>
-            <input ref={fileRef} type="file" accept="application/pdf"
-              className="hidden" onChange={handleFileChange} />
-            {form.file ? (
-              <div className="flex items-center gap-3">
-                <span className="text-xl">📄</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold font-body text-gray-700 truncate">{form.file.name}</p>
-                  <p className="text-xs text-gray-400 font-body">{(form.file.size / 1024 / 1024).toFixed(2)} MB</p>
-                </div>
-                <button type="button"
-                  onClick={e => { e.stopPropagation(); setForm(f => ({ ...f, file: null })); if (fileRef.current) fileRef.current.value = '' }}
-                  className="text-red-400 hover:text-red-600 text-lg shrink-0">✕</button>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-400 font-body text-center">PDF · max. 50 MB</p>
-            )}
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-sm text-red-500 bg-red-50 px-4 py-2 rounded-lg font-body">{error}</p>
-        )}
-
-        <div className="flex justify-end gap-3">
-          <button onClick={onCancel}
-            className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold
-                       font-body text-gray-600 hover:border-gray-300 transition-colors">
-            {t('common.cancel')}
-          </button>
-          <button onClick={onSubmit}
-            disabled={uploading || !form.title || !form.file}
-            className="px-5 py-2 rounded-xl text-white text-sm font-semibold font-body
-                       hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-2"
-            style={{ backgroundColor: 'var(--color-highlight)' }}>
-            {uploading && (
-              <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-            )}
-            {uploading ? t('documents.uploading') : t('documents.upload')}
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   // ── Loading / not found ───────────────────────────────────
   if (loading) {
     return (
@@ -1367,35 +1178,63 @@ export default function PropertyDetail() {
     }
   }
 
-  // ── Eigentümer: eigenes Dokument hochladen ────────────────
-  async function handleUploadEigDoc(file: File) {
-    if (!linkedUnitId || !profile?.id) return
-    setEigDocUploading(true)
+  // ── Payment Plan: bezahlt markieren / entmarkieren ───────
+  async function handleMarkAsPaid(payId: string, date: string) {
+    await supabase.from('crm_unit_payments')
+      .update({ is_paid: true, paid_date: date || new Date().toISOString().split('T')[0] })
+      .eq('id', payId)
+    setMarkingPaidId(null)
+    setMarkingPaidDate('')
+    await fetchUnitPayments()
+  }
+
+  async function handleUnmarkAsPaid(payId: string) {
+    if (!window.confirm('Bezahlt-Markierung aufheben?')) return
+    await supabase.from('crm_unit_payments')
+      .update({ is_paid: false, paid_date: null })
+      .eq('id', payId)
+    await fetchUnitPayments()
+  }
+
+  // ── Verträge: Dokument hochladen → crm_unit_documents ────
+  async function handleUploadContractDoc() {
+    if (!linkedUnitId || !profile?.id || !contractDocFile) return
+    setContractDocSaving(true)
     try {
-      const ext  = file.name.split('.').pop() ?? 'pdf'
-      const path = `unit-documents/${linkedUnitId}/eig-${Date.now()}.${ext}`
+      const { data: unitRow } = await supabase
+        .from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()
+      if (!unitRow) throw new Error('Unit not found')
+      const ext  = contractDocFile.name.split('.').pop() ?? 'pdf'
+      const path = `unit-documents/${linkedUnitId}/doc-${Date.now()}.${ext}`
       const { error: upErr } = await supabase.storage
-        .from('unit-documents').upload(path, file, { upsert: false })
+        .from('unit-documents').upload(path, contractDocFile, { upsert: false })
       if (upErr) throw upErr
+      const docName = contractDocType === 'kaufvertrag' ? 'Kaufvertrag'
+                    : contractDocType === 'mietvertrag' ? 'Mietvertrag'
+                    : contractDocName.trim() || contractDocFile.name.replace(/\.[^.]+$/, '')
       const { error: dbErr } = await supabase.from('crm_unit_documents').insert({
         unit_id:     linkedUnitId,
-        project_id:  (await supabase.from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()).data?.project_id,
-        name:        file.name.replace(/\.[^.]+$/, ''),
+        project_id:  unitRow.project_id,
+        name:        docName,
         file_path:   path,
-        file_name:   file.name,
-        file_size:   file.size,
-        doc_type:    'zahlungsbeleg',
+        file_name:   contractDocFile.name,
+        file_size:   contractDocFile.size,
+        doc_type:    contractDocType,
         uploaded_by: profile.id,
       })
       if (dbErr) throw dbErr
+      setShowContractDoc(false)
+      setContractDocFile(null)
+      setContractDocName('')
+      setContractDocType('kaufvertrag')
+      if (contractDocRef.current) contractDocRef.current.value = ''
       await fetchUnitPayments()
-      setToast({ msg: 'Dokument hochgeladen ✓', type: 'success' })
+      setToast({ msg: 'Dokument hochgeladen ✓' })
     } catch (err) {
-      console.error('[PropertyDetail] eigDoc upload:', err)
+      console.error('[handleUploadContractDoc]', err)
       setToast({ msg: 'Upload fehlgeschlagen.', type: 'error' })
     } finally {
-      setEigDocUploading(false)
-      if (eigDocRef.current) eigDocRef.current.value = ''
+      setContractDocSaving(false)
     }
   }
 
@@ -1790,303 +1629,274 @@ export default function PropertyDetail() {
   function renderContracts() {
     const mietvertrags = docs.filter(d => d.type === 'mietvertrag')
 
-    return (
-      <div className="space-y-6">
+    // Alle CRM-Docs: Kaufvertrag/Mietvertrag oben gepinnt, Rest darunter
+    const pinnedCrmDocs  = [...unitKaufvertraege, ...eigentuemerDocs.filter(d => d.doc_type === 'mietvertrag')]
+    const otherCrmDocs   = eigentuemerDocs.filter(d => d.doc_type !== 'mietvertrag')
 
-        {/* Contracts table */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-            {t('propertyDetail.contracts.activeContracts')}
-          </h3>
-          {contractsLoading ? (
-            <div className="flex items-center gap-2 text-gray-400 text-sm font-body py-8 justify-center">
-              <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
-              {t('common.loading')}
-            </div>
-          ) : contracts.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 font-body">
-              <div className="text-3xl mb-2">📝</div>
-              <p className="text-sm">{t('propertyDetail.contracts.noContracts')}</p>
-            </div>
-          ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-              <table className="w-full text-sm font-body">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    {['tenant', 'period', 'rent', 'status', 'actions'].map(c => (
-                      <th key={c} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">
-                        {t(`contracts.columns.${c}`)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {contracts.map((c, i) => (
-                    <tr key={c.id}
-                        className={`hover:bg-gray-50 transition-colors ${i < contracts.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-hp-black">{c.tenant_name}</div>
-                        <div className="text-xs text-gray-400">{c.tenant_email}</div>
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
-                        <div>{fmtDate(c.start_date)}</div>
-                        {c.end_date && <div className="text-xs text-gray-400">– {fmtDate(c.end_date)}</div>}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600 tabular-nums">
-                        {fmtCurrency(c.monthly_rent)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge color={contractStatusColor(c.status)}>
-                          {t(`contracts.statuses.${c.status}`)}
-                        </Badge>
-                        {c.signed_at && (
-                          <div className="text-xs text-gray-400 mt-0.5">{fmtDate(c.signed_at)}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        {c.status !== 'signed' && (
-                          <button
-                            onClick={() => copySignLink(c.signature_token)}
-                            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors
-                              ${linkCopied === c.signature_token
-                                ? 'bg-green-50 border-green-200 text-green-700'
-                                : 'border-gray-200 text-gray-600 hover:border-hp-highlight hover:text-hp-highlight'}`}>
-                            {linkCopied === c.signature_token
-                              ? t('propertyDetail.contracts.linkCopied')
-                              : t('propertyDetail.contracts.copyLink')}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+    async function openCrmDoc(path: string) {
+      const { data } = await supabase.storage.from('unit-documents').createSignedUrl(path, 300)
+      if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+    }
+    async function downloadCrmDoc(path: string, name: string) {
+      const { data } = await supabase.storage.from('unit-documents').createSignedUrl(path, 60)
+      if (!data?.signedUrl) return
+      const a = document.createElement('a'); a.href = data.signedUrl; a.download = name; a.click()
+    }
 
-        {/* Mietvertrag documents */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body">
-              {t('propertyDetail.contracts.documents')}
-            </h3>
-            {canEdit && (
-              <button
-                onClick={() => { setShowContractForm(f => !f); setContractError('') }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold
-                           font-body transition-colors
-                           ${showContractForm
-                             ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                             : 'text-white hover:opacity-90'}`}
-                style={!showContractForm ? { backgroundColor: 'var(--color-highlight)' } : {}}>
-                {showContractForm ? <>✕ {t('common.cancel')}</> : <><span className="text-sm">+</span> {t('propertyDetail.contracts.uploadBtn')}</>}
+    function DocRow({ doc }: { doc: CrmUnitDocument }) {
+      return (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-hp-black font-body truncate">{doc.name}</p>
+            <p className="text-xs text-gray-400 font-body mt-0.5">{fmtDate(doc.created_at)}</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={() => openCrmDoc(doc.file_path)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
+                               text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+              Öffnen
+            </button>
+            <button onClick={() => downloadCrmDoc(doc.file_path, doc.file_name ?? doc.name)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200
+                               text-gray-500 hover:border-gray-400 transition-colors" title="Download">
+              ↓
+            </button>
+            {(canEdit || isEigentuemer) && (
+              <button onClick={() => handleDeleteEigDoc(doc)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
+                                 text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
+                ✕
               </button>
             )}
           </div>
+        </div>
+      )
+    }
 
-          {showContractForm && canEdit && renderDocUploadForm({
-            form: contractForm,
-            setForm: setContractForm,
-            uploading: contractUploading,
-            error: contractError,
-            fileRef: contractFileRef,
-            onSubmit: () => uploadDoc(
-              contractForm,
-              setContractUploading,
-              setContractError,
-              () => { setContractForm({ ...EMPTY_DOC_FORM, type: 'mietvertrag' }); setShowContractForm(false) },
-            ),
-            onCancel: () => { setContractForm({ ...EMPTY_DOC_FORM, type: 'mietvertrag' }); setShowContractForm(false) },
-            titleKey: 'propertyDetail.contracts.uploadTitle',
-          })}
+    function DocRowLegacy({ doc }: { doc: DocRecord }) {
+      return (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-hp-black font-body truncate">{doc.title}</p>
+            <p className="text-xs text-gray-400 font-body mt-0.5">{fmtDate(doc.uploaded_at)}</p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button onClick={() => openDoc(doc.file_url)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
+                               text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+              Öffnen
+            </button>
+            <button onClick={() => downloadDoc(doc.file_url, doc.title)}
+                    className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200
+                               text-gray-500 hover:border-gray-400 transition-colors" title="Download">
+              ↓
+            </button>
+            {canEdit && (
+              <button onClick={() => deleteDoc(doc)}
+                      className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
+                                 text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      )
+    }
 
-          {docsLoading ? (
-            <div className="flex items-center gap-2 text-gray-400 text-sm font-body py-6 justify-center">
-              <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
-              {t('common.loading')}
-            </div>
-          ) : mietvertrags.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 font-body">
-              <div className="text-3xl mb-2">📄</div>
-              <p className="text-sm">{t('propertyDetail.contracts.noDocs')}</p>
+    const hasPinned = pinnedCrmDocs.length > 0 || mietvertrags.length > 0
+    const hasOther  = otherCrmDocs.length > 0
+
+    return (
+      <div className="space-y-6">
+
+        {/* ── Angepinnte Verträge ──────────────────────────── */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+            📌 Kaufvertrag & Mietvertrag
+          </h3>
+          {!hasPinned ? (
+            <div className="text-center py-6 text-gray-400 font-body">
+              <p className="text-sm">Noch keine Verträge hochgeladen.</p>
             </div>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-              <table className="w-full text-sm font-body">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('documents.columns.title')}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('documents.columns.date')}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('propertyDetail.contracts.tenant')}</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">{t('documents.columns.actions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mietvertrags.map((doc, i) => (
-                    <tr key={doc.id}
-                        className={`hover:bg-gray-50 transition-colors ${i < mietvertrags.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                      <td className="px-4 py-3 font-medium text-hp-black">{doc.title}</td>
-                      <td className="px-4 py-3 text-gray-500">{fmtDate(doc.uploaded_at)}</td>
-                      <td className="px-4 py-3 text-gray-500">{doc.creditor || '—'}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <button onClick={() => openDoc(doc.file_url)}
-                            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
-                                       text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                            PDF
-                          </button>
-                          <button onClick={() => downloadDoc(doc.file_url, doc.title)}
-                            className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200
-                                       text-gray-500 hover:border-gray-400 transition-colors">
-                            ↓
-                          </button>
-                          {canEdit && (
-                            <button onClick={() => deleteDoc(doc)}
-                              className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
-                                         text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
-                              ✕
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
+              {pinnedCrmDocs.map(doc => <DocRow key={doc.id} doc={doc} />)}
+              {mietvertrags.map(doc => <DocRowLegacy key={doc.id} doc={doc} />)}
             </div>
           )}
         </div>
 
-        {/* ── Kaufvertrag (aus CRM) ─────────────────────────── */}
-        {unitKaufvertraege.length > 0 && (
+        {/* ── Weitere Unterlagen ───────────────────────────── */}
+        {(hasOther || canEdit) && (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              📝 Kaufvertrag
+              📄 Weitere Unterlagen
             </h3>
-            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
-              <table className="w-full text-sm font-body">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Dokument</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Datum</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Aktionen</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unitKaufvertraege.map((doc, i) => (
-                    <tr key={doc.id}
-                        className={`hover:bg-gray-50 transition-colors ${i < unitKaufvertraege.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                      <td className="px-4 py-3 font-medium text-hp-black">
-                        {doc.name}
-                        {doc.notes && <div className="text-xs text-gray-400 mt-0.5">{doc.notes}</div>}
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">{fmtDate(doc.created_at)}</td>
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={async () => {
-                            const { data } = await supabase.storage
-                              .from('unit-documents')
-                              .createSignedUrl(doc.file_path, 300)
-                            if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                          }}
-                          className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
-                                     text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                          PDF öffnen
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {!hasOther ? (
+              <div className="text-center py-6 text-gray-400 font-body">
+                <p className="text-sm">Noch keine weiteren Dokumente.</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
+                {otherCrmDocs.map(doc => <DocRow key={doc.id} doc={doc} />)}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── Meine Unterlagen (Eigentümer-Upload) ──────────── */}
-        {(isEigentuemer || canEdit) && linkedUnitId && (
+        {/* ── Dokument hochladen ───────────────────────────── */}
+        {(canEdit || isEigentuemer) && linkedUnitId && (
           <div>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body">
-                📎 Meine Unterlagen
-              </h3>
-              <div>
-                <input
-                  ref={eigDocRef}
-                  type="file"
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0]
-                    if (file) handleUploadEigDoc(file)
-                    if (e.target) e.target.value = ''
-                  }}
-                />
-                <button
-                  onClick={() => eigDocRef.current?.click()}
-                  disabled={eigDocUploading}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold
-                             font-body text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
-                  style={{ backgroundColor: 'var(--color-highlight)' }}>
-                  {eigDocUploading ? (
-                    <>
-                      <span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                      Hochladen…
-                    </>
-                  ) : (
-                    <><span className="text-sm">+</span> Dokument hochladen</>
-                  )}
-                </button>
-              </div>
-            </div>
+            {!showContractDoc ? (
+              <button
+                onClick={() => setShowContractDoc(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2
+                           border-dashed border-gray-200 text-sm font-medium text-gray-400
+                           hover:border-orange-300 hover:text-orange-500 transition-colors font-body">
+                <span className="text-lg">+</span> Dokument hochladen
+              </button>
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-4">
+                <p className="text-sm font-semibold text-hp-black font-body">Dokument hinzufügen</p>
 
-            {eigentuemerDocs.length === 0 ? (
+                {/* Typ-Auswahl */}
+                <div className="flex gap-2 flex-wrap">
+                  {(['kaufvertrag', 'mietvertrag', 'sonstige'] as const).map(t => (
+                    <button
+                      key={t}
+                      onClick={() => { setContractDocType(t); if (t !== 'sonstige') setContractDocName('') }}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors
+                        ${contractDocType === t
+                          ? 'text-white' : 'border border-gray-200 text-gray-600 hover:border-orange-300'}`}
+                      style={contractDocType === t ? { backgroundColor: 'var(--color-highlight)' } : {}}>
+                      {t === 'kaufvertrag' ? '📋 Kaufvertrag' : t === 'mietvertrag' ? '🏠 Mietvertrag' : '📄 Sonstige'}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Name (nur bei Sonstige) */}
+                {contractDocType === 'sonstige' && (
+                  <div>
+                    <label className="text-xs text-gray-500 font-body block mb-1">Bezeichnung <span className="text-red-400">*</span></label>
+                    <input
+                      value={contractDocName}
+                      onChange={e => setContractDocName(e.target.value)}
+                      placeholder="z.B. Reservierungsbestätigung, Grundbuchauszug …"
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
+                                 focus:outline-none focus:border-orange-400"
+                    />
+                  </div>
+                )}
+
+                {/* Datei */}
+                <div>
+                  <input
+                    ref={contractDocRef}
+                    type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) setContractDocFile(f) }}
+                  />
+                  <div
+                    onClick={() => contractDocRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-3 cursor-pointer transition text-center
+                      ${contractDocFile ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}>
+                    {contractDocFile ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <span>📄</span>
+                        <span className="text-xs font-semibold text-gray-700 truncate max-w-[200px]">{contractDocFile.name}</span>
+                        <button type="button"
+                          onClick={e => { e.stopPropagation(); setContractDocFile(null); if (contractDocRef.current) contractDocRef.current.value = '' }}
+                          className="text-red-400 hover:text-red-600 text-sm">✕</button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 font-body">PDF / Bild wählen</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <button onClick={() => { setShowContractDoc(false); setContractDocFile(null) }}
+                          className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-body text-gray-600 hover:bg-gray-50">
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={handleUploadContractDoc}
+                    disabled={contractDocSaving || !contractDocFile || (contractDocType === 'sonstige' && !contractDocName.trim())}
+                    className="px-5 py-2 rounded-xl text-white text-sm font-semibold font-body
+                               hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+                    style={{ backgroundColor: 'var(--color-highlight)' }}>
+                    {contractDocSaving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                    {contractDocSaving ? 'Hochladen…' : 'Speichern'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Aktive Mietverträge (nur Admin) ─────────────────── */}
+        {canEdit && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              {t('propertyDetail.contracts.activeContracts')}
+            </h3>
+            {contractsLoading ? (
+              <div className="flex items-center gap-2 text-gray-400 text-sm font-body py-8 justify-center">
+                <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
+                {t('common.loading')}
+              </div>
+            ) : contracts.length === 0 ? (
               <div className="text-center py-8 text-gray-400 font-body">
-                <div className="text-3xl mb-2">📎</div>
-                <p className="text-sm">Noch keine eigenen Dokumente hochgeladen.</p>
-                <p className="text-xs mt-1 text-gray-300">
-                  Hier kannst du Reservierungen, Zahlungsbelege und weitere Unterlagen ablegen.
-                </p>
+                <div className="text-3xl mb-2">📝</div>
+                <p className="text-sm">{t('propertyDetail.contracts.noContracts')}</p>
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
                 <table className="w-full text-sm font-body">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50">
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Dokument</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Datum</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">Aktionen</th>
+                      {['tenant', 'period', 'rent', 'status', 'actions'].map(c => (
+                        <th key={c} className="px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wide">
+                          {t(`contracts.columns.${c}`)}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {eigentuemerDocs.map((doc, i) => (
-                      <tr key={doc.id}
-                          className={`hover:bg-gray-50 transition-colors ${i < eigentuemerDocs.length - 1 ? 'border-b border-gray-50' : ''}`}>
-                        <td className="px-4 py-3 font-medium text-hp-black">
-                          {doc.name}
-                          {doc.notes && <div className="text-xs text-gray-400 mt-0.5">{doc.notes}</div>}
-                        </td>
-                        <td className="px-4 py-3 text-gray-500">{fmtDate(doc.created_at)}</td>
+                    {contracts.map((c, i) => (
+                      <tr key={c.id}
+                          className={`hover:bg-gray-50 transition-colors ${i < contracts.length - 1 ? 'border-b border-gray-50' : ''}`}>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                          <div className="font-medium text-hp-black">{c.tenant_name}</div>
+                          <div className="text-xs text-gray-400">{c.tenant_email}</div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          <div>{fmtDate(c.start_date)}</div>
+                          {c.end_date && <div className="text-xs text-gray-400">– {fmtDate(c.end_date)}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 tabular-nums">
+                          {fmtCurrency(c.monthly_rent)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <Badge color={contractStatusColor(c.status)}>
+                            {t(`contracts.statuses.${c.status}`)}
+                          </Badge>
+                          {c.signed_at && (
+                            <div className="text-xs text-gray-400 mt-0.5">{fmtDate(c.signed_at)}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {c.status !== 'signed' && (
                             <button
-                              onClick={async () => {
-                                const { data } = await supabase.storage
-                                  .from('unit-documents')
-                                  .createSignedUrl(doc.file_path, 300)
-                                if (data?.signedUrl) window.open(data.signedUrl, '_blank')
-                              }}
-                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
-                                         text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                              Öffnen
+                              onClick={() => copySignLink(c.signature_token)}
+                              className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors
+                                ${linkCopied === c.signature_token
+                                  ? 'bg-green-50 border-green-200 text-green-700'
+                                  : 'border-gray-200 text-gray-600 hover:border-hp-highlight hover:text-hp-highlight'}`}>
+                              {linkCopied === c.signature_token
+                                ? t('propertyDetail.contracts.linkCopied')
+                                : t('propertyDetail.contracts.copyLink')}
                             </button>
-                            <button
-                              onClick={() => handleDeleteEigDoc(doc)}
-                              className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
-                                         text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
-                              ✕
-                            </button>
-                          </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -2759,21 +2569,46 @@ export default function PropertyDetail() {
               {/* Header */}
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                  <span className={`text-xl shrink-0 ${pay.is_paid ? 'text-green-500' : 'text-gray-300'}`}>
-                    {pay.is_paid ? '✅' : '⬜'}
-                  </span>
+                  {/* Bezahlt-Toggle */}
+                  {pay.is_paid ? (
+                    <button
+                      onClick={() => handleUnmarkAsPaid(pay.id)}
+                      className="text-xl shrink-0 leading-none" title="Als unbezahlt markieren">✅</button>
+                  ) : markingPaidId === pay.id ? (
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        type="date" autoFocus
+                        value={markingPaidDate}
+                        onChange={e => setMarkingPaidDate(e.target.value)}
+                        className="text-xs border border-green-300 rounded-lg px-2 py-1 focus:outline-none font-body w-32"
+                      />
+                      <button
+                        onClick={() => handleMarkAsPaid(pay.id, markingPaidDate)}
+                        className="text-xs bg-green-500 text-white px-2 py-1 rounded-lg font-semibold hover:bg-green-600">
+                        ✓
+                      </button>
+                      <button onClick={() => setMarkingPaidId(null)}
+                              className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => { setMarkingPaidId(pay.id); setMarkingPaidDate(new Date().toISOString().split('T')[0]) }}
+                      className="w-5 h-5 rounded border-2 border-gray-300 shrink-0 hover:border-green-400 transition-colors"
+                      title="Als bezahlt markieren" />
+                  )}
+
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-hp-black font-body">{pay.description ?? '—'}</p>
-                    <div className="flex flex-wrap gap-x-2 text-xs text-gray-400 mt-0.5 font-body">
-                      {pay.due_date && <span>Fällig: {fmtDate(pay.due_date)}</span>}
-                      {pay.paid_date && <span>· Bezahlt: {fmtDate(pay.paid_date)}</span>}
-                      {pay.payment_reference && <span>· {pay.payment_reference}</span>}
-                    </div>
+                    {pay.paid_date && (
+                      <p className="text-xs text-green-600 font-body mt-0.5">
+                        Bezahlt am {fmtDate(pay.paid_date)}
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                {/* Betrag: inline editierbar */}
-                <div className="flex items-center gap-1.5 shrink-0">
+                {/* Betrag: inline editierbar, rot/grün */}
+                <div className="flex items-center gap-1.5 shrink-0 group">
                   {editingPayId === pay.id ? (
                     <>
                       <div className="relative">
@@ -2796,19 +2631,18 @@ export default function PropertyDetail() {
                     </>
                   ) : (
                     <>
-                      <span className="text-base font-bold text-hp-black font-body">
+                      <span className={`text-base font-bold font-body ${pay.is_paid ? 'text-green-600' : 'text-red-500'}`}>
                         {fmtCurrency(pay.amount)}
                       </span>
                       <button
                         onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
-                        className="text-gray-300 hover:text-gray-500 text-xs" title="Betrag bearbeiten">✎</button>
+                        className="text-gray-200 group-hover:text-gray-400 text-xs transition-colors" title="Betrag bearbeiten">✎</button>
+                      {(canEdit || isEigentuemer) && (
+                        <button
+                          onClick={() => handleDeletePaymentEntry(pay.id)}
+                          className="text-gray-200 group-hover:text-red-300 text-xs transition-colors" title="Löschen">🗑</button>
+                      )}
                     </>
-                  )}
-                  {/* Eintrag löschen */}
-                  {(canEdit || isEigentuemer) && (
-                    <button
-                      onClick={() => handleDeletePaymentEntry(pay.id)}
-                      className="text-gray-200 hover:text-red-400 text-xs ml-1" title="Rate löschen">🗑</button>
                   )}
                 </div>
               </div>
@@ -2906,17 +2740,6 @@ export default function PropertyDetail() {
                       />
                     </div>
                   </div>
-                </div>
-
-                <div>
-                  <label className="text-xs text-gray-500 font-body block mb-1">Fälligkeitsdatum (optional)</label>
-                  <input
-                    type="date"
-                    value={addPayDueDate}
-                    onChange={e => setAddPayDueDate(e.target.value)}
-                    className="border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
-                               focus:outline-none focus:border-orange-400"
-                  />
                 </div>
 
                 {/* PDF Upload mit KI-Erkennung */}
