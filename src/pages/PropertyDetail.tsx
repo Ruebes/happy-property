@@ -657,6 +657,18 @@ export default function PropertyDetail() {
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
   const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
   const payReceiptRef = useRef<Record<string, HTMLInputElement | null>>({})
+  // Payment Plan: neue Rate hinzufügen
+  const [showAddPayForm,  setShowAddPayForm]  = useState(false)
+  const [addPayDesc,      setAddPayDesc]      = useState('')
+  const [addPayAmount,    setAddPayAmount]    = useState('')
+  const [addPayDueDate,   setAddPayDueDate]   = useState('')
+  const [addPayFile,      setAddPayFile]      = useState<File | null>(null)
+  const [addPayAnalyzing, setAddPayAnalyzing] = useState(false)
+  const [addPaySaving,    setAddPaySaving]    = useState(false)
+  const addPayFileRef = useRef<HTMLInputElement | null>(null)
+  // Payment Plan: Betrag inline editieren
+  const [editingPayId,    setEditingPayId]    = useState<string | null>(null)
+  const [editingAmount,   setEditingAmount]   = useState('')
 
   // Owner accordion
   const [ownerOpen, setOwnerOpen]       = useState(false)
@@ -1249,6 +1261,110 @@ export default function PropertyDetail() {
       : { receipt_path: null, receipt_filename: null, receipt_filesize: null }
     await supabase.from('crm_unit_payments').update(update).eq('id', payId)
     await fetchUnitPayments()
+  }
+
+  async function handleDownloadPaymentFile(path: string, filename: string) {
+    const { data } = await supabase.storage
+      .from('unit-documents').createSignedUrl(path, 60)
+    if (!data?.signedUrl) { setToast({ msg: 'Download fehlgeschlagen.', type: 'error' }); return }
+    const a = document.createElement('a')
+    a.href = data.signedUrl
+    a.download = filename
+    a.click()
+  }
+
+  async function handleDeletePaymentEntry(payId: string) {
+    if (!window.confirm('Rate löschen? Hochgeladene Dateien werden ebenfalls entfernt.')) return
+    const pay = unitPayments.find(p => p.id === payId)
+    if (!pay) return
+    const paths = [pay.invoice_path, pay.receipt_path].filter(Boolean) as string[]
+    if (paths.length) await supabase.storage.from('unit-documents').remove(paths)
+    await supabase.from('crm_unit_payments').delete().eq('id', payId)
+    await fetchUnitPayments()
+  }
+
+  async function handleSaveEditedAmount(payId: string) {
+    const val = parseFloat(editingAmount.replace(',', '.'))
+    if (isNaN(val) || val < 0) { setEditingPayId(null); return }
+    await supabase.from('crm_unit_payments').update({ amount: val }).eq('id', payId)
+    setEditingPayId(null)
+    await fetchUnitPayments()
+  }
+
+  // auto-suggest next label
+  function nextPaymentLabel(): string {
+    const hasReservierung = unitPayments.some(p =>
+      (p.description ?? '').toLowerCase().includes('reserv'))
+    if (!hasReservierung) return 'Reservierung'
+    const rateCount = unitPayments.filter(p =>
+      !(p.description ?? '').toLowerCase().includes('reserv')).length
+    return `${rateCount + 1}. Rate`
+  }
+
+  async function handleAddPayment() {
+    if (!linkedUnitId || !profile?.id) return
+    setAddPaySaving(true)
+    try {
+      // get project_id
+      const { data: unitRow } = await supabase
+        .from('crm_project_units').select('project_id').eq('id', linkedUnitId).single()
+      if (!unitRow) throw new Error('Unit not found')
+
+      let invoicePath: string | null = null
+      let invoiceFilename: string | null = null
+      let invoiceFilesize: number | null = null
+
+      if (addPayFile) {
+        const ext  = addPayFile.name.split('.').pop() ?? 'pdf'
+        const path = `unit-documents/${linkedUnitId}/inv-${Date.now()}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from('unit-documents').upload(path, addPayFile, { upsert: false })
+        if (upErr) throw upErr
+        invoicePath     = path
+        invoiceFilename = addPayFile.name
+        invoiceFilesize = addPayFile.size
+      }
+
+      const amount = parseFloat(addPayAmount.replace(',', '.')) || 0
+      await supabase.from('crm_unit_payments').insert({
+        unit_id:          linkedUnitId,
+        project_id:       unitRow.project_id,
+        description:      addPayDesc.trim() || nextPaymentLabel(),
+        amount,
+        due_date:         addPayDueDate || null,
+        is_paid:          false,
+        invoice_path:     invoicePath,
+        invoice_filename: invoiceFilename,
+        invoice_filesize: invoiceFilesize,
+      })
+
+      setShowAddPayForm(false)
+      setAddPayDesc('')
+      setAddPayAmount('')
+      setAddPayDueDate('')
+      setAddPayFile(null)
+      if (addPayFileRef.current) addPayFileRef.current.value = ''
+      await fetchUnitPayments()
+      setToast({ msg: 'Rate hinzugefügt ✓' })
+    } catch (err) {
+      console.error('[handleAddPayment]', err)
+      setToast({ msg: 'Fehler beim Speichern.', type: 'error' })
+    } finally {
+      setAddPaySaving(false)
+    }
+  }
+
+  async function handleAddPayInvoice(file: File) {
+    setAddPayFile(file)
+    if (file.type !== 'application/pdf') return
+    setAddPayAnalyzing(true)
+    try {
+      const result = await analyzeInvoicePDF(file)
+      if (result?.amount_gross) setAddPayAmount(String(result.amount_gross))
+      else if (result?.amount_net) setAddPayAmount(String(result.amount_net))
+    } catch { /* silent – user enters manually */ } finally {
+      setAddPayAnalyzing(false)
+    }
   }
 
   // ── Eigentümer: eigenes Dokument hochladen ────────────────
@@ -2525,201 +2641,334 @@ export default function PropertyDetail() {
       <div className="text-center py-20 text-gray-400">
         <p className="text-4xl mb-3">📋</p>
         <p className="text-sm font-medium">Keine Kaufdaten verknüpft.</p>
-        <p className="text-xs mt-1 text-gray-300">
-          Im CRM die Einheit mit dieser Immobilie verknüpfen.
-        </p>
+        <p className="text-xs mt-1 text-gray-300">Im CRM die Einheit mit dieser Immobilie verknüpfen.</p>
       </div>
     )
-    if (unitPayments.length === 0) return (
-      <div className="text-center py-20 text-gray-400">
-        <p className="text-4xl mb-3">📋</p>
-        <p className="text-sm">Noch keine Zahlungsraten eingetragen.</p>
-      </div>
-    )
+
     const totalAmount = unitPayments.reduce((s, p) => s + p.amount, 0)
     const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
     const outstanding = totalAmount - totalPaid
     const pct         = totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0
 
+    // ── Helper: Datei-Aktionen (öffnen / download / löschen) ──
+    function FileActions({
+      path, filename, onRemove, canRemove,
+    }: { path: string; filename: string; onRemove: () => void; canRemove: boolean }) {
+      return (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button
+            onClick={() => openUnitPaymentFile(path)}
+            className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body truncate max-w-[130px]"
+            title={filename}>
+            📄 <span className="truncate">{filename}</span>
+          </button>
+          <button
+            onClick={() => handleDownloadPaymentFile(path, filename)}
+            className="text-gray-400 hover:text-gray-600 text-xs" title="Download">↓</button>
+          {canRemove && (
+            <button
+              onClick={onRemove}
+              className="text-gray-300 hover:text-red-500 text-xs" title="Entfernen">✕</button>
+          )}
+        </div>
+      )
+    }
+
+    // ── Helper: Upload-Button ──────────────────────────────────
+    function UploadBtn({
+      payId, type, label,
+    }: { payId: string; type: 'invoice' | 'receipt'; label: string }) {
+      const isUploading = uploadingPayId === payId && uploadingPayType === type
+      const ref = type === 'invoice' ? payInvoiceRef : payReceiptRef
+      return (
+        <>
+          <input
+            type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+            ref={el => { ref.current[payId] = el }}
+            onChange={e => {
+              const file = e.target.files?.[0]
+              if (file) handleUploadPaymentFile(payId, type, file)
+              if (e.target) e.target.value = ''
+            }}
+          />
+          <button
+            onClick={() => ref.current[payId]?.click()}
+            disabled={isUploading}
+            className="text-xs font-medium transition-colors disabled:opacity-50 font-body"
+            style={{ color: 'var(--color-highlight)' }}>
+            {isUploading ? '↑ Hochladen…' : label}
+          </button>
+        </>
+      )
+    }
+
     return (
       <div className="space-y-6">
 
-        {/* KPI cards */}
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-blue-50 rounded-2xl p-4 text-center">
-            <p className="text-xs text-blue-500 font-medium font-body mb-1">Gesamtbetrag</p>
-            <p className="text-lg font-bold text-blue-800">{fmtCurrency(totalAmount)}</p>
-          </div>
-          <div className="bg-green-50 rounded-2xl p-4 text-center">
-            <p className="text-xs text-green-500 font-medium font-body mb-1">Bezahlt</p>
-            <p className="text-lg font-bold text-green-800">{fmtCurrency(totalPaid)}</p>
-          </div>
-          <div className={`rounded-2xl p-4 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
-            <p className={`text-xs font-medium font-body mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-              Ausstehend
-            </p>
-            <p className={`text-lg font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
-              {fmtCurrency(outstanding)}
-            </p>
-          </div>
-        </div>
+        {/* KPI cards — nur wenn Daten vorhanden */}
+        {unitPayments.length > 0 && (
+          <>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-blue-50 rounded-2xl p-4 text-center">
+                <p className="text-xs text-blue-500 font-medium font-body mb-1">Gesamtbetrag</p>
+                <p className="text-lg font-bold text-blue-800">{fmtCurrency(totalAmount)}</p>
+              </div>
+              <div className="bg-green-50 rounded-2xl p-4 text-center">
+                <p className="text-xs text-green-500 font-medium font-body mb-1">Bezahlt</p>
+                <p className="text-lg font-bold text-green-800">{fmtCurrency(totalPaid)}</p>
+              </div>
+              <div className={`rounded-2xl p-4 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
+                <p className={`text-xs font-medium font-body mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
+                  Ausstehend
+                </p>
+                <p className={`text-lg font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
+                  {fmtCurrency(outstanding)}
+                </p>
+              </div>
+            </div>
 
-        {/* Progress bar */}
-        <div>
-          <div className="flex justify-between text-xs text-gray-400 mb-1.5 font-body">
-            <span>{Math.round(pct)}% bezahlt</span>
-            <span>{fmtCurrency(totalPaid)} / {fmtCurrency(totalAmount)}</span>
-          </div>
-          <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{ width: `${pct}%`, backgroundColor: '#22c55e' }}
-            />
-          </div>
-        </div>
+            <div>
+              <div className="flex justify-between text-xs text-gray-400 mb-1.5 font-body">
+                <span>{Math.round(pct)}% bezahlt</span>
+                <span>{fmtCurrency(totalPaid)} / {fmtCurrency(totalAmount)}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-500"
+                     style={{ width: `${pct}%`, backgroundColor: '#22c55e' }} />
+              </div>
+            </div>
+          </>
+        )}
 
-        {/* Payment rows */}
+        {/* ── Zahlungsraten ──────────────────────────────────── */}
         <div className="space-y-3">
+          {unitPayments.length === 0 && (
+            <div className="text-center py-10 text-gray-400 font-body">
+              <p className="text-3xl mb-2">📋</p>
+              <p className="text-sm">Noch keine Rechnungen hochgeladen.</p>
+              <p className="text-xs mt-1 text-gray-300">
+                Lade die erste Rechnung hoch, um den Zahlungsplan zu starten.
+              </p>
+            </div>
+          )}
+
           {unitPayments.map(pay => (
-            <div
-              key={pay.id}
-              className={`rounded-2xl border p-4 ${
-                pay.is_paid ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'
-              }`}
-            >
-              {/* Header row */}
-              <div className="flex items-start justify-between gap-4 mb-3">
-                <div className="flex items-center gap-3">
+            <div key={pay.id}
+                 className={`rounded-2xl border p-4 ${pay.is_paid ? 'bg-green-50 border-green-100' : 'bg-white border-gray-100'}`}>
+
+              {/* Header */}
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="flex items-center gap-3 flex-1 min-w-0">
                   <span className={`text-xl shrink-0 ${pay.is_paid ? 'text-green-500' : 'text-gray-300'}`}>
                     {pay.is_paid ? '✅' : '⬜'}
                   </span>
-                  <div>
-                    <p className="text-sm font-semibold text-hp-black font-body">
-                      {pay.description ?? '—'}
-                    </p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-hp-black font-body">{pay.description ?? '—'}</p>
                     <div className="flex flex-wrap gap-x-2 text-xs text-gray-400 mt-0.5 font-body">
-                      {pay.due_date   && <span>Fällig: {fmtDate(pay.due_date)}</span>}
-                      {pay.paid_date  && <span>· Bezahlt: {fmtDate(pay.paid_date)}</span>}
+                      {pay.due_date && <span>Fällig: {fmtDate(pay.due_date)}</span>}
+                      {pay.paid_date && <span>· Bezahlt: {fmtDate(pay.paid_date)}</span>}
                       {pay.payment_reference && <span>· {pay.payment_reference}</span>}
                     </div>
                   </div>
                 </div>
-                <span className="text-base font-bold text-hp-black shrink-0 font-body">
-                  {fmtCurrency(pay.amount)}
-                </span>
+
+                {/* Betrag: inline editierbar */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {editingPayId === pay.id ? (
+                    <>
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs">€</span>
+                        <input
+                          type="number" min="0" step="0.01" autoFocus
+                          value={editingAmount}
+                          onChange={e => setEditingAmount(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleSaveEditedAmount(pay.id)
+                            if (e.key === 'Escape') setEditingPayId(null)
+                          }}
+                          className="w-28 pl-5 pr-2 py-1 text-xs border border-orange-300 rounded-lg focus:outline-none font-body"
+                        />
+                      </div>
+                      <button onClick={() => handleSaveEditedAmount(pay.id)}
+                              className="text-xs text-green-600 hover:text-green-800 font-semibold">✓</button>
+                      <button onClick={() => setEditingPayId(null)}
+                              className="text-xs text-gray-400 hover:text-gray-600">✕</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-base font-bold text-hp-black font-body">
+                        {fmtCurrency(pay.amount)}
+                      </span>
+                      <button
+                        onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
+                        className="text-gray-300 hover:text-gray-500 text-xs" title="Betrag bearbeiten">✎</button>
+                    </>
+                  )}
+                  {/* Eintrag löschen */}
+                  {(canEdit || isEigentuemer) && (
+                    <button
+                      onClick={() => handleDeletePaymentEntry(pay.id)}
+                      className="text-gray-200 hover:text-red-400 text-xs ml-1" title="Rate löschen">🗑</button>
+                  )}
+                </div>
               </div>
 
-              {/* Invoice + Receipt */}
+              {/* Rechnung + Zahlungsbeleg */}
               <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100">
 
-                {/* Rechnung */}
+                {/* Rechnung vom Developer */}
                 <div>
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     Rechnung
                   </p>
                   {pay.invoice_path ? (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openUnitPaymentFile(pay.invoice_path!)}
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body"
-                      >
-                        📄 {pay.invoice_filename ?? 'Öffnen'}
-                      </button>
-                      {canEdit && (
-                        <button
-                          onClick={() => handleRemovePaymentFile(pay.id, 'invoice')}
-                          className="text-gray-300 hover:text-red-500 text-xs leading-none"
-                          title="Entfernen"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ) : canEdit ? (
-                    <>
-                      <input
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        className="hidden"
-                        ref={el => { payInvoiceRef.current[pay.id] = el }}
-                        onChange={e => {
-                          const file = e.target.files?.[0]
-                          if (file) handleUploadPaymentFile(pay.id, 'invoice', file)
-                          if (e.target) e.target.value = ''
-                        }}
-                      />
-                      <button
-                        onClick={() => payInvoiceRef.current[pay.id]?.click()}
-                        disabled={uploadingPayId === pay.id && uploadingPayType === 'invoice'}
-                        className="text-xs text-gray-400 hover:text-hp-highlight transition-colors disabled:opacity-50 font-body"
-                        style={{ '--color-highlight': 'var(--color-highlight)' } as React.CSSProperties}
-                      >
-                        {uploadingPayId === pay.id && uploadingPayType === 'invoice'
-                          ? '↑ Wird hochgeladen…'
-                          : '+ Hochladen'}
-                      </button>
-                    </>
+                    <FileActions
+                      path={pay.invoice_path}
+                      filename={pay.invoice_filename ?? 'Rechnung'}
+                      canRemove={canEdit || isEigentuemer}
+                      onRemove={() => handleRemovePaymentFile(pay.id, 'invoice')}
+                    />
+                  ) : (canEdit || isEigentuemer) ? (
+                    <UploadBtn payId={pay.id} type="invoice" label="+ Rechnung hochladen" />
                   ) : (
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
                 </div>
 
-                {/* Zahlungsbeleg — Eigentümer kann selbst hochladen */}
+                {/* Zahlungsbeleg */}
                 <div>
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
                     Zahlungsbeleg
                   </p>
                   {pay.receipt_path ? (
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openUnitPaymentFile(pay.receipt_path!)}
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium font-body"
-                      >
-                        📄 {pay.receipt_filename ?? 'Öffnen'}
-                      </button>
-                      {canEdit && (
-                        <button
-                          onClick={() => handleRemovePaymentFile(pay.id, 'receipt')}
-                          className="text-gray-300 hover:text-red-500 text-xs leading-none"
-                          title="Entfernen"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
+                    <FileActions
+                      path={pay.receipt_path}
+                      filename={pay.receipt_filename ?? 'Zahlungsbeleg'}
+                      canRemove={canEdit || isEigentuemer}
+                      onRemove={() => handleRemovePaymentFile(pay.id, 'receipt')}
+                    />
                   ) : (canEdit || isEigentuemer) ? (
-                    <>
-                      <input
-                        type="file"
-                        accept=".pdf,.jpg,.jpeg,.png"
-                        className="hidden"
-                        ref={el => { payReceiptRef.current[pay.id] = el }}
-                        onChange={e => {
-                          const file = e.target.files?.[0]
-                          if (file) handleUploadPaymentFile(pay.id, 'receipt', file)
-                          if (e.target) e.target.value = ''
-                        }}
-                      />
-                      <button
-                        onClick={() => payReceiptRef.current[pay.id]?.click()}
-                        disabled={uploadingPayId === pay.id && uploadingPayType === 'receipt'}
-                        className="text-xs font-medium transition-colors disabled:opacity-50 font-body"
-                        style={{ color: 'var(--color-highlight)' }}
-                      >
-                        {uploadingPayId === pay.id && uploadingPayType === 'receipt'
-                          ? '↑ Wird hochgeladen…'
-                          : '↑ Beleg hochladen'}
-                      </button>
-                    </>
+                    <UploadBtn payId={pay.id} type="receipt" label="↑ Beleg hochladen" />
                   ) : (
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
                 </div>
-
               </div>
             </div>
           ))}
         </div>
+
+        {/* ── Rechnung hinzufügen ────────────────────────────── */}
+        {(canEdit || isEigentuemer) && (
+          <div>
+            {!showAddPayForm ? (
+              <button
+                onClick={() => {
+                  setShowAddPayForm(true)
+                  setAddPayDesc(nextPaymentLabel())
+                }}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2
+                           border-dashed border-gray-200 text-sm font-medium text-gray-400
+                           hover:border-orange-300 hover:text-orange-500 transition-colors font-body">
+                <span className="text-lg">+</span> Rechnung hinzufügen
+              </button>
+            ) : (
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-4">
+                <p className="text-sm font-semibold text-hp-black font-body">Neue Rate hinzufügen</p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500 font-body block mb-1">Bezeichnung</label>
+                    <input
+                      value={addPayDesc}
+                      onChange={e => setAddPayDesc(e.target.value)}
+                      placeholder="z.B. Reservierung, 1. Rate …"
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
+                                 focus:outline-none focus:border-orange-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 font-body block mb-1">
+                      Betrag (€)
+                      {addPayAnalyzing && (
+                        <span className="ml-2 text-orange-400 font-normal">KI liest…</span>
+                      )}
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">€</span>
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={addPayAmount}
+                        onChange={e => setAddPayAmount(e.target.value)}
+                        placeholder="0,00"
+                        className="w-full pl-7 border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
+                                   focus:outline-none focus:border-orange-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-gray-500 font-body block mb-1">Fälligkeitsdatum (optional)</label>
+                  <input
+                    type="date"
+                    value={addPayDueDate}
+                    onChange={e => setAddPayDueDate(e.target.value)}
+                    className="border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
+                               focus:outline-none focus:border-orange-400"
+                  />
+                </div>
+
+                {/* PDF Upload mit KI-Erkennung */}
+                <div>
+                  <label className="text-xs text-gray-500 font-body block mb-1">
+                    Rechnung hochladen (optional — KI liest Betrag automatisch aus)
+                  </label>
+                  <input
+                    ref={addPayFileRef}
+                    type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (file) handleAddPayInvoice(file)
+                    }}
+                  />
+                  <div
+                    onClick={() => addPayFileRef.current?.click()}
+                    className={`border-2 border-dashed rounded-xl p-3 cursor-pointer transition text-center
+                      ${addPayFile ? 'border-green-300 bg-green-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}>
+                    {addPayFile ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="text-lg">📄</span>
+                        <span className="text-xs font-semibold text-gray-700 truncate max-w-[200px]">{addPayFile.name}</span>
+                        <button type="button"
+                          onClick={e => { e.stopPropagation(); setAddPayFile(null); if (addPayFileRef.current) addPayFileRef.current.value = '' }}
+                          className="text-red-400 hover:text-red-600 text-sm">✕</button>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 font-body">PDF / Bild · max. 50 MB</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-3">
+                  <button onClick={() => { setShowAddPayForm(false); setAddPayFile(null) }}
+                          className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-body text-gray-600 hover:bg-gray-50">
+                    Abbrechen
+                  </button>
+                  <button
+                    onClick={handleAddPayment}
+                    disabled={addPaySaving || addPayAnalyzing || (!addPayAmount && !addPayFile)}
+                    className="px-5 py-2 rounded-xl text-white text-sm font-semibold font-body
+                               hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+                    style={{ backgroundColor: 'var(--color-highlight)' }}>
+                    {addPaySaving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
+                    {addPaySaving ? 'Speichern…' : 'Hinzufügen'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     )
   }
