@@ -35,18 +35,17 @@ export default function Sign() {
   // ── Vertrag laden ────────────────────────────────────────────
   useEffect(() => {
     if (!token) { setState('not_found'); return }
-
-    supabase
-      .rpc('get_contract_for_signing', { p_token: token })
-      .then(({ data, error }) => {
-        if (error || !data || data.length === 0) {
-          setState('not_found')
-          return
-        }
+    async function load() {
+      try {
+        const { data, error } = await supabase
+          .rpc('get_contract_for_signing', { p_token: token })
+        if (error || !data || data.length === 0) { setState('not_found'); return }
         const c = data[0] as ContractPreview
         setContract(c)
         setState(c.status === 'signed' ? 'already_signed' : 'ready')
-      })
+      } catch { setState('not_found') }
+    }
+    load()
   }, [token])
 
   // ── Unterschreiben ───────────────────────────────────────────

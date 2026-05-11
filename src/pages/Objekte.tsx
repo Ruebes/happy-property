@@ -224,12 +224,17 @@ export default function Objekte() {
   // ── Fetch ──────────────────────────────────────────────────
   const fetchProperties = useCallback(async () => {
     setLoadingList(true)
-    const { data } = await supabase
-      .from('properties')
-      .select('*, owner:owner_id(full_name, email)')
-      .order('created_at', { ascending: false })
-    setProperties((data as Property[]) ?? [])
-    setLoadingList(false)
+    try {
+      const { data } = await supabase
+        .from('properties')
+        .select('*, owner:owner_id(full_name, email)')
+        .order('created_at', { ascending: false })
+      setProperties((data as Property[]) ?? [])
+    } catch (err) {
+      console.error('[Objekte] fetchProperties:', err)
+    } finally {
+      setLoadingList(false)
+    }
   }, [])
 
   useEffect(() => { fetchProperties() }, [fetchProperties])
@@ -249,13 +254,18 @@ export default function Objekte() {
 
   const fetchOwners = useCallback(async () => {
     setLoadingOwners(true)
-    const { data } = await supabase
-      .from('profiles')
-      .select('id, full_name, email')
-      .eq('role', 'eigentuemer')
-      .order('full_name')
-    setOwners((data as OwnerProfile[]) ?? [])
-    setLoadingOwners(false)
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .eq('role', 'eigentuemer')
+        .order('full_name')
+      setOwners((data as OwnerProfile[]) ?? [])
+    } catch (err) {
+      console.error('[Objekte] fetchOwners:', err)
+    } finally {
+      setLoadingOwners(false)
+    }
   }, [])
 
   // ── Image helpers ──────────────────────────────────────────

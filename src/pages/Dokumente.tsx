@@ -131,19 +131,22 @@ export default function Dokumente() {
   // ── Fetch documents ────────────────────────────────────────
   const fetchDocuments = useCallback(async () => {
     setLoadingList(true)
-    const query = supabase
-      .from('documents')
-      .select(`
-        *,
-        property:property_id(project_name, unit_number),
-        uploader:uploaded_by(full_name, email)
-      `)
-      .order('uploaded_at', { ascending: false })
-      .limit(500)
-
-    const { data } = await query
-    setDocuments((data as Document[]) ?? [])
-    setLoadingList(false)
+    try {
+      const { data } = await supabase
+        .from('documents')
+        .select(`
+          *,
+          property:property_id(project_name, unit_number),
+          uploader:uploaded_by(full_name, email)
+        `)
+        .order('uploaded_at', { ascending: false })
+        .limit(500)
+      setDocuments((data as Document[]) ?? [])
+    } catch (err) {
+      console.error('[Dokumente] fetchDocuments:', err)
+    } finally {
+      setLoadingList(false)
+    }
   }, [])
 
   useEffect(() => { fetchDocuments() }, [fetchDocuments])
@@ -151,12 +154,17 @@ export default function Dokumente() {
   // ── Fetch properties for upload form ──────────────────────
   const fetchProperties = useCallback(async () => {
     setLoadingProps(true)
-    const { data } = await supabase
-      .from('properties')
-      .select('id, project_name, unit_number')
-      .order('project_name')
-    setPropOptions((data as PropertyOption[]) ?? [])
-    setLoadingProps(false)
+    try {
+      const { data } = await supabase
+        .from('properties')
+        .select('id, project_name, unit_number')
+        .order('project_name')
+      setPropOptions((data as PropertyOption[]) ?? [])
+    } catch (err) {
+      console.error('[Dokumente] fetchProperties:', err)
+    } finally {
+      setLoadingProps(false)
+    }
   }, [])
 
   // ── Filtered + searched list ──────────────────────────────

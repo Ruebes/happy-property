@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../lib/auth'
 
@@ -8,8 +9,19 @@ interface Props {
 export default function ProtectedRoute({ allowedRoles }: Props) {
   const { user, profile, loading } = useAuth()
 
+  // Lokaler Timeout: falls loading nach 10 s noch true ist (Netzwerkausfall,
+  // iOS-PWA-Kaltstart), erzwingen wir einen Weitersprung. Der Auth-Timeout in
+  // auth.tsx greift nach 8 s – dieser hier ist ein zweiter Sicherheitsring.
+  const [timedOut, setTimedOut] = useState(false)
+  useEffect(() => {
+    if (!loading) { setTimedOut(false); return }
+    const t = setTimeout(() => setTimedOut(true), 10_000)
+    return () => clearTimeout(t)
+  }, [loading])
+
   // Absolutes Erstladen: noch keine Session bekannt → Spinner
-  if (loading && !user) {
+  // (aber max. 10 Sekunden – danach weiterleiten)
+  if (loading && !user && !timedOut) {
     return (
       <div className="flex items-center justify-center h-screen"
            style={{ backgroundColor: 'var(--color-bg)' }}>

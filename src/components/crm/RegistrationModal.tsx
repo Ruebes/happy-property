@@ -25,15 +25,21 @@ export default function RegistrationModal({
   const [loading, setLoading]       = useState(true)
 
   useEffect(() => {
-    supabase
-      .from('crm_developers')
-      .select('id, name, active')
-      .eq('active', true)
-      .order('name')
-      .then(({ data }) => {
+    async function load() {
+      try {
+        const { data } = await supabase
+          .from('crm_developers')
+          .select('id, name, active')
+          .eq('active', true)
+          .order('name')
         setDevelopers((data ?? []) as Developer[])
+      } catch (err) {
+        console.error('[RegistrationModal] fetchDevelopers:', err)
+      } finally {
         setLoading(false)
-      })
+      }
+    }
+    load()
   }, [])
 
   const toggle = (name: string) =>

@@ -58,9 +58,14 @@ export default function AdminVerwaltungen() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const { data } = await supabase.from('verwaltungen').select('*').order('name')
-    setList((data ?? []) as VerwaltungRecord[])
-    setLoading(false)
+    try {
+      const { data } = await supabase.from('verwaltungen').select('*').order('name')
+      setList((data ?? []) as VerwaltungRecord[])
+    } catch (err) {
+      console.error('[Verwaltungen] load:', err)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])

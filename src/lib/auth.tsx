@@ -96,6 +96,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // folgenden Auth-Events (z.B. INITIAL_SESSION → SIGNED_IN).
   const fetchIdRef = useRef(0)
 
+  // ── Timeout-Fallback ─────────────────────────────────────────
+  // Falls onAuthStateChange im PWA-Modus / Offline-Modus nie feuert
+  // (z.B. bei iOS Safari Cold-Start), setzen wir loading nach 8 s auf false.
+  // Dann greift ProtectedRoute: kein user → Weiterleitung zu /login.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setState(s => s.loading ? { ...s, loading: false } : s)
+    }, 8000)
+    return () => clearTimeout(t)
+  }, [])
+
   // ── Profil laden ────────────────────────────────────────────
   // Retry mit reduziertem Delay (400ms × Versuch) für schnellere Reaktion.
   async function fetchProfile(userId: string, attempt = 1): Promise<Profile | null> {

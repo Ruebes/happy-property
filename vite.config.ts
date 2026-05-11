@@ -38,23 +38,16 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Nur statische App-Shell cachen (JS, CSS, HTML, Bilder)
+        // Supabase-Requests NICHT cachen – Auth-Tokens, Realtime und RLS-Abfragen
+        // dürfen niemals aus dem Cache kommen (würde Login-Loops und veraltete
+        // Daten verursachen).
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff2}'],
+        // Supabase explizit ausschließen
+        navigateFallbackDenylist: [/^\/auth\//],
         runtimeCaching: [
           {
-            // Supabase API: Network first (frische Daten, Fallback Cache)
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'supabase-api-cache',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 10, // 10 Minuten
-              },
-              networkTimeoutSeconds: 10,
-            },
-          },
-          {
-            // Google Fonts: Cache first
+            // Google Fonts: Cache first (ändert sich nie)
             urlPattern: /^https:\/\/fonts\.(googleapis|gstatic)\.com\/.*/i,
             handler: 'CacheFirst',
             options: {
