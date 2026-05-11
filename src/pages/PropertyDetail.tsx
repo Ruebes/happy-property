@@ -103,7 +103,7 @@ interface ContractRecord {
   signed_at: string | null
 }
 
-type TabKey = 'overview' | 'contracts' | 'invoices' | 'income' | 'images' | 'purchases'
+type TabKey = 'overview' | 'verwaltung' | 'contracts' | 'invoices' | 'income' | 'images' | 'purchases'
 
 type InvoiceSortField = 'date' | 'creditor' | 'amount'
 
@@ -1596,221 +1596,6 @@ export default function PropertyDetail() {
           </div>
         )}
 
-        {/* ── Verwaltung Section ───────────────────────────── */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-            Verwaltung
-          </h3>
-
-          {p.is_managed && p.verwaltung ? (
-            /* Verwaltung zugewiesen → Infokarte */
-            <div className="bg-white border border-gray-100 rounded-xl shadow-sm p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-hp-black flex items-center justify-center
-                                  text-white text-sm font-bold shrink-0">
-                    {p.verwaltung.name[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="font-semibold text-hp-black font-body text-sm">{p.verwaltung.name}</p>
-                    {p.management_rental_type && (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                        {p.management_rental_type === 'shortterm' ? 'Kurzzeitvermietung' : 'Langzeitvermietung'}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {canEdit && (
-                  <button onClick={handleDeaktivieren}
-                          className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
-                    Deaktivieren
-                  </button>
-                )}
-              </div>
-              {/* Kontaktdaten Firma */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-gray-100">
-                {p.verwaltung.phone && (
-                  <a href={`tel:${p.verwaltung.phone}`}
-                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
-                    <span className="text-base">📞</span>
-                    <span>{p.verwaltung.phone}</span>
-                  </a>
-                )}
-                {p.verwaltung.email && (
-                  <a href={`mailto:${p.verwaltung.email}`}
-                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
-                    <span className="text-base">✉️</span>
-                    <span className="truncate">{p.verwaltung.email}</span>
-                  </a>
-                )}
-                {(p.verwaltung.address_street || p.verwaltung.address_city) && (() => {
-                  const addr = [
-                    p.verwaltung!.address_street,
-                    [p.verwaltung!.address_zip, p.verwaltung!.address_city].filter(Boolean).join(' '),
-                    p.verwaltung!.address_country !== 'Deutschland' ? p.verwaltung!.address_country : null,
-                  ].filter(Boolean).join(', ')
-                  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`
-                  return (
-                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
-                       className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors col-span-full">
-                      <span className="text-base">📍</span>
-                      <span className="truncate">{addr}</span>
-                    </a>
-                  )
-                })()}
-                {p.verwaltung.website && (
-                  <a href={p.verwaltung.website.startsWith('http') ? p.verwaltung.website : `https://${p.verwaltung.website}`}
-                     target="_blank" rel="noopener noreferrer"
-                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
-                    <span className="text-base">🌐</span>
-                    <span className="truncate">{p.verwaltung.website}</span>
-                  </a>
-                )}
-              </div>
-
-              {/* Ansprechpartner */}
-              {p.verwaltung.ansprechpartner && (
-                <div className="pt-2 border-t border-gray-100">
-                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-2 font-body">
-                    Ansprechpartner
-                  </p>
-                  <div className="flex items-center gap-3">
-                    <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center
-                                    text-gray-600 text-xs font-bold shrink-0">
-                      {p.verwaltung.ansprechpartner[0].toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-hp-black font-body">{p.verwaltung.ansprechpartner}</p>
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                        {p.verwaltung.ansprechpartner_phone && (
-                          <a href={`tel:${p.verwaltung.ansprechpartner_phone}`}
-                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors">
-                            📞 {p.verwaltung.ansprechpartner_phone}
-                          </a>
-                        )}
-                        {p.verwaltung.ansprechpartner_email && (
-                          <a href={`mailto:${p.verwaltung.ansprechpartner_email}`}
-                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors truncate">
-                            ✉️ {p.verwaltung.ansprechpartner_email}
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Aktions-Buttons */}
-              <div className="pt-2 border-t border-gray-100 space-y-2">
-                {/* Eigentuemer → Verwaltung */}
-                {isEigentuemer && (p.verwaltung.ansprechpartner_email || p.verwaltung.email) && (
-                  <a href={`mailto:${p.verwaltung.ansprechpartner_email ?? p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
-                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
-                                text-white font-body hover:opacity-90 transition-opacity"
-                     style={{ backgroundColor: 'var(--color-highlight)' }}>
-                    ✉️ Nachricht an Verwaltung senden
-                  </a>
-                )}
-                {/* Verwalter → Eigentuemer */}
-                {canEdit && p.owner?.email && (
-                  <a href={`mailto:${p.owner.email}?subject=Info zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
-                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
-                                font-body border border-gray-200 text-gray-700 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                    ✉️ E-Mail an Eigentümer senden
-                  </a>
-                )}
-              </div>
-            </div>
-          ) : canEdit ? (
-            /* Admin: Aktivierungsbutton */
-            <button
-              onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType('longterm'); setShowVerwaltungModal(true) }}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed
-                         border-gray-200 text-sm font-semibold font-body text-gray-500
-                         hover:border-hp-highlight hover:text-hp-highlight transition-all w-full justify-center">
-              🔑 Für Verwaltung aktivieren
-            </button>
-          ) : (
-            <p className="text-sm text-gray-400 font-body">Noch keine Verwaltung zugewiesen.</p>
-          )}
-        </div>
-
-        {/* Verwaltung-Aktivierungs-Modal (Admin) */}
-        {showVerwaltungModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center
-                          bg-black/40 backdrop-blur-sm px-4"
-               onClick={e => { if (e.target === e.currentTarget) setShowVerwaltungModal(false) }}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-                  🔑 Für Verwaltung aktivieren
-                </h2>
-                <button onClick={() => setShowVerwaltungModal(false)}
-                        className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
-              </div>
-              <div className="px-6 py-5 space-y-4">
-                {/* Verwaltung auswählen */}
-                <div>
-                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
-                    Verwaltungsunternehmen *
-                  </label>
-                  <select
-                    value={aktivierVerwaltungId}
-                    onChange={e => setAktivierVerwaltungId(e.target.value)}
-                    className={`${inputCls} w-full`}
-                    style={focusRing()}>
-                    <option value="">– Bitte auswählen –</option>
-                    {verwaltungList.map(v => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                  {verwaltungList.length === 0 && (
-                    <p className="text-xs text-amber-600 font-body mt-1">
-                      Noch keine Verwaltungen angelegt.{' '}
-                      <a href="/admin/verwaltungen" target="_blank"
-                         className="underline hover:text-amber-800">Jetzt anlegen →</a>
-                    </p>
-                  )}
-                </div>
-                {/* Miettyp */}
-                <div>
-                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
-                    Vermietungsart *
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['longterm', 'shortterm'] as const).map(rt => (
-                      <button
-                        key={rt}
-                        type="button"
-                        onClick={() => setAktivierRentalType(rt)}
-                        className={`py-2.5 rounded-xl border-2 text-sm font-semibold font-body transition-all
-                          ${aktivierRentalType === rt
-                            ? 'border-hp-highlight text-hp-highlight bg-blue-50'
-                            : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
-                        {rt === 'longterm' ? '🏠 Langzeit' : '🌴 Kurzzeit'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <div className="px-6 pb-5 flex gap-3 justify-end">
-                <button onClick={() => setShowVerwaltungModal(false)}
-                        className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
-                  Abbrechen
-                </button>
-                <button
-                  onClick={handleAktivieren}
-                  disabled={!aktivierVerwaltungId || aktivierSaving}
-                  className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body
-                             hover:opacity-90 transition-opacity disabled:opacity-50"
-                  style={{ backgroundColor: 'var(--color-highlight)' }}>
-                  {aktivierSaving ? 'Speichern…' : '✓ Aktivieren'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Owner Edit Modal */}
         {ownerEditOpen && p.owner && ownerForm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center
@@ -1912,6 +1697,220 @@ export default function PropertyDetail() {
                         style={{ backgroundColor: 'var(--color-highlight)' }}>
                   {ownerSaving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
                   {t('common.save')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+    )
+  }
+
+  // ── Tab: Verwaltung ───────────────────────────────────
+  function renderVerwaltung() {
+    const prop = p
+    const subjectLine = encodeURIComponent(prop.project_name + (prop.unit_number ? ' #' + prop.unit_number : ''))
+
+    return (
+      <div className="space-y-6">
+
+        {prop.is_managed && prop.verwaltung ? (
+          <>
+            {/* Firmenkarte */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+
+              {/* Kopfzeile */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-full bg-hp-black flex items-center justify-center
+                                  text-white text-lg font-bold shrink-0">
+                    {prop.verwaltung.name[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-hp-black font-body">{prop.verwaltung.name}</p>
+                    {prop.management_rental_type && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                        {prop.management_rental_type === 'shortterm' ? '🌴 Kurzzeitvermietung' : '🏠 Langzeitvermietung'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {canEdit && (
+                  <button onClick={handleDeaktivieren}
+                          className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
+                    Deaktivieren
+                  </button>
+                )}
+              </div>
+
+              {/* Firma-Kontakt */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-3 border-t border-gray-100">
+                {prop.verwaltung.phone && (
+                  <a href={`tel:${prop.verwaltung.phone}`}
+                     className="flex items-center gap-2 text-sm font-body text-gray-700 hover:text-hp-highlight transition-colors">
+                    <span className="text-base">📞</span><span>{prop.verwaltung.phone}</span>
+                  </a>
+                )}
+                {prop.verwaltung.email && (
+                  <a href={`mailto:${prop.verwaltung.email}`}
+                     className="flex items-center gap-2 text-sm font-body text-gray-700 hover:text-hp-highlight transition-colors truncate">
+                    <span className="text-base">✉️</span><span className="truncate">{prop.verwaltung.email}</span>
+                  </a>
+                )}
+                {(prop.verwaltung.address_street || prop.verwaltung.address_city) && (() => {
+                  const addr = [
+                    prop.verwaltung!.address_street,
+                    [prop.verwaltung!.address_zip, prop.verwaltung!.address_city].filter(Boolean).join(' '),
+                    prop.verwaltung!.address_country !== 'Deutschland' ? prop.verwaltung!.address_country : null,
+                  ].filter(Boolean).join(', ')
+                  return (
+                    <a href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`}
+                       target="_blank" rel="noopener noreferrer"
+                       className="flex items-center gap-2 text-sm font-body text-gray-700 hover:text-hp-highlight transition-colors col-span-full">
+                      <span className="text-base">📍</span><span className="truncate">{addr}</span>
+                    </a>
+                  )
+                })()}
+                {prop.verwaltung.website && (
+                  <a href={prop.verwaltung.website.startsWith('http') ? prop.verwaltung.website : `https://${prop.verwaltung.website}`}
+                     target="_blank" rel="noopener noreferrer"
+                     className="flex items-center gap-2 text-sm font-body text-gray-700 hover:text-hp-highlight transition-colors">
+                    <span className="text-base">🌐</span><span className="truncate">{prop.verwaltung.website}</span>
+                  </a>
+                )}
+              </div>
+
+              {/* Ansprechpartner */}
+              {prop.verwaltung.ansprechpartner && (
+                <div className="pt-3 border-t border-gray-100">
+                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-2 font-body">
+                    Ansprechpartner
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center
+                                    text-gray-500 text-xs font-bold shrink-0">
+                      {prop.verwaltung.ansprechpartner[0].toUpperCase()}
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-hp-black font-body">{prop.verwaltung.ansprechpartner}</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5">
+                        {prop.verwaltung.ansprechpartner_phone && (
+                          <a href={`tel:${prop.verwaltung.ansprechpartner_phone}`}
+                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors">
+                            📞 {prop.verwaltung.ansprechpartner_phone}
+                          </a>
+                        )}
+                        {prop.verwaltung.ansprechpartner_email && (
+                          <a href={`mailto:${prop.verwaltung.ansprechpartner_email}`}
+                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors">
+                            ✉️ {prop.verwaltung.ansprechpartner_email}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Aktions-Buttons */}
+            <div className="space-y-2">
+              {isEigentuemer && (prop.verwaltung.ansprechpartner_email ?? prop.verwaltung.email) && (
+                <a href={`mailto:${prop.verwaltung.ansprechpartner_email ?? prop.verwaltung.email}?subject=Anfrage zu ${subjectLine}`}
+                   className="flex items-center justify-center gap-2 w-full py-3 rounded-2xl text-sm font-semibold
+                              text-white font-body hover:opacity-90 transition-opacity shadow-sm"
+                   style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  ✉️ Nachricht an Verwaltung senden
+                </a>
+              )}
+              {canEdit && prop.owner?.email && (
+                <a href={`mailto:${prop.owner.email}?subject=Info zu ${subjectLine}`}
+                   className="flex items-center justify-center gap-2 w-full py-3 rounded-2xl text-sm font-semibold
+                              font-body border border-gray-200 text-gray-700 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                  ✉️ E-Mail an Eigentümer senden
+                </a>
+              )}
+            </div>
+          </>
+        ) : canEdit ? (
+          /* Admin: noch nicht aktiviert */
+          <div className="text-center py-16 space-y-4">
+            <div className="text-5xl">🔑</div>
+            <p className="text-sm text-gray-500 font-body">
+              Diese Immobilie ist noch keiner Verwaltung zugewiesen.
+            </p>
+            <button
+              onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType('longterm'); setShowVerwaltungModal(true) }}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
+                         text-white font-body hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: 'var(--color-highlight)' }}>
+              🔑 Für Verwaltung aktivieren
+            </button>
+          </div>
+        ) : (
+          /* Eigentuemer: noch keine Verwaltung */
+          <div className="text-center py-16">
+            <div className="text-5xl mb-4">🏢</div>
+            <p className="text-sm text-gray-500 font-body">
+              Für diese Immobilie ist noch keine Verwaltung eingetragen.
+            </p>
+          </div>
+        )}
+
+        {/* Aktivierungs-Modal (Admin) */}
+        {showVerwaltungModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center
+                          bg-black/40 backdrop-blur-sm px-4"
+               onClick={e => { if (e.target === e.currentTarget) setShowVerwaltungModal(false) }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
+                  🔑 Für Verwaltung aktivieren
+                </h2>
+                <button onClick={() => setShowVerwaltungModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
+                    Verwaltungsunternehmen *
+                  </label>
+                  <select value={aktivierVerwaltungId} onChange={e => setAktivierVerwaltungId(e.target.value)}
+                          className={`${inputCls} w-full`} style={focusRing()}>
+                    <option value="">– Bitte auswählen –</option>
+                    {verwaltungList.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                  </select>
+                  {verwaltungList.length === 0 && (
+                    <p className="text-xs text-amber-600 font-body mt-1">
+                      Noch keine Verwaltungen angelegt.{' '}
+                      <a href="/admin/verwaltungen" target="_blank" className="underline hover:text-amber-800">Jetzt anlegen →</a>
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">Vermietungsart *</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['longterm', 'shortterm'] as const).map(rt => (
+                      <button key={rt} type="button" onClick={() => setAktivierRentalType(rt)}
+                              className={`py-2.5 rounded-xl border-2 text-sm font-semibold font-body transition-all
+                                ${aktivierRentalType === rt
+                                  ? 'border-hp-highlight text-hp-highlight bg-blue-50'
+                                  : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                        {rt === 'longterm' ? '🏠 Langzeit' : '🌴 Kurzzeit'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 pb-5 flex gap-3 justify-end">
+                <button onClick={() => setShowVerwaltungModal(false)}
+                        className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
+                  Abbrechen
+                </button>
+                <button onClick={handleAktivieren} disabled={!aktivierVerwaltungId || aktivierSaving}
+                        className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body hover:opacity-90 transition-opacity disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  {aktivierSaving ? 'Speichern…' : '✓ Aktivieren'}
                 </button>
               </div>
             </div>
@@ -3157,8 +3156,9 @@ export default function PropertyDetail() {
   const rechnungCount    = docs.filter(d => d.type === 'rechnung').length
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
-    { key: 'overview',   label: t('propertyDetail.tabs.overview') },
-    { key: 'contracts',  label: t('propertyDetail.tabs.contracts'),
+    { key: 'overview',    label: t('propertyDetail.tabs.overview') },
+    { key: 'verwaltung',  label: 'Verwaltung' },
+    { key: 'contracts',   label: t('propertyDetail.tabs.contracts'),
       count: (contracts.length + mietvertragCount + unitKaufvertraege.length) || undefined },
     { key: 'invoices',   label: t('propertyDetail.tabs.invoices'),
       count: rechnungCount || undefined },
@@ -3244,8 +3244,9 @@ export default function PropertyDetail() {
 
       {/* Tab content */}
       <div className="pb-12">
-        {activeTab === 'overview'  && renderOverview()}
-        {activeTab === 'contracts' && renderContracts()}
+        {activeTab === 'overview'   && renderOverview()}
+        {activeTab === 'verwaltung' && renderVerwaltung()}
+        {activeTab === 'contracts'  && renderContracts()}
         {activeTab === 'invoices'  && renderInvoices()}
         {activeTab === 'income'    && renderIncome()}
         {activeTab === 'images'    && renderImages()}
