@@ -718,13 +718,21 @@ export default function PropertyDetail() {
     if (!id || !aktivierVerwaltungId) return
     setAktivierSaving(true)
     const { error } = await supabase.from('properties').update({
-      is_managed:            true,
-      property_status:       'active',
-      verwaltung_id:         aktivierVerwaltungId,
+      is_managed:             true,
+      property_status:        'active',
+      verwaltung_id:          aktivierVerwaltungId,
       management_rental_type: aktivierRentalType,
+      rental_type:            aktivierRentalType,  // sync rental_type on property too
     }).eq('id', id)
+    if (error) { setAktivierSaving(false); setToast({ msg: 'Fehler beim Aktivieren.', type: 'error' }); return }
+
+    // Sync rental_type to linked crm_project_unit
+    if (linkedUnitId) {
+      const crmRentalType = aktivierRentalType === 'longterm' ? 'long' : 'short'
+      await supabase.from('crm_project_units').update({ rental_type: crmRentalType }).eq('id', linkedUnitId)
+    }
+
     setAktivierSaving(false)
-    if (error) { setToast({ msg: 'Fehler beim Aktivieren.', type: 'error' }); return }
     setShowVerwaltungModal(false)
     setToast({ msg: '✅ Immobilie für Verwaltung aktiviert' })
     fetchProperty()

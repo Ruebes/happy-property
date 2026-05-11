@@ -409,6 +409,20 @@ export default function Objekte() {
           .eq('id', editId)
         if (error) throw error
 
+        // Sync rental_type to all linked crm_project_units
+        const crmRentalType = form.rental_type === 'longterm' ? 'long' : 'short'
+        await supabase
+          .from('crm_project_units')
+          .update({ rental_type: crmRentalType })
+          .eq('property_id', editId)
+
+        // Also update management_rental_type if property is managed
+        await supabase
+          .from('properties')
+          .update({ management_rental_type: form.rental_type })
+          .eq('id', editId)
+          .eq('is_managed', true)
+
       } else {
         // Generate UUID client-side → upload images → SINGLE insert with all data
         const newId = crypto.randomUUID()

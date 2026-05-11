@@ -51,7 +51,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
   const adminView: AdminView = (() => {
     if (location.pathname.startsWith('/admin/crm'))          return 'crm'
     if (location.pathname.startsWith('/admin/dashboard') ||
-        location.pathname.startsWith('/admin/users'))        return 'verwaltung'
+        location.pathname.startsWith('/admin/users')      ||
+        location.pathname.startsWith('/admin/verwaltungen')) return 'verwaltung'
     return (localStorage.getItem('admin_view') as AdminView | null) ?? 'crm'
   })()
 
@@ -186,8 +187,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
               />
             </Link>
 
-            {/* Admin: CRM | Verwaltung Toggle */}
-            {isAdmin && (
+            {/* Admin: CRM | Verwaltung Toggle – only visible outside CRM view */}
+            {isAdmin && adminView !== 'crm' && (
               <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 shrink-0">
                 <button
                   onClick={() => switchAdminView('crm')}

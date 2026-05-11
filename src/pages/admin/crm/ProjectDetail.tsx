@@ -562,6 +562,15 @@ export default function ProjectDetail() {
       if (editUnit) {
         const { error } = await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
         if (error) throw error
+
+        // Sync rental_type back to linked property
+        if (editUnit.property_id && form.rental_type) {
+          const propRentalType = form.rental_type === 'long' ? 'longterm' : 'shortterm'
+          await supabase
+            .from('properties')
+            .update({ rental_type: propRentalType, management_rental_type: propRentalType })
+            .eq('id', editUnit.property_id)
+        }
       } else {
         const { data: newUnit, error } = await supabase
           .from('crm_project_units')
