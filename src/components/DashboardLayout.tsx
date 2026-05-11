@@ -193,18 +193,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
                 <button
                   onClick={() => switchAdminView('crm')}
                   className="px-3 py-1 text-xs font-semibold font-body rounded-md transition-all"
-                  style={adminView === 'crm'
-                    ? { backgroundColor: '#ff795d', color: 'white' }
-                    : { color: '#6b7280' }}
+                  style={{ color: '#6b7280' }}
                 >
                   {t('adminView.crm')}
                 </button>
                 <button
                   onClick={() => switchAdminView('verwaltung')}
                   className="px-3 py-1 text-xs font-semibold font-body rounded-md transition-all"
-                  style={adminView === 'verwaltung'
-                    ? { backgroundColor: '#ff795d', color: 'white' }
-                    : { color: '#6b7280' }}
+                  style={{ backgroundColor: '#ff795d', color: 'white' }}
                 >
                   {t('adminView.verwaltung')}
                 </button>
@@ -397,9 +393,86 @@ export default function DashboardLayout({ children, basePath }: Props) {
       </header>
 
       {/* ── Content ── */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-8">
+      {/* pb-24 = Platz für die mobile Bottom-Nav (md:pb-8 = kein Bottom-Nav sichtbar) */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-8 pb-24 md:pb-8">
         {children}
       </main>
+
+      {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
+      {!isAdmin && (
+        <nav
+          className="fixed bottom-0 left-0 right-0 md:hidden z-50 bg-white border-t border-gray-100"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          <div className="flex items-stretch justify-around">
+
+            {/* Dashboard */}
+            <Link to={basePath}
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive(basePath) ? 'text-hp-highlight' : 'text-gray-400'}`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('nav.dashboard')}</span>
+            </Link>
+
+            {/* Objekte */}
+            <Link to="/objekte"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/objekte') ? 'text-hp-highlight' : 'text-gray-400'}`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('nav.properties')}</span>
+            </Link>
+
+            {/* Kalender */}
+            <Link to="/kalender"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/kalender') ? 'text-hp-highlight' : 'text-gray-400'}`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('nav.calendar')}</span>
+            </Link>
+
+            {/* Dokumente */}
+            <Link to="/dokumente"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/dokumente') ? 'text-hp-highlight' : 'text-gray-400'}`}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round"
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('nav.documents')}</span>
+            </Link>
+
+            {/* Profil */}
+            <Link to="/profile"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/profile') ? 'text-hp-highlight' : 'text-gray-400'}`}
+            >
+              <span
+                className="w-5 h-5 rounded-full flex items-center justify-center
+                           text-white text-[10px] font-bold font-body shrink-0"
+                style={{ backgroundColor: isActive('/profile') ? 'var(--color-highlight)' : '#9ca3af' }}
+              >
+                {initials}
+              </span>
+              <span className="text-[10px] font-medium font-body">{t('nav.profile')}</span>
+            </Link>
+
+          </div>
+        </nav>
+      )}
+
     </div>
   )
 }
