@@ -26,15 +26,18 @@ interface OwnerProfile {
 }
 
 interface VerwaltungRecord {
-  id:              string
-  name:            string
-  address_street:  string | null
-  address_zip:     string | null
-  address_city:    string | null
-  address_country: string | null
-  phone:           string | null
-  email:           string | null
-  website:         string | null
+  id:                   string
+  name:                 string
+  address_street:       string | null
+  address_zip:          string | null
+  address_city:         string | null
+  address_country:      string | null
+  phone:                string | null
+  email:                string | null
+  website:              string | null
+  ansprechpartner:      string | null
+  ansprechpartner_phone: string | null
+  ansprechpartner_email: string | null
 }
 
 interface PropertyFull {
@@ -747,7 +750,7 @@ export default function PropertyDetail() {
     try {
       const { data } = await supabase
         .from('properties')
-        .select('*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website)')
+        .select('*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website, ansprechpartner, ansprechpartner_phone, ansprechpartner_email)')
         .eq('id', id)
         .single()
       setProperty(data as PropertyFull ?? null)
@@ -1624,7 +1627,7 @@ export default function PropertyDetail() {
                   </button>
                 )}
               </div>
-              {/* Kontaktdaten */}
+              {/* Kontaktdaten Firma */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-gray-100">
                 {p.verwaltung.phone && (
                   <a href={`tel:${p.verwaltung.phone}`}
@@ -1634,7 +1637,7 @@ export default function PropertyDetail() {
                   </a>
                 )}
                 {p.verwaltung.email && (
-                  <a href={`mailto:${p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
+                  <a href={`mailto:${p.verwaltung.email}`}
                      className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
                     <span className="text-base">✉️</span>
                     <span className="truncate">{p.verwaltung.email}</span>
@@ -1664,15 +1667,59 @@ export default function PropertyDetail() {
                   </a>
                 )}
               </div>
-              {/* Mail-Button (Eigentuemer sieht diesen prominent) */}
-              {isEigentuemer && p.verwaltung.email && (
-                <a href={`mailto:${p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
-                   className="mt-1 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
-                              text-white font-body hover:opacity-90 transition-opacity"
-                   style={{ backgroundColor: 'var(--color-highlight)' }}>
-                  ✉️ Nachricht an Verwaltung senden
-                </a>
+
+              {/* Ansprechpartner */}
+              {p.verwaltung.ansprechpartner && (
+                <div className="pt-2 border-t border-gray-100">
+                  <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-2 font-body">
+                    Ansprechpartner
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center
+                                    text-gray-600 text-xs font-bold shrink-0">
+                      {p.verwaltung.ansprechpartner[0].toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-hp-black font-body">{p.verwaltung.ansprechpartner}</p>
+                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                        {p.verwaltung.ansprechpartner_phone && (
+                          <a href={`tel:${p.verwaltung.ansprechpartner_phone}`}
+                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors">
+                            📞 {p.verwaltung.ansprechpartner_phone}
+                          </a>
+                        )}
+                        {p.verwaltung.ansprechpartner_email && (
+                          <a href={`mailto:${p.verwaltung.ansprechpartner_email}`}
+                             className="text-xs text-gray-500 hover:text-hp-highlight font-body transition-colors truncate">
+                            ✉️ {p.verwaltung.ansprechpartner_email}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               )}
+
+              {/* Aktions-Buttons */}
+              <div className="pt-2 border-t border-gray-100 space-y-2">
+                {/* Eigentuemer → Verwaltung */}
+                {isEigentuemer && (p.verwaltung.ansprechpartner_email || p.verwaltung.email) && (
+                  <a href={`mailto:${p.verwaltung.ansprechpartner_email ?? p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
+                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
+                                text-white font-body hover:opacity-90 transition-opacity"
+                     style={{ backgroundColor: 'var(--color-highlight)' }}>
+                    ✉️ Nachricht an Verwaltung senden
+                  </a>
+                )}
+                {/* Verwalter → Eigentuemer */}
+                {canEdit && p.owner?.email && (
+                  <a href={`mailto:${p.owner.email}?subject=Info zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
+                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
+                                font-body border border-gray-200 text-gray-700 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                    ✉️ E-Mail an Eigentümer senden
+                  </a>
+                )}
+              </div>
             </div>
           ) : canEdit ? (
             /* Admin: Aktivierungsbutton */

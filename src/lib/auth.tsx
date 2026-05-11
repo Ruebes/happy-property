@@ -43,6 +43,7 @@ export interface Profile {
   phone: string | null
   role: UserRole
   language: 'de' | 'en'
+  verwaltung_id: string | null
 }
 
 interface AuthState {
@@ -101,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, full_name, phone, role, language')
+        .select('id, email, full_name, phone, role, language, verwaltung_id')
         .eq('id', userId)
         .single()
       if (error || !data) {

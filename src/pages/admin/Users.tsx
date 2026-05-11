@@ -35,6 +35,8 @@ interface Property {
   owner_id: string
 }
 
+interface VerwaltungOption { id: string; name: string }
+
 interface FormState {
   firstName: string
   lastName: string
@@ -51,6 +53,7 @@ interface FormState {
   address_country: string
   tempPassword: string
   showPassword: boolean
+  verwaltung_id: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -78,6 +81,7 @@ function emptyForm(): FormState {
     bank_account_holder: '',
     tempPassword:        generatePassword(),
     showPassword:        false,
+    verwaltung_id:       '',
   }
 }
 
@@ -161,6 +165,7 @@ export default function AdminUsers() {
   const [toast, setToast]           = useState<string | null>(null)
   const [assignPropId, setAssignPropId] = useState('')
   const toastCb = useCallback(() => setToast(null), [])
+  const [verwaltungOptions, setVerwaltungOptions] = useState<VerwaltungOption[]>([])
 
   // ── Delete state ─────────────────────────────────────────
   const [deleteTarget, setDeleteTarget] = useState<UserProfile | null>(null)
@@ -211,10 +216,16 @@ export default function AdminUsers() {
     setAllProps((data as Property[]) ?? [])
   }, [])
 
+  const fetchVerwaltungen = useCallback(async () => {
+    const { data } = await supabase.from('verwaltungen').select('id, name').order('name')
+    setVerwaltungOptions((data as VerwaltungOption[]) ?? [])
+  }, [])
+
   useEffect(() => {
     fetchUsers()
     fetchProps()
-  }, [fetchUsers, fetchProps])
+    fetchVerwaltungen()
+  }, [fetchUsers, fetchProps, fetchVerwaltungen])
 
   // ── Filter ───────────────────────────────────────────────
   const filtered = users.filter(u => {
@@ -252,6 +263,7 @@ export default function AdminUsers() {
       bank_account_holder: u.bank_account_holder ?? '',
       tempPassword:        generatePassword(),
       showPassword:        false,
+      verwaltung_id:       (u as UserProfile & { verwaltung_id?: string }).verwaltung_id ?? '',
     })
     setFormError('')
     setEditUser(u)
@@ -355,6 +367,7 @@ export default function AdminUsers() {
         iban:                form.iban.trim() || null,
         bic:                 form.bic.trim() || null,
         bank_account_holder: form.bank_account_holder.trim() || null,
+        verwaltung_id:       form.role === 'verwalter' ? (form.verwaltung_id || null) : null,
       }).eq('id', editUser.id)
       if (error) throw new Error(error.message)
       closeModal()
@@ -718,6 +731,28 @@ export default function AdminUsers() {
                   </Field>
                 </div>
               </section>
+
+              {/* ── Verwaltung (nur bei Rolle Verwalter) ─────── */}
+              {form.role === 'verwalter' && (
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-2">
+                    Verwaltungsunternehmen
+                  </h3>
+                  <select className={inputCls} value={form.verwaltung_id}
+                          onChange={e => setF('verwaltung_id', e.target.value)}>
+                    <option value="">– Keiner Verwaltung zugeordnet –</option>
+                    {verwaltungOptions.map(v => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                  {verwaltungOptions.length === 0 && (
+                    <p className="text-xs text-amber-600 font-body mt-1">
+                      Noch keine Verwaltungen angelegt.{' '}
+                      <a href="/admin/verwaltungen" target="_blank" className="underline">Jetzt anlegen →</a>
+                    </p>
+                  )}
+                </section>
+              )}
 
               {/* ── Adresse ───────────────────────────────── */}
               <section>
