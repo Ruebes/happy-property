@@ -96,11 +96,12 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const verwaltungNavItems = [
-    { to: '/admin/dashboard', key: 'nav.dashboard'       },
-    { to: '/objekte',         key: 'nav.properties'      },
-    { to: '/kalender',        key: 'nav.calendar'        },
-    { to: '/dokumente',       key: 'nav.documents'       },
-    { to: '/admin/users',     key: 'adminView.nav.users' },
+    { to: '/admin/dashboard',    key: 'nav.dashboard'       },
+    { to: '/objekte',            key: 'nav.properties'      },
+    { to: '/kalender',           key: 'nav.calendar'        },
+    { to: '/dokumente',          key: 'nav.documents'       },
+    { to: '/admin/users',        key: 'adminView.nav.users' },
+    { to: '/admin/verwaltungen', key: 'adminView.nav.verwaltungen' },
   ]
 
   const defaultNavItems = [

@@ -1439,7 +1439,8 @@
     "verwaltung": "Management",
     "current":    "Currently viewing: {{view}}",
     "nav": {
-      "users": "Users"
+      "users":         "Users",
+      "verwaltungen":  "Management Companies"
     }
   }
 }

@@ -25,6 +25,18 @@ interface OwnerProfile {
   is_active: boolean
 }
 
+interface VerwaltungRecord {
+  id:              string
+  name:            string
+  address_street:  string | null
+  address_zip:     string | null
+  address_city:    string | null
+  address_country: string | null
+  phone:           string | null
+  email:           string | null
+  website:         string | null
+}
+
 interface PropertyFull {
   id: string
   project_name: string
@@ -46,6 +58,12 @@ interface PropertyFull {
   vat_rate: number
   created_at: string
   owner: OwnerProfile | null
+  // Verwaltung / Activation
+  property_status:       'under_construction' | 'active' | null
+  is_managed:            boolean | null
+  management_rental_type: 'longterm' | 'shortterm' | null
+  verwaltung_id:         string | null
+  verwaltung:            VerwaltungRecord | null
 }
 
 type DocType = 'mietvertrag' | 'rechnung' | 'sonstiges'
@@ -648,8 +666,9 @@ export default function PropertyDetail() {
   const [editingPayId,    setEditingPayId]    = useState<string | null>(null)
   const [editingAmount,   setEditingAmount]   = useState('')
   // Payment Plan: als bezahlt markieren
-  const [markingPaidId,   setMarkingPaidId]   = useState<string | null>(null)
-  const [markingPaidDate, setMarkingPaidDate] = useState('')
+  const [markingPaidId,    setMarkingPaidId]    = useState<string | null>(null)
+  const [markingPaidDate,  setMarkingPaidDate]  = useState('')
+  const [unmarkConfirmId,  setUnmarkConfirmId]  = useState<string | null>(null)
 
   // Verträge: Doc-Upload (crm_unit_documents)
   const [contractDocType,   setContractDocType]   = useState<'kaufvertrag' | 'mietvertrag' | 'sonstige'>('kaufvertrag')
@@ -658,6 +677,13 @@ export default function PropertyDetail() {
   const [contractDocSaving, setContractDocSaving] = useState(false)
   const [showContractDoc,   setShowContractDoc]   = useState(false)
   const contractDocRef = useRef<HTMLInputElement | null>(null)
+
+  // Verwaltung Aktivierung (Admin)
+  const [showVerwaltungModal,  setShowVerwaltungModal]  = useState(false)
+  const [verwaltungList,       setVerwaltungList]       = useState<VerwaltungRecord[]>([])
+  const [aktivierVerwaltungId, setAktivierVerwaltungId] = useState('')
+  const [aktivierRentalType,   setAktivierRentalType]   = useState<'longterm' | 'shortterm'>('longterm')
+  const [aktivierSaving,       setAktivierSaving]       = useState(false)
 
   // Owner accordion
   const [ownerOpen, setOwnerOpen]       = useState(false)
@@ -676,6 +702,44 @@ export default function PropertyDetail() {
   const isEigentuemer = profile?.role === 'eigentuemer'
   const basePath = `/${profile?.role ?? 'eigentuemer'}/dashboard`
 
+  // Verwaltung-Liste laden wenn Modal geöffnet wird
+  async function loadVerwaltungList() {
+    const { data } = await supabase
+      .from('verwaltungen')
+      .select('id, name, address_street, address_zip, address_city, address_country, phone, email, website')
+      .order('name')
+    setVerwaltungList((data ?? []) as VerwaltungRecord[])
+  }
+
+  async function handleAktivieren() {
+    if (!id || !aktivierVerwaltungId) return
+    setAktivierSaving(true)
+    const { error } = await supabase.from('properties').update({
+      is_managed:            true,
+      property_status:       'active',
+      verwaltung_id:         aktivierVerwaltungId,
+      management_rental_type: aktivierRentalType,
+    }).eq('id', id)
+    setAktivierSaving(false)
+    if (error) { setToast({ msg: 'Fehler beim Aktivieren.', type: 'error' }); return }
+    setShowVerwaltungModal(false)
+    setToast({ msg: '✅ Immobilie für Verwaltung aktiviert' })
+    fetchProperty()
+  }
+
+  async function handleDeaktivieren() {
+    if (!id) return
+    const { error } = await supabase.from('properties').update({
+      is_managed:            false,
+      property_status:       'under_construction',
+      verwaltung_id:         null,
+      management_rental_type: null,
+    }).eq('id', id)
+    if (error) { setToast({ msg: 'Fehler beim Deaktivieren.', type: 'error' }); return }
+    setToast({ msg: 'Immobilie deaktiviert' })
+    fetchProperty()
+  }
+
   // ── Fetch property ───────────────────────────────────────
   const fetchProperty = useCallback(async () => {
     if (!id) return
@@ -683,7 +747,7 @@ export default function PropertyDetail() {
     try {
       const { data } = await supabase
         .from('properties')
-        .select('*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active)')
+        .select('*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website)')
         .eq('id', id)
         .single()
       setProperty(data as PropertyFull ?? null)
@@ -1203,7 +1267,6 @@ export default function PropertyDetail() {
   }
 
   async function handleUnmarkAsPaid(payId: string) {
-    if (!window.confirm('Bezahlt-Markierung aufheben?')) return
     const { error } = await supabase.from('crm_unit_payments')
       .update({ is_paid: false, paid_date: null })
       .eq('id', payId)
@@ -1211,6 +1274,7 @@ export default function PropertyDetail() {
       setToast({ msg: 'Speichern fehlgeschlagen.', type: 'error' })
       return
     }
+    setUnmarkConfirmId(null)
     await fetchUnitPayments()
   }
 
@@ -1526,6 +1590,177 @@ export default function PropertyDetail() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Verwaltung Section ───────────────────────────── */}
+        <div>
+          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+            Verwaltung
+          </h3>
+
+          {p.is_managed && p.verwaltung ? (
+            /* Verwaltung zugewiesen → Infokarte */
+            <div className="bg-white border border-gray-100 rounded-xl shadow-sm p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-hp-black flex items-center justify-center
+                                  text-white text-sm font-bold shrink-0">
+                    {p.verwaltung.name[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-hp-black font-body text-sm">{p.verwaltung.name}</p>
+                    {p.management_rental_type && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                        {p.management_rental_type === 'shortterm' ? 'Kurzzeitvermietung' : 'Langzeitvermietung'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {canEdit && (
+                  <button onClick={handleDeaktivieren}
+                          className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
+                    Deaktivieren
+                  </button>
+                )}
+              </div>
+              {/* Kontaktdaten */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-gray-100">
+                {p.verwaltung.phone && (
+                  <a href={`tel:${p.verwaltung.phone}`}
+                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
+                    <span className="text-base">📞</span>
+                    <span>{p.verwaltung.phone}</span>
+                  </a>
+                )}
+                {p.verwaltung.email && (
+                  <a href={`mailto:${p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
+                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
+                    <span className="text-base">✉️</span>
+                    <span className="truncate">{p.verwaltung.email}</span>
+                  </a>
+                )}
+                {(p.verwaltung.address_street || p.verwaltung.address_city) && (() => {
+                  const addr = [
+                    p.verwaltung!.address_street,
+                    [p.verwaltung!.address_zip, p.verwaltung!.address_city].filter(Boolean).join(' '),
+                    p.verwaltung!.address_country !== 'Deutschland' ? p.verwaltung!.address_country : null,
+                  ].filter(Boolean).join(', ')
+                  const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}`
+                  return (
+                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                       className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors col-span-full">
+                      <span className="text-base">📍</span>
+                      <span className="truncate">{addr}</span>
+                    </a>
+                  )
+                })()}
+                {p.verwaltung.website && (
+                  <a href={p.verwaltung.website.startsWith('http') ? p.verwaltung.website : `https://${p.verwaltung.website}`}
+                     target="_blank" rel="noopener noreferrer"
+                     className="flex items-center gap-2 text-sm font-body text-hp-black hover:text-hp-highlight transition-colors">
+                    <span className="text-base">🌐</span>
+                    <span className="truncate">{p.verwaltung.website}</span>
+                  </a>
+                )}
+              </div>
+              {/* Mail-Button (Eigentuemer sieht diesen prominent) */}
+              {isEigentuemer && p.verwaltung.email && (
+                <a href={`mailto:${p.verwaltung.email}?subject=Anfrage zu ${encodeURIComponent(p.project_name + (p.unit_number ? ' #' + p.unit_number : ''))}`}
+                   className="mt-1 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold
+                              text-white font-body hover:opacity-90 transition-opacity"
+                   style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  ✉️ Nachricht an Verwaltung senden
+                </a>
+              )}
+            </div>
+          ) : canEdit ? (
+            /* Admin: Aktivierungsbutton */
+            <button
+              onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType('longterm'); setShowVerwaltungModal(true) }}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-dashed
+                         border-gray-200 text-sm font-semibold font-body text-gray-500
+                         hover:border-hp-highlight hover:text-hp-highlight transition-all w-full justify-center">
+              🔑 Für Verwaltung aktivieren
+            </button>
+          ) : (
+            <p className="text-sm text-gray-400 font-body">Noch keine Verwaltung zugewiesen.</p>
+          )}
+        </div>
+
+        {/* Verwaltung-Aktivierungs-Modal (Admin) */}
+        {showVerwaltungModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center
+                          bg-black/40 backdrop-blur-sm px-4"
+               onClick={e => { if (e.target === e.currentTarget) setShowVerwaltungModal(false) }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
+                  🔑 Für Verwaltung aktivieren
+                </h2>
+                <button onClick={() => setShowVerwaltungModal(false)}
+                        className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                {/* Verwaltung auswählen */}
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
+                    Verwaltungsunternehmen *
+                  </label>
+                  <select
+                    value={aktivierVerwaltungId}
+                    onChange={e => setAktivierVerwaltungId(e.target.value)}
+                    className={`${inputCls} w-full`}
+                    style={focusRing()}>
+                    <option value="">– Bitte auswählen –</option>
+                    {verwaltungList.map(v => (
+                      <option key={v.id} value={v.id}>{v.name}</option>
+                    ))}
+                  </select>
+                  {verwaltungList.length === 0 && (
+                    <p className="text-xs text-amber-600 font-body mt-1">
+                      Noch keine Verwaltungen angelegt.{' '}
+                      <a href="/admin/verwaltungen" target="_blank"
+                         className="underline hover:text-amber-800">Jetzt anlegen →</a>
+                    </p>
+                  )}
+                </div>
+                {/* Miettyp */}
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
+                    Vermietungsart *
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['longterm', 'shortterm'] as const).map(rt => (
+                      <button
+                        key={rt}
+                        type="button"
+                        onClick={() => setAktivierRentalType(rt)}
+                        className={`py-2.5 rounded-xl border-2 text-sm font-semibold font-body transition-all
+                          ${aktivierRentalType === rt
+                            ? 'border-hp-highlight text-hp-highlight bg-blue-50'
+                            : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
+                        {rt === 'longterm' ? '🏠 Langzeit' : '🌴 Kurzzeit'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="px-6 pb-5 flex gap-3 justify-end">
+                <button onClick={() => setShowVerwaltungModal(false)}
+                        className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
+                  Abbrechen
+                </button>
+                <button
+                  onClick={handleAktivieren}
+                  disabled={!aktivierVerwaltungId || aktivierSaving}
+                  className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body
+                             hover:opacity-90 transition-opacity disabled:opacity-50"
+                  style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  {aktivierSaving ? 'Speichern…' : '✓ Aktivieren'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1960,7 +2195,7 @@ export default function PropertyDetail() {
       <div className="space-y-4">
 
         {/* Upload button */}
-        {canEdit && (
+        {(canEdit || isEigentuemer) && (
           <button
             onClick={() => { setInvoiceModalDoc(null); setInvoiceModalOpen(true) }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold
@@ -2700,11 +2935,27 @@ export default function PropertyDetail() {
                           )}
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleUnmarkAsPaid(pay.id)}
-                        className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
-                        Rückgängig
-                      </button>
+                      {unmarkConfirmId === pay.id ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500 font-body">Wirklich zurücknehmen?</span>
+                          <button
+                            onClick={() => handleUnmarkAsPaid(pay.id)}
+                            className="text-xs font-semibold text-red-600 hover:text-red-800 font-body transition-colors">
+                            Ja
+                          </button>
+                          <button
+                            onClick={() => setUnmarkConfirmId(null)}
+                            className="text-xs text-gray-400 hover:text-gray-600 font-body transition-colors">
+                            Nein
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setUnmarkConfirmId(pay.id)}
+                          className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
+                          Rückgängig
+                        </button>
+                      )}
                     </div>
                   ) : markingPaidId === pay.id ? (
                     /* DATUM EINGEBEN */

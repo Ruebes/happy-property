@@ -72,7 +72,7 @@ interface FormState {
 
 const EMPTY_FORM: FormState = {
   propertyId: '', checkIn: '', checkOut: '',
-  pricePerNightGross: '', vatRate: '19', cleaningFeeGross: '',
+  pricePerNightGross: '', vatRate: '9', cleaningFeeGross: '',
   firstName: '', lastName: '', email: '',
   phone: '', nationality: '', language: 'de', guestCount: '2',
   checkinTime: '15:00', checkoutTime: '11:00',
@@ -162,7 +162,7 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
 
   // ── Pricing calculations ────────────────────────────────────
   const nights     = nightCount(form.checkIn, form.checkOut)
-  const vatPct     = parseFloat(form.vatRate) || 19
+  const vatPct     = parseFloat(form.vatRate) || 9
   const vatMul     = 1 + vatPct / 100
   const ppnGross   = isOwnerGuest ? 0 : (parseFloat(form.pricePerNightGross) || 0)
   const ppnNet     = ppnGross / vatMul

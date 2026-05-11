@@ -17,7 +17,8 @@ import EigentuemerDashboard    from './pages/eigentuemer/Dashboard'
 import EigentuemerProperties  from './pages/eigentuemer/Properties'
 
 // Admin-Seiten
-import AdminUsers from './pages/admin/Users'
+import AdminUsers       from './pages/admin/Users'
+import AdminVerwaltungen from './pages/admin/Verwaltungen'
 
 // CRM (Admin + Verwalter)
 import CrmPipeline   from './pages/admin/crm/Pipeline'
@@ -70,6 +71,7 @@ export default function App() {
           <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
             <Route path="/admin/dashboard"             element={<AdminDashboard />} />
             <Route path="/admin/users"                 element={<AdminUsers />} />
+            <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
             <Route path="/admin/crm/statistics"        element={<Statistics />} />
             <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
             <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />

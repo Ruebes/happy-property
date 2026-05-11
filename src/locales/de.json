@@ -1439,7 +1439,8 @@
     "verwaltung": "Verwaltung",
     "current":    "Du siehst gerade: {{view}}",
     "nav": {
-      "users": "Nutzer"
+      "users":         "Nutzer",
+      "verwaltungen":  "Verwaltungen"
     }
   }
 }

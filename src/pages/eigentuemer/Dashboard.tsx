@@ -7,13 +7,14 @@ import { useAuth } from '../../lib/auth'
 
 // ── Types ──────────────────────────────────────────────────────
 interface PropertyCard {
-  id:           string
-  project_name: string
-  unit_number:  string | null
-  type:         'villa' | 'apartment' | 'studio'
-  city:         string | null
-  images:       string[]
-  rental_type:  'longterm' | 'shortterm'
+  id:              string
+  project_name:    string
+  unit_number:     string | null
+  type:            'villa' | 'apartment' | 'studio'
+  city:            string | null
+  images:          string[]
+  rental_type:     'longterm' | 'shortterm'
+  property_status: 'under_construction' | 'active' | null
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ export default function EigentuemerDashboard() {
         // 1. Eigene Immobilien laden
         const { data: props } = await supabase
           .from('properties')
-          .select('id, project_name, unit_number, type, city, images, rental_type')
+          .select('id, project_name, unit_number, type, city, images, rental_type, property_status')
           .eq('owner_id', profile!.id)
           .order('project_name')
 
@@ -75,8 +76,15 @@ export default function EigentuemerDashboard() {
           }
         }
 
-        // 2b. Buchungen + Dokumente parallel zählen
-        const [bookRes, docRes] = await Promise.all([
+        // 2b. Unit-IDs für CRM-Dokumente ermitteln
+        const { data: unitRows } = await supabase
+          .from('crm_project_units')
+          .select('id')
+          .in('property_id', propIds)
+        const unitIds = (unitRows ?? []).map((u: { id: string }) => u.id)
+
+        // 2c. Buchungen + Dokumente parallel zählen
+        const [bookRes, docRes, crmDocRes] = await Promise.all([
           supabase
             .from('bookings')
             .select('*', { count: 'exact', head: true })
@@ -85,11 +93,17 @@ export default function EigentuemerDashboard() {
             .from('documents')
             .select('*', { count: 'exact', head: true })
             .in('property_id', propIds),
+          unitIds.length > 0
+            ? supabase
+                .from('crm_unit_documents')
+                .select('*', { count: 'exact', head: true })
+                .in('unit_id', unitIds)
+            : Promise.resolve({ count: 0 }),
         ])
 
         if (cancelled) return
         setBookingCount(bookRes.count ?? 0)
-        setDocCount(docRes.count ?? 0)
+        setDocCount((docRes.count ?? 0) + (crmDocRes.count ?? 0))
       } catch (err) {
         console.error('[Eigentuemer/Dashboard] load:', err)
       } finally {
@@ -111,18 +125,18 @@ export default function EigentuemerDashboard() {
       clickable: true,
     },
     {
-      key:   'bookings',
-      icon:  '📅',
-      value: loading ? null : bookingCount,
-      href:  null,   // Seite noch nicht vorhanden
-      clickable: false,
+      key:       'bookings',
+      icon:      '📅',
+      value:     loading ? null : bookingCount,
+      href:      '/kalender',
+      clickable: true,
     },
     {
-      key:   'documents',
-      icon:  '📄',
-      value: loading ? null : docCount,
-      href:  null,   // Seite noch nicht vorhanden
-      clickable: false,
+      key:       'documents',
+      icon:      '📄',
+      value:     loading ? null : docCount,
+      href:      '/dokumente',
+      clickable: true,
     },
     {
       key:        'avgReturn',
@@ -235,6 +249,20 @@ export default function EigentuemerDashboard() {
                           <span className="text-5xl text-gray-300">{TYPE_ICON[p.type] ?? '🏠'}</span>
                         </div>
                       )}
+                      {/* Status-Badge oben links */}
+                      {(p.property_status === 'active') ? (
+                        <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
+                                         rounded-full bg-green-500 text-white shadow-sm flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
+                          Aktiv
+                        </span>
+                      ) : (
+                        <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
+                                         rounded-full bg-amber-500 text-white shadow-sm">
+                          🏗 Im Bau
+                        </span>
+                      )}
+                      {/* Miettyp-Badge oben rechts */}
                       <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5
                                        rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
                         {t(`properties.rental.${p.rental_type}`)}
