@@ -138,6 +138,18 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     if (!form.name.trim()) return
     setSaving(true)
     setSaveError(null)
+
+    // Timeout-Fallback: verhindert endlosen Spinner bei hängender Netzwerkanfrage
+    // Promise.resolve() wandelt PromiseLike (Supabase) in echtes Promise um
+    const timeoutMs = 15_000
+    const withTimeout = <T,>(p: PromiseLike<T>): Promise<T> =>
+      Promise.race([
+        Promise.resolve(p),
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout – Verbindung zu langsam. Bitte erneut versuchen.')), timeoutMs)
+        ),
+      ])
+
     try {
       const payload = {
         name:            form.name.trim(),
@@ -151,18 +163,22 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         video_url:       form.video_url.trim() || null,
         images,
       }
+      type DbResult = { error: { message: string } | null }
       if (project?.id) {
-        const { error } = await supabase.from('crm_projects').update(payload).eq('id', project.id)
-        if (error) throw error
+        const res = await withTimeout(
+          supabase.from('crm_projects').update(payload).eq('id', project.id)
+        ) as DbResult
+        if (res.error) throw new Error(res.error.message)
       } else {
-        const { error } = await supabase.from('crm_projects').insert(payload)
-        if (error) throw error
+        const res = await withTimeout(
+          supabase.from('crm_projects').insert(payload)
+        ) as DbResult
+        if (res.error) throw new Error(res.error.message)
       }
       onSaved()
       onClose()
     } catch (err) {
-      const msg = err instanceof Error ? err.message
-                : (err as { message?: string })?.message ?? 'Unbekannter Fehler'
+      const msg = err instanceof Error ? err.message : 'Unbekannter Fehler'
       setSaveError(msg)
       console.error('[ProjectModal] handleSave:', err)
     } finally {
