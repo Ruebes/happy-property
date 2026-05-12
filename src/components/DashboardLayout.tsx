@@ -187,20 +187,24 @@ export default function DashboardLayout({ children, basePath }: Props) {
               />
             </Link>
 
-            {/* Admin: CRM | Verwaltung Toggle – only visible outside CRM view */}
-            {isAdmin && adminView !== 'crm' && (
+            {/* Admin: CRM | Verwaltung Toggle – immer sichtbar für Admin */}
+            {isAdmin && (
               <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5 shrink-0">
                 <button
                   onClick={() => switchAdminView('crm')}
                   className="px-3 py-1 text-xs font-semibold font-body rounded-md transition-all"
-                  style={{ color: '#6b7280' }}
+                  style={adminView === 'crm'
+                    ? { backgroundColor: '#ff795d', color: 'white' }
+                    : { color: '#6b7280' }}
                 >
                   {t('adminView.crm')}
                 </button>
                 <button
                   onClick={() => switchAdminView('verwaltung')}
                   className="px-3 py-1 text-xs font-semibold font-body rounded-md transition-all"
-                  style={{ backgroundColor: '#ff795d', color: 'white' }}
+                  style={adminView === 'verwaltung'
+                    ? { backgroundColor: '#ff795d', color: 'white' }
+                    : { color: '#6b7280' }}
                 >
                   {t('adminView.verwaltung')}
                 </button>

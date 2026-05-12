@@ -563,12 +563,23 @@ export default function ProjectDetail() {
         const { error } = await supabase.from('crm_project_units').update(payload).eq('id', editUnit.id)
         if (error) throw error
 
-        // Sync rental_type back to linked property
-        if (editUnit.property_id && form.rental_type) {
-          const propRentalType = form.rental_type === 'long' ? 'longterm' : 'shortterm'
+        // Sync rental_type + property_status back to linked property
+        if (editUnit.property_id) {
+          const propUpdate: Record<string, string> = {}
+
+          // rental_type sync
+          if (form.rental_type) {
+            const propRentalType = form.rental_type === 'long' ? 'longterm' : 'shortterm'
+            propUpdate.rental_type = propRentalType
+            propUpdate.management_rental_type = propRentalType
+          }
+
+          // property_status sync: under_construction ↔ under_construction, alles andere → active
+          propUpdate.property_status = form.status === 'under_construction' ? 'under_construction' : 'active'
+
           await supabase
             .from('properties')
-            .update({ rental_type: propRentalType, management_rental_type: propRentalType })
+            .update(propUpdate)
             .eq('id', editUnit.property_id)
         }
       } else {

@@ -726,10 +726,20 @@ export default function PropertyDetail() {
     }).eq('id', id)
     if (error) { setAktivierSaving(false); setToast({ msg: 'Fehler beim Aktivieren.', type: 'error' }); return }
 
-    // Sync rental_type to linked crm_project_unit
+    // Sync rental_type + status to linked crm_project_unit
     if (linkedUnitId) {
       const crmRentalType = aktivierRentalType === 'longterm' ? 'long' : 'short'
-      await supabase.from('crm_project_units').update({ rental_type: crmRentalType }).eq('id', linkedUnitId)
+      // Wenn die Unit noch auf 'under_construction' steht → auf 'available' hochsetzen
+      await supabase
+        .from('crm_project_units')
+        .update({ rental_type: crmRentalType, status: 'available' })
+        .eq('id', linkedUnitId)
+        .eq('status', 'under_construction')   // nur wenn noch im Bau
+      // rental_type immer aktualisieren (unabhängig vom Status)
+      await supabase
+        .from('crm_project_units')
+        .update({ rental_type: crmRentalType })
+        .eq('id', linkedUnitId)
     }
 
     setAktivierSaving(false)
@@ -747,6 +757,16 @@ export default function PropertyDetail() {
       management_rental_type: null,
     }).eq('id', id)
     if (error) { setToast({ msg: 'Fehler beim Deaktivieren.', type: 'error' }); return }
+
+    // Linked unit zurück auf 'under_construction' setzen (wenn nicht bereits verkauft)
+    if (linkedUnitId) {
+      await supabase
+        .from('crm_project_units')
+        .update({ status: 'under_construction' })
+        .eq('id', linkedUnitId)
+        .in('status', ['available', 'reserved'])   // verkaufte Units NICHT anfassen
+    }
+
     setToast({ msg: 'Immobilie deaktiviert' })
     fetchProperty()
   }
