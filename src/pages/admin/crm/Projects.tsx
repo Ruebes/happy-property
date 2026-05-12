@@ -67,6 +67,7 @@ function parseGoogleMapsLocation(input: string): string {
 function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   const { t } = useTranslation()
   const [saving, setSaving]             = useState(false)
+  const [saveError, setSaveError]       = useState<string | null>(null)
   const [developers, setDevelopers]     = useState<{ id: string; name: string }[]>([])
   const [devLoading, setDevLoading]     = useState(true)
 
@@ -136,6 +137,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   const handleSave = async () => {
     if (!form.name.trim()) return
     setSaving(true)
+    setSaveError(null)
     try {
       const payload = {
         name:            form.name.trim(),
@@ -150,12 +152,19 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         images,
       }
       if (project?.id) {
-        await supabase.from('crm_projects').update(payload).eq('id', project.id)
+        const { error } = await supabase.from('crm_projects').update(payload).eq('id', project.id)
+        if (error) throw error
       } else {
-        await supabase.from('crm_projects').insert(payload)
+        const { error } = await supabase.from('crm_projects').insert(payload)
+        if (error) throw error
       }
       onSaved()
       onClose()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message
+                : (err as { message?: string })?.message ?? 'Unbekannter Fehler'
+      setSaveError(msg)
+      console.error('[ProjectModal] handleSave:', err)
     } finally {
       setSaving(false)
     }
@@ -437,23 +446,30 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:text-gray-800 border border-gray-200"
-          >
-            {t('common.cancel', 'Abbrechen')}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving || !form.name.trim() || uploading}
-            className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
-            style={{ backgroundColor: '#ff795d' }}
-          >
-            {saving
-              ? t('common.saving', 'Speichert…')
-              : t('crm.project.save', 'Projekt speichern')}
-          </button>
+        <div className="border-t border-gray-100 px-6 py-4 flex-shrink-0">
+          {saveError && (
+            <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">
+              ❌ {saveError}
+            </p>
+          )}
+          <div className="flex justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-lg text-sm text-gray-600 hover:text-gray-800 border border-gray-200"
+            >
+              {t('common.cancel', 'Abbrechen')}
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !form.name.trim() || uploading}
+              className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+              style={{ backgroundColor: '#ff795d' }}
+            >
+              {saving
+                ? t('common.saving', 'Speichert…')
+                : t('crm.project.save', 'Projekt speichern')}
+            </button>
+          </div>
         </div>
       </div>
     </div>
