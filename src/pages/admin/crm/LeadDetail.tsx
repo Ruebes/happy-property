@@ -106,7 +106,7 @@ export default function LeadDetail() {
     unit_number: '', block: '', type: 'apartment', floor: '',
     bedrooms: '', bathrooms: '', size_sqm: '', terrace_sqm: '',
     price_net: '', price_gross: '', vat_rate: '0',
-    status: 'available', is_furnished: false, rental_type: '',
+    status: 'active', is_furnished: false, rental_type: '',
     handover_date: '', notes: '',
   })
   // Portal-Zugangs-Check (wird beim Öffnen des Unit-Edit-Modals geprüft)
@@ -1037,7 +1037,7 @@ export default function LeadDetail() {
       .from('crm_project_units')
       .select('*')
       .eq('project_id', projectId)
-      .eq('status', 'available')
+      .eq('status', 'active')
       .order('unit_number')
     if (availableUnits && availableUnits.length > 0) {
       // Vorhandene verfügbare Units zur Auswahl anbieten
@@ -1091,7 +1091,7 @@ export default function LeadDetail() {
 
     try {
       // 1. Einheit als verkauft markieren
-      await supabase.from('crm_project_units').update({ status: 'sold' }).eq('id', unit.id)
+      await supabase.from('crm_project_units').update({ status: 'active' }).eq('id', unit.id)
 
       // 2. unit_id immer speichern; property_id wenn vorhanden
       if (deal) {
@@ -2993,7 +2993,7 @@ export default function LeadDetail() {
                     price_net:     dp?.price_net != null ? String(dp.price_net) : '',
                     price_gross:   '',
                     vat_rate:      '0',
-                    status:        'sold',
+                    status:        'active',
                     is_furnished:  false,
                     rental_type:   '',
                     handover_date: '',
@@ -3083,9 +3083,7 @@ export default function LeadDetail() {
                   <select value={unitEditForm.status}
                     onChange={e => setUnitEditForm(f => ({ ...f, status: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                    <option value="available">Verfügbar</option>
-                    <option value="reserved">Reserviert</option>
-                    <option value="sold">Verkauft</option>
+                    <option value="active">Aktiv</option>
                     <option value="under_construction">Im Bau</option>
                   </select>
                 </div>

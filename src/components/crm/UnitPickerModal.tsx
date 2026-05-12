@@ -14,16 +14,12 @@ interface Props {
 }
 
 const STATUS_PILL: Record<string, string> = {
-  available:          'bg-green-100 text-green-700',
-  reserved:           'bg-yellow-100 text-yellow-700',
-  sold:               'bg-red-100 text-red-700',
   under_construction: 'bg-blue-100 text-blue-700',
+  active:             'bg-green-100 text-green-700',
 }
 const STATUS_LABEL: Record<string, string> = {
-  available:          'Verfügbar',
-  reserved:           'Reserviert',
-  sold:               'Verkauft',
   under_construction: 'Im Bau',
+  active:             'Aktiv',
 }
 
 function fmtPrice(v: number | null | undefined): string {
@@ -42,7 +38,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
   const [projects,       setProjects]       = useState<CrmProject[]>([])
   const [loading,        setLoading]        = useState(true)
   const [search,         setSearch]         = useState('')
-  const [statusFilter,   setStatusFilter]   = useState<'all' | 'available' | 'reserved'>('all')
+  const [statusFilter,   setStatusFilter]   = useState<'all' | 'active' | 'under_construction'>('all')
   const [expanded,       setExpanded]       = useState<Record<string, boolean>>({})
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [selectedUnit,   setSelectedUnit]   = useState<{ unit: CrmProjectUnit; project: CrmProject } | null>(null)
@@ -95,7 +91,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
     })
 
   function pickUnit(unit: CrmProjectUnit, project: CrmProject) {
-    if (unit.status === 'sold') return
+    if (unit.status === 'under_construction') return
     setSelectedUnitId(unit.id)
     setSelectedUnit({ unit, project })
   }
@@ -126,9 +122,9 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
           />
           <div className="flex gap-2">
             {([
-              { v: 'all',       label: 'Alle Einheiten' },
-              { v: 'available', label: '✅ Verfügbar'   },
-              { v: 'reserved',  label: '🕐 Reserviert'  },
+              { v: 'all',                label: 'Alle Einheiten' },
+              { v: 'active',             label: '🟢 Aktiv'        },
+              { v: 'under_construction', label: '🏗 Im Bau'       },
             ] as const).map(f => (
               <button
                 key={f.v}
@@ -197,7 +193,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                 {expanded[project.id] && (
                   <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {project.units.map(unit => {
-                      const isSold     = unit.status === 'sold'
+                      const isSold     = unit.status === 'under_construction'
                       const isSelected = selectedUnitId === unit.id
 
                       return (

@@ -147,7 +147,7 @@ export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
 
 export type ProjectStatus = 'available' | 'under_construction' | 'sold_out' | 'completed'
 export type UnitType      = 'villa' | 'apartment' | 'studio'
-export type UnitStatus    = 'available' | 'reserved' | 'sold' | 'under_construction'
+export type UnitStatus    = 'under_construction' | 'active'
 
 export interface CrmProject {
   id:              string

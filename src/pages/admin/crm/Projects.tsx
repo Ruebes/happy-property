@@ -534,7 +534,7 @@ export default function Projects() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {filtered.map(p => {
               const totalUnits     = p.units?.length ?? 0
-              const availableUnits = p.units?.filter((u: { status: string }) => u.status === 'available').length ?? 0
+              const availableUnits = p.units?.filter((u: { status: string }) => u.status === 'active').length ?? 0
               const mainImage      = p.images?.[0]
 
               return (

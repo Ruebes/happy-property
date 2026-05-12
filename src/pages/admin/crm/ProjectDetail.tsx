@@ -45,22 +45,16 @@ function formatFileSize(b: number | null): string {
 }
 
 const STATUS_PILL: Record<UnitStatus, string> = {
-  available:          'bg-green-100 text-green-700',
-  reserved:           'bg-yellow-100 text-yellow-700',
-  sold:               'bg-red-100 text-red-700',
   under_construction: 'bg-blue-100 text-blue-700',
+  active:             'bg-green-100 text-green-700',
 }
 const STATUS_BAR: Record<UnitStatus, string> = {
-  available:          '#22c55e',
-  reserved:           '#eab308',
-  sold:               '#ef4444',
   under_construction: '#3b82f6',
+  active:             '#22c55e',
 }
 const STATUS_LABEL: Record<UnitStatus, string> = {
-  available:          'Verfügbar',
-  reserved:           'Reserviert',
-  sold:               'Verkauft',
   under_construction: 'Im Bau',
+  active:             'Aktiv',
 }
 const DOC_PILL: Record<string, string> = {
   kaufvertrag:  'bg-purple-100 text-purple-700',
@@ -79,7 +73,7 @@ const DOC_LABEL: Record<string, string> = {
 
 const EMPTY_FORM = {
   block: '', unit_number: '',
-  type: 'apartment' as UnitType, status: 'available' as UnitStatus,
+  type: 'apartment' as UnitType, status: 'active' as UnitStatus,
   bedrooms: 1, bathrooms: 1,
   size_sqm: '', terrace_sqm: '', floor: '',
   price_net: '', price_gross: '', vat_rate: '5',
@@ -186,7 +180,7 @@ function UnitCard({
               <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
             </button>
           </div>
-        ) : unit.status !== 'sold' && (
+        ) : unit.status !== 'under_construction' && (
           <div className="mt-3 pt-2.5 border-t border-gray-100">
             <button
               onClick={e => { e.stopPropagation(); onAssignCustomer?.() }}
@@ -370,9 +364,9 @@ export default function ProjectDetail() {
           .eq('id', dealId)
         if (error) throw error
       }
-      // Mark unit as reserved
+      // Unit bleibt aktiv nach Kundenzuweisung
       await supabase.from('crm_project_units')
-        .update({ status: 'reserved' })
+        .update({ status: 'active' })
         .eq('id', assigningUnit.id)
       // Log activity
       await supabase.from('activities').insert({
@@ -534,8 +528,8 @@ export default function ProjectDetail() {
   async function handleSaveUnit() {
     if (!form.unit_number.trim() || !projectId) return
     setSaving(true)
-    const wasNotSold = editUnit ? editUnit.status !== 'sold' : true   // new units: always offer portal if sold
-    const isNowSold  = form.status === 'sold'
+    const wasUnderConstruction = editUnit ? editUnit.status === 'under_construction' : false
+    const isNowActive          = form.status === 'active'
     try {
       const payload = {
         project_id:   projectId,
@@ -589,8 +583,8 @@ export default function ProjectDetail() {
           .select()
           .single()
         if (error) throw error
-        // Offer customer assignment for non-sold units
-        if (newUnit && form.status !== 'sold') {
+        // Offer customer assignment for active units
+        if (newUnit && form.status !== 'under_construction') {
           await fetchData()
           showToast('✅ Einheit angelegt')
           setShowModal(false)
@@ -602,8 +596,8 @@ export default function ProjectDetail() {
       await fetchData()
       showToast(editUnit ? '✅ Einheit aktualisiert' : '✅ Einheit angelegt')
       setShowModal(false)
-      // If status is 'sold' → offer to send portal access
-      if (wasNotSold && isNowSold) {
+      // Wenn von "Im Bau" → "Aktiv" gewechselt: Portal-Dialog anbieten
+      if (wasUnderConstruction && isNowActive) {
         setPortalSuccess(false)
         setPortalError('')
         setShowPortalDialog(true)
@@ -802,7 +796,7 @@ export default function ProjectDetail() {
 
         {/* Status pills */}
         <div className="flex flex-wrap gap-2 mt-4">
-          {(['available', 'reserved', 'sold', 'under_construction'] as UnitStatus[]).map(s => {
+          {(['under_construction', 'active'] as UnitStatus[]).map(s => {
             const n = units.filter(u => u.status === s).length
             return n > 0 ? (
               <span key={s} className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_PILL[s]}`}>
@@ -810,11 +804,6 @@ export default function ProjectDetail() {
               </span>
             ) : null
           })}
-          {units.filter(u => u.is_completed).length > 0 && (
-            <span className="px-3 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-              {units.filter(u => u.is_completed).length} Übergeben
-            </span>
-          )}
           <span className="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
             {units.length} Einheiten gesamt
           </span>
@@ -949,9 +938,7 @@ export default function ProjectDetail() {
                         value={form.status}
                         onChange={e => setForm(f => ({ ...f, status: e.target.value as UnitStatus }))}
                       >
-                        <option value="available">Verfügbar</option>
-                        <option value="reserved">Reserviert</option>
-                        <option value="sold">Verkauft</option>
+                        <option value="active">Aktiv</option>
                         <option value="under_construction">Im Bau</option>
                       </select>
                     </div>
