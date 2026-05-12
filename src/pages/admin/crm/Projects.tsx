@@ -66,12 +66,28 @@ function parseGoogleMapsLocation(input: string): string {
 
 function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   const { t } = useTranslation()
-  const [saving, setSaving]       = useState(false)
-  const [developers, setDevelopers] = useState<{ id: string; name: string }[]>([])
+  const [saving, setSaving]             = useState(false)
+  const [developers, setDevelopers]     = useState<{ id: string; name: string }[]>([])
+  const [devLoading, setDevLoading]     = useState(true)
 
   useEffect(() => {
-    supabase.from('crm_developers').select('id, name').order('name')
-      .then(({ data }) => setDevelopers(data ?? []))
+    async function loadDevs() {
+      setDevLoading(true)
+      try {
+        const { data, error } = await supabase
+          .from('crm_developers')
+          .select('id, name')
+          .order('name')
+        if (error) throw error
+        setDevelopers(data ?? [])
+      } catch (err) {
+        console.error('[ProjectModal] loadDevelopers:', err)
+        setDevelopers([])
+      } finally {
+        setDevLoading(false)
+      }
+    }
+    loadDevs()
   }, [])
   const [activeTab, setActiveTab] = useState<'basic' | 'location' | 'media'>('basic')
   const [form, setForm] = useState<ProjectForm>({
@@ -209,12 +225,20 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                     {t('crm.project.developer', 'Entwickler / Developer')}
                   </label>
                   <select value={form.developer} onChange={e => up('developer', e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                    <option value="">— Developer wählen —</option>
+                    disabled={devLoading}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white disabled:opacity-60">
+                    <option value="">
+                      {devLoading ? 'Wird geladen…' : developers.length === 0 ? 'Keine Developer angelegt' : '— Developer wählen —'}
+                    </option>
                     {developers.map(d => (
                       <option key={d.id} value={d.name}>{d.name}</option>
                     ))}
                   </select>
+                  {!devLoading && developers.length === 0 && (
+                    <p className="text-[11px] text-amber-600 mt-1">
+                      Noch keine Developer angelegt → CRM → Einstellungen → Developer hinzufügen
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
