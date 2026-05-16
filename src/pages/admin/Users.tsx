@@ -1,10 +1,17 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
-import { supabaseAdmin } from '../../lib/supabaseAdmin'
 import { useAuth } from '../../lib/auth'
+
+// Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
+async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke('admin-user-ops', { body })
+  if (error) throw new Error(error.message)
+  if (data?.error) throw new Error(data.error)
+  return data as T
+}
 
 // ── Types ──────────────────────────────────────────────────────
 type Role = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast'
@@ -171,34 +178,42 @@ export default function AdminUsers() {
   const [deleteTarget, setDeleteTarget] = useState<UserProfile | null>(null)
   const [deleting, setDeleting]         = useState(false)
 
+  // ── Passwort-Anzeige nach Anlegen / Reset ─────────────────
+  const [createdPassword, setCreatedPassword] = useState<string | null>(null)
+  const [pwCopied, setPwCopied]               = useState(false)
+  function copyCreatedPw() {
+    if (!createdPassword) return
+    navigator.clipboard.writeText(createdPassword)
+    setPwCopied(true)
+    setTimeout(() => setPwCopied(false), 2000)
+  }
+
   // ── Fetch ────────────────────────────────────────────────
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      // Profile + echte Auth-User parallel laden
-      const [{ data: profileData }, { data: authData, error: authErr }] = await Promise.all([
-        supabase
-          .from('profiles')
-          .select('id, email, full_name, phone, role, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, is_active, created_at')
-          .order('created_at', { ascending: false })
-          .limit(500),
-        supabaseAdmin.auth.admin.listUsers({ perPage: 1000 }),
-      ])
+      // Profile laden
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, phone, role, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, is_active, created_at')
+        .order('created_at', { ascending: false })
+        .limit(500)
 
       const profiles = (profileData as UserProfile[]) ?? []
 
-      // Verwaiste Profile bereinigen: Einträge ohne echten Auth-User
-      if (!authErr && authData?.users) {
-        const authIds = new Set(authData.users.map(u => u.id))
+      // Verwaiste Profile bereinigen via Edge Function
+      try {
+        const { ids } = await adminUserOp<{ ids: string[] }>({ action: 'list_auth_ids' })
+        const authIds  = new Set(ids)
         const orphaned = profiles.filter(p => !authIds.has(p.id))
         if (orphaned.length > 0) {
-          // Stille Bereinigung – kein Toast, da Nutzer dies nicht erwartet
           await Promise.all(
-            orphaned.map(p => supabaseAdmin.from('profiles').delete().eq('id', p.id))
+            orphaned.map(p => adminUserOp({ action: 'delete_profile', profileId: p.id }))
           )
         }
         setUsers(profiles.filter(p => authIds.has(p.id)))
-      } else {
+      } catch {
+        // Edge Function nicht erreichbar → einfach alle Profile zeigen
         setUsers(profiles)
       }
     } catch (e) {
@@ -292,8 +307,8 @@ export default function AdminUsers() {
   }
 
   // ── Create user ──────────────────────────────────────────
-  // Uses inviteUserByEmail() so Supabase automatically sends the
-  // branded invite email with a password-set link (ConfirmationURL).
+  // Läuft via Edge Function – kein Service-Key im Browser nötig.
+  // Passwort wird generiert und dem Admin angezeigt (kein automatischer E-Mail-Versand).
   async function handleCreate() {
     const err = validate()
     if (err) { setFormError(err); return }
@@ -301,30 +316,13 @@ export default function AdminUsers() {
     setFormError('')
     try {
       const full_name = `${form.firstName.trim()} ${form.lastName.trim()}`
-      const redirectTo = form.role === 'eigentuemer'
-        ? 'https://portal.happy-property.com/login'
-        : `${window.location.origin}/login`
-
-      // 1. Invite → sends branded "Konto aktivieren" email automatically
-      const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-        form.email.trim(),
-        {
-          data: { full_name, needs_password_setup: true },
-          redirectTo,
-        }
-      )
-      if (authErr) throw new Error(authErr.message)
-      const userId = authData.user.id
-
-      // 2. Profile — created immediately so the rest of the app
-      //    can reference this owner before they accept the invite.
-      const { error: profileErr } = await supabaseAdmin.from('profiles').upsert({
-        id:                  userId,
+      const { password } = await adminUserOp<{ success: true; userId: string; password: string }>({
+        action:              'create',
         email:               form.email.trim(),
         full_name,
-        phone:               form.phone.trim() || null,
         role:                form.role,
         language:            form.language,
+        phone:               form.phone.trim() || null,
         address_street:      form.address_street.trim() || null,
         address_zip:         form.address_zip.trim() || null,
         address_city:        form.address_city.trim() || null,
@@ -332,12 +330,9 @@ export default function AdminUsers() {
         iban:                form.iban.trim() || null,
         bic:                 form.bic.trim() || null,
         bank_account_holder: form.bank_account_holder.trim() || null,
-        is_active:           true,
       })
-      if (profileErr) throw new Error(profileErr.message)
-
       closeModal()
-      setToast(t('users.success.created'))
+      setCreatedPassword(password)
       fetchUsers()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
@@ -386,13 +381,12 @@ export default function AdminUsers() {
     setSaving(true)
     setFormError('')
     try {
-      const { error } = await supabaseAdmin.auth.admin.updateUserById(editUser.id, {
-        password: form.tempPassword,
-        user_metadata: { needs_password_setup: true },
+      const { password } = await adminUserOp<{ success: true; password: string }>({
+        action: 'reset_password',
+        userId: editUser.id,
       })
-      if (error) throw new Error(error.message)
-      setToast(t('users.success.passwordReset'))
-      setF('showPassword', true)
+      closeModal()
+      setCreatedPassword(password)
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
     } finally {
@@ -426,21 +420,7 @@ export default function AdminUsers() {
 
     setDeleting(true)
     try {
-      // 1. Auth-User löschen (cascadet profiles via ON DELETE CASCADE)
-      const { error: authErr } = await supabaseAdmin.auth.admin.deleteUser(deleteTarget.id)
-      if (authErr) throw new Error(authErr.message)
-
-      // 2. Profil explizit löschen (Fallback falls kein CASCADE aktiv)
-      //    Nutze supabaseAdmin um RLS-Einschränkungen zu umgehen
-      const { error: profileErr } = await supabaseAdmin
-        .from('profiles')
-        .delete()
-        .eq('id', deleteTarget.id)
-      // Profil-Fehler ignorieren wenn bereits per CASCADE gelöscht
-      if (profileErr && profileErr.code !== 'PGRST116') {
-        console.warn('[handleDelete] profile delete:', profileErr.message)
-      }
-
+      await adminUserOp({ action: 'delete_user', userId: deleteTarget.id })
       setDeleteTarget(null)
       setToast(t('users.success.deleted'))
       fetchUsers()
@@ -482,15 +462,6 @@ export default function AdminUsers() {
     : []
   const unassignedProps = allProps.filter(p => editUser && p.owner_id !== editUser.id)
 
-  // ── Copy to clipboard ─────────────────────────────────────
-  const [copied, setCopied] = useState(false)
-  const copyRef = useRef(false)
-  function copyPassword() {
-    navigator.clipboard.writeText(form.tempPassword)
-    setCopied(true)
-    copyRef.current = true
-    setTimeout(() => { setCopied(false); copyRef.current = false }, 2000)
-  }
 
   // ── Role filter tabs ─────────────────────────────────────
   const roleTabs = [
@@ -507,6 +478,43 @@ export default function AdminUsers() {
   return (
     <DashboardLayout basePath="/admin/dashboard">
       {toast && <Toast msg={toast} onClose={toastCb} />}
+
+      {/* ── Passwort-Anzeige nach Anlegen / Reset ────────────── */}
+      {createdPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="text-center mb-5">
+              <div className="text-4xl mb-3">✅</div>
+              <h2 className="text-lg font-bold text-hp-black font-body">Nutzer angelegt</h2>
+              <p className="text-sm text-gray-500 font-body mt-1">
+                Bitte Passwort manuell mitteilen (per WhatsApp, Telefon o.ä.)
+              </p>
+            </div>
+            <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4">
+              <p className="text-xs text-gray-400 font-body mb-1">Generiertes Passwort</p>
+              <p className="font-mono text-lg font-bold text-hp-black tracking-wider text-center">
+                {createdPassword}
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={copyCreatedPw}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm
+                           font-semibold font-body text-gray-700 hover:border-gray-300
+                           transition-colors">
+                {pwCopied ? '✓ Kopiert!' : '📋 Kopieren'}
+              </button>
+              <button
+                onClick={() => { setCreatedPassword(null); setPwCopied(false) }}
+                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold
+                           font-body transition-opacity hover:opacity-90"
+                style={{ backgroundColor: 'var(--color-highlight)' }}>
+                Fertig
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
@@ -834,15 +842,15 @@ export default function AdminUsers() {
 
               {/* ── Einladungs-Info (neu anlegen) ────────── */}
               {modal === 'new' && (
-                <div className="flex items-start gap-3 bg-green-50 border border-green-100
+                <div className="flex items-start gap-3 bg-blue-50 border border-blue-100
                                 rounded-xl px-4 py-3">
-                  <span className="text-lg shrink-0">✉️</span>
+                  <span className="text-lg shrink-0">🔑</span>
                   <div>
-                    <p className="text-sm font-semibold text-green-800 font-body">
-                      {t('users.invite.emailSent')}
+                    <p className="text-sm font-semibold text-blue-800 font-body">
+                      Passwort wird generiert
                     </p>
-                    <p className="text-xs text-green-700 font-body mt-0.5">
-                      {t('users.invite.emailHint')}
+                    <p className="text-xs text-blue-700 font-body mt-0.5">
+                      Nach dem Anlegen wird das Passwort angezeigt – bitte manuell mitteilen.
                     </p>
                   </div>
                 </div>
@@ -853,48 +861,18 @@ export default function AdminUsers() {
                 <section>
                   <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest
                                  font-body mb-3">{t('users.sections.password')}</h3>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <input
-                        readOnly
-                        type={form.showPassword ? 'text' : 'password'}
-                        value={form.tempPassword}
-                        className={`${inputCls} pr-10 font-mono bg-gray-50`}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setF('showPassword', !form.showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2
-                                   text-gray-400 hover:text-gray-600 text-base">
-                        {form.showPassword ? '🙈' : '👁'}
-                      </button>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={copyPassword}
-                      className="shrink-0 px-3 py-2 rounded-xl border border-gray-200
-                                 text-xs font-medium text-gray-600 hover:border-gray-300
-                                 transition-colors">
-                      {copied ? '✓' : t('users.form.copy')}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setF('tempPassword', generatePassword())}
-                      className="shrink-0 px-3 py-2 rounded-xl border border-gray-200
-                                 text-xs font-medium text-gray-600 hover:border-gray-300
-                                 transition-colors">
-                      ↻
-                    </button>
-                  </div>
                   <button
                     type="button"
                     onClick={handleResetPassword}
                     disabled={saving}
-                    className="mt-2 w-full py-2 rounded-xl border border-gray-200 text-sm
+                    className="w-full py-2.5 rounded-xl border border-gray-200 text-sm
                                font-medium font-body text-gray-700 hover:border-gray-300
                                hover:bg-gray-50 transition-colors disabled:opacity-50">
-                    {t('users.actions.resetPassword')}
+                    🔑 Neues Passwort generieren & anzeigen
                   </button>
+                  <p className="text-xs text-gray-400 font-body mt-1">
+                    Generiert ein neues Passwort – bitte danach manuell mitteilen.
+                  </p>
                 </section>
               )}
 

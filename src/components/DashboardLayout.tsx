@@ -23,8 +23,11 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // ── Profil-Cache in localStorage ─────────────────────────────────────────
   // Wenn profile kurz null ist (Tab-Wechsel, Neuladen), bleiben Nav und
   // Avatar-Initiale korrekt angezeigt.
-  if (profile?.full_name) localStorage.setItem('cached_user_name', profile.full_name)
-  if (profile?.role)      localStorage.setItem('cached_user_role', profile.role)
+  // Writes sind in useEffect, damit sie nicht im Render-Body passieren.
+  useEffect(() => {
+    if (profile?.full_name) localStorage.setItem('cached_user_name', profile.full_name)
+    if (profile?.role)      localStorage.setItem('cached_user_role', profile.role)
+  }, [profile?.full_name, profile?.role])
 
   const effectiveRole = profile?.role
     ?? (localStorage.getItem('cached_user_role') as UserRole | null)

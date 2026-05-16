@@ -180,7 +180,7 @@ function UnitCard({
               <span className="text-[9px] text-[#ff795d] ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">→</span>
             </button>
           </div>
-        ) : unit.status !== 'under_construction' && (
+        ) : (
           <div className="mt-3 pt-2.5 border-t border-gray-100">
             <button
               onClick={e => { e.stopPropagation(); onAssignCustomer?.() }}
@@ -358,9 +358,11 @@ export default function ProjectDetail() {
     setAssignLeadSaving(true)
     try {
       if (dealId) {
+        const dealUpdate: Record<string, unknown> = { unit_id: assigningUnit.id }
+        if (assigningUnit.property_id) dealUpdate.property_id = assigningUnit.property_id
         const { error } = await supabase
           .from('deals')
-          .update({ unit_id: assigningUnit.id })
+          .update(dealUpdate)
           .eq('id', dealId)
         if (error) throw error
       }
@@ -379,6 +381,56 @@ export default function ProjectDetail() {
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
+
+      // Portal-Eintrag synchronisieren (wenn Eigentümer-Profil bereits vorhanden)
+      const { data: leadData } = await supabase
+        .from('leads')
+        .select('email')
+        .eq('id', leadId)
+        .maybeSingle()
+      if (leadData?.email && profile?.id) {
+        const { data: ownerProfile } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', leadData.email)
+          .eq('role', 'eigentuemer')
+          .maybeSingle()
+        if (ownerProfile) {
+          const unit = assigningUnit
+          const rentalType: 'shortterm' | 'longterm' | null =
+            unit.rental_type === 'long' ? 'longterm'
+            : unit.rental_type === 'short' ? 'shortterm'
+            : null
+          const propData = {
+            project_name:         project?.name ?? '',
+            unit_number:          unit.unit_number || null,
+            type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+            bedrooms:             unit.bedrooms ?? 0,
+            size_sqm:             unit.size_sqm ?? null,
+            is_furnished:         unit.is_furnished ?? false,
+            rental_type:          rentalType,
+            city:                 project?.location ?? null,
+            purchase_price_net:   unit.price_net   ?? null,
+            purchase_price_gross: unit.price_gross ?? null,
+            property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
+          }
+          if (unit.property_id) {
+            await supabase.from('properties').update(propData).eq('id', unit.property_id)
+          } else {
+            const { data: newProp } = await supabase
+              .from('properties')
+              .insert({ ...propData, owner_id: (ownerProfile as { id: string }).id, created_by: profile.id, images: [] })
+              .select('id')
+              .single()
+            if (newProp) {
+              const newPropId = (newProp as { id: string }).id
+              await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
+              if (dealId) await supabase.from('deals').update({ property_id: newPropId }).eq('id', dealId)
+            }
+          }
+        }
+      }
+
       showToast('✅ Kunde zugewiesen')
       setShowAssignModal(false)
       setAssigningUnit(null)
@@ -418,7 +470,10 @@ export default function ProjectDetail() {
   // ── Modal open helpers ───────────────────────────────────────────────────────
   function openNew() {
     setEditUnit(null)
-    setForm({ ...EMPTY_FORM })
+    setForm({
+      ...EMPTY_FORM,
+      status: project?.status === 'under_construction' ? 'under_construction' : 'active',
+    })
     setPayments([])
     setDocuments([])
     setUnitImages([])
@@ -561,12 +616,11 @@ export default function ProjectDetail() {
         if (editUnit.property_id) {
           const propUpdate: Record<string, string> = {}
 
-          // rental_type sync
-          if (form.rental_type) {
-            const propRentalType = form.rental_type === 'long' ? 'longterm' : 'shortterm'
-            propUpdate.rental_type = propRentalType
-            propUpdate.management_rental_type = propRentalType
-          }
+          // rental_type sync (immer, auch wenn leer → null)
+          const propRentalType = form.rental_type === 'long' ? 'longterm'
+            : form.rental_type === 'short' ? 'shortterm' : null
+          propUpdate.rental_type            = propRentalType ?? ''
+          propUpdate.management_rental_type = propRentalType ?? ''
 
           // property_status sync: under_construction ↔ under_construction, alles andere → active
           propUpdate.property_status = form.status === 'under_construction' ? 'under_construction' : 'active'
@@ -611,9 +665,15 @@ export default function ProjectDetail() {
   // ── Delete unit ──────────────────────────────────────────────────────────────
   async function handleDeleteUnit(id: string) {
     if (!window.confirm('Wohnung wirklich löschen? Alle Zahlungen und Dokumente werden ebenfalls gelöscht.')) return
-    await supabase.from('crm_project_units').delete().eq('id', id)
-    await fetchData()
-    setShowModal(false)
+    try {
+      const { error } = await supabase.from('crm_project_units').delete().eq('id', id)
+      if (error) throw error
+      setShowModal(false)
+      await fetchData()
+    } catch (err) {
+      console.error('[ProjectDetail] handleDeleteUnit:', err)
+      showToast('Fehler beim Löschen')
+    }
   }
 
   // ── Payment CRUD ─────────────────────────────────────────────────────────────

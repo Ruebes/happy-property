@@ -73,6 +73,9 @@ export default function Statistics() {
       })
 
       setStats(Array.from(map.values()).sort((a, b) => b.totalCommission - a.totalCommission))
+    } catch (err) {
+      console.error('[Statistics] fetchStats:', err)
+      setStats([])
     } finally {
       setLoading(false)
     }

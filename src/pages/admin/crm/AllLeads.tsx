@@ -126,51 +126,56 @@ export default function AllLeads() {
   const handleCreate = async () => {
     if (!newLeadForm.first_name.trim() || !newLeadForm.email.trim()) return
     setCreating(true)
+    try {
+      const insertPayload = {
+        first_name: newLeadForm.first_name.trim(),
+        last_name: newLeadForm.last_name.trim(),
+        email: newLeadForm.email.trim(),
+        phone: newLeadForm.phone.trim() || null,
+        whatsapp: newLeadForm.whatsapp.trim() || null,
+        country: newLeadForm.country.trim() || null,
+        language: newLeadForm.language,
+        source: newLeadForm.source,
+        notes: newLeadForm.notes.trim() || null,
+        assigned_to: newLeadForm.assigned_to || null,
+        status: 'new',
+      }
 
-    const insertPayload = {
-      first_name: newLeadForm.first_name.trim(),
-      last_name: newLeadForm.last_name.trim(),
-      email: newLeadForm.email.trim(),
-      phone: newLeadForm.phone.trim() || null,
-      whatsapp: newLeadForm.whatsapp.trim() || null,
-      country: newLeadForm.country.trim() || null,
-      language: newLeadForm.language,
-      source: newLeadForm.source,
-      notes: newLeadForm.notes.trim() || null,
-      assigned_to: newLeadForm.assigned_to || null,
-      status: 'new',
-    }
-
-    const { data: createdLead } = await supabase
-      .from('leads')
-      .insert(insertPayload)
-      .select('id')
-      .single()
-
-    if (createdLead?.id && newLeadForm.createDeal) {
-      const { data: createdDeal } = await supabase
-        .from('deals')
-        .insert({ lead_id: createdLead.id, phase: 'erstkontakt' })
+      const { data: createdLead, error: leadErr } = await supabase
+        .from('leads')
+        .insert(insertPayload)
         .select('id')
         .single()
+      if (leadErr) throw new Error(leadErr.message)
 
-      if (createdDeal?.id) {
-        await supabase.from('activities').insert({
-          lead_id: createdLead.id,
-          deal_id: createdDeal.id,
-          type: 'note',
-          direction: 'outbound',
-          subject: 'Deal erstellt',
-          content: 'Deal automatisch beim Erstellen des Leads angelegt',
-        })
+      if (createdLead?.id && newLeadForm.createDeal) {
+        const { data: createdDeal } = await supabase
+          .from('deals')
+          .insert({ lead_id: createdLead.id, phase: 'erstkontakt' })
+          .select('id')
+          .single()
+
+        if (createdDeal?.id) {
+          await supabase.from('activities').insert({
+            lead_id: createdLead.id,
+            deal_id: createdDeal.id,
+            type: 'note',
+            direction: 'outbound',
+            subject: 'Deal erstellt',
+            content: 'Deal automatisch beim Erstellen des Leads angelegt',
+          })
+        }
       }
-    }
 
-    await fetchLeads()
-    setShowModal(false)
-    setNewLeadForm(DEFAULT_FORM)
-    setCreating(false)
-    showToast('Lead erstellt')
+      await fetchLeads()
+      setShowModal(false)
+      setNewLeadForm(DEFAULT_FORM)
+      showToast('Lead erstellt')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Fehler beim Erstellen')
+    } finally {
+      setCreating(false)
+    }
   }
 
   const formatDate = (iso: string) =>

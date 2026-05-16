@@ -169,6 +169,26 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           supabase.from('crm_projects').update(payload).eq('id', project.id)
         ) as DbResult
         if (res.error) throw new Error(res.error.message)
+
+        // Status-Kaskade: Wenn Projektstatus sich geändert hat →
+        // property_status aller verlinkten Portal-Einträge aktualisieren
+        if (project.status !== form.status) {
+          const newPropStatus = form.status === 'under_construction' ? 'under_construction' : 'active'
+          // Alle Units dieses Projekts mit property_id holen
+          const { data: units } = await supabase
+            .from('crm_project_units')
+            .select('id, property_id')
+            .eq('project_id', project.id)
+            .not('property_id', 'is', null)
+          if (units && units.length > 0) {
+            const propertyIds = (units as { id: string; property_id: string }[])
+              .map(u => u.property_id)
+            await supabase
+              .from('properties')
+              .update({ property_status: newPropStatus })
+              .in('id', propertyIds)
+          }
+        }
       } else {
         const res = await withTimeout(
           supabase.from('crm_projects').insert(payload)
@@ -590,7 +610,7 @@ export default function Projects() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {filtered.map(p => {
               const totalUnits     = p.units?.length ?? 0
-              const availableUnits = p.units?.filter((u: { status: string }) => u.status === 'active').length ?? 0
+              const activeUnits = p.units?.filter((u: { status: string }) => u.status === 'active').length ?? 0
               const mainImage      = p.images?.[0]
 
               return (
@@ -629,8 +649,8 @@ export default function Projects() {
                     {/* Stats */}
                     <div className="flex items-center gap-3 text-xs text-gray-500">
                       <span>{totalUnits} Units</span>
-                      {availableUnits > 0 && (
-                        <span className="text-green-600 font-medium">{availableUnits} verfügbar</span>
+                      {activeUnits > 0 && (
+                        <span className="text-green-600 font-medium">{activeUnits} aktiv</span>
                       )}
                       {p.completion_date && (
                         <span>

@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# Happy Property CRM — Pre-Commit Hook
+# Blockt den Commit hart, wenn der TypeScript-Typecheck (tsc) fehlschlägt.
+#
+
+echo "→ Pre-Commit: TypeScript-Typecheck läuft (npx tsc --noEmit)…"
+
+npx tsc --noEmit
+STATUS=$?
+
+if [ $STATUS -ne 0 ]; then
+  echo ""
+  echo "✗ COMMIT ABGEBROCHEN — TypeScript-Fehler gefunden (siehe oben)."
+  echo "  Fehler beheben, dann erneut committen."
+  echo "  Notfall-Bypass: git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+echo "✓ TypeScript sauber — Commit wird fortgesetzt."
+exit 0

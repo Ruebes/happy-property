@@ -160,6 +160,7 @@ export default function CrmCalendar() {
   const [googleConnected, setGoogleConnected] = useState<boolean>(hasGoogleToken())
   const [googleInitialized, setGoogleInitialized] = useState(false)
   const [loading, setLoading]         = useState(false)
+  const [googleError, setGoogleError] = useState('')
   const [showModal, setShowModal]     = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [selectedAppt, setSelectedAppt]       = useState<CrmAppointment | null>(null)
@@ -217,13 +218,17 @@ export default function CrmCalendar() {
   const fetchAppointments = useCallback(async (rangeStart: Date, rangeEnd: Date) => {
     setLoading(true)
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('crm_appointments')
         .select('*, lead:leads(id, first_name, last_name)')
         .gte('start_time', rangeStart.toISOString())
         .lte('start_time', rangeEnd.toISOString())
         .order('start_time', { ascending: true })
+      if (error) throw error
       setAppointments((data ?? []) as CrmAppointment[])
+    } catch (err) {
+      console.error('[Calendar] fetchAppointments:', err)
+      setAppointments([])
     } finally {
       setLoading(false)
     }
@@ -325,10 +330,15 @@ export default function CrmCalendar() {
 
   // ── Google auth ───────────────────────────────────────────────
   async function handleConnectGoogle() {
+    setGoogleError('')
     try {
       await signInGoogle()
       setGoogleConnected(true)
-    } catch { /* ignore */ }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Google-Verbindung fehlgeschlagen'
+      setGoogleError(msg)
+      console.error('[Calendar] handleConnectGoogle:', err)
+    }
   }
 
   function handleDisconnectGoogle() {
@@ -843,6 +853,9 @@ export default function CrmCalendar() {
           </h1>
 
           <div className="flex items-center gap-2">
+            {googleError && (
+              <span className="text-xs text-red-500 font-body">{googleError}</span>
+            )}
             {googleInitialized && !googleConnected && (
               <button
                 type="button"

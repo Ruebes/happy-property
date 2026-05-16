@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
-import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import type { CrmUnitPayment, CrmUnitDocument } from '../lib/crmTypes'
@@ -729,10 +728,10 @@ export default function PropertyDetail() {
     // Sync rental_type + status to linked crm_project_unit
     if (linkedUnitId) {
       const crmRentalType = aktivierRentalType === 'longterm' ? 'long' : 'short'
-      // Wenn die Unit noch auf 'under_construction' steht → auf 'available' hochsetzen
+      // Wenn die Unit noch auf 'under_construction' steht → auf 'active' hochsetzen
       await supabase
         .from('crm_project_units')
-        .update({ rental_type: crmRentalType, status: 'available' })
+        .update({ rental_type: crmRentalType, status: 'active' })
         .eq('id', linkedUnitId)
         .eq('status', 'under_construction')   // nur wenn noch im Bau
       // rental_type immer aktualisieren (unabhängig vom Status)
@@ -762,9 +761,9 @@ export default function PropertyDetail() {
     if (linkedUnitId) {
       await supabase
         .from('crm_project_units')
-        .update({ status: 'under_construction' })
+        .update({ status: 'under_construction', rental_type: null })
         .eq('id', linkedUnitId)
-        .in('status', ['available', 'reserved'])   // verkaufte Units NICHT anfassen
+        .eq('status', 'active')   // nur aktive Units zurücksetzen, nicht zugewiesene
     }
 
     setToast({ msg: 'Immobilie deaktiviert' })
@@ -1068,7 +1067,7 @@ export default function PropertyDetail() {
     setOwnerError('')
     try {
       const full_name = `${ownerForm.firstName.trim()} ${ownerForm.lastName.trim()}`
-      const { error } = await supabaseAdmin.from('profiles').update({
+      const { error } = await supabase.from('profiles').update({
         full_name,
         phone:               ownerForm.phone.trim() || null,
         language:            ownerForm.language,

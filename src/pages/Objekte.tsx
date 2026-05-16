@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
-import { supabaseAdmin } from '../lib/supabaseAdmin'
+
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 
@@ -70,18 +70,6 @@ interface OwnerModalData {
   address_country: string
 }
 
-// ── Helpers ────────────────────────────────────────────────────
-function generatePassword(): string {
-  const upper   = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-  const lower   = 'abcdefghijkmnpqrstuvwxyz'
-  const digits  = '23456789'
-  const special = '!@#$'
-  const all = upper + lower + digits + special
-  const rand = (s: string) => s[Math.floor(Math.random() * s.length)]
-  const base = [rand(upper), rand(lower), rand(digits), rand(special),
-    ...Array.from({ length: 8 }, () => rand(all))]
-  return base.sort(() => Math.random() - 0.5).join('')
-}
 
 const EMPTY_FORM: FormData = {
   project_name: '', unit_number: '', type: 'apartment', bedrooms: '1',
@@ -93,7 +81,7 @@ const EMPTY_FORM: FormData = {
 
 const EMPTY_OWNER_MODAL: OwnerModalData = {
   first_name: '', last_name: '', email: '',
-  phone: '', language: 'de', tempPassword: generatePassword(),
+  phone: '', language: 'de', tempPassword: '',
   address_street: '', address_zip: '', address_city: '', address_country: 'Deutschland',
 }
 
@@ -442,7 +430,7 @@ export default function Objekte() {
         }
         const { error } = await supabase
           .from('properties')
-          .insert({ id: newId, ...basePayload, created_by: profile.id, images })
+          .insert({ id: newId, ...basePayload, created_by: profile.id, images, property_status: 'active' })
         if (error) throw error
       }
 
@@ -469,7 +457,7 @@ export default function Objekte() {
 
   // ── Owner modal ───────────────────────────────────────────
   function openOwnerModal() {
-    setOwnerModal({ ...EMPTY_OWNER_MODAL, tempPassword: generatePassword() })
+    setOwnerModal({ ...EMPTY_OWNER_MODAL })
     setOwnerModalError('')
     setOwnerModalSuccess(false)
     setPwCopied(false)
@@ -482,43 +470,41 @@ export default function Objekte() {
     setOwnerModalError('')
 
     const full_name = `${ownerModal.first_name.trim()} ${ownerModal.last_name.trim()}`
-    // inviteUserByEmail → Supabase versendet automatisch die gebrandete Einladungs-E-Mail
-    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-      ownerModal.email.trim().toLowerCase(),
-      {
-        data: { full_name, needs_password_setup: true },
-        redirectTo: `${window.location.origin}/login`,
-      }
-    )
-
-    if (authError) {
-      setOwnerModalError(
-        authError.message.includes('already') || authError.message.includes('exists')
-          ? t('properties.ownerModal.errorExists')
-          : authError.message
-      )
-      setOwnerModalSaving(false)
-      return
-    }
-
-    if (userData.user) {
-      await supabaseAdmin.from('profiles').upsert({
-        id: userData.user.id,
-        email: ownerModal.email.trim().toLowerCase(),
-        full_name,
-        phone: ownerModal.phone.trim() || null,
-        role: 'eigentuemer',
-        language: ownerModal.language,
-        address_street:  ownerModal.address_street.trim()  || null,
-        address_zip:     ownerModal.address_zip.trim()     || null,
-        address_city:    ownerModal.address_city.trim()    || null,
-        address_country: ownerModal.address_country.trim() || null,
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
+        body: {
+          action:          'create',
+          email:           ownerModal.email.trim().toLowerCase(),
+          full_name,
+          role:            'eigentuemer',
+          language:        ownerModal.language,
+          phone:           ownerModal.phone.trim()            || undefined,
+          address_street:  ownerModal.address_street.trim()  || undefined,
+          address_zip:     ownerModal.address_zip.trim()      || undefined,
+          address_city:    ownerModal.address_city.trim()     || undefined,
+          address_country: ownerModal.address_country.trim() || undefined,
+        },
       })
+
+      if (fnError || data?.error) {
+        const msg = data?.error ?? fnError?.message ?? 'Unbekannter Fehler'
+        setOwnerModalError(
+          msg.includes('already') || msg.includes('exists')
+            ? t('properties.ownerModal.errorExists')
+            : msg
+        )
+        return
+      }
+
+      // Zeige das vom Server generierte Passwort an
+      setOwnerModal(m => ({ ...m, tempPassword: data?.password ?? '' }))
       setOwnerModalSuccess(true)
-      setOwnerModalSaving(false)
       await fetchOwners()
-      setField('owner_id', userData.user.id)
-      setTimeout(() => { setShowOwnerModal(false); setOwnerModalSuccess(false) }, 2000)
+      if (data?.userId) setField('owner_id', data.userId)
+    } catch (err) {
+      setOwnerModalError(err instanceof Error ? err.message : 'Fehler beim Anlegen')
+    } finally {
+      setOwnerModalSaving(false)
     }
   }
 
@@ -888,9 +874,40 @@ export default function Objekte() {
           </div>
 
           {ownerModalSuccess ? (
-            <div className="text-center py-8">
-              <div className="text-4xl mb-3">✅</div>
-              <p className="text-sm font-body text-gray-600">{t('properties.ownerModal.success')}</p>
+            <div className="py-4 space-y-4">
+              <div className="text-center">
+                <div className="text-4xl mb-3">✅</div>
+                <p className="text-sm font-body text-gray-600">{t('properties.ownerModal.success')}</p>
+              </div>
+              {ownerModal.tempPassword && (
+                <div>
+                  <Label>{t('properties.ownerModal.tempPw')}</Label>
+                  <div className="flex gap-2">
+                    <input readOnly
+                      className={`${inputCls} flex-1 font-mono text-xs bg-gray-50`}
+                      value={ownerModal.tempPassword} />
+                    <button type="button" onClick={copyPassword}
+                      className="px-3 py-2 rounded-xl border text-xs font-semibold font-body
+                                 transition-colors shrink-0"
+                      style={pwCopied
+                        ? { backgroundColor: 'var(--color-highlight)', borderColor: 'var(--color-highlight)', color: 'white' }
+                        : { borderColor: 'var(--color-highlight)', color: 'var(--color-highlight)' }}>
+                      {pwCopied ? '✓' : t('properties.ownerModal.copyPw')}
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1 font-body">
+                    Passwort jetzt kopieren — es wird nicht nochmal angezeigt.
+                  </p>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => { setShowOwnerModal(false); setOwnerModalSuccess(false) }}
+                className="w-full py-2.5 rounded-xl text-white text-sm font-semibold font-body hover:opacity-90 transition-opacity"
+                style={{ backgroundColor: 'var(--color-highlight)' }}
+              >
+                Schließen
+              </button>
             </div>
           ) : (
             <div className="space-y-4">
@@ -966,23 +983,6 @@ export default function Objekte() {
                   value={ownerModal.address_country}
                   onChange={e => setOwnerModal(m => ({ ...m, address_country: e.target.value }))}
                   placeholder="Deutschland" />
-              </div>
-
-              <div>
-                <Label>{t('properties.ownerModal.tempPw')}</Label>
-                <div className="flex gap-2">
-                  <input readOnly
-                    className={`${inputCls} flex-1 font-mono text-xs bg-gray-50`}
-                    value={ownerModal.tempPassword} />
-                  <button type="button" onClick={copyPassword}
-                    className="px-3 py-2 rounded-xl border text-xs font-semibold font-body
-                               transition-colors shrink-0"
-                    style={pwCopied
-                      ? { backgroundColor: 'var(--color-highlight)', borderColor: 'var(--color-highlight)', color: 'white' }
-                      : { borderColor: 'var(--color-highlight)', color: 'var(--color-highlight)' }}>
-                    {pwCopied ? '✓' : t('properties.ownerModal.copyPw')}
-                  </button>
-                </div>
               </div>
 
               {ownerModalError && (

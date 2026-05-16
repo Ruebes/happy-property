@@ -144,9 +144,9 @@ export default function LeadDetail() {
   }
 
   // ── Data fetching ───────────────────────────────────────────────
-  const fetchAll = useCallback(async () => {
+  const fetchAll = useCallback(async (silent = false) => {
     if (!id) return
-    setLoading(true)
+    if (!silent) setLoading(true)
     try {
       const [
         { data: leadData },
@@ -288,23 +288,27 @@ export default function LeadDetail() {
     }
     setSaving(true)
     const oldPhase = deal.phase
-    await supabase.from('deals').update({ phase }).eq('id', deal.id)
-    await supabase.from('activities').insert({
-      lead_id: id,
-      deal_id: deal.id,
-      type: 'note',
-      direction: 'outbound',
-      subject: null,
-      content: `Phase geändert: ${oldPhase} → ${phase}`,
-      created_by: profile?.id ?? null,
-    })
-    if (PHASE_WEBHOOK_EVENTS[phase]) {
-      await sendWebhook(PHASE_WEBHOOK_EVENTS[phase]!)
+    try {
+      await supabase.from('deals').update({ phase }).eq('id', deal.id)
+      await supabase.from('activities').insert({
+        lead_id: id,
+        deal_id: deal.id,
+        type: 'note',
+        direction: 'outbound',
+        subject: null,
+        content: `Phase geändert: ${oldPhase} → ${phase}`,
+        created_by: profile?.id ?? null,
+      })
+      if (PHASE_WEBHOOK_EVENTS[phase]) {
+        await sendWebhook(PHASE_WEBHOOK_EVENTS[phase]!)
+      }
+      triggerScheduleMessage(phase)
+      await fetchAll(true)
+    } catch (err) {
+      console.error('[LeadDetail] updateDealPhase:', err)
+    } finally {
+      setSaving(false)
     }
-    // Automations-Queue befüllen (fire-and-forget)
-    triggerScheduleMessage(phase)
-    setSaving(false)
-    await fetchAll()
   }
 
   // ── Registration confirm (from modal) ───────────────────────────
@@ -349,7 +353,7 @@ export default function LeadDetail() {
 
       setShowRegistrationModal(false)
       showToast(t('crm.registrationSent', 'Registrierung gesendet'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] registrationConfirm:', err)
       showToast('❌ Fehler beim Senden')
@@ -373,7 +377,7 @@ export default function LeadDetail() {
         created_by: profile?.id ?? null,
       })
       setActForm({ type: 'note', direction: 'outbound', subject: '', content: '' })
-      await fetchAll()
+      await fetchAll(true)
       showToast(t('crm.activitySaved', 'Aktivität gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveActivity:', err)
@@ -399,7 +403,7 @@ export default function LeadDetail() {
         created_by: profile?.id ?? null,
       })
       setTaskForm({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
-      await fetchAll()
+      await fetchAll(true)
       showToast(t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveTask:', err)
@@ -412,7 +416,7 @@ export default function LeadDetail() {
   const handleCompleteTask = async (taskId: string) => {
     try {
       await supabase.from('activities').update({ completed_at: new Date().toISOString() }).eq('id', taskId)
-      await fetchAll()
+      await fetchAll(true)
       showToast(t('crm.taskCompleted', 'Aufgabe erledigt'))
     } catch (err) {
       console.error('[LeadDetail] completeTask:', err)
@@ -493,7 +497,7 @@ export default function LeadDetail() {
 
       showToast(t('crm.email.sent', 'E-Mail gesendet! ✓'))
       setEmailForm({ templateId: '', subject: '', body: '' })
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[send-email] Kompletter Fehler:', err)
       console.error('[send-email] Details:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2))
@@ -550,7 +554,7 @@ export default function LeadDetail() {
       })
       setShowWaPreview(false)
       showToast(t('crm.whatsappSent', '📱 WhatsApp gesendet'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] sendWhatsappNoShow:', err)
       showToast('❌ WhatsApp Fehler')
@@ -579,7 +583,7 @@ export default function LeadDetail() {
         lead_id: id,
       })
       showToast(t('crm.whatsappSent', '📱 WhatsApp gesendet'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] commissionWhatsapp:', err)
       showToast('❌ WhatsApp Fehler')
@@ -615,7 +619,7 @@ export default function LeadDetail() {
       })
       await sendWebhook('deal.financing')
       showToast(t('crm.financingNotified', 'Partner informiert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] financingNotify:', err)
       showToast('❌ Fehler')
@@ -639,7 +643,7 @@ export default function LeadDetail() {
       })
       await sendWebhook('deal.contract', { google_drive_url: driveUrl })
       showToast(t('crm.lawyerNotified', 'Anwalt informiert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] lawyerNotify:', err)
       showToast('❌ Fehler')
@@ -659,7 +663,7 @@ export default function LeadDetail() {
       })
       await sendWebhook('deal.deposit_paid')
       showToast(t('crm.commissionRequested', 'Provision angefordert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] depositCommission:', err)
       showToast('❌ Fehler')
@@ -683,7 +687,7 @@ export default function LeadDetail() {
       })
       await sendWebhook('deal.commission_paid', { commission_amount: commissionAmount })
       showToast(t('crm.dealClosed', 'Deal abgeschlossen'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] dealClose:', err)
       showToast('❌ Fehler')
@@ -737,7 +741,7 @@ export default function LeadDetail() {
     try {
       await supabase.from('deals').update({ google_drive_url: driveUrl }).eq('id', deal.id)
       showToast(t('crm.driveSaved', 'Drive-Link gespeichert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveDriveUrl:', err)
       showToast('❌ Fehler')
@@ -749,7 +753,7 @@ export default function LeadDetail() {
     try {
       await supabase.from('deals').update({ immobilien_notes: immoNotes || null }).eq('id', deal.id)
       showToast(t('crm.notesSaved', 'Notiz gespeichert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveImmoNotes:', err)
       showToast('❌ Fehler')
@@ -793,7 +797,7 @@ export default function LeadDetail() {
       if (error) throw error
       setEditingLead(false)
       showToast('✅ Stammdaten gespeichert')
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveLead:', err)
       showToast('❌ Fehler beim Speichern')
@@ -807,7 +811,7 @@ export default function LeadDetail() {
     try {
       await supabase.from('deals').update({ registration_notes: regNotes || null }).eq('id', deal.id)
       showToast(t('crm.notesSaved', 'Notiz gespeichert'))
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveRegNotes:', err)
       showToast('❌ Fehler')
@@ -818,7 +822,7 @@ export default function LeadDetail() {
   async function handleDeleteDealProject(dpId: string) {
     await supabase.from('deal_projects').delete().eq('id', dpId)
     showToast('Projekt entfernt')
-    await fetchAll()
+    await fetchAll(true)
   }
 
   async function handleSaveUnit() {
@@ -889,7 +893,7 @@ export default function LeadDetail() {
           created_by:   profile?.id ?? null,
           completed_at: new Date().toISOString(),
         })
-        await fetchAll()
+        await fetchAll(true)
       }
 
       // ── Sync properties-Eintrag für Eigentümer-Portal ─────────────
@@ -900,8 +904,10 @@ export default function LeadDetail() {
           const dp         = dealProjects.find(d => d.project_id === projectId)
           const projectName = dp?.project?.name ?? ''
           const location   = dp?.project?.location ?? null
-          const rentalType: 'shortterm' | 'longterm' =
-            unitEditForm.rental_type === 'long' ? 'longterm' : 'shortterm'
+          const rentalType: 'shortterm' | 'longterm' | null =
+            unitEditForm.rental_type === 'long' ? 'longterm'
+            : unitEditForm.rental_type === 'short' ? 'shortterm'
+            : null
 
           const propData = {
             project_name:  projectName,
@@ -1032,22 +1038,22 @@ export default function LeadDetail() {
         .maybeSingle()
       if (data) { openUnitEdit(data as CrmProjectUnit); return }
     }
-    // 4. Noch keine Einheit → Verfügbare Units im Projekt prüfen
+    // 4. Noch keine Einheit → Alle Units im Projekt anzeigen (inkl. Im-Bau)
     const { data: availableUnits } = await supabase
       .from('crm_project_units')
       .select('*')
       .eq('project_id', projectId)
-      .eq('status', 'active')
       .order('unit_number')
     if (availableUnits && availableUnits.length > 0) {
       // Vorhandene verfügbare Units zur Auswahl anbieten
       const dp = dealProjects.find(d => d.project_id === projectId)
       setUnitSelectProjectId(projectId)
       setUnitSelectUnits(availableUnits as CrmProjectUnit[])
-      setUnitSelectProject(dp?.project
-        ? { id: dp.project.id, name: dp.project.name, location: dp.project.location ?? null }
-        : { id: projectId, name: dp?.project?.name ?? 'Projekt', location: null }
-      )
+      setUnitSelectProject({
+        id:       dp?.project?.id       ?? projectId,
+        name:     dp?.project?.name     ?? 'Projekt',
+        location: dp?.project?.location ?? null,
+      })
       setShowUnitSelect(true)
       return
     }
@@ -1067,7 +1073,7 @@ export default function LeadDetail() {
       price_net:     dp?.price_net != null ? String(dp.price_net) : '',
       price_gross:   '',
       vat_rate:      '0',
-      status:        'sold',
+      status:        'active',
       is_furnished:  false,
       rental_type:   '',
       handover_date: '',
@@ -1090,7 +1096,7 @@ export default function LeadDetail() {
     setPickedUnit({ unit, projectName: project.name })
 
     try {
-      // 1. Einheit als verkauft markieren
+      // 1. Einheit als zugewiesen/aktiv markieren
       await supabase.from('crm_project_units').update({ status: 'active' }).eq('id', unit.id)
 
       // 2. unit_id immer speichern; property_id wenn vorhanden
@@ -1108,17 +1114,53 @@ export default function LeadDetail() {
         type:         'note',
         direction:    'outbound',
         subject:      'Wohnung zugewiesen',
-        content:      `${unitLabel} wurde dem Lead zugewiesen und als Verkauft markiert.`,
+        content:      `${unitLabel} wurde dem Lead zugewiesen.`,
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
 
-      await fetchAll()
+      // 4. Portal-Eintrag synchronisieren (wenn Eigentümer-Profil bereits vorhanden)
+      const ownerProfile = await getEigentuemerProfile()
+      if (ownerProfile && profile?.id) {
+        const rentalType: 'shortterm' | 'longterm' | null =
+          unit.rental_type === 'long' ? 'longterm'
+          : unit.rental_type === 'short' ? 'shortterm'
+          : null
+        const propData = {
+          project_name:         project.name,
+          unit_number:          unit.unit_number || null,
+          type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+          bedrooms:             unit.bedrooms ?? 0,
+          size_sqm:             unit.size_sqm ?? null,
+          is_furnished:         unit.is_furnished ?? false,
+          rental_type:          rentalType,
+          city:                 project.location ?? null,
+          purchase_price_net:   unit.price_net   ?? null,
+          purchase_price_gross: unit.price_gross ?? null,
+          property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
+        }
+        if (unit.property_id) {
+          await supabase.from('properties').update(propData).eq('id', unit.property_id)
+        } else {
+          const { data: newProp } = await supabase
+            .from('properties')
+            .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
+            .select('id')
+            .single()
+          if (newProp) {
+            const newPropId = (newProp as { id: string }).id
+            await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
+            if (deal) await supabase.from('deals').update({ property_id: newPropId }).eq('id', deal.id)
+          }
+        }
+      }
+
+      await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] handleUnitAssign:', err)
     }
 
-    // 4. Unit-Edit öffnen (Portal-Check läuft darin automatisch)
+    // 5. Unit-Edit öffnen (Portal-Check läuft darin automatisch)
     openUnitEdit(unit)
   }
 
@@ -1198,7 +1240,7 @@ export default function LeadDetail() {
         setPortalOpen(false)
         setPortalSuccess(false)
       }, 4000)
-      await fetchAll()
+      await fetchAll(true)
     } catch (err) {
       setPortalError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -2122,7 +2164,7 @@ export default function LeadDetail() {
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <button
-                                    onClick={() => handleActivateProject(dp.project?.id ?? '')}
+                                    onClick={() => handleActivateProject(dp.project_id)}
                                     className="text-[11px] px-2.5 py-1 rounded-lg font-medium text-white"
                                     style={{ backgroundColor: '#ff795d' }}
                                     title="Wohnung auswählen und Käufer aktivieren"
@@ -2746,7 +2788,7 @@ export default function LeadDetail() {
           dealId={deal.id}
           leadName={`${lead.first_name} ${lead.last_name}`}
           onClose={() => setShowProjectModal(false)}
-          onSaved={() => { setShowProjectModal(false); fetchAll() }}
+          onSaved={() => { setShowProjectModal(false); fetchAll(true) }}
         />
       )}
 
@@ -2764,7 +2806,7 @@ export default function LeadDetail() {
           leadId={lead.id}
           leadName={`${lead.first_name} ${lead.last_name}`}
           onClose={() => setShowApptModal(false)}
-          onCreated={() => { setShowApptModal(false); fetchAll() }}
+          onCreated={() => { setShowApptModal(false); fetchAll(true) }}
         />
       )}
 

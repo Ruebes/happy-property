@@ -91,7 +91,6 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
     })
 
   function pickUnit(unit: CrmProjectUnit, project: CrmProject) {
-    if (unit.status === 'under_construction') return
     setSelectedUnitId(unit.id)
     setSelectedUnit({ unit, project })
   }
@@ -193,19 +192,16 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                 {expanded[project.id] && (
                   <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {project.units.map(unit => {
-                      const isSold     = unit.status === 'under_construction'
                       const isSelected = selectedUnitId === unit.id
 
                       return (
                         <div
                           key={unit.id}
                           onClick={() => pickUnit(unit, project)}
-                          className={`rounded-xl border-2 p-3 transition-all select-none ${
+                          className={`rounded-xl border-2 p-3 transition-all select-none cursor-pointer ${
                             isSelected
                               ? 'border-[#ff795d] bg-orange-50 shadow-sm'
-                              : isSold
-                                ? 'border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed'
-                                : 'border-gray-100 bg-white hover:border-orange-300 hover:shadow-sm cursor-pointer'
+                              : 'border-gray-100 bg-white hover:border-orange-300 hover:shadow-sm'
                           }`}
                         >
                           {/* Unit header row */}
