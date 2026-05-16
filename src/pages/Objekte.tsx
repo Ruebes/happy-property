@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
+import type { CrmProjectUnit } from '../lib/crmTypes'
 
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -195,6 +196,13 @@ export default function Objekte() {
   const [ownerModalSuccess, setOwnerModalSuccess]   = useState(false)
   const [pwCopied, setPwCopied]                     = useState(false)
 
+  // CRM-Verknüpfung
+  const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string }[]>([])
+  const [crmProjId, setCrmProjId]           = useState('')
+  const [crmUnits, setCrmUnits]             = useState<CrmProjectUnit[]>([])
+  const [crmUnitId, setCrmUnitId]           = useState('')
+  const [loadingCrmUnits, setLoadingCrmUnits] = useState(false)
+
   // Toast
   const [toast, setToast] = useState('')
 
@@ -208,6 +216,30 @@ export default function Objekte() {
       return gross / (1 + vat / 100)
     return null
   }, [form.purchase_price_gross, form.vat_rate])
+
+  // ── CRM Projekte + Einheiten ───────────────────────────────
+  const fetchCrmProjects = useCallback(async () => {
+    const { data } = await supabase
+      .from('crm_projects')
+      .select('id, name')
+      .order('name')
+    setCrmProjects((data ?? []) as { id: string; name: string }[])
+  }, [])
+
+  async function fetchCrmUnitsForProject(projectId: string) {
+    setLoadingCrmUnits(true)
+    try {
+      const { data } = await supabase
+        .from('crm_project_units')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('block', { ascending: true, nullsFirst: true })
+        .order('unit_number')
+      setCrmUnits((data ?? []) as CrmProjectUnit[])
+    } finally {
+      setLoadingCrmUnits(false)
+    }
+  }
 
   // ── Fetch ──────────────────────────────────────────────────
   const fetchProperties = useCallback(async () => {
@@ -225,7 +257,7 @@ export default function Objekte() {
     }
   }, [])
 
-  useEffect(() => { fetchProperties() }, [fetchProperties])
+  useEffect(() => { fetchProperties(); fetchCrmProjects() }, [fetchProperties, fetchCrmProjects])
 
   // Auto-open edit form when navigated here with ?edit=<id>
   useEffect(() => {
@@ -316,6 +348,9 @@ export default function Objekte() {
     setPendingFiles([])
     setPendingPreviews([])
     setExistingImages([])
+    setCrmProjId('')
+    setCrmUnitId('')
+    setCrmUnits([])
     setStep(1)
     setShowForm(true)
     fetchOwners()
@@ -353,6 +388,9 @@ export default function Objekte() {
     setPendingFiles([])
     setPendingPreviews([])
     setExistingImages([])
+    setCrmProjId('')
+    setCrmUnitId('')
+    setCrmUnits([])
     setShowForm(false)
     setEditId(null)
     setStep(1)
@@ -394,6 +432,7 @@ export default function Objekte() {
         owner_id:             form.owner_id,
       }
 
+      let savedId = editId
       if (editId) {
         // Upload new images first, then do a SINGLE update (data + images together)
         let finalImages = [...existingImages]
@@ -424,6 +463,7 @@ export default function Objekte() {
       } else {
         // Generate UUID client-side → upload images → SINGLE insert with all data
         const newId = crypto.randomUUID()
+        savedId = newId
         let images: string[] = []
         if (pendingFiles.length > 0) {
           images = await uploadPendingImages(newId)
@@ -432,6 +472,28 @@ export default function Objekte() {
           .from('properties')
           .insert({ id: newId, ...basePayload, created_by: profile.id, images, property_status: 'active' })
         if (error) throw error
+      }
+
+      // CRM-Einheit verknüpfen falls ausgewählt
+      if (savedId && crmProjId && crmUnitId) {
+        if (crmUnitId === 'new') {
+          // Neue crm_project_unit anlegen und mit property verknüpfen
+          await supabase.from('crm_project_units').insert({
+            project_id:  crmProjId,
+            unit_number: form.unit_number.trim() || 'NEU',
+            type:        form.type,
+            bedrooms:    parseInt(form.bedrooms) || 0,
+            size_sqm:    form.size_sqm ? parseFloat(form.size_sqm.replace(',', '.')) : null,
+            price_net:   priceNet,
+            property_id: savedId,
+          })
+        } else {
+          // Bestehende Einheit mit property verknüpfen
+          await supabase
+            .from('crm_project_units')
+            .update({ property_id: savedId })
+            .eq('id', crmUnitId)
+        }
       }
 
       closeForm()
@@ -530,6 +592,89 @@ export default function Objekte() {
   function renderStep1() {
     return (
       <div className="space-y-4">
+
+        {/* ── CRM-Projekt verknüpfen ─────────────────────────── */}
+        {!editId && (
+          <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide font-body">
+              🔗 CRM-Projekt verknüpfen <span className="font-normal normal-case">(optional)</span>
+            </p>
+
+            {/* Projekt-Dropdown */}
+            <div>
+              <Label>Projekt aus CRM</Label>
+              <select
+                className={inputCls} style={focusRing()}
+                value={crmProjId}
+                onChange={e => {
+                  const pid = e.target.value
+                  setCrmProjId(pid)
+                  setCrmUnitId('')
+                  setCrmUnits([])
+                  if (pid) {
+                    const proj = crmProjects.find(p => p.id === pid)
+                    if (proj) setField('project_name', proj.name)
+                    fetchCrmUnitsForProject(pid)
+                  }
+                }}
+              >
+                <option value="">— Kein CRM-Projekt —</option>
+                {crmProjects.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Einheiten-Dropdown (erscheint nach Projektauswahl) */}
+            {crmProjId && (
+              <div>
+                <Label>Wohnungseinheit</Label>
+                {loadingCrmUnits ? (
+                  <div className="flex items-center gap-2 py-2 text-sm text-gray-400 font-body">
+                    <span className="w-4 h-4 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin shrink-0" />
+                    Lade Einheiten…
+                  </div>
+                ) : (
+                  <select
+                    className={inputCls} style={focusRing()}
+                    value={crmUnitId}
+                    onChange={e => {
+                      const uid = e.target.value
+                      setCrmUnitId(uid)
+                      if (uid && uid !== 'new') {
+                        const unit = crmUnits.find(u => u.id === uid)
+                        if (unit) {
+                          setField('unit_number', unit.unit_number)
+                          setField('type', unit.type as FormData['type'])
+                          if (unit.bedrooms != null) setField('bedrooms', String(unit.bedrooms))
+                          if (unit.size_sqm != null) setField('size_sqm', String(unit.size_sqm))
+                          if (unit.price_net != null) setField('purchase_price_gross', String(Math.round(unit.price_net * 1.19)))
+                        }
+                      }
+                    }}
+                  >
+                    <option value="">— Einheit auswählen —</option>
+                    {crmUnits.filter(u => !u.property_id).map(u => (
+                      <option key={u.id} value={u.id}>
+                        {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
+                        {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
+                        {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
+                        {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
+                      </option>
+                    ))}
+                    <option value="new">+ Neue Einheit anlegen</option>
+                  </select>
+                )}
+                {crmUnitId === 'new' && (
+                  <p className="text-xs text-blue-600 font-body mt-1">
+                    ℹ️ Neue Einheit wird beim Speichern automatisch im CRM angelegt – fülle unten die Details aus.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label required>{t('properties.projectName')}</Label>
