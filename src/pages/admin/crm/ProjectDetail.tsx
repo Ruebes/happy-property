@@ -58,14 +58,18 @@ const STATUS_LABEL: Record<UnitStatus, string> = {
 }
 const DOC_PILL: Record<string, string> = {
   kaufvertrag:  'bg-purple-100 text-purple-700',
+  mietvertrag:  'bg-indigo-100 text-indigo-700',
   zahlungsbeleg:'bg-green-100 text-green-700',
   grundriss:    'bg-blue-100 text-blue-700',
+  rechnung:     'bg-amber-100 text-amber-700',
   sonstiges:    'bg-gray-100 text-gray-600',
 }
 const DOC_LABEL: Record<string, string> = {
   kaufvertrag:  'Kaufvertrag',
+  mietvertrag:  'Mietvertrag',
   zahlungsbeleg:'Zahlungsbeleg',
   grundriss:    'Grundriss',
+  rechnung:     'Rechnung',
   sonstiges:    'Sonstiges',
 }
 
@@ -199,6 +203,7 @@ function UnitCard({
 // ── Unit image helpers ────────────────────────────────────────────────────────
 
 const UNIT_IMG_BUCKET = 'unit-images'
+const PROJ_IMG_BUCKET = 'crm-project-images'
 
 async function uploadUnitImage(file: File, unitId: string): Promise<string | null> {
   const ext  = file.name.split('.').pop() ?? 'jpg'
@@ -271,6 +276,10 @@ export default function ProjectDetail() {
   const [photoDate, setPhotoDate]           = useState(new Date().toISOString().slice(0, 10))
   const [photoDesc, setPhotoDesc]           = useState('')
   const constPhotoInputRef = useRef<HTMLInputElement>(null)
+
+  // ── Projektbilder ────────────────────────────────────────────────────────────
+  const [uploadingProjectImg, setUploadingProjectImg] = useState(false)
+  const projectImgInputRef = useRef<HTMLInputElement>(null)
 
   // ── Customer assignment ──────────────────────────────────────────────────────
   const [showAssignModal,  setShowAssignModal]  = useState(false)
@@ -611,6 +620,51 @@ export default function ProjectDetail() {
       setUnitImages(updated)
       await fetchData()
     }
+  }
+
+  // ── Projektbilder Upload / Delete ───────────────────────────────────────────
+
+  async function handleUploadProjectImages(files: FileList) {
+    if (!projectId || files.length === 0) return
+    setUploadingProjectImg(true)
+    try {
+      const newUrls: string[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const ext  = file.name.split('.').pop() ?? 'jpg'
+        const path = `projects/${projectId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from(PROJ_IMG_BUCKET)
+          .upload(path, file, { upsert: false })
+        if (upErr) { showToast(`❌ Upload fehlgeschlagen: ${upErr.message}`); continue }
+        const { data: urlData } = supabase.storage.from(PROJ_IMG_BUCKET).getPublicUrl(path)
+        if (urlData?.publicUrl) newUrls.push(urlData.publicUrl)
+      }
+      if (newUrls.length === 0) { showToast('❌ Kein Bild hochgeladen'); return }
+      const updated = [...(project?.images ?? []), ...newUrls]
+      const { error } = await supabase.from('crm_projects').update({ images: updated }).eq('id', projectId)
+      if (error) throw error
+      setProject(p => p ? { ...p, images: updated } : p)
+      showToast(`✅ ${newUrls.length} Projektbild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+    } finally {
+      setUploadingProjectImg(false)
+      if (projectImgInputRef.current) projectImgInputRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteProjectImage(url: string) {
+    if (!project || !window.confirm('Projektbild wirklich löschen?')) return
+    const marker = `/${PROJ_IMG_BUCKET}/`
+    const idx = url.indexOf(marker)
+    if (idx !== -1) {
+      const path = url.slice(idx + marker.length)
+      await supabase.storage.from(PROJ_IMG_BUCKET).remove([path])
+    }
+    const updated = (project.images ?? []).filter(u => u !== url)
+    const { error } = await supabase.from('crm_projects').update({ images: updated }).eq('id', projectId)
+    if (!error) setProject(p => p ? { ...p, images: updated } : p)
   }
 
   // ── Baustellenfotos Upload ───────────────────────────────────────────────────
@@ -1029,13 +1083,65 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      {/* ── Baustellenbilder ── */}
+      {/* ── Projektbilder ── */}
       <div className="mt-10 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-gray-900">🏗️ Baustellenbilder</h2>
+            <h2 className="font-semibold text-gray-900">🖼️ Projektbilder</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Alle Eigentümer in diesem Projekt werden per E-Mail benachrichtigt.
+              Allgemeine Bilder des Projekts – für alle Eigentümer sichtbar.
+            </p>
+          </div>
+          <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
+            ${uploadingProjectImg ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
+            {uploadingProjectImg ? '⏳ Wird hochgeladen…' : '🖼️ Bilder hochladen'}
+            <input
+              ref={projectImgInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={uploadingProjectImg}
+              className="hidden"
+              onChange={e => { if (e.target.files?.length) handleUploadProjectImages(e.target.files) }}
+            />
+          </label>
+        </div>
+        {(project.images ?? []).length === 0 ? (
+          <p className="text-center text-gray-400 text-sm py-10">
+            Noch keine Projektbilder hochgeladen.
+          </p>
+        ) : (
+          <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {(project.images ?? []).map((url, idx) => (
+              <div key={url} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
+                <img
+                  src={url}
+                  alt={`Projektbild ${idx + 1}`}
+                  className="w-full h-32 object-cover cursor-pointer"
+                  onClick={() => window.open(url, '_blank')}
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <button
+                  onClick={() => handleDeleteProjectImage(url)}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
+                             opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                  title="Löschen"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Baustellenbilder ── */}
+      <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-gray-900">🏗️ Baustellenbilder & -videos</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Fortschritts-Updates – alle Eigentümer in diesem Projekt werden per E-Mail benachrichtigt.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1054,11 +1160,11 @@ export default function ProjectDetail() {
             />
             <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
               ${uploadingPhoto ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
-              {uploadingPhoto ? '⏳ Wird hochgeladen…' : '📷 Fotos hochladen'}
+              {uploadingPhoto ? '⏳ Wird hochgeladen…' : '📷 Medien hochladen'}
               <input
                 ref={constPhotoInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/mp4,video/quicktime,video/webm,video/mpeg"
                 multiple
                 disabled={uploadingPhoto}
                 className="hidden"
@@ -1069,38 +1175,52 @@ export default function ProjectDetail() {
         </div>
         {constructionPhotos.length === 0 ? (
           <p className="text-center text-gray-400 text-sm py-10">
-            Noch keine Baustellenfotos hochgeladen.
+            Noch keine Baustellenmedien hochgeladen.
           </p>
         ) : (
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            {constructionPhotos.map(photo => (
-              <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
-                <img
-                  src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`}
-                  alt={photo.file_name}
-                  className="w-full h-32 object-cover"
-                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                />
-                <div className="px-2 py-1.5">
-                  {photo.photo_date && (
-                    <p className="text-[10px] font-medium text-gray-600">
-                      📅 {new Date(photo.photo_date).toLocaleDateString('de-DE')}
-                    </p>
+            {constructionPhotos.map(photo => {
+              const isVideo = /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(photo.file_name)
+              const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
+              return (
+                <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
+                  {isVideo ? (
+                    <video
+                      src={mediaUrl}
+                      className="w-full h-32 object-cover"
+                      controls
+                      preload="metadata"
+                    />
+                  ) : (
+                    <img
+                      src={mediaUrl}
+                      alt={photo.file_name}
+                      className="w-full h-32 object-cover cursor-pointer"
+                      onClick={() => window.open(mediaUrl, '_blank')}
+                      onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    />
                   )}
-                  {photo.description && (
-                    <p className="text-[10px] text-gray-400 truncate">{photo.description}</p>
-                  )}
+                  <div className="px-2 py-1.5">
+                    {photo.photo_date && (
+                      <p className="text-[10px] font-medium text-gray-600">
+                        📅 {new Date(photo.photo_date).toLocaleDateString('de-DE')}
+                      </p>
+                    )}
+                    {photo.description && (
+                      <p className="text-[10px] text-gray-400 truncate">{photo.description}</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleDeleteConstructionPhoto(photo)}
+                    className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
+                               opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                    title="Löschen"
+                  >
+                    ×
+                  </button>
                 </div>
-                <button
-                  onClick={() => handleDeleteConstructionPhoto(photo)}
-                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
-                             opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  title="Löschen"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -1619,6 +1739,8 @@ export default function ProjectDetail() {
                         }))}
                       >
                         <option value="kaufvertrag">Kaufvertrag</option>
+                        <option value="mietvertrag">Mietvertrag</option>
+                        <option value="rechnung">Rechnung</option>
                         <option value="zahlungsbeleg">Zahlungsbeleg</option>
                         <option value="grundriss">Grundriss</option>
                         <option value="sonstiges">Sonstiges</option>

@@ -5,7 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
-import type { CrmUnitPayment, CrmUnitDocument } from '../lib/crmTypes'
+import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
 interface OwnerProfile {
@@ -650,6 +650,7 @@ export default function PropertyDetail() {
   // CRM images + project location
   const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
+  const [constructionPhotos, setConstructionPhotos] = useState<ConstructionPhoto[]>([])
   const [crmProjectCoords, setCrmProjectCoords] = useState<{ lat: number; lng: number; name: string } | null>(null)
   const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
@@ -848,13 +849,14 @@ export default function PropertyDetail() {
         setUnitKaufvertraege([])
         setCrmProjectImages([])
         setCrmUnitImages([])
+        setConstructionPhotos([])
         return
       }
       setLinkedUnitId(unitData.id)
       setLinkedProjectId((unitData as { project_id: string }).project_id)
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
 
-      const [paysRes, docsRes, ownDocsRes, projRes] = await Promise.all([
+      const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
         supabase
           .from('crm_unit_payments')
           .select('*')
@@ -877,10 +879,17 @@ export default function PropertyDetail() {
           .select('images, latitude, longitude, name, location')
           .eq('id', (unitData as { project_id: string }).project_id)
           .maybeSingle(),
+        supabase
+          .from('construction_photos')
+          .select('*')
+          .eq('project_id', (unitData as { project_id: string }).project_id)
+          .order('photo_date', { ascending: false, nullsFirst: false })
+          .order('created_at', { ascending: false }),
       ])
       setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
       setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
       setEigentuemerDocs((ownDocsRes.data ?? []) as CrmUnitDocument[])
+      setConstructionPhotos((constPhotosRes.data ?? []) as ConstructionPhoto[])
       const proj = projRes.data as { images?: string[]; latitude?: number; longitude?: number; name?: string; location?: string } | null
       setCrmProjectImages(proj?.images ?? [])
       if (proj?.latitude && proj?.longitude) {
@@ -2627,6 +2636,52 @@ export default function PropertyDetail() {
           </h3>
           <ImageGrid images={crmUnitImages} emptyText="Noch keine Wohnungsbilder vorhanden." />
         </div>
+
+        {/* ── Baustellenbilder ─────────────────────────────── */}
+        {constructionPhotos.length > 0 && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              🏗️ Baustellenbilder
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {constructionPhotos.map(photo => {
+                const isVideo = /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(photo.file_name)
+                const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
+                return (
+                  <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-100 border border-gray-100">
+                    {isVideo ? (
+                      <video
+                        src={mediaUrl}
+                        className="w-full aspect-square object-cover"
+                        controls
+                        preload="metadata"
+                      />
+                    ) : (
+                      <img
+                        src={mediaUrl}
+                        alt={photo.file_name}
+                        className="w-full aspect-square object-cover cursor-pointer transition-transform hover:scale-105"
+                        onClick={() => window.open(mediaUrl, '_blank')}
+                      />
+                    )}
+                    {(photo.photo_date || photo.description) && (
+                      <div className="px-3 py-2 bg-white">
+                        {photo.photo_date && (
+                          <p className="text-xs font-medium text-gray-600 font-body">
+                            📅 {new Date(photo.photo_date).toLocaleDateString('de-DE')}
+                          </p>
+                        )}
+                        {photo.description && (
+                          <p className="text-xs text-gray-400 font-body mt-0.5">{photo.description}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── Admin-Upload + eigene Fotos (nur Admin/Verwalter sieht Upload) ── */}
         {canEdit && (

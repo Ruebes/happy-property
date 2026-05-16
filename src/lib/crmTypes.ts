@@ -172,7 +172,7 @@ export interface CrmProject {
 }
 
 export type UnitRentalType = 'short' | 'long'
-export type UnitDocType   = 'kaufvertrag' | 'mietvertrag' | 'zahlungsbeleg' | 'grundriss' | 'sonstiges'
+export type UnitDocType   = 'kaufvertrag' | 'mietvertrag' | 'zahlungsbeleg' | 'grundriss' | 'rechnung' | 'sonstiges'
 
 export interface CrmProjectUnit {
   id:             string
