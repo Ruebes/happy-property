@@ -800,7 +800,8 @@ export default function Objekte() {
               <Label>{t('properties.purchasePrice.gross')}</Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
-                <input type="number" min="0" step="0.01"
+                <input
+                  type="text" inputMode="decimal"
                   className={`${inputCls} pl-7`} style={focusRing()}
                   value={form.purchase_price_gross}
                   onChange={e => onGrossChange(e.target.value)}
@@ -811,7 +812,8 @@ export default function Objekte() {
               <Label>{t('properties.purchasePrice.net')}</Label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
-                <input type="number" min="0" step="0.01"
+                <input
+                  type="text" inputMode="decimal"
                   className={`${inputCls} pl-7`} style={focusRing()}
                   value={form.purchase_price_net}
                   onChange={e => onNetChange(e.target.value)}
