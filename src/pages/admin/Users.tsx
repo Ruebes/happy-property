@@ -313,11 +313,6 @@ export default function AdminUsers() {
     if (!form.firstName.trim()) return t('users.errors.firstNameRequired')
     if (!form.lastName.trim())  return t('users.errors.lastNameRequired')
     if (!form.email.trim())     return t('users.errors.emailRequired')
-    if (form.role === 'eigentuemer') {
-      if (!form.address_street.trim()) return t('users.errors.streetRequired')
-      if (!form.address_zip.trim())    return t('users.errors.zipRequired')
-      if (!form.address_city.trim())   return t('users.errors.cityRequired')
-    }
     return ''
   }
 
@@ -824,22 +819,19 @@ export default function AdminUsers() {
                   </p>
                 )}
                 <div className="grid grid-cols-1 gap-3">
-                  <Field label={t('users.form.street')}
-                         required={form.role === 'eigentuemer'}>
+                  <Field label={t('users.form.street')}>
                     <input className={inputCls} value={form.address_street}
                            onChange={e => setF('address_street', e.target.value)}
                            placeholder="Musterstraße 12" />
                   </Field>
                   <div className="grid grid-cols-3 gap-3">
-                    <Field label={t('users.form.zip')}
-                           required={form.role === 'eigentuemer'}>
+                    <Field label={t('users.form.zip')}>
                       <input className={inputCls} value={form.address_zip}
                              onChange={e => setF('address_zip', e.target.value)}
                              placeholder="12345" />
                     </Field>
                     <div className="col-span-2">
-                      <Field label={t('users.form.city')}
-                             required={form.role === 'eigentuemer'}>
+                      <Field label={t('users.form.city')}>
                         <input className={inputCls} value={form.address_city}
                                onChange={e => setF('address_city', e.target.value)}
                                placeholder="Berlin" />
