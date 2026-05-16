@@ -114,6 +114,12 @@ export default function LeadDetail() {
   const [customerHasAccess,   setCustomerHasAccess]   = useState(false)
   const [checkingAccess,      setCheckingAccess]      = useState(false)
 
+  // Auto-created owner password modal
+  const [showNewOwnerPwModal,  setShowNewOwnerPwModal]  = useState(false)
+  const [newOwnerPassword,     setNewOwnerPassword]     = useState('')
+  const [newOwnerPasswordEmail,setNewOwnerPasswordEmail]= useState('')
+  const [newOwnerPwCopied,     setNewOwnerPwCopied]     = useState(false)
+
   // Portal access (always accessible)
   const [portalOpen,       setPortalOpen]       = useState(false)
   const [portalEmail,      setPortalEmail]       = useState('')
@@ -950,9 +956,37 @@ export default function LeadDetail() {
 
       showToast('✅ Einheit gespeichert')
       setShowUnitEdit(false)
-      // Kein Portalzugang → Portal-Dialog öffnen
-      if (portalAccessChecked && !customerHasAccess) {
-        await openPortal()
+
+      // Kein Portalzugang → Eigentümer-Account automatisch anlegen
+      if (portalAccessChecked && !customerHasAccess && lead?.email) {
+        try {
+          const fullName = `${lead.first_name} ${lead.last_name}`.trim()
+          const { data, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
+            body: {
+              action:   'create',
+              email:    lead.email,
+              full_name: fullName,
+              role:     'eigentuemer',
+              language: lead.language ?? 'de',
+              phone:    lead.phone ?? undefined,
+            },
+          })
+          if (!fnError && !data?.error && data?.password) {
+            // Passwort-Modal anzeigen
+            setNewOwnerPassword(data.password)
+            setNewOwnerPasswordEmail(lead.email)
+            setNewOwnerPwCopied(false)
+            setShowNewOwnerPwModal(true)
+            setCustomerHasAccess(true)
+          } else {
+            const errMsg = data?.error ?? fnError?.message ?? 'Fehler'
+            console.error('[LeadDetail] Auto-create eigentuemer:', errMsg)
+            showToast(`⚠️ Eigentümer-Account konnte nicht angelegt werden: ${errMsg}`)
+          }
+        } catch (err) {
+          console.error('[LeadDetail] Auto-create eigentuemer:', err)
+          showToast('⚠️ Eigentümer-Account konnte nicht automatisch angelegt werden')
+        }
       }
     } catch (err) {
       console.error('[LeadDetail] saveUnit:', err)
@@ -3067,6 +3101,65 @@ export default function LeadDetail() {
       )}
 
       {/* ── Einheit bearbeiten Modal ─────────────────────────────────── */}
+      {/* ── Eigentümer-Account angelegt: Passwort anzeigen ── */}
+      {showNewOwnerPwModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+             style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+             onClick={() => setShowNewOwnerPwModal(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4"
+               onClick={e => e.stopPropagation()}>
+            <div className="text-center">
+              <div className="text-4xl mb-2">🔑</div>
+              <h3 className="text-base font-bold text-hp-black font-body">Eigentümer-Account erstellt</h3>
+              <p className="text-xs text-gray-500 font-body mt-1">
+                {lead?.first_name} {lead?.last_name} ist jetzt in der Nutzerliste als Eigentümer sichtbar.
+              </p>
+            </div>
+
+            <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm font-body">
+              <div className="flex justify-between">
+                <span className="text-gray-500">E-Mail:</span>
+                <span className="font-medium text-gray-800">{newOwnerPasswordEmail}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-gray-500">Passwort:</span>
+                <span className="font-mono font-bold text-hp-black tracking-wide">{newOwnerPassword}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(
+                      `E-Mail: ${newOwnerPasswordEmail}\nPasswort: ${newOwnerPassword}`
+                    )
+                    setNewOwnerPwCopied(true)
+                    setTimeout(() => setNewOwnerPwCopied(false), 2000)
+                  } catch { /* ignore */ }
+                }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold font-body border transition-colors"
+                style={newOwnerPwCopied
+                  ? { backgroundColor: 'var(--color-highlight)', borderColor: 'var(--color-highlight)', color: 'white' }
+                  : { borderColor: 'var(--color-highlight)', color: 'var(--color-highlight)' }}>
+                {newOwnerPwCopied ? '✓ Kopiert!' : '📋 Zugangsdaten kopieren'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowNewOwnerPwModal(false)}
+                className="py-2.5 px-4 rounded-xl text-sm font-semibold font-body border border-gray-200 text-gray-600 hover:bg-gray-50">
+                Schließen
+              </button>
+            </div>
+
+            <p className="text-[11px] text-amber-600 text-center font-body">
+              ⚠️ Passwort jetzt kopieren — wird nicht nochmal angezeigt.
+            </p>
+          </div>
+        </div>
+      )}
+
       {showUnitEdit && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
@@ -3254,8 +3347,8 @@ export default function LeadDetail() {
               )}
               {portalAccessChecked && !customerHasAccess && (
                 <div className="bg-orange-50 border border-orange-100 rounded-xl px-4 py-2.5 text-xs text-orange-700 flex items-center gap-2">
-                  <span>📧</span>
-                  <span>Nach dem Speichern wird der Portalzugang-Dialog geöffnet.</span>
+                  <span>🔑</span>
+                  <span>Nach dem Speichern wird automatisch ein Eigentümer-Account erstellt.</span>
                 </div>
               )}
 
@@ -3270,7 +3363,7 @@ export default function LeadDetail() {
                   {savingUnit && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
                   {savingUnit ? 'Speichert…'
                     : portalAccessChecked && !customerHasAccess
-                      ? '✓ Speichern & Portalzugang senden'
+                      ? '✓ Speichern & Eigentümer anlegen'
                       : '✓ Speichern'}
                 </button>
               </div>
