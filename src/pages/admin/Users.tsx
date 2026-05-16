@@ -465,8 +465,44 @@ export default function AdminUsers() {
       if (form.role === 'eigentuemer' && assignProjectId && assignUnitId) {
         await performUnitAssignment(result.userId, form.email.trim())
       }
+      // Willkommens-E-Mail mit Zugangsdaten automatisch senden
+      const firstName = form.firstName.trim()
+      const appUrl = window.location.origin
+      const welcomeHtml = `<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Dein Zugang</title></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:32px 0;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+<tr><td style="background:#ff795d;padding:28px 32px;">
+  <h1 style="margin:0;color:#ffffff;font-size:22px;">Willkommen bei Happy Property</h1>
+</td></tr>
+<tr><td style="padding:32px;">
+  <p style="margin:0 0 16px;font-size:15px;color:#374151;">Hallo ${firstName},</p>
+  <p style="margin:0 0 24px;font-size:15px;color:#374151;">dein Zugang zum Happy Property Portal wurde eingerichtet. Hier sind deine Zugangsdaten:</p>
+  <table cellpadding="0" cellspacing="0" style="background:#f3f4f6;border-radius:8px;padding:20px;margin-bottom:24px;width:100%;">
+    <tr><td style="padding:4px 0;font-size:14px;color:#6b7280;">E-Mail:</td><td style="padding:4px 0;font-size:14px;font-weight:600;color:#111827;">${form.email.trim()}</td></tr>
+    <tr><td style="padding:4px 0;font-size:14px;color:#6b7280;">Passwort:</td><td style="padding:4px 0;font-size:14px;font-weight:600;color:#111827;font-family:monospace;">${result.password}</td></tr>
+  </table>
+  <p style="margin:0 0 24px;font-size:13px;color:#9ca3af;">⚠️ Bitte ändere dein Passwort direkt nach dem ersten Login.</p>
+  <a href="${appUrl}/login" style="display:inline-block;background:#ff795d;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;">Zum Portal →</a>
+</td></tr>
+<tr><td style="padding:16px 32px;border-top:1px solid #f3f4f6;font-size:12px;color:#9ca3af;">
+  Happy Property · Cyprus Real Estate
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`
+      supabase.functions.invoke('send-email', {
+        body: {
+          to:      form.email.trim(),
+          subject: 'Dein Zugang zum Happy Property Portal',
+          html:    welcomeHtml,
+        },
+      }).catch(() => { /* Fehler im Hintergrund ignorieren */ })
       closeModal()
-      setCreatedPassword(result.password)
+      setToast(`✉️ Nutzer angelegt – Zugangsdaten wurden an ${form.email.trim()} gesendet.`)
       fetchUsers()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
@@ -911,6 +947,124 @@ export default function AdminUsers() {
                 </div>
               </section>
 
+              {/* ── Wohnung zuweisen (nur beim Erstellen, Rolle Eigentümer) ─── */}
+              {modal === 'new' && form.role === 'eigentuemer' && (
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-3">
+                    🏠 Wohnung zuweisen (optional)
+                  </h3>
+
+                  {/* Projekt */}
+                  <Field label="Projekt">
+                    <select
+                      className={inputCls}
+                      value={assignProjectId}
+                      onChange={e => {
+                        setAssignProjectId(e.target.value)
+                        setAssignUnitId('')
+                        if (e.target.value) fetchProjectUnits(e.target.value)
+                        else setProjectUnits([])
+                      }}
+                    >
+                      <option value="">— Kein Projekt —</option>
+                      {crmProjects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  {/* Einheit */}
+                  {assignProjectId && (
+                    <div className="mt-3">
+                      <Field label="Wohnungseinheit">
+                        {loadingUnits ? (
+                          <div className="flex items-center gap-2 py-2">
+                            <span className="w-4 h-4 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
+                            <span className="text-xs text-gray-400 font-body">Lade Wohnungen…</span>
+                          </div>
+                        ) : (
+                          <select
+                            className={inputCls}
+                            value={assignUnitId}
+                            onChange={e => setAssignUnitId(e.target.value)}
+                          >
+                            <option value="">— Keine Einheit —</option>
+                            {projectUnits
+                              .filter(u => !u.property_id)
+                              .map(u => (
+                                <option key={u.id} value={u.id}>
+                                  {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
+                                  {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
+                                  {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
+                                  {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
+                                </option>
+                              ))
+                            }
+                            <option value="new">+ Neue Wohnung anlegen</option>
+                          </select>
+                        )}
+                      </Field>
+                    </div>
+                  )}
+
+                  {/* Neue Wohnung anlegen — Mini-Formular */}
+                  {assignUnitId === 'new' && (
+                    <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 font-body">Neue Wohnung</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Wohnungsnummer *">
+                          <input
+                            className={inputCls}
+                            placeholder="z.B. 12 oder A-12"
+                            value={newUnitForm.unit_number}
+                            onChange={e => setNewUnitForm(f => ({ ...f, unit_number: e.target.value }))}
+                          />
+                        </Field>
+                        <Field label="Typ">
+                          <select
+                            className={inputCls}
+                            value={newUnitForm.type}
+                            onChange={e => setNewUnitForm(f => ({ ...f, type: e.target.value as 'apartment' | 'villa' | 'studio' }))}
+                          >
+                            <option value="apartment">Wohnung</option>
+                            <option value="villa">Villa</option>
+                            <option value="studio">Studio</option>
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <Field label="Schlafzimmer">
+                          <input
+                            className={inputCls}
+                            type="number" min="0"
+                            value={newUnitForm.bedrooms}
+                            onChange={e => setNewUnitForm(f => ({ ...f, bedrooms: parseInt(e.target.value) || 0 }))}
+                          />
+                        </Field>
+                        <Field label="Fläche (m²)">
+                          <input
+                            className={inputCls}
+                            type="number" min="0" step="0.01"
+                            placeholder="85"
+                            value={newUnitForm.size_sqm}
+                            onChange={e => setNewUnitForm(f => ({ ...f, size_sqm: e.target.value }))}
+                          />
+                        </Field>
+                        <Field label="Preis netto (€)">
+                          <input
+                            className={inputCls}
+                            type="number" min="0" step="100"
+                            placeholder="190000"
+                            value={newUnitForm.price_net}
+                            onChange={e => setNewUnitForm(f => ({ ...f, price_net: e.target.value }))}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
               {/* ── Verwaltung (nur bei Rolle Verwalter) ─────── */}
               {form.role === 'verwalter' && (
                 <section>
@@ -1003,135 +1157,17 @@ export default function AdminUsers() {
                 </div>
               </section>
 
-              {/* ── Wohnung zuweisen (nur beim Erstellen, Rolle Eigentümer) ─── */}
-              {modal === 'new' && form.role === 'eigentuemer' && (
-                <section>
-                  <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-3">
-                    🏠 Wohnung zuweisen (optional)
-                  </h3>
-
-                  {/* Projekt */}
-                  <Field label="Projekt">
-                    <select
-                      className={inputCls}
-                      value={assignProjectId}
-                      onChange={e => {
-                        setAssignProjectId(e.target.value)
-                        setAssignUnitId('')
-                        if (e.target.value) fetchProjectUnits(e.target.value)
-                        else setProjectUnits([])
-                      }}
-                    >
-                      <option value="">— Kein Projekt —</option>
-                      {crmProjects.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
-                  </Field>
-
-                  {/* Einheit */}
-                  {assignProjectId && (
-                    <div className="mt-3">
-                      <Field label="Wohnungseinheit">
-                        {loadingUnits ? (
-                          <div className="flex items-center gap-2 py-2">
-                            <span className="w-4 h-4 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
-                            <span className="text-xs text-gray-400 font-body">Lade Wohnungen…</span>
-                          </div>
-                        ) : (
-                          <select
-                            className={inputCls}
-                            value={assignUnitId}
-                            onChange={e => setAssignUnitId(e.target.value)}
-                          >
-                            <option value="">— Keine Einheit —</option>
-                            {projectUnits
-                              .filter(u => !u.property_id) // nur nicht vergebene
-                              .map(u => (
-                                <option key={u.id} value={u.id}>
-                                  {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
-                                  {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
-                                  {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
-                                  {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
-                                </option>
-                              ))
-                            }
-                            <option value="new">+ Neue Wohnung anlegen</option>
-                          </select>
-                        )}
-                      </Field>
-                    </div>
-                  )}
-
-                  {/* Neue Wohnung anlegen — Mini-Formular */}
-                  {assignUnitId === 'new' && (
-                    <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-100">
-                      <p className="text-xs font-semibold text-gray-500 font-body">Neue Wohnung</p>
-                      <div className="grid grid-cols-2 gap-3">
-                        <Field label="Wohnungsnummer *">
-                          <input
-                            className={inputCls}
-                            placeholder="z.B. 12 oder A-12"
-                            value={newUnitForm.unit_number}
-                            onChange={e => setNewUnitForm(f => ({ ...f, unit_number: e.target.value }))}
-                          />
-                        </Field>
-                        <Field label="Typ">
-                          <select
-                            className={inputCls}
-                            value={newUnitForm.type}
-                            onChange={e => setNewUnitForm(f => ({ ...f, type: e.target.value as 'apartment' | 'villa' | 'studio' }))}
-                          >
-                            <option value="apartment">Wohnung</option>
-                            <option value="villa">Villa</option>
-                            <option value="studio">Studio</option>
-                          </select>
-                        </Field>
-                      </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <Field label="Schlafzimmer">
-                          <input
-                            className={inputCls}
-                            type="number" min="0"
-                            value={newUnitForm.bedrooms}
-                            onChange={e => setNewUnitForm(f => ({ ...f, bedrooms: parseInt(e.target.value) || 0 }))}
-                          />
-                        </Field>
-                        <Field label="Fläche (m²)">
-                          <input
-                            className={inputCls}
-                            type="number" min="0" step="0.01"
-                            placeholder="85"
-                            value={newUnitForm.size_sqm}
-                            onChange={e => setNewUnitForm(f => ({ ...f, size_sqm: e.target.value }))}
-                          />
-                        </Field>
-                        <Field label="Preis netto (€)">
-                          <input
-                            className={inputCls}
-                            type="number" min="0" step="100"
-                            placeholder="190000"
-                            value={newUnitForm.price_net}
-                            onChange={e => setNewUnitForm(f => ({ ...f, price_net: e.target.value }))}
-                          />
-                        </Field>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              )}
-
               {/* ── Einladungs-Info (neu anlegen) ────────── */}
               {modal === 'new' && (
                 <div className="flex items-start gap-3 bg-blue-50 border border-blue-100
                                 rounded-xl px-4 py-3">
-                  <span className="text-lg shrink-0">🔑</span>
+                  <span className="text-lg shrink-0">✉️</span>
                   <div>
                     <p className="text-sm font-semibold text-blue-800 font-body">
-                      Passwort wird generiert
+                      Zugangsdaten werden automatisch per E-Mail versendet
                     </p>
                     <p className="text-xs text-blue-700 font-body mt-0.5">
-                      Nach dem Anlegen wird das Passwort angezeigt – bitte manuell mitteilen.
+                      Nach dem Anlegen erhält der Nutzer automatisch eine E-Mail mit Login-Daten.
                     </p>
                   </div>
                 </div>
