@@ -191,6 +191,7 @@ export default function Objekte() {
   const [step, setStep]           = useState<Step>(1)
   const [form, setForm]           = useState<FormData>(EMPTY_FORM)
   const [saving, setSaving]       = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   // Images
   const [pendingFiles, setPendingFiles]         = useState<File[]>([])
@@ -390,6 +391,7 @@ export default function Objekte() {
     setCrmProjId('')
     setCrmUnitId('')
     setCrmUnits([])
+    setSaveError('')
     setStep(1)
     setShowForm(true)
     fetchOwners()
@@ -552,8 +554,13 @@ export default function Objekte() {
 
     } catch (err) {
       console.error('[handleSave] Fehler:', err)
-      const msg = err instanceof Error ? err.message : JSON.stringify(err)
-      setToast(`Fehler: ${msg}`)
+      try {
+        const e = err as Record<string, unknown>
+        const msg = e?.message ?? e?.code ?? e?.details ?? JSON.stringify(err) ?? 'Unbekannter Fehler'
+        setSaveError(String(msg))
+      } catch {
+        setSaveError('Unbekannter Fehler (nicht serialisierbar)')
+      }
     } finally {
       // Always reset spinners — even if an error occurred
       setSaving(false)
@@ -1400,6 +1407,13 @@ export default function Objekte() {
             {step === 1 && renderStep1()}
             {step === 2 && renderStep3()}
             {step === 3 && renderStep4()}
+
+            {/* Save error display */}
+            {saveError && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-body break-words">
+                <strong>Fehler beim Speichern:</strong><br />{saveError}
+              </div>
+            )}
 
             {/* Navigation */}
             <div className="flex gap-3 mt-6">
