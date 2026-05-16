@@ -813,11 +813,6 @@ export default function AdminUsers() {
               <section>
                 <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest
                                font-body mb-1">{t('users.sections.address')}</h3>
-                {form.role === 'eigentuemer' && (
-                  <p className="text-xs text-orange-500 font-body mb-2">
-                    {t('users.form.addressRequired')}
-                  </p>
-                )}
                 <div className="grid grid-cols-1 gap-3">
                   <Field label={t('users.form.street')}>
                     <input className={inputCls} value={form.address_street}
