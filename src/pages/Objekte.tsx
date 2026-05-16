@@ -206,7 +206,7 @@ export default function Objekte() {
   const [ownerModalError, setOwnerModalError]       = useState('')
   const [ownerModalSuccess, setOwnerModalSuccess]   = useState(false)
   // CRM-Verknüpfung
-  const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string }[]>([])
+  const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string; location: string | null }[]>([])
   const [crmProjId, setCrmProjId]           = useState('')
   const [crmUnits, setCrmUnits]             = useState<CrmProjectUnit[]>([])
   const [crmUnitId, setCrmUnitId]           = useState('')
@@ -255,9 +255,9 @@ export default function Objekte() {
   const fetchCrmProjects = useCallback(async () => {
     const { data } = await supabase
       .from('crm_projects')
-      .select('id, name')
+      .select('id, name, location')
       .order('name')
-    setCrmProjects((data ?? []) as { id: string; name: string }[])
+    setCrmProjects((data ?? []) as { id: string; name: string; location: string | null }[])
   }, [])
 
   async function fetchCrmUnitsForProject(projectId: string) {
@@ -672,7 +672,11 @@ export default function Objekte() {
                   setCrmUnits([])
                   if (pid) {
                     const proj = crmProjects.find(p => p.id === pid)
-                    if (proj) setField('project_name', proj.name)
+                    if (proj) {
+                      setField('project_name', proj.name)
+                      // Standort des Projekts → Ort in Schritt 2 vorausfüllen
+                      if (proj.location) setField('city', proj.location)
+                    }
                     fetchCrmUnitsForProject(pid)
                   }
                 }}
