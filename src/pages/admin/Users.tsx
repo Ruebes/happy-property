@@ -777,7 +777,8 @@ export default function AdminUsers() {
               <tbody>
                 {filtered.map((u, i) => (
                   <tr key={u.id}
-                      className={`border-b border-gray-50 hover:bg-gray-50/70 transition-colors
+                      onClick={() => openEdit(u)}
+                      className={`border-b border-gray-50 hover:bg-gray-50/70 transition-colors cursor-pointer
                         ${i === filtered.length - 1 ? 'border-b-0' : ''}`}>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-3">
@@ -806,7 +807,7 @@ export default function AdminUsers() {
                     <td className="px-5 py-3 text-gray-400 text-xs hidden lg:table-cell">
                       {new Date(u.created_at).toLocaleDateString('de-DE')}
                     </td>
-                    <td className="px-5 py-3">
+                    <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 justify-end flex-wrap">
                         {/* CRM-Link für Eigentümer */}
                         {u.role === 'eigentuemer' && leadIdMap[u.email.toLowerCase()] && (
