@@ -253,6 +253,93 @@ export default function LeadDetail() {
     fetchAll()
   }, [fetchAll])
 
+  // ── pickedUnit aus deal.unit_id wiederherstellen (nach Reload / Navigation) ──
+  // Läuft wenn deal oder dealProjects geladen werden und unit_id vorhanden ist.
+  useEffect(() => {
+    if (!deal?.unit_id) return
+    let cancelled = false
+    supabase
+      .from('crm_project_units')
+      .select('*')
+      .eq('id', deal.unit_id)
+      .maybeSingle()
+      .then(({ data: unitData }) => {
+        if (cancelled || !unitData) return
+        const unit = unitData as CrmProjectUnit
+        // Nur setzen wenn noch nicht für dieselbe Unit gesetzt
+        setPickedUnit(prev => {
+          if (prev?.unit.id === unit.id) return prev
+          const dp = dealProjects.find(d => d.project_id === unit.project_id)
+          return { unit, projectName: dp?.project?.name ?? '' }
+        })
+      })
+    return () => { cancelled = true }
+  }, [deal?.unit_id, dealProjects])
+
+  // ── Selbstheilender Properties-Sync ─────────────────────────────────────────
+  // Wenn Eigentümer-Profil vorhanden + Wohnung zugewiesen,
+  // aber noch kein properties-Eintrag existiert → direkt anlegen.
+  // Läuft nur einmal (sobald deal.property_id gesetzt ist, greift die Bedingung nicht mehr).
+  useEffect(() => {
+    if (!lead?.profile_id || !deal?.unit_id || deal?.property_id) return
+    async function repairPropertiesEntry() {
+      if (!lead?.profile_id || !deal?.unit_id || !profile?.id) return
+      try {
+        const { data: unitData } = await supabase
+          .from('crm_project_units')
+          .select('*')
+          .eq('id', deal.unit_id!)
+          .maybeSingle()
+        if (!unitData) return
+        const unit = unitData as CrmProjectUnit
+        if (unit.property_id) {
+          // properties-Eintrag existiert schon auf der Unit, aber deal.property_id fehlt
+          await supabase.from('deals').update({ property_id: unit.property_id }).eq('id', deal.id)
+          fetchAll(true)
+          return
+        }
+        // Properties-Eintrag komplett anlegen
+        const dp = dealProjects.find(d => d.project_id === unit.project_id)
+        const rentalType: 'shortterm' | 'longterm' | null =
+          unit.rental_type === 'long' ? 'longterm'
+          : unit.rental_type === 'short' ? 'shortterm'
+          : null
+        const { data: newProp } = await supabase
+          .from('properties')
+          .insert({
+            owner_id:             lead.profile_id,
+            created_by:           profile.id,
+            project_name:         dp?.project?.name ?? '',
+            unit_number:          unit.unit_number || null,
+            type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+            bedrooms:             unit.bedrooms ?? 0,
+            size_sqm:             unit.size_sqm ?? null,
+            is_furnished:         unit.is_furnished ?? false,
+            rental_type:          rentalType,
+            city:                 dp?.project?.location ?? null,
+            purchase_price_net:   unit.price_net  ?? null,
+            purchase_price_gross: unit.price_gross ?? null,
+            property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
+            images:               [],
+          })
+          .select('id')
+          .single()
+        if (newProp) {
+          const newPropId = (newProp as { id: string }).id
+          await Promise.all([
+            supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id),
+            supabase.from('deals').update({ property_id: newPropId }).eq('id', deal.id),
+          ])
+          fetchAll(true)
+        }
+      } catch (err) {
+        console.error('[LeadDetail] repairPropertiesEntry:', err)
+      }
+    }
+    void repairPropertiesEntry()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lead?.profile_id, deal?.unit_id, deal?.property_id])
+
   // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
   const triggerScheduleMessage = (event_type: string) => {
     if (!id) return
@@ -1017,6 +1104,11 @@ export default function LeadDetail() {
               }
             }
 
+            // Lead mit dem neuen Eigentümer-Profil verknüpfen
+            if (id && data.userId) {
+              await supabase.from('leads').update({ profile_id: data.userId }).eq('id', id)
+            }
+
             // Passwort-Modal anzeigen
             setNewOwnerPassword(data.password)
             setNewOwnerPasswordEmail(lead.email)
@@ -1393,9 +1485,16 @@ export default function LeadDetail() {
 
               {/* Info */}
               <div className="flex-1 min-w-0">
-                <h1 className="text-2xl font-bold text-gray-900 truncate">
-                  {lead.first_name} {lead.last_name}
-                </h1>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-2xl font-bold text-gray-900 truncate">
+                    {lead.first_name} {lead.last_name}
+                  </h1>
+                  {lead.profile_id && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 shrink-0">
+                      🏠 Eigentümer
+                    </span>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-3 mt-1 text-sm text-gray-600">
                   <a href={`mailto:${lead.email}`} className="hover:text-orange-500 truncate">
                     {lead.email}

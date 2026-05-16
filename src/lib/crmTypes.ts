@@ -31,6 +31,7 @@ export interface Lead {
   source:            LeadSource
   status:            LeadStatus
   assigned_to:       string | null
+  profile_id:        string | null   // Auth-User / Eigentümer-Profil (null = noch kein Portal-Zugang)
   notes:             string | null
   calendly_event_id: string | null
   created_at:        string
