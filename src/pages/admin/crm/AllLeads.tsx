@@ -124,7 +124,7 @@ export default function AllLeads() {
   }
 
   const handleCreate = async () => {
-    if (!newLeadForm.first_name.trim() || !newLeadForm.email.trim()) return
+    if (!newLeadForm.first_name.trim() || !newLeadForm.last_name.trim() || !newLeadForm.email.trim()) return
     setCreating(true)
     try {
       const insertPayload = {
@@ -314,7 +314,7 @@ export default function AllLeads() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nachname</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nachname *</label>
                   <input
                     type="text"
                     value={newLeadForm.last_name}
@@ -435,7 +435,7 @@ export default function AllLeads() {
                 </button>
                 <button
                   onClick={handleCreate}
-                  disabled={creating}
+                  disabled={creating || !newLeadForm.first_name.trim() || !newLeadForm.last_name.trim() || !newLeadForm.email.trim()}
                   className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50"
                   style={{ backgroundColor: '#ff795d' }}
                 >
