@@ -43,7 +43,7 @@ interface OwnerProfile {
   email: string
 }
 
-type Step = 1 | 2 | 3 | 4
+type Step = 1 | 2 | 3
 
 interface FormData {
   project_name: string
@@ -925,53 +925,6 @@ export default function Objekte() {
     )
   }
 
-  function renderStep2() {
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-3">
-          <div className="col-span-2">
-            <Label>{t('properties.street')}</Label>
-            <input className={inputCls} style={focusRing()}
-              value={form.street}
-              onChange={e => setField('street', e.target.value)}
-              placeholder="Hauptstraße" />
-          </div>
-          <div>
-            <Label>{t('properties.houseNumber')}</Label>
-            <input className={inputCls} style={focusRing()}
-              value={form.house_number}
-              onChange={e => setField('house_number', e.target.value)}
-              placeholder="12a" />
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>{t('properties.zip')}</Label>
-            <input className={inputCls} style={focusRing()}
-              value={form.zip}
-              onChange={e => setField('zip', e.target.value)}
-              placeholder="29670" />
-          </div>
-          <div>
-            <Label>{t('properties.city')}</Label>
-            <input className={inputCls} style={focusRing()}
-              value={form.city}
-              onChange={e => setField('city', e.target.value)}
-              placeholder="Marbella" />
-          </div>
-        </div>
-        <div>
-          <Label>{t('properties.description')}</Label>
-          <textarea rows={4}
-            className={`${inputCls} resize-none`} style={focusRing()}
-            value={form.description}
-            onChange={e => setField('description', e.target.value)}
-            placeholder="Kurze Beschreibung des Objekts …" />
-        </div>
-      </div>
-    )
-  }
-
   function renderStep3() {
     const totalImages = existingImages.length + pendingPreviews.length
     return (
@@ -1285,7 +1238,6 @@ export default function Objekte() {
   // ════════════════════════════════════════════════════════
   const stepLabels = [
     t('properties.form.step1'),
-    t('properties.form.step2'),
     t('properties.form.step3'),
     t('properties.form.step4'),
   ]
@@ -1439,9 +1391,8 @@ export default function Objekte() {
             <StepIndicator step={step} labels={stepLabels} />
 
             {step === 1 && renderStep1()}
-            {step === 2 && renderStep2()}
-            {step === 3 && renderStep3()}
-            {step === 4 && renderStep4()}
+            {step === 2 && renderStep3()}
+            {step === 3 && renderStep4()}
 
             {/* Navigation */}
             <div className="flex gap-3 mt-6">
@@ -1454,7 +1405,7 @@ export default function Objekte() {
                 </button>
               )}
               <div className="flex-1" />
-              {step < 4 ? (
+              {step < 3 ? (
                 <button type="button"
                   onClick={() => setStep(s => (s + 1) as Step)}
                   disabled={step === 1 && !step1Valid()}
