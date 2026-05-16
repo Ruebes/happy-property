@@ -5,7 +5,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
-  UnitType, UnitStatus,
+  UnitType, UnitStatus, ConstructionPhoto,
 } from '../../../lib/crmTypes'
 
 // ── Local types ───────────────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ type ModalTab = 'grunddaten' | 'bilder' | 'zahlungen' | 'dokumente' | 'verwaltun
 
 interface Verwalter { id: string; full_name: string }
 
-type UnitLead = { id: string; first_name: string; last_name: string } | null
+type UnitLead = { id: string; first_name: string; last_name: string; email: string } | null
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -265,6 +265,13 @@ export default function ProjectDetail() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Baustellenfotos ──────────────────────────────────────────────────────────
+  const [constructionPhotos, setConstructionPhotos] = useState<ConstructionPhoto[]>([])
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [photoDate, setPhotoDate]           = useState(new Date().toISOString().slice(0, 10))
+  const [photoDesc, setPhotoDesc]           = useState('')
+  const constPhotoInputRef = useRef<HTMLInputElement>(null)
+
   // ── Customer assignment ──────────────────────────────────────────────────────
   const [showAssignModal,  setShowAssignModal]  = useState(false)
   const [assigningUnit,    setAssigningUnit]    = useState<CrmProjectUnit | null>(null)
@@ -301,7 +308,7 @@ export default function ProjectDetail() {
           const unitIds = fetchedUnits.map(u => u.id)
           const { data: dealsData, error: dealsErr } = await supabase
             .from('deals')
-            .select('unit_id, lead:lead_id(id, first_name, last_name)')
+            .select('unit_id, lead:lead_id(id, first_name, last_name, email)')
             .in('unit_id', unitIds)
             .neq('phase', 'archiviert')
           if (!dealsErr && dealsData) {
@@ -324,6 +331,41 @@ export default function ProjectDetail() {
   }, [projectId])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── Baustellenfotos laden ────────────────────────────────────────────────────
+  const fetchConstructionPhotos = useCallback(async () => {
+    if (!projectId) return
+    const { data } = await supabase
+      .from('construction_photos')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('photo_date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
+    setConstructionPhotos((data ?? []) as ConstructionPhoto[])
+  }, [projectId])
+
+  useEffect(() => { fetchConstructionPhotos() }, [fetchConstructionPhotos])
+
+  // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
+  async function notifyCustomerUpload(
+    email: string, firstName: string,
+    fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto',
+  ) {
+    try {
+      await supabase.functions.invoke('send-email', {
+        body: {
+          to:      email,
+          subject: `Neue Datei in Ihrem Happy Property Portal`,
+          html:    `<p>Hallo ${firstName},</p>
+<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
+<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
+<p>Viele Grüße<br>Ihr Happy Property Team</p>`,
+        },
+      })
+    } catch (err) {
+      console.warn('[ProjectDetail] notifyCustomerUpload failed:', err)
+    }
+  }
 
   // ── Search leads for assignment ──────────────────────────────────────────────
   async function searchLeadsForAssign(query: string) {
@@ -397,10 +439,11 @@ export default function ProjectDetail() {
           .maybeSingle()
         if (ownerProfile) {
           const unit = assigningUnit
-          const rentalType: 'shortterm' | 'longterm' | null =
+          // rental_type NOT NULL in DB → 'longterm' als Fallback
+          const rentalType: 'shortterm' | 'longterm' =
             unit.rental_type === 'long' ? 'longterm'
             : unit.rental_type === 'short' ? 'shortterm'
-            : null
+            : 'longterm'
           const propData = {
             project_name:         project?.name ?? '',
             unit_number:          unit.unit_number || null,
@@ -544,6 +587,11 @@ export default function ProjectDetail() {
       setUnitImages(updated)
       showToast(`✅ ${newUrls.length} Bild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
       await fetchData()
+      // E-Mail an Kunden senden
+      const customer = unitLeadMap[unitId]
+      if (customer?.email) {
+        void notifyCustomerUpload(customer.email, customer.first_name, `${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
+      }
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
     } finally {
@@ -563,6 +611,77 @@ export default function ProjectDetail() {
       setUnitImages(updated)
       await fetchData()
     }
+  }
+
+  // ── Baustellenfotos Upload ───────────────────────────────────────────────────
+  async function handleUploadConstructionPhoto(files: FileList) {
+    if (!projectId || files.length === 0) return
+    setUploadingPhoto(true)
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const ext  = file.name.split('.').pop() ?? 'jpg'
+        const path = `${projectId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from('construction-photos')
+          .upload(path, file, { upsert: false })
+        if (upErr) { showToast(`❌ Upload fehlgeschlagen: ${upErr.message}`); continue }
+        const { data: urlData } = supabase.storage.from('construction-photos').getPublicUrl(path)
+        await supabase.from('construction_photos').insert({
+          project_id:  projectId,
+          file_path:   path,
+          file_name:   file.name,
+          file_size:   file.size,
+          photo_date:  photoDate || null,
+          description: photoDesc.trim() || null,
+          uploaded_by: profile?.id ?? null,
+        })
+        // Kunden benachrichtigen (alle mit Wohnungen in diesem Projekt)
+        if (urlData?.publicUrl) {
+          try {
+            const { data: unitCustomers } = await supabase
+              .from('crm_project_units')
+              .select('property_id')
+              .eq('project_id', projectId)
+              .not('property_id', 'is', null)
+            if (unitCustomers && unitCustomers.length > 0) {
+              const propIds = (unitCustomers as { property_id: string }[]).map(u => u.property_id)
+              const { data: owners } = await supabase
+                .from('properties')
+                .select('owner_id')
+                .in('id', propIds)
+              if (owners) {
+                const ownerIds = (owners as { owner_id: string }[]).map(o => o.owner_id)
+                const { data: ownerProfiles } = await supabase
+                  .from('profiles')
+                  .select('email, full_name')
+                  .in('id', ownerIds)
+                for (const p of (ownerProfiles ?? []) as { email: string; full_name: string }[]) {
+                  void notifyCustomerUpload(p.email, p.full_name.split(' ')[0], file.name, 'Baustellenfoto')
+                }
+              }
+            }
+          } catch (notifyErr) {
+            console.warn('[ProjectDetail] Baustellenfoto Notify error:', notifyErr)
+          }
+        }
+      }
+      showToast(`✅ ${files.length} Baustellenfoto${files.length > 1 ? 's' : ''} hochgeladen`)
+      setPhotoDesc('')
+      if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
+      await fetchConstructionPhotos()
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
+
+  async function handleDeleteConstructionPhoto(photo: ConstructionPhoto) {
+    if (!window.confirm('Baustellenfoto wirklich löschen?')) return
+    await supabase.storage.from('construction-photos').remove([photo.file_path])
+    await supabase.from('construction_photos').delete().eq('id', photo.id)
+    await fetchConstructionPhotos()
   }
 
   // ── Price auto-calculation ───────────────────────────────────────────────────
@@ -771,6 +890,11 @@ export default function ProjectDetail() {
       setDocForm({ name: '', doc_type: 'sonstiges', notes: '' })
       if (fileInputRef.current) fileInputRef.current.value = ''
       await fetchDocuments(editUnit.id)
+      // E-Mail an Kunden senden
+      const customer = unitLeadMap[editUnit.id]
+      if (customer?.email) {
+        void notifyCustomerUpload(customer.email, customer.first_name, docForm.name.trim() || pendingFile.name, 'Dokument')
+      }
     } catch (err) {
       console.error('[ProjectDetail] Upload error:', err)
     } finally { setUploadingDoc(false) }
@@ -904,6 +1028,82 @@ export default function ProjectDetail() {
           ))}
         </div>
       )}
+
+      {/* ── Baustellenbilder ── */}
+      <div className="mt-10 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-gray-900">🏗️ Baustellenbilder</h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Alle Eigentümer in diesem Projekt werden per E-Mail benachrichtigt.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={photoDate}
+              onChange={e => setPhotoDate(e.target.value)}
+              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#ff795d]"
+            />
+            <input
+              type="text"
+              value={photoDesc}
+              onChange={e => setPhotoDesc(e.target.value)}
+              placeholder="Beschreibung (optional)"
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-40 focus:outline-none focus:border-[#ff795d]"
+            />
+            <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
+              ${uploadingPhoto ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
+              {uploadingPhoto ? '⏳ Wird hochgeladen…' : '📷 Fotos hochladen'}
+              <input
+                ref={constPhotoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={uploadingPhoto}
+                className="hidden"
+                onChange={e => { if (e.target.files?.length) handleUploadConstructionPhoto(e.target.files) }}
+              />
+            </label>
+          </div>
+        </div>
+        {constructionPhotos.length === 0 ? (
+          <p className="text-center text-gray-400 text-sm py-10">
+            Noch keine Baustellenfotos hochgeladen.
+          </p>
+        ) : (
+          <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {constructionPhotos.map(photo => (
+              <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
+                <img
+                  src={`${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`}
+                  alt={photo.file_name}
+                  className="w-full h-32 object-cover"
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                />
+                <div className="px-2 py-1.5">
+                  {photo.photo_date && (
+                    <p className="text-[10px] font-medium text-gray-600">
+                      📅 {new Date(photo.photo_date).toLocaleDateString('de-DE')}
+                    </p>
+                  )}
+                  {photo.description && (
+                    <p className="text-[10px] text-gray-400 truncate">{photo.description}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleDeleteConstructionPhoto(photo)}
+                  className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
+                             opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                  title="Löschen"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}
       {/* Unit Modal                                                            */}

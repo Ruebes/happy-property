@@ -185,6 +185,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           loading:            false,
           needsPasswordSetup,
         })
+
+        // Portal-Login tracken: nur bei echtem Login (nicht Reload/Token-Refresh)
+        if (event === 'SIGNED_IN' && freshProfile?.role === 'eigentuemer' && session?.user?.id) {
+          supabase.from('portal_logins').insert({ profile_id: session.user.id })
+            .then(() => {}) // fire-and-forget, Fehler ignorieren
+        }
       }
     )
 

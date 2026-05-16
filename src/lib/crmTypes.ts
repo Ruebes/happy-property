@@ -31,7 +31,8 @@ export interface Lead {
   source:            LeadSource
   status:            LeadStatus
   assigned_to:       string | null
-  profile_id:        string | null   // Auth-User / Eigentümer-Profil (null = noch kein Portal-Zugang)
+  profile_id:            string | null   // Auth-User / Eigentümer-Profil (null = noch kein Portal-Zugang)
+  portal_access_sent_at: string | null   // wann wurde der Portalzugang verschickt?
   notes:             string | null
   calendly_event_id: string | null
   created_at:        string
@@ -212,6 +213,18 @@ export interface CrmUnitDocument {
   file_size:   number | null
   doc_type:    UnitDocType
   notes:       string | null
+  uploaded_by: string | null
+  created_at:  string
+}
+
+export interface ConstructionPhoto {
+  id:          string
+  project_id:  string
+  file_path:   string
+  file_name:   string
+  file_size:   number | null
+  photo_date:  string | null  // ISO date 'YYYY-MM-DD'
+  description: string | null
   uploaded_by: string | null
   created_at:  string
 }

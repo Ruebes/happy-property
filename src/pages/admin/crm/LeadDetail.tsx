@@ -1,10 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit } from '../../../lib/crmTypes'
+import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
@@ -13,7 +13,7 @@ import AppointmentModal from '../../../components/crm/AppointmentModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 
-type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled'
+type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
@@ -45,6 +45,19 @@ export default function LeadDetail() {
   const [showApptModal, setShowApptModal] = useState(false)
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessage[]>([])
   const [cancellingMsg, setCancellingMsg] = useState<string | null>(null)
+
+  // Portal-Login-Historie
+  const [portalLoginLog, setPortalLoginLog] = useState<{ id: string; created_at: string }[]>([])
+
+  // Unit-Dokumente + Bilder (Tab „Wohnung")
+  const [unitDocs,         setUnitDocs]         = useState<CrmUnitDocument[]>([])
+  const [unitImages,       setUnitImages]        = useState<string[]>([])
+  const [uploadingUnitDoc, setUploadingUnitDoc]  = useState(false)
+  const [uploadingUnitImg, setUploadingUnitImg]  = useState(false)
+  const [unitDocForm,      setUnitDocForm]       = useState({ name: '', doc_type: 'sonstiges' as UnitDocType, notes: '' })
+  const [unitDocFile,      setUnitDocFile]       = useState<File | null>(null)
+  const unitDocFileRef  = useRef<HTMLInputElement>(null)
+  const unitImgFileRef  = useRef<HTMLInputElement>(null)
 
   // WhatsApp preview (no_show)
   const [showWaPreview, setShowWaPreview] = useState(false)
@@ -119,6 +132,7 @@ export default function LeadDetail() {
   const [newOwnerPassword,     setNewOwnerPassword]     = useState('')
   const [newOwnerPasswordEmail,setNewOwnerPasswordEmail]= useState('')
   const [newOwnerPwCopied,     setNewOwnerPwCopied]     = useState(false)
+  const [resendingPortal,      setResendingPortal]      = useState(false)
 
   // Portal access (always accessible)
   const [portalOpen,       setPortalOpen]       = useState(false)
@@ -204,18 +218,6 @@ export default function LeadDetail() {
       setTemplates((tplData ?? []) as unknown as EmailTemplate[])
       setStaff((staffData ?? []) as { id: string; full_name: string }[])
 
-      // Fetch deal_projects when deal exists
-      if (dealResult?.id) {
-        const { data: dpData } = await supabase
-          .from('deal_projects')
-          .select('*, project:crm_projects(id,name,images,location)')
-          .eq('deal_id', dealResult.id)
-          .order('created_at')
-        setDealProjects((dpData ?? []) as unknown as DealProject[])
-      } else {
-        setDealProjects([])
-      }
-
       if (dealResult) {
         setDriveUrl(dealResult.google_drive_url ?? '')
         setFinancingRequired(dealResult.financing_required ?? false)
@@ -227,21 +229,62 @@ export default function LeadDetail() {
         setProvNotes(dealResult.provision_notes ?? '')
       }
 
-      // Fetch appointments for this lead
-      const { data: apptData } = await supabase
-        .from('crm_appointments')
-        .select('*')
-        .eq('lead_id', id)
-        .order('start_time', { ascending: true })
-      setAppointments((apptData ?? []) as unknown as CrmAppointment[])
+      // ── Batch 2: alle sekundären Queries parallel ─────────────────────────────
+      const [
+        { data: dpData },
+        { data: apptData },
+        { data: schedData },
+        { data: loginData },
+        { data: docsData },
+        { data: unitImgData },
+      ] = await Promise.all([
+        // deal_projects
+        dealResult?.id
+          ? supabase.from('deal_projects')
+              .select('*, project:crm_projects(id,name,images,location)')
+              .eq('deal_id', dealResult.id)
+              .order('created_at')
+          : Promise.resolve({ data: [] }),
+        // appointments
+        supabase.from('crm_appointments')
+          .select('*')
+          .eq('lead_id', id)
+          .order('start_time', { ascending: true }),
+        // scheduled messages
+        supabase.from('scheduled_messages')
+          .select('*')
+          .eq('lead_id', id)
+          .order('scheduled_at', { ascending: true }),
+        // portal login log
+        leadData?.profile_id
+          ? supabase.from('portal_logins')
+              .select('id, created_at')
+              .eq('profile_id', leadData.profile_id)
+              .order('created_at', { ascending: false })
+              .limit(50)
+          : Promise.resolve({ data: [] }),
+        // unit documents
+        dealResult?.unit_id
+          ? supabase.from('crm_unit_documents')
+              .select('*')
+              .eq('unit_id', dealResult.unit_id)
+              .order('created_at', { ascending: false })
+          : Promise.resolve({ data: [] }),
+        // unit images
+        dealResult?.unit_id
+          ? supabase.from('crm_project_units')
+              .select('images')
+              .eq('id', dealResult.unit_id)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+      ])
 
-      // Fetch scheduled messages for this lead
-      const { data: schedData } = await supabase
-        .from('scheduled_messages')
-        .select('*')
-        .eq('lead_id', id)
-        .order('scheduled_at', { ascending: true })
+      setDealProjects((dpData ?? []) as unknown as DealProject[])
+      setAppointments((apptData ?? []) as unknown as CrmAppointment[])
       setScheduledMessages((schedData ?? []) as unknown as ScheduledMessage[])
+      setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
+      setUnitDocs((docsData ?? []) as CrmUnitDocument[])
+      setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
@@ -300,10 +343,11 @@ export default function LeadDetail() {
         }
         // Properties-Eintrag komplett anlegen
         const dp = dealProjects.find(d => d.project_id === unit.project_id)
-        const rentalType: 'shortterm' | 'longterm' | null =
+        // rental_type: DB column is NOT NULL, 'longterm' als Fallback
+        const rentalType: 'shortterm' | 'longterm' =
           unit.rental_type === 'long' ? 'longterm'
           : unit.rental_type === 'short' ? 'shortterm'
-          : null
+          : 'longterm'
         const { data: newProp } = await supabase
           .from('properties')
           .insert({
@@ -339,6 +383,116 @@ export default function LeadDetail() {
     void repairPropertiesEntry()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?.profile_id, deal?.unit_id, deal?.property_id])
+
+  // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
+  const notifyCustomerUpload = (fileName: string, kind: 'Dokument' | 'Bild') => {
+    if (!lead?.email) return
+    const firstName = lead.first_name
+    supabase.functions.invoke('send-email', {
+      body: {
+        to:      lead.email,
+        subject: 'Neue Datei in Ihrem Happy Property Portal',
+        html:    `<p>Hallo ${firstName},</p>
+<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
+<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
+<p>Viele Grüße<br>Ihr Happy Property Team</p>`,
+      },
+    }).catch(err => console.warn('[LeadDetail] notifyCustomerUpload failed:', err))
+  }
+
+  // ── Unit-Dokument hochladen ───────────────────────────────────────────────────
+  const handleUploadUnitDoc = async () => {
+    if (!deal?.unit_id || !unitDocFile || !unitDocForm.name.trim()) return
+    setUploadingUnitDoc(true)
+    try {
+      const ext  = unitDocFile.name.split('.').pop() ?? 'pdf'
+      const path = `unit-documents/${deal.unit_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error: upErr } = await supabase.storage
+        .from('unit-documents').upload(path, unitDocFile, { upsert: false })
+      if (upErr) throw upErr
+      const { data: unitForProject } = await supabase
+        .from('crm_project_units').select('project_id').eq('id', deal.unit_id).maybeSingle()
+      await supabase.from('crm_unit_documents').insert({
+        unit_id:     deal.unit_id,
+        project_id:  (unitForProject as { project_id: string } | null)?.project_id ?? null,
+        name:        unitDocForm.name.trim(),
+        file_path:   path,
+        file_name:   unitDocFile.name,
+        file_size:   unitDocFile.size,
+        doc_type:    unitDocForm.doc_type,
+        notes:       unitDocForm.notes.trim() || null,
+        uploaded_by: profile?.id ?? null,
+      })
+      setUnitDocFile(null)
+      setUnitDocForm({ name: '', doc_type: 'sonstiges', notes: '' })
+      if (unitDocFileRef.current) unitDocFileRef.current.value = ''
+      notifyCustomerUpload(unitDocForm.name.trim(), 'Dokument')
+      showToast('✅ Dokument hochgeladen')
+      await fetchAll(true)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Upload'}`)
+    } finally {
+      setUploadingUnitDoc(false)
+    }
+  }
+
+  // ── Unit-Dokument öffnen ──────────────────────────────────────────────────────
+  const handleOpenUnitDoc = async (doc: CrmUnitDocument) => {
+    const { data } = await supabase.storage
+      .from('unit-documents').createSignedUrl(doc.file_path, 300)
+    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+  }
+
+  // ── Unit-Dokument löschen ─────────────────────────────────────────────────────
+  const handleDeleteUnitDoc = async (doc: CrmUnitDocument) => {
+    if (!window.confirm('Dokument wirklich löschen?')) return
+    await supabase.storage.from('unit-documents').remove([doc.file_path])
+    await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
+    await fetchAll(true)
+  }
+
+  // ── Unit-Bilder hochladen ─────────────────────────────────────────────────────
+  const handleUploadUnitImages = async (files: FileList) => {
+    if (!deal?.unit_id || files.length === 0) return
+    setUploadingUnitImg(true)
+    try {
+      const newUrls: string[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const ext  = file.name.split('.').pop() ?? 'jpg'
+        const path = `units/${deal.unit_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error } = await supabase.storage
+          .from('unit-images').upload(path, file, { upsert: false })
+        if (error) continue
+        const { data } = supabase.storage.from('unit-images').getPublicUrl(path)
+        if (data?.publicUrl) newUrls.push(data.publicUrl)
+      }
+      if (newUrls.length === 0) { showToast('❌ Upload fehlgeschlagen'); return }
+      const updated = [...unitImages, ...newUrls]
+      await supabase.from('crm_project_units').update({ images: updated }).eq('id', deal.unit_id)
+      setUnitImages(updated)
+      notifyCustomerUpload(`${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
+      showToast(`✅ ${newUrls.length} Bild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+    } finally {
+      setUploadingUnitImg(false)
+      if (unitImgFileRef.current) unitImgFileRef.current.value = ''
+    }
+  }
+
+  // ── Unit-Bild löschen ─────────────────────────────────────────────────────────
+  const handleDeleteUnitImage = async (url: string) => {
+    if (!deal?.unit_id) return
+    const marker = '/unit-images/'
+    const idx    = url.indexOf(marker)
+    if (idx !== -1) {
+      await supabase.storage.from('unit-images').remove([url.slice(idx + marker.length)])
+    }
+    const updated = unitImages.filter(u => u !== url)
+    await supabase.from('crm_project_units').update({ images: updated }).eq('id', deal.unit_id)
+    setUnitImages(updated)
+  }
 
   // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
   const triggerScheduleMessage = (event_type: string) => {
@@ -997,10 +1151,11 @@ export default function LeadDetail() {
           const dp         = dealProjects.find(d => d.project_id === projectId)
           const projectName = dp?.project?.name ?? ''
           const location   = dp?.project?.location ?? null
-          const rentalType: 'shortterm' | 'longterm' | null =
+          // rental_type NOT NULL in DB → 'longterm' als Fallback
+          const rentalType: 'shortterm' | 'longterm' =
             unitEditForm.rental_type === 'long' ? 'longterm'
             : unitEditForm.rental_type === 'short' ? 'shortterm'
-            : null
+            : 'longterm'
 
           const propData = {
             project_name:  projectName,
@@ -1065,10 +1220,11 @@ export default function LeadDetail() {
               const dp          = dealProjects.find(d => d.project_id === projectId)
               const projectName = dp?.project?.name ?? ''
               const location    = dp?.project?.location ?? null
-              const rentalType: 'shortterm' | 'longterm' | null =
+              // rental_type NOT NULL in DB → 'longterm' als Fallback
+              const rentalType: 'shortterm' | 'longterm' =
                 unitEditForm.rental_type === 'long' ? 'longterm'
                 : unitEditForm.rental_type === 'short' ? 'shortterm'
-                : null
+                : 'longterm'
               const propData = {
                 project_name:         projectName,
                 unit_number:          unitEditForm.unit_number.trim() || null,
@@ -1104,9 +1260,12 @@ export default function LeadDetail() {
               }
             }
 
-            // Lead mit dem neuen Eigentümer-Profil verknüpfen
+            // Lead mit dem neuen Eigentümer-Profil verknüpfen + Zeitstempel setzen
             if (id && data.userId) {
-              await supabase.from('leads').update({ profile_id: data.userId }).eq('id', id)
+              await supabase.from('leads').update({
+                profile_id: data.userId,
+                portal_access_sent_at: new Date().toISOString(),
+              }).eq('id', id)
             }
 
             // Passwort-Modal anzeigen
@@ -1293,10 +1452,11 @@ export default function LeadDetail() {
       // 4. Portal-Eintrag synchronisieren (wenn Eigentümer-Profil bereits vorhanden)
       const ownerProfile = await getEigentuemerProfile()
       if (ownerProfile && profile?.id) {
-        const rentalType: 'shortterm' | 'longterm' | null =
+        // rental_type NOT NULL in DB → 'longterm' als Fallback
+        const rentalType: 'shortterm' | 'longterm' =
           unit.rental_type === 'long' ? 'longterm'
           : unit.rental_type === 'short' ? 'shortterm'
-          : null
+          : 'longterm'
         const propData = {
           project_name:         project.name,
           unit_number:          unit.unit_number || null,
@@ -1405,6 +1565,11 @@ export default function LeadDetail() {
         completed_at: new Date().toISOString(),
       })
 
+      // portal_access_sent_at setzen
+      if (id) {
+        await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
+      }
+
       setPortalSuccess(true)
       showToast('✅ Portalzugang erfolgreich gesendet')
       setTimeout(() => {
@@ -1416,6 +1581,30 @@ export default function LeadDetail() {
       setPortalError(err instanceof Error ? err.message : String(err))
     } finally {
       setPortalSending(false)
+    }
+  }
+
+  // ── Portal-Zugang nochmal verschicken (Passwort-Reset) ───────────────────────
+  async function resendPortalAccess() {
+    if (!lead?.profile_id) { openPortal(); return }
+    setResendingPortal(true)
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
+        body: { action: 'reset_password', userId: lead.profile_id },
+      })
+      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? 'Fehler')
+      if (id) {
+        await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
+      }
+      setNewOwnerPassword(data.password as string)
+      setNewOwnerPasswordEmail(lead.email)
+      setNewOwnerPwCopied(false)
+      setShowNewOwnerPwModal(true)
+      await fetchAll(true)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Zurücksetzen'}`)
+    } finally {
+      setResendingPortal(false)
     }
   }
 
@@ -1559,11 +1748,12 @@ export default function LeadDetail() {
                   📝 {t('crm.addNote', 'Notiz')}
                 </button>
                 <button
-                  onClick={openPortal}
-                  className="px-3 py-1.5 text-sm rounded-lg font-medium text-white"
-                  style={{ backgroundColor: '#ff795d' }}
+                  onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                  disabled={resendingPortal}
+                  className="px-3 py-1.5 text-sm rounded-lg font-medium text-white disabled:opacity-60 transition-colors"
+                  style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
                 >
-                  🔑 Portalzugang
+                  {resendingPortal ? '⏳' : lead?.portal_access_sent_at ? '✅ Zugang' : '🔑 Portalzugang'}
                 </button>
               </div>
             </div>
@@ -1904,11 +2094,16 @@ export default function LeadDetail() {
 
                       {/* Portal access button */}
                       <button
-                        onClick={openPortal}
-                        className="w-full py-2 text-xs font-medium text-white rounded-lg"
-                        style={{ backgroundColor: '#ff795d' }}
+                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        disabled={resendingPortal}
+                        className="w-full py-2 text-xs font-medium text-white rounded-lg disabled:opacity-60 transition-colors"
+                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
                       >
-                        📧 Portalzugang erstellen & senden
+                        {resendingPortal
+                          ? '⏳ Wird zurückgesetzt…'
+                          : lead?.portal_access_sent_at
+                            ? '✅ Zugang verschickt – nochmal verschicken'
+                            : '📧 Portalzugang erstellen & senden'}
                       </button>
                     </div>
 
@@ -1985,11 +2180,16 @@ export default function LeadDetail() {
                         📱 {t('crm.commissionWhatsapp', 'Provision via WhatsApp')}
                       </button>
                       <button
-                        onClick={openPortal}
-                        className="px-4 py-2 rounded-lg text-sm font-medium text-white"
-                        style={{ backgroundColor: '#ff795d' }}
+                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        disabled={resendingPortal}
+                        className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60 transition-colors"
+                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
                       >
-                        🔑 {t('crm.sendPortalAccess', 'Portalzugang senden')}
+                        {resendingPortal
+                          ? '⏳ …'
+                          : lead?.portal_access_sent_at
+                            ? '✅ Zugang verschickt – nochmal verschicken'
+                            : `🔑 ${t('crm.sendPortalAccess', 'Portalzugang senden')}`}
                       </button>
                       <button
                         onClick={handleArchive}
@@ -2036,6 +2236,14 @@ export default function LeadDetail() {
                   id: 'scheduled',
                   label: `⚡ ${t('crm.tab.scheduled', 'Geplant')}${scheduledMessages.filter(m => m.status === 'pending').length ? ` (${scheduledMessages.filter(m => m.status === 'pending').length})` : ''}`,
                 },
+                {
+                  id: 'portal',
+                  label: `🔑 ${t('crm.tab.portal', 'Portal')}${portalLoginLog.length ? ` (${portalLoginLog.length})` : ''}`,
+                },
+                ...(deal?.unit_id ? [{
+                  id: 'wohnung' as TabId,
+                  label: `🏠 ${t('crm.tab.wohnung', 'Wohnung')}${unitDocs.length ? ` (${unitDocs.length})` : ''}`,
+                }] : []),
               ] as { id: TabId; label: string }[]).map((tab) => (
                 <button
                   key={tab.id}
@@ -2954,6 +3162,237 @@ export default function LeadDetail() {
                     })}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* ── Tab: Wohnung (Dokumente & Bilder) ───────────────────────── */}
+            {activeTab === 'wohnung' && deal?.unit_id && (
+              <div className="p-6 space-y-8">
+
+                {/* ── Dokumente ── */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">📄 Dokumente</h3>
+
+                  {/* Upload-Formular */}
+                  <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 mb-4 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="text"
+                        placeholder="Dokumentname *"
+                        value={unitDocForm.name}
+                        onChange={e => setUnitDocForm(f => ({ ...f, name: e.target.value }))}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
+                      />
+                      <select
+                        value={unitDocForm.doc_type}
+                        onChange={e => setUnitDocForm(f => ({ ...f, doc_type: e.target.value as UnitDocType }))}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
+                      >
+                        <option value="kaufvertrag">Kaufvertrag</option>
+                        <option value="mietvertrag">Mietvertrag</option>
+                        <option value="zahlungsbeleg">Zahlungsbeleg</option>
+                        <option value="grundriss">Grundriss</option>
+                        <option value="sonstiges">Sonstiges</option>
+                      </select>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Notiz (optional)"
+                      value={unitDocForm.notes}
+                      onChange={e => setUnitDocForm(f => ({ ...f, notes: e.target.value }))}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
+                    />
+                    <div className="flex items-center gap-3">
+                      <label className="flex-1 flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 cursor-pointer hover:border-[#ff795d] transition-colors">
+                        <span className="text-sm text-gray-500">{unitDocFile ? unitDocFile.name : '📎 Datei auswählen (PDF, Word, Bild)'}</span>
+                        <input
+                          ref={unitDocFileRef}
+                          type="file"
+                          accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                          className="hidden"
+                          onChange={e => setUnitDocFile(e.target.files?.[0] ?? null)}
+                        />
+                      </label>
+                      <button
+                        onClick={handleUploadUnitDoc}
+                        disabled={uploadingUnitDoc || !unitDocFile || !unitDocForm.name.trim()}
+                        className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 transition-opacity"
+                        style={{ backgroundColor: '#ff795d' }}
+                      >
+                        {uploadingUnitDoc ? '⏳ …' : 'Hochladen'}
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      💡 Der Kunde erhält automatisch eine E-Mail wenn ein Dokument hochgeladen wird.
+                    </p>
+                  </div>
+
+                  {/* Dok-Liste */}
+                  {unitDocs.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-6">Noch keine Dokumente hochgeladen.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {unitDocs.map(doc => {
+                        const DOC_PILL: Record<string, string> = {
+                          kaufvertrag: 'bg-purple-100 text-purple-700',
+                          mietvertrag: 'bg-blue-100 text-blue-700',
+                          zahlungsbeleg: 'bg-green-100 text-green-700',
+                          grundriss: 'bg-amber-100 text-amber-700',
+                          sonstiges: 'bg-gray-100 text-gray-600',
+                        }
+                        const DOC_LABEL: Record<string, string> = {
+                          kaufvertrag: 'Kaufvertrag', mietvertrag: 'Mietvertrag',
+                          zahlungsbeleg: 'Zahlungsbeleg', grundriss: 'Grundriss', sonstiges: 'Sonstiges',
+                        }
+                        return (
+                          <div key={doc.id} className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-100">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${DOC_PILL[doc.doc_type] ?? 'bg-gray-100 text-gray-600'}`}>
+                              {DOC_LABEL[doc.doc_type] ?? doc.doc_type}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-800 truncate">{doc.name}</p>
+                              {doc.notes && <p className="text-xs text-gray-400 truncate">{doc.notes}</p>}
+                              <p className="text-[10px] text-gray-300">
+                                {new Date(doc.created_at).toLocaleDateString('de-DE')} · {doc.file_name}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleOpenUnitDoc(doc)}
+                              className="text-xs text-[#ff795d] hover:underline flex-shrink-0"
+                            >
+                              Öffnen
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUnitDoc(doc)}
+                              className="text-xs text-gray-400 hover:text-red-500 flex-shrink-0"
+                            >
+                              Löschen
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Bilder ── */}
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-semibold text-gray-700">🖼️ Bilder der Wohnung</h3>
+                    <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
+                      ${uploadingUnitImg ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
+                      {uploadingUnitImg ? '⏳ Wird hochgeladen…' : '📷 Bilder hochladen'}
+                      <input
+                        ref={unitImgFileRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        disabled={uploadingUnitImg}
+                        className="hidden"
+                        onChange={e => { if (e.target.files?.length) handleUploadUnitImages(e.target.files) }}
+                      />
+                    </label>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-3">
+                    💡 Der Kunde erhält automatisch eine E-Mail wenn Bilder hochgeladen werden.
+                  </p>
+                  {unitImages.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-6">Noch keine Bilder hochgeladen.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                      {unitImages.map((url, idx) => (
+                        <div key={url} className="relative group rounded-xl overflow-hidden border border-gray-100">
+                          <img src={url} alt={`Bild ${idx + 1}`} className="w-full h-28 object-cover" />
+                          <button
+                            onClick={() => handleDeleteUnitImage(url)}
+                            className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
+                                       opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab: Portal ──────────────────────────────────────────────── */}
+            {activeTab === 'portal' && (
+              <div className="p-6 space-y-6">
+                {/* Status-Karte */}
+                <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">🔑 Portal-Zugang</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      {lead?.profile_id ? (
+                        <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-full text-xs font-medium">
+                          ✓ Zugang aktiv
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-full text-xs font-medium">
+                          Kein Zugang
+                        </span>
+                      )}
+                    </div>
+                    {lead?.portal_access_sent_at ? (
+                      <p className="text-gray-600 text-xs">
+                        Zugang verschickt am{' '}
+                        <span className="font-medium">
+                          {new Date(lead.portal_access_sent_at).toLocaleString('de-DE', {
+                            day: '2-digit', month: '2-digit', year: 'numeric',
+                            hour: '2-digit', minute: '2-digit',
+                          })}
+                        </span>
+                      </p>
+                    ) : (
+                      <p className="text-gray-400 text-xs">Noch kein Portalzugang versendet.</p>
+                    )}
+                    {lead?.email && lead?.profile_id && (
+                      <p className="text-gray-500 text-xs">Portal-E-Mail: <span className="font-mono">{lead.email}</span></p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Login-Historie */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">
+                    📋 Login-Verlauf
+                    {portalLoginLog.length > 0 && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        ({portalLoginLog.length} {portalLoginLog.length === 1 ? 'Login' : 'Logins'})
+                      </span>
+                    )}
+                  </h3>
+                  {!lead?.profile_id ? (
+                    <p className="text-gray-400 text-sm text-center py-8">
+                      Kein Portal-Zugang — noch keine Login-Daten vorhanden.
+                    </p>
+                  ) : portalLoginLog.length === 0 ? (
+                    <p className="text-gray-400 text-sm text-center py-8">
+                      Noch kein Login im Portal.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {portalLoginLog.map((entry, idx) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 border border-gray-100"
+                        >
+                          <span className="text-gray-300 text-xs w-5 text-right flex-shrink-0">{idx + 1}.</span>
+                          <span className="text-gray-500 text-xs">
+                            🟢 {new Date(entry.created_at).toLocaleString('de-DE', {
+                              day: '2-digit', month: '2-digit', year: 'numeric',
+                              hour: '2-digit', minute: '2-digit',
+                              weekday: 'short',
+                            })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

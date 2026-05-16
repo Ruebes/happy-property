@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
@@ -155,8 +155,9 @@ const inputCls = `w-full px-3 py-2 rounded-xl border border-gray-200 bg-white te
 // AdminUsers
 // ══════════════════════════════════════════════════════════════
 export default function AdminUsers() {
-  const { t }       = useTranslation()
-  const { profile } = useAuth()
+  const { t }        = useTranslation()
+  const { profile }  = useAuth()
+  const navigate     = useNavigate()
 
   // ── State ────────────────────────────────────────────────
   const [users, setUsers]           = useState<UserProfile[]>([])
@@ -181,6 +182,10 @@ export default function AdminUsers() {
   // ── Passwort-Anzeige nach Anlegen / Reset ─────────────────
   const [createdPassword, setCreatedPassword] = useState<string | null>(null)
   const [pwCopied, setPwCopied]               = useState(false)
+
+  // ── Lead-ID-Map für CRM-Link (email → lead_id) ───────────
+  const [leadIdMap, setLeadIdMap] = useState<Record<string, string>>({})
+  const [resetingPwId, setResetingPwId] = useState<string | null>(null)
   function copyCreatedPw() {
     if (!createdPassword) return
     navigator.clipboard.writeText(createdPassword)
@@ -192,7 +197,7 @@ export default function AdminUsers() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      // Profile laden
+      // Profile sofort laden und anzeigen
       const { data: profileData } = await supabase
         .from('profiles')
         .select('id, email, full_name, phone, role, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, is_active, created_at')
@@ -200,22 +205,22 @@ export default function AdminUsers() {
         .limit(500)
 
       const profiles = (profileData as UserProfile[]) ?? []
+      setUsers(profiles)  // sofort anzeigen, nicht auf Edge Function warten
 
-      // Verwaiste Profile bereinigen via Edge Function
-      try {
-        const { ids } = await adminUserOp<{ ids: string[] }>({ action: 'list_auth_ids' })
-        const authIds  = new Set(ids)
-        const orphaned = profiles.filter(p => !authIds.has(p.id))
-        if (orphaned.length > 0) {
-          await Promise.all(
-            orphaned.map(p => adminUserOp({ action: 'delete_profile', profileId: p.id }))
-          )
-        }
-        setUsers(profiles.filter(p => authIds.has(p.id)))
-      } catch {
-        // Edge Function nicht erreichbar → einfach alle Profile zeigen
-        setUsers(profiles)
-      }
+      // Verwaiste Profile im Hintergrund bereinigen (non-blocking)
+      adminUserOp<{ ids: string[] }>({ action: 'list_auth_ids' })
+        .then(({ ids }) => {
+          const authIds  = new Set(ids)
+          const orphaned = profiles.filter(p => !authIds.has(p.id))
+          if (orphaned.length > 0) {
+            Promise.all(
+              orphaned.map(p => adminUserOp({ action: 'delete_profile', profileId: p.id }))
+            ).then(() => {
+              setUsers(profiles.filter(p => authIds.has(p.id)))
+            }).catch(() => {})
+          }
+        })
+        .catch(() => {}) // Edge Function nicht erreichbar → ignorieren
     } catch (e) {
       console.error('[fetchUsers]', e)
     } finally {
@@ -240,6 +245,16 @@ export default function AdminUsers() {
     fetchUsers()
     fetchProps()
     fetchVerwaltungen()
+    // Lead-ID-Map: email → lead_id (für CRM-Link bei Eigentümern)
+    supabase.from('leads').select('id, email').then(({ data }) => {
+      if (data) {
+        const map: Record<string, string> = {}
+        for (const l of data as { id: string; email: string }[]) {
+          map[l.email.toLowerCase()] = l.id
+        }
+        setLeadIdMap(map)
+      }
+    })
   }, [fetchUsers, fetchProps, fetchVerwaltungen])
 
   // ── Filter ───────────────────────────────────────────────
@@ -432,6 +447,23 @@ export default function AdminUsers() {
     }
   }
 
+  // ── Quick portal password reset (direkt aus Tabelle) ────────
+  async function handleQuickResetPassword(u: UserProfile) {
+    if (!window.confirm(`Neues Passwort für ${u.full_name} generieren und anzeigen?`)) return
+    setResetingPwId(u.id)
+    try {
+      const { password } = await adminUserOp<{ success: true; password: string }>({
+        action: 'reset_password',
+        userId: u.id,
+      })
+      setCreatedPassword(password)
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : 'Fehler beim Zurücksetzen')
+    } finally {
+      setResetingPwId(null)
+    }
+  }
+
   // ── Assign property to owner ─────────────────────────────
   async function handleAssignProperty() {
     if (!editUser || !assignPropId) return
@@ -620,7 +652,27 @@ export default function AdminUsers() {
                       {new Date(u.created_at).toLocaleDateString('de-DE')}
                     </td>
                     <td className="px-5 py-3">
-                      <div className="flex items-center gap-2 justify-end">
+                      <div className="flex items-center gap-2 justify-end flex-wrap">
+                        {/* CRM-Link für Eigentümer */}
+                        {u.role === 'eigentuemer' && leadIdMap[u.email.toLowerCase()] && (
+                          <button
+                            onClick={() => navigate(`/admin/crm/leads/${leadIdMap[u.email.toLowerCase()]}`)}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg border
+                                       border-blue-200 text-blue-600 hover:bg-blue-50 transition-colors">
+                            🏠 CRM
+                          </button>
+                        )}
+                        {/* Portal-Zugang zurücksetzen */}
+                        {u.role === 'eigentuemer' && (
+                          <button
+                            onClick={() => handleQuickResetPassword(u)}
+                            disabled={resetingPwId === u.id}
+                            className="px-3 py-1.5 text-xs font-medium rounded-lg border
+                                       border-green-200 text-green-700 hover:bg-green-50
+                                       transition-colors disabled:opacity-50">
+                            {resetingPwId === u.id ? '⏳' : '🔑 Neues PW'}
+                          </button>
+                        )}
                         <button
                           onClick={() => openEdit(u)}
                           className="px-3 py-1.5 text-xs font-medium rounded-lg border
