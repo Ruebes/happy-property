@@ -201,7 +201,7 @@ Deno.serve(async (req: Request) => {
     const serviceRoleKey     = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const smtpUser           = Deno.env.get('SMTP_USER') ?? ''
     const smtpPass           = Deno.env.get('SMTP_PASS') ?? ''
-    const appUrl             = Deno.env.get('APP_URL') ?? 'https://happy-property.app'
+    const appUrl             = Deno.env.get('APP_URL') ?? 'https://portal.happy-property.com'
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey)
 

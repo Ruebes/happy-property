@@ -183,7 +183,7 @@ function buildHtml(p: {
     )}
   </p>
 
-  <a href="${Deno.env.get('APP_URL') ?? 'https://happyproperty.app'}/feriengast/dashboard" class="btn">
+  <a href="${Deno.env.get('APP_URL') ?? 'https://portal.happy-property.com'}/feriengast/dashboard" class="btn">
     ${t('Zum Portal', 'Open portal')}
   </a>
 

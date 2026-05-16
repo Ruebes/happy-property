@@ -606,7 +606,7 @@ export default function Objekte() {
       if (data?.password && data?.userId) {
         const firstName = ownerModal.first_name.trim()
         const email     = ownerModal.email.trim().toLowerCase()
-        const appUrl    = window.location.origin
+        const appUrl    = 'https://portal.happy-property.com'
         const welcomeHtml = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>Dein Zugang</title></head>
 <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:32px 0;">

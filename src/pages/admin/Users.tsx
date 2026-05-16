@@ -468,7 +468,7 @@ export default function AdminUsers() {
       }
       // Willkommens-E-Mail mit Zugangsdaten automatisch senden
       const firstName = form.firstName.trim()
-      const appUrl = window.location.origin
+      const appUrl = 'https://portal.happy-property.com'
       const welcomeHtml = `<!DOCTYPE html>
 <html lang="de"><head><meta charset="UTF-8"><title>Dein Zugang</title></head>
 <body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
