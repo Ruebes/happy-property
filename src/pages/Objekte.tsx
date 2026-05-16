@@ -22,6 +22,10 @@ interface Property {
   zip: string | null
   city: string | null
   description: string | null
+  bathrooms: number
+  terrace_sqm: number | null
+  floor: number | null
+  block: string | null
   images: string[]
   rental_type: 'longterm' | 'shortterm' | null
   owner_id: string
@@ -47,6 +51,10 @@ interface FormData {
   type: 'villa' | 'apartment' | 'studio'
   bedrooms: string
   size_sqm: string
+  terrace_sqm: string
+  bathrooms: string
+  floor: string
+  block: string
   is_furnished: boolean
   rental_type: 'longterm' | 'shortterm' | ''
   purchase_price_gross: string
@@ -76,7 +84,8 @@ interface OwnerModalData {
 
 const EMPTY_FORM: FormData = {
   project_name: '', unit_number: '', type: 'apartment', bedrooms: '1',
-  size_sqm: '', is_furnished: false, rental_type: '',
+  size_sqm: '', terrace_sqm: '', bathrooms: '1', floor: '', block: '',
+  is_furnished: false, rental_type: '',
   purchase_price_gross: '', purchase_price_net: '', vat_rate: '19',
   street: '', house_number: '', zip: '', city: '', description: '',
   owner_id: '',
@@ -388,7 +397,11 @@ export default function Objekte() {
       unit_number:          p.unit_number ?? '',
       type:                 p.type,
       bedrooms:             String(p.bedrooms),
-      size_sqm:             p.size_sqm != null ? String(p.size_sqm) : '',
+      size_sqm:             p.size_sqm    != null ? String(p.size_sqm)    : '',
+      terrace_sqm:          p.terrace_sqm != null ? String(p.terrace_sqm) : '',
+      bathrooms:            p.bathrooms   != null ? String(p.bathrooms)   : '1',
+      floor:                p.floor       != null ? String(p.floor)       : '',
+      block:                p.block       ?? '',
       is_furnished:         p.is_furnished ?? false,
       rental_type:          p.rental_type ?? '',
       purchase_price_gross: p.purchase_price_gross != null ? String(p.purchase_price_gross) : '',
@@ -442,7 +455,11 @@ export default function Objekte() {
         unit_number:          form.unit_number.trim() || null,
         type:                 form.type,
         bedrooms:             parseInt(form.bedrooms) || 0,
-        size_sqm:             form.size_sqm ? parseFloat(form.size_sqm.replace(',', '.')) : null,
+        size_sqm:             form.size_sqm    ? parseFloat(form.size_sqm.replace(',', '.'))    : null,
+        terrace_sqm:          form.terrace_sqm ? parseFloat(form.terrace_sqm.replace(',', '.')) : null,
+        bathrooms:            parseInt(form.bathrooms) || 1,
+        floor:                form.floor ? parseInt(form.floor) : null,
+        block:                form.block.trim() || null,
         is_furnished:         form.is_furnished,
         rental_type:          form.rental_type || null,
         purchase_price_gross: form.purchase_price_gross
@@ -687,9 +704,13 @@ export default function Objekte() {
                         if (unit) {
                           setField('unit_number', unit.unit_number)
                           setField('type', unit.type as FormData['type'])
-                          if (unit.bedrooms != null) setField('bedrooms', String(unit.bedrooms))
-                          if (unit.size_sqm != null) setField('size_sqm', String(unit.size_sqm))
-                          if (unit.price_net != null) onNetChange(String(unit.price_net))
+                          if (unit.bedrooms    != null) setField('bedrooms',    String(unit.bedrooms))
+                          if (unit.bathrooms   != null) setField('bathrooms',   String(unit.bathrooms))
+                          if (unit.size_sqm    != null) setField('size_sqm',    String(unit.size_sqm))
+                          if (unit.terrace_sqm != null) setField('terrace_sqm', String(unit.terrace_sqm))
+                          if (unit.floor       != null) setField('floor',       String(unit.floor))
+                          if (unit.block)               setField('block',       unit.block)
+                          if (unit.price_net   != null) onNetChange(String(unit.price_net))
                         }
                       }
                     }}
@@ -731,41 +752,87 @@ export default function Objekte() {
           </div>
         </div>
 
+        <div>
+          <Label required>{t('properties.type')}</Label>
+          <CustomSelect
+            className={inputCls} style={focusRing()}
+            value={form.type}
+            onChange={val => setField('type', val as FormData['type'])}
+            options={(['villa', 'apartment', 'studio'] as const).map(v => ({
+              value: v, label: t(`properties.types.${v}`),
+            }))}
+          />
+        </div>
+
+        {/* Flächen */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label required>{t('properties.type')}</Label>
-            <CustomSelect
-              className={inputCls} style={focusRing()}
-              value={form.type}
-              onChange={val => setField('type', val as FormData['type'])}
-              options={(['villa', 'apartment', 'studio'] as const).map(v => ({
-                value: v, label: t(`properties.types.${v}`),
-              }))}
-            />
+            <Label>{t('properties.size')}</Label>
+            <div className="relative">
+              <input type="text" inputMode="decimal"
+                className={`${inputCls} pr-10`} style={focusRing()}
+                value={form.size_sqm}
+                onChange={e => setField('size_sqm', e.target.value)}
+                placeholder="85.50" />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">m²</span>
+            </div>
           </div>
           <div>
-            <Label>{t('properties.bedrooms')}</Label>
+            <Label>Terrasse (m²)</Label>
+            <div className="relative">
+              <input type="text" inputMode="decimal"
+                className={`${inputCls} pr-10`} style={focusRing()}
+                value={form.terrace_sqm}
+                onChange={e => setField('terrace_sqm', e.target.value)}
+                placeholder="20" />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">m²</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Zimmer & Lage */}
+        <div className="grid grid-cols-4 gap-3">
+          <div>
+            <Label>Schlafzimmer</Label>
             <CustomSelect
               className={inputCls} style={focusRing()}
               value={form.bedrooms}
               onChange={val => setField('bedrooms', val)}
               options={[
-                { value: '0', label: t('properties.bedroomsStudio') },
-                ...[1, 2, 3, 4, 5].map(n => ({ value: String(n), label: String(n) })),
+                { value: '0', label: 'Studio' },
+                ...[1,2,3,4,5,6].map(n => ({ value: String(n), label: String(n) })),
               ]}
             />
           </div>
+          <div>
+            <Label>Badezimmer</Label>
+            <CustomSelect
+              className={inputCls} style={focusRing()}
+              value={form.bathrooms}
+              onChange={val => setField('bathrooms', val)}
+              options={[1,2,3,4].map(n => ({ value: String(n), label: String(n) }))}
+            />
+          </div>
+          <div>
+            <Label>Etage</Label>
+            <input type="text" inputMode="numeric"
+              className={inputCls} style={focusRing()}
+              value={form.floor}
+              onChange={e => setField('floor', e.target.value)}
+              placeholder="1" />
+          </div>
+          <div>
+            <Label>Block</Label>
+            <input type="text"
+              className={inputCls} style={focusRing()}
+              value={form.block}
+              onChange={e => setField('block', e.target.value)}
+              placeholder="A" />
+          </div>
         </div>
 
+        {/* Möblierung */}
         <div className="grid grid-cols-2 gap-3">
-          <div>
-            <Label>{t('properties.size')}</Label>
-            <input type="number" min="0" step="0.01"
-              className={inputCls} style={focusRing()}
-              value={form.size_sqm}
-              onChange={e => setField('size_sqm', e.target.value)}
-              placeholder="85.50" />
-          </div>
           <div>
             <Label>{t('properties.furnished')}</Label>
             <button type="button"
