@@ -972,6 +972,51 @@ export default function LeadDetail() {
             },
           })
           if (!fnError && !data?.error && data?.password) {
+            // Properties-Eintrag für Portal anlegen (jetzt hat der Eigentümer eine userId)
+            if (savedUnitId && data.userId && profile?.id) {
+              const projectId   = unitEditData?.project_id ?? unitEditProjectId
+              const dp          = dealProjects.find(d => d.project_id === projectId)
+              const projectName = dp?.project?.name ?? ''
+              const location    = dp?.project?.location ?? null
+              const rentalType: 'shortterm' | 'longterm' | null =
+                unitEditForm.rental_type === 'long' ? 'longterm'
+                : unitEditForm.rental_type === 'short' ? 'shortterm'
+                : null
+              const propData = {
+                project_name:         projectName,
+                unit_number:          unitEditForm.unit_number.trim() || null,
+                type:                 unitEditForm.type as 'villa' | 'apartment' | 'studio',
+                bedrooms:             parseInt(unitEditForm.bedrooms) || 0,
+                size_sqm:             unitEditForm.size_sqm ? parseFloat(unitEditForm.size_sqm) : null,
+                is_furnished:         unitEditForm.is_furnished,
+                rental_type:          rentalType,
+                city:                 location,
+                purchase_price_net:   unitEditForm.price_net   ? parseFloat(unitEditForm.price_net)   : null,
+                purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
+                property_status:      unitEditForm.status === 'under_construction' ? 'under_construction' : 'active',
+              }
+              if (existingPropertyId) {
+                await supabase.from('properties').update(propData).eq('id', existingPropertyId)
+              } else {
+                const { data: newProp } = await supabase
+                  .from('properties')
+                  .insert({ ...propData, owner_id: data.userId, created_by: profile.id, images: [] })
+                  .select('id')
+                  .single()
+                if (newProp) {
+                  const newPropId = (newProp as { id: string }).id
+                  await supabase.from('crm_project_units')
+                    .update({ property_id: newPropId })
+                    .eq('id', savedUnitId)
+                  if (deal) {
+                    await supabase.from('deals')
+                      .update({ property_id: newPropId })
+                      .eq('id', deal.id)
+                  }
+                }
+              }
+            }
+
             // Passwort-Modal anzeigen
             setNewOwnerPassword(data.password)
             setNewOwnerPasswordEmail(lead.email)
