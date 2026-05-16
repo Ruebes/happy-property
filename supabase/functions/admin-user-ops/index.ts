@@ -59,20 +59,25 @@ Deno.serve(async (req: Request) => {
 
       const password = generatePassword()
 
-      // Existierenden User prüfen
-      const { data: listData } = await admin.auth.admin.listUsers({ perPage: 1000 })
-      const existing = listData?.users?.find((u: { email?: string }) => u.email === email)
+      // Schnelle Prüfung per profiles-Tabelle statt listUsers
+      const { data: existingProfile } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle()
 
       let userId: string
 
-      if (existing) {
-        const { error } = await admin.auth.admin.updateUserById(existing.id, {
-          password,
-          user_metadata: { full_name, needs_password_setup: true },
-        })
+      if (existingProfile) {
+        // User existiert → Passwort aktualisieren
+        const { error } = await admin.auth.admin.updateUserById(
+          (existingProfile as { id: string }).id,
+          { password, user_metadata: { full_name, needs_password_setup: true } },
+        )
         if (error) throw error
-        userId = existing.id
+        userId = (existingProfile as { id: string }).id
       } else {
+        // Neuen User anlegen
         const { data: created, error } = await admin.auth.admin.createUser({
           email,
           password,

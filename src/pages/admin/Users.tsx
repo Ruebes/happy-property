@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
+import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -186,6 +187,18 @@ export default function AdminUsers() {
   // ── Lead-ID-Map für CRM-Link (email → lead_id) ───────────
   const [leadIdMap, setLeadIdMap] = useState<Record<string, string>>({})
   const [resetingPwId, setResetingPwId] = useState<string | null>(null)
+
+  // ── Wohnungszuweisung beim Erstellen ─────────────────────────────
+  const [crmProjects,     setCrmProjects]     = useState<CrmProject[]>([])
+  const [assignProjectId, setAssignProjectId] = useState('')
+  const [projectUnits,    setProjectUnits]    = useState<CrmProjectUnit[]>([])
+  const [loadingUnits,    setLoadingUnits]    = useState(false)
+  const [assignUnitId,    setAssignUnitId]    = useState('') // '' = keine, 'new' = neu anlegen
+  const [newUnitForm,     setNewUnitForm]     = useState({
+    unit_number: '', type: 'apartment' as 'apartment' | 'villa' | 'studio',
+    bedrooms: 1, size_sqm: '', price_net: '', price_gross: '',
+  })
+
   function copyCreatedPw() {
     if (!createdPassword) return
     navigator.clipboard.writeText(createdPassword)
@@ -241,10 +254,34 @@ export default function AdminUsers() {
     setVerwaltungOptions((data as VerwaltungOption[]) ?? [])
   }, [])
 
+  const fetchCrmProjects = useCallback(async () => {
+    const { data } = await supabase
+      .from('crm_projects')
+      .select('id, name, location, status, images, description_de, description_en, developer, completion_date, video_url, equipment_list, latitude, longitude, created_at, updated_at')
+      .order('name')
+    setCrmProjects((data ?? []) as CrmProject[])
+  }, [])
+
+  async function fetchProjectUnits(projectId: string) {
+    setLoadingUnits(true)
+    try {
+      const { data } = await supabase
+        .from('crm_project_units')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('block', { ascending: true, nullsFirst: true })
+        .order('unit_number', { ascending: true })
+      setProjectUnits((data ?? []) as CrmProjectUnit[])
+    } finally {
+      setLoadingUnits(false)
+    }
+  }
+
   useEffect(() => {
     fetchUsers()
     fetchProps()
     fetchVerwaltungen()
+    fetchCrmProjects()   // ← neu
     // Lead-ID-Map: email → lead_id (für CRM-Link bei Eigentümern)
     supabase.from('leads').select('id, email').then(({ data }) => {
       if (data) {
@@ -255,7 +292,7 @@ export default function AdminUsers() {
         setLeadIdMap(map)
       }
     })
-  }, [fetchUsers, fetchProps, fetchVerwaltungen])
+  }, [fetchUsers, fetchProps, fetchVerwaltungen, fetchCrmProjects])
 
   // ── Filter ───────────────────────────────────────────────
   const filtered = users.filter(u => {
@@ -272,6 +309,10 @@ export default function AdminUsers() {
     setFormError('')
     setEditUser(null)
     setAssignPropId('')
+    setAssignProjectId('')   // ← neu
+    setAssignUnitId('')      // ← neu
+    setProjectUnits([])      // ← neu
+    setNewUnitForm({ unit_number: '', type: 'apartment', bedrooms: 1, size_sqm: '', price_net: '', price_gross: '' })  // ← neu
     setModal('new')
   }
 
@@ -316,6 +357,85 @@ export default function AdminUsers() {
     return ''
   }
 
+  // ── Wohnungseinheit für neuen User anlegen/verknüpfen ───────────────────────────────
+  async function performUnitAssignment(userId: string, userEmail: string) {
+    if (!assignProjectId || !assignUnitId) return
+    const project = crmProjects.find(p => p.id === assignProjectId)
+    if (!project) return
+
+    let unit: CrmProjectUnit | null = null
+
+    if (assignUnitId === 'new') {
+      if (!newUnitForm.unit_number.trim()) return
+      const { data: newUnit, error } = await supabase
+        .from('crm_project_units')
+        .insert({
+          project_id:   assignProjectId,
+          unit_number:  newUnitForm.unit_number.trim(),
+          type:         newUnitForm.type,
+          bedrooms:     newUnitForm.bedrooms,
+          bathrooms:    1,
+          size_sqm:     newUnitForm.size_sqm   ? parseFloat(newUnitForm.size_sqm)   : null,
+          price_net:    newUnitForm.price_net   ? parseFloat(newUnitForm.price_net)   : null,
+          price_gross:  newUnitForm.price_gross ? parseFloat(newUnitForm.price_gross) : null,
+          vat_rate:     5,
+          status:       'active' as const,
+          is_furnished: false,
+          is_completed: false,
+          images:       [] as string[],
+        })
+        .select()
+        .single()
+      if (error || !newUnit) return
+      unit = newUnit as CrmProjectUnit
+    } else {
+      unit = projectUnits.find(u => u.id === assignUnitId) ?? null
+    }
+    if (!unit) return
+
+    // Property anlegen
+    const rentalType: 'longterm' | 'shortterm' =
+      unit.rental_type === 'short' ? 'shortterm' : 'longterm'
+    const { data: newProp, error: propErr } = await supabase
+      .from('properties')
+      .insert({
+        owner_id:             userId,
+        project_name:         project.name,
+        unit_number:          unit.unit_number || null,
+        type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+        bedrooms:             unit.bedrooms ?? 0,
+        size_sqm:             unit.size_sqm ?? null,
+        is_furnished:         unit.is_furnished ?? false,
+        rental_type:          rentalType,
+        city:                 project.location ?? null,
+        purchase_price_net:   unit.price_net ?? null,
+        purchase_price_gross: unit.price_gross ?? null,
+        property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
+        images:               [] as string[],
+        created_by:           profile!.id,
+      })
+      .select('id')
+      .single()
+    if (propErr || !newProp) return
+    const newPropId = (newProp as { id: string }).id
+
+    // Unit mit Property verknüpfen
+    await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
+
+    // Lead-Deal aktualisieren falls vorhanden
+    const { data: leadRow } = await supabase
+      .from('leads').select('id').eq('email', userEmail).maybeSingle()
+    if (leadRow) {
+      const { data: dealRow } = await supabase
+        .from('deals').select('id').eq('lead_id', (leadRow as { id: string }).id)
+        .neq('phase', 'archiviert').maybeSingle()
+      if (dealRow) {
+        await supabase.from('deals').update({ unit_id: unit.id, property_id: newPropId })
+          .eq('id', (dealRow as { id: string }).id)
+      }
+    }
+  }
+
   // ── Create user ──────────────────────────────────────────
   // Läuft via Edge Function – kein Service-Key im Browser nötig.
   // Passwort wird generiert und dem Admin angezeigt (kein automatischer E-Mail-Versand).
@@ -326,7 +446,7 @@ export default function AdminUsers() {
     setFormError('')
     try {
       const full_name = `${form.firstName.trim()} ${form.lastName.trim()}`
-      const { password } = await adminUserOp<{ success: true; userId: string; password: string }>({
+      const result = await adminUserOp<{ success: true; userId: string; password: string }>({
         action:              'create',
         email:               form.email.trim(),
         full_name,
@@ -341,8 +461,12 @@ export default function AdminUsers() {
         bic:                 form.bic.trim() || null,
         bank_account_holder: form.bank_account_holder.trim() || null,
       })
+      // Wohnung zuweisen falls ausgewählt
+      if (form.role === 'eigentuemer' && assignProjectId && assignUnitId) {
+        await performUnitAssignment(result.userId, form.email.trim())
+      }
       closeModal()
-      setCreatedPassword(password)
+      setCreatedPassword(result.password)
       fetchUsers()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
@@ -878,6 +1002,124 @@ export default function AdminUsers() {
                   </div>
                 </div>
               </section>
+
+              {/* ── Wohnung zuweisen (nur beim Erstellen, Rolle Eigentümer) ─── */}
+              {modal === 'new' && form.role === 'eigentuemer' && (
+                <section>
+                  <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-3">
+                    🏠 Wohnung zuweisen (optional)
+                  </h3>
+
+                  {/* Projekt */}
+                  <Field label="Projekt">
+                    <select
+                      className={inputCls}
+                      value={assignProjectId}
+                      onChange={e => {
+                        setAssignProjectId(e.target.value)
+                        setAssignUnitId('')
+                        if (e.target.value) fetchProjectUnits(e.target.value)
+                        else setProjectUnits([])
+                      }}
+                    >
+                      <option value="">— Kein Projekt —</option>
+                      {crmProjects.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  {/* Einheit */}
+                  {assignProjectId && (
+                    <div className="mt-3">
+                      <Field label="Wohnungseinheit">
+                        {loadingUnits ? (
+                          <div className="flex items-center gap-2 py-2">
+                            <span className="w-4 h-4 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
+                            <span className="text-xs text-gray-400 font-body">Lade Wohnungen…</span>
+                          </div>
+                        ) : (
+                          <select
+                            className={inputCls}
+                            value={assignUnitId}
+                            onChange={e => setAssignUnitId(e.target.value)}
+                          >
+                            <option value="">— Keine Einheit —</option>
+                            {projectUnits
+                              .filter(u => !u.property_id) // nur nicht vergebene
+                              .map(u => (
+                                <option key={u.id} value={u.id}>
+                                  {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
+                                  {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
+                                  {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
+                                  {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
+                                </option>
+                              ))
+                            }
+                            <option value="new">+ Neue Wohnung anlegen</option>
+                          </select>
+                        )}
+                      </Field>
+                    </div>
+                  )}
+
+                  {/* Neue Wohnung anlegen — Mini-Formular */}
+                  {assignUnitId === 'new' && (
+                    <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-100">
+                      <p className="text-xs font-semibold text-gray-500 font-body">Neue Wohnung</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Wohnungsnummer *">
+                          <input
+                            className={inputCls}
+                            placeholder="z.B. 12 oder A-12"
+                            value={newUnitForm.unit_number}
+                            onChange={e => setNewUnitForm(f => ({ ...f, unit_number: e.target.value }))}
+                          />
+                        </Field>
+                        <Field label="Typ">
+                          <select
+                            className={inputCls}
+                            value={newUnitForm.type}
+                            onChange={e => setNewUnitForm(f => ({ ...f, type: e.target.value as 'apartment' | 'villa' | 'studio' }))}
+                          >
+                            <option value="apartment">Wohnung</option>
+                            <option value="villa">Villa</option>
+                            <option value="studio">Studio</option>
+                          </select>
+                        </Field>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <Field label="Schlafzimmer">
+                          <input
+                            className={inputCls}
+                            type="number" min="0"
+                            value={newUnitForm.bedrooms}
+                            onChange={e => setNewUnitForm(f => ({ ...f, bedrooms: parseInt(e.target.value) || 0 }))}
+                          />
+                        </Field>
+                        <Field label="Fläche (m²)">
+                          <input
+                            className={inputCls}
+                            type="number" min="0" step="0.01"
+                            placeholder="85"
+                            value={newUnitForm.size_sqm}
+                            onChange={e => setNewUnitForm(f => ({ ...f, size_sqm: e.target.value }))}
+                          />
+                        </Field>
+                        <Field label="Preis netto (€)">
+                          <input
+                            className={inputCls}
+                            type="number" min="0" step="100"
+                            placeholder="190000"
+                            value={newUnitForm.price_net}
+                            onChange={e => setNewUnitForm(f => ({ ...f, price_net: e.target.value }))}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
 
               {/* ── Einladungs-Info (neu anlegen) ────────── */}
               {modal === 'new' && (
