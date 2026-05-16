@@ -49,6 +49,7 @@ interface FormData {
   is_furnished: boolean
   rental_type: 'longterm' | 'shortterm'
   purchase_price_gross: string
+  purchase_price_net: string
   vat_rate: string
   street: string
   house_number: string
@@ -75,7 +76,7 @@ interface OwnerModalData {
 const EMPTY_FORM: FormData = {
   project_name: '', unit_number: '', type: 'apartment', bedrooms: '1',
   size_sqm: '', is_furnished: false, rental_type: 'longterm',
-  purchase_price_gross: '', vat_rate: '19',
+  purchase_price_gross: '', purchase_price_net: '', vat_rate: '19',
   street: '', house_number: '', zip: '', city: '', description: '',
   owner_id: '',
 }
@@ -208,14 +209,39 @@ export default function Objekte() {
 
   const canEdit = profile?.role === 'admin' || profile?.role === 'verwalter'
 
-  // ── Kaufpreis live ─────────────────────────────────────────
-  const priceNet = useMemo(() => {
-    const gross = parseFloat(form.purchase_price_gross.replace(',', '.'))
+  // ── Kaufpreis bidirektional ────────────────────────────────
+  function onGrossChange(val: string) {
+    const gross = parseFloat(val.replace(',', '.'))
     const vat   = parseFloat(form.vat_rate.replace(',', '.'))
-    if (!isNaN(gross) && gross > 0 && !isNaN(vat) && vat >= 0)
-      return gross / (1 + vat / 100)
-    return null
-  }, [form.purchase_price_gross, form.vat_rate])
+    const net   = (!isNaN(gross) && gross > 0 && !isNaN(vat) && vat >= 0)
+      ? String(Math.round(gross / (1 + vat / 100) * 100) / 100)
+      : ''
+    setForm(f => ({ ...f, purchase_price_gross: val, purchase_price_net: net }))
+  }
+
+  function onNetChange(val: string) {
+    const net   = parseFloat(val.replace(',', '.'))
+    const vat   = parseFloat(form.vat_rate.replace(',', '.'))
+    const gross = (!isNaN(net) && net > 0 && !isNaN(vat) && vat >= 0)
+      ? String(Math.round(net * (1 + vat / 100) * 100) / 100)
+      : ''
+    setForm(f => ({ ...f, purchase_price_net: val, purchase_price_gross: gross }))
+  }
+
+  function onVatChange(val: string) {
+    const vat   = parseFloat(val.replace(',', '.'))
+    const gross = parseFloat(form.purchase_price_gross.replace(',', '.'))
+    const net   = (!isNaN(gross) && gross > 0 && !isNaN(vat) && vat >= 0)
+      ? String(Math.round(gross / (1 + vat / 100) * 100) / 100)
+      : ''
+    setForm(f => ({ ...f, vat_rate: val, purchase_price_net: net }))
+  }
+
+  // Für handleSave: berechneter Nettowert aus State
+  const priceNet = useMemo(() => {
+    const v = parseFloat(form.purchase_price_net.replace(',', '.'))
+    return isNaN(v) || v <= 0 ? null : v
+  }, [form.purchase_price_net])
 
   // ── CRM Projekte + Einheiten ───────────────────────────────
   const fetchCrmProjects = useCallback(async () => {
@@ -367,6 +393,7 @@ export default function Objekte() {
       is_furnished:         p.is_furnished ?? false,
       rental_type:          p.rental_type,
       purchase_price_gross: p.purchase_price_gross != null ? String(p.purchase_price_gross) : '',
+      purchase_price_net:   p.purchase_price_net  != null ? String(p.purchase_price_net)  : '',
       vat_rate:             p.vat_rate != null ? String(p.vat_rate) : '19',
       street:               p.street ?? '',
       house_number:         p.house_number ?? '',
@@ -648,7 +675,7 @@ export default function Objekte() {
                           setField('type', unit.type as FormData['type'])
                           if (unit.bedrooms != null) setField('bedrooms', String(unit.bedrooms))
                           if (unit.size_sqm != null) setField('size_sqm', String(unit.size_sqm))
-                          if (unit.price_net != null) setField('purchase_price_gross', String(Math.round(unit.price_net * 1.19)))
+                          if (unit.price_net != null) onNetChange(String(unit.price_net))
                         }
                       }
                     }}
@@ -756,6 +783,18 @@ export default function Objekte() {
           <h4 className="text-sm font-semibold font-body text-hp-black">
             {t('properties.purchasePrice.title')}
           </h4>
+          {/* MwSt-Zeile */}
+          <div>
+            <Label>{t('properties.purchasePrice.vat')}</Label>
+            <div className="relative w-36">
+              <input type="number" min="0" max="100" step="0.01"
+                className={`${inputCls} pr-7`} style={focusRing()}
+                value={form.vat_rate}
+                onChange={e => onVatChange(e.target.value)} />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">%</span>
+            </div>
+          </div>
+          {/* Brutto / Netto — bidirektional */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>{t('properties.purchasePrice.gross')}</Label>
@@ -764,38 +803,29 @@ export default function Objekte() {
                 <input type="number" min="0" step="0.01"
                   className={`${inputCls} pl-7`} style={focusRing()}
                   value={form.purchase_price_gross}
-                  onChange={e => setField('purchase_price_gross', e.target.value)}
+                  onChange={e => onGrossChange(e.target.value)}
                   placeholder="595000" />
               </div>
             </div>
             <div>
-              <Label>{t('properties.purchasePrice.vat')}</Label>
+              <Label>{t('properties.purchasePrice.net')}</Label>
               <div className="relative">
-                <input type="number" min="0" max="100" step="0.01"
-                  className={`${inputCls} pr-7`} style={focusRing()}
-                  value={form.vat_rate}
-                  onChange={e => setField('vat_rate', e.target.value)} />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">%</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
+                <input type="number" min="0" step="0.01"
+                  className={`${inputCls} pl-7`} style={focusRing()}
+                  value={form.purchase_price_net}
+                  onChange={e => onNetChange(e.target.value)}
+                  placeholder="500000" />
               </div>
             </div>
           </div>
-          <div>
-            <Label>{t('properties.purchasePrice.net')}</Label>
-            <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm select-none">€</span>
-              <input readOnly
-                className={`${inputCls} pl-7 bg-gray-100 text-gray-500 cursor-default`}
-                value={priceNet != null ? fmtCurrency(priceNet).replace(/[€$£\s]/g, '') : ''}
-                placeholder={t('properties.purchasePrice.netHint')} />
-            </div>
-            {priceNet != null && form.purchase_price_gross && (
-              <p className="text-xs text-gray-400 font-body mt-1">
-                {fmtCurrency(parseFloat(form.purchase_price_gross.replace(',', '.')))}
-                {' ÷ (1 + '}{form.vat_rate}{'%) = '}
-                <strong className="text-gray-500">{fmtCurrency(priceNet)}</strong>
-              </p>
-            )}
-          </div>
+          {priceNet != null && form.purchase_price_gross && (
+            <p className="text-xs text-gray-400 font-body">
+              {fmtCurrency(parseFloat(form.purchase_price_gross.replace(',', '.')))} brutto
+              {' · MwSt '}{form.vat_rate}{'% · '}
+              <strong className="text-gray-600">{fmtCurrency(priceNet)} netto</strong>
+            </p>
+          )}
         </div>
       </div>
     )

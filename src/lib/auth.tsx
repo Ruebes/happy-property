@@ -162,14 +162,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         )
         const myId = ++fetchIdRef.current
 
-        // Wenn Cache vorhanden: sofort ohne Spinner anzeigen
-        setState({
-          loading:            !cachedProfile,
+        // WICHTIG: loading nur auf true setzen wenn wir weder Cache noch laufendes
+        // Profil haben. Bei Fenster-Fokus-Events (SIGNED_IN nach Token-Refresh)
+        // niemals loading=true setzen wenn bereits ein Profil im State ist.
+        setState(s => ({
+          ...s,
+          loading:            !cachedProfile && !s.profile,
           session,
           user:               session?.user ?? null,
-          profile:            cachedProfile,
+          profile:            cachedProfile ?? s.profile,
           needsPasswordSetup,
-        })
+        }))
 
         // Frisches Profil im Hintergrund laden
         const freshProfile = session?.user ? await fetchProfile(session.user.id) : null
@@ -178,13 +181,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Cache aktualisieren
         setCachedProfile(freshProfile)
 
-        setState({
+        setState(s => ({
+          ...s,
           user:               session?.user ?? null,
           session,
-          profile:            freshProfile,
+          profile:            freshProfile ?? s.profile,
           loading:            false,
           needsPasswordSetup,
-        })
+        }))
 
         // Portal-Login tracken: nur bei echtem Login (nicht Reload/Token-Refresh)
         if (event === 'SIGNED_IN' && freshProfile?.role === 'eigentuemer' && session?.user?.id) {
