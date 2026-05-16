@@ -103,13 +103,18 @@ function sanitizeFilename(name: string): string {
 
 // ── Toast ──────────────────────────────────────────────────────
 function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  const isError = message.startsWith('Fehler:')
   useEffect(() => {
-    const t = setTimeout(onClose, 4000)
+    const t = setTimeout(onClose, isError ? 12000 : 4000)
     return () => clearTimeout(t)
-  }, [onClose])
+  }, [onClose, isError])
   return (
-    <div className="fixed bottom-6 right-6 z-50 bg-hp-black text-white text-sm
-                    font-body px-5 py-3 rounded-xl shadow-lg max-w-sm">
+    <div
+      onClick={onClose}
+      className={`fixed bottom-6 right-6 z-50 text-white text-sm cursor-pointer
+                  font-body px-5 py-3 rounded-xl shadow-lg max-w-sm break-words`}
+      style={{ backgroundColor: isError ? '#dc2626' : '#111827' }}
+    >
       {message}
     </div>
   )
@@ -545,8 +550,10 @@ export default function Objekte() {
       setToast(t('success.saved'))
       fetchProperties()
 
-    } catch {
-      setToast(t('errors.saveFailed'))
+    } catch (err) {
+      console.error('[handleSave] Fehler:', err)
+      const msg = err instanceof Error ? err.message : JSON.stringify(err)
+      setToast(`Fehler: ${msg}`)
     } finally {
       // Always reset spinners — even if an error occurred
       setSaving(false)
