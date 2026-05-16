@@ -23,7 +23,7 @@ interface Property {
   city: string | null
   description: string | null
   images: string[]
-  rental_type: 'longterm' | 'shortterm'
+  rental_type: 'longterm' | 'shortterm' | null
   owner_id: string
   purchase_price_gross: number | null
   purchase_price_net: number | null
@@ -48,7 +48,7 @@ interface FormData {
   bedrooms: string
   size_sqm: string
   is_furnished: boolean
-  rental_type: 'longterm' | 'shortterm'
+  rental_type: 'longterm' | 'shortterm' | ''
   purchase_price_gross: string
   purchase_price_net: string
   vat_rate: string
@@ -76,7 +76,7 @@ interface OwnerModalData {
 
 const EMPTY_FORM: FormData = {
   project_name: '', unit_number: '', type: 'apartment', bedrooms: '1',
-  size_sqm: '', is_furnished: false, rental_type: 'longterm',
+  size_sqm: '', is_furnished: false, rental_type: '',
   purchase_price_gross: '', purchase_price_net: '', vat_rate: '19',
   street: '', house_number: '', zip: '', city: '', description: '',
   owner_id: '',
@@ -390,7 +390,7 @@ export default function Objekte() {
       bedrooms:             String(p.bedrooms),
       size_sqm:             p.size_sqm != null ? String(p.size_sqm) : '',
       is_furnished:         p.is_furnished ?? false,
-      rental_type:          p.rental_type,
+      rental_type:          p.rental_type ?? '',
       purchase_price_gross: p.purchase_price_gross != null ? String(p.purchase_price_gross) : '',
       purchase_price_net:   p.purchase_price_net  != null ? String(p.purchase_price_net)  : '',
       vat_rate:             p.vat_rate != null ? String(p.vat_rate) : '19',
@@ -444,7 +444,7 @@ export default function Objekte() {
         bedrooms:             parseInt(form.bedrooms) || 0,
         size_sqm:             form.size_sqm ? parseFloat(form.size_sqm.replace(',', '.')) : null,
         is_furnished:         form.is_furnished,
-        rental_type:          form.rental_type,
+        rental_type:          form.rental_type || null,
         purchase_price_gross: form.purchase_price_gross
                                 ? parseFloat(form.purchase_price_gross.replace(',', '.'))
                                 : null,
@@ -472,12 +472,14 @@ export default function Objekte() {
           .eq('id', editId)
         if (error) throw error
 
-        // Sync rental_type to all linked crm_project_units
-        const crmRentalType = form.rental_type === 'longterm' ? 'long' : 'short'
-        await supabase
-          .from('crm_project_units')
-          .update({ rental_type: crmRentalType })
-          .eq('property_id', editId)
+        // Sync rental_type to all linked crm_project_units (nur wenn gesetzt)
+        if (form.rental_type) {
+          const crmRentalType = form.rental_type === 'longterm' ? 'long' : 'short'
+          await supabase
+            .from('crm_project_units')
+            .update({ rental_type: crmRentalType })
+            .eq('property_id', editId)
+        }
 
         // Also update management_rental_type if property is managed
         await supabase
@@ -780,15 +782,21 @@ export default function Objekte() {
         </div>
 
         <div>
-          <Label required>{t('properties.rentalType')}</Label>
+          <Label>{t('properties.rentalType')}</Label>
           <CustomSelect
             className={inputCls} style={focusRing()}
             value={form.rental_type}
             onChange={val => setField('rental_type', val as FormData['rental_type'])}
-            options={(['longterm', 'shortterm'] as const).map(v => ({
-              value: v, label: t(`properties.rental.${v}`),
-            }))}
+            placeholder="— Noch nicht festgelegt —"
+            options={[
+              { value: '', label: '— Noch nicht festgelegt —' },
+              { value: 'longterm',  label: t('properties.rental.longterm')  },
+              { value: 'shortterm', label: t('properties.rental.shortterm') },
+            ]}
           />
+          <p className="text-xs text-gray-400 font-body mt-1">
+            Wird spätestens bei Freigabe für die Verwaltung festgelegt.
+          </p>
         </div>
 
         {/* Kaufpreis-Block */}
@@ -1301,12 +1309,16 @@ export default function Objekte() {
                       {locationStr(p)}
                     </td>
                     <td className="px-5 py-3.5">
-                      <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full
-                        ${p.rental_type === 'longterm'
-                          ? 'bg-blue-50 text-blue-700'
-                          : 'bg-orange-50 text-orange-700'}`}>
-                        {t(`properties.rental.${p.rental_type}`)}
-                      </span>
+                      {p.rental_type ? (
+                        <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full
+                          ${p.rental_type === 'longterm'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-orange-50 text-orange-700'}`}>
+                          {t(`properties.rental.${p.rental_type}`)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-300 font-body">—</span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">
                       {p.owner?.full_name || p.owner?.email || t('common.na')}

@@ -685,7 +685,7 @@ export default function PropertyDetail() {
   const [showVerwaltungModal,  setShowVerwaltungModal]  = useState(false)
   const [verwaltungList,       setVerwaltungList]       = useState<VerwaltungRecord[]>([])
   const [aktivierVerwaltungId, setAktivierVerwaltungId] = useState('')
-  const [aktivierRentalType,   setAktivierRentalType]   = useState<'longterm' | 'shortterm'>('longterm')
+  const [aktivierRentalType,   setAktivierRentalType]   = useState<'longterm' | 'shortterm' | ''>('')
   const [aktivierSaving,       setAktivierSaving]       = useState(false)
 
   // Owner accordion
@@ -715,7 +715,7 @@ export default function PropertyDetail() {
   }
 
   async function handleAktivieren() {
-    if (!id || !aktivierVerwaltungId) return
+    if (!id || !aktivierVerwaltungId || !aktivierRentalType) return
     setAktivierSaving(true)
     const { error } = await supabase.from('properties').update({
       is_managed:             true,
@@ -1877,7 +1877,7 @@ export default function PropertyDetail() {
               Diese Immobilie ist noch keiner Verwaltung zugewiesen.
             </p>
             <button
-              onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType('longterm'); setShowVerwaltungModal(true) }}
+              onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType(''); setShowVerwaltungModal(true) }}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
                          text-white font-body hover:opacity-90 transition-opacity"
               style={{ backgroundColor: 'var(--color-highlight)' }}>
@@ -1924,18 +1924,25 @@ export default function PropertyDetail() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">Vermietungsart *</label>
+                  <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
+                    Vermietungsart <span className="text-red-400">*</span>
+                  </label>
                   <div className="grid grid-cols-2 gap-2">
                     {(['longterm', 'shortterm'] as const).map(rt => (
                       <button key={rt} type="button" onClick={() => setAktivierRentalType(rt)}
                               className={`py-2.5 rounded-xl border-2 text-sm font-semibold font-body transition-all
                                 ${aktivierRentalType === rt
-                                  ? 'border-hp-highlight text-hp-highlight bg-blue-50'
+                                  ? 'border-hp-highlight text-hp-highlight bg-orange-50'
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
                         {rt === 'longterm' ? '🏠 Langzeit' : '🌴 Kurzzeit'}
                       </button>
                     ))}
                   </div>
+                  {!aktivierRentalType && (
+                    <p className="text-xs text-amber-600 font-body mt-1.5">
+                      Bitte Vermietungsart auswählen.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="px-6 pb-5 flex gap-3 justify-end">
@@ -1943,7 +1950,7 @@ export default function PropertyDetail() {
                         className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
                   Abbrechen
                 </button>
-                <button onClick={handleAktivieren} disabled={!aktivierVerwaltungId || aktivierSaving}
+                <button onClick={handleAktivieren} disabled={!aktivierVerwaltungId || !aktivierRentalType || aktivierSaving}
                         className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body hover:opacity-90 transition-opacity disabled:opacity-50"
                         style={{ backgroundColor: 'var(--color-highlight)' }}>
                   {aktivierSaving ? 'Speichern…' : '✓ Aktivieren'}
