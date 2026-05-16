@@ -12,6 +12,7 @@ import RegistrationModal from '../../../components/crm/RegistrationModal'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -2403,41 +2404,42 @@ export default function LeadDetail() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="block text-xs text-gray-500 mb-1">Quelle</label>
-                          <select
+                          <CustomSelect
                             value={leadForm.source}
-                            onChange={e => setLeadForm(f => ({ ...f, source: e.target.value }))}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
-                          >
-                            <option value="meta">Meta</option>
-                            <option value="google">Google</option>
-                            <option value="empfehlung">Empfehlung</option>
-                            <option value="sonstiges">Sonstiges</option>
-                          </select>
+                            onChange={val => setLeadForm(f => ({ ...f, source: val }))}
+                            className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                            options={[
+                              { value: 'meta', label: 'Meta' },
+                              { value: 'google', label: 'Google' },
+                              { value: 'empfehlung', label: 'Empfehlung' },
+                              { value: 'sonstiges', label: 'Sonstiges' },
+                            ]}
+                          />
                         </div>
                         <div>
                           <label className="block text-xs text-gray-500 mb-1">Sprache</label>
-                          <select
+                          <CustomSelect
                             value={leadForm.language}
-                            onChange={e => setLeadForm(f => ({ ...f, language: e.target.value }))}
-                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
-                          >
-                            <option value="de">Deutsch</option>
-                            <option value="en">English</option>
-                          </select>
+                            onChange={val => setLeadForm(f => ({ ...f, language: val }))}
+                            className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                            options={[
+                              { value: 'de', label: 'Deutsch' },
+                              { value: 'en', label: 'English' },
+                            ]}
+                          />
                         </div>
                       </div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Zuständig</label>
-                        <select
+                        <CustomSelect
                           value={leadForm.assigned_to}
-                          onChange={e => setLeadForm(f => ({ ...f, assigned_to: e.target.value }))}
-                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white"
-                        >
-                          <option value="">— Niemand —</option>
-                          {staff.map(s => (
-                            <option key={s.id} value={s.id}>{s.full_name}</option>
-                          ))}
-                        </select>
+                          onChange={val => setLeadForm(f => ({ ...f, assigned_to: val }))}
+                          className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                          options={[
+                            { value: '', label: '— Niemand —' },
+                            ...staff.map(s => ({ value: s.id, label: s.full_name })),
+                          ]}
+                        />
                       </div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">Notizen</label>
@@ -2708,28 +2710,30 @@ export default function LeadDetail() {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-gray-500 mb-1">{t('crm.type', 'Typ')}</label>
-                      <select
+                      <CustomSelect
                         value={actForm.type}
-                        onChange={(e) => setActForm({ ...actForm, type: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-orange-400"
-                      >
-                        <option value="call">📞 {t('crm.actType.call', 'Anruf')}</option>
-                        <option value="email">📧 {t('crm.actType.email', 'E-Mail')}</option>
-                        <option value="whatsapp">📱 WhatsApp</option>
-                        <option value="note">📝 {t('crm.actType.note', 'Notiz')}</option>
-                        <option value="meeting">🤝 {t('crm.actType.meeting', 'Meeting')}</option>
-                      </select>
+                        onChange={val => setActForm({ ...actForm, type: val })}
+                        className="w-full border border-gray-200 rounded-lg text-sm"
+                        options={[
+                          { value: 'call', label: `📞 ${t('crm.actType.call', 'Anruf')}` },
+                          { value: 'email', label: `📧 ${t('crm.actType.email', 'E-Mail')}` },
+                          { value: 'whatsapp', label: '📱 WhatsApp' },
+                          { value: 'note', label: `📝 ${t('crm.actType.note', 'Notiz')}` },
+                          { value: 'meeting', label: `🤝 ${t('crm.actType.meeting', 'Meeting')}` },
+                        ]}
+                      />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-500 mb-1">{t('crm.direction', 'Richtung')}</label>
-                      <select
+                      <CustomSelect
                         value={actForm.direction}
-                        onChange={(e) => setActForm({ ...actForm, direction: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-orange-400"
-                      >
-                        <option value="outbound">{t('crm.outbound', 'Ausgehend')}</option>
-                        <option value="inbound">{t('crm.inbound', 'Eingehend')}</option>
-                      </select>
+                        onChange={val => setActForm({ ...actForm, direction: val })}
+                        className="w-full border border-gray-200 rounded-lg text-sm"
+                        options={[
+                          { value: 'outbound', label: t('crm.outbound', 'Ausgehend') },
+                          { value: 'inbound', label: t('crm.inbound', 'Eingehend') },
+                        ]}
+                      />
                     </div>
                   </div>
                   <input
@@ -2763,18 +2767,15 @@ export default function LeadDetail() {
               <div className="p-6 space-y-4">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">{t('crm.emailTemplate', 'Vorlage')}</label>
-                  <select
+                  <CustomSelect
                     value={emailForm.templateId}
-                    onChange={(e) => handleTemplateSelect(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                  >
-                    <option value="">{t('crm.selectTemplate', '– Vorlage wählen –')}</option>
-                    {templates.map((tpl) => (
-                      <option key={tpl.id} value={tpl.id}>
-                        {tpl.name} ({tpl.language.toUpperCase()})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={val => handleTemplateSelect(val)}
+                    className="w-full border border-gray-200 rounded-lg text-sm"
+                    options={[
+                      { value: '', label: t('crm.selectTemplate', '– Vorlage wählen –') },
+                      ...templates.map(tpl => ({ value: tpl.id, label: `${tpl.name} (${tpl.language.toUpperCase()})` })),
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">{t('crm.subject', 'Betreff')}</label>
@@ -2888,16 +2889,15 @@ export default function LeadDetail() {
                     </div>
                     <div>
                       <label className="block text-xs text-gray-500 mb-1">{t('crm.assignTo', 'Zuweisen an')}</label>
-                      <select
+                      <CustomSelect
                         value={taskForm.assigned_to}
-                        onChange={(e) => setTaskForm({ ...taskForm, assigned_to: e.target.value })}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-orange-400"
-                      >
-                        <option value="">— {t('crm.nobody', 'Niemand')} —</option>
-                        {staff.map((s) => (
-                          <option key={s.id} value={s.id}>{s.full_name}</option>
-                        ))}
-                      </select>
+                        onChange={val => setTaskForm({ ...taskForm, assigned_to: val })}
+                        className="w-full border border-gray-200 rounded-lg text-sm"
+                        options={[
+                          { value: '', label: `— ${t('crm.nobody', 'Niemand')} —` },
+                          ...staff.map(s => ({ value: s.id, label: s.full_name })),
+                        ]}
+                      />
                     </div>
                   </div>
                   <button
@@ -3183,17 +3183,18 @@ export default function LeadDetail() {
                         onChange={e => setUnitDocForm(f => ({ ...f, name: e.target.value }))}
                         className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
                       />
-                      <select
+                      <CustomSelect
                         value={unitDocForm.doc_type}
-                        onChange={e => setUnitDocForm(f => ({ ...f, doc_type: e.target.value as UnitDocType }))}
-                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                      >
-                        <option value="kaufvertrag">Kaufvertrag</option>
-                        <option value="mietvertrag">Mietvertrag</option>
-                        <option value="zahlungsbeleg">Zahlungsbeleg</option>
-                        <option value="grundriss">Grundriss</option>
-                        <option value="sonstiges">Sonstiges</option>
-                      </select>
+                        onChange={val => setUnitDocForm(f => ({ ...f, doc_type: val as UnitDocType }))}
+                        className="border border-gray-200 rounded-lg text-sm"
+                        options={[
+                          { value: 'kaufvertrag', label: 'Kaufvertrag' },
+                          { value: 'mietvertrag', label: 'Mietvertrag' },
+                          { value: 'zahlungsbeleg', label: 'Zahlungsbeleg' },
+                          { value: 'grundriss', label: 'Grundriss' },
+                          { value: 'sonstiges', label: 'Sonstiges' },
+                        ]}
+                      />
                     </div>
                     <input
                       type="text"
@@ -3788,22 +3789,28 @@ export default function LeadDetail() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Typ</label>
-                  <select value={unitEditForm.type}
-                    onChange={e => setUnitEditForm(f => ({ ...f, type: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                    <option value="apartment">Wohnung</option>
-                    <option value="villa">Villa</option>
-                    <option value="studio">Studio</option>
-                  </select>
+                  <CustomSelect
+                    value={unitEditForm.type}
+                    onChange={val => setUnitEditForm(f => ({ ...f, type: val }))}
+                    className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                    options={[
+                      { value: 'apartment', label: 'Wohnung' },
+                      { value: 'villa', label: 'Villa' },
+                      { value: 'studio', label: 'Studio' },
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Status</label>
-                  <select value={unitEditForm.status}
-                    onChange={e => setUnitEditForm(f => ({ ...f, status: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                    <option value="active">Aktiv</option>
-                    <option value="under_construction">Im Bau</option>
-                  </select>
+                  <CustomSelect
+                    value={unitEditForm.status}
+                    onChange={val => setUnitEditForm(f => ({ ...f, status: val }))}
+                    className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                    options={[
+                      { value: 'active', label: 'Aktiv' },
+                      { value: 'under_construction', label: 'Im Bau' },
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Etage</label>
@@ -3879,13 +3886,16 @@ export default function LeadDetail() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Vermietungsart</label>
-                  <select value={unitEditForm.rental_type}
-                    onChange={e => setUnitEditForm(f => ({ ...f, rental_type: e.target.value }))}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                    <option value="">– keine –</option>
-                    <option value="short">🏖 Kurzzeitvermietung</option>
-                    <option value="long">🏠 Langzeitvermietung</option>
-                  </select>
+                  <CustomSelect
+                    value={unitEditForm.rental_type}
+                    onChange={val => setUnitEditForm(f => ({ ...f, rental_type: val }))}
+                    className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                    options={[
+                      { value: '', label: '– keine –' },
+                      { value: 'short', label: '🏖 Kurzzeitvermietung' },
+                      { value: 'long', label: '🏠 Langzeitvermietung' },
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Übergabedatum</label>

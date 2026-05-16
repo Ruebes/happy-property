@@ -7,6 +7,7 @@ import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
   UnitType, UnitStatus, ConstructionPhoto,
 } from '../../../lib/crmTypes'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -1301,26 +1302,28 @@ export default function ProjectDetail() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">Typ</label>
-                      <select
+                      <CustomSelect
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                         value={form.type}
-                        onChange={e => setForm(f => ({ ...f, type: e.target.value as UnitType }))}
-                      >
-                        <option value="apartment">Wohnung</option>
-                        <option value="villa">Villa</option>
-                        <option value="studio">Studio</option>
-                      </select>
+                        onChange={val => setForm(f => ({ ...f, type: val as UnitType }))}
+                        options={[
+                          { value: 'apartment', label: 'Wohnung' },
+                          { value: 'villa',     label: 'Villa' },
+                          { value: 'studio',    label: 'Studio' },
+                        ]}
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
-                      <select
+                      <CustomSelect
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                         value={form.status}
-                        onChange={e => setForm(f => ({ ...f, status: e.target.value as UnitStatus }))}
-                      >
-                        <option value="active">Aktiv</option>
-                        <option value="under_construction">Im Bau</option>
-                      </select>
+                        onChange={val => setForm(f => ({ ...f, status: val as UnitStatus }))}
+                        options={[
+                          { value: 'active',             label: 'Aktiv' },
+                          { value: 'under_construction', label: 'Im Bau' },
+                        ]}
+                      />
                     </div>
                   </div>
 
@@ -1731,20 +1734,21 @@ export default function ProjectDetail() {
                         value={docForm.name}
                         onChange={e => setDocForm(d => ({ ...d, name: e.target.value }))}
                       />
-                      <select
+                      <CustomSelect
                         className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
                         value={docForm.doc_type}
-                        onChange={e => setDocForm(d => ({
-                          ...d, doc_type: e.target.value as CrmUnitDocument['doc_type'],
+                        onChange={val => setDocForm(d => ({
+                          ...d, doc_type: val as CrmUnitDocument['doc_type'],
                         }))}
-                      >
-                        <option value="kaufvertrag">Kaufvertrag</option>
-                        <option value="mietvertrag">Mietvertrag</option>
-                        <option value="rechnung">Rechnung</option>
-                        <option value="zahlungsbeleg">Zahlungsbeleg</option>
-                        <option value="grundriss">Grundriss</option>
-                        <option value="sonstiges">Sonstiges</option>
-                      </select>
+                        options={[
+                          { value: 'kaufvertrag',   label: 'Kaufvertrag' },
+                          { value: 'mietvertrag',   label: 'Mietvertrag' },
+                          { value: 'rechnung',      label: 'Rechnung' },
+                          { value: 'zahlungsbeleg', label: 'Zahlungsbeleg' },
+                          { value: 'grundriss',     label: 'Grundriss' },
+                          { value: 'sonstiges',     label: 'Sonstiges' },
+                        ]}
+                      />
                       <input
                         className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
                         placeholder="Notiz (optional)"
@@ -1842,16 +1846,16 @@ export default function ProjectDetail() {
                   {/* Verwalter */}
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Verwalter zuweisen</label>
-                    <select
+                    <CustomSelect
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                       value={form.verwalter_id}
-                      onChange={e => setForm(f => ({ ...f, verwalter_id: e.target.value }))}
-                    >
-                      <option value="">— Kein Verwalter —</option>
-                      {verwalters.map(v => (
-                        <option key={v.id} value={v.id}>{v.full_name}</option>
-                      ))}
-                    </select>
+                      onChange={val => setForm(f => ({ ...f, verwalter_id: val }))}
+                      options={[
+                        { value: '', label: '— Kein Verwalter —' },
+                        ...verwalters.map(v => ({ value: v.id, label: v.full_name })),
+                      ]}
+                      placeholder="— Kein Verwalter —"
+                    />
                     {verwalters.length === 0 && (
                       <p className="text-xs text-gray-400 mt-1">
                         Noch keine Verwalter angelegt.

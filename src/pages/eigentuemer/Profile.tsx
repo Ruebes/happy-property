@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
+import { CustomSelect } from '../../components/CustomSelect'
 
 // ── IBAN mask ─────────────────────────────────────────────────
 function maskIban(iban: string): string {
@@ -224,11 +225,15 @@ export default function EigentuemerProfile() {
                        placeholder="+49 170 …" />
               </Field>
               <Field label={t('users.form.language')}>
-                <select className={inputCls} value={language}
-                        onChange={e => setLanguage(e.target.value)}>
-                  <option value="de">🇩🇪 Deutsch</option>
-                  <option value="en">🇬🇧 English</option>
-                </select>
+                <CustomSelect
+                  className={inputCls}
+                  value={language}
+                  onChange={val => setLanguage(val)}
+                  options={[
+                    { value: 'de', label: '🇩🇪 Deutsch' },
+                    { value: 'en', label: '🇬🇧 English' },
+                  ]}
+                />
               </Field>
             </div>
           </div>

@@ -14,6 +14,7 @@ import {
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 // ── LeadModal ───────────────────────────────────────────────────────────────
 
@@ -200,29 +201,31 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 {t('crm.lead.source', 'Quelle')}
               </label>
-              <select
+              <CustomSelect
                 value={form.source}
-                onChange={e => set('source', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-              >
-                <option value="meta">{t('crm.sources.meta', 'META Werbung')}</option>
-                <option value="google">{t('crm.sources.google', 'Google')}</option>
-                <option value="empfehlung">{t('crm.sources.empfehlung', 'Empfehlung')}</option>
-                <option value="sonstiges">{t('crm.sources.sonstiges', 'Sonstiges')}</option>
-              </select>
+                onChange={val => set('source', val)}
+                className="w-full border rounded-lg text-sm bg-white"
+                options={[
+                  { value: 'meta', label: t('crm.sources.meta', 'META Werbung') },
+                  { value: 'google', label: t('crm.sources.google', 'Google') },
+                  { value: 'empfehlung', label: t('crm.sources.empfehlung', 'Empfehlung') },
+                  { value: 'sonstiges', label: t('crm.sources.sonstiges', 'Sonstiges') },
+                ]}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 {t('crm.lead.language', 'Sprache')}
               </label>
-              <select
+              <CustomSelect
                 value={form.language}
-                onChange={e => set('language', e.target.value as 'de' | 'en')}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-              >
-                <option value="de">Deutsch</option>
-                <option value="en">English</option>
-              </select>
+                onChange={val => set('language', val as 'de' | 'en')}
+                className="w-full border rounded-lg text-sm bg-white"
+                options={[
+                  { value: 'de', label: 'Deutsch' },
+                  { value: 'en', label: 'English' },
+                ]}
+              />
             </div>
           </div>
 
@@ -241,16 +244,15 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
             <label className="block text-xs font-medium text-gray-600 mb-1">
               {t('crm.lead.assignedTo', 'Zuständig')}
             </label>
-            <select
+            <CustomSelect
               value={form.assigned_to}
-              onChange={e => set('assigned_to', e.target.value)}
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-            >
-              <option value="">{t('crm.lead.noAssignee', '— Niemand —')}</option>
-              {staff.map(s => (
-                <option key={s.id} value={s.id}>{s.full_name}</option>
-              ))}
-            </select>
+              onChange={val => set('assigned_to', val)}
+              className="w-full border rounded-lg text-sm bg-white"
+              options={[
+                { value: '', label: t('crm.lead.noAssignee', '— Niemand —') },
+                ...staff.map(s => ({ value: s.id, label: s.full_name })),
+              ]}
+            />
           </div>
 
           <div>
@@ -648,27 +650,27 @@ export default function Pipeline() {
             onChange={e => setSearch(e.target.value)}
             className="border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 min-w-[180px]"
           />
-          <select
+          <CustomSelect
             value={filterSource}
-            onChange={e => setFilterSource(e.target.value)}
-            className="border rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-          >
-            <option value="">{t('crm.pipeline.allSources', 'Alle Quellen')}</option>
-            <option value="meta">{t('crm.sources.meta', 'META Werbung')}</option>
-            <option value="google">{t('crm.sources.google', 'Google')}</option>
-            <option value="empfehlung">{t('crm.sources.empfehlung', 'Empfehlung')}</option>
-            <option value="sonstiges">{t('crm.sources.sonstiges', 'Sonstiges')}</option>
-          </select>
-          <select
+            onChange={val => setFilterSource(val)}
+            className="border rounded-lg text-sm bg-white"
+            options={[
+              { value: '', label: t('crm.pipeline.allSources', 'Alle Quellen') },
+              { value: 'meta', label: t('crm.sources.meta', 'META Werbung') },
+              { value: 'google', label: t('crm.sources.google', 'Google') },
+              { value: 'empfehlung', label: t('crm.sources.empfehlung', 'Empfehlung') },
+              { value: 'sonstiges', label: t('crm.sources.sonstiges', 'Sonstiges') },
+            ]}
+          />
+          <CustomSelect
             value={filterAssignee}
-            onChange={e => setFilterAssignee(e.target.value)}
-            className="border rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-          >
-            <option value="">{t('crm.pipeline.allAssignees', 'Alle Zuständigen')}</option>
-            {staff.map(s => (
-              <option key={s.id} value={s.id}>{s.full_name}</option>
-            ))}
-          </select>
+            onChange={val => setFilterAssignee(val)}
+            className="border rounded-lg text-sm bg-white"
+            options={[
+              { value: '', label: t('crm.pipeline.allAssignees', 'Alle Zuständigen') },
+              ...staff.map(s => ({ value: s.id, label: s.full_name })),
+            ]}
+          />
         </div>
 
         {/* Loading */}

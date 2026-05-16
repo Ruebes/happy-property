@@ -5,6 +5,7 @@ import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
+import { CustomSelect } from '../../components/CustomSelect'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -925,13 +926,17 @@ export default function AdminUsers() {
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-3">
                   <Field label={t('users.form.role')} required>
-                    <select className={inputCls} value={form.role}
-                            onChange={e => setF('role', e.target.value as Role)}>
-                      <option value="admin">{t('roles.admin')}</option>
-                      <option value="verwalter">{t('roles.verwalter')}</option>
-                      <option value="eigentuemer">{t('roles.eigentuemer')}</option>
-                      <option value="feriengast">{t('roles.feriengast')}</option>
-                    </select>
+                    <CustomSelect
+                      className={inputCls}
+                      value={form.role}
+                      onChange={val => setF('role', val as Role)}
+                      options={[
+                        { value: 'admin',       label: t('roles.admin') },
+                        { value: 'verwalter',   label: t('roles.verwalter') },
+                        { value: 'eigentuemer', label: t('roles.eigentuemer') },
+                        { value: 'feriengast',  label: t('roles.feriengast') },
+                      ]}
+                    />
                   </Field>
                   <Field label={t('users.form.phone')}>
                     <input className={inputCls} value={form.phone}
@@ -939,11 +944,15 @@ export default function AdminUsers() {
                            placeholder="+49 170 …" />
                   </Field>
                   <Field label={t('users.form.language')}>
-                    <select className={inputCls} value={form.language}
-                            onChange={e => setF('language', e.target.value as Lang)}>
-                      <option value="de">🇩🇪 Deutsch</option>
-                      <option value="en">🇬🇧 English</option>
-                    </select>
+                    <CustomSelect
+                      className={inputCls}
+                      value={form.language}
+                      onChange={val => setF('language', val as Lang)}
+                      options={[
+                        { value: 'de', label: '🇩🇪 Deutsch' },
+                        { value: 'en', label: '🇬🇧 English' },
+                      ]}
+                    />
                   </Field>
                 </div>
               </section>
@@ -957,21 +966,21 @@ export default function AdminUsers() {
 
                   {/* Projekt */}
                   <Field label="Projekt">
-                    <select
+                    <CustomSelect
                       className={inputCls}
                       value={assignProjectId}
-                      onChange={e => {
-                        setAssignProjectId(e.target.value)
+                      onChange={val => {
+                        setAssignProjectId(val)
                         setAssignUnitId('')
-                        if (e.target.value) fetchProjectUnits(e.target.value)
+                        if (val) fetchProjectUnits(val)
                         else setProjectUnits([])
                       }}
-                    >
-                      <option value="">— Kein Projekt —</option>
-                      {crmProjects.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: '', label: '— Kein Projekt —' },
+                        ...crmProjects.map(p => ({ value: p.id, label: p.name })),
+                      ]}
+                      placeholder="— Kein Projekt —"
+                    />
                   </Field>
 
                   {/* Einheit */}
@@ -984,25 +993,22 @@ export default function AdminUsers() {
                             <span className="text-xs text-gray-400 font-body">Lade Wohnungen…</span>
                           </div>
                         ) : (
-                          <select
+                          <CustomSelect
                             className={inputCls}
                             value={assignUnitId}
-                            onChange={e => setAssignUnitId(e.target.value)}
-                          >
-                            <option value="">— Keine Einheit —</option>
-                            {projectUnits
-                              .filter(u => !u.property_id)
-                              .map(u => (
-                                <option key={u.id} value={u.id}>
-                                  {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
-                                  {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
-                                  {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
-                                  {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
-                                </option>
-                              ))
-                            }
-                            <option value="new">+ Neue Wohnung anlegen</option>
-                          </select>
+                            onChange={val => setAssignUnitId(val)}
+                            options={[
+                              { value: '', label: '— Keine Einheit —' },
+                              ...projectUnits
+                                .filter(u => !u.property_id)
+                                .map(u => ({
+                                  value: u.id,
+                                  label: `${u.block ? `Block ${u.block} · ` : ''}${u.unit_number}${u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}${u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
+                                })),
+                              { value: 'new', label: '+ Neue Wohnung anlegen' },
+                            ]}
+                            placeholder="— Keine Einheit —"
+                          />
                         )}
                       </Field>
                     </div>
@@ -1022,15 +1028,16 @@ export default function AdminUsers() {
                           />
                         </Field>
                         <Field label="Typ">
-                          <select
+                          <CustomSelect
                             className={inputCls}
                             value={newUnitForm.type}
-                            onChange={e => setNewUnitForm(f => ({ ...f, type: e.target.value as 'apartment' | 'villa' | 'studio' }))}
-                          >
-                            <option value="apartment">Wohnung</option>
-                            <option value="villa">Villa</option>
-                            <option value="studio">Studio</option>
-                          </select>
+                            onChange={val => setNewUnitForm(f => ({ ...f, type: val as 'apartment' | 'villa' | 'studio' }))}
+                            options={[
+                              { value: 'apartment', label: 'Wohnung' },
+                              { value: 'villa',     label: 'Villa' },
+                              { value: 'studio',    label: 'Studio' },
+                            ]}
+                          />
                         </Field>
                       </div>
                       <div className="grid grid-cols-3 gap-3">
@@ -1072,13 +1079,16 @@ export default function AdminUsers() {
                   <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-2">
                     Verwaltungsunternehmen
                   </h3>
-                  <select className={inputCls} value={form.verwaltung_id}
-                          onChange={e => setF('verwaltung_id', e.target.value)}>
-                    <option value="">– Keiner Verwaltung zugeordnet –</option>
-                    {verwaltungOptions.map(v => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    className={inputCls}
+                    value={form.verwaltung_id}
+                    onChange={val => setF('verwaltung_id', val)}
+                    options={[
+                      { value: '', label: '– Keiner Verwaltung zugeordnet –' },
+                      ...verwaltungOptions.map(v => ({ value: v.id, label: v.name })),
+                    ]}
+                    placeholder="– Keiner Verwaltung zugeordnet –"
+                  />
                   {verwaltungOptions.length === 0 && (
                     <p className="text-xs text-amber-600 font-body mt-1">
                       Noch keine Verwaltungen angelegt.{' '}
@@ -1229,17 +1239,19 @@ export default function AdminUsers() {
 
                   {/* Assign property */}
                   <div className="flex gap-2">
-                    <select
+                    <CustomSelect
                       className={`${inputCls} flex-1`}
                       value={assignPropId}
-                      onChange={e => setAssignPropId(e.target.value)}>
-                      <option value="">{t('users.properties.selectToAssign')}</option>
-                      {unassignedProps.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.project_name}{p.unit_number ? ` · ${p.unit_number}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                      onChange={val => setAssignPropId(val)}
+                      options={[
+                        { value: '', label: t('users.properties.selectToAssign') },
+                        ...unassignedProps.map(p => ({
+                          value: p.id,
+                          label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`,
+                        })),
+                      ]}
+                      placeholder={t('users.properties.selectToAssign')}
+                    />
                     <button
                       type="button"
                       disabled={!assignPropId || saving}

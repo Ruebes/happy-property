@@ -4,6 +4,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import BookingModal, { type ModalProperty } from '../components/BookingModal'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { CustomSelect } from '../components/CustomSelect'
 
 // ── Types ──────────────────────────────────────────────────────
 interface CalBook {
@@ -473,18 +474,15 @@ export default function Kalender() {
 
         <div className="flex items-center gap-3 flex-wrap">
           {/* Property filter */}
-          <select
+          <CustomSelect
             value={propFilter}
-            onChange={e => setPropFilter(e.target.value)}
-            className="px-3 py-2 text-sm border border-gray-200 rounded-xl font-body
-                       focus:outline-none focus:border-hp-highlight bg-white text-hp-black">
-            <option value="all">{t('calendar.allProperties')}</option>
-            {properties.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.project_name}{p.unit_number ? ` · ${p.unit_number}` : ''}
-              </option>
-            ))}
-          </select>
+            onChange={val => setPropFilter(val)}
+            className="text-sm border border-gray-200 rounded-xl font-body bg-white text-hp-black"
+            options={[
+              { value: 'all', label: t('calendar.allProperties') },
+              ...properties.map(p => ({ value: p.id, label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}` })),
+            ]}
+          />
 
           {/* New booking button */}
           <button

@@ -7,6 +7,7 @@ import type { CrmProjectUnit } from '../lib/crmTypes'
 
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
+import { CustomSelect } from '../components/CustomSelect'
 
 // ── Types ──────────────────────────────────────────────────────
 interface Property {
@@ -195,8 +196,6 @@ export default function Objekte() {
   const [ownerModalSaving, setOwnerModalSaving]     = useState(false)
   const [ownerModalError, setOwnerModalError]       = useState('')
   const [ownerModalSuccess, setOwnerModalSuccess]   = useState(false)
-  const [pwCopied, setPwCopied]                     = useState(false)
-
   // CRM-Verknüpfung
   const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string }[]>([])
   const [crmProjId, setCrmProjId]           = useState('')
@@ -549,7 +548,6 @@ export default function Objekte() {
     setOwnerModal({ ...EMPTY_OWNER_MODAL })
     setOwnerModalError('')
     setOwnerModalSuccess(false)
-    setPwCopied(false)
     setShowOwnerModal(true)
   }
 
@@ -585,8 +583,32 @@ export default function Objekte() {
         return
       }
 
-      // Zeige das vom Server generierte Passwort an
-      setOwnerModal(m => ({ ...m, tempPassword: data?.password ?? '' }))
+      // Zugangsdaten automatisch per E-Mail senden
+      if (data?.password && data?.userId) {
+        const firstName = ownerModal.first_name.trim()
+        const email     = ownerModal.email.trim().toLowerCase()
+        const appUrl    = window.location.origin
+        const welcomeHtml = `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><title>Dein Zugang</title></head>
+<body style="margin:0;padding:0;background:#f9fafb;font-family:Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;padding:32px 0;">
+<tr><td align="center"><table width="560" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.08);">
+<tr><td style="background:#ff795d;padding:28px 32px;"><h1 style="margin:0;color:#fff;font-size:22px;">Willkommen bei Happy Property</h1></td></tr>
+<tr><td style="padding:32px;">
+<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hallo ${firstName},</p>
+<p style="margin:0 0 24px;font-size:15px;color:#374151;">dein Zugang zum Happy Property Portal wurde eingerichtet:</p>
+<table cellpadding="0" cellspacing="0" style="background:#f3f4f6;border-radius:8px;padding:20px;margin-bottom:24px;width:100%;">
+<tr><td style="padding:4px 0;font-size:14px;color:#6b7280;">E-Mail:</td><td style="font-size:14px;font-weight:600;color:#111827;">${email}</td></tr>
+<tr><td style="padding:4px 0;font-size:14px;color:#6b7280;">Passwort:</td><td style="font-size:14px;font-weight:600;color:#111827;font-family:monospace;">${data.password}</td></tr>
+</table>
+<p style="margin:0 0 24px;font-size:13px;color:#9ca3af;">⚠️ Bitte ändere dein Passwort direkt nach dem ersten Login.</p>
+<a href="${appUrl}/login" style="display:inline-block;background:#ff795d;color:#fff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;">Zum Portal →</a>
+</td></tr>
+<tr><td style="padding:16px 32px;border-top:1px solid #f3f4f6;font-size:12px;color:#9ca3af;">Happy Property · Cyprus Real Estate</td></tr>
+</table></td></tr></table></body></html>`
+        supabase.functions.invoke('send-email', {
+          body: { to: email, subject: 'Dein Zugang zum Happy Property Portal', html: welcomeHtml },
+        }).catch(() => {})
+      }
       setOwnerModalSuccess(true)
       await fetchOwners()
       if (data?.userId) setField('owner_id', data.userId)
@@ -595,14 +617,6 @@ export default function Objekte() {
     } finally {
       setOwnerModalSaving(false)
     }
-  }
-
-  async function copyPassword() {
-    try {
-      await navigator.clipboard.writeText(ownerModal.tempPassword)
-      setPwCopied(true)
-      setTimeout(() => setPwCopied(false), 2000)
-    } catch { /* ignore */ }
   }
 
   // ── Display helpers ───────────────────────────────────────
@@ -630,11 +644,10 @@ export default function Objekte() {
             {/* Projekt-Dropdown */}
             <div>
               <Label>Projekt aus CRM</Label>
-              <select
+              <CustomSelect
                 className={inputCls} style={focusRing()}
                 value={crmProjId}
-                onChange={e => {
-                  const pid = e.target.value
+                onChange={pid => {
                   setCrmProjId(pid)
                   setCrmUnitId('')
                   setCrmUnits([])
@@ -644,12 +657,12 @@ export default function Objekte() {
                     fetchCrmUnitsForProject(pid)
                   }
                 }}
-              >
-                <option value="">— Kein CRM-Projekt —</option>
-                {crmProjects.map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+                options={[
+                  { value: '', label: '— Kein CRM-Projekt —' },
+                  ...crmProjects.map(p => ({ value: p.id, label: p.name })),
+                ]}
+                placeholder="— Kein CRM-Projekt —"
+              />
             </div>
 
             {/* Einheiten-Dropdown (erscheint nach Projektauswahl) */}
@@ -662,11 +675,10 @@ export default function Objekte() {
                     Lade Einheiten…
                   </div>
                 ) : (
-                  <select
+                  <CustomSelect
                     className={inputCls} style={focusRing()}
                     value={crmUnitId}
-                    onChange={e => {
-                      const uid = e.target.value
+                    onChange={uid => {
                       setCrmUnitId(uid)
                       if (uid && uid !== 'new') {
                         const unit = crmUnits.find(u => u.id === uid)
@@ -679,18 +691,16 @@ export default function Objekte() {
                         }
                       }
                     }}
-                  >
-                    <option value="">— Einheit auswählen —</option>
-                    {crmUnits.filter(u => !u.property_id).map(u => (
-                      <option key={u.id} value={u.id}>
-                        {u.block ? `Block ${u.block} · ` : ''}{u.unit_number}
-                        {u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}
-                        {u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}
-                        {u.size_sqm ? ` · ${u.size_sqm} m²` : ''}
-                      </option>
-                    ))}
-                    <option value="new">+ Neue Einheit anlegen</option>
-                  </select>
+                    options={[
+                      { value: '', label: '— Einheit auswählen —' },
+                      ...crmUnits.filter(u => !u.property_id).map(u => ({
+                        value: u.id,
+                        label: `${u.block ? `Block ${u.block} · ` : ''}${u.unit_number}${u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}${u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
+                      })),
+                      { value: 'new', label: '+ Neue Einheit anlegen' },
+                    ]}
+                    placeholder="— Einheit auswählen —"
+                  />
                 )}
                 {crmUnitId === 'new' && (
                   <p className="text-xs text-blue-600 font-body mt-1">
@@ -722,24 +732,26 @@ export default function Objekte() {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label required>{t('properties.type')}</Label>
-            <select className={inputCls} style={focusRing()}
+            <CustomSelect
+              className={inputCls} style={focusRing()}
               value={form.type}
-              onChange={e => setField('type', e.target.value as FormData['type'])}>
-              {(['villa', 'apartment', 'studio'] as const).map(v => (
-                <option key={v} value={v}>{t(`properties.types.${v}`)}</option>
-              ))}
-            </select>
+              onChange={val => setField('type', val as FormData['type'])}
+              options={(['villa', 'apartment', 'studio'] as const).map(v => ({
+                value: v, label: t(`properties.types.${v}`),
+              }))}
+            />
           </div>
           <div>
             <Label>{t('properties.bedrooms')}</Label>
-            <select className={inputCls} style={focusRing()}
+            <CustomSelect
+              className={inputCls} style={focusRing()}
               value={form.bedrooms}
-              onChange={e => setField('bedrooms', e.target.value)}>
-              <option value="0">{t('properties.bedroomsStudio')}</option>
-              {[1, 2, 3, 4, 5].map(n => (
-                <option key={n} value={String(n)}>{n}</option>
-              ))}
-            </select>
+              onChange={val => setField('bedrooms', val)}
+              options={[
+                { value: '0', label: t('properties.bedroomsStudio') },
+                ...[1, 2, 3, 4, 5].map(n => ({ value: String(n), label: String(n) })),
+              ]}
+            />
           </div>
         </div>
 
@@ -769,13 +781,14 @@ export default function Objekte() {
 
         <div>
           <Label required>{t('properties.rentalType')}</Label>
-          <select className={inputCls} style={focusRing()}
+          <CustomSelect
+            className={inputCls} style={focusRing()}
             value={form.rental_type}
-            onChange={e => setField('rental_type', e.target.value as FormData['rental_type'])}>
-            {(['longterm', 'shortterm'] as const).map(v => (
-              <option key={v} value={v}>{t(`properties.rental.${v}`)}</option>
-            ))}
-          </select>
+            onChange={val => setField('rental_type', val as FormData['rental_type'])}
+            options={(['longterm', 'shortterm'] as const).map(v => ({
+              value: v, label: t(`properties.rental.${v}`),
+            }))}
+          />
         </div>
 
         {/* Kaufpreis-Block */}
@@ -992,19 +1005,22 @@ export default function Objekte() {
                   {t('common.loading')}
                 </div>
               ) : (
-                <select className={inputCls} style={focusRing()}
+                <CustomSelect
+                  className={inputCls} style={focusRing()}
                   value={form.owner_id}
-                  onChange={e => setField('owner_id', e.target.value)}>
-                  <option value="">{t('properties.ownerSelect')}</option>
-                  {owners.length === 0 && (
-                    <option disabled value="">{t('properties.ownerNone')}</option>
-                  )}
-                  {owners.map(o => (
-                    <option key={o.id} value={o.id}>
-                      {o.full_name || o.email}{o.full_name ? ` (${o.email})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  onChange={val => setField('owner_id', val)}
+                  options={[
+                    { value: '', label: t('properties.ownerSelect') },
+                    ...(owners.length === 0
+                      ? [{ value: '__none__', label: t('properties.ownerNone'), disabled: true }]
+                      : owners.map(o => ({
+                          value: o.id,
+                          label: `${o.full_name || o.email}${o.full_name ? ` (${o.email})` : ''}`,
+                        }))
+                    ),
+                  ]}
+                  placeholder={t('properties.ownerSelect')}
+                />
               )}
             </div>
             {canEdit && (
@@ -1021,12 +1037,24 @@ export default function Objekte() {
           {form.owner_id && (() => {
             const o = owners.find(o => o.id === form.owner_id)
             return o ? (
-              <div className="mt-2 flex items-center gap-2 text-sm font-body
+              <div className="mt-2 flex items-center justify-between gap-2
                               bg-green-50 border border-green-100 rounded-xl px-4 py-2">
-                <span className="text-green-600 text-base">✓</span>
-                <span className="text-gray-700 font-medium">{o.full_name}</span>
-                <span className="text-gray-300">·</span>
-                <span className="text-gray-400 text-xs">{o.email}</span>
+                <div className="flex items-center gap-2 text-sm font-body min-w-0">
+                  <span className="text-green-600 text-base shrink-0">✓</span>
+                  <span className="text-gray-700 font-medium truncate">{o.full_name}</span>
+                  <span className="text-gray-300 shrink-0">·</span>
+                  <span className="text-gray-400 text-xs truncate">{o.email}</span>
+                </div>
+                <a
+                  href="/admin/users"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold shrink-0 px-2.5 py-1 rounded-lg
+                             border border-green-200 text-green-700 hover:bg-green-100
+                             transition-colors whitespace-nowrap"
+                >
+                  → Profil
+                </a>
               </div>
             ) : null
           })()}
@@ -1052,38 +1080,22 @@ export default function Objekte() {
 
           {ownerModalSuccess ? (
             <div className="py-4 space-y-4">
-              <div className="text-center">
-                <div className="text-4xl mb-3">✅</div>
-                <p className="text-sm font-body text-gray-600">{t('properties.ownerModal.success')}</p>
-              </div>
-              {ownerModal.tempPassword && (
+              <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
+                <span className="text-2xl shrink-0">✉️</span>
                 <div>
-                  <Label>{t('properties.ownerModal.tempPw')}</Label>
-                  <div className="flex gap-2">
-                    <input readOnly
-                      className={`${inputCls} flex-1 font-mono text-xs bg-gray-50`}
-                      value={ownerModal.tempPassword} />
-                    <button type="button" onClick={copyPassword}
-                      className="px-3 py-2 rounded-xl border text-xs font-semibold font-body
-                                 transition-colors shrink-0"
-                      style={pwCopied
-                        ? { backgroundColor: 'var(--color-highlight)', borderColor: 'var(--color-highlight)', color: 'white' }
-                        : { borderColor: 'var(--color-highlight)', color: 'var(--color-highlight)' }}>
-                      {pwCopied ? '✓' : t('properties.ownerModal.copyPw')}
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-400 mt-1 font-body">
-                    Passwort jetzt kopieren — es wird nicht nochmal angezeigt.
+                  <p className="text-sm font-semibold text-green-800 font-body">Nutzer angelegt</p>
+                  <p className="text-xs text-green-700 font-body mt-0.5">
+                    Zugangsdaten wurden automatisch an <strong>{ownerModal.email}</strong> gesendet.
                   </p>
                 </div>
-              )}
+              </div>
               <button
                 type="button"
                 onClick={() => { setShowOwnerModal(false); setOwnerModalSuccess(false) }}
                 className="w-full py-2.5 rounded-xl text-white text-sm font-semibold font-body hover:opacity-90 transition-opacity"
                 style={{ backgroundColor: 'var(--color-highlight)' }}
               >
-                Schließen
+                Schließen &amp; weiter
               </button>
             </div>
           ) : (

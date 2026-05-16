@@ -5,6 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import type { CrmProject, ProjectStatus } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -269,16 +270,14 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('crm.project.developer', 'Entwickler / Developer')}
                   </label>
-                  <select value={form.developer} onChange={e => up('developer', e.target.value)}
+                  <CustomSelect
+                    value={form.developer}
+                    onChange={val => up('developer', val)}
                     disabled={devLoading}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 bg-white disabled:opacity-60">
-                    <option value="">
-                      {devLoading ? 'Wird geladen…' : developers.length === 0 ? 'Keine Developer angelegt' : '— Developer wählen —'}
-                    </option>
-                    {developers.map(d => (
-                      <option key={d.id} value={d.name}>{d.name}</option>
-                    ))}
-                  </select>
+                    className="w-full border border-gray-200 rounded-lg text-sm bg-white"
+                    placeholder={devLoading ? 'Wird geladen…' : developers.length === 0 ? 'Keine Developer angelegt' : '— Developer wählen —'}
+                    options={developers.map(d => ({ value: d.name, label: d.name }))}
+                  />
                   {!devLoading && developers.length === 0 && (
                     <p className="text-[11px] text-amber-600 mt-1">
                       Noch keine Developer angelegt → CRM → Einstellungen → Developer hinzufügen
@@ -289,12 +288,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('crm.project.status', 'Status')}
                   </label>
-                  <select value={form.status} onChange={e => up('status', e.target.value as ProjectStatus)}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
-                    {(['available', 'under_construction', 'sold_out', 'completed'] as ProjectStatus[]).map(s => (
-                      <option key={s} value={s}>{t(`crm.project.statuses.${s}`, s)}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    value={form.status}
+                    onChange={val => up('status', val as ProjectStatus)}
+                    className="w-full border border-gray-200 rounded-lg text-sm"
+                    options={(['available', 'under_construction', 'sold_out', 'completed'] as ProjectStatus[]).map(s => ({ value: s, label: t(`crm.project.statuses.${s}`, s) }))}
+                  />
                 </div>
               </div>
 
@@ -585,16 +584,15 @@ export default function Projects() {
             placeholder={t('crm.project.search', 'Suchen nach Name, Developer, Ort…')}
             className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 min-w-[220px]"
           />
-          <select
+          <CustomSelect
             value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-          >
-            <option value="">— {t('crm.project.allStatuses', 'Alle Status')} —</option>
-            {(['available', 'under_construction', 'sold_out', 'completed'] as ProjectStatus[]).map(s => (
-              <option key={s} value={s}>{t(`crm.project.statuses.${s}`, s)}</option>
-            ))}
-          </select>
+            onChange={val => setFilterStatus(val)}
+            className="border border-gray-200 rounded-lg text-sm bg-white"
+            options={[
+              { value: '', label: `— ${t('crm.project.allStatuses', 'Alle Status')} —` },
+              ...(['available', 'under_construction', 'sold_out', 'completed'] as ProjectStatus[]).map(s => ({ value: s, label: t(`crm.project.statuses.${s}`, s) })),
+            ]}
+          />
         </div>
 
         {/* Grid */}

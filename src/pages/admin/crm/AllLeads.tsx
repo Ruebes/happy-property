@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, LeadSource } from '../../../lib/crmTypes'
 import { SOURCE_BADGE_STYLE } from '../../../lib/crmTypes'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 const SOURCES: Array<'' | LeadSource> = ['', 'meta', 'google', 'empfehlung', 'sonstiges']
 const STATUSES = ['', 'new', 'contacted', 'qualified', 'registered', 'property_selection', 'financing', 'sold', 'archived'] as const
@@ -212,26 +213,26 @@ export default function AllLeads() {
             onChange={e => setSearch(e.target.value)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 w-64"
           />
-          <select
+          <CustomSelect
             value={filterSource}
-            onChange={e => setFilterSource(e.target.value)}
+            onChange={val => setFilterSource(val)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-          >
-            <option value="">Alle Quellen</option>
-            {SOURCES.filter(s => s !== '').map(s => (
-              <option key={s} value={s}>{sourceLabel[s]}</option>
-            ))}
-          </select>
-          <select
+            options={[
+              { value: '', label: 'Alle Quellen' },
+              ...SOURCES.filter(s => s !== '').map(s => ({ value: s, label: sourceLabel[s] })),
+            ]}
+            placeholder="Alle Quellen"
+          />
+          <CustomSelect
             value={filterStatus}
-            onChange={e => setFilterStatus(e.target.value)}
+            onChange={val => setFilterStatus(val)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-          >
-            <option value="">Alle Status</option>
-            {STATUSES.filter(s => s !== '').map(s => (
-              <option key={s} value={s}>{statusLabel[s] ?? s}</option>
-            ))}
-          </select>
+            options={[
+              { value: '', label: 'Alle Status' },
+              ...STATUSES.filter(s => s !== '').map(s => ({ value: s, label: statusLabel[s] ?? s })),
+            ]}
+            placeholder="Alle Status"
+          />
         </div>
 
         {/* Table */}
@@ -367,42 +368,40 @@ export default function AllLeads() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Sprache</label>
-                  <select
+                  <CustomSelect
                     value={newLeadForm.language}
-                    onChange={e => setNewLeadForm(f => ({ ...f, language: e.target.value as 'de' | 'en' }))}
+                    onChange={val => setNewLeadForm(f => ({ ...f, language: val as 'de' | 'en' }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-                  >
-                    <option value="de">Deutsch</option>
-                    <option value="en">English</option>
-                  </select>
+                    options={[
+                      { value: 'de', label: 'Deutsch' },
+                      { value: 'en', label: 'English' },
+                    ]}
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Quelle</label>
-                  <select
+                  <CustomSelect
                     value={newLeadForm.source}
-                    onChange={e => setNewLeadForm(f => ({ ...f, source: e.target.value as NewLeadForm['source'] }))}
+                    onChange={val => setNewLeadForm(f => ({ ...f, source: val as NewLeadForm['source'] }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-                  >
-                    {SOURCES.filter(s => s !== '').map(s => (
-                      <option key={s} value={s}>{sourceLabel[s]}</option>
-                    ))}
-                  </select>
+                    options={SOURCES.filter(s => s !== '').map(s => ({ value: s, label: sourceLabel[s] }))}
+                  />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Zuständig</label>
-                  <select
+                  <CustomSelect
                     value={newLeadForm.assigned_to}
-                    onChange={e => setNewLeadForm(f => ({ ...f, assigned_to: e.target.value }))}
+                    onChange={val => setNewLeadForm(f => ({ ...f, assigned_to: val }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-                  >
-                    <option value="">Nicht zugewiesen</option>
-                    {staff.map(s => (
-                      <option key={s.id} value={s.id}>{s.full_name}</option>
-                    ))}
-                  </select>
+                    options={[
+                      { value: '', label: 'Nicht zugewiesen' },
+                      ...staff.map(s => ({ value: s.id, label: s.full_name })),
+                    ]}
+                    placeholder="Nicht zugewiesen"
+                  />
                 </div>
               </div>
 
