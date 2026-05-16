@@ -74,17 +74,30 @@ export function hasGoogleToken(): boolean {
 }
 
 function saveToken(token: string) {
-  const expires_at = Date.now() + 50 * 60 * 1000 // 50 Minuten (10 Min Puffer vor Google 1h Limit)
+  const expires_at = Date.now() + 55 * 60 * 1000 // 55 Minuten (5 Min Puffer vor Google 1h Limit)
   localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expires_at }))
+}
+
+// Liest Ablaufzeit aus dem gespeicherten Token
+function getTokenExpiresAt(): number {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY)
+    if (!raw) return 0
+    return (JSON.parse(raw) as { expires_at: number }).expires_at
+  } catch { return 0 }
 }
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleTokenRefresh(clientId: string) {
   if (refreshTimer) clearTimeout(refreshTimer)
-  // Refresh nach 45 Minuten (15 Min vor Ablauf) – silent, kein Popup
+
+  // Refresh 5 Minuten VOR echtem Token-Ablauf planen (nicht pauschal 45 Min)
+  const expiresAt = getTokenExpiresAt()
+  const refreshAt = expiresAt - 5 * 60 * 1000
+  const delayMs   = Math.max(refreshAt - Date.now(), 30_000) // mindestens 30s
+
   refreshTimer = setTimeout(() => {
-    // Kein Token mehr (z.B. nach Logout) → kein Refresh nötig
     if (!localStorage.getItem(TOKEN_KEY)) return
     const client = window.google?.accounts?.oauth2?.initTokenClient({
       client_id: clientId,
@@ -98,16 +111,13 @@ function scheduleTokenRefresh(clientId: string) {
             (window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
               .setToken({ access_token: resp.access_token })
           }
-        }
-        // Kein Token im Response → localStorage-Eintrag entfernen
-        // (nächster Kalender-Besuch zeigt "Verbinden"-Button)
-        else {
+        } else {
           localStorage.removeItem(TOKEN_KEY)
         }
       },
     })
     client?.requestAccessToken()
-  }, 45 * 60 * 1000)
+  }, delayMs)
 }
 
 // Exportiert damit Calendar.tsx beim Unmount den Timer löschen kann
@@ -165,7 +175,15 @@ export async function initGoogleAuth(): Promise<void> {
   if (storedToken) {
     ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
       .setToken({ access_token: storedToken })
-    if (clientId) scheduleTokenRefresh(clientId)
+    if (clientId) {
+      const remaining = getTokenExpiresAt() - Date.now()
+      if (remaining < 10 * 60 * 1000) {
+        // Token läuft in < 10 Min ab → sofort silent refresh
+        refreshGoogleToken().catch(() => {})
+      } else {
+        scheduleTokenRefresh(clientId)
+      }
+    }
   }
 }
 
@@ -335,11 +353,12 @@ export async function listGoogleEvents(
 ): Promise<GoogleCalendarEvent[]> {
   let token = getToken()
 
-  // Token abgelaufen → silent refresh versuchen
-  if (!token) {
+  // Token abgelaufen oder läuft in < 5 Min ab → proaktiver silent refresh
+  const remaining = getTokenExpiresAt() - Date.now()
+  if (!token || remaining < 5 * 60 * 1000) {
     const refreshed = await refreshGoogleToken()
-    if (!refreshed) return []       // Muss manuell neu verbinden
-    token = getToken()
+    if (!refreshed && !token) return []  // Kein alter Token mehr vorhanden
+    token = getToken() ?? token          // Entweder neuer oder noch gültiger alter Token
     if (!token) return []
   }
 

@@ -183,20 +183,24 @@ export default function CrmCalendar() {
     return () => { cancelled = true }
   }, [])
 
-  // ── Proaktiver Token-Refresh alle 45 Minuten ──────────────────
-  // Erneuert den Access Token im Hintergrund bevor er abläuft.
-  // Falls der silent refresh fehlschlägt (z.B. Google-Session abgelaufen),
-  // wird der "Mit Google verbinden" Button wieder angezeigt.
-  // clearInterval beim Unmount verhindert Timer-Leaks auf anderen Seiten.
+  // ── Proaktiver Token-Refresh (alle 5 Min prüfen, refresh wenn < 10 Min übrig) ──
+  // Kurzes Prüfintervall damit der Token nie unbemerkt abläuft.
+  // Der eigentliche HTTP-Refresh läuft nur wenn nötig (< 10 Min Restlaufzeit).
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (!hasGoogleToken()) return
+      if (!hasGoogleToken()) {
+        setGoogleConnected(false)
+        return
+      }
+      const expiresAt = (JSON.parse(localStorage.getItem('google_calendar_token') ?? '{}') as { expires_at?: number }).expires_at ?? 0
+      const remaining = expiresAt - Date.now()
+      if (remaining > 10 * 60 * 1000) return   // Noch > 10 Min übrig → nichts tun
       const ok = await refreshGoogleToken()
       if (!ok) {
         setGoogleConnected(false)
         setGoogleEvents([])
       }
-    }, 45 * 60 * 1000)
+    }, 5 * 60 * 1000)
     return () => clearInterval(interval)
   }, [])
 
