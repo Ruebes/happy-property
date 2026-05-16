@@ -655,7 +655,6 @@ export default function AdminUsers() {
   const roleTabs = [
     { key: 'all',         label: t('users.filter.all') },
     { key: 'admin',       label: t('roles.admin') },
-    { key: 'verwalter',   label: t('roles.verwalter') },
     { key: 'eigentuemer', label: t('roles.eigentuemer') },
     { key: 'feriengast',  label: t('roles.feriengast') },
   ]
