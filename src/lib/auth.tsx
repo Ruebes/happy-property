@@ -96,14 +96,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // folgenden Auth-Events (z.B. INITIAL_SESSION → SIGNED_IN).
   const fetchIdRef = useRef(0)
 
+  // ── Sofort-Init aus gespeicherter Session ───────────────────
+  // Liest die Supabase-Session direkt aus localStorage – kein Warten auf
+  // onAuthStateChange nötig. Wenn eine gecachte Session + Profil vorhanden
+  // sind, erscheint die App sofort ohne Spinner.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.user) return
+      const cached = getCachedProfile(session.user.id)
+      if (!cached) return
+      setState(s => s.profile ? s : {
+        ...s,
+        loading:  false,
+        session,
+        user:     session.user,
+        profile:  cached,
+        needsPasswordSetup: !!(session.user.user_metadata?.needs_password_setup),
+      })
+    }).catch(() => {})
+  }, [])
+
   // ── Timeout-Fallback ─────────────────────────────────────────
-  // Falls onAuthStateChange im PWA-Modus / Offline-Modus nie feuert
-  // (z.B. bei iOS Safari Cold-Start), setzen wir loading nach 8 s auf false.
-  // Dann greift ProtectedRoute: kein user → Weiterleitung zu /login.
+  // Falls weder getSession noch onAuthStateChange rechtzeitig feuert
+  // (PWA-Kaltstart, Offline), loading nach 10 s auf false setzen.
   useEffect(() => {
     const t = setTimeout(() => {
       setState(s => s.loading ? { ...s, loading: false } : s)
-    }, 8000)
+    }, 10_000)
     return () => clearTimeout(t)
   }, [])
 
@@ -117,16 +136,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', userId)
         .single()
       if (error || !data) {
-        if (attempt < 3) {
-          await new Promise(r => setTimeout(r, attempt * 400))
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 300))
           return fetchProfile(userId, attempt + 1)
         }
         return null
       }
       return data as Profile
     } catch {
-      if (attempt < 3) {
-        await new Promise(r => setTimeout(r, attempt * 400))
+      // fetch timed out (AbortError) oder Netzwerkfehler → einmal retry
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 300))
         return fetchProfile(userId, attempt + 1)
       }
       return null

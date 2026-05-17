@@ -9,18 +9,17 @@ interface Props {
 export default function ProtectedRoute({ allowedRoles }: Props) {
   const { user, profile, loading } = useAuth()
 
-  // Lokaler Timeout: falls loading nach 10 s noch true ist (Netzwerkausfall,
-  // iOS-PWA-Kaltstart), erzwingen wir einen Weitersprung. Der Auth-Timeout in
-  // auth.tsx greift nach 8 s – dieser hier ist ein zweiter Sicherheitsring.
+  // Lokaler Spinner-Timeout: max. 12 s warten, dann Entscheidung erzwingen.
+  // Länger als auth.tsx-Timeout (10 s) um Race-Conditions zu vermeiden.
   const [timedOut, setTimedOut] = useState(false)
   useEffect(() => {
     if (!loading) { setTimedOut(false); return }
-    const t = setTimeout(() => setTimedOut(true), 10_000)
+    const t = setTimeout(() => setTimedOut(true), 12_000)
     return () => clearTimeout(t)
   }, [loading])
 
-  // Absolutes Erstladen: noch keine Session bekannt → Spinner
-  // (aber max. 10 Sekunden – danach weiterleiten)
+  // Spinner nur wenn WEDER User noch Timeout bekannt.
+  // Sobald user gesetzt ist oder Timeout abgelaufen → weiter entscheiden.
   if (loading && !user && !timedOut) {
     return (
       <div className="flex items-center justify-center h-screen"
@@ -36,11 +35,12 @@ export default function ProtectedRoute({ allowedRoles }: Props) {
     return <Navigate to="/login" replace />
   }
 
-  // Falsche Rolle → Login (Profil muss geladen sein für den Check)
+  // Falsche Rolle → Dashboard (Profil muss geladen sein)
+  // Wenn Profil noch lädt → Outlet zeigen (Loading-State in der Page)
   if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
     return <Navigate to="/login" replace />
   }
 
-  // Eingeloggt – Inhalt immer zeigen (auch wenn Profil noch lädt)
+  // Eingeloggt und Rolle ok (oder Profil noch unterwegs) → Inhalt zeigen
   return <Outlet />
 }
