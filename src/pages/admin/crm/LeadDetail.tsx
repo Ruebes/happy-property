@@ -39,6 +39,8 @@ export default function LeadDetail() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([])
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [dealProjects, setDealProjects] = useState<DealProject[]>([])
+  // Ref für stabile Lesbarkeit in Effects ohne dealProjects als Dependency
+  const dealProjectsRef = useRef<DealProject[]>([])
   const [showProjectModal, setShowProjectModal] = useState(false)
   const [showRegistrationModal, setShowRegistrationModal] = useState(false)
   const [savingReg, setSavingReg] = useState(false)
@@ -280,7 +282,9 @@ export default function LeadDetail() {
           : Promise.resolve({ data: null }),
       ])
 
-      setDealProjects((dpData ?? []) as unknown as DealProject[])
+      const dp = (dpData ?? []) as unknown as DealProject[]
+      dealProjectsRef.current = dp
+      setDealProjects(dp)
       setAppointments((apptData ?? []) as unknown as CrmAppointment[])
       setScheduledMessages((schedData ?? []) as unknown as ScheduledMessage[])
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
@@ -298,7 +302,8 @@ export default function LeadDetail() {
   }, [fetchAll])
 
   // ── pickedUnit aus deal.unit_id wiederherstellen (nach Reload / Navigation) ──
-  // Läuft wenn deal oder dealProjects geladen werden und unit_id vorhanden ist.
+  // Läuft nur wenn deal.unit_id sich ändert. dealProjectsRef statt State-Dep
+  // verhindert Re-Fetch-Loop bei jedem fetchAll (dealProjects erzeugt neue Referenz).
   useEffect(() => {
     if (!deal?.unit_id) return
     let cancelled = false
@@ -310,15 +315,15 @@ export default function LeadDetail() {
       .then(({ data: unitData }) => {
         if (cancelled || !unitData) return
         const unit = unitData as CrmProjectUnit
-        // Nur setzen wenn noch nicht für dieselbe Unit gesetzt
         setPickedUnit(prev => {
           if (prev?.unit.id === unit.id) return prev
-          const dp = dealProjects.find(d => d.project_id === unit.project_id)
+          const dp = dealProjectsRef.current.find(d => d.project_id === unit.project_id)
           return { unit, projectName: dp?.project?.name ?? '' }
         })
       })
     return () => { cancelled = true }
-  }, [deal?.unit_id, dealProjects])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deal?.unit_id])
 
   // ── Selbstheilender Properties-Sync ─────────────────────────────────────────
   // Wenn Eigentümer-Profil vorhanden + Wohnung zugewiesen,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
@@ -20,7 +20,7 @@ export default function Archived() {
     setTimeout(() => setToast(''), 3000)
   }
 
-  const fetchDeals = async () => {
+  const fetchDeals = useCallback(async () => {
     setLoading(true)
     try {
       const { data, error } = await supabase
@@ -36,11 +36,11 @@ export default function Archived() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchDeals()
-  }, [])
+  }, [fetchDeals])
 
   const handleRestore = async (dealId: string) => {
     await supabase

@@ -77,39 +77,47 @@ export default function FeriengastDashboard() {
   useEffect(() => {
     if (!profile) return
     ;(async () => {
-      const [{ data: bData }, { count }] = await Promise.all([
-        supabase
-          .from('bookings')
-          .select(`
-            id, booking_number, check_in, check_out, checkin_time, checkout_time,
-            total_price, house_rules,
-            property:property_id(id, project_name, street, house_number, zip, city, images)
-          `)
-          .eq('guest_id', profile.id)
-          .order('check_in', { ascending: false })
-          .limit(1)
-          .single(),
-        supabase
-          .from('messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('is_read', false)
-          .neq('sender_id', profile.id),
-      ])
+      try {
+        const [{ data: bData }, { count }] = await Promise.all([
+          supabase
+            .from('bookings')
+            .select(`
+              id, booking_number, check_in, check_out, checkin_time, checkout_time,
+              total_price, house_rules,
+              property:property_id(id, project_name, street, house_number, zip, city, images)
+            `)
+            .eq('guest_id', profile.id)
+            .order('check_in', { ascending: false })
+            .limit(1)
+            .single(),
+          supabase
+            .from('messages')
+            .select('id', { count: 'exact', head: true })
+            .eq('is_read', false)
+            .neq('sender_id', profile.id),
+        ])
 
-      // Check if agreed to house rules
-      let agreed = false
-      if (bData?.id) {
-        const { data: ag } = await supabase
-          .from('guest_agreements')
-          .select('agreed_at')
-          .eq('booking_id', bData.id)
-          .single()
-        agreed = !!(ag?.agreed_at)
+        // Sofort rendern — Hausregeln-Zustimmung im Hintergrund nachladen
+        setBooking(bData ? { ...(bData as unknown as Booking), agreed: false } : null)
+        setUnread(count ?? 0)
+        setLoading(false)
+
+        // Hausregeln-Zustimmung ohne Blockierung prüfen
+        if (bData?.id) {
+          supabase
+            .from('guest_agreements')
+            .select('agreed_at')
+            .eq('booking_id', bData.id)
+            .single()
+            .then(({ data: ag }) => {
+              if (ag?.agreed_at) {
+                setBooking(prev => prev ? { ...prev, agreed: true } : null)
+              }
+            })
+        }
+      } catch {
+        setLoading(false)
       }
-
-      setBooking(bData ? { ...(bData as unknown as Booking), agreed } : null)
-      setUnread(count ?? 0)
-      setLoading(false)
     })()
   }, [profile])
 

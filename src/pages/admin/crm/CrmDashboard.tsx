@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -41,7 +41,7 @@ export default function CrmDashboard() {
     loading: true,
   })
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setState(prev => ({ ...prev, loading: true }))
 
     // Calculate time boundaries
@@ -67,11 +67,13 @@ export default function CrmDashboard() {
           .from('leads')
           .select('id', { count: 'exact', head: true })
           .gte('created_at', startOfWeek.toISOString()),
-        supabase.from('deals').select('phase').neq('phase', 'archiviert'),
+        supabase.from('deals').select('phase').neq('phase', 'archiviert').limit(2000),
         supabase
           .from('deals')
           .select('commission_amount, commission_paid_at')
-          .not('commission_paid_at', 'is', null),
+          .not('commission_paid_at', 'is', null)
+          // Nur dieses Jahr laden – JS-seitige Filterung auf subset statt auf allen Deals
+          .gte('commission_paid_at', startOfYear.toISOString()),
         supabase
           .from('activities')
           .select('id, subject, content, scheduled_at, lead:leads(id, first_name, last_name)')
@@ -114,11 +116,11 @@ export default function CrmDashboard() {
       console.error('[CrmDashboard] fetchData:', err)
       setState(prev => ({ ...prev, loading: false }))
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchData()
-  }, [])
+  }, [fetchData])
 
   const handleCompleteTask = async (taskId: string) => {
     await supabase

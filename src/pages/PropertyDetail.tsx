@@ -825,11 +825,16 @@ export default function PropertyDetail() {
     }
   }, [id])
 
+  // Zwei separate Effects damit canEdit-Änderung (Profil lädt nach) nicht
+  // fetchProperty + fetchDocs nochmals triggert.
   useEffect(() => {
     fetchProperty()
     fetchDocs()
+  }, [fetchProperty, fetchDocs])
+
+  useEffect(() => {
     if (canEdit) fetchContracts()
-  }, [fetchProperty, fetchDocs, fetchContracts, canEdit])
+  }, [fetchContracts, canEdit])
 
   // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {
