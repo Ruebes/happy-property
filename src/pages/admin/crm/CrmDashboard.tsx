@@ -123,11 +123,12 @@ export default function CrmDashboard() {
   }, [fetchData])
 
   const handleCompleteTask = async (taskId: string) => {
-    await supabase
+    const { error } = await supabase
       .from('activities')
       .update({ completed_at: new Date().toISOString() })
       .eq('id', taskId)
-    fetchData()
+    if (error) { console.error('[CrmDashboard] handleCompleteTask:', error.message); return }
+    await fetchData()
   }
 
   const formatCurrency = (amount: number) =>

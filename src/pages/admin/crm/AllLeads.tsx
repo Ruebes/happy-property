@@ -119,7 +119,8 @@ export default function AllLeads() {
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Lead wirklich löschen?')) return
-    await supabase.from('leads').delete().eq('id', id)
+    const { error } = await supabase.from('leads').delete().eq('id', id)
+    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchLeads()
     showToast('Lead gelöscht')
   }
@@ -150,11 +151,12 @@ export default function AllLeads() {
       if (leadErr) throw new Error(leadErr.message)
 
       if (createdLead?.id && newLeadForm.createDeal) {
-        const { data: createdDeal } = await supabase
+        const { data: createdDeal, error: dealErr } = await supabase
           .from('deals')
           .insert({ lead_id: createdLead.id, phase: 'erstkontakt' })
           .select('id')
           .single()
+        if (dealErr) throw new Error(dealErr.message)
 
         if (createdDeal?.id) {
           await supabase.from('activities').insert({

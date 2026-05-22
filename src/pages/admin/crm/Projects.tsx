@@ -178,10 +178,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           const newPropStatus = newUnitStatus
 
           // 1. Alle CRM-Einheiten dieses Projekts updaten
-          await supabase
+          const { error: unitStatusErr } = await supabase
             .from('crm_project_units')
             .update({ status: newUnitStatus })
             .eq('project_id', project.id)
+          if (unitStatusErr) throw new Error(unitStatusErr.message)
 
           // 2. Verknüpfte Portal-Einträge (property_status) ebenfalls updaten
           const { data: units } = await supabase
@@ -191,10 +192,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
             .not('property_id', 'is', null)
           if (units && units.length > 0) {
             const propertyIds = (units as { property_id: string }[]).map(u => u.property_id)
-            await supabase
+            const { error: propStatusErr } = await supabase
               .from('properties')
               .update({ property_status: newPropStatus })
               .in('id', propertyIds)
+            if (propStatusErr) throw new Error(propStatusErr.message)
           }
         }
       } else {
@@ -561,7 +563,8 @@ export default function Projects() {
 
   const handleDelete = async (id: string) => {
     if (!confirm(t('crm.project.confirmDelete', 'Projekt wirklich löschen?'))) return
-    await supabase.from('crm_projects').delete().eq('id', id)
+    const { error } = await supabase.from('crm_projects').delete().eq('id', id)
+    if (error) { alert(`Fehler beim Löschen: ${error.message}`); return }
     await fetchAll()
   }
 

@@ -58,7 +58,8 @@ export default function Statistics() {
       if (from) query = query.gte('created_at', from)
       if (to)   query = query.lte('created_at', to + 'T23:59:59')
 
-      const { data } = await query
+      const { data, error } = await query
+      if (error) { console.error('[Statistics]', error.message); setStats([]); setLoading(false); return }
       const rows = data ?? []
 
       // Group by developer

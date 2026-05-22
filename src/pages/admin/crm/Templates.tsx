@@ -86,22 +86,28 @@ export default function Templates() {
   const handleSave = async () => {
     if (!form.name.trim() || !form.subject.trim() || !form.body.trim()) return
     setSaving(true)
-
-    if (editingId) {
-      await supabase.from('email_templates').update(form).eq('id', editingId)
-    } else {
-      await supabase.from('email_templates').insert(form)
+    try {
+      if (editingId) {
+        const { error } = await supabase.from('email_templates').update(form).eq('id', editingId)
+        if (error) throw new Error(error.message)
+      } else {
+        const { error } = await supabase.from('email_templates').insert(form)
+        if (error) throw new Error(error.message)
+      }
+      await fetchTemplates()
+      setShowForm(false)
+      showToast(editingId ? 'Vorlage gespeichert' : 'Vorlage erstellt')
+    } catch (err) {
+      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSaving(false)
     }
-
-    await fetchTemplates()
-    setShowForm(false)
-    setSaving(false)
-    showToast(editingId ? 'Vorlage gespeichert' : 'Vorlage erstellt')
   }
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Vorlage wirklich löschen?')) return
-    await supabase.from('email_templates').delete().eq('id', id)
+    const { error } = await supabase.from('email_templates').delete().eq('id', id)
+    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchTemplates()
     showToast('Vorlage gelöscht')
   }

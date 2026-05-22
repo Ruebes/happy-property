@@ -353,7 +353,8 @@ export default function CrmCalendar() {
 
   // ── Delete appointment ────────────────────────────────────────
   async function handleDelete(id: string) {
-    await supabase.from('crm_appointments').delete().eq('id', id)
+    const { error } = await supabase.from('crm_appointments').delete().eq('id', id)
+    if (error) { console.error('[Calendar] handleDelete:', error.message); return }
     setSelectedAppt(null)
     const { start, end } = getRange()
     void fetchAppointments(start, end)

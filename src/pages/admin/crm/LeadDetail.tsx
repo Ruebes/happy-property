@@ -544,7 +544,7 @@ export default function LeadDetail() {
     setSaving(true)
     const oldPhase = deal.phase
     try {
-      await supabase.from('deals').update({ phase }).eq('id', deal.id)
+      await supabase.from('deals').update({ phase }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id,
         deal_id: deal.id,
@@ -553,7 +553,7 @@ export default function LeadDetail() {
         subject: null,
         content: `Phase geändert: ${oldPhase} → ${phase}`,
         created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       if (PHASE_WEBHOOK_EVENTS[phase]) {
         await sendWebhook(PHASE_WEBHOOK_EVENTS[phase]!)
       }
@@ -561,6 +561,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] updateDealPhase:', err)
+      showToast(`❌ Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`)
     } finally {
       setSaving(false)
     }
@@ -572,7 +573,7 @@ export default function LeadDetail() {
     setSavingReg(true)
     const oldPhase = deal.phase
     try {
-      await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null }).eq('id', deal.id)
+      await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id:    id,
         deal_id:    deal.id,
@@ -581,7 +582,7 @@ export default function LeadDetail() {
         subject:    null,
         content:    `Phase geändert: ${oldPhase} → registrierung. Registrierung gesendet an: ${selectedDevelopers.join(', ')}${notes ? `. Bemerkung: ${notes}` : ''}`,
         created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       await sendWebhook('deal.registration', {
         developers:  selectedDevelopers,
         bemerkungen: notes,
@@ -867,11 +868,11 @@ export default function LeadDetail() {
       await supabase.from('deals').update({
         financing_partner_notified_at: new Date().toISOString(),
         [notesField]: notesValue || null,
-      }).eq('id', deal.id)
+      }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: null, content: 'Finanzierungspartner informiert', created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       await sendWebhook('deal.financing')
       showToast(t('crm.financingNotified', 'Partner informiert'))
       await fetchAll(true)
@@ -891,11 +892,11 @@ export default function LeadDetail() {
         google_drive_url:    driveUrl,
         lawyer_notified_at:  new Date().toISOString(),
         kaufvertrag_notes:   kaufNotes || null,
-      }).eq('id', deal.id)
+      }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: null, content: `Anwalt informiert. Drive: ${driveUrl}`, created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       await sendWebhook('deal.contract', { google_drive_url: driveUrl })
       showToast(t('crm.lawyerNotified', 'Anwalt informiert'))
       await fetchAll(true)
@@ -911,11 +912,11 @@ export default function LeadDetail() {
     if (!deal) return
     setSaving(true)
     try {
-      await supabase.from('deals').update({ deposit_paid_at: depositDate || new Date().toISOString() }).eq('id', deal.id)
+      await supabase.from('deals').update({ deposit_paid_at: depositDate || new Date().toISOString() }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: null, content: 'Provision angefordert – Anzahlung bezahlt', created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       await sendWebhook('deal.deposit_paid')
       showToast(t('crm.commissionRequested', 'Provision angefordert'))
       await fetchAll(true)
@@ -935,11 +936,11 @@ export default function LeadDetail() {
         commission_amount:  parseFloat(commissionAmount) || null,
         commission_paid_at: new Date().toISOString(),
         provision_notes:    provNotes || null,
-      }).eq('id', deal.id)
+      }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: null, content: `Deal abgeschlossen. Provision: ${commissionAmount}`, created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       await sendWebhook('deal.commission_paid', { commission_amount: commissionAmount })
       showToast(t('crm.dealClosed', 'Deal abgeschlossen'))
       await fetchAll(true)
@@ -976,11 +977,11 @@ export default function LeadDetail() {
     if (!deal) return
     setSaving(true)
     try {
-      await supabase.from('deals').update({ phase: 'archiviert' }).eq('id', deal.id)
+      await supabase.from('deals').update({ phase: 'archiviert' }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: null, content: 'Deal archiviert', created_by: profile?.id ?? null,
-      })
+      }).throwOnError()
       showToast(t('crm.archivedSuccess', 'Archiviert'))
       navigate('/admin/crm')
     } catch (err) {
@@ -994,7 +995,7 @@ export default function LeadDetail() {
   const handleSaveDriveUrl = async () => {
     if (!deal) return
     try {
-      await supabase.from('deals').update({ google_drive_url: driveUrl }).eq('id', deal.id)
+      await supabase.from('deals').update({ google_drive_url: driveUrl }).eq('id', deal.id).throwOnError()
       showToast(t('crm.driveSaved', 'Drive-Link gespeichert'))
       await fetchAll(true)
     } catch (err) {

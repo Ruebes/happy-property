@@ -930,26 +930,33 @@ export default function ProjectDetail() {
         payment_reference: payForm.payment_reference.trim() || null,
       }
       if (editPayId) {
-        await supabase.from('crm_unit_payments').update(payload).eq('id', editPayId)
+        const { error } = await supabase.from('crm_unit_payments').update(payload).eq('id', editPayId)
+        if (error) throw new Error(error.message)
       } else {
-        await supabase.from('crm_unit_payments').insert(payload)
+        const { error } = await supabase.from('crm_unit_payments').insert(payload)
+        if (error) throw new Error(error.message)
       }
       setPayForm({ ...EMPTY_PAY }); setEditPayId(null)
       await fetchPayments(editUnit.id)
+      showToast('Rate gespeichert ✓')
+    } catch (err) {
+      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
     } finally { setSavingPay(false) }
   }
 
   async function handleDeletePayment(id: string) {
     if (!editUnit) return
-    await supabase.from('crm_unit_payments').delete().eq('id', id)
+    const { error } = await supabase.from('crm_unit_payments').delete().eq('id', id)
+    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchPayments(editUnit.id)
   }
 
   async function togglePaid(pay: CrmUnitPayment) {
-    await supabase.from('crm_unit_payments').update({
+    const { error } = await supabase.from('crm_unit_payments').update({
       is_paid:   !pay.is_paid,
       paid_date: !pay.is_paid ? new Date().toISOString().slice(0, 10) : null,
     }).eq('id', pay.id)
+    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     if (editUnit) await fetchPayments(editUnit.id)
   }
 

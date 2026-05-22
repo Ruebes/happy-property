@@ -43,10 +43,11 @@ export default function Archived() {
   }, [fetchDeals])
 
   const handleRestore = async (dealId: string) => {
-    await supabase
+    const { error } = await supabase
       .from('deals')
       .update({ phase: 'provision_erhalten' })
       .eq('id', dealId)
+    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchDeals()
     showToast('Deal wiederhergestellt')
   }
