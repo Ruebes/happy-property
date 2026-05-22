@@ -1209,7 +1209,10 @@ export default function PropertyDetail() {
   }
 
   async function handleAddPayment() {
-    if (!linkedUnitId || !linkedProjectId || !profile?.id) return
+    if (!linkedUnitId || !linkedProjectId || !profile?.id) {
+      setToast({ msg: 'Kein verknüpftes CRM-Objekt gefunden. Bitte erst im CRM verknüpfen.', type: 'error' })
+      return
+    }
     setAddPaySaving(true)
     try {
       let invoicePath: string | null = null
@@ -1228,9 +1231,10 @@ export default function PropertyDetail() {
       }
 
       const amount = parseFloat(addPayAmount.replace(',', '.')) || 0
-      await supabase.from('crm_unit_payments').insert({
+      const { error: insertErr } = await supabase.from('crm_unit_payments').insert({
         unit_id:          linkedUnitId,
         project_id:       linkedProjectId,
+        uploaded_by:      profile.id,
         description:      addPayDesc.trim() || nextPaymentLabel(),
         amount,
         due_date:         addPayDueDate || null,
@@ -1239,6 +1243,7 @@ export default function PropertyDetail() {
         invoice_filename: invoiceFilename,
         invoice_filesize: invoiceFilesize,
       })
+      if (insertErr) throw new Error(insertErr.message)
 
       setShowAddPayForm(false)
       setAddPayDesc('')
@@ -1250,7 +1255,7 @@ export default function PropertyDetail() {
       setToast({ msg: 'Rate hinzugefügt ✓' })
     } catch (err) {
       console.error('[handleAddPayment]', err)
-      setToast({ msg: 'Fehler beim Speichern.', type: 'error' })
+      setToast({ msg: `Fehler beim Speichern: ${err instanceof Error ? err.message : String(err)}`, type: 'error' })
     } finally {
       setAddPaySaving(false)
     }
