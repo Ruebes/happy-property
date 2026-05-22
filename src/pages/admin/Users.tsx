@@ -1197,16 +1197,21 @@ export default function AdminUsers() {
                         <li key={p.id}
                             className="flex items-center justify-between px-3 py-2
                                        bg-gray-50 rounded-xl border border-gray-100">
-                          <span className="text-sm font-body text-hp-black">
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/admin/properties/${p.id}`)}
+                            className="flex items-center gap-1 text-sm font-body text-hp-black
+                                       hover:text-orange-500 transition-colors text-left">
                             {p.project_name}
                             {p.unit_number && (
                               <span className="text-gray-400 ml-1">· {p.unit_number}</span>
                             )}
-                          </span>
+                            <span className="text-gray-300 text-xs ml-1">→</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => handleRemoveProperty(p.id, editUser!.id)}
-                            className="text-xs text-red-400 hover:text-red-600 font-body">
+                            className="text-xs text-red-400 hover:text-red-600 font-body shrink-0">
                             {t('users.properties.remove')}
                           </button>
                         </li>

@@ -2835,8 +2835,26 @@ export default function PropertyDetail() {
     if (!linkedUnitId) return (
       <div className="text-center py-20 text-gray-400">
         <p className="text-4xl mb-3">📋</p>
-        <p className="text-sm font-medium">Keine Kaufdaten verknüpft.</p>
-        <p className="text-xs mt-1 text-gray-300">Im CRM die Einheit mit dieser Immobilie verknüpfen.</p>
+        <p className="text-sm font-medium text-gray-500">Keine CRM-Einheit verknüpft.</p>
+        {canEdit ? (
+          <>
+            <p className="text-xs mt-1 text-gray-400">
+              Diese Immobilie ist mit keiner Einheit im CRM verbunden.<br />
+              Öffne das Projekt im CRM und verknüpfe die Einheit mit dieser Immobilie.
+            </p>
+            <a
+              href="/admin/crm/projects"
+              className="inline-block mt-4 px-4 py-2 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-80"
+              style={{ backgroundColor: 'var(--color-highlight)' }}
+            >
+              Zu den CRM-Projekten →
+            </a>
+          </>
+        ) : (
+          <p className="text-xs mt-1 text-gray-300">
+            Kaufdaten werden nach Vertragsunterzeichnung hier angezeigt.
+          </p>
+        )}
       </div>
     )
 

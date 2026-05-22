@@ -282,6 +282,13 @@ export default function ProjectDetail() {
   const [uploadingProjectImg, setUploadingProjectImg] = useState(false)
   const projectImgInputRef = useRef<HTMLInputElement>(null)
 
+  // ── Property-Verknüpfung ─────────────────────────────────────────────────────
+  const [linkableProperties, setLinkableProperties] = useState<Array<{
+    id: string; project_name: string; unit_number: string | null
+  }>>([])
+  const [linkPropId,     setLinkPropId]     = useState('')
+  const [linkPropSaving, setLinkPropSaving] = useState(false)
+
   // ── Customer assignment ──────────────────────────────────────────────────────
   const [showAssignModal,  setShowAssignModal]  = useState(false)
   const [assigningUnit,    setAssigningUnit]    = useState<CrmProjectUnit | null>(null)
@@ -355,6 +362,64 @@ export default function ProjectDetail() {
   }, [projectId])
 
   useEffect(() => { fetchConstructionPhotos() }, [fetchConstructionPhotos])
+
+  // ── Verknüpfbare Portal-Immobilien laden ─────────────────────────────────────
+  async function fetchLinkableProperties(currentPropertyId?: string | null) {
+    // Alle property_ids die bereits von ANDEREN Einheiten belegt sind
+    const { data: used } = await supabase
+      .from('crm_project_units')
+      .select('property_id')
+      .not('property_id', 'is', null)
+    const usedByOther = new Set(
+      ((used ?? []) as { property_id: string }[])
+        .map(r => r.property_id)
+        .filter(pid => pid !== currentPropertyId) // aktuell verknüpfte behalten
+    )
+    const { data } = await supabase
+      .from('properties')
+      .select('id, project_name, unit_number')
+      .order('project_name')
+    setLinkableProperties(
+      ((data ?? []) as Array<{ id: string; project_name: string; unit_number: string | null }>)
+        .filter(p => !usedByOther.has(p.id))
+    )
+  }
+
+  async function handleLinkProperty() {
+    if (!editUnit || !linkPropId) return
+    setLinkPropSaving(true)
+    try {
+      const { error } = await supabase
+        .from('crm_project_units')
+        .update({ property_id: linkPropId })
+        .eq('id', editUnit.id)
+      if (error) throw error
+      showToast('✅ Immobilie verknüpft')
+      setEditUnit(prev => prev ? { ...prev, property_id: linkPropId } : prev)
+      setLinkPropId('')
+      await fetchData()
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : String(err)}`)
+    } finally { setLinkPropSaving(false) }
+  }
+
+  async function handleUnlinkProperty() {
+    if (!editUnit) return
+    setLinkPropSaving(true)
+    try {
+      const { error } = await supabase
+        .from('crm_project_units')
+        .update({ property_id: null })
+        .eq('id', editUnit.id)
+      if (error) throw error
+      showToast('✅ Verknüpfung entfernt')
+      setEditUnit(prev => prev ? { ...prev, property_id: null } : prev)
+      await fetchData()
+      await fetchLinkableProperties(null)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : String(err)}`)
+    } finally { setLinkPropSaving(false) }
+  }
 
   // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
   async function notifyCustomerUpload(
@@ -557,10 +622,12 @@ export default function ProjectDetail() {
       rental_type:  unit.rental_type  ?? '',
     })
     setUnitImages(unit.images ?? [])
+    setLinkPropId('')
     setTab('grunddaten')
     setShowModal(true)
     fetchPayments(unit.id)
     fetchDocuments(unit.id)
+    fetchLinkableProperties(unit.property_id)
   }
 
   function closeModal() {
@@ -569,6 +636,8 @@ export default function ProjectDetail() {
     setPendingFile(null)
     setEditPayId(null)
     setPayForm({ ...EMPTY_PAY })
+    setLinkPropId('')
+    setLinkableProperties([])
   }
 
   // ── Unit image upload / delete ───────────────────────────────────────────────
@@ -1465,6 +1534,65 @@ export default function ProjectDetail() {
                       onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     />
                   </div>
+
+                  {/* ── Portal-Immobilie verknüpfen (nur bei bestehenden Einheiten) ── */}
+                  {editUnit && (
+                    <div className="border-t border-gray-100 pt-4">
+                      <label className="block text-xs font-medium text-gray-500 mb-2">
+                        Portal-Immobilie
+                      </label>
+                      {editUnit.property_id ? (
+                        <div className="flex items-center justify-between px-3 py-2
+                                        bg-green-50 rounded-xl border border-green-100">
+                          <span className="text-sm font-medium text-green-800 truncate">
+                            {(() => {
+                              const p = linkableProperties.find(lp => lp.id === editUnit.property_id)
+                              return p
+                                ? `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`
+                                : '✓ Verknüpft'
+                            })()}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={linkPropSaving}
+                            onClick={handleUnlinkProperty}
+                            className="text-xs text-red-400 hover:text-red-600 disabled:opacity-40
+                                       shrink-0 ml-2">
+                            Trennen
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <CustomSelect
+                            className="flex-1 rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white"
+                            value={linkPropId}
+                            onChange={val => setLinkPropId(val)}
+                            options={[
+                              { value: '', label: 'Immobilie auswählen…' },
+                              ...linkableProperties.map(p => ({
+                                value: p.id,
+                                label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`,
+                              })),
+                            ]}
+                            placeholder="Immobilie auswählen…"
+                          />
+                          <button
+                            type="button"
+                            disabled={!linkPropId || linkPropSaving}
+                            onClick={handleLinkProperty}
+                            className="shrink-0 px-3 py-2 rounded-xl text-sm font-medium
+                                       text-white disabled:opacity-40 transition-opacity"
+                            style={{ backgroundColor: 'var(--color-highlight)' }}>
+                            {linkPropSaving ? '…' : 'Verknüpfen'}
+                          </button>
+                        </div>
+                      )}
+                      <p className="text-xs text-gray-400 mt-1.5">
+                        Verknüpft diese Einheit mit dem Portal-Eintrag des Eigentümers
+                        (Zahlungsplan + Dokumente).
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
