@@ -198,8 +198,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const freshProfile = session?.user ? await fetchProfile(session.user.id) : null
         if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
 
-        // Cache aktualisieren
-        setCachedProfile(freshProfile)
+        // Cache nur aktualisieren wenn erfolgreich geladen – nie löschen bei
+        // Netzwerkfehler/Timeout (sonst fehlt beim nächsten Load der Cache und
+        // der Spinner erscheint erneut).
+        if (freshProfile) setCachedProfile(freshProfile)
 
         setState(s => ({
           ...s,
