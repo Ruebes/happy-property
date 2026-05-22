@@ -112,9 +112,6 @@ function sanitize(name: string) {
   return name.toLowerCase().replace(/[^a-z0-9.\-_]/g, '-').replace(/-+/g, '-')
 }
 
-function sanitizeFilename(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9.\-_]/g, '-').replace(/-+/g, '-')
-}
 
 // ── Toast ──────────────────────────────────────────────────────
 function Toast({ msg, type = 'success', onClose }: {
@@ -630,12 +627,7 @@ export default function PropertyDetail() {
   const [linkCopied, setLinkCopied]             = useState<string | null>(null)
 
   // Images tab
-  const [imgDragOver, setImgDragOver]         = useState(false)
-  const [imgPendingFiles, setImgPendingFiles] = useState<File[]>([])
-  const [imgPreviews, setImgPreviews]         = useState<string[]>([])
-  const [imgUploading, setImgUploading]       = useState(false)
   const [deleteImgUrl, setDeleteImgUrl]       = useState<string | null>(null)
-  const imgInputRef = useRef<HTMLInputElement>(null)
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
@@ -653,6 +645,11 @@ export default function PropertyDetail() {
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
   const [constructionPhotos, setConstructionPhotos] = useState<ConstructionPhoto[]>([])
   const [crmProjectCoords, setCrmProjectCoords] = useState<{ lat: number; lng: number; name: string } | null>(null)
+  // Baustellenfotos-Upload
+  const [uploadingPhoto,     setUploadingPhoto]     = useState(false)
+  const [photoDate,          setPhotoDate]          = useState(new Date().toISOString().slice(0, 10))
+  const [photoDesc,          setPhotoDesc]          = useState('')
+  const constPhotoInputRef = useRef<HTMLInputElement>(null)
   const [uploadingPayId,   setUploadingPayId]   = useState<string | null>(null)
   const [uploadingPayType, setUploadingPayType] = useState<'invoice' | 'receipt' | null>(null)
   const payInvoiceRef = useRef<Record<string, HTMLInputElement | null>>({})
@@ -988,50 +985,6 @@ export default function PropertyDetail() {
     })
   }
 
-  // ── Image upload helpers ──────────────────────────────────
-  function addImageFiles(files: FileList | File[]) {
-    const arr = Array.from(files).filter(f => f.type.startsWith('image/'))
-    if (!arr.length) return
-    setImgPendingFiles(p => [...p, ...arr])
-    arr.forEach(f => {
-      const reader = new FileReader()
-      reader.onload = e => {
-        if (e.target?.result) setImgPreviews(p => [...p, e.target!.result as string])
-      }
-      reader.readAsDataURL(f)
-    })
-  }
-
-  async function uploadPendingImages() {
-    if (!id || !imgPendingFiles.length) return
-    setImgUploading(true)
-    try {
-      const urls = (await Promise.all(
-        imgPendingFiles.map(async file => {
-          const rand = Math.random().toString(36).slice(2, 8)
-          const path = `${id}/${Date.now()}-${rand}-${sanitizeFilename(file.name)}`
-          const { error } = await supabase.storage
-            .from('property-images').upload(path, file, { upsert: true })
-          if (error) return null
-          const { data: pub } = supabase.storage.from('property-images').getPublicUrl(path)
-          return pub.publicUrl
-        })
-      )).filter((u): u is string => u !== null)
-
-      const finalImages = [...(property?.images ?? []), ...urls]
-      const { error } = await supabase.from('properties')
-        .update({ images: finalImages }).eq('id', id)
-      if (error) throw error
-      setImgPendingFiles([])
-      setImgPreviews([])
-      setToast({ msg: t('success.saved') })
-      fetchProperty()
-    } catch {
-      setToast({ msg: t('errors.saveFailed'), type: 'error' })
-    } finally {
-      setImgUploading(false)
-    }
-  }
 
   async function confirmDeleteImage() {
     if (!deleteImgUrl || !id || !property) return
@@ -2648,6 +2601,39 @@ export default function PropertyDetail() {
     )
   }
 
+  // ── Baustellenfoto hochladen ──────────────────────────
+  async function handleUploadConstructionPhoto(files: FileList) {
+    if (!linkedProjectId || !files.length) return
+    setUploadingPhoto(true)
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const ext  = file.name.split('.').pop() ?? 'jpg'
+        const path = `${linkedProjectId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error: upErr } = await supabase.storage
+          .from('construction-photos')
+          .upload(path, file, { upsert: false })
+        if (upErr) { console.error('[PropertyDetail] Upload error:', upErr); continue }
+        await supabase.from('construction_photos').insert({
+          project_id:  linkedProjectId,
+          file_path:   path,
+          file_name:   file.name,
+          file_size:   file.size,
+          photo_date:  photoDate || null,
+          description: photoDesc.trim() || null,
+          uploaded_by: profile?.id ?? null,
+        })
+      }
+      setPhotoDesc('')
+      if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
+      await fetchUnitPayments()
+    } catch (err) {
+      console.error('[PropertyDetail] Baustellenfoto:', err)
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
+
   // ── Tab 5: Bilder ─────────────────────────────────────
   function renderImages() {
     const ownImages = property!.images ?? []
@@ -2753,107 +2739,88 @@ export default function PropertyDetail() {
           </>
         )}
 
-        {/* ── Admin-Upload + eigene Fotos (nur Admin/Verwalter sieht Upload) ── */}
-        {canEdit && (
-          <div>
-            <div
-              onDragOver={e => { e.preventDefault(); setImgDragOver(true) }}
-              onDragLeave={e => {
-                if (!e.currentTarget.contains(e.relatedTarget as Node)) setImgDragOver(false)
-              }}
-              onDrop={e => {
-                e.preventDefault()
-                setImgDragOver(false)
-                addImageFiles(e.dataTransfer.files)
-              }}
-              onClick={() => imgInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-colors
-                ${imgDragOver
-                  ? 'border-orange-400 bg-orange-50'
-                  : 'border-gray-200 bg-gray-50 hover:border-gray-300 hover:bg-white'}`}>
-              <input ref={imgInputRef} type="file" accept="image/*" multiple className="hidden"
-                onChange={e => { if (e.target.files) addImageFiles(e.target.files) }} />
-              <div className="text-3xl mb-2">{imgDragOver ? '📸' : '🖼️'}</div>
-              <p className="text-sm font-body text-gray-400">{t('propertyDetail.images.dropHint')}</p>
-              <p className="text-xs text-gray-300 font-body mt-1">{t('properties.imageUpload.hint')}</p>
-            </div>
-
-            {/* Pending previews */}
-            {imgPreviews.length > 0 && (
-              <div className="mt-4 space-y-3">
-                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                  {imgPreviews.map((src, i) => (
-                    <div key={i} className="relative aspect-square rounded-xl overflow-hidden group ring-2 ring-orange-400">
-                      <img src={src} alt="" className="w-full h-full object-cover" />
-                      <span className="absolute top-1 left-1 text-[10px] bg-orange-500 text-white font-body
-                                       px-1.5 py-0.5 rounded-full">neu</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setImgPendingFiles(p => p.filter((_, j) => j !== i))
-                          setImgPreviews(p => p.filter((_, j) => j !== i))
-                        }}
-                        className="absolute top-1 right-1 w-6 h-6 rounded-full bg-red-500 text-white
-                                   text-xs font-bold flex items-center justify-center
-                                   opacity-0 group-hover:opacity-100 transition-opacity shadow">
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+        {/* ── Baustellenfotos hochladen (Admin/Verwalter) ── */}
+        {canEdit && linkedProjectId && (
+          <div className="border-t border-gray-100 pt-6">
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              📷 Baustellenfoto hochladen
+            </h3>
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
+              {/* Datum + Beschreibung */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1">Datum</label>
+                  <input
+                    type="date"
+                    value={photoDate}
+                    onChange={e => setPhotoDate(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2
+                               text-sm text-hp-black font-body focus:outline-none
+                               focus:ring-2 focus:border-transparent transition"
+                    style={{ '--tw-ring-color': 'var(--color-highlight)' } as React.CSSProperties}
+                  />
                 </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={uploadPendingImages}
-                    disabled={imgUploading}
-                    className="px-4 py-2 rounded-xl text-white text-sm font-semibold font-body
-                               hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-2"
-                    style={{ backgroundColor: 'var(--color-highlight)' }}>
-                    {imgUploading && (
-                      <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                    )}
-                    {imgUploading ? t('properties.imageUpload.uploading') : t('propertyDetail.images.uploadBtn')}
-                  </button>
-                  <button
-                    onClick={() => { setImgPendingFiles([]); setImgPreviews([]) }}
-                    className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold
-                               font-body text-gray-600 hover:border-gray-300 transition-colors">
-                    {t('common.cancel')}
-                  </button>
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1">Beschreibung (optional)</label>
+                  <input
+                    type="text"
+                    value={photoDesc}
+                    onChange={e => setPhotoDesc(e.target.value)}
+                    placeholder="z.B. Rohbau EG"
+                    className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2
+                               text-sm text-hp-black font-body placeholder-gray-400
+                               focus:outline-none focus:ring-2 focus:border-transparent transition"
+                    style={{ '--tw-ring-color': 'var(--color-highlight)' } as React.CSSProperties}
+                  />
                 </div>
               </div>
-            )}
+              {/* Upload-Button */}
+              <button
+                type="button"
+                disabled={uploadingPhoto}
+                onClick={() => constPhotoInputRef.current?.click()}
+                className="w-full py-2.5 rounded-xl text-sm font-semibold font-body
+                           flex items-center justify-center gap-2 transition-opacity
+                           disabled:opacity-50"
+                style={{ backgroundColor: 'var(--color-highlight)', color: '#fff' }}>
+                {uploadingPhoto
+                  ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Wird hochgeladen…</>
+                  : '📷 Fotos / Videos auswählen'}
+              </button>
+              <input
+                ref={constPhotoInputRef}
+                type="file"
+                accept="image/*,video/*"
+                multiple
+                className="hidden"
+                onChange={e => { if (e.target.files) handleUploadConstructionPhoto(e.target.files) }}
+              />
+            </div>
           </div>
         )}
 
-        {/* Existing property images (admin-managed) */}
-        {canEdit && (
+        {/* Bestehende Fotos aus properties (legacy, nur wenn vorhanden) */}
+        {canEdit && ownImages.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              📁 Weitere Fotos
+              📁 Sonstige Fotos
             </h3>
-            {ownImages.length === 0 ? (
-              <div className="text-center py-8 text-gray-400 font-body">
-                <div className="text-4xl mb-2">🖼️</div>
-                <p className="text-sm">{t('propertyDetail.gallery.noImages')}</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                {ownImages.map((url, i) => (
-                  <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
-                    <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
-                    <button
-                      onClick={() => setDeleteImgUrl(url)}
-                      className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors
-                                 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <span className="bg-red-600 text-white text-xs font-semibold font-body
-                                       px-3 py-1.5 rounded-lg shadow">
-                        {t('common.delete')}
-                      </span>
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+              {ownImages.map((url, i) => (
+                <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
+                  <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                  <button
+                    onClick={() => setDeleteImgUrl(url)}
+                    className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors
+                               flex items-center justify-center opacity-0 group-hover:opacity-100">
+                    <span className="bg-red-600 text-white text-xs font-semibold font-body
+                                     px-3 py-1.5 rounded-lg shadow">
+                      {t('common.delete')}
+                    </span>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
