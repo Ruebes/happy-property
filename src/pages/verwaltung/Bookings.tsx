@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
-import { supabaseAdmin } from '../../lib/supabaseAdmin'
 
 interface GuestBooking {
   id: string
@@ -138,28 +137,22 @@ export default function VerwalterBookings() {
       if (existing?.id) {
         guestId = existing.id
       } else {
-        // Neuen Feriengast anlegen via Invite
-        const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-          form.email.trim().toLowerCase(),
-          {
-            data: { full_name, needs_password_setup: true },
-            redirectTo: `${window.location.origin}/login`,
-          }
-        )
-        if (authErr) throw new Error(authErr.message)
-        guestId = authData.user.id
-
-        // Profil anlegen
-        await supabaseAdmin.from('profiles').upsert({
-          id:          guestId,
-          email:       form.email.trim().toLowerCase(),
-          full_name,
-          phone:       form.phone.trim() || null,
-          language:    form.language,
-          nationality: form.nationality.trim() || null,
-          role:        'feriengast',
-          is_active:   true,
+        // Neuen Feriengast anlegen via Edge Function (kein Service-Role-Key im Browser)
+        const { data: inviteData, error: inviteErr } = await supabase.functions.invoke('admin-user-ops', {
+          body: {
+            action:      'invite_feriengast',
+            email:       form.email.trim().toLowerCase(),
+            full_name,
+            phone:       form.phone.trim() || null,
+            language:    form.language,
+            nationality: form.nationality.trim() || null,
+            redirectTo:  `${window.location.origin}/login`,
+          },
         })
+        if (inviteErr) throw new Error(inviteErr.message)
+        const result = inviteData as { success: boolean; userId: string; error?: string }
+        if (!result.success) throw new Error(result.error ?? 'Einladung fehlgeschlagen')
+        guestId = result.userId
       }
 
       // 2. Buchung anlegen

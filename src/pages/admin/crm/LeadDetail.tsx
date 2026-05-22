@@ -197,14 +197,16 @@ export default function LeadDetail() {
           .select('*, creator:profiles!activities_created_by_fkey(full_name)')
           .eq('lead_id', id)
           .not('type', 'eq', 'task')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(100),
         supabase
           .from('activities')
           .select('*, creator:profiles!activities_created_by_fkey(full_name)')
           .eq('lead_id', id)
           .eq('type', 'task')
           .is('completed_at', null)
-          .order('scheduled_at', { ascending: true }),
+          .order('scheduled_at', { ascending: true })
+          .limit(100),
         supabase.from('email_templates').select('*').order('name'),
         supabase
           .from('profiles')

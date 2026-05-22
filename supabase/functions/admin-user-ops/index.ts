@@ -155,6 +155,49 @@ Deno.serve(async (req: Request) => {
       return json({ success: true })
     }
 
+    // ── INVITE FERIENGAST ────────────────────────────────────────────────────────
+    if (action === 'invite_feriengast') {
+      const { email, full_name, phone, language, nationality, redirectTo } = body
+      if (!email || !full_name) {
+        return json({ error: 'email und full_name sind Pflichtfelder' }, 400)
+      }
+
+      // Check if user already exists
+      const { data: existingProfile } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle()
+
+      if (existingProfile) {
+        return json({ success: true, userId: (existingProfile as { id: string }).id, existing: true })
+      }
+
+      const { data: authData, error: authErr } = await admin.auth.admin.inviteUserByEmail(
+        email.trim().toLowerCase(),
+        {
+          data: { full_name, needs_password_setup: true },
+          redirectTo: redirectTo ?? `${Deno.env.get('SITE_URL') ?? ''}/set-password`,
+        }
+      )
+      if (authErr) throw new Error(authErr.message)
+
+      const userId = authData.user.id
+      const { error: profileErr } = await admin.from('profiles').upsert({
+        id:          userId,
+        email:       email.trim().toLowerCase(),
+        full_name,
+        phone:       phone        || null,
+        language:    language     || 'de',
+        nationality: nationality  || null,
+        role:        'feriengast',
+        is_active:   true,
+      }, { onConflict: 'id' })
+      if (profileErr) throw new Error(profileErr.message)
+
+      return json({ success: true, userId, existing: false })
+    }
+
     return json({ error: `Unbekannte Aktion: ${action}` }, 400)
 
   } catch (err) {

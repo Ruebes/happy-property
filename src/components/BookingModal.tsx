@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { supabaseAdmin } from '../lib/supabaseAdmin'
 import { sendWhatsApp } from '../lib/whatsapp'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -363,26 +362,22 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
       if (knownId) {
         guestId = knownId
       } else {
-        // Invite new guest
-        const { data: authData, error: authErr } = await supabaseAdmin.auth.admin.inviteUserByEmail(
-          email,
-          {
-            data: { full_name: fullName, needs_password_setup: true },
-            redirectTo: `${window.location.origin}/set-password`,
-          }
-        )
-        if (authErr) throw new Error(authErr.message)
-        guestId = authData.user.id
-        await supabaseAdmin.from('profiles').upsert({
-          id:          guestId,
-          email,
-          full_name:   fullName,
-          phone:       form.phone.trim() || null,
-          language:    form.language,
-          nationality: form.nationality.trim() || null,
-          role:        'feriengast',
-          is_active:   true,
+        // Invite new guest via Edge Function (no service-role key in browser)
+        const { data: inviteData, error: inviteErr } = await supabase.functions.invoke('admin-user-ops', {
+          body: {
+            action:      'invite_feriengast',
+            email,
+            full_name:   fullName,
+            phone:       form.phone.trim() || null,
+            language:    form.language,
+            nationality: form.nationality.trim() || null,
+            redirectTo:  `${window.location.origin}/set-password`,
+          },
         })
+        if (inviteErr) throw new Error(inviteErr.message)
+        const result = inviteData as { success: boolean; userId: string; error?: string }
+        if (!result.success) throw new Error(result.error ?? 'Einladung fehlgeschlagen')
+        guestId = result.userId
       }
 
       // 2. Booking number

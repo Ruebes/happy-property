@@ -299,6 +299,7 @@ export default function Objekte() {
           owner:owner_id(full_name, email)
         `)
         .order('created_at', { ascending: false })
+        .limit(500)
       setProperties((data as unknown as Property[]) ?? [])
     } catch (err) {
       console.error('[Objekte] fetchProperties:', err)

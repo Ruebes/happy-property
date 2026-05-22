@@ -213,6 +213,15 @@ function calcNet(gross: string, vat: string): string {
   return ''
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    ),
+  ])
+}
+
 async function analyzeInvoicePDF(file: File): Promise<Partial<InvoiceFullForm> | null> {
   // PDF → base64 (data-URL-Präfix abschneiden)
   const pdfBase64 = await new Promise<string>((resolve, reject) => {
@@ -296,7 +305,7 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
     setAiFilledFields(new Set())
 
     try {
-      const filled = await analyzeInvoicePDF(file)
+      const filled = await withTimeout(analyzeInvoicePDF(file), 12000)
       if (filled && Object.keys(filled).length > 0) {
         // Recalculate net if gross and vat were both found
         const newGross = filled.amount_gross ?? form.amount_gross
@@ -832,7 +841,7 @@ export default function PropertyDetail() {
 
   useEffect(() => {
     if (canEdit) fetchContracts()
-  }, [fetchContracts, canEdit])
+  }, [fetchContracts, profile?.role])
 
   // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {
@@ -1131,7 +1140,7 @@ export default function PropertyDetail() {
       // Rechnung-PDF → KI liest Betrag aus und überschreibt den vordefinierten Wert
       if (type === 'invoice' && file.type === 'application/pdf') {
         try {
-          const result = await analyzeInvoicePDF(file)
+          const result = await withTimeout(analyzeInvoicePDF(file), 12000)
           const amount = result?.amount_gross ?? result?.amount_net
           if (amount) update.amount = parseFloat(String(amount))
         } catch { /* silent – amount stays as-is */ }
@@ -1252,7 +1261,7 @@ export default function PropertyDetail() {
     if (file.type !== 'application/pdf') return
     setAddPayAnalyzing(true)
     try {
-      const result = await analyzeInvoicePDF(file)
+      const result = await withTimeout(analyzeInvoicePDF(file), 12000)
       if (result?.amount_gross) setAddPayAmount(String(result.amount_gross))
       else if (result?.amount_net) setAddPayAmount(String(result.amount_net))
     } catch { /* silent – user enters manually */ } finally {

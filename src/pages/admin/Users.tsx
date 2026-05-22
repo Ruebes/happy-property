@@ -290,7 +290,7 @@ export default function AdminUsers() {
     fetchVerwaltungen()
     fetchCrmProjects()   // ← neu
     // Lead-ID-Map: email → lead_id (für CRM-Link bei Eigentümern)
-    supabase.from('leads').select('id, email').then(({ data }) => {
+    supabase.from('leads').select('id, email').limit(1000).then(({ data }) => {
       if (data) {
         const map: Record<string, string> = {}
         for (const l of data as { id: string; email: string }[]) {
