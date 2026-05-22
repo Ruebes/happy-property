@@ -507,12 +507,28 @@ export default function Objekte() {
           .eq('id', editId)
         if (error) throw error
 
-        // Sync rental_type to all linked crm_project_units (nur wenn gesetzt)
-        if (form.rental_type) {
-          const crmRentalType = form.rental_type === 'longterm' ? 'long' : 'short'
+        // Alle Spec-Felder in verknüpfte crm_project_units synchronisieren
+        {
+          const crmRentalType = form.rental_type === 'longterm' ? 'long'
+                              : form.rental_type === 'shortterm' ? 'short'
+                              : null
           await supabase
             .from('crm_project_units')
-            .update({ rental_type: crmRentalType })
+            .update({
+              type:        form.type,
+              bedrooms:    parseInt(form.bedrooms) || 0,
+              bathrooms:   parseInt(form.bathrooms) || 1,
+              size_sqm:    form.size_sqm    ? parseFloat(form.size_sqm.replace(',', '.'))    : null,
+              terrace_sqm: form.terrace_sqm ? parseFloat(form.terrace_sqm.replace(',', '.')) : null,
+              floor:       form.floor       ? parseInt(form.floor)                           : null,
+              block:       form.block.trim() || null,
+              is_furnished:form.is_furnished,
+              rental_type: crmRentalType,
+              price_net:   priceNet,
+              price_gross: form.purchase_price_gross ? parseFloat(form.purchase_price_gross.replace(',', '.')) : null,
+              vat_rate:    parseFloat(form.vat_rate.replace(',', '.')) || 19,
+              unit_number: form.unit_number.trim() || null,
+            })
             .eq('property_id', editId)
         }
 
@@ -541,13 +557,24 @@ export default function Objekte() {
       if (savedId && crmProjId && crmUnitId) {
         if (crmUnitId === 'new') {
           // Neue crm_project_unit anlegen und mit property verknüpfen
+          const crmRentalType = form.rental_type === 'longterm' ? 'long'
+                              : form.rental_type === 'shortterm' ? 'short'
+                              : null
           await supabase.from('crm_project_units').insert({
             project_id:  crmProjId,
             unit_number: form.unit_number.trim() || 'NEU',
             type:        form.type,
             bedrooms:    parseInt(form.bedrooms) || 0,
-            size_sqm:    form.size_sqm ? parseFloat(form.size_sqm.replace(',', '.')) : null,
+            bathrooms:   parseInt(form.bathrooms) || 1,
+            size_sqm:    form.size_sqm    ? parseFloat(form.size_sqm.replace(',', '.'))    : null,
+            terrace_sqm: form.terrace_sqm ? parseFloat(form.terrace_sqm.replace(',', '.')) : null,
+            floor:       form.floor       ? parseInt(form.floor)                           : null,
+            block:       form.block.trim() || null,
+            is_furnished:form.is_furnished,
+            rental_type: crmRentalType,
             price_net:   priceNet,
+            price_gross: form.purchase_price_gross ? parseFloat(form.purchase_price_gross.replace(',', '.')) : null,
+            vat_rate:    parseFloat(form.vat_rate.replace(',', '.')) || 19,
             property_id: savedId,
           })
         } else {

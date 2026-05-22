@@ -5,7 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
-import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto } from '../lib/crmTypes'
+import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto, CrmProjectUnit } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
 interface OwnerProfile {
@@ -643,6 +643,7 @@ export default function PropertyDetail() {
   // Payment Plan tab
   const [linkedUnitId,      setLinkedUnitId]      = useState<string | null>(null)
   const [linkedProjectId,   setLinkedProjectId]   = useState<string | null>(null)
+  const [linkedUnit,        setLinkedUnit]        = useState<CrmProjectUnit | null>(null)
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [eigentuemerDocs,   setEigentuemerDocs]   = useState<CrmUnitDocument[]>([])
@@ -844,12 +845,21 @@ export default function PropertyDetail() {
       // Find the CRM unit linked to this property
       const { data: unitData } = await supabase
         .from('crm_project_units')
-        .select('id, project_id, images')
+        .select(`
+          id, project_id, images,
+          unit_number, block, type, bedrooms, bathrooms,
+          size_sqm, terrace_sqm, floor,
+          price_net, price_gross, vat_rate,
+          is_furnished, rental_type, status,
+          handover_date, notes,
+          verwalter_id, verwalter:verwalter_id(id, full_name)
+        `)
         .eq('property_id', id)
         .maybeSingle()
       if (!unitData) {
         setLinkedUnitId(null)
         setLinkedProjectId(null)
+        setLinkedUnit(null)
         setUnitPayments([])
         setUnitKaufvertraege([])
         setCrmProjectImages([])
@@ -860,6 +870,7 @@ export default function PropertyDetail() {
       setLinkedUnitId(unitData.id)
       setLinkedProjectId((unitData as { project_id: string }).project_id)
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
+      setLinkedUnit(unitData as unknown as CrmProjectUnit)
 
       const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
         supabase
@@ -1376,6 +1387,22 @@ export default function PropertyDetail() {
   // ── Tab 1: Übersicht ──────────────────────────────────
   function renderOverview() {
     const p = property!
+    // Prefer CRM unit data for specs; fall back to properties for unlinked units
+    const u = linkedUnit
+    const displayType        = u?.type         ?? p.type
+    const displayBedrooms    = u?.bedrooms      ?? p.bedrooms
+    const displayBathrooms   = u?.bathrooms     ?? null
+    const displaySizeSqm     = u?.size_sqm      ?? p.size_sqm
+    const displayTerraceSqm  = u?.terrace_sqm   ?? null
+    const displayFloor       = u?.floor         ?? null
+    const displayIsFurnished = u?.is_furnished  ?? p.is_furnished
+    const displayRentalType  = u?.rental_type === 'long'  ? 'longterm'
+                             : u?.rental_type === 'short' ? 'shortterm'
+                             : (p.rental_type ?? 'longterm')
+    const displayPriceGross  = u?.price_gross   ?? p.purchase_price_gross
+    const displayPriceNet    = u?.price_net     ?? p.purchase_price_net
+    const displayVatRate     = u?.vat_rate      ?? p.vat_rate
+
     return (
       <div className="space-y-6">
 
@@ -1386,37 +1413,49 @@ export default function PropertyDetail() {
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <Stat label={t('properties.type')}
-                  value={t(`properties.types.${p.type}`)} />
+                  value={t(`properties.types.${displayType}`)} />
             <Stat label={t('properties.bedrooms')}
-                  value={p.bedrooms === 0 ? t('properties.bedroomsStudio') : String(p.bedrooms)} />
+                  value={displayBedrooms === 0 ? t('properties.bedroomsStudio') : String(displayBedrooms)} />
             <Stat label={t('properties.size')}
-                  value={p.size_sqm != null ? `${fmtNumber(p.size_sqm, 0)} m²` : null} />
+                  value={displaySizeSqm != null ? `${fmtNumber(displaySizeSqm, 0)} m²` : null} />
+            {displayTerraceSqm != null && (
+              <Stat label="Terrasse"
+                    value={`${fmtNumber(displayTerraceSqm, 0)} m²`} />
+            )}
+            {displayFloor != null && (
+              <Stat label="Etage"
+                    value={String(displayFloor)} />
+            )}
+            {displayBathrooms != null && (
+              <Stat label="Badezimmer"
+                    value={String(displayBathrooms)} />
+            )}
             <Stat label={t('properties.rentalType')}
-                  value={t(`properties.rental.${p.rental_type}`)} />
+                  value={t(`properties.rental.${displayRentalType}`)} />
             <Stat label={t('properties.furnished')}
-                  value={p.is_furnished ? t('properties.furnishedYes') : t('properties.furnishedNo')} />
+                  value={displayIsFurnished ? t('properties.furnishedYes') : t('properties.furnishedNo')} />
             <Stat label={t('propertyDetail.overview.createdAt')}
                   value={fmtDate(p.created_at)} />
           </div>
         </div>
 
         {/* Kaufpreis */}
-        {(p.purchase_price_gross || p.purchase_price_net) && (
+        {(displayPriceGross || displayPriceNet) && (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
               {t('propertyDetail.overview.purchaseData')}
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {p.purchase_price_gross && (
+              {displayPriceGross && (
                 <Stat label={t('properties.purchasePrice.gross')}
-                      value={fmtCurrency(p.purchase_price_gross)} />
+                      value={fmtCurrency(displayPriceGross)} />
               )}
-              {p.purchase_price_net && (
+              {displayPriceNet && (
                 <Stat label={t('properties.purchasePrice.net')}
-                      value={fmtCurrency(p.purchase_price_net)} />
+                      value={fmtCurrency(displayPriceNet)} />
               )}
               <Stat label={t('properties.purchasePrice.vat')}
-                    value={`${p.vat_rate} %`} />
+                    value={`${displayVatRate} %`} />
             </div>
           </div>
         )}
@@ -2630,27 +2669,28 @@ export default function PropertyDetail() {
       )
     }
 
-    return (
-      <div className="space-y-8">
+    // Reihenfolge: aktive Einheit → Wohnungsbilder zuerst; Im Bau → Projektbilder zuerst
+    const isActive = linkedUnit?.status === 'active' || property!.property_status === 'active'
 
-        {/* ── Projektbilder ────────────────────────────────── */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-            🏗 Projektbilder
-          </h3>
-          <ImageGrid images={crmProjectImages} emptyText="Noch keine Projektbilder vorhanden." />
-        </div>
+    const sectionUnitImages = (
+      <div>
+        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+          🏠 Wohnungsbilder
+        </h3>
+        <ImageGrid images={crmUnitImages} emptyText="Noch keine Wohnungsbilder vorhanden." />
+      </div>
+    )
 
-        {/* ── Wohnungsbilder ───────────────────────────────── */}
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-            🏠 Wohnungsbilder
-          </h3>
-          <ImageGrid images={crmUnitImages} emptyText="Noch keine Wohnungsbilder vorhanden." />
-        </div>
+    const sectionProjectImages = (
+      <div>
+        <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+          🏗 Projektbilder
+        </h3>
+        <ImageGrid images={crmProjectImages} emptyText="Noch keine Projektbilder vorhanden." />
+      </div>
+    )
 
-        {/* ── Baustellenbilder ─────────────────────────────── */}
-        {constructionPhotos.length > 0 && (
+    const sectionConstructionPhotos = constructionPhotos.length > 0 ? (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
               🏗️ Baustellenbilder
@@ -2693,6 +2733,24 @@ export default function PropertyDetail() {
               })}
             </div>
           </div>
+    ) : null
+
+    return (
+      <div className="space-y-8">
+
+        {/* Reihenfolge: Aktiv → Wohnung zuerst | Im Bau → Projekt zuerst */}
+        {isActive ? (
+          <>
+            {sectionUnitImages}
+            {sectionProjectImages}
+            {sectionConstructionPhotos}
+          </>
+        ) : (
+          <>
+            {sectionProjectImages}
+            {sectionConstructionPhotos}
+            {sectionUnitImages}
+          </>
         )}
 
         {/* ── Admin-Upload + eigene Fotos (nur Admin/Verwalter sieht Upload) ── */}
@@ -2870,7 +2928,7 @@ export default function PropertyDetail() {
     })
 
     // Gesamtbetrag = Bruttokaufpreis der Immobilie (fix, immer sichtbar)
-    const grossTotal  = property!.purchase_price_gross ?? 0
+    const grossTotal  = linkedUnit?.price_gross ?? property!.purchase_price_gross ?? 0
     const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
     const outstanding = grossTotal - totalPaid
     const pct         = grossTotal > 0 ? Math.min((totalPaid / grossTotal) * 100, 100) : 0
@@ -3317,12 +3375,12 @@ export default function PropertyDetail() {
           )}
         </h1>
         <div className="flex flex-wrap gap-2">
-          <Badge color="blue">{t(`properties.types.${p.type}`)}</Badge>
-          <Badge color="orange">{t(`properties.rental.${p.rental_type}`)}</Badge>
-          {p.is_furnished && <Badge color="green">🛋️ {t('properties.furnishedYes')}</Badge>}
+          <Badge color="blue">{t(`properties.types.${linkedUnit?.type ?? p.type}`)}</Badge>
+          <Badge color="orange">{t(`properties.rental.${linkedUnit?.rental_type === 'long' ? 'longterm' : linkedUnit?.rental_type === 'short' ? 'shortterm' : (p.rental_type ?? 'longterm')}`)}</Badge>
+          {(linkedUnit?.is_furnished ?? p.is_furnished) && <Badge color="green">🛋️ {t('properties.furnishedYes')}</Badge>}
           {p.owner && <Badge color="purple">{p.owner.full_name || p.owner.email}</Badge>}
-          {p.purchase_price_gross && (
-            <Badge color="green">{fmtCurrency(p.purchase_price_gross)}</Badge>
+          {(linkedUnit?.price_gross ?? p.purchase_price_gross) && (
+            <Badge color="green">{fmtCurrency((linkedUnit?.price_gross ?? p.purchase_price_gross)!)}</Badge>
           )}
           {addressStr(p) && (
             <span className="text-xs font-body text-gray-400 self-center">📍 {addressStr(p)}</span>

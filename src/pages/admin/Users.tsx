@@ -39,10 +39,15 @@ interface UserProfile {
 }
 
 interface Property {
-  id: string
-  project_name: string
-  unit_number: string | null
-  owner_id: string
+  id:                   string
+  project_name:         string
+  unit_number:          string | null
+  owner_id:             string
+  type:                 'apartment' | 'villa' | 'studio' | null
+  bedrooms:             number | null
+  size_sqm:             number | null
+  purchase_price_gross: number | null
+  property_status:      'active' | 'under_construction' | null
 }
 
 interface VerwaltungOption { id: string; name: string }
@@ -246,7 +251,7 @@ export default function AdminUsers() {
   const fetchProps = useCallback(async () => {
     const { data } = await supabase
       .from('properties')
-      .select('id, project_name, unit_number, owner_id')
+      .select('id, project_name, unit_number, owner_id, type, bedrooms, size_sqm, purchase_price_gross, property_status')
       .order('project_name')
     setAllProps((data as Property[]) ?? [])
   }, [])
@@ -1192,31 +1197,77 @@ export default function AdminUsers() {
                       {t('users.properties.none')}
                     </p>
                   ) : (
-                    <ul className="space-y-1.5 mb-3">
+                    <div className="space-y-2 mb-3">
                       {ownerProps.map(p => (
-                        <li key={p.id}
-                            className="flex items-center justify-between px-3 py-2
-                                       bg-gray-50 rounded-xl border border-gray-100">
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/admin/properties/${p.id}`)}
-                            className="flex items-center gap-1 text-sm font-body text-hp-black
-                                       hover:text-orange-500 transition-colors text-left">
-                            {p.project_name}
-                            {p.unit_number && (
-                              <span className="text-gray-400 ml-1">· {p.unit_number}</span>
-                            )}
-                            <span className="text-gray-300 text-xs ml-1">→</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveProperty(p.id, editUser!.id)}
-                            className="text-xs text-red-400 hover:text-red-600 font-body shrink-0">
-                            {t('users.properties.remove')}
-                          </button>
-                        </li>
+                        <div key={p.id}
+                             className="rounded-xl border border-gray-100 bg-white overflow-hidden
+                                        shadow-sm hover:shadow-md hover:border-orange-200 transition-all">
+                          {/* Farbstreifen oben */}
+                          <div className="h-1"
+                               style={{ backgroundColor: p.property_status === 'under_construction' ? '#3b82f6' : '#22c55e' }} />
+                          <div className="px-3 py-2.5">
+                            {/* Titelzeile + Entfernen-Button */}
+                            <div className="flex items-start justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/admin/properties/${p.id}`)}
+                                className="flex-1 text-left group">
+                                <p className="text-sm font-semibold text-hp-black font-body
+                                             group-hover:text-orange-500 transition-colors leading-tight">
+                                  {p.project_name}
+                                  {p.unit_number && (
+                                    <span className="font-normal text-gray-400 ml-1.5">#{p.unit_number}</span>
+                                  )}
+                                </p>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveProperty(p.id, editUser!.id)}
+                                className="text-[10px] text-red-300 hover:text-red-500 font-body shrink-0 mt-0.5 transition-colors">
+                                ✕
+                              </button>
+                            </div>
+                            {/* Badges: Typ, Status, Größe, Preis */}
+                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                              {p.type && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-body font-medium">
+                                  {p.type === 'apartment' ? 'Apartment' : p.type === 'villa' ? 'Villa' : 'Studio'}
+                                </span>
+                              )}
+                              {p.bedrooms != null && p.bedrooms > 0 && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-body">
+                                  🛏 {p.bedrooms}
+                                </span>
+                              )}
+                              {p.size_sqm != null && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-body">
+                                  📐 {p.size_sqm} m²
+                                </span>
+                              )}
+                              {p.purchase_price_gross != null && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 font-body font-medium">
+                                  {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(p.purchase_price_gross)}
+                                </span>
+                              )}
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-body font-medium
+                                ${p.property_status === 'under_construction'
+                                  ? 'bg-blue-50 text-blue-600'
+                                  : 'bg-green-50 text-green-700'}`}>
+                                {p.property_status === 'under_construction' ? '🏗 Im Bau' : '✅ Aktiv'}
+                              </span>
+                            </div>
+                            {/* Link-Hinweis */}
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/admin/properties/${p.id}`)}
+                              className="mt-1.5 text-[10px] text-orange-400 hover:text-orange-600
+                                         font-body transition-colors flex items-center gap-0.5">
+                              Öffnen →
+                            </button>
+                          </div>
+                        </div>
                       ))}
-                    </ul>
+                    </div>
                   )}
 
                   {/* Assign property */}

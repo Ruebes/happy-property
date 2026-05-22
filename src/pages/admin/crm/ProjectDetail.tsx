@@ -519,18 +519,13 @@ export default function ProjectDetail() {
             unit.rental_type === 'long' ? 'longterm'
             : unit.rental_type === 'short' ? 'shortterm'
             : 'longterm'
+          // Nur Portal-Management-Felder synchronisieren — Specs leben in crm_project_units
           const propData = {
-            project_name:         project?.name ?? '',
-            unit_number:          unit.unit_number || null,
-            type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
-            bedrooms:             unit.bedrooms ?? 0,
-            size_sqm:             unit.size_sqm ?? null,
-            is_furnished:         unit.is_furnished ?? false,
-            rental_type:          rentalType,
-            city:                 project?.location ?? null,
-            purchase_price_net:   unit.price_net   ?? null,
-            purchase_price_gross: unit.price_gross ?? null,
-            property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
+            project_name:    project?.name ?? '',
+            unit_number:     unit.unit_number || null,
+            rental_type:     rentalType,
+            city:            project?.location ?? null,
+            property_status: unit.status === 'under_construction' ? 'under_construction' : 'active',
           }
           if (unit.property_id) {
             await supabase.from('properties').update(propData).eq('id', unit.property_id)

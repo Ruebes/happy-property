@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 
@@ -43,8 +44,17 @@ function focusRing(): React.CSSProperties {
   return { '--tw-ring-color': 'var(--color-highlight)' } as React.CSSProperties
 }
 
+interface VerwaltungProperty {
+  id:           string
+  project_name: string
+  unit_number:  string | null
+  owner:        { full_name: string } | null
+}
+
 // ── Component ──────────────────────────────────────────────────
 export default function AdminVerwaltungen() {
+  const navigate = useNavigate()
+
   const [list,    setList]    = useState<VerwaltungRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [toast,   setToast]   = useState<string | null>(null)
@@ -55,6 +65,10 @@ export default function AdminVerwaltungen() {
   const [saving,     setSaving]     = useState(false)
   const [formError,  setFormError]  = useState('')
   const [deleteId,   setDeleteId]   = useState<string | null>(null)
+
+  // Immobilien der aktuell geöffneten Verwaltung
+  const [verwaltungProps, setVerwaltungProps] = useState<VerwaltungProperty[]>([])
+  const [propsLoading,    setPropsLoading]    = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,7 +110,20 @@ export default function AdminVerwaltungen() {
       ansprechpartner_email: v.ansprechpartner_email ?? '',
       notes:                 v.notes                 ?? '',
     })
-    setFormError(''); setModalOpen(true)
+    setFormError('')
+    setVerwaltungProps([])
+    setModalOpen(true)
+    // Immobilien dieser Verwaltung laden
+    setPropsLoading(true)
+    supabase
+      .from('properties')
+      .select('id, project_name, unit_number, owner:owner_id(full_name)')
+      .eq('verwaltung_id', v.id)
+      .order('project_name')
+      .then(({ data }) => {
+        setVerwaltungProps((data ?? []) as unknown as VerwaltungProperty[])
+        setPropsLoading(false)
+      })
   }
 
   async function handleSave() {
@@ -338,6 +365,47 @@ export default function AdminVerwaltungen() {
                           value={form.notes}
                           onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
+
+              {/* Zugeordnete Immobilien */}
+              {editing && (
+                <div className="border-t border-gray-100 pt-4">
+                  <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">
+                    Immobilien ({verwaltungProps.length})
+                  </p>
+                  {propsLoading ? (
+                    <div className="flex items-center gap-2 text-xs text-gray-400 font-body py-1">
+                      <span className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
+                      Lädt…
+                    </div>
+                  ) : verwaltungProps.length === 0 ? (
+                    <p className="text-xs text-gray-400 font-body">Keine Immobilien zugeordnet.</p>
+                  ) : (
+                    <ul className="space-y-1.5">
+                      {verwaltungProps.map(p => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            onClick={() => { setModalOpen(false); navigate(`/admin/properties/${p.id}`) }}
+                            className="w-full flex items-center justify-between px-3 py-2
+                                       bg-gray-50 rounded-xl border border-gray-100
+                                       hover:border-orange-200 hover:bg-orange-50 transition-colors text-left">
+                            <div className="min-w-0">
+                              <span className="text-sm font-body text-hp-black">
+                                {p.project_name}
+                                {p.unit_number && <span className="text-gray-400 ml-1">· {p.unit_number}</span>}
+                              </span>
+                              {p.owner?.full_name && (
+                                <p className="text-xs text-gray-400 font-body mt-0.5 truncate">{p.owner.full_name}</p>
+                              )}
+                            </div>
+                            <span className="text-xs text-gray-400 ml-2 shrink-0">→</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {formError && <p className="text-sm text-red-500 font-body">{formError}</p>}
             </div>

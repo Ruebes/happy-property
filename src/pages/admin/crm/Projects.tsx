@@ -172,18 +172,25 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (res.error) throw new Error(res.error.message)
 
         // Status-Kaskade: Wenn Projektstatus sich geändert hat →
-        // property_status aller verlinkten Portal-Einträge aktualisieren
+        // alle CRM-Einheiten + verlinkten Portal-Einträge aktualisieren
         if (project.status !== form.status) {
-          const newPropStatus = form.status === 'under_construction' ? 'under_construction' : 'active'
-          // Alle Units dieses Projekts mit property_id holen
+          const newUnitStatus = form.status === 'under_construction' ? 'under_construction' : 'active'
+          const newPropStatus = newUnitStatus
+
+          // 1. Alle CRM-Einheiten dieses Projekts updaten
+          await supabase
+            .from('crm_project_units')
+            .update({ status: newUnitStatus })
+            .eq('project_id', project.id)
+
+          // 2. Verknüpfte Portal-Einträge (property_status) ebenfalls updaten
           const { data: units } = await supabase
             .from('crm_project_units')
-            .select('id, property_id')
+            .select('property_id')
             .eq('project_id', project.id)
             .not('property_id', 'is', null)
           if (units && units.length > 0) {
-            const propertyIds = (units as { id: string; property_id: string }[])
-              .map(u => u.property_id)
+            const propertyIds = (units as { property_id: string }[]).map(u => u.property_id)
             await supabase
               .from('properties')
               .update({ property_status: newPropStatus })
