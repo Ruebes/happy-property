@@ -841,7 +841,7 @@ export default function PropertyDetail() {
 
   useEffect(() => {
     if (canEdit) fetchContracts()
-  }, [fetchContracts, profile?.role])
+  }, [fetchContracts, canEdit])
 
   // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {

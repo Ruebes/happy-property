@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { AuthProvider } from './lib/auth'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -57,6 +57,13 @@ const Buchung             = lazy(() => import('./pages/feriengast/Buchung'))
 const Nachrichten         = lazy(() => import('./pages/feriengast/Nachrichten'))
 const FeriengastProfil    = lazy(() => import('./pages/feriengast/Profil'))
 
+// ── Wrapper: erzwingt Re-Mount wenn :id in der URL wechselt ──────────────────
+// Ohne key würde React die Komponente beim Wechsel von z.B. Lead A → Lead B
+// NICHT unmounten – alter State bleibt bis zum Fetch-Ende sichtbar (Stale UI).
+function PropertyDetailRoute()   { const { id } = useParams(); return <PropertyDetail    key={id} /> }
+function CrmLeadDetailRoute()    { const { id } = useParams(); return <CrmLeadDetail     key={id} /> }
+function CrmProjectDetailRoute() { const { id } = useParams(); return <CrmProjectDetail  key={id} /> }
+
 // ── Suspense-Fallback ─────────────────────────────────────────────────────────
 function PageLoader() {
   return (
@@ -92,7 +99,7 @@ export default function App() {
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
               <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />
-              <Route path="/admin/properties/:id"        element={<PropertyDetail />} />
+              <Route path="/admin/properties/:id"        element={<PropertyDetailRoute />} />
             </Route>
 
             {/* ── Admin + Verwalter (CRM + Verwaltung) ── */}
@@ -100,15 +107,15 @@ export default function App() {
               <Route path="/admin/crm"             element={<CrmPipeline />} />
               <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
               <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
-              <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetail />} />
+              <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetailRoute />} />
               <Route path="/admin/crm/templates"   element={<CrmTemplates />} />
               <Route path="/admin/crm/archived"    element={<CrmArchived />} />
               <Route path="/admin/crm/projects"       element={<CrmProjects />} />
-              <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetail />} />
+              <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />
               <Route path="/admin/crm/settings"    element={<CrmSettings />} />
               <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
               <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />
-              <Route path="/verwalter/properties/:id" element={<PropertyDetail />} />
+              <Route path="/verwalter/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 
             {/* ── Verwalter ── */}
@@ -120,7 +127,7 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={['eigentuemer']} />}>
               <Route path="/eigentuemer/dashboard"      element={<EigentuemerDashboard />} />
               <Route path="/eigentuemer/properties"     element={<EigentuemerProperties />} />
-              <Route path="/eigentuemer/properties/:id" element={<PropertyDetail />} />
+              <Route path="/eigentuemer/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 
             {/* ── Admin + Verwalter + Eigentümer (gemeinsame Seiten) ── */}
