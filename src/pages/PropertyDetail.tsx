@@ -1138,6 +1138,7 @@ export default function PropertyDetail() {
       }
 
       await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+      void notifyOwner(file.name, 'Dokument')
       await fetchUnitPayments()
     } catch (err) {
       console.error('[PropertyDetail] upload payment file:', err)
@@ -1310,6 +1311,7 @@ export default function PropertyDetail() {
         uploaded_by: profile.id,
       })
       if (dbErr) throw dbErr
+      void notifyOwner(docName, 'Dokument')
       setShowContractDoc(false)
       setContractDocFile(null)
       setContractDocName('')
@@ -2601,6 +2603,27 @@ export default function PropertyDetail() {
     )
   }
 
+  // ── Eigentümer per E-Mail benachrichtigen ─────────────
+  async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
+    const owner = property?.owner
+    if (!owner?.email) return
+    const firstName = owner.full_name?.split(' ')[0] || owner.full_name || 'Eigentümer'
+    try {
+      await supabase.functions.invoke('send-email', {
+        body: {
+          to:      owner.email,
+          subject: 'Neue Datei in Ihrem Happy Property Portal',
+          html:    `<p>Hallo ${firstName},</p>
+<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
+<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
+<p>Viele Grüße<br>Ihr Happy Property Team</p>`,
+        },
+      })
+    } catch (err) {
+      console.warn('[PropertyDetail] notifyOwner failed:', err)
+    }
+  }
+
   // ── Baustellenfoto hochladen ──────────────────────────
   async function handleUploadConstructionPhoto(files: FileList) {
     if (!linkedProjectId || !files.length) return
@@ -2624,6 +2647,7 @@ export default function PropertyDetail() {
           uploaded_by: profile?.id ?? null,
         })
       }
+      void notifyOwner(`${files.length} neues Baustellenfoto${files.length > 1 ? 's' : ''}`, 'Baustellenfoto')
       setPhotoDesc('')
       if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
       await fetchUnitPayments()
