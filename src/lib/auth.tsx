@@ -154,8 +154,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    // WICHTIG (Spinner-Deadlock-Fix): Der onAuthStateChange-Callback ist
+    // bewusst SYNCHRON (nicht async) und ruft NIE direkt eine Supabase-Methode
+    // (.from / .auth …) auf. supabase-js feuert diese Events teilweise WÄHREND
+    // es den internen Auth-Lock (navigator.locks) hält. Ein Supabase-Aufruf im
+    // Callback würde denselben Lock erneut anfragen → Deadlock → Spinner hängt,
+    // nur Reload hilft. INITIAL_SESSION feuert bei JEDEM Laden, daher trat das
+    // "von Anfang an / fast immer" auf. Lösung (offizielle Supabase-Empfehlung):
+    // alle Supabase-Calls per setTimeout(…,0) aus dem Callback herauslösen,
+    // damit der Lock zuerst freigegeben wird.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
 
         // TOKEN_REFRESHED: Session silent aktualisieren – kein Profil-Reload
         // nötig, da Supabase autoRefreshToken alles selbst handhabt.
@@ -174,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Alle anderen Events (INITIAL_SESSION, SIGNED_IN, PASSWORD_RECOVERY …):
         // 1. Sofort aus Cache setzen → kein Spinner bei bekanntem User
-        // 2. Profil im Hintergrund frisch laden → State + Cache aktualisieren
+        // 2. Profil im Hintergrund (nach Lock-Freigabe) frisch laden
         const cachedProfile = session?.user ? getCachedProfile(session.user.id) : null
         const needsPasswordSetup = !!(
           session?.user?.user_metadata?.needs_password_setup === true ||
@@ -182,9 +191,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         )
         const myId = ++fetchIdRef.current
 
-        // WICHTIG: loading nur auf true setzen wenn wir weder Cache noch laufendes
-        // Profil haben. Bei Fenster-Fokus-Events (SIGNED_IN nach Token-Refresh)
-        // niemals loading=true setzen wenn bereits ein Profil im State ist.
+        // loading nur auf true wenn weder Cache noch laufendes Profil vorhanden.
+        // Bei Fenster-Fokus-Events (SIGNED_IN nach Token-Refresh) niemals
+        // loading=true setzen wenn bereits ein Profil im State ist.
         setState(s => ({
           ...s,
           loading:            !cachedProfile && !s.profile,
@@ -194,29 +203,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           needsPasswordSetup,
         }))
 
-        // Frisches Profil im Hintergrund laden
-        const freshProfile = session?.user ? await fetchProfile(session.user.id) : null
-        if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
-
-        // Cache nur aktualisieren wenn erfolgreich geladen – nie löschen bei
-        // Netzwerkfehler/Timeout (sonst fehlt beim nächsten Load der Cache und
-        // der Spinner erscheint erneut).
-        if (freshProfile) setCachedProfile(freshProfile)
-
-        setState(s => ({
-          ...s,
-          user:               session?.user ?? null,
-          session,
-          profile:            freshProfile ?? s.profile,
-          loading:            false,
-          needsPasswordSetup,
-        }))
-
-        // Portal-Login tracken: nur bei echtem Login (nicht Reload/Token-Refresh)
-        if (event === 'SIGNED_IN' && freshProfile?.role === 'eigentuemer' && session?.user?.id) {
-          supabase.from('portal_logins').insert({ profile_id: session.user.id })
-            .then(() => {}) // fire-and-forget, Fehler ignorieren
+        const sessionUser = session?.user
+        if (!sessionUser) {
+          // Kein User → loading sicher beenden, kein Profil-Load nötig
+          setState(s => ({ ...s, loading: false }))
+          return
         }
+
+        // Profil-Load NACH Lock-Freigabe (setTimeout 0). NIE synchron hier!
+        setTimeout(() => {
+          void (async () => {
+            const freshProfile = await fetchProfile(sessionUser.id)
+            if (myId !== fetchIdRef.current) return   // neuerer Event hat übernommen
+
+            // Cache nur bei Erfolg aktualisieren – nie löschen bei Netzwerk-
+            // fehler/Timeout (sonst fehlt beim nächsten Load der Cache und der
+            // Spinner erscheint erneut).
+            if (freshProfile) setCachedProfile(freshProfile)
+
+            setState(s => ({
+              ...s,
+              user:               sessionUser,
+              session,
+              profile:            freshProfile ?? s.profile,
+              loading:            false,
+              needsPasswordSetup,
+            }))
+
+            // Portal-Login tracken: nur bei echtem Login (nicht Reload/Refresh)
+            if (event === 'SIGNED_IN' && freshProfile?.role === 'eigentuemer') {
+              supabase.from('portal_logins').insert({ profile_id: sessionUser.id })
+                .then(() => {}) // fire-and-forget, Fehler ignorieren
+            }
+          })()
+        }, 0)
       }
     )
 

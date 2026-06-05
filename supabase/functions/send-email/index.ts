@@ -18,6 +18,11 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
+// ── Platzhalter ersetzen ─────────────────────────────────────────────────────
+function replacePlaceholders(text: string, vars: Record<string, string>): string {
+  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`)
+}
+
 // ── HTML → Plaintext ──────────────────────────────────────────────────────────
 function stripHtml(html: string): string {
   return html
@@ -74,36 +79,62 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const {
-      to,
-      subject,
-      html,
-      lead_id,
-      deal_id,
-      attach_category,   // optional: 'finanzierung_de' | 'finanzierung_cy' | 'willkommen' | 'kaufvertrag' | 'sonstiges'
-    } = await req.json() as {
+    const body = await req.json() as {
       to:               string
-      subject:          string
-      html:             string
+      subject?:         string
+      html?:            string
+      template_id?:     string | null    // ID aus email_templates → Platzhalter werden ersetzt
+      template_vars?:   Record<string, string> | null  // { vorname, nachname, ... }
       lead_id?:         string | null
       deal_id?:         string | null
       attach_category?: string | null
     }
 
-    if (!to || !subject || !html) {
+    const { to, lead_id, deal_id, attach_category } = body
+    let { subject = '', html = '' } = body
+
+    if (!to) {
       return new Response(
-        JSON.stringify({ error: 'Pflichtfelder fehlen: to, subject, html' }),
+        JSON.stringify({ error: 'Pflichtfeld fehlt: to' }),
+        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // ── Template aus DB laden und Platzhalter ersetzen ────────────────────────
+    if (body.template_id) {
+      const { data: tpl } = await supabase
+        .from('email_templates')
+        .select('subject, body, html_body')
+        .eq('id', body.template_id)
+        .single()
+
+      if (tpl) {
+        const vars = body.template_vars ?? {}
+        subject = subject || replacePlaceholders(tpl.subject, vars)
+        // Bevorzuge html_body wenn vorhanden, sonst text body als <pre>-Block
+        if (tpl.html_body) {
+          html = replacePlaceholders(tpl.html_body, vars)
+        } else {
+          const textBody = replacePlaceholders(tpl.body, vars)
+          html = html || `<pre style="font-family:sans-serif;white-space:pre-wrap">${textBody}</pre>`
+        }
+      }
+    }
+
+    if (!subject || !html) {
+      return new Response(
+        JSON.stringify({ error: 'Pflichtfelder fehlen: subject + html (oder template_id)' }),
         { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
       )
     }
 
     const smtpUser = Deno.env.get('SMTP_USER') ?? ''
     const smtpPass = Deno.env.get('SMTP_PASS') ?? ''
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    )
 
     // ── PDF-Anhang vorbereiten ────────────────────────────────────────────────
     let pdfAttachment: { filename: string; content: Uint8Array } | null = null

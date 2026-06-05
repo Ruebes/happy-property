@@ -1,5 +1,5 @@
 // Supabase Edge Function: calendly-webhook
-// Endpunkt für Calendly Webhooks.
+// Endpunkt für Calendly Webhooks (v2 Payload-Format).
 // In Calendly eintragen unter: Integrations → Webhooks → Endpoint URL = <supabase-url>/functions/v1/calendly-webhook
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
@@ -21,24 +21,39 @@ Deno.serve(async (req) => {
     )
 
     const body = await req.json()
-    const event     = body.event as string
-    const invitee   = body.payload?.invitee ?? {}
-    const eventInfo = body.payload?.event ?? {}
+    const event = body.event as string
+
+    // ── Calendly v2 Payload-Struktur ─────────────────────────────────────────
+    // body.payload = das Invitee-Objekt direkt (name, email, etc.)
+    // body.payload.scheduled_event = Event-Details (start_time, end_time, name, location)
+    // body.payload.event = URI-String (nicht das Event-Objekt!)
+    const p          = body.payload ?? {}
+    const eventInfo  = p.scheduled_event ?? {}
 
     // Name aufteilen
-    const fullName  = (invitee.name as string) ?? ''
-    const nameParts = fullName.trim().split(/\s+/)
-    const firstName = nameParts[0] ?? ''
-    const lastName  = nameParts.slice(1).join(' ') || ''
-    const email     = (invitee.email as string) ?? ''
-    const phone     = getTextResponse(body, 'phone') ?? getTextResponse(body, 'telefon') ?? null
-    const startTime = (eventInfo.start_time as string) ?? new Date().toISOString()
-    const endTime   = (eventInfo.end_time as string) ?? null
-    const calendlyId = (invitee.uuid as string) ?? (invitee.uri as string) ?? null
-    const eventName  = (eventInfo.name as string) ?? 'Calendly Termin'
-    const joinUrl    = (eventInfo.location?.join_url as string) ?? null
+    const fullName   = (p.name as string) ?? ''
+    const nameParts  = fullName.trim().split(/\s+/)
+    const firstName  = nameParts[0] ?? ''
+    const lastName   = nameParts.slice(1).join(' ') || ''
+    const email      = (p.email as string) ?? ''
+    const phone      = getTextResponse(p, 'phone') ?? getTextResponse(p, 'telefon') ?? null
+
+    // Terminzeiten — end_time NOT NULL in DB, daher Fallback auf start_time + 1h
+    const startTime  = (eventInfo.start_time as string) ?? new Date().toISOString()
+    const endTimeRaw = (eventInfo.end_time as string) ?? null
+    const endTime    = endTimeRaw ?? new Date(new Date(startTime).getTime() + 60 * 60 * 1000).toISOString()
+
+    // Invitee-UUID aus URI extrahieren: ".../invitees/<uuid>"
+    const inviteeUri  = (p.uri as string) ?? ''
+    const calendlyId  = inviteeUri.split('/').pop() ?? inviteeUri ?? null
+
+    const eventName   = (eventInfo.name as string) ?? 'Calendly Termin'
+    const joinUrl     = (eventInfo.location?.join_url as string) ?? null
+
+    console.log('[calendly-webhook] Event:', event, '| Email:', email, '| Start:', startTime)
 
     if (!email) {
+      console.error('[calendly-webhook] Kein E-Mail im Payload:', JSON.stringify(p).slice(0, 200))
       return new Response(
         JSON.stringify({ error: 'No email in payload' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -46,7 +61,7 @@ Deno.serve(async (req) => {
     }
 
     // ── invitee.canceled: Deal auf no_show setzen ────────────────────────────
-    if (event === 'invitee.canceled') {
+    if (event === 'invitee.canceled' || event === 'invitee.cancelled') {
       const { data: lead } = await supabase
         .from('leads')
         .select('id')
@@ -141,16 +156,8 @@ Deno.serve(async (req) => {
       dealId = newDeal?.id ?? null
     }
 
-    // Termin in crm_appointments anlegen
-    await supabase.from('crm_appointments').insert({
-      lead_id:     leadId,
-      title:       eventName,
-      type:        'zoom',
-      start_time:  startTime,
-      end_time:    endTime,
-      description: 'Automatisch via Calendly',
-      zoom_link:   joinUrl,
-    })
+    // KEIN crm_appointments-Eintrag — Kalender wird extern (Google) synchronisiert,
+    // Doppeleinträge würden entstehen. Nur Aktivität loggen.
 
     // Aktivität loggen
     await supabase.from('activities').insert({
@@ -170,7 +177,7 @@ Deno.serve(async (req) => {
       timestamp: new Date().toISOString(),
     })
 
-    console.log('[calendly-webhook] Erfolg:', { leadId, dealId })
+    console.log('[calendly-webhook] Erfolg:', { leadId, dealId, startTime })
 
     return new Response(
       JSON.stringify({ ok: true, lead_id: leadId, deal_id: dealId }),
@@ -188,9 +195,9 @@ Deno.serve(async (req) => {
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
 
-function getTextResponse(body: Record<string, unknown>, keyword: string): string | null {
+function getTextResponse(payload: Record<string, unknown>, keyword: string): string | null {
   try {
-    const responses = body?.payload?.questions_and_answers as Array<{ question: string; answer: string }> | undefined
+    const responses = payload?.questions_and_answers as Array<{ question: string; answer: string }> | undefined
     if (!responses) return null
     const match = responses.find(r => r.question.toLowerCase().includes(keyword.toLowerCase()))
     return match?.answer ?? null

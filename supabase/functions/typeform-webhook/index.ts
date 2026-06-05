@@ -22,6 +22,10 @@ Deno.serve(async (req) => {
 
     const payload = await req.json()
 
+    // Hidden Fields (UTM-Parameter, Werbekanal etc.)
+    // Typeform sendet diese unter form_response.hidden
+    const hidden = (payload.form_response?.hidden ?? {}) as Record<string, string>
+
     // Typeform sendet answers Array + definition.fields
     const answers = (payload.form_response?.answers ?? []) as Array<{
       field: { id: string }
@@ -29,6 +33,7 @@ Deno.serve(async (req) => {
       text?: string
       email?: string
       phone_number?: string
+      number?: number
       choice?: { label: string }
       choices?: { labels: string[] }
     }>
@@ -47,6 +52,7 @@ Deno.serve(async (req) => {
         case 'text':         return answer.text ?? null
         case 'email':        return answer.email ?? null
         case 'phone_number': return answer.phone_number ?? null
+        case 'number':       return answer.number != null ? String(answer.number) : null
         case 'choice':       return answer.choice?.label ?? null
         case 'choices':      return answer.choices?.labels?.join(', ') ?? null
         default:             return null
@@ -58,10 +64,42 @@ Deno.serve(async (req) => {
     const firstName = getAnswer('vorname') ?? getAnswer('first name') ?? rawName.split(' ')[0] ?? ''
     const lastName  = getAnswer('nachname') ?? getAnswer('last name') ?? rawName.split(' ').slice(1).join(' ') ?? ''
     const email     = getAnswer('email') ?? getAnswer('e-mail') ?? ''
-    const phone     = getAnswer('telefon') ?? getAnswer('phone') ?? getAnswer('handy') ?? null
+
+    // Telefon: erst per Keyword suchen, dann Fallback auf erstes phone_number-Feld
+    // (unabhängig vom Feldtitel – fängt alle Typeform-Feldnamen ab)
+    const phoneByKeyword =
+      getAnswer('telefon') ??
+      getAnswer('phone')   ??
+      getAnswer('handy')   ??
+      getAnswer('mobil')   ??
+      getAnswer('mobile')  ??
+      getAnswer('nummer')  ??
+      getAnswer('tel')     ??
+      getAnswer('whatsapp')
+    const phoneByType = answers.find(a => a.type === 'phone_number')?.phone_number ?? null
+    const phone = phoneByKeyword ?? phoneByType ?? null
     const country   = getAnswer('land') ?? getAnswer('country') ?? null
     const notes     = getAnswer('nachricht') ?? getAnswer('message') ?? getAnswer('bemerkung') ?? null
-    const source    = (getAnswer('quelle') ?? getAnswer('source') ?? null) as 'meta' | 'google' | 'empfehlung' | null
+    // Source: erst Hidden Fields (UTM/Ads), dann Formular-Antwort
+    // Typeform Hidden Fields kommen z.B. als ?utm_source=meta in der Formular-URL
+    const utmSource  = hidden['utm_source'] ?? hidden['source'] ?? hidden['kanal'] ?? null
+    const utmMedium  = hidden['utm_medium'] ?? null
+    const utmCampaign = hidden['utm_campaign'] ?? null
+    const utmContent = hidden['utm_content'] ?? null
+
+    // Source-Mapping: utm_source → CRM-Quelle (muss mit leads_source_check übereinstimmen)
+    function mapSource(raw: string | null): 'meta' | 'google' | 'empfehlung' | 'sonstiges' | null {
+      if (!raw) return null
+      const s = raw.toLowerCase()
+      if (s.includes('meta') || s.includes('facebook') || s.includes('instagram')) return 'meta'
+      if (s.includes('google'))                                                      return 'google'
+      if (s.includes('empfehlung') || s.includes('referral') || s.includes('ref'))  return 'empfehlung'
+      return 'sonstiges'
+    }
+
+    const sourceFromHidden = mapSource(utmSource)
+    const sourceFromForm   = (getAnswer('quelle') ?? getAnswer('source') ?? null) as 'meta' | 'google' | 'empfehlung' | null
+    const source = sourceFromHidden ?? sourceFromForm
 
     if (!email && !firstName) {
       return new Response(
@@ -85,14 +123,18 @@ Deno.serve(async (req) => {
       const { data: newLead, error } = await supabase
         .from('leads')
         .insert({
-          first_name: firstName,
-          last_name:  lastName,
-          email:      email || null,
-          phone:      phone,
-          country:    country,
-          source:     source ?? 'sonstiges',
-          status:     'new',
-          language:   'de',
+          first_name:    firstName,
+          last_name:     lastName,
+          email:         email || null,
+          phone:         phone,
+          country:       country,
+          source:        source ?? 'sonstiges',
+          status:        'new',
+          language:      'de',
+          utm_source:    utmSource,
+          utm_medium:    utmMedium,
+          utm_campaign:  utmCampaign,
+          utm_content:   utmContent,
         })
         .select('id')
         .single()

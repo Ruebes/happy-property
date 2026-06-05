@@ -78,8 +78,9 @@ export default function AllLeads() {
     setTimeout(() => setToast(''), 3000)
   }
 
-  const fetchLeads = useCallback(async () => {
-    setLoading(true)
+  // silent=true: Hintergrund-Refresh (Tab-Fokus) ohne Vollbild-Spinner.
+  const fetchLeads = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const { data, error } = await supabase
         .from('leads')
@@ -90,9 +91,9 @@ export default function AllLeads() {
       setLeads((data ?? []) as unknown as Lead[])
     } catch (err) {
       console.error('[AllLeads] fetchLeads:', err)
-      setLeads([])
+      if (!silent) setLeads([])   // bei Hintergrund-Refresh alte Daten behalten
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -105,6 +106,15 @@ export default function AllLeads() {
     fetchLeads()
     fetchStaff()
   }, [fetchLeads, fetchStaff])
+
+  // Re-Fetch bei Tab-Fokus — STILL, ohne Vollbild-Spinner.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchLeads(true)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [fetchLeads])
 
   const filteredLeads = leads.filter(lead => {
     const fullName = `${lead.first_name} ${lead.last_name}`.toLowerCase()

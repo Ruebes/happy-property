@@ -90,6 +90,7 @@ export interface EmailTemplate {
   name:      string
   subject:   string
   body:      string
+  html_body: string | null   // optionales HTML-Template mit {{platzhalter}}
   category:  'general' | 'project' | 'followup' | 'noshow' | 'lawyer' | 'financing' | 'portal'
   language:  'de' | 'en'
   created_at: string

@@ -402,8 +402,11 @@ export default function Pipeline() {
     setTimeout(() => setToast(''), 3000)
   }
 
-  const fetchDeals = useCallback(async () => {
-    setLoading(true)
+  // silent=true: Hintergrund-Refresh (z.B. bei Tab-Fokus) ohne Vollbild-Spinner.
+  // Verhindert, dass jede Tab-Rückkehr die Seite blankt — und dass ein evtl.
+  // am Auth-Lock hängender Refresh die ganze Seite im Spinner einfriert.
+  const fetchDeals = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const { data, error } = await supabase
         .from('deals')
@@ -422,9 +425,9 @@ export default function Pipeline() {
       setDeals((data as unknown as Deal[]) ?? [])
     } catch (err) {
       console.error('[Pipeline] fetchDeals:', err)
-      setDeals([])
+      if (!silent) setDeals([])   // bei Hintergrund-Refresh alte Daten behalten
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
@@ -445,6 +448,16 @@ export default function Pipeline() {
     fetchDeals()
     fetchStaff()
   }, [fetchDeals, fetchStaff])
+
+  // Re-Fetch bei Tab-Fokus (behebt veraltete Daten nach Token-Refresh im
+  // Hintergrund) — STILL, ohne Vollbild-Spinner.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchDeals(true)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [fetchDeals])
 
   // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
   const triggerScheduleMessage = (lead_id: string, deal_id: string | null, event_type: string) => {

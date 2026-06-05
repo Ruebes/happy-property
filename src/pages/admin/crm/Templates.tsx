@@ -12,32 +12,54 @@ const LANGUAGES = ['de', 'en'] as const
 type Language = typeof LANGUAGES[number]
 
 interface FormState {
-  name: string
-  subject: string
-  body: string
-  category: Category
-  language: Language
+  name:      string
+  subject:   string
+  body:      string
+  html_body: string
+  category:  Category
+  language:  Language
 }
 
 const DEFAULT_FORM: FormState = {
-  name: '',
-  subject: '',
-  body: '',
-  category: 'general',
-  language: 'de',
+  name:      '',
+  subject:   '',
+  body:      '',
+  html_body: '',
+  category:  'general',
+  language:  'de',
 }
+
+// Alle verfügbaren Platzhalter
+const PLACEHOLDERS = [
+  { key: '{{vorname}}',       label: 'Vorname' },
+  { key: '{{nachname}}',      label: 'Nachname' },
+  { key: '{{name}}',          label: 'Vollständiger Name' },
+  { key: '{{email}}',         label: 'E-Mail' },
+  { key: '{{telefon}}',       label: 'Telefon' },
+  { key: '{{betreff}}',       label: 'Betreff' },
+  { key: '{{projekt}}',       label: 'Projektname' },
+  { key: '{{termin_datum}}',  label: 'Termindatum' },
+  { key: '{{termin_link}}',   label: 'Zoom-Link' },
+  { key: '{{berater}}',       label: 'Berater' },
+  { key: '{{firma}}',         label: 'Firma (Happy Property)' },
+  { key: '{{password}}',      label: 'Temporäres Passwort' },
+  { key: '{{login_url}}',     label: 'Portal-Login-URL' },
+]
 
 export default function Templates() {
   const { t } = useTranslation()
   useAuth()
 
-  const [templates, setTemplates] = useState<EmailTemplate[]>([])
-  const [loading, setLoading] = useState(true)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState<FormState>(DEFAULT_FORM)
-  const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState('')
+  const [templates, setTemplates]   = useState<EmailTemplate[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [editingId, setEditingId]   = useState<string | null>(null)
+  const [showForm, setShowForm]     = useState(false)
+  const [form, setForm]             = useState<FormState>(DEFAULT_FORM)
+  const [saving, setSaving]         = useState(false)
+  const [toast, setToast]           = useState('')
+  const [bodyTab, setBodyTab]       = useState<'text' | 'html'>('text')
+  const [showPreview, setShowPreview] = useState(false)
+  const [copiedKey, setCopiedKey]   = useState<string | null>(null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -61,25 +83,28 @@ export default function Templates() {
     }
   }, [])
 
-  useEffect(() => {
-    fetchTemplates()
-  }, [fetchTemplates])
+  useEffect(() => { fetchTemplates() }, [fetchTemplates])
 
   const openCreate = () => {
     setEditingId(null)
     setForm(DEFAULT_FORM)
+    setBodyTab('text')
+    setShowPreview(false)
     setShowForm(true)
   }
 
   const openEdit = (tpl: EmailTemplate) => {
     setEditingId(tpl.id)
     setForm({
-      name: tpl.name,
-      subject: tpl.subject,
-      body: tpl.body,
-      category: tpl.category,
-      language: tpl.language,
+      name:      tpl.name,
+      subject:   tpl.subject,
+      body:      tpl.body,
+      html_body: tpl.html_body ?? '',
+      category:  tpl.category,
+      language:  tpl.language,
     })
+    setBodyTab(tpl.html_body ? 'html' : 'text')
+    setShowPreview(false)
     setShowForm(true)
   }
 
@@ -87,16 +112,24 @@ export default function Templates() {
     if (!form.name.trim() || !form.subject.trim() || !form.body.trim()) return
     setSaving(true)
     try {
+      const payload = {
+        name:      form.name.trim(),
+        subject:   form.subject.trim(),
+        body:      form.body.trim(),
+        html_body: form.html_body.trim() || null,
+        category:  form.category,
+        language:  form.language,
+      }
       if (editingId) {
-        const { error } = await supabase.from('email_templates').update(form).eq('id', editingId)
+        const { error } = await supabase.from('email_templates').update(payload).eq('id', editingId)
         if (error) throw new Error(error.message)
       } else {
-        const { error } = await supabase.from('email_templates').insert(form)
+        const { error } = await supabase.from('email_templates').insert(payload)
         if (error) throw new Error(error.message)
       }
       await fetchTemplates()
       setShowForm(false)
-      showToast(editingId ? 'Vorlage gespeichert' : 'Vorlage erstellt')
+      showToast(editingId ? '✅ Vorlage gespeichert' : '✅ Vorlage erstellt')
     } catch (err) {
       showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
@@ -112,6 +145,28 @@ export default function Templates() {
     showToast('Vorlage gelöscht')
   }
 
+  const copyPlaceholder = (key: string) => {
+    navigator.clipboard.writeText(key).catch(() => {})
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 1500)
+  }
+
+  // HTML-Vorschau: Platzhalter durch Beispielwerte ersetzen
+  const previewHtml = (html: string) => html
+    .replace(/\{\{vorname\}\}/g,      'Max')
+    .replace(/\{\{nachname\}\}/g,     'Mustermann')
+    .replace(/\{\{name\}\}/g,         'Max Mustermann')
+    .replace(/\{\{email\}\}/g,        'max@beispiel.de')
+    .replace(/\{\{telefon\}\}/g,      '+49 151 12345678')
+    .replace(/\{\{betreff\}\}/g,      form.subject || 'Betreff')
+    .replace(/\{\{projekt\}\}/g,      'Sunrise Residences')
+    .replace(/\{\{termin_datum\}\}/g, '15. Juni 2026, 14:00 Uhr')
+    .replace(/\{\{termin_link\}\}/g,  'https://zoom.us/j/123456')
+    .replace(/\{\{berater\}\}/g,      'Sven Müller')
+    .replace(/\{\{firma\}\}/g,        'Happy Property')
+    .replace(/\{\{password\}\}/g,     'TempPass123!')
+    .replace(/\{\{login_url\}\}/g,    'https://portal.happy-property.com/login')
+
   const categoryLabel: Record<Category, string> = {
     general:   'Allgemein',
     project:   'Projekt',
@@ -122,7 +177,15 @@ export default function Templates() {
     portal:    '🔑 Portal-Zugang',
   }
 
-  const PORTAL_PLACEHOLDERS = '{{vorname}} · {{name}} · {{email}} · {{password}} · {{login_url}}'
+  const categoryColor: Record<Category, string> = {
+    general:   'bg-gray-100 text-gray-600',
+    project:   'bg-blue-100 text-blue-700',
+    followup:  'bg-orange-100 text-orange-700',
+    noshow:    'bg-red-100 text-red-700',
+    lawyer:    'bg-purple-100 text-purple-700',
+    financing: 'bg-green-100 text-green-700',
+    portal:    'bg-yellow-100 text-yellow-700',
+  }
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -136,7 +199,7 @@ export default function Templates() {
 
         {/* Header */}
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">{t('crm.template.title')}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t('crm.template.title', 'E-Mail Vorlagen')}</h1>
           <button
             onClick={openCreate}
             className="px-4 py-2 rounded-xl text-white text-sm font-medium"
@@ -148,26 +211,33 @@ export default function Templates() {
 
         {/* Template list */}
         {loading ? (
-          <p className="text-gray-400 text-sm">Lädt…</p>
+          <div className="flex justify-center py-16">
+            <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
+          </div>
         ) : templates.length === 0 ? (
-          <p className="text-gray-400 text-sm">Keine Vorlagen vorhanden</p>
+          <p className="text-gray-400 text-sm text-center py-16">Keine Vorlagen vorhanden</p>
         ) : (
-          <div className="grid gap-4">
+          <div className="grid gap-3">
             {templates.map(tpl => (
-              <div key={tpl.id} className="bg-white rounded-2xl shadow p-5">
+              <div key={tpl.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="font-semibold text-gray-900">{tpl.name}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${categoryColor[tpl.category]}`}>
                         {categoryLabel[tpl.category]}
                       </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 uppercase">
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 uppercase">
                         {tpl.language}
                       </span>
+                      {tpl.html_body && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
+                          HTML ✓
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm text-gray-600 truncate">{tpl.subject}</p>
-                    <p className="text-xs text-gray-400 mt-1 line-clamp-2">{tpl.body}</p>
+                    <p className="text-xs text-gray-400 mt-1 line-clamp-1">{tpl.body}</p>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <button
@@ -189,94 +259,195 @@ export default function Templates() {
           </div>
         )}
 
-        {/* Form modal */}
+        {/* ── Form modal ──────────────────────────────────────────────────── */}
         {showForm && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-4">
+          <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl my-6 p-6 space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">
                 {editingId ? 'Vorlage bearbeiten' : 'Neue Vorlage'}
               </h2>
 
-              <div className="space-y-3">
-                {/* Name */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                  <input
-                    type="text"
-                    value={form.name}
-                    onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                  />
+              <div className="space-y-4">
+                {/* Name + Kategorie + Sprache in einer Zeile */}
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+                    <input
+                      type="text"
+                      value={form.name}
+                      onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+                      placeholder="z.B. Termin-Bestätigung DE"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Kategorie</label>
+                    <select
+                      value={form.category}
+                      onChange={e => setForm(f => ({ ...f, category: e.target.value as Category }))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
+                    >
+                      {CATEGORIES.map(c => (
+                        <option key={c} value={c}>{categoryLabel[c]}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Sprache</label>
+                    <select
+                      value={form.language}
+                      onChange={e => setForm(f => ({ ...f, language: e.target.value as Language }))}
+                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
+                    >
+                      <option value="de">Deutsch</option>
+                      <option value="en">English</option>
+                    </select>
+                  </div>
                 </div>
 
-                {/* Subject */}
+                {/* Betreff */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Betreff *</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Betreff *</label>
                   <input
                     type="text"
                     value={form.subject}
                     onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+                    placeholder="z.B. Ihr Termin bei Happy Property – {{termin_datum}}"
                   />
                 </div>
 
-                {/* Body */}
+                {/* Platzhalter-Referenz */}
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-gray-500 mb-2">Platzhalter (klicken zum Kopieren)</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PLACEHOLDERS.map(p => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => copyPlaceholder(p.key)}
+                        title={p.label}
+                        className={`text-xs px-2 py-1 rounded-lg border transition-all ${
+                          copiedKey === p.key
+                            ? 'bg-green-100 border-green-300 text-green-700'
+                            : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-600'
+                        }`}
+                      >
+                        {copiedKey === p.key ? '✓ Kopiert' : p.key}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Text / HTML Tabs */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Inhalt *</label>
-                  <textarea
-                    rows={8}
-                    value={form.body}
-                    onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
-                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y"
-                  />
-                  <p className="text-xs text-gray-400 mt-1">
-                    {form.category === 'portal'
-                      ? `Platzhalter: ${PORTAL_PLACEHOLDERS}`
-                      : t('crm.template.placeholders')}
-                  </p>
-                  {form.category === 'portal' && (
-                    <div className="mt-2 bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700 space-y-1">
-                      <p className="font-semibold">Portal-Vorlage – Platzhalter:</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{vorname}}'}</code> → Vorname des Käufers</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> → Vollständiger Name</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> → E-Mail-Adresse</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> → Temporäres Passwort (automatisch generiert)</p>
-                      <p><code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code> → Link zur Anmeldung</p>
-                      <p className="text-blue-500 mt-1">Die Zugangsdaten werden automatisch als formatierter Block nach Ihrem Text angehängt.</p>
+                  <div className="flex gap-1 mb-2 border-b border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => setBodyTab('text')}
+                      className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                        bodyTab === 'text'
+                          ? 'border-orange-500 text-orange-600'
+                          : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      Textinhalt *
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBodyTab('html')}
+                      className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px flex items-center gap-1.5 ${
+                        bodyTab === 'html'
+                          ? 'border-orange-500 text-orange-600'
+                          : 'border-transparent text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      HTML-Template
+                      {form.html_body && (
+                        <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
+                      )}
+                    </button>
+                  </div>
+
+                  {bodyTab === 'text' && (
+                    <div>
+                      <textarea
+                        rows={7}
+                        value={form.body}
+                        onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y font-mono"
+                        placeholder="Reiner Text wird als Fallback genutzt, wenn kein HTML-Template vorhanden ist."
+                      />
+                      <p className="text-xs text-gray-400 mt-1">
+                        Wird verwendet wenn kein HTML-Template hinterlegt ist oder für WhatsApp/Textnachrichten.
+                      </p>
+                    </div>
+                  )}
+
+                  {bodyTab === 'html' && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-gray-500">
+                          HTML einfügen (von Claude generiert). Platzhalter aus der Liste oben verwenden.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowPreview(!showPreview)}
+                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+                        >
+                          {showPreview ? '✕ Vorschau schließen' : '👁 Vorschau'}
+                        </button>
+                      </div>
+
+                      <textarea
+                        rows={10}
+                        value={form.html_body}
+                        onChange={e => setForm(f => ({ ...f, html_body: e.target.value }))}
+                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y font-mono"
+                        placeholder={'<!DOCTYPE html>\n<html>\n<body>\n  <p>Hallo {{vorname}},</p>\n  …\n</body>\n</html>'}
+                      />
+
+                      {showPreview && form.html_body && (
+                        <div className="border border-gray-200 rounded-xl overflow-hidden">
+                          <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 border-b border-gray-200">
+                            Vorschau (Platzhalter = Beispielwerte)
+                          </div>
+                          <iframe
+                            srcDoc={previewHtml(form.html_body)}
+                            className="w-full"
+                            style={{ height: '400px', border: 'none' }}
+                            sandbox="allow-same-origin"
+                            title="E-Mail Vorschau"
+                          />
+                        </div>
+                      )}
+
+                      {!form.html_body && (
+                        <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-700 space-y-2">
+                          <p className="font-semibold">💡 HTML-Template mit Claude erstellen</p>
+                          <p className="text-xs">Gib Claude dieses Briefing:</p>
+                          <div className="bg-white border border-indigo-100 rounded-lg p-3 text-xs font-mono text-gray-700 select-all">
+                            {`Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const prompt = `Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`
+                              navigator.clipboard.writeText(prompt).catch(() => {})
+                              showToast('✅ Prompt kopiert – jetzt in Claude einfügen!')
+                            }}
+                            className="mt-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
+                          >
+                            📋 Prompt kopieren
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-
-                {/* Category */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Kategorie</label>
-                  <select
-                    value={form.category}
-                    onChange={e => setForm(f => ({ ...f, category: e.target.value as Category }))}
-                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-                  >
-                    {CATEGORIES.map(c => (
-                      <option key={c} value={c}>{categoryLabel[c]}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Language */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Sprache</label>
-                  <select
-                    value={form.language}
-                    onChange={e => setForm(f => ({ ...f, language: e.target.value as Language }))}
-                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-                  >
-                    {LANGUAGES.map(l => (
-                      <option key={l} value={l}>{l === 'de' ? 'Deutsch' : 'English'}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
                 <button
                   onClick={() => setShowForm(false)}
                   className="px-4 py-2 rounded-xl border border-gray-300 text-sm text-gray-600 hover:bg-gray-50"
@@ -285,8 +456,8 @@ export default function Templates() {
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving}
-                  className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50"
+                  disabled={saving || !form.name.trim() || !form.subject.trim() || !form.body.trim()}
+                  className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50 transition-opacity"
                   style={{ backgroundColor: '#ff795d' }}
                 >
                   {saving ? 'Speichert…' : 'Speichern'}
