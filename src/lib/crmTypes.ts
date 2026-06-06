@@ -63,6 +63,8 @@ export interface Deal {
   immobilien_notes:             string | null
   kaufvertrag_notes:            string | null
   provision_notes:              string | null
+  phase_changed_at:             string | null   // wann aktuelle Phase erreicht (Auto-Archiv)
+  archived_from_phase:          string | null   // Ursprungsphase vor Archivierung (korrektes Restore)
   created_at:                   string
   updated_at:                   string
   // joined

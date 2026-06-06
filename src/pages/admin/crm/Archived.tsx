@@ -25,7 +25,7 @@ export default function Archived() {
     try {
       const { data, error } = await supabase
         .from('deals')
-        .select('id, lead_id, phase, commission_amount, updated_at, lead:leads(first_name, last_name, email, source), property:properties(project_name, unit_number)')
+        .select('id, lead_id, phase, archived_from_phase, commission_amount, updated_at, lead:leads(first_name, last_name, email, source), property:properties(project_name, unit_number)')
         .eq('phase', 'archiviert')
         .order('updated_at', { ascending: false })
       if (error) throw error
@@ -42,11 +42,14 @@ export default function Archived() {
     fetchDeals()
   }, [fetchDeals])
 
-  const handleRestore = async (dealId: string) => {
+  const handleRestore = async (deal: Deal) => {
+    // Ursprungsphase zurückgeben (verloren bleibt verloren, gewonnen bleibt
+    // gewonnen). Fallback 'provision_erhalten' für Altbestand ohne Ursprung.
+    const restorePhase = deal.archived_from_phase ?? 'provision_erhalten'
     const { error } = await supabase
       .from('deals')
-      .update({ phase: 'provision_erhalten' })
-      .eq('id', dealId)
+      .update({ phase: restorePhase, archived_from_phase: null })
+      .eq('id', deal.id)
     if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchDeals()
     showToast('Deal wiederhergestellt')
@@ -143,7 +146,7 @@ export default function Archived() {
                               Details
                             </Link>
                             <button
-                              onClick={() => handleRestore(deal.id)}
+                              onClick={() => handleRestore(deal)}
                               className="text-sm font-medium hover:underline"
                               style={{ color: '#ff795d' }}
                             >

@@ -483,9 +483,12 @@ export default function ProjectDetail() {
           .eq('id', dealId)
         if (error) throw error
       }
-      // Unit bleibt aktiv nach Kundenzuweisung
+      // Bau-Status folgt dem Projekt (Quelle der Wahrheit) — eine Kundenzuweisung
+      // ändert NICHT den Bau-Status. "Verkauft" ergibt sich aus der Zuordnung
+      // (deal.unit_id / owner_id), nicht aus unit.status.
+      const unitBuildStatus = project?.status === 'under_construction' ? 'under_construction' : 'active'
       await supabase.from('crm_project_units')
-        .update({ status: 'active' })
+        .update({ status: unitBuildStatus })
         .eq('id', assigningUnit.id)
       // Log activity
       await supabase.from('activities').insert({
@@ -525,7 +528,7 @@ export default function ProjectDetail() {
             unit_number:     unit.unit_number || null,
             rental_type:     rentalType,
             city:            project?.location ?? null,
-            property_status: unit.status === 'under_construction' ? 'under_construction' : 'active',
+            property_status: unitBuildStatus,
           }
           if (unit.property_id) {
             await supabase.from('properties').update(propData).eq('id', unit.property_id)
