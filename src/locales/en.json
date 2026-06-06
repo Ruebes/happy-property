@@ -1383,7 +1383,28 @@
       "googleDisconnectedToast":"Google Calendar disconnected",
       "googleConnectError":     "Connection failed",
       "zoomHint":               "Configure Zoom API Keys as Supabase Secrets.",
-      "zoomDocs":               "API Docs →"
+      "zoomDocs":               "API Docs →",
+      "contacts":               "Contacts"
+    },
+    "devContacts": {
+      "title":         "Contacts",
+      "subtitle":      "Contacts for mail/WhatsApp and reservation notifications.",
+      "add":           "Contact",
+      "empty":         "No contacts yet. Add the first one.",
+      "newTitle":      "New contact",
+      "editTitle":     "Edit contact",
+      "name":          "Name",
+      "role":          "Role / Department",
+      "email":         "Email",
+      "phone":         "Phone",
+      "whatsappNum":   "WhatsApp number",
+      "notes":         "Notes",
+      "isPrimary":     "Primary contact",
+      "primary":       "Primary contact",
+      "mail":          "Mail",
+      "whatsapp":      "WhatsApp",
+      "nameRequired":  "Name is required.",
+      "deleteConfirm": "Really delete {{name}}?"
     }
   },
 

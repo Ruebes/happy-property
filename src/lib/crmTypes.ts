@@ -13,6 +13,7 @@ export type DealPhase =
   | 'finanzierung_de'
   | 'finanzierung_cy'
   | 'immobilienauswahl'
+  | 'reservierung'
   | 'kaufvertrag'
   | 'anzahlung'
   | 'provision_erhalten'
@@ -102,7 +103,7 @@ export interface EmailTemplate {
 export const DEAL_PHASES: DealPhase[] = [
   'erstkontakt', 'termin_gebucht', 'registrierung', 'no_show',
   'finanzierung_de', 'finanzierung_cy',
-  'immobilienauswahl',
+  'immobilienauswahl', 'reservierung',
   'kaufvertrag', 'anzahlung', 'provision_erhalten',
   'deal_verloren',
 ]
@@ -115,6 +116,7 @@ export const PHASE_ICONS: Record<DealPhase, string> = {
   finanzierung_cy:    '🌍',
   registrierung:      '📋',
   immobilienauswahl:  '🏠',
+  reservierung:       '🔖',
   kaufvertrag:        '📝',
   anzahlung:          '✅',
   provision_erhalten: '🎉',
@@ -143,6 +145,7 @@ export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
   registrierung:      'deal.registration',
   finanzierung_de:    'deal.financing',
   finanzierung_cy:    'deal.financing',
+  reservierung:       'deal.reservation',
   kaufvertrag:        'deal.contract',
   anzahlung:          'deal.deposit_paid',
   provision_erhalten: 'deal.commission_paid',
@@ -272,6 +275,30 @@ export const PROJECT_STATUS_COLORS: Record<ProjectStatus, string> = {
   under_construction: 'bg-yellow-100 text-yellow-700',
   sold_out:           'bg-red-100 text-red-700',
   completed:          'bg-blue-100 text-blue-700',
+}
+
+// ── Developer Types ───────────────────────────────────────────────────────────
+
+export interface Developer {
+  id:         string
+  name:       string
+  active:     boolean
+  created_at: string
+}
+
+// Ansprechpartner pro Developer (Mail/WhatsApp aus dem CRM, Drive-Freigabe).
+export interface DeveloperContact {
+  id:           string
+  developer_id: string
+  name:         string
+  email:        string | null
+  phone:        string | null
+  whatsapp:     string | null
+  role:         string | null
+  is_primary:   boolean
+  notes:        string | null
+  created_at:   string
+  updated_at:   string
 }
 
 // ── Automation System Types ───────────────────────────────────────────────────

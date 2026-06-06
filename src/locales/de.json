@@ -1383,7 +1383,28 @@
       "googleDisconnectedToast":"Google Kalender getrennt",
       "googleConnectError":     "Verbindung fehlgeschlagen",
       "zoomHint":               "Zoom API Keys als Supabase Secrets konfigurieren.",
-      "zoomDocs":               "API Docs →"
+      "zoomDocs":               "API Docs →",
+      "contacts":               "Ansprechpartner"
+    },
+    "devContacts": {
+      "title":         "Ansprechpartner",
+      "subtitle":      "Kontakte für Mail/WhatsApp und Reservierungs-Benachrichtigungen.",
+      "add":           "Ansprechpartner",
+      "empty":         "Noch keine Ansprechpartner. Lege den ersten an.",
+      "newTitle":      "Neuer Ansprechpartner",
+      "editTitle":     "Ansprechpartner bearbeiten",
+      "name":          "Name",
+      "role":          "Rolle / Abteilung",
+      "email":         "E-Mail",
+      "phone":         "Telefon",
+      "whatsappNum":   "WhatsApp-Nummer",
+      "notes":         "Notizen",
+      "isPrimary":     "Hauptkontakt",
+      "primary":       "Hauptkontakt",
+      "mail":          "Mail",
+      "whatsapp":      "WhatsApp",
+      "nameRequired":  "Name ist erforderlich.",
+      "deleteConfirm": "{{name}} wirklich löschen?"
     }
   },
 

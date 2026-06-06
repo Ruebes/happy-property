@@ -1,12 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
-
-interface Developer {
-  id:     string
-  name:   string
-  active: boolean
-}
+import type { Developer } from '../../lib/crmTypes'
 
 interface RegistrationModalProps {
   leadName: string

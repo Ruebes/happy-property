@@ -7,12 +7,14 @@ import type { AutomationRule, ScheduledMessage } from '../../../../lib/crmTypes'
 
 const EVENT_TYPES: { value: string; label: string; icon: string }[] = [
   { value: 'lead_created',      label: 'Neuer Lead',          icon: '📥' },
+  { value: 'erstkontakt',       label: 'Erstkontakt',         icon: '📥' },
   { value: 'termin_gebucht',    label: 'Termin gebucht',      icon: '📅' },
   { value: 'no_show',           label: 'No Show',             icon: '❌' },
   { value: 'registrierung',     label: 'Registrierung',       icon: '📋' },
   { value: 'finanzierung_de',   label: 'Finanzierung DE',     icon: '🏦' },
   { value: 'finanzierung_cy',   label: 'Finanzierung CY',     icon: '🌍' },
   { value: 'immobilienauswahl', label: 'Immobilienauswahl',   icon: '🏠' },
+  { value: 'reservierung',      label: 'Reservierung',        icon: '🔖' },
   { value: 'kaufvertrag',       label: 'Kaufvertrag',         icon: '📝' },
   { value: 'anzahlung',         label: 'Anzahlung',           icon: '✅' },
   { value: 'provision_erhalten',label: 'Provision erhalten',  icon: '🎉' },

@@ -8,13 +8,8 @@ import {
   signOutGoogle,
   hasGoogleToken,
 } from '../../../lib/googleCalendar'
-
-interface Developer {
-  id:         string
-  name:       string
-  active:     boolean
-  created_at: string
-}
+import type { Developer } from '../../../lib/crmTypes'
+import DeveloperContactsModal from '../../../components/crm/DeveloperContactsModal'
 
 // ── Add Developer Modal ───────────────────────────────────────────────────────
 
@@ -108,6 +103,7 @@ export default function Settings() {
   const [showAddModal, setShowAddModal] = useState(false)
   const [toggling, setToggling]       = useState<string | null>(null)
   const [toast, setToast]             = useState('')
+  const [contactsDev, setContactsDev] = useState<Developer | null>(null)
 
   // ── Google Calendar integration state ─────────────────────────────────────
   const [googleConnected, setGoogleConnected]   = useState(false)
@@ -276,17 +272,26 @@ export default function Settings() {
                           <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
                           <span className="font-medium text-gray-900 text-sm">{dev.name}</span>
                         </div>
-                        <button
-                          onClick={() => handleToggleActive(dev)}
-                          disabled={toggling === dev.id}
-                          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500
-                                     hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-colors
-                                     disabled:opacity-50"
-                        >
-                          {toggling === dev.id
-                            ? '…'
-                            : t('crm.settings.deactivate', 'Deaktivieren')}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setContactsDev(dev)}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500
+                                       hover:border-orange-200 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                          >
+                            {t('crm.settings.contacts', 'Ansprechpartner')}
+                          </button>
+                          <button
+                            onClick={() => handleToggleActive(dev)}
+                            disabled={toggling === dev.id}
+                            className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500
+                                       hover:border-red-200 hover:text-red-500 hover:bg-red-50 transition-colors
+                                       disabled:opacity-50"
+                          >
+                            {toggling === dev.id
+                              ? '…'
+                              : t('crm.settings.deactivate', 'Deaktivieren')}
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -438,6 +443,14 @@ export default function Settings() {
         <AddDeveloperModal
           onClose={() => setShowAddModal(false)}
           onSaved={fetchDevelopers}
+        />
+      )}
+
+      {/* Developer Contacts Modal */}
+      {contactsDev && (
+        <DeveloperContactsModal
+          developer={contactsDev}
+          onClose={() => setContactsDev(null)}
         />
       )}
     </DashboardLayout>
