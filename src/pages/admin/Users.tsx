@@ -189,6 +189,7 @@ export default function AdminUsers() {
 
   // ── Passwort-Anzeige nach Anlegen / Reset ─────────────────
   const [createdPassword, setCreatedPassword] = useState<string | null>(null)
+  const [pwEmailed, setPwEmailed]             = useState(false)
   const [pwCopied, setPwCopied]               = useState(false)
 
   // ── Lead-ID-Map für CRM-Link (email → lead_id) ───────────
@@ -535,11 +536,13 @@ export default function AdminUsers() {
     setSaving(true)
     setFormError('')
     try {
-      const { password } = await adminUserOp<{ success: true; password: string }>({
+      const { password, emailed } = await adminUserOp<{ success: true; password: string; emailed: boolean }>({
         action: 'reset_password',
         userId: editUser.id,
+        sendEmail: true,
       })
       closeModal()
+      setPwEmailed(!!emailed)
       setCreatedPassword(password)
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
@@ -588,13 +591,15 @@ export default function AdminUsers() {
 
   // ── Quick portal password reset (direkt aus Tabelle) ────────
   async function handleQuickResetPassword(u: UserProfile) {
-    if (!window.confirm(`Neues Passwort für ${u.full_name} generieren und anzeigen?`)) return
+    if (!window.confirm(`Neues Passwort für ${u.full_name} generieren und dem Nutzer per E-Mail senden?`)) return
     setResetingPwId(u.id)
     try {
-      const { password } = await adminUserOp<{ success: true; password: string }>({
+      const { password, emailed } = await adminUserOp<{ success: true; password: string; emailed: boolean }>({
         action: 'reset_password',
         userId: u.id,
+        sendEmail: true,
       })
+      setPwEmailed(!!emailed)
       setCreatedPassword(password)
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Fehler beim Zurücksetzen')
@@ -655,9 +660,11 @@ export default function AdminUsers() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="text-center mb-5">
               <div className="text-4xl mb-3">✅</div>
-              <h2 className="text-lg font-bold text-hp-black font-body">Nutzer angelegt</h2>
+              <h2 className="text-lg font-bold text-hp-black font-body">Passwort zurückgesetzt</h2>
               <p className="text-sm text-gray-500 font-body mt-1">
-                Bitte Passwort manuell mitteilen (per WhatsApp, Telefon o.ä.)
+                {pwEmailed
+                  ? '✉️ Die Zugangsdaten wurden dem Nutzer per E-Mail gesendet. Passwort unten als Kopie.'
+                  : 'Bitte Passwort manuell mitteilen (per WhatsApp, Telefon o.ä.)'}
               </p>
             </div>
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4">
@@ -675,7 +682,7 @@ export default function AdminUsers() {
                 {pwCopied ? '✓ Kopiert!' : '📋 Kopieren'}
               </button>
               <button
-                onClick={() => { setCreatedPassword(null); setPwCopied(false) }}
+                onClick={() => { setCreatedPassword(null); setPwCopied(false); setPwEmailed(false) }}
                 className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold
                            font-body transition-opacity hover:opacity-90"
                 style={{ backgroundColor: 'var(--color-highlight)' }}>
@@ -1178,10 +1185,10 @@ export default function AdminUsers() {
                     className="w-full py-2.5 rounded-xl border border-gray-200 text-sm
                                font-medium font-body text-gray-700 hover:border-gray-300
                                hover:bg-gray-50 transition-colors disabled:opacity-50">
-                    🔑 Neues Passwort generieren & anzeigen
+                    🔑 Neues Passwort generieren & per E-Mail senden
                   </button>
                   <p className="text-xs text-gray-400 font-body mt-1">
-                    Generiert ein neues Passwort – bitte danach manuell mitteilen.
+                    Setzt ein neues Passwort und sendet es dem Nutzer automatisch per E-Mail.
                   </p>
                 </section>
               )}

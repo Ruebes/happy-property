@@ -904,8 +904,17 @@ export default function ProjectDetail() {
   async function handleDeleteUnit(id: string) {
     if (!window.confirm('Wohnung wirklich löschen? Alle Zahlungen und Dokumente werden ebenfalls gelöscht.')) return
     try {
+      // Verknüpftes Portal-Objekt (properties) mit aufräumen, damit es nicht
+      // verwaist beim Eigentümer/in der Verwaltung hängen bleibt.
+      const { data: u } = await supabase
+        .from('crm_project_units').select('property_id').eq('id', id).maybeSingle()
+      const propId = (u as { property_id: string | null } | null)?.property_id ?? null
+
       const { error } = await supabase.from('crm_project_units').delete().eq('id', id)
       if (error) throw error
+
+      if (propId) { await supabase.from('properties').delete().eq('id', propId) }
+
       setShowModal(false)
       await fetchData()
     } catch (err) {

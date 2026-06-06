@@ -328,60 +328,26 @@ export default function LeadDetail() {
   }, [deal?.unit_id])
 
   // ── Selbstheilender Properties-Sync ─────────────────────────────────────────
-  // Wenn Eigentümer-Profil vorhanden + Wohnung zugewiesen,
-  // aber noch kein properties-Eintrag existiert → direkt anlegen.
+  // Wenn die zugewiesene Unit bereits ein Portal-Objekt hat, aber deal.property_id
+  // fehlt → nur neu VERKNÜPFEN. KEIN automatisches Neu-Anlegen, sonst tauchen
+  // bewusst gelöschte Portal-Objekte beim nächsten Öffnen wieder auf.
   // Läuft nur einmal (sobald deal.property_id gesetzt ist, greift die Bedingung nicht mehr).
   useEffect(() => {
     if (!lead?.profile_id || !deal?.unit_id || deal?.property_id) return
     async function repairPropertiesEntry() {
-      if (!lead?.profile_id || !deal?.unit_id || !profile?.id) return
+      if (!lead?.profile_id || !deal?.unit_id) return
       try {
         const { data: unitData } = await supabase
           .from('crm_project_units')
-          .select('*')
+          .select('property_id')
           .eq('id', deal.unit_id!)
           .maybeSingle()
         if (!unitData) return
-        const unit = unitData as CrmProjectUnit
+        const unit = unitData as { property_id: string | null }
+        // Nur verknüpfen, wenn die Unit bereits ein Portal-Objekt besitzt.
+        // Bewusst KEIN Neu-Anlegen → gelöschte Objekte bleiben gelöscht.
         if (unit.property_id) {
-          // properties-Eintrag existiert schon auf der Unit, aber deal.property_id fehlt
           await supabase.from('deals').update({ property_id: unit.property_id }).eq('id', deal.id)
-          fetchAll(true)
-          return
-        }
-        // Properties-Eintrag komplett anlegen
-        const dp = dealProjects.find(d => d.project_id === unit.project_id)
-        // rental_type: DB column is NOT NULL, 'longterm' als Fallback
-        const rentalType: 'shortterm' | 'longterm' =
-          unit.rental_type === 'long' ? 'longterm'
-          : unit.rental_type === 'short' ? 'shortterm'
-          : 'longterm'
-        const { data: newProp } = await supabase
-          .from('properties')
-          .insert({
-            owner_id:             lead.profile_id,
-            created_by:           profile.id,
-            project_name:         dp?.project?.name ?? '',
-            unit_number:          unit.unit_number || null,
-            type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
-            bedrooms:             unit.bedrooms ?? 0,
-            size_sqm:             unit.size_sqm ?? null,
-            is_furnished:         unit.is_furnished ?? false,
-            rental_type:          rentalType,
-            city:                 dp?.project?.location ?? null,
-            purchase_price_net:   unit.price_net  ?? null,
-            purchase_price_gross: unit.price_gross ?? null,
-            property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
-            images:               [],
-          })
-          .select('id')
-          .single()
-        if (newProp) {
-          const newPropId = (newProp as { id: string }).id
-          await Promise.all([
-            supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id),
-            supabase.from('deals').update({ property_id: newPropId }).eq('id', deal.id),
-          ])
           fetchAll(true)
         }
       } catch (err) {
@@ -1081,6 +1047,45 @@ export default function LeadDetail() {
     await fetchAll(true)
   }
 
+  // ── Zugewiesene Wohnung vom Kunden entfernen ─────────────────────
+  // Löscht das verknüpfte Portal-Objekt (properties) und hebt die Zuordnung im
+  // Deal auf (unit_id + property_id). Verhindert „Geister-Objekte" beim Kunden.
+  async function handleRemoveWohnung() {
+    if (!deal?.unit_id) return
+    if (!window.confirm(
+      'Wohnung wirklich aus diesem Kunden entfernen?\n\n' +
+      'Das verknüpfte Objekt im Eigentümer-Portal wird gelöscht. ' +
+      'Die Wohnung im Projekt selbst bleibt erhalten.'
+    )) return
+    try {
+      // 1. Portal-Objekt löschen (das taucht beim Kunden in der Verwaltung auf)
+      if (deal.property_id) {
+        await supabase.from('properties').delete().eq('id', deal.property_id)
+      }
+      // 2. Unit vom Portal-Objekt entkoppeln
+      await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id)
+      // 3. Zuordnung im Deal aufheben → Sync legt nichts mehr neu an
+      await supabase.from('deals').update({ unit_id: null, property_id: null }).eq('id', deal.id)
+      // 4. Aktivität protokollieren
+      await supabase.from('activities').insert({
+        lead_id:      id,
+        deal_id:      deal.id,
+        type:         'note',
+        direction:    'outbound',
+        subject:      'Wohnung entfernt',
+        content:      'Die zugewiesene Wohnung wurde vom Kunden entfernt und das Portal-Objekt gelöscht.',
+        created_by:   profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      setPickedUnit(null)
+      setActiveTab('overview')
+      showToast('✅ Wohnung entfernt')
+      await fetchAll(true)
+    } catch (err) {
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Entfernen'}`)
+    }
+  }
+
   async function handleSaveUnit() {
     if (!unitEditForm.unit_number.trim()) return
     setSavingUnit(true)
@@ -1593,25 +1598,42 @@ export default function LeadDetail() {
     }
   }
 
-  // ── Portal-Zugang nochmal verschicken (Passwort-Reset) ───────────────────────
+  // ── Portal-Zugang nochmal verschicken (neues Passwort + E-Mail an Kunden) ─────
   async function resendPortalAccess() {
-    if (!lead?.profile_id) { openPortal(); return }
+    if (!lead) return
+    if (!lead.profile_id) { openPortal(); return }
+    if (!window.confirm(
+      `Neues Passwort erstellen und per E-Mail an ${lead.email} senden?\n\n` +
+      'Das bisherige Passwort des Kunden wird dabei ungültig.'
+    )) return
     setResendingPortal(true)
     try {
-      const { data, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
-        body: { action: 'reset_password', userId: lead.profile_id },
+      // create-eigentuemer-access setzt für bestehende Nutzer ein neues Passwort
+      // UND verschickt die Zugangsdaten-E-Mail an den Kunden.
+      const fullName = `${lead.first_name} ${lead.last_name}`.trim()
+      const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
+        body: { email: lead.email, full_name: fullName },
       })
       if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? 'Fehler')
+
+      await supabase.from('activities').insert({
+        lead_id:      id,
+        deal_id:      deal?.id ?? null,
+        type:         'email',
+        direction:    'outbound',
+        subject:      'Portal-Zugangsdaten erneut gesendet',
+        content:      `Neues Passwort erstellt und per E-Mail an ${lead.email} gesendet.`,
+        created_by:   profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+
       if (id) {
         await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
       }
-      setNewOwnerPassword(data.password as string)
-      setNewOwnerPasswordEmail(lead.email)
-      setNewOwnerPwCopied(false)
-      setShowNewOwnerPwModal(true)
+      showToast('✅ Neuer Zugang per E-Mail an den Kunden gesendet')
       await fetchAll(true)
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Zurücksetzen'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim erneuten Senden'}`)
     } finally {
       setResendingPortal(false)
     }
@@ -3176,6 +3198,24 @@ export default function LeadDetail() {
             {/* ── Tab: Wohnung (Dokumente & Bilder) ───────────────────────── */}
             {activeTab === 'wohnung' && deal?.unit_id && (
               <div className="p-6 space-y-8">
+
+                {/* ── Wohnung-Kopf + Entfernen ── */}
+                <div className="flex items-center justify-between gap-3 pb-2 border-b border-gray-100">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-700 truncate">
+                      🏠 {pickedUnit ? `Wohnung ${pickedUnit.unit.unit_number}` : 'Wohnung'}
+                      {pickedUnit?.projectName ? ` · ${pickedUnit.projectName}` : ''}
+                    </h3>
+                    <p className="text-xs text-gray-400">Dokumente und Bilder dieser Wohnung.</p>
+                  </div>
+                  <button
+                    onClick={handleRemoveWohnung}
+                    className="text-xs px-3 py-1.5 rounded-lg text-red-600 border border-red-200 hover:bg-red-50 flex-shrink-0"
+                    title="Wohnung vom Kunden entfernen und Portal-Objekt löschen"
+                  >
+                    🗑 Wohnung entfernen
+                  </button>
+                </div>
 
                 {/* ── Dokumente ── */}
                 <div>
