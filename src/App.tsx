@@ -36,6 +36,9 @@ const CrmProjectDetail      = lazy(() => import('./pages/admin/crm/ProjectDetail
 const CrmSettings           = lazy(() => import('./pages/admin/crm/Settings'))
 const CrmWhatsappTemplates  = lazy(() => import('./pages/admin/crm/settings/WhatsappTemplates'))
 const CrmAutomationRules    = lazy(() => import('./pages/admin/crm/settings/AutomationRules'))
+const CrmStageMessages      = lazy(() => import('./pages/admin/crm/settings/StageMessages'))
+const CrmAdhocMessages      = lazy(() => import('./pages/admin/crm/settings/AdhocMessages'))
+const CrmAiAgent            = lazy(() => import('./pages/admin/crm/settings/AiAgent'))
 const CrmDocuments          = lazy(() => import('./pages/admin/crm/settings/Documents'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
@@ -96,6 +99,9 @@ export default function App() {
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
+              <Route path="/admin/crm/settings/stages"      element={<CrmStageMessages />} />
+              <Route path="/admin/crm/settings/adhoc"       element={<CrmAdhocMessages />} />
+              <Route path="/admin/crm/settings/ai"          element={<CrmAiAgent />} />
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
               <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />

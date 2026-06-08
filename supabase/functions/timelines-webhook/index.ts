@@ -5,6 +5,31 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+// ── Stop-Intent-Erkennung ───────────────────────────────────────────────────
+// Konservativ: nur bei eindeutigen Abmelde-Signalen. Erkennt der Kunde, dass er
+// nicht mehr kontaktiert werden will, wird ein communication_optouts-Eintrag
+// angelegt. Der DB-Trigger trg_hp_cancel_on_optout storniert daraufhin alle noch
+// offenen geplanten Nachrichten dieses Leads. Sendet NICHTS – stoppt nur.
+const STOP_PATTERNS: RegExp[] = [
+  /\bstop\b/i,                                        // engl./Konvention: „STOP"
+  /\bstopp/i,                                         // dt.: stopp, stoppen, stoppt, …
+  /abmeld/i,                                          // abmelden, abmeldung
+  /austragen/i,
+  /\bunsubscribe\b/i,
+  /kein(e|en)?\s+interesse/i,
+  /nicht\s+mehr\s+(kontakt|schreib|anschreib|melden|nachricht|anruf)/i,
+  /keine\s+(nachricht|werbung|mails?|e-?mails?|whatsapp|anrufe?)/i,
+  /bitte\s+nicht\s+mehr/i,
+  /löscht?\s+mich/i,
+  /remove\s+me/i,
+  /leave\s+me\s+alone/i,
+  /do\s*n('|o)?t\s+contact/i,
+  /stop\s+contacting/i,
+]
+function detectsStopIntent(text: string): boolean {
+  return STOP_PATTERNS.some((re) => re.test(text))
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -51,6 +76,26 @@ Deno.serve(async (req) => {
         .from('lead_ai_summaries')
         .delete()
         .eq('lead_id', lead.id)
+
+      // Eingehende Abmeldung erkennen → Opt-Out anlegen (idempotent).
+      // Der DB-Trigger storniert dann offene geplante Nachrichten.
+      if (!fromMe && detectsStopIntent(text)) {
+        const { data: existing } = await supabase
+          .from('communication_optouts')
+          .select('id')
+          .eq('lead_id', lead.id)
+          .limit(1)
+
+        if (!existing || existing.length === 0) {
+          await supabase
+            .from('communication_optouts')
+            .insert({
+              lead_id:      lead.id,
+              reason:       `Inbound-WhatsApp (Auto-Erkennung): ${text.slice(0, 200)}`,
+              opted_out_at: new Date().toISOString(),
+            })
+        }
+      }
     }
 
     return new Response(

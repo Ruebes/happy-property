@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType } from '../../../lib/crmTypes'
+import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
@@ -14,7 +14,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 
-type TabId = 'overview' | 'activities' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
+type TabId = 'overview' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
@@ -23,6 +23,15 @@ const ACTIVITY_ICONS: Record<string, string> = {
   note: '📝',
   meeting: '🤝',
   task: '✅',
+}
+
+// KI-Antwort: Badge-Farben je Status (Label kommt aus i18n: crm.ai.st_<status>)
+const AI_STATUS_CLS: Record<string, string> = {
+  approved:  'bg-green-100 text-green-700',
+  edited:    'bg-blue-100 text-blue-700',
+  auto_sent: 'bg-purple-100 text-purple-700',
+  discarded: 'bg-gray-100 text-gray-500',
+  pending:   'bg-amber-100 text-amber-700',
 }
 
 export default function LeadDetail() {
@@ -66,6 +75,18 @@ export default function LeadDetail() {
   const [showWaPreview, setShowWaPreview] = useState(false)
   const [waMsg, setWaMsg]               = useState('')
   const [sendingWa, setSendingWa]       = useState(false)
+
+  // ── KI-Antwort-Agent (nur Entwurf — sendet NICHTS) ──────────────
+  const [aiExamples,      setAiExamples]      = useState<AiReplyExample[]>([])
+  const [aiInbound,       setAiInbound]        = useState('')   // Kunden-Nachricht (Basis für Entwurf)
+  const [aiChannel,       setAiChannel]        = useState<'whatsapp' | 'email'>('whatsapp')
+  const [aiDraft,         setAiDraft]          = useState('')   // editierbarer Entwurf
+  const [aiDraftOriginal, setAiDraftOriginal]  = useState('')   // unveränderter KI-Vorschlag (für approved/edited)
+  const [aiExamplesUsed,  setAiExamplesUsed]   = useState<number | null>(null)
+  const [aiGenerating,    setAiGenerating]     = useState(false)
+  const [aiSaving,        setAiSaving]         = useState(false)
+  const [aiUnavailable,   setAiUnavailable]    = useState(false) // Edge Function noch nicht deployt
+  const [aiCopied,        setAiCopied]         = useState(false)
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>('overview')
@@ -164,6 +185,130 @@ export default function LeadDetail() {
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(''), 3000)
+  }
+
+  // ── KI-Antwort-Agent: Daten + Aktionen (sendet NICHTS) ──────────
+  // Lädt die zuletzt für diesen Lead erzeugten/freigegebenen Entwürfe (Audit + „gelernt").
+  const loadAiExamples = useCallback(async () => {
+    if (!id) return
+    const { data } = await supabase
+      .from('ai_reply_examples')
+      .select('*')
+      .eq('lead_id', id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+    setAiExamples((data ?? []) as AiReplyExample[])
+  }, [id])
+
+  useEffect(() => { loadAiExamples() }, [loadAiExamples])
+
+  // Letzte eingehende Kundennachricht (WhatsApp/E-Mail) als Entwurfs-Basis übernehmen.
+  const adoptLatestInbound = () => {
+    const latest = activities.find(
+      (a) => a.direction === 'inbound' && (a.type === 'whatsapp' || a.type === 'email'),
+    )
+    if (!latest) { showToast(t('crm.ai.noInbound', 'Keine eingehende Nachricht gefunden')); return }
+    setAiInbound(latest.content ?? '')
+    setAiChannel(latest.type === 'email' ? 'email' : 'whatsapp')
+    setAiDraft(''); setAiDraftOriginal(''); setAiExamplesUsed(null)
+  }
+
+  // Entwurf von der Edge Function holen. Bei nicht-deployter Funktion → „nicht aktiviert"-Hinweis.
+  const handleGenerateDraft = async () => {
+    if (!id || !aiInbound.trim()) return
+    setAiGenerating(true); setAiUnavailable(false)
+    try {
+      const { data, error } = await supabase.functions.invoke('ai-draft-reply', {
+        body: { lead_id: id, inbound_text: aiInbound.trim(), channel: aiChannel },
+      })
+      if (error) {
+        // Funktion (noch) nicht erreichbar/deployt → freundlicher „nicht aktiviert"-Hinweis.
+        // FunctionsFetchError = Netzwerk/nicht erreichbar; HTTP 404 = Funktion nicht deployt.
+        const ctx = (error as { context?: Response }).context
+        const notDeployed =
+          (error as { name?: string }).name === 'FunctionsFetchError' ||
+          (ctx && ctx.status === 404)
+        if (notDeployed) {
+          setAiUnavailable(true)
+        } else {
+          let msg = (error as { message?: string }).message ?? 'Fehler'
+          try {
+            if (ctx && typeof ctx.json === 'function') {
+              const errBody = await ctx.json() as { error?: string }
+              if (errBody?.error) msg = errBody.error
+            }
+          } catch { /* ignore */ }
+          showToast(`${t('crm.ai.errGen', 'KI-Fehler')}: ${msg}`)
+        }
+        return
+      }
+      const resp = data as { draft?: string; examples_used?: number; error?: string } | null
+      if (resp?.error) { showToast(`${t('crm.ai.errGen', 'KI-Fehler')}: ${resp.error}`); return }
+      const draft = (resp?.draft ?? '').trim()
+      if (!draft) { showToast(t('crm.ai.errEmpty', 'KI hat keinen Entwurf geliefert')); return }
+      setAiDraft(draft)
+      setAiDraftOriginal(draft)
+      setAiExamplesUsed(typeof resp?.examples_used === 'number' ? resp.examples_used : null)
+    } catch {
+      setAiUnavailable(true)
+    } finally {
+      setAiGenerating(false)
+    }
+  }
+
+  // Freigeben: speichert das Paar (inbound → final) als gelerntes Beispiel und kopiert den Text.
+  // status 'approved' wenn 1:1 übernommen, 'edited' wenn Sven korrigiert hat. Sendet NICHTS.
+  const handleApproveDraft = async () => {
+    if (!id || !aiDraft.trim()) return
+    setAiSaving(true)
+    try {
+      const edited = aiDraft.trim() !== aiDraftOriginal.trim()
+      const { error } = await supabase.from('ai_reply_examples').insert({
+        lead_id:      id,
+        channel:      aiChannel,
+        inbound_text: aiInbound.trim() || null,
+        ai_draft:     aiDraftOriginal || null,
+        final_text:   aiDraft.trim(),
+        status:       edited ? 'edited' : 'approved',
+        is_learning:  true,
+      })
+      if (error) { showToast(`${t('crm.ai.errSave', 'Konnte nicht speichern')}: ${error.message}`); return }
+      try {
+        await navigator.clipboard.writeText(aiDraft.trim())
+        setAiCopied(true)
+        setTimeout(() => setAiCopied(false), 2500)
+      } catch { /* Zwischenablage optional */ }
+      showToast(edited
+        ? t('crm.ai.savedEdited', 'Freigegeben (korrigiert) & kopiert – das System lernt daraus')
+        : t('crm.ai.savedApproved', 'Freigegeben & kopiert – das System lernt daraus'))
+      setAiDraft(''); setAiDraftOriginal(''); setAiExamplesUsed(null)
+      await loadAiExamples()
+    } finally {
+      setAiSaving(false)
+    }
+  }
+
+  // Verwerfen: optionaler Audit-Eintrag (is_learning=false), wird NICHT gelernt.
+  const handleDiscardDraft = async () => {
+    if (!id) { setAiDraft(''); setAiDraftOriginal(''); setAiExamplesUsed(null); return }
+    if (!aiDraftOriginal) { setAiDraft(''); setAiDraftOriginal(''); setAiExamplesUsed(null); return }
+    setAiSaving(true)
+    try {
+      await supabase.from('ai_reply_examples').insert({
+        lead_id:      id,
+        channel:      aiChannel,
+        inbound_text: aiInbound.trim() || null,
+        ai_draft:     aiDraftOriginal || null,
+        final_text:   null,
+        status:       'discarded',
+        is_learning:  false,
+      })
+      showToast(t('crm.ai.discarded', 'Entwurf verworfen'))
+      setAiDraft(''); setAiDraftOriginal(''); setAiExamplesUsed(null)
+      await loadAiExamples()
+    } finally {
+      setAiSaving(false)
+    }
   }
 
   // ── Data fetching ───────────────────────────────────────────────
@@ -2260,6 +2405,7 @@ export default function LeadDetail() {
                 { id: 'overview',     label: t('crm.tab.overview',      'Übersicht') },
                 { id: 'appointments', label: t('crm.tab.appointments',  `📅 Termine${appointments.length ? ` (${appointments.length})` : ''}`) },
                 { id: 'activities',   label: t('crm.tab.activities',    'Aktivitäten') },
+                { id: 'ai',           label: `🤖 ${t('crm.tab.ai',      'KI-Antwort')}` },
                 { id: 'emails',       label: t('crm.tab.emails',        'E-Mails') },
                 { id: 'tasks',        label: t('crm.tab.tasks',         'Aufgaben') },
                 { id: 'documents',    label: t('crm.tab.documents',     'Dokumente') },
@@ -2788,6 +2934,156 @@ export default function LeadDetail() {
                   >
                     {savingAct ? t('crm.saving', 'Speichert…') : t('crm.save', 'Speichern')}
                   </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Tab: KI-Antwort (nur Entwurf — sendet NICHTS) ─── */}
+            {activeTab === 'ai' && (
+              <div className="p-6 space-y-5">
+                {/* Sicherheits-Hinweis */}
+                <div className="flex gap-2 items-start bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <span className="text-amber-500 text-lg leading-none">🛟</span>
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    {t('crm.ai.safety', 'Die KI erstellt nur Entwürfe. Es wird nichts automatisch gesendet. Du prüfst, korrigierst und gibst frei – kopierst den Text und schickst ihn wie gewohnt. Aus deinen Freigaben und Korrekturen lernt das System.')}
+                  </p>
+                </div>
+
+                {/* Eingabe: Kundennachricht + Kanal */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <label className="block text-xs font-medium text-gray-500">
+                      {t('crm.ai.inboundLabel', 'Eingehende Kundennachricht')}
+                    </label>
+                    <button
+                      onClick={adoptLatestInbound}
+                      className="text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"
+                    >
+                      {t('crm.ai.adoptLatest', '↧ Letzte Kundennachricht übernehmen')}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    {(['whatsapp', 'email'] as const).map((ch) => (
+                      <button
+                        key={ch}
+                        onClick={() => setAiChannel(ch)}
+                        className={`text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors ${
+                          aiChannel === ch
+                            ? 'border-transparent text-white'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                        style={aiChannel === ch ? { backgroundColor: '#ff795d' } : undefined}
+                      >
+                        {ch === 'whatsapp' ? t('crm.ai.chWhatsapp', '📱 WhatsApp') : t('crm.ai.chEmail', '📧 E-Mail')}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={aiInbound}
+                    onChange={(e) => setAiInbound(e.target.value)}
+                    placeholder={t('crm.ai.inboundPh', 'Was hat der Kunde geschrieben? Hier einfügen oder oben übernehmen…')}
+                    rows={4}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none"
+                  />
+                  <button
+                    onClick={handleGenerateDraft}
+                    disabled={aiGenerating || !aiInbound.trim()}
+                    className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+                    style={{ backgroundColor: '#ff795d' }}
+                  >
+                    {aiGenerating ? t('crm.ai.generating', 'KI denkt nach…') : t('crm.ai.generate', '✨ KI-Entwurf erstellen')}
+                  </button>
+                </div>
+
+                {/* KI noch nicht aktiviert (Edge Function nicht deployt) */}
+                {aiUnavailable && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm text-gray-600 space-y-1">
+                    <p className="font-medium text-gray-700">{t('crm.ai.unavailableTitle', 'KI-Funktion noch nicht aktiviert')}</p>
+                    <p className="text-xs leading-relaxed">
+                      {t('crm.ai.unavailableBody', 'Der KI-Entwurfs-Generator ist angelegt, aber noch nicht scharf geschaltet. Sobald du grünes Licht gibst, wird er aktiviert – danach funktioniert dieser Button. Bis dahin bleibt alles ein reiner Entwurf-Workflow.')}
+                    </p>
+                  </div>
+                )}
+
+                {/* Entwurf-Editor */}
+                {(aiDraft || aiDraftOriginal) && (
+                  <div className="border border-gray-200 rounded-xl p-4 space-y-3 bg-white">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-medium text-gray-500">
+                        {t('crm.ai.draftLabel', 'KI-Entwurf (bearbeitbar)')}
+                      </label>
+                      {aiExamplesUsed !== null && (
+                        <span className="text-[11px] text-gray-400">
+                          {t('crm.ai.examplesUsed', 'Gelernte Beispiele genutzt')}: {aiExamplesUsed}
+                        </span>
+                      )}
+                    </div>
+                    <textarea
+                      value={aiDraft}
+                      onChange={(e) => setAiDraft(e.target.value)}
+                      rows={6}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none"
+                    />
+                    {aiDraft.trim() !== aiDraftOriginal.trim() && aiDraftOriginal && (
+                      <p className="text-[11px] text-blue-600">
+                        {t('crm.ai.editedHint', '✏️ Korrigiert – wird als „korrigiert" gelernt.')}
+                      </p>
+                    )}
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        onClick={handleApproveDraft}
+                        disabled={aiSaving || !aiDraft.trim()}
+                        className="px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: '#ff795d' }}
+                      >
+                        {aiCopied
+                          ? t('crm.ai.copied', '✓ Kopiert')
+                          : aiSaving
+                            ? t('crm.saving', 'Speichert…')
+                            : t('crm.ai.approve', '✓ Freigeben & kopieren')}
+                      </button>
+                      <button
+                        onClick={handleDiscardDraft}
+                        disabled={aiSaving}
+                        className="px-4 py-2 rounded-lg border border-gray-200 text-gray-600 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {t('crm.ai.discard', 'Verwerfen')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Historie / gelernte Beispiele */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {t('crm.ai.historyTitle', 'Bisherige KI-Antworten zu diesem Lead')}
+                  </h4>
+                  {aiExamples.length === 0 ? (
+                    <p className="text-sm text-gray-400">{t('crm.ai.historyEmpty', 'Noch keine KI-Entwürfe für diesen Lead.')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {aiExamples.map((ex) => (
+                        <div key={ex.id} className="border border-gray-100 rounded-lg p-3 text-sm">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${AI_STATUS_CLS[ex.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                              {t(`crm.ai.st_${ex.status}`, ex.status)}
+                            </span>
+                            <span className="text-[11px] text-gray-400">{formatDate(ex.created_at)}</span>
+                          </div>
+                          {ex.inbound_text && (
+                            <p className="text-xs text-gray-500 mb-1">
+                              <span className="font-medium">{t('crm.ai.histInbound', 'Kunde')}:</span> {ex.inbound_text}
+                            </p>
+                          )}
+                          {ex.final_text && (
+                            <p className="text-xs text-gray-700 whitespace-pre-wrap">
+                              <span className="font-medium">{t('crm.ai.histReply', 'Antwort')}:</span> {ex.final_text}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}

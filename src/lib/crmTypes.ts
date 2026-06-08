@@ -362,3 +362,43 @@ export interface CrmAppointment {
   // joined
   lead?: { id: string; first_name: string; last_name: string } | null
 }
+
+// ── Ad-hoc / Sonstige Nachrichten ─────────────────────────────────────────────
+// Einmalige WhatsApp/E-Mail-Nachrichten, NICHT an eine Pipeline-Phase gebunden.
+// Reine Definition (Zweck + Inhalt + Sendezeitpunkt). Bleibt inert, bis Versand
+// separat scharfgeschaltet wird — nichts hieraus sendet von selbst.
+export type AdhocChannel = 'email' | 'whatsapp'
+export type AdhocStatus  = 'draft' | 'scheduled' | 'sent' | 'cancelled'
+
+export interface CrmAdhocMessage {
+  id:            string
+  label:         string          // Zweck / Bezeichnung
+  channel:       AdhocChannel
+  email_subject: string | null
+  email_body:    string | null
+  email_html:    string | null
+  whatsapp_text: string | null
+  scheduled_at:  string | null   // gewünschter Sendezeitpunkt (null = offen)
+  status:        AdhocStatus
+  created_at:    string
+  updated_at:    string
+}
+
+// ── KI-Antwort-Agent ───────────────────────────────────────────────────────────
+// Eingehende Nachricht → KI-Entwurf → Freigabe/Korrektur durch Sven. Freigegebene
+// (ggf. korrigierte) Paare dienen als Few-Shot-Beispiele („lernen"). Auto-Versand
+// nur, wenn crm_settings.ai_autopilot_enabled = 'true' (Default aus).
+export type AiReplyStatus = 'pending' | 'approved' | 'edited' | 'discarded' | 'auto_sent'
+
+export interface AiReplyExample {
+  id:           string
+  lead_id:      string | null
+  channel:      'whatsapp' | 'email'
+  inbound_text: string | null   // was der Kunde geschrieben hat
+  ai_draft:     string | null   // KI-Vorschlag
+  final_text:   string | null   // tatsächlich gesendeter Text (nach Korrektur)
+  status:       AiReplyStatus
+  is_learning:  boolean         // als Few-Shot-Beispiel nutzbar?
+  created_at:   string
+  updated_at:   string
+}
