@@ -87,7 +87,7 @@ export default function Archived() {
         {/* Table */}
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
           {loading ? (
-            <p className="p-6 text-gray-400 text-sm">Lädt…</p>
+            <p className="p-6 text-gray-400 text-sm">{t('common.loading')}</p>
           ) : deals.length === 0 ? (
             <p className="p-6 text-gray-400 text-sm">{t('crm.archived.noArchived')}</p>
           ) : (

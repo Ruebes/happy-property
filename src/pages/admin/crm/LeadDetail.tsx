@@ -2175,9 +2175,9 @@ export default function LeadDetail() {
                     <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-sm font-semibold text-gray-800">🏠 Wohnung zuweisen</p>
+                          <p className="text-sm font-semibold text-gray-800">{t('crm.assignUnit.title')}</p>
                           <p className="text-xs text-gray-500 mt-0.5">
-                            Spezifische Einheit auswählen, aktivieren und Käufer-Portalzugang senden.
+                            {t('crm.assignUnit.subtitle')}
                           </p>
                         </div>
                         <button
@@ -2185,7 +2185,7 @@ export default function LeadDetail() {
                           className="px-3 py-1.5 text-xs font-medium text-white rounded-lg shrink-0"
                           style={{ backgroundColor: '#ff795d' }}
                         >
-                          {pickedUnit ?? deal.property ? '✏️ Ändern' : '+ Auswählen'}
+                          {pickedUnit ?? deal.property ? t('crm.assignUnit.change') : t('crm.assignUnit.select')}
                         </button>
                       </div>
 
@@ -2196,7 +2196,7 @@ export default function LeadDetail() {
                             <span className="text-green-500">✅</span>
                             <span className="font-medium text-gray-800 truncate">{deal.property.project_name}</span>
                             {deal.property.unit_number && (
-                              <span className="text-gray-400 shrink-0">· Nr. {deal.property.unit_number}</span>
+                              <span className="text-gray-400 shrink-0">· {t('crm.unitSelect.no')} {deal.property.unit_number}</span>
                             )}
                           </div>
                           <button
@@ -2207,11 +2207,11 @@ export default function LeadDetail() {
                                 .eq('property_id', deal.property_id!)
                                 .maybeSingle()
                               if (data) openUnitEdit(data as CrmProjectUnit)
-                              else showToast('Keine verknüpfte Einheit gefunden')
+                              else showToast(t('crm.assignUnit.noLinkedUnit'))
                             }}
                             className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
                           >
-                            ✏️ Bearbeiten
+                            ✏️ {t('common.edit')}
                           </button>
                         </div>
                       )}
@@ -2221,23 +2221,23 @@ export default function LeadDetail() {
                         <div className="bg-white rounded-xl p-3 space-y-2 border border-orange-100">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-semibold text-[#ff795d] uppercase tracking-wide">
-                              Zugewiesene Einheit
+                              {t('crm.assignUnit.assignedUnit')}
                             </span>
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => navigate(`/admin/crm/projects/${unitSelectProjectId ?? dealProjects.find(dp => dp.project?.name === pickedUnit?.projectName)?.project_id ?? ''}`)}
                                 className="text-[10px] text-gray-400 hover:text-[#ff795d] transition-colors"
                               >
-                                🏗 Zum Projekt →
+                                {t('crm.assignUnit.toProject')}
                               </button>
                               <span className="text-[10px] text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded-full">
-                                ✅ Als Verkauft markiert
+                                {t('crm.assignUnit.markedSold')}
                               </span>
                               <button
                                 onClick={() => openUnitEdit(pickedUnit.unit)}
                                 className="text-[11px] px-2.5 py-0.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
                               >
-                                ✏️ Bearbeiten
+                                ✏️ {t('common.edit')}
                               </button>
                             </div>
                           </div>
@@ -2251,17 +2251,17 @@ export default function LeadDetail() {
                               <span>📐 {pickedUnit.unit.size_sqm} m²</span>
                             )}
                             {pickedUnit.unit.bedrooms > 0 && (
-                              <span>🛏 {pickedUnit.unit.bedrooms} SZ</span>
+                              <span>🛏 {pickedUnit.unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')}</span>
                             )}
                             {pickedUnit.unit.bathrooms > 0 && (
-                              <span>🚿 {pickedUnit.unit.bathrooms} Bad</span>
+                              <span>🚿 {pickedUnit.unit.bathrooms} {t('crm.assignUnit.bathAbbr')}</span>
                             )}
                             {pickedUnit.unit.price_gross != null && (
                               <span className="font-semibold text-gray-800 col-span-3">
                                 💶{' '}
                                 {new Intl.NumberFormat('de-DE', {
                                   style: 'currency', currency: 'EUR', maximumFractionDigits: 0,
-                                }).format(pickedUnit.unit.price_gross)} Brutto
+                                }).format(pickedUnit.unit.price_gross)} {t('crm.assignUnit.gross')}
                               </span>
                             )}
                           </div>
@@ -2276,10 +2276,10 @@ export default function LeadDetail() {
                         style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
                       >
                         {resendingPortal
-                          ? '⏳ Wird zurückgesetzt…'
+                          ? t('crm.portalBtn.resetting')
                           : lead?.portal_access_sent_at
-                            ? '✅ Zugang verschickt – nochmal verschicken'
-                            : '📧 Portalzugang erstellen & senden'}
+                            ? t('crm.portalBtn.sentResend')
+                            : t('crm.portalBtn.createSend')}
                       </button>
                     </div>
 
@@ -2364,7 +2364,7 @@ export default function LeadDetail() {
                         {resendingPortal
                           ? '⏳ …'
                           : lead?.portal_access_sent_at
-                            ? '✅ Zugang verschickt – nochmal verschicken'
+                            ? t('crm.portalBtn.sentResend')
                             : `🔑 ${t('crm.sendPortalAccess', 'Portalzugang senden')}`}
                       </button>
                       <button
@@ -2450,7 +2450,7 @@ export default function LeadDetail() {
                         onClick={openLeadEdit}
                         className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
                       >
-                        ✏️ Bearbeiten
+                        ✏️ {t('common.edit')}
                       </button>
                     )}
                   </div>
@@ -2523,7 +2523,7 @@ export default function LeadDetail() {
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Vorname *</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.firstName')} *</label>
                           <input
                             value={leadForm.first_name}
                             onChange={e => setLeadForm(f => ({ ...f, first_name: e.target.value }))}
@@ -2531,7 +2531,7 @@ export default function LeadDetail() {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Nachname</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.lastName')}</label>
                           <input
                             value={leadForm.last_name}
                             onChange={e => setLeadForm(f => ({ ...f, last_name: e.target.value }))}
@@ -2540,7 +2540,7 @@ export default function LeadDetail() {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">E-Mail *</label>
+                        <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.email')} *</label>
                         <input
                           type="email"
                           value={leadForm.email}
@@ -2550,7 +2550,7 @@ export default function LeadDetail() {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Telefon</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.phone')}</label>
                           <input
                             value={leadForm.phone}
                             onChange={e => setLeadForm(f => ({ ...f, phone: e.target.value }))}
@@ -2559,7 +2559,7 @@ export default function LeadDetail() {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">WhatsApp</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.whatsapp')}</label>
                           <input
                             value={leadForm.whatsapp}
                             onChange={e => setLeadForm(f => ({ ...f, whatsapp: e.target.value }))}
@@ -2569,31 +2569,31 @@ export default function LeadDetail() {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Land</label>
+                        <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.country')}</label>
                         <input
                           value={leadForm.country}
                           onChange={e => setLeadForm(f => ({ ...f, country: e.target.value }))}
                           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                          placeholder="z.B. Deutschland"
+                          placeholder={t('crm.lead.countryPlaceholder', 'z.B. Deutschland')}
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Quelle</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.source')}</label>
                           <CustomSelect
                             value={leadForm.source}
                             onChange={val => setLeadForm(f => ({ ...f, source: val }))}
                             className="w-full border border-gray-200 rounded-lg text-sm bg-white"
                             options={[
-                              { value: 'meta', label: 'Meta' },
-                              { value: 'google', label: 'Google' },
-                              { value: 'empfehlung', label: 'Empfehlung' },
-                              { value: 'sonstiges', label: 'Sonstiges' },
+                              { value: 'meta', label: t('crm.sources.meta') },
+                              { value: 'google', label: t('crm.sources.google') },
+                              { value: 'empfehlung', label: t('crm.sources.empfehlung') },
+                              { value: 'sonstiges', label: t('crm.sources.sonstiges') },
                             ]}
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-gray-500 mb-1">Sprache</label>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.language')}</label>
                           <CustomSelect
                             value={leadForm.language}
                             onChange={val => setLeadForm(f => ({ ...f, language: val }))}
@@ -2606,19 +2606,19 @@ export default function LeadDetail() {
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Zuständig</label>
+                        <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.assignedTo')}</label>
                         <CustomSelect
                           value={leadForm.assigned_to}
                           onChange={val => setLeadForm(f => ({ ...f, assigned_to: val }))}
                           className="w-full border border-gray-200 rounded-lg text-sm bg-white"
                           options={[
-                            { value: '', label: '— Niemand —' },
+                            { value: '', label: t('crm.allLeads.notAssigned') },
                             ...staff.map(s => ({ value: s.id, label: s.full_name })),
                           ]}
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 mb-1">Notizen</label>
+                        <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.notes')}</label>
                         <textarea
                           rows={3}
                           value={leadForm.notes}
@@ -2631,7 +2631,7 @@ export default function LeadDetail() {
                           onClick={() => setEditingLead(false)}
                           className="flex-1 py-2 text-sm border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50"
                         >
-                          Abbrechen
+                          {t('common.cancel')}
                         </button>
                         <button
                           onClick={handleSaveLead}
@@ -2639,7 +2639,7 @@ export default function LeadDetail() {
                           className="flex-1 py-2 text-sm font-medium text-white rounded-lg disabled:opacity-50"
                           style={{ backgroundColor: '#ff795d' }}
                         >
-                          {savingLead ? 'Speichert…' : '✓ Speichern'}
+                          {savingLead ? t('common.saving') : '✓ ' + t('common.save')}
                         </button>
                       </div>
                     </div>
@@ -3792,7 +3792,7 @@ export default function LeadDetail() {
             {/* Header */}
             <div className="px-6 pt-6 pb-3 flex-shrink-0">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">🔑 Portalzugang senden</h2>
+                <h2 className="text-lg font-bold text-gray-900">{t('crm.portal.title')}</h2>
                 <button
                   onClick={() => { setPortalOpen(false); setPortalSuccess(false); setPortalError('') }}
                   className="text-gray-400 hover:text-gray-600 text-xl leading-none"
@@ -3800,10 +3800,7 @@ export default function LeadDetail() {
                   ✕
                 </button>
               </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Eigentümer-Account erstellen und Zugangsdaten per E-Mail senden.
-                Das Passwort wird automatisch generiert und als formatierter Block angehängt.
-              </p>
+              <p className="text-xs text-gray-500 mt-1">{t('crm.portal.intro')}</p>
             </div>
 
             {/* Body — scrollable */}
@@ -3812,7 +3809,7 @@ export default function LeadDetail() {
               {/* Empfänger */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">E-Mail *</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.email')} *</label>
                   <input
                     type="email"
                     value={portalEmail}
@@ -3823,13 +3820,13 @@ export default function LeadDetail() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Vollständiger Name *</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.fullName')} *</label>
                   <input
                     value={portalName}
                     onChange={e => setPortalName(e.target.value)}
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
                                focus:outline-none focus:border-[#ff795d]"
-                    placeholder="Max Mustermann"
+                    placeholder={t('crm.portal.namePlaceholder')}
                   />
                 </div>
               </div>
@@ -3838,13 +3835,13 @@ export default function LeadDetail() {
               {loadingPortalTpl && (
                 <div className="flex items-center gap-2 text-xs text-gray-400">
                   <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-[#ff795d] rounded-full animate-spin" />
-                  Vorlage wird geladen…
+                  {t('crm.portal.loadingTemplate')}
                 </div>
               )}
 
               {/* Subject */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Betreff</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('crm.template.subject')}</label>
                 <input
                   type="text"
                   value={portalSubject}
@@ -3852,13 +3849,13 @@ export default function LeadDetail() {
                   disabled={loadingPortalTpl}
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
                              focus:outline-none focus:border-[#ff795d] disabled:opacity-50"
-                  placeholder="Ihr Zugang zum Happy Property Portal"
+                  placeholder={t('crm.portal.subjectPlaceholder')}
                 />
               </div>
 
               {/* Message */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Nachricht</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.message')}</label>
                 <textarea
                   rows={7}
                   value={portalMessage}
@@ -3867,17 +3864,17 @@ export default function LeadDetail() {
                   className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
                              focus:outline-none focus:border-[#ff795d] resize-y disabled:opacity-50
                              font-mono leading-relaxed"
-                  placeholder="Nachrichtentext…"
+                  placeholder={t('crm.portal.messagePlaceholder')}
                 />
                 <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-600 space-y-0.5">
-                  <p className="font-semibold">Verfügbare Platzhalter:</p>
+                  <p className="font-semibold">{t('crm.portal.availablePlaceholders')}</p>
                   <p>
                     <code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> ·{' '}
                     <code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> ·{' '}
                     <code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> ·{' '}
                     <code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code>
                   </p>
-                  <p className="text-blue-400">Zugangsdaten werden automatisch als formatierter Block angehängt.</p>
+                  <p className="text-blue-400">{t('crm.portal.credentialsAppended')}</p>
                 </div>
               </div>
 
@@ -3886,7 +3883,7 @@ export default function LeadDetail() {
               )}
               {portalSuccess && (
                 <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 font-medium">
-                  ✅ Zugangsdaten wurden erfolgreich per E-Mail gesendet!
+                  {t('crm.portal.sentSuccess')}
                 </p>
               )}
             </div>
@@ -3898,7 +3895,7 @@ export default function LeadDetail() {
                 className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200
                            rounded-xl hover:bg-gray-50"
               >
-                Schließen
+                {t('common.close')}
               </button>
               <button
                 onClick={sendPortalAccess}
@@ -3911,10 +3908,10 @@ export default function LeadDetail() {
                   <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
                 )}
                 {portalSending
-                  ? 'Wird gesendet…'
+                  ? t('crm.portal.sending')
                   : portalSuccess
-                    ? '✓ Gesendet'
-                    : '📧 Zugang erstellen & senden'}
+                    ? t('crm.portal.sent')
+                    : t('crm.portal.createAndSend')}
               </button>
             </div>
           </div>
@@ -3930,10 +3927,10 @@ export default function LeadDetail() {
           >
             <div className="px-6 pt-5 pb-3 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">🏠 Wohnung auswählen</h2>
+                <h2 className="text-lg font-bold text-gray-900">{t('crm.unitSelect.title')}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project?.name ?? 'Projekt'}
-                  {' – '}Verfügbare Einheiten
+                  {dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project?.name ?? t('crm.unitSelect.projectFallback')}
+                  {' – '}{t('crm.unitSelect.availableUnits')}
                 </p>
               </div>
               <button
@@ -3961,12 +3958,12 @@ export default function LeadDetail() {
                              hover:border-[#ff795d] hover:bg-orange-50 transition-colors"
                 >
                   <div className="font-semibold text-gray-900 text-sm">
-                    {unit.block ? `Block ${unit.block} · ` : ''}Nr. {unit.unit_number}
+                    {unit.block ? `${t('crm.unitEdit.block')} ${unit.block} · ` : ''}{t('crm.unitSelect.no')} {unit.unit_number}
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-3">
                     {unit.size_sqm != null && <span>📐 {unit.size_sqm} m²</span>}
-                    {unit.bedrooms > 0 && <span>🛏 {unit.bedrooms} SZ</span>}
-                    {unit.floor != null && <span>Etage {unit.floor}</span>}
+                    {unit.bedrooms > 0 && <span>🛏 {unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')}</span>}
+                    {unit.floor != null && <span>{t('crm.unit.floor')} {unit.floor}</span>}
                     {(unit.price_gross ?? unit.price_net) != null && (
                       <span className="font-semibold text-gray-700">
                         💶 {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(unit.price_gross ?? unit.price_net ?? 0)}
@@ -4015,13 +4012,13 @@ export default function LeadDetail() {
                 }}
                 className="flex-1 py-2.5 text-sm font-medium border border-gray-200 rounded-xl text-gray-700 hover:bg-gray-50"
               >
-                + Neue Einheit anlegen
+                {t('crm.unitSelect.newUnit')}
               </button>
               <button
                 onClick={() => setShowUnitSelect(false)}
                 className="px-4 py-2.5 text-sm text-gray-500 rounded-xl hover:bg-gray-50"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
             </div>
           </div>
@@ -4038,19 +4035,19 @@ export default function LeadDetail() {
                onClick={e => e.stopPropagation()}>
             <div className="text-center">
               <div className="text-4xl mb-2">🔑</div>
-              <h3 className="text-base font-bold text-hp-black font-body">Eigentümer-Account erstellt</h3>
+              <h3 className="text-base font-bold text-hp-black font-body">{t('crm.owner.created')}</h3>
               <p className="text-xs text-gray-500 font-body mt-1">
-                {lead?.first_name} {lead?.last_name} ist jetzt in der Nutzerliste als Eigentümer sichtbar.
+                {t('crm.owner.nowVisible', { name: `${lead?.first_name ?? ''} ${lead?.last_name ?? ''}`.trim() })}
               </p>
             </div>
 
             <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm font-body">
               <div className="flex justify-between">
-                <span className="text-gray-500">E-Mail:</span>
+                <span className="text-gray-500">{t('crm.lead.email')}:</span>
                 <span className="font-medium text-gray-800">{newOwnerPasswordEmail}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-500">Passwort:</span>
+                <span className="text-gray-500">{t('crm.owner.password')}:</span>
                 <span className="font-mono font-bold text-hp-black tracking-wide">{newOwnerPassword}</span>
               </div>
             </div>
@@ -4071,18 +4068,18 @@ export default function LeadDetail() {
                 style={newOwnerPwCopied
                   ? { backgroundColor: 'var(--color-highlight)', borderColor: 'var(--color-highlight)', color: 'white' }
                   : { borderColor: 'var(--color-highlight)', color: 'var(--color-highlight)' }}>
-                {newOwnerPwCopied ? '✓ Kopiert!' : '📋 Zugangsdaten kopieren'}
+                {newOwnerPwCopied ? t('crm.owner.copied') : t('crm.owner.copyCredentials')}
               </button>
               <button
                 type="button"
                 onClick={() => setShowNewOwnerPwModal(false)}
                 className="py-2.5 px-4 rounded-xl text-sm font-semibold font-body border border-gray-200 text-gray-600 hover:bg-gray-50">
-                Schließen
+                {t('common.close')}
               </button>
             </div>
 
             <p className="text-[11px] text-amber-600 text-center font-body">
-              ⚠️ Passwort jetzt kopieren — wird nicht nochmal angezeigt.
+              {t('crm.owner.passwordWarning')}
             </p>
           </div>
         </div>
@@ -4097,12 +4094,12 @@ export default function LeadDetail() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">
-                    {unitEditData ? '✏️ Einheit bearbeiten' : '➕ Neue Einheit anlegen'}
+                    {unitEditData ? t('crm.unitEdit.editTitle') : t('crm.unitEdit.newTitle')}
                   </h2>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {unitEditData
-                      ? `Einheit Nr. ${unitEditData.unit_number}${unitEditData.block ? ` · Block ${unitEditData.block}` : ''}`
-                      : (dealProjects.find(dp => dp.project_id === unitEditProjectId)?.project?.name ?? 'Projekt')}
+                      ? `${t('crm.unitEdit.unitNoPrefix')} ${unitEditData.unit_number}${unitEditData.block ? ` · ${t('crm.unitEdit.block')} ${unitEditData.block}` : ''}`
+                      : (dealProjects.find(dp => dp.project_id === unitEditProjectId)?.project?.name ?? t('crm.unitSelect.projectFallback'))}
                   </p>
                 </div>
                 <button onClick={() => setShowUnitEdit(false)}
@@ -4116,48 +4113,48 @@ export default function LeadDetail() {
               {/* Basis */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Einheitsnummer *</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.unitNumber')} *</label>
                   <input value={unitEditForm.unit_number}
                     onChange={e => setUnitEditForm(f => ({ ...f, unit_number: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Block</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.block')}</label>
                   <input value={unitEditForm.block}
                     onChange={e => setUnitEditForm(f => ({ ...f, block: e.target.value }))}
-                    placeholder="z.B. A"
+                    placeholder={t('crm.unitEdit.blockPlaceholder')}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Typ</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unit.type')}</label>
                   <CustomSelect
                     value={unitEditForm.type}
                     onChange={val => setUnitEditForm(f => ({ ...f, type: val }))}
                     className="w-full border border-gray-200 rounded-lg text-sm bg-white"
                     options={[
-                      { value: 'apartment', label: 'Wohnung' },
-                      { value: 'villa', label: 'Villa' },
-                      { value: 'studio', label: 'Studio' },
+                      { value: 'apartment', label: t('crm.unit.types.apartment') },
+                      { value: 'villa', label: t('crm.unit.types.villa') },
+                      { value: 'studio', label: t('crm.unit.types.studio') },
                     ]}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Status</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unit.status')}</label>
                   <CustomSelect
                     value={unitEditForm.status}
                     onChange={val => setUnitEditForm(f => ({ ...f, status: val }))}
                     className="w-full border border-gray-200 rounded-lg text-sm bg-white"
                     options={[
-                      { value: 'active', label: 'Aktiv' },
-                      { value: 'under_construction', label: 'Im Bau' },
+                      { value: 'active', label: t('crm.unitEdit.statusActive') },
+                      { value: 'under_construction', label: t('crm.unit.statuses.under_construction') },
                     ]}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Etage</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unit.floor')}</label>
                   <input type="number" value={unitEditForm.floor}
                     onChange={e => setUnitEditForm(f => ({ ...f, floor: e.target.value }))}
                     placeholder="0"
@@ -4168,14 +4165,14 @@ export default function LeadDetail() {
               {/* Flächen */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Wohnfläche (m²)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.livingArea')}</label>
                   <input type="number" value={unitEditForm.size_sqm}
                     onChange={e => setUnitEditForm(f => ({ ...f, size_sqm: e.target.value }))}
                     placeholder="0"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Terrassenfläche (m²)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.terraceArea')}</label>
                   <input type="number" value={unitEditForm.terrace_sqm}
                     onChange={e => setUnitEditForm(f => ({ ...f, terrace_sqm: e.target.value }))}
                     placeholder="0"
@@ -4186,14 +4183,14 @@ export default function LeadDetail() {
               {/* Zimmer */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Schlafzimmer</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.bedrooms')}</label>
                   <input type="number" value={unitEditForm.bedrooms}
                     onChange={e => setUnitEditForm(f => ({ ...f, bedrooms: e.target.value }))}
                     placeholder="0"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Badezimmer</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.bathrooms')}</label>
                   <input type="number" value={unitEditForm.bathrooms}
                     onChange={e => setUnitEditForm(f => ({ ...f, bathrooms: e.target.value }))}
                     placeholder="0"
@@ -4204,21 +4201,21 @@ export default function LeadDetail() {
               {/* Preise */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Nettpreis (€)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.priceNet')}</label>
                   <input type="number" value={unitEditForm.price_net}
                     onChange={e => setUnitEditForm(f => ({ ...f, price_net: e.target.value }))}
                     placeholder="0"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Bruttopreis (€)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.priceGross')}</label>
                   <input type="number" value={unitEditForm.price_gross}
                     onChange={e => setUnitEditForm(f => ({ ...f, price_gross: e.target.value }))}
                     placeholder="0"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">MwSt. (%)</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.vat')}</label>
                   <input type="number" value={unitEditForm.vat_rate}
                     onChange={e => setUnitEditForm(f => ({ ...f, vat_rate: e.target.value }))}
                     placeholder="0"
@@ -4229,20 +4226,20 @@ export default function LeadDetail() {
               {/* Extras */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Vermietungsart</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.rentalType')}</label>
                   <CustomSelect
                     value={unitEditForm.rental_type}
                     onChange={val => setUnitEditForm(f => ({ ...f, rental_type: val }))}
                     className="w-full border border-gray-200 rounded-lg text-sm bg-white"
                     options={[
-                      { value: '', label: '– keine –' },
-                      { value: 'short', label: '🏖 Kurzzeitvermietung' },
-                      { value: 'long', label: '🏠 Langzeitvermietung' },
+                      { value: '', label: t('crm.unitEdit.rentalNone') },
+                      { value: 'short', label: t('crm.unitEdit.rentalShort') },
+                      { value: 'long', label: t('crm.unitEdit.rentalLong') },
                     ]}
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">Übergabedatum</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.handoverDate')}</label>
                   <input type="date" value={unitEditForm.handover_date}
                     onChange={e => setUnitEditForm(f => ({ ...f, handover_date: e.target.value }))}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
@@ -4254,12 +4251,12 @@ export default function LeadDetail() {
                   onChange={e => setUnitEditForm(f => ({ ...f, is_furnished: e.target.checked }))}
                   className="w-4 h-4 rounded" />
                 <label htmlFor="is_furnished" className="text-sm text-gray-700 cursor-pointer">
-                  Möbliert
+                  {t('crm.unitEdit.furnished')}
                 </label>
               </div>
 
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Notizen</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('crm.unit.notes')}</label>
                 <textarea rows={2} value={unitEditForm.notes}
                   onChange={e => setUnitEditForm(f => ({ ...f, notes: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none" />
@@ -4273,35 +4270,35 @@ export default function LeadDetail() {
               {checkingAccess && (
                 <div className="flex items-center gap-2 text-xs text-gray-400">
                   <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-[#ff795d] rounded-full animate-spin" />
-                  Prüfe Portalzugang…
+                  {t('crm.unitEdit.checkingAccess')}
                 </div>
               )}
               {portalAccessChecked && customerHasAccess && (
                 <div className="bg-green-50 border border-green-100 rounded-xl px-4 py-2.5 text-xs text-green-700 flex items-center gap-2">
                   <span>✅</span>
-                  <span><strong>{lead?.first_name}</strong> hat bereits Portalzugang — kein erneuter Versand nötig.</span>
+                  <span><strong>{lead?.first_name}</strong> {t('crm.unitEdit.alreadyHasAccess')}</span>
                 </div>
               )}
               {portalAccessChecked && !customerHasAccess && (
                 <div className="bg-orange-50 border border-orange-100 rounded-xl px-4 py-2.5 text-xs text-orange-700 flex items-center gap-2">
                   <span>🔑</span>
-                  <span>Nach dem Speichern wird automatisch ein Eigentümer-Account erstellt.</span>
+                  <span>{t('crm.unitEdit.willCreateOwner')}</span>
                 </div>
               )}
 
               <div className="flex gap-3">
                 <button onClick={() => setShowUnitEdit(false)}
                   className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50">
-                  Abbrechen
+                  {t('common.cancel')}
                 </button>
                 <button onClick={handleSaveUnit} disabled={savingUnit || !unitEditForm.unit_number.trim()}
                   className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2"
                   style={{ backgroundColor: '#ff795d' }}>
                   {savingUnit && <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                  {savingUnit ? 'Speichert…'
+                  {savingUnit ? t('common.saving')
                     : portalAccessChecked && !customerHasAccess
-                      ? '✓ Speichern & Eigentümer anlegen'
-                      : '✓ Speichern'}
+                      ? t('crm.unitEdit.saveAndCreateOwner')
+                      : '✓ ' + t('common.save')}
                 </button>
               </div>
             </div>

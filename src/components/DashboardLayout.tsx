@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
@@ -66,37 +66,36 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
   // ── CRM Settings submenu ─────────────────────────────────────────────────
   // Settings-Bereich: /admin/crm/settings/* und /admin/crm/templates
+  // (nur für die Button-Hervorhebung — steuert NICHT den Auf/Zu-Zustand)
   const isInSettings =
     location.pathname.startsWith('/admin/crm/settings') ||
     location.pathname.startsWith('/admin/crm/templates')
 
-  const [settingsOpen, setSettingsOpen] = useState(
-    () => isInSettings || localStorage.getItem('crm_settings_menu_open') === 'true'
-  )
+  // Reines Klick-Dropdown: öffnet/schließt per Klick, schließt bei Klick
+  // außerhalb, bei Escape und bei jeder Navigation (z.B. Auswahl eines Eintrags).
+  const settingsRef = useRef<HTMLDivElement>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
-  // URL-gesteuert: auto-auf wenn in Settings, auto-zu wenn zu Pipeline/Leads/Projekte navigiert
   useEffect(() => {
-    if (isInSettings) {
-      setSettingsOpen(true)
-    } else if (
-      location.pathname === '/admin/crm' ||
-      location.pathname.startsWith('/admin/crm/leads') ||
-      location.pathname.startsWith('/admin/crm/projects') ||
-      location.pathname.startsWith('/admin/crm/calendar')
-    ) {
-      setSettingsOpen(false)
-      localStorage.setItem('crm_settings_menu_open', 'false')
+    if (!settingsOpen) return
+    const onPointerDown = (e: MouseEvent) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false)
+      }
     }
-  }, [location.pathname, isInSettings])
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSettingsOpen(false) }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [settingsOpen])
 
-  const toggleSettings = () => {
-    if (isInSettings) return // kein Schließen wenn man gerade im Settings-Bereich ist
-    setSettingsOpen(prev => {
-      const next = !prev
-      localStorage.setItem('crm_settings_menu_open', String(next))
-      return next
-    })
-  }
+  // Jede Navigation schließt das Menü (Auswahl eines Eintrags oder Wechsel woanders hin)
+  useEffect(() => { setSettingsOpen(false) }, [location.pathname])
+
+  const toggleSettings = () => setSettingsOpen(prev => !prev)
 
   // ── Navigation ────────────────────────────────────────────────────────────
   const verwaltungNavItems = [
@@ -148,8 +147,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
       ])
     } catch { /* ignorieren */ }
     finally {
+      // Google-Calendar-Token über den Logout hinweg erhalten: localStorage.clear()
+      // löschte bisher bei JEDEM Abmelden die Google-Verbindung → Nutzer musste
+      // den Kalender ständig neu verbinden ("wieder getrennt"). Token bleibt
+      // erhalten; läuft er ab, greift der normale Silent-Refresh / Reconnect.
+      const gcalToken = localStorage.getItem('google_calendar_token')
       localStorage.clear()
       sessionStorage.clear()
+      if (gcalToken) localStorage.setItem('google_calendar_token', gcalToken)
       window.location.href = '/login'
     }
   }
@@ -231,7 +236,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
                   ))}
 
                   {/* Einstellungen (aufklappbar) */}
-                  <div className="relative">
+                  <div className="relative" ref={settingsRef}>
                     {/* Toggle-Button */}
                     <button
                       onClick={toggleSettings}

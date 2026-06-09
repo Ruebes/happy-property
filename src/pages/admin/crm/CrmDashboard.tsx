@@ -27,8 +27,9 @@ interface DashboardState {
 }
 
 export default function CrmDashboard() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   useAuth()
+  const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
   const [state, setState] = useState<DashboardState>({
     totalLeads: 0,
@@ -132,10 +133,10 @@ export default function CrmDashboard() {
   }
 
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(amount)
+    new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(amount)
 
   const formatDate = (iso: string) =>
-    new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' })
+    new Date(iso).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
 
   const maxPhaseCount = Math.max(1, ...Object.values(state.dealsPerPhase))
 
@@ -147,28 +148,28 @@ export default function CrmDashboard() {
         {/* Top stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">Leads gesamt</p>
+            <p className="text-sm text-gray-500">{t('crm.dashboard.totalLeads')}</p>
             <p className="text-3xl font-bold text-gray-900 mt-1">{state.totalLeads}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">Neue diese Woche</p>
+            <p className="text-sm text-gray-500">{t('crm.dashboard.newThisWeek')}</p>
             <p className="text-3xl font-bold text-gray-900 mt-1">{state.newThisWeek}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">Provision diesen Monat</p>
+            <p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisMonth')}</p>
             <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionMonth)}</p>
           </div>
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">Provision dieses Jahr</p>
+            <p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisYear')}</p>
             <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionYear)}</p>
           </div>
         </div>
 
         {/* Deals per phase */}
         <div className="bg-white rounded-2xl shadow-sm p-5">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">Deals pro Phase</h2>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.dealsPerPhase')}</h2>
           {state.loading ? (
-            <p className="text-gray-400 text-sm">Lädt…</p>
+            <p className="text-gray-400 text-sm">{t('common.loading')}</p>
           ) : (
             <div className="space-y-2">
               {DEAL_PHASES.map(phase => {
@@ -196,11 +197,11 @@ export default function CrmDashboard() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Open tasks today */}
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Offene Aufgaben heute</h2>
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.openTasksToday')}</h2>
             {state.loading ? (
-              <p className="text-gray-400 text-sm">Lädt…</p>
+              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
             ) : state.openTasksToday.length === 0 ? (
-              <p className="text-gray-400 text-sm">Keine offenen Aufgaben</p>
+              <p className="text-gray-400 text-sm">{t('crm.dashboard.noOpenTasks')}</p>
             ) : (
               <ul className="space-y-3">
                 {state.openTasksToday.map(task => (
@@ -221,7 +222,7 @@ export default function CrmDashboard() {
                       className="shrink-0 text-xs px-3 py-1 rounded-lg text-white font-medium"
                       style={{ backgroundColor: '#ff795d' }}
                     >
-                      Erledigt
+                      {t('crm.dashboard.taskDone')}
                     </button>
                   </li>
                 ))}

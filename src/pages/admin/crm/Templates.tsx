@@ -129,7 +129,7 @@ export default function Templates() {
       }
       await fetchTemplates()
       setShowForm(false)
-      showToast(editingId ? '✅ Vorlage gespeichert' : '✅ Vorlage erstellt')
+      showToast('✅ ' + t(editingId ? 'crm.template.savedToast' : 'crm.template.createdToast'))
     } catch (err) {
       showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
@@ -138,11 +138,11 @@ export default function Templates() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Vorlage wirklich löschen?')) return
+    if (!window.confirm(t('crm.template.confirmDelete'))) return
     const { error } = await supabase.from('email_templates').delete().eq('id', id)
     if (error) { showToast(`❌ Fehler: ${error.message}`); return }
     await fetchTemplates()
-    showToast('Vorlage gelöscht')
+    showToast(t('crm.template.deletedToast'))
   }
 
   const copyPlaceholder = (key: string) => {
@@ -205,7 +205,7 @@ export default function Templates() {
             className="px-4 py-2 rounded-xl text-white text-sm font-medium"
             style={{ backgroundColor: '#ff795d' }}
           >
-            + Neue Vorlage
+            {t('crm.template.new')}
           </button>
         </div>
 
@@ -215,7 +215,7 @@ export default function Templates() {
             <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
           </div>
         ) : templates.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-16">Keine Vorlagen vorhanden</p>
+          <p className="text-gray-400 text-sm text-center py-16">{t('crm.template.empty')}</p>
         ) : (
           <div className="grid gap-3">
             {templates.map(tpl => (
@@ -225,7 +225,7 @@ export default function Templates() {
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="font-semibold text-gray-900">{tpl.name}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full ${categoryColor[tpl.category]}`}>
-                        {categoryLabel[tpl.category]}
+                        {t(`crm.template.categories.${tpl.category}`)}
                       </span>
                       <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 uppercase">
                         {tpl.language}
@@ -244,13 +244,13 @@ export default function Templates() {
                       onClick={() => openEdit(tpl)}
                       className="text-sm text-gray-500 hover:text-gray-800 font-medium"
                     >
-                      Bearbeiten
+                      {t('crm.template.edit')}
                     </button>
                     <button
                       onClick={() => handleDelete(tpl.id)}
                       className="text-sm text-red-500 hover:text-red-700 font-medium"
                     >
-                      Löschen
+                      {t('crm.template.delete')}
                     </button>
                   </div>
                 </div>
@@ -264,36 +264,36 @@ export default function Templates() {
           <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl my-6 p-6 space-y-4">
               <h2 className="text-lg font-semibold text-gray-900">
-                {editingId ? 'Vorlage bearbeiten' : 'Neue Vorlage'}
+                {editingId ? t('crm.template.editTemplate') : t('crm.template.newTemplate')}
               </h2>
 
               <div className="space-y-4">
                 {/* Name + Kategorie + Sprache in einer Zeile */}
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div className="sm:col-span-2">
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.name')} *</label>
                     <input
                       type="text"
                       value={form.name}
                       onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                      placeholder="z.B. Termin-Bestätigung DE"
+                      placeholder={t('crm.template.namePlaceholder')}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Kategorie</label>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.category')}</label>
                     <select
                       value={form.category}
                       onChange={e => setForm(f => ({ ...f, category: e.target.value as Category }))}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
                     >
                       {CATEGORIES.map(c => (
-                        <option key={c} value={c}>{categoryLabel[c]}</option>
+                        <option key={c} value={c}>{t(`crm.template.categories.${c}`)}</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Sprache</label>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.language')}</label>
                     <select
                       value={form.language}
                       onChange={e => setForm(f => ({ ...f, language: e.target.value as Language }))}
@@ -307,19 +307,19 @@ export default function Templates() {
 
                 {/* Betreff */}
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1">Betreff *</label>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.subject')} *</label>
                   <input
                     type="text"
                     value={form.subject}
                     onChange={e => setForm(f => ({ ...f, subject: e.target.value }))}
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
-                    placeholder="z.B. Ihr Termin bei Happy Property – {{termin_datum}}"
+                    placeholder={t('crm.template.subjectPlaceholder')}
                   />
                 </div>
 
                 {/* Platzhalter-Referenz */}
                 <div className="bg-gray-50 rounded-xl p-3">
-                  <p className="text-xs font-semibold text-gray-500 mb-2">Platzhalter (klicken zum Kopieren)</p>
+                  <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.template.clickToCopy')}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {PLACEHOLDERS.map(p => (
                       <button
@@ -333,7 +333,7 @@ export default function Templates() {
                             : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-600'
                         }`}
                       >
-                        {copiedKey === p.key ? '✓ Kopiert' : p.key}
+                        {copiedKey === p.key ? t('crm.template.copied') : p.key}
                       </button>
                     ))}
                   </div>
@@ -351,7 +351,7 @@ export default function Templates() {
                           : 'border-transparent text-gray-500 hover:text-gray-700'
                       }`}
                     >
-                      Textinhalt *
+                      {t('crm.template.textContent')} *
                     </button>
                     <button
                       type="button"
@@ -362,7 +362,7 @@ export default function Templates() {
                           : 'border-transparent text-gray-500 hover:text-gray-700'
                       }`}
                     >
-                      HTML-Template
+                      {t('crm.template.htmlTemplate')}
                       {form.html_body && (
                         <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block" />
                       )}
@@ -376,10 +376,10 @@ export default function Templates() {
                         value={form.body}
                         onChange={e => setForm(f => ({ ...f, body: e.target.value }))}
                         className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y font-mono"
-                        placeholder="Reiner Text wird als Fallback genutzt, wenn kein HTML-Template vorhanden ist."
+                        placeholder={t('crm.template.textPlaceholder')}
                       />
                       <p className="text-xs text-gray-400 mt-1">
-                        Wird verwendet wenn kein HTML-Template hinterlegt ist oder für WhatsApp/Textnachrichten.
+                        {t('crm.template.textHint')}
                       </p>
                     </div>
                   )}
@@ -388,14 +388,14 @@ export default function Templates() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <p className="text-xs text-gray-500">
-                          HTML einfügen (von Claude generiert). Platzhalter aus der Liste oben verwenden.
+                          {t('crm.template.htmlHint')}
                         </p>
                         <button
                           type="button"
                           onClick={() => setShowPreview(!showPreview)}
                           className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
                         >
-                          {showPreview ? '✕ Vorschau schließen' : '👁 Vorschau'}
+                          {showPreview ? t('crm.template.closePreview') : t('crm.template.preview')}
                         </button>
                       </div>
 
@@ -410,7 +410,7 @@ export default function Templates() {
                       {showPreview && form.html_body && (
                         <div className="border border-gray-200 rounded-xl overflow-hidden">
                           <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 border-b border-gray-200">
-                            Vorschau (Platzhalter = Beispielwerte)
+                            {t('crm.template.previewLabel')}
                           </div>
                           <iframe
                             srcDoc={previewHtml(form.html_body)}
@@ -424,8 +424,8 @@ export default function Templates() {
 
                       {!form.html_body && (
                         <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-sm text-indigo-700 space-y-2">
-                          <p className="font-semibold">💡 HTML-Template mit Claude erstellen</p>
-                          <p className="text-xs">Gib Claude dieses Briefing:</p>
+                          <p className="font-semibold">{t('crm.template.claudeTitle')}</p>
+                          <p className="text-xs">{t('crm.template.claudeIntro')}</p>
                           <div className="bg-white border border-indigo-100 rounded-lg p-3 text-xs font-mono text-gray-700 select-all">
                             {`Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`}
                           </div>
@@ -434,11 +434,11 @@ export default function Templates() {
                             onClick={() => {
                               const prompt = `Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`
                               navigator.clipboard.writeText(prompt).catch(() => {})
-                              showToast('✅ Prompt kopiert – jetzt in Claude einfügen!')
+                              showToast('✅ ' + t('crm.template.promptCopied'))
                             }}
                             className="mt-1 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-colors"
                           >
-                            📋 Prompt kopieren
+                            {t('crm.template.copyPrompt')}
                           </button>
                         </div>
                       )}
@@ -452,7 +452,7 @@ export default function Templates() {
                   onClick={() => setShowForm(false)}
                   className="px-4 py-2 rounded-xl border border-gray-300 text-sm text-gray-600 hover:bg-gray-50"
                 >
-                  Abbrechen
+                  {t('crm.template.cancel')}
                 </button>
                 <button
                   onClick={handleSave}
@@ -460,7 +460,7 @@ export default function Templates() {
                   className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50 transition-opacity"
                   style={{ backgroundColor: '#ff795d' }}
                 >
-                  {saving ? 'Speichert…' : 'Speichern'}
+                  {saving ? t('crm.template.saving') : t('crm.template.save')}
                 </button>
               </div>
             </div>

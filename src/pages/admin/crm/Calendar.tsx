@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Link } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -47,12 +48,17 @@ function gEvtTime(gEvt: GoogleCalendarEvent): string {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const DE_DAYS_SHORT  = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
-const DE_DAYS_LONG   = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag']
-const DE_MONTHS      = [
-  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
-]
+// Locale-aware Wochentag-/Monatsnamen: passen sich an die UI-Sprache an
+// (DE → „Mo"/„Montag"/„Januar", EN → „Mon"/„Monday"/„January"). Montag zuerst.
+function buildDayNames(locale: string, style: 'short' | 'long'): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { weekday: style })
+  // 2021-03-01 war ein Montag → ergibt Mo..So
+  return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(2021, 2, 1 + i)))
+}
+function buildMonthNames(locale: string): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { month: 'long' })
+  return Array.from({ length: 12 }, (_, m) => fmt.format(new Date(2021, m, 1)))
+}
 
 /** ISO date string yyyy-mm-dd */
 function toDateStr(d: Date): string {
@@ -133,11 +139,11 @@ function durationMinutes(start: string, end: string): number {
 
 // ── TypeBadge ─────────────────────────────────────────────────────────────────
 
-function TypeBadge({ type }: { type: string }) {
+function TypeBadge({ type, t }: { type: string; t: TFunction }) {
   const colors = APPT_COLORS[type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
-  const label  = type === 'zoom' ? '📹 Zoom'
-    : type === 'inperson' ? '📍 Vor Ort'
-    : '📞 Telefon'
+  const label  = type === 'zoom' ? t('crm.appointment.zoom', '📹 Zoom')
+    : type === 'inperson' ? t('crm.appointment.inperson', '📍 Vor Ort')
+    : t('crm.appointment.phone', '📞 Telefon')
   return (
     <span
       className="inline-block px-2 py-0.5 rounded-full text-xs font-medium"
@@ -151,7 +157,13 @@ function TypeBadge({ type }: { type: string }) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function CrmCalendar() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+
+  // UI-Sprache → Locale für Datums- und Namensformatierung
+  const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
+  const daysShort = useMemo(() => buildDayNames(locale, 'short'), [locale])
+  const daysLong  = useMemo(() => buildDayNames(locale, 'long'),  [locale])
+  const months    = useMemo(() => buildMonthNames(locale),        [locale])
 
   const [view, setView]               = useState<CalView>('month')
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
@@ -303,14 +315,14 @@ export default function CrmCalendar() {
   // ── Period label ──────────────────────────────────────────────
   function periodLabel(): string {
     if (view === 'month') {
-      return `${DE_MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`
+      return `${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`
     }
     if (view === 'week') {
       const { start, end } = getWeekRange(currentDate)
-      return `${start.getDate()}. – ${end.getDate()}. ${DE_MONTHS[end.getMonth()]} ${end.getFullYear()}`
+      return `${start.getDate()}. – ${end.getDate()}. ${months[end.getMonth()]} ${end.getFullYear()}`
     }
-    const dow = DE_DAYS_LONG[(currentDate.getDay() + 6) % 7]
-    return `${dow}, ${currentDate.getDate()}. ${DE_MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`
+    const dow = daysLong[(currentDate.getDay() + 6) % 7]
+    return `${dow}, ${currentDate.getDate()}. ${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`
   }
 
   // ── Events for a given day ────────────────────────────────────
@@ -382,7 +394,7 @@ export default function CrmCalendar() {
       <div className="flex-1 overflow-auto">
         {/* Day headers */}
         <div className="grid grid-cols-7 border-b border-gray-200">
-          {DE_DAYS_SHORT.map(d => (
+          {daysShort.map(d => (
             <div key={d} className="text-center text-xs font-medium text-gray-400 py-2">
               {d}
             </div>
@@ -493,7 +505,7 @@ export default function CrmCalendar() {
         <div className="grid grid-cols-7 border-b border-gray-200">
           {days.map((d, i) => (
             <div key={i} className={`text-center py-3 text-sm ${isToday(d) ? 'font-bold' : ''}`}>
-              <span className="text-gray-500 text-xs block">{DE_DAYS_SHORT[i]}</span>
+              <span className="text-gray-500 text-xs block">{daysShort[i]}</span>
               <span
                 className="inline-flex items-center justify-center w-7 h-7 rounded-full text-sm font-semibold"
                 style={isToday(d) ? { backgroundColor: '#ff795d', color: '#fff' } : { color: '#374151' }}
@@ -527,7 +539,7 @@ export default function CrmCalendar() {
                         {formatTime(appt.start_time)}
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
-                      <TypeBadge type={appt.type} />
+                      <TypeBadge type={appt.type} t={t} />
                     </div>
                   )
                 })}
@@ -570,8 +582,8 @@ export default function CrmCalendar() {
   function renderDayView() {
     const appts = appointmentsForDay(currentDate)
     const gEvts = googleEventsForDay(currentDate)
-    const dow   = DE_DAYS_LONG[(currentDate.getDay() + 6) % 7]
-    const dateLabel = `${dow}, ${currentDate.getDate()}. ${DE_MONTHS[currentDate.getMonth()]} ${currentDate.getFullYear()}`
+    const dow   = daysLong[(currentDate.getDay() + 6) % 7]
+    const dateLabel = `${dow}, ${currentDate.getDate()}. ${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`
 
     return (
       <div className="flex-1 overflow-auto p-4">
@@ -600,7 +612,7 @@ export default function CrmCalendar() {
                       {formatTimeRange(appt.start_time, appt.end_time)}
                     </p>
                   </div>
-                  <TypeBadge type={appt.type} />
+                  <TypeBadge type={appt.type} t={t} />
                 </div>
                 {appt.zoom_link && (
                   <a
@@ -694,7 +706,7 @@ export default function CrmCalendar() {
               </span>
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
-                <TypeBadge type={appt.type} />
+                <TypeBadge type={appt.type} t={t} />
               </div>
             </div>
           </div>
@@ -703,7 +715,7 @@ export default function CrmCalendar() {
             {/* Date + time */}
             <div>
               📅{' '}
-              {new Date(appt.start_time).toLocaleDateString('de-DE', {
+              {new Date(appt.start_time).toLocaleDateString(locale, {
                 weekday: 'short', day: 'numeric', month: 'long', year: 'numeric',
               })}
               {' · '}
@@ -793,7 +805,7 @@ export default function CrmCalendar() {
       : `${formatTime(gEvt.start.dateTime ?? '')} – ${formatTime(gEvt.end.dateTime ?? '')}`
     const dateStr = new Date(
       gEvt.start.dateTime ?? gEvt.start.date ?? ''
-    ).toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
+    ).toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })
 
     return (
       <div

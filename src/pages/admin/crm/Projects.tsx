@@ -411,7 +411,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                       ? t('crm.project.uploading', 'Lädt hoch…')
                       : t('crm.project.dropImages', 'Bilder hierher ziehen oder klicken')}
                   </p>
-                  <p className="text-xs text-gray-400 mt-1">PNG, JPG, WEBP — mehrere möglich</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('crm.project.imageFormats', 'PNG, JPG, WEBP — mehrere möglich')}</p>
                 </div>
                 <input
                   ref={fileInputRef}

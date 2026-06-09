@@ -212,7 +212,7 @@ export default function AllLeads() {
             className="px-4 py-2 rounded-xl text-white text-sm font-medium"
             style={{ backgroundColor: '#ff795d' }}
           >
-            + Neuer Lead
+            + {t('crm.allLeads.newLead')}
           </button>
         </div>
 
@@ -220,7 +220,7 @@ export default function AllLeads() {
         <div className="flex flex-wrap gap-3">
           <input
             type="text"
-            placeholder="Name oder E-Mail suchen…"
+            placeholder={t('crm.allLeads.searchPlaceholder')}
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 w-64"
@@ -230,27 +230,27 @@ export default function AllLeads() {
             onChange={val => setFilterSource(val)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
             options={[
-              { value: '', label: 'Alle Quellen' },
+              { value: '', label: t('crm.allLeads.allSources') },
               ...SOURCES.filter(s => s !== '').map(s => ({ value: s, label: sourceLabel[s] })),
             ]}
-            placeholder="Alle Quellen"
+            placeholder={t('crm.allLeads.allSources')}
           />
           <CustomSelect
             value={filterStatus}
             onChange={val => setFilterStatus(val)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
             options={[
-              { value: '', label: 'Alle Status' },
+              { value: '', label: t('crm.allLeads.allStatuses') },
               ...STATUSES.filter(s => s !== '').map(s => ({ value: s, label: statusLabel[s] ?? s })),
             ]}
-            placeholder="Alle Status"
+            placeholder={t('crm.allLeads.allStatuses')}
           />
         </div>
 
         {/* Table */}
         <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
           {loading ? (
-            <p className="p-6 text-gray-400 text-sm">Lädt…</p>
+            <p className="p-6 text-gray-400 text-sm">{t('common.loading')}</p>
           ) : filteredLeads.length === 0 ? (
             <p className="p-6 text-gray-400 text-sm">{t('crm.allLeads.noLeads')}</p>
           ) : (
@@ -258,7 +258,7 @@ export default function AllLeads() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {['Name', 'E-Mail', 'Telefon', 'Quelle', 'Status', 'Zuständig', 'Datum', 'Aktionen'].map(col => (
+                    {[t('users.table.name'), t('crm.lead.email'), t('crm.lead.phone'), t('crm.lead.source'), t('crm.lead.status'), t('crm.lead.assignedTo'), t('crm.lead.date'), t('common.actions')].map(col => (
                       <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         {col}
                       </th>
@@ -292,13 +292,13 @@ export default function AllLeads() {
                             className="text-sm font-medium hover:underline"
                             style={{ color: '#ff795d' }}
                           >
-                            Details
+                            {t('crm.lead.details', 'Details')}
                           </Link>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDelete(lead.id) }}
                             className="text-sm text-red-500 hover:text-red-700"
                           >
-                            Löschen
+                            {t('common.delete')}
                           </button>
                         </div>
                       </td>
@@ -314,11 +314,11 @@ export default function AllLeads() {
         {showModal && (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
             <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900">Neuer Lead</h2>
+              <h2 className="text-lg font-semibold text-gray-900">{t('crm.allLeads.newLead')}</h2>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Vorname *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.firstName')} *</label>
                   <input
                     type="text"
                     value={newLeadForm.first_name}
@@ -327,7 +327,7 @@ export default function AllLeads() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Nachname *</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.lastName')} *</label>
                   <input
                     type="text"
                     value={newLeadForm.last_name}
@@ -338,7 +338,7 @@ export default function AllLeads() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">E-Mail *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.email')} *</label>
                 <input
                   type="email"
                   value={newLeadForm.email}
@@ -349,7 +349,7 @@ export default function AllLeads() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Telefon</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.phone')}</label>
                   <input
                     type="tel"
                     value={newLeadForm.phone}
@@ -370,7 +370,7 @@ export default function AllLeads() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Land</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.country')}</label>
                   <input
                     type="text"
                     value={newLeadForm.country}
@@ -379,7 +379,7 @@ export default function AllLeads() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Sprache</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.language')}</label>
                   <CustomSelect
                     value={newLeadForm.language}
                     onChange={val => setNewLeadForm(f => ({ ...f, language: val as 'de' | 'en' }))}
@@ -394,7 +394,7 @@ export default function AllLeads() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Quelle</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.source')}</label>
                   <CustomSelect
                     value={newLeadForm.source}
                     onChange={val => setNewLeadForm(f => ({ ...f, source: val as NewLeadForm['source'] }))}
@@ -403,22 +403,22 @@ export default function AllLeads() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Zuständig</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.assignedTo')}</label>
                   <CustomSelect
                     value={newLeadForm.assigned_to}
                     onChange={val => setNewLeadForm(f => ({ ...f, assigned_to: val }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
                     options={[
-                      { value: '', label: 'Nicht zugewiesen' },
+                      { value: '', label: t('crm.allLeads.notAssigned') },
                       ...staff.map(s => ({ value: s.id, label: s.full_name })),
                     ]}
-                    placeholder="Nicht zugewiesen"
+                    placeholder={t('crm.allLeads.notAssigned')}
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notizen</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.notes')}</label>
                 <textarea
                   rows={3}
                   value={newLeadForm.notes}
@@ -434,7 +434,7 @@ export default function AllLeads() {
                   onChange={e => setNewLeadForm(f => ({ ...f, createDeal: e.target.checked }))}
                   className="rounded"
                 />
-                Deal automatisch erstellen
+                {t('crm.allLeads.autoCreateDeal')}
               </label>
 
               <div className="flex justify-end gap-3 pt-2">
@@ -442,7 +442,7 @@ export default function AllLeads() {
                   onClick={() => { setShowModal(false); setNewLeadForm(DEFAULT_FORM) }}
                   className="px-4 py-2 rounded-xl border border-gray-300 text-sm text-gray-600 hover:bg-gray-50"
                 >
-                  Abbrechen
+                  {t('common.cancel')}
                 </button>
                 <button
                   onClick={handleCreate}
@@ -450,7 +450,7 @@ export default function AllLeads() {
                   className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50"
                   style={{ backgroundColor: '#ff795d' }}
                 >
-                  {creating ? 'Erstellt…' : 'Erstellen'}
+                  {creating ? t('crm.allLeads.creating') : t('crm.allLeads.create')}
                 </button>
               </div>
             </div>

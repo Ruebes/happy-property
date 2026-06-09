@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -53,10 +54,6 @@ const STATUS_BAR: Record<UnitStatus, string> = {
   under_construction: '#3b82f6',
   active:             '#22c55e',
 }
-const STATUS_LABEL: Record<UnitStatus, string> = {
-  under_construction: 'Im Bau',
-  active:             'Aktiv',
-}
 const DOC_PILL: Record<string, string> = {
   kaufvertrag:  'bg-purple-100 text-purple-700',
   mietvertrag:  'bg-indigo-100 text-indigo-700',
@@ -64,14 +61,6 @@ const DOC_PILL: Record<string, string> = {
   grundriss:    'bg-blue-100 text-blue-700',
   rechnung:     'bg-amber-100 text-amber-700',
   sonstiges:    'bg-gray-100 text-gray-600',
-}
-const DOC_LABEL: Record<string, string> = {
-  kaufvertrag:  'Kaufvertrag',
-  mietvertrag:  'Mietvertrag',
-  zahlungsbeleg:'Zahlungsbeleg',
-  grundriss:    'Grundriss',
-  rechnung:     'Rechnung',
-  sonstiges:    'Sonstiges',
 }
 
 // ── Empty form defaults ───────────────────────────────────────────────────────
@@ -106,6 +95,7 @@ function UnitCard({
   onCustomerClick?: () => void
   onAssignCustomer?: () => void
 }) {
+  const { t } = useTranslation()
   const price = unit.price_gross ?? unit.price_net
   return (
     <div
@@ -138,12 +128,12 @@ function UnitCard({
             <span className="text-base font-bold text-gray-900 font-body">{unit.unit_number}</span>
             <div className="mt-1">
               <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_PILL[unit.status]}`}>
-                {unit.is_completed ? '✅ Übergeben' : STATUS_LABEL[unit.status]}
+                {unit.is_completed ? t('crm.pd.handedOver') : t(`crm.pd.status.${unit.status}`)}
               </span>
             </div>
           </div>
           {unit.rental_type && (
-            <span className="text-xl" title={unit.rental_type === 'short' ? 'Kurzzeitmiete' : 'Langzeitmiete'}>
+            <span className="text-xl" title={unit.rental_type === 'short' ? t('crm.pd.rentalShortTitle') : t('crm.pd.rentalLongTitle')}>
               {unit.rental_type === 'short' ? '🏖️' : '🏠'}
             </span>
           )}
@@ -154,21 +144,21 @@ function UnitCard({
           {unit.size_sqm != null && (
             <p>
               📐 {unit.size_sqm} m²
-              {unit.terrace_sqm != null ? ` · ${unit.terrace_sqm} m² Terrasse` : ''}
+              {unit.terrace_sqm != null ? ` · ${unit.terrace_sqm} m² ${t('crm.pd.terrace')}` : ''}
             </p>
           )}
           {(unit.bedrooms > 0 || unit.bathrooms > 0) && (
-            <p>🛏️ {unit.bedrooms} SZ · 🚿 {unit.bathrooms} Bad</p>
+            <p>🛏️ {unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')} · 🚿 {unit.bathrooms} {t('crm.assignUnit.bathAbbr')}</p>
           )}
           {price != null && (
             <p className="font-semibold text-gray-700 mt-1">
               💶 {fmtPrice(price)}
-              {unit.price_gross == null && unit.price_net != null ? ' netto' : ''}
+              {unit.price_gross == null && unit.price_net != null ? t('crm.pd.netSuffix') : ''}
             </p>
           )}
-          {unit.handover_date && <p>📅 Übergabe {fmtDate(unit.handover_date)}</p>}
+          {unit.handover_date && <p>📅 {t('crm.pd.handover')} {fmtDate(unit.handover_date)}</p>}
           {unit.verwalter && <p>👤 {unit.verwalter.full_name}</p>}
-          {unit.is_furnished && <p>🛋️ Möbliert</p>}
+          {unit.is_furnished && <p>🛋️ {t('crm.unitEdit.furnished')}</p>}
         </div>
 
         {/* Customer badge — clickable → LeadDetail */}
@@ -192,7 +182,7 @@ function UnitCard({
               className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-[#ff795d] transition-colors"
             >
               <span>👤</span>
-              <span>Kunden zuweisen</span>
+              <span>{t('crm.pd.assignCustomer')}</span>
             </button>
           </div>
         )}
@@ -228,6 +218,7 @@ async function deleteUnitImage(url: string) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ProjectDetail() {
+  const { t } = useTranslation()
   const { id: projectId } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { profile } = useAuth()
@@ -394,7 +385,7 @@ export default function ProjectDetail() {
         .update({ property_id: linkPropId })
         .eq('id', editUnit.id)
       if (error) throw error
-      showToast('✅ Immobilie verknüpft')
+      showToast(t('crm.pd.toastLinked'))
       setEditUnit(prev => prev ? { ...prev, property_id: linkPropId } : prev)
       setLinkPropId('')
       await fetchData()
@@ -412,7 +403,7 @@ export default function ProjectDetail() {
         .update({ property_id: null })
         .eq('id', editUnit.id)
       if (error) throw error
-      showToast('✅ Verknüpfung entfernt')
+      showToast(t('crm.pd.toastUnlinked'))
       setEditUnit(prev => prev ? { ...prev, property_id: null } : prev)
       await fetchData()
       await fetchLinkableProperties(null)
@@ -547,14 +538,14 @@ export default function ProjectDetail() {
         }
       }
 
-      showToast('✅ Kunde zugewiesen')
+      showToast(t('crm.pd.toastCustomerAssigned'))
       setShowAssignModal(false)
       setAssigningUnit(null)
       setAssignLeadQuery('')
       setAssignLeadResults([])
       await fetchData()
     } catch (err) {
-      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(t('crm.pd.toastError', { msg: err instanceof Error ? err.message : String(err) }))
     } finally { setAssignLeadSaving(false) }
   }
 
@@ -647,7 +638,7 @@ export default function ProjectDetail() {
       // For existing units upload immediately
       const unitId = editUnit?.id
       if (!unitId) {
-        showToast('⚠ Bitte erst Wohnung speichern, dann Bilder hochladen')
+        showToast(t('crm.pd.toastSaveFirst'))
         return
       }
       const newUrls: string[] = []
@@ -655,14 +646,14 @@ export default function ProjectDetail() {
         const url = await uploadUnitImage(files[i], unitId)
         if (url) newUrls.push(url)
       }
-      if (newUrls.length === 0) { showToast('❌ Upload fehlgeschlagen'); return }
+      if (newUrls.length === 0) { showToast(t('crm.pd.toastUploadFailed')); return }
       const updated = [...unitImages, ...newUrls]
       const { error } = await supabase.from('crm_project_units')
         .update({ images: updated })
         .eq('id', unitId)
       if (error) throw error
       setUnitImages(updated)
-      showToast(`✅ ${newUrls.length} Bild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+      showToast(t('crm.pd.toastImagesUploaded', { count: newUrls.length }))
       await fetchData()
       // E-Mail an Kunden senden
       const customer = unitLeadMap[unitId]
@@ -670,7 +661,7 @@ export default function ProjectDetail() {
         void notifyCustomerUpload(customer.email, customer.first_name, `${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
       }
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('errors.generic')}`)
     } finally {
       setUploadingUnitImg(false)
       if (unitImgInputRef.current) unitImgInputRef.current.value = ''
@@ -704,18 +695,18 @@ export default function ProjectDetail() {
         const { error: upErr } = await supabase.storage
           .from(PROJ_IMG_BUCKET)
           .upload(path, file, { upsert: false })
-        if (upErr) { showToast(`❌ Upload fehlgeschlagen: ${upErr.message}`); continue }
+        if (upErr) { showToast(t('crm.pd.toastUploadFailedMsg', { msg: upErr.message })); continue }
         const { data: urlData } = supabase.storage.from(PROJ_IMG_BUCKET).getPublicUrl(path)
         if (urlData?.publicUrl) newUrls.push(urlData.publicUrl)
       }
-      if (newUrls.length === 0) { showToast('❌ Kein Bild hochgeladen'); return }
+      if (newUrls.length === 0) { showToast(t('crm.pd.toastNoImageUploaded')); return }
       const updated = [...(project?.images ?? []), ...newUrls]
       const { error } = await supabase.from('crm_projects').update({ images: updated }).eq('id', projectId)
       if (error) throw error
       setProject(p => p ? { ...p, images: updated } : p)
-      showToast(`✅ ${newUrls.length} Projektbild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+      showToast(t('crm.pd.toastProjectImagesUploaded', { count: newUrls.length }))
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('errors.generic')}`)
     } finally {
       setUploadingProjectImg(false)
       if (projectImgInputRef.current) projectImgInputRef.current.value = ''
@@ -723,7 +714,7 @@ export default function ProjectDetail() {
   }
 
   async function handleDeleteProjectImage(url: string) {
-    if (!project || !window.confirm('Projektbild wirklich löschen?')) return
+    if (!project || !window.confirm(t('crm.pd.confirmDeleteProjectImage'))) return
     const marker = `/${PROJ_IMG_BUCKET}/`
     const idx = url.indexOf(marker)
     if (idx !== -1) {
@@ -747,7 +738,7 @@ export default function ProjectDetail() {
         const { error: upErr } = await supabase.storage
           .from('construction-photos')
           .upload(path, file, { upsert: false })
-        if (upErr) { showToast(`❌ Upload fehlgeschlagen: ${upErr.message}`); continue }
+        if (upErr) { showToast(t('crm.pd.toastUploadFailedMsg', { msg: upErr.message })); continue }
         const { data: urlData } = supabase.storage.from('construction-photos').getPublicUrl(path)
         await supabase.from('construction_photos').insert({
           project_id:  projectId,
@@ -788,19 +779,19 @@ export default function ProjectDetail() {
           }
         }
       }
-      showToast(`✅ ${files.length} Baustellenfoto${files.length > 1 ? 's' : ''} hochgeladen`)
+      showToast(t('crm.pd.toastConstructionUploaded', { count: files.length }))
       setPhotoDesc('')
       if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
       await fetchConstructionPhotos()
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('errors.generic')}`)
     } finally {
       setUploadingPhoto(false)
     }
   }
 
   async function handleDeleteConstructionPhoto(photo: ConstructionPhoto) {
-    if (!window.confirm('Baustellenfoto wirklich löschen?')) return
+    if (!window.confirm(t('crm.pd.confirmDeleteConstructionPhoto'))) return
     await supabase.storage.from('construction-photos').remove([photo.file_path])
     await supabase.from('construction_photos').delete().eq('id', photo.id)
     await fetchConstructionPhotos()
@@ -881,7 +872,7 @@ export default function ProjectDetail() {
         // Offer customer assignment for active units
         if (newUnit && form.status !== 'under_construction') {
           await fetchData()
-          showToast('✅ Einheit angelegt')
+          showToast(t('crm.pd.toastUnitCreated'))
           setShowModal(false)
           setAssigningUnit(newUnit as CrmProjectUnit)
           setShowAssignModal(true)
@@ -889,7 +880,7 @@ export default function ProjectDetail() {
         }
       }
       await fetchData()
-      showToast(editUnit ? '✅ Einheit aktualisiert' : '✅ Einheit angelegt')
+      showToast(editUnit ? t('crm.pd.toastUnitUpdated') : t('crm.pd.toastUnitCreated'))
       setShowModal(false)
       // Wenn von "Im Bau" → "Aktiv" gewechselt: Portal-Dialog anbieten
       if (wasUnderConstruction && isNowActive) {
@@ -899,13 +890,13 @@ export default function ProjectDetail() {
       }
     } catch (err) {
       console.error('[ProjectDetail] saveUnit:', err)
-      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(t('crm.pd.toastError', { msg: err instanceof Error ? err.message : String(err) }))
     } finally { setSaving(false) }
   }
 
   // ── Delete unit ──────────────────────────────────────────────────────────────
   async function handleDeleteUnit(id: string) {
-    if (!window.confirm('Wohnung wirklich löschen? Alle Zahlungen und Dokumente werden ebenfalls gelöscht.')) return
+    if (!window.confirm(t('crm.pd.confirmDeleteUnit'))) return
     try {
       // Verknüpftes Portal-Objekt (properties) mit aufräumen, damit es nicht
       // verwaist beim Eigentümer/in der Verwaltung hängen bleibt.
@@ -922,7 +913,7 @@ export default function ProjectDetail() {
       await fetchData()
     } catch (err) {
       console.error('[ProjectDetail] handleDeleteUnit:', err)
-      showToast('Fehler beim Löschen')
+      showToast(t('crm.pd.toastDeleteError'))
     }
   }
 
@@ -950,16 +941,16 @@ export default function ProjectDetail() {
       }
       setPayForm({ ...EMPTY_PAY }); setEditPayId(null)
       await fetchPayments(editUnit.id)
-      showToast('Rate gespeichert ✓')
+      showToast(t('crm.pd.toastPaymentSaved'))
     } catch (err) {
-      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+      showToast(t('crm.pd.toastError', { msg: err instanceof Error ? err.message : String(err) }))
     } finally { setSavingPay(false) }
   }
 
   async function handleDeletePayment(id: string) {
     if (!editUnit) return
     const { error } = await supabase.from('crm_unit_payments').delete().eq('id', id)
-    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
+    if (error) { showToast(t('crm.pd.toastError', { msg: error.message })); return }
     await fetchPayments(editUnit.id)
   }
 
@@ -968,7 +959,7 @@ export default function ProjectDetail() {
       is_paid:   !pay.is_paid,
       paid_date: !pay.is_paid ? new Date().toISOString().slice(0, 10) : null,
     }).eq('id', pay.id)
-    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
+    if (error) { showToast(t('crm.pd.toastError', { msg: error.message })); return }
     if (editUnit) await fetchPayments(editUnit.id)
   }
 
@@ -997,7 +988,7 @@ export default function ProjectDetail() {
       setTimeout(() => setPortalSuccess(false), 6000)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      setPortalError(`Fehler: ${msg}`)
+      setPortalError(t('crm.pd.errorPrefix', { msg }))
     } finally {
       setPortalSending(false)
     }
@@ -1039,7 +1030,7 @@ export default function ProjectDetail() {
   }
 
   async function handleDeleteDoc(doc: CrmUnitDocument) {
-    if (!editUnit || !window.confirm('Dokument wirklich löschen?')) return
+    if (!editUnit || !window.confirm(t('crm.pd.confirmDeleteDoc'))) return
     await supabase.storage.from('unit-documents').remove([doc.file_path])
     await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
     await fetchDocuments(editUnit.id)
@@ -1075,7 +1066,7 @@ export default function ProjectDetail() {
 
   if (!project) return (
     <DashboardLayout basePath="/admin/crm">
-      <div className="text-center py-20 text-gray-400">Projekt nicht gefunden.</div>
+      <div className="text-center py-20 text-gray-400">{t('crm.pd.notFound')}</div>
     </DashboardLayout>
   )
 
@@ -1095,7 +1086,7 @@ export default function ProjectDetail() {
           onClick={() => navigate('/admin/crm/projects')}
           className="text-sm text-gray-400 hover:text-gray-600 mb-3 inline-flex items-center gap-1"
         >
-          ← Zurück zu Projekten
+          {t('crm.pd.backToProjects')}
         </button>
 
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1112,7 +1103,7 @@ export default function ProjectDetail() {
             className="px-4 py-2 text-sm font-medium text-white rounded-xl"
             style={{ backgroundColor: '#ff795d' }}
           >
-            + Neue Wohnung
+            {t('crm.pd.newUnit')}
           </button>
         </div>
 
@@ -1122,12 +1113,12 @@ export default function ProjectDetail() {
             const n = units.filter(u => u.status === s).length
             return n > 0 ? (
               <span key={s} className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_PILL[s]}`}>
-                {n} {STATUS_LABEL[s]}
+                {n} {t(`crm.pd.status.${s}`)}
               </span>
             ) : null
           })}
           <span className="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-            {units.length} Einheiten gesamt
+            {units.length} {t('crm.pd.unitsTotal')}
           </span>
         </div>
       </div>
@@ -1136,9 +1127,9 @@ export default function ProjectDetail() {
       {units.length === 0 ? (
         <div className="text-center py-24 text-gray-400">
           <p className="text-5xl mb-3">🏗️</p>
-          <p className="text-sm">Noch keine Wohnungen angelegt.</p>
+          <p className="text-sm">{t('crm.pd.noUnits')}</p>
           <button onClick={openNew} className="mt-4 text-sm text-[#ff795d] underline font-medium">
-            Erste Wohnung anlegen
+            {t('crm.pd.createFirstUnit')}
           </button>
         </div>
       ) : (
@@ -1147,7 +1138,7 @@ export default function ProjectDetail() {
             <div key={block}>
               {multiBlock && (
                 <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 font-body">
-                  {block === '—' ? 'Ohne Block' : `Block ${block}`}
+                  {block === '—' ? t('crm.pd.noBlock') : `Block ${block}`}
                 </h2>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1171,14 +1162,14 @@ export default function ProjectDetail() {
       <div className="mt-10 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-gray-900">🖼️ Projektbilder</h2>
+            <h2 className="font-semibold text-gray-900">{t('crm.pd.projectImages')}</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Allgemeine Bilder des Projekts – für alle Eigentümer sichtbar.
+              {t('crm.pd.projectImagesDesc')}
             </p>
           </div>
           <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
             ${uploadingProjectImg ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
-            {uploadingProjectImg ? '⏳ Wird hochgeladen…' : '🖼️ Bilder hochladen'}
+            {uploadingProjectImg ? t('crm.pd.uploading') : t('crm.pd.uploadImages')}
             <input
               ref={projectImgInputRef}
               type="file"
@@ -1192,7 +1183,7 @@ export default function ProjectDetail() {
         </div>
         {(project.images ?? []).length === 0 ? (
           <p className="text-center text-gray-400 text-sm py-10">
-            Noch keine Projektbilder hochgeladen.
+            {t('crm.pd.noProjectImages')}
           </p>
         ) : (
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -1200,7 +1191,7 @@ export default function ProjectDetail() {
               <div key={url} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
                 <img
                   src={url}
-                  alt={`Projektbild ${idx + 1}`}
+                  alt={t('crm.pd.projectImageAlt', { n: idx + 1 })}
                   className="w-full h-32 object-cover cursor-pointer"
                   onClick={() => window.open(url, '_blank')}
                   onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
@@ -1209,7 +1200,7 @@ export default function ProjectDetail() {
                   onClick={() => handleDeleteProjectImage(url)}
                   className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
                              opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                  title="Löschen"
+                  title={t('crm.pd.delete')}
                 >
                   ×
                 </button>
@@ -1223,9 +1214,9 @@ export default function ProjectDetail() {
       <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
           <div>
-            <h2 className="font-semibold text-gray-900">🏗️ Baustellenbilder & -videos</h2>
+            <h2 className="font-semibold text-gray-900">{t('crm.pd.constructionMedia')}</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Fortschritts-Updates – alle Eigentümer in diesem Projekt werden per E-Mail benachrichtigt.
+              {t('crm.pd.constructionMediaDesc')}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1239,12 +1230,12 @@ export default function ProjectDetail() {
               type="text"
               value={photoDesc}
               onChange={e => setPhotoDesc(e.target.value)}
-              placeholder="Beschreibung (optional)"
+              placeholder={t('crm.pd.descriptionOptional')}
               className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-40 focus:outline-none focus:border-[#ff795d]"
             />
             <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
               ${uploadingPhoto ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
-              {uploadingPhoto ? '⏳ Wird hochgeladen…' : '📷 Medien hochladen'}
+              {uploadingPhoto ? t('crm.pd.uploading') : t('crm.pd.uploadMedia')}
               <input
                 ref={constPhotoInputRef}
                 type="file"
@@ -1259,7 +1250,7 @@ export default function ProjectDetail() {
         </div>
         {constructionPhotos.length === 0 ? (
           <p className="text-center text-gray-400 text-sm py-10">
-            Noch keine Baustellenmedien hochgeladen.
+            {t('crm.pd.noConstructionMedia')}
           </p>
         ) : (
           <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -1298,7 +1289,7 @@ export default function ProjectDetail() {
                     onClick={() => handleDeleteConstructionPhoto(photo)}
                     className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
                                opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                    title="Löschen"
+                    title={t('crm.pd.delete')}
                   >
                     ×
                   </button>
@@ -1322,7 +1313,7 @@ export default function ProjectDetail() {
               <h2 className="text-lg font-bold text-gray-900 font-body">
                 {editUnit
                   ? `${editUnit.block ? `Block ${editUnit.block} · ` : ''}${editUnit.unit_number}`
-                  : 'Neue Wohnung'}
+                  : t('crm.pd.newUnitTitle')}
               </h2>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
             </div>
@@ -1330,24 +1321,24 @@ export default function ProjectDetail() {
             {/* Tabs */}
             <div className="flex border-b border-gray-100 px-6 overflow-x-auto">
               {([
-                { id: 'grunddaten',  label: 'Grunddaten' },
-                { id: 'bilder',      label: `Bilder${unitImages.length > 0 ? ` (${unitImages.length})` : ''}` },
-                { id: 'zahlungen',   label: `Zahlungen${payments.length > 0 ? ` (${payments.length})` : ''}` },
-                { id: 'dokumente',   label: `Dokumente${documents.length > 0 ? ` (${documents.length})` : ''}` },
-                { id: 'verwaltung',  label: 'Verwaltung' },
-              ] as { id: ModalTab; label: string }[]).map(t => (
+                { id: 'grunddaten',  label: t('crm.pd.tabBasics') },
+                { id: 'bilder',      label: `${t('crm.pd.tabImages')}${unitImages.length > 0 ? ` (${unitImages.length})` : ''}` },
+                { id: 'zahlungen',   label: `${t('crm.pd.tabPayments')}${payments.length > 0 ? ` (${payments.length})` : ''}` },
+                { id: 'dokumente',   label: `${t('crm.pd.tabDocuments')}${documents.length > 0 ? ` (${documents.length})` : ''}` },
+                { id: 'verwaltung',  label: t('crm.pd.tabManagement') },
+              ] as { id: ModalTab; label: string }[]).map(tb => (
                 <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  disabled={t.id !== 'grunddaten' && !editUnit}
+                  key={tb.id}
+                  onClick={() => setTab(tb.id)}
+                  disabled={tb.id !== 'grunddaten' && !editUnit}
                   className={`whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 -mb-px transition-colors
                     disabled:opacity-30 disabled:cursor-not-allowed ${
-                    tab === t.id
+                    tab === tb.id
                       ? 'border-[#ff795d] text-[#ff795d]'
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  {t.label}
+                  {tb.label}
                 </button>
               ))}
             </div>
@@ -1362,19 +1353,19 @@ export default function ProjectDetail() {
                   {/* Block + Nummer */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Block</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.block')}</label>
                       <input
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                        placeholder="z.B. A"
+                        placeholder={t('crm.unitEdit.blockPlaceholder')}
                         value={form.block}
                         onChange={e => setForm(f => ({ ...f, block: e.target.value }))}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Wohnungsnummer *</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.pd.unitNumber')} *</label>
                       <input
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                        placeholder="z.B. 12 oder A-12"
+                        placeholder={t('crm.pd.unitNumberPlaceholder')}
                         value={form.unit_number}
                         onChange={e => setForm(f => ({ ...f, unit_number: e.target.value }))}
                       />
@@ -1384,27 +1375,27 @@ export default function ProjectDetail() {
                   {/* Typ + Status */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Typ</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unit.type')}</label>
                       <CustomSelect
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                         value={form.type}
                         onChange={val => setForm(f => ({ ...f, type: val as UnitType }))}
                         options={[
-                          { value: 'apartment', label: 'Wohnung' },
-                          { value: 'villa',     label: 'Villa' },
-                          { value: 'studio',    label: 'Studio' },
+                          { value: 'apartment', label: t('crm.unit.types.apartment') },
+                          { value: 'villa',     label: t('crm.unit.types.villa') },
+                          { value: 'studio',    label: t('crm.unit.types.studio') },
                         ]}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Status</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unit.status')}</label>
                       <CustomSelect
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                         value={form.status}
                         onChange={val => setForm(f => ({ ...f, status: val as UnitStatus }))}
                         options={[
-                          { value: 'active',             label: 'Aktiv' },
-                          { value: 'under_construction', label: 'Im Bau' },
+                          { value: 'active',             label: t('crm.pd.status.active') },
+                          { value: 'under_construction', label: t('crm.pd.status.under_construction') },
                         ]}
                       />
                     </div>
@@ -1413,31 +1404,31 @@ export default function ProjectDetail() {
                   {/* Flächen + Etage */}
                   <div className="grid grid-cols-3 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Wohnfläche (m²)</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.livingArea')}</label>
                       <input
                         type="number" min="0" step="0.01"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                        placeholder="z.B. 85"
+                        placeholder={t('crm.pd.phLivingArea')}
                         value={form.size_sqm}
                         onChange={e => setForm(f => ({ ...f, size_sqm: e.target.value }))}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Terrasse (m²)</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.terraceArea')}</label>
                       <input
                         type="number" min="0" step="0.01"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                        placeholder="z.B. 20"
+                        placeholder={t('crm.pd.phTerrace')}
                         value={form.terrace_sqm}
                         onChange={e => setForm(f => ({ ...f, terrace_sqm: e.target.value }))}
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Etage</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unit.floor')}</label>
                       <input
                         type="number" min="0"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
-                        placeholder="z.B. 2"
+                        placeholder={t('crm.pd.phFloor')}
                         value={form.floor}
                         onChange={e => setForm(f => ({ ...f, floor: e.target.value }))}
                       />
@@ -1447,7 +1438,7 @@ export default function ProjectDetail() {
                   {/* Zimmer */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Schlafzimmer</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.bedrooms')}</label>
                       <input
                         type="number" min="0"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
@@ -1456,7 +1447,7 @@ export default function ProjectDetail() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Badezimmer</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.bathrooms')}</label>
                       <input
                         type="number" min="0"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
@@ -1470,7 +1461,7 @@ export default function ProjectDetail() {
                   <div className="bg-gray-50 rounded-xl p-4 space-y-3">
                     <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
                       <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Preis Netto (€)</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.priceNet')}</label>
                         <input
                           type="number" min="0" step="100"
                           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
@@ -1481,7 +1472,7 @@ export default function ProjectDetail() {
                       </div>
                       <span className="text-gray-400 pb-2 text-center">⇄</span>
                       <div>
-                        <label className="block text-xs font-medium text-gray-500 mb-1">Preis Brutto (€)</label>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.priceGross')}</label>
                         <input
                           type="number" min="0" step="100"
                           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
@@ -1492,7 +1483,7 @@ export default function ProjectDetail() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <label className="text-xs text-gray-500 whitespace-nowrap">MwSt. (%)</label>
+                      <label className="text-xs text-gray-500 whitespace-nowrap">{t('crm.unitEdit.vat')}</label>
                       <input
                         type="number" min="0" max="100" step="0.5"
                         className="w-20 rounded-xl border border-gray-200 px-3 py-1.5 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
@@ -1500,7 +1491,7 @@ export default function ProjectDetail() {
                         onChange={e => handleVatChange(e.target.value)}
                       />
                       <span className="text-xs text-gray-400">
-                        Netto eingeben → Brutto wird berechnet (und umgekehrt)
+                        {t('crm.pd.netGrossHint')}
                       </span>
                     </div>
                   </div>
@@ -1508,7 +1499,7 @@ export default function ProjectDetail() {
                   {/* Möblierung + Übergabe */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-2">Einrichtung</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-2">{t('crm.pd.furnishing')}</label>
                       <div className="flex gap-2">
                         {([false, true] as const).map(v => (
                           <button
@@ -1521,13 +1512,13 @@ export default function ProjectDetail() {
                                 : 'border-gray-200 text-gray-600 hover:bg-gray-50'
                             }`}
                           >
-                            {v ? 'Möbliert' : 'Unmöbliert'}
+                            {v ? t('crm.unitEdit.furnished') : t('crm.pd.unfurnished')}
                           </button>
                         ))}
                       </div>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Übergabedatum</label>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.handoverDate')}</label>
                       <input
                         type="date"
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
@@ -1539,11 +1530,11 @@ export default function ProjectDetail() {
 
                   {/* Notizen */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Notizen</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unit.notes')}</label>
                     <textarea
                       rows={2}
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm resize-none focus:outline-none focus:border-[#ff795d]"
-                      placeholder="Interne Notizen zur Wohnung…"
+                      placeholder={t('crm.pd.notesPlaceholder')}
                       value={form.notes}
                       onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     />
@@ -1553,7 +1544,7 @@ export default function ProjectDetail() {
                   {editUnit && (
                     <div className="border-t border-gray-100 pt-4">
                       <label className="block text-xs font-medium text-gray-500 mb-2">
-                        Portal-Immobilie
+                        {t('crm.pd.portalProperty')}
                       </label>
                       {editUnit.property_id ? (
                         <div className="flex items-center justify-between px-3 py-2
@@ -1563,7 +1554,7 @@ export default function ProjectDetail() {
                               const p = linkableProperties.find(lp => lp.id === editUnit.property_id)
                               return p
                                 ? `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`
-                                : '✓ Verknüpft'
+                                : t('crm.pd.linked')
                             })()}
                           </span>
                           <button
@@ -1572,7 +1563,7 @@ export default function ProjectDetail() {
                             onClick={handleUnlinkProperty}
                             className="text-xs text-red-400 hover:text-red-600 disabled:opacity-40
                                        shrink-0 ml-2">
-                            Trennen
+                            {t('crm.pd.unlink')}
                           </button>
                         </div>
                       ) : (
@@ -1582,13 +1573,13 @@ export default function ProjectDetail() {
                             value={linkPropId}
                             onChange={val => setLinkPropId(val)}
                             options={[
-                              { value: '', label: 'Immobilie auswählen…' },
+                              { value: '', label: t('crm.pd.selectProperty') },
                               ...linkableProperties.map(p => ({
                                 value: p.id,
                                 label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`,
                               })),
                             ]}
-                            placeholder="Immobilie auswählen…"
+                            placeholder={t('crm.pd.selectProperty')}
                           />
                           <button
                             type="button"
@@ -1597,13 +1588,12 @@ export default function ProjectDetail() {
                             className="shrink-0 px-3 py-2 rounded-xl text-sm font-medium
                                        text-white disabled:opacity-40 transition-opacity"
                             style={{ backgroundColor: 'var(--color-highlight)' }}>
-                            {linkPropSaving ? '…' : 'Verknüpfen'}
+                            {linkPropSaving ? '…' : t('crm.pd.link')}
                           </button>
                         </div>
                       )}
                       <p className="text-xs text-gray-400 mt-1.5">
-                        Verknüpft diese Einheit mit dem Portal-Eintrag des Eigentümers
-                        (Zahlungsplan + Dokumente).
+                        {t('crm.pd.linkHint')}
                       </p>
                     </div>
                   )}
@@ -1629,18 +1619,18 @@ export default function ProjectDetail() {
                       className="w-full border-2 border-dashed border-gray-200 rounded-xl py-6 text-sm text-gray-400
                                  hover:border-[#ff795d] hover:text-[#ff795d] transition-colors disabled:opacity-50"
                     >
-                      {uploadingUnitImg ? '⏳ Wird hochgeladen…' : '📷 Bilder hochladen (mehrere möglich)'}
+                      {uploadingUnitImg ? t('crm.pd.uploading') : t('crm.pd.uploadImagesMulti')}
                     </button>
                   </div>
 
                   {/* Image grid */}
                   {unitImages.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">Noch keine Bilder hochgeladen.</p>
+                    <p className="text-sm text-gray-400 text-center py-4">{t('crm.pd.noImages')}</p>
                   ) : (
                     <div className="grid grid-cols-3 gap-3">
                       {unitImages.map((url, idx) => (
                         <div key={url} className="relative group rounded-xl overflow-hidden aspect-video bg-gray-100">
-                          <img src={url} alt={`Bild ${idx + 1}`} className="w-full h-full object-cover" />
+                          <img src={url} alt={t('crm.pd.imageAlt', { n: idx + 1 })} className="w-full h-full object-cover" />
                           <button
                             onClick={() => handleDeleteUnitImage(url)}
                             className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs
@@ -1649,14 +1639,14 @@ export default function ProjectDetail() {
                           >✕</button>
                           {idx === 0 && (
                             <span className="absolute bottom-1 left-1 text-[10px] bg-black/50 text-white px-1.5 py-0.5 rounded-full">
-                              Titelbild
+                              {t('crm.pd.coverImage')}
                             </span>
                           )}
                         </div>
                       ))}
                     </div>
                   )}
-                  <p className="text-xs text-gray-400">Das erste Bild wird als Vorschau auf der Einheitskarte verwendet.</p>
+                  <p className="text-xs text-gray-400">{t('crm.pd.coverHint')}</p>
                 </div>
               )}
 
@@ -1667,16 +1657,16 @@ export default function ProjectDetail() {
                   {/* Summary */}
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-blue-50 rounded-xl p-3 text-center">
-                      <p className="text-[10px] text-blue-500 font-medium mb-0.5">Kaufpreis (Brutto)</p>
+                      <p className="text-[10px] text-blue-500 font-medium mb-0.5">{t('crm.pd.purchasePrice')}</p>
                       <p className="text-sm font-bold text-blue-800">{fmtPrice(totalPrice)}</p>
                     </div>
                     <div className="bg-green-50 rounded-xl p-3 text-center">
-                      <p className="text-[10px] text-green-500 font-medium mb-0.5">Bezahlt</p>
+                      <p className="text-[10px] text-green-500 font-medium mb-0.5">{t('crm.pd.paid')}</p>
                       <p className="text-sm font-bold text-green-800">{fmtPrice(totalPaid)}</p>
                     </div>
                     <div className={`rounded-xl p-3 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
                       <p className={`text-[10px] font-medium mb-0.5 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                        Ausstehend
+                        {t('crm.pd.outstanding')}
                       </p>
                       <p className={`text-sm font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
                         {fmtPrice(outstanding)}
@@ -1690,7 +1680,7 @@ export default function ProjectDetail() {
                       <span className="w-5 h-5 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
                     </div>
                   ) : payments.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">Noch keine Raten eingetragen.</p>
+                    <p className="text-sm text-gray-400 text-center py-4">{t('crm.pd.noPayments')}</p>
                   ) : (
                     <div className="space-y-2">
                       {payments.map(pay => (
@@ -1708,8 +1698,8 @@ export default function ProjectDetail() {
                           <div className="flex-1 min-w-0">
                             <p className="font-medium text-gray-800 truncate">{pay.description ?? '—'}</p>
                             <p className="text-xs text-gray-400 truncate">
-                              {pay.due_date  ? `Fällig: ${fmtDate(pay.due_date)}` : ''}
-                              {pay.paid_date ? ` · Bezahlt: ${fmtDate(pay.paid_date)}` : ''}
+                              {pay.due_date  ? `${t('crm.pd.due')}: ${fmtDate(pay.due_date)}` : ''}
+                              {pay.paid_date ? ` · ${t('crm.pd.paid')}: ${fmtDate(pay.paid_date)}` : ''}
                               {pay.payment_reference ? ` · ${pay.payment_reference}` : ''}
                             </p>
                           </div>
@@ -1744,11 +1734,11 @@ export default function ProjectDetail() {
                   {/* Add / Edit payment form */}
                   <div className="border border-dashed border-gray-200 rounded-xl p-4 space-y-3 bg-gray-50/50">
                     <p className="text-xs font-semibold text-gray-500">
-                      {editPayId ? 'Rate bearbeiten' : '+ Rate hinzufügen'}
+                      {editPayId ? t('crm.pd.editPayment') : t('crm.pd.addPayment')}
                     </p>
                     <input
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
-                      placeholder="Bezeichnung (z.B. Anzahlung, 2. Rate)"
+                      placeholder={t('crm.pd.paymentDescPlaceholder')}
                       value={payForm.description}
                       onChange={e => setPayForm(f => ({ ...f, description: e.target.value }))}
                     />
@@ -1756,18 +1746,18 @@ export default function ProjectDetail() {
                       <input
                         type="number" min="0" step="100"
                         className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
-                        placeholder="Betrag (€) *"
+                        placeholder={t('crm.pd.amountPlaceholder')}
                         value={payForm.amount}
                         onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
                       />
                       <input
                         className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
-                        placeholder="Referenznummer / Überweisung"
+                        placeholder={t('crm.pd.referencePlaceholder')}
                         value={payForm.payment_reference}
                         onChange={e => setPayForm(f => ({ ...f, payment_reference: e.target.value }))}
                       />
                       <div>
-                        <label className="text-[10px] text-gray-400 block mb-1">Fälligkeitsdatum</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('crm.pd.dueDate')}</label>
                         <input
                           type="date"
                           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
@@ -1776,7 +1766,7 @@ export default function ProjectDetail() {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-gray-400 block mb-1">Zahlungsdatum</label>
+                        <label className="text-[10px] text-gray-400 block mb-1">{t('crm.pd.paymentDate')}</label>
                         <input
                           type="date"
                           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
@@ -1795,7 +1785,7 @@ export default function ProjectDetail() {
                           onChange={e => setPayForm(f => ({ ...f, is_paid: e.target.checked }))}
                           className="rounded"
                         />
-                        <span className="text-xs text-gray-600">Bereits bezahlt</span>
+                        <span className="text-xs text-gray-600">{t('crm.pd.alreadyPaid')}</span>
                       </label>
                       <div className="flex gap-2 ml-auto">
                         {editPayId && (
@@ -1803,7 +1793,7 @@ export default function ProjectDetail() {
                             onClick={() => { setEditPayId(null); setPayForm({ ...EMPTY_PAY }) }}
                             className="px-3 py-2 text-xs text-gray-500 border border-gray-200 rounded-xl bg-white"
                           >
-                            Abbrechen
+                            {t('common.cancel')}
                           </button>
                         )}
                         <button
@@ -1812,7 +1802,7 @@ export default function ProjectDetail() {
                           className="px-4 py-2 text-xs font-medium text-white rounded-xl disabled:opacity-50"
                           style={{ backgroundColor: '#ff795d' }}
                         >
-                          {savingPay ? '…' : editPayId ? 'Aktualisieren' : 'Hinzufügen'}
+                          {savingPay ? '…' : editPayId ? t('crm.pd.update') : t('crm.pd.add')}
                         </button>
                       </div>
                     </div>
@@ -1826,7 +1816,7 @@ export default function ProjectDetail() {
 
                   {/* Upload area */}
                   <div className="border border-dashed border-gray-200 rounded-xl p-4 space-y-3 bg-gray-50/50">
-                    <p className="text-xs font-semibold text-gray-500">Dokument hochladen</p>
+                    <p className="text-xs font-semibold text-gray-500">{t('crm.pd.uploadDocument')}</p>
 
                     <input
                       type="file"
@@ -1848,7 +1838,7 @@ export default function ProjectDetail() {
                         className="w-full border-2 border-dashed border-gray-200 rounded-xl py-6 text-sm text-gray-400
                                    hover:border-[#ff795d] hover:text-[#ff795d] transition-colors"
                       >
-                        📎 Datei auswählen (PDF, Word, Bild)
+                        {t('crm.pd.chooseFile')}
                       </button>
                     ) : (
                       <div className="bg-blue-50 rounded-xl p-3 flex items-center gap-3">
@@ -1872,7 +1862,7 @@ export default function ProjectDetail() {
                     <div className="grid grid-cols-2 gap-3">
                       <input
                         className="col-span-2 rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
-                        placeholder="Dokumentenname *"
+                        placeholder={t('crm.pd.docNamePlaceholder')}
                         value={docForm.name}
                         onChange={e => setDocForm(d => ({ ...d, name: e.target.value }))}
                       />
@@ -1883,17 +1873,17 @@ export default function ProjectDetail() {
                           ...d, doc_type: val as CrmUnitDocument['doc_type'],
                         }))}
                         options={[
-                          { value: 'kaufvertrag',   label: 'Kaufvertrag' },
-                          { value: 'mietvertrag',   label: 'Mietvertrag' },
-                          { value: 'rechnung',      label: 'Rechnung' },
-                          { value: 'zahlungsbeleg', label: 'Zahlungsbeleg' },
-                          { value: 'grundriss',     label: 'Grundriss' },
-                          { value: 'sonstiges',     label: 'Sonstiges' },
+                          { value: 'kaufvertrag',   label: t('crm.pd.docType.kaufvertrag') },
+                          { value: 'mietvertrag',   label: t('crm.pd.docType.mietvertrag') },
+                          { value: 'rechnung',      label: t('crm.pd.docType.rechnung') },
+                          { value: 'zahlungsbeleg', label: t('crm.pd.docType.zahlungsbeleg') },
+                          { value: 'grundriss',     label: t('crm.pd.docType.grundriss') },
+                          { value: 'sonstiges',     label: t('crm.pd.docType.sonstiges') },
                         ]}
                       />
                       <input
                         className="rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none"
-                        placeholder="Notiz (optional)"
+                        placeholder={t('crm.pd.noteOptional')}
                         value={docForm.notes}
                         onChange={e => setDocForm(d => ({ ...d, notes: e.target.value }))}
                       />
@@ -1905,7 +1895,7 @@ export default function ProjectDetail() {
                       className="w-full py-2 text-sm font-medium text-white rounded-xl disabled:opacity-50"
                       style={{ backgroundColor: '#ff795d' }}
                     >
-                      {uploadingDoc ? 'Wird hochgeladen…' : 'Hochladen'}
+                      {uploadingDoc ? t('crm.pd.uploadingPlain') : t('crm.pd.upload')}
                     </button>
                   </div>
 
@@ -1915,7 +1905,7 @@ export default function ProjectDetail() {
                       <span className="w-5 h-5 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
                     </div>
                   ) : documents.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-4">Noch keine Dokumente.</p>
+                    <p className="text-sm text-gray-400 text-center py-4">{t('crm.pd.noDocuments')}</p>
                   ) : (
                     <div className="space-y-2">
                       {documents.map(doc => (
@@ -1928,7 +1918,7 @@ export default function ProjectDetail() {
                             <p className="text-sm font-medium text-gray-800 truncate">{doc.name}</p>
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${DOC_PILL[doc.doc_type]}`}>
-                                {DOC_LABEL[doc.doc_type]}
+                                {t(`crm.pd.docType.${doc.doc_type}`)}
                               </span>
                               {doc.file_size && (
                                 <span className="text-xs text-gray-400">{formatFileSize(doc.file_size)}</span>
@@ -1941,7 +1931,7 @@ export default function ProjectDetail() {
                             onClick={() => handleOpenDoc(doc)}
                             className="text-blue-500 hover:text-blue-700 text-xs shrink-0 px-2 font-medium"
                           >
-                            Öffnen
+                            {t('crm.pd.open')}
                           </button>
                           <button
                             onClick={() => handleDeleteDoc(doc)}
@@ -1964,9 +1954,9 @@ export default function ProjectDetail() {
                   <div className="bg-gray-50 rounded-xl p-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="text-sm font-semibold text-gray-800">Übergabe abgeschlossen</p>
+                        <p className="text-sm font-semibold text-gray-800">{t('crm.pd.handoverComplete')}</p>
                         <p className="text-xs text-gray-500 mt-0.5">
-                          Wohnung wurde fertig übergeben
+                          {t('crm.pd.handoverCompleteDesc')}
                         </p>
                       </div>
                       <button
@@ -1981,39 +1971,38 @@ export default function ProjectDetail() {
                       </button>
                     </div>
                     {form.is_completed && (
-                      <p className="mt-2 text-xs text-green-600 font-medium">✅ Als abgeschlossen markiert</p>
+                      <p className="mt-2 text-xs text-green-600 font-medium">{t('crm.pd.markedComplete')}</p>
                     )}
                   </div>
 
                   {/* Verwalter */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Verwalter zuweisen</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.pd.assignManager')}</label>
                     <CustomSelect
                       className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
                       value={form.verwalter_id}
                       onChange={val => setForm(f => ({ ...f, verwalter_id: val }))}
                       options={[
-                        { value: '', label: '— Kein Verwalter —' },
+                        { value: '', label: t('crm.pd.noManager') },
                         ...verwalters.map(v => ({ value: v.id, label: v.full_name })),
                       ]}
-                      placeholder="— Kein Verwalter —"
+                      placeholder={t('crm.pd.noManager')}
                     />
                     {verwalters.length === 0 && (
                       <p className="text-xs text-gray-400 mt-1">
-                        Noch keine Verwalter angelegt.
-                        Im Bereich Nutzer → Verwalter hinzufügen.
+                        {t('crm.pd.noManagersHint')}
                       </p>
                     )}
                   </div>
 
                   {/* Miettyp */}
                   <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-2">Miettyp</label>
+                    <label className="block text-xs font-medium text-gray-500 mb-2">{t('crm.pd.rentalTypeLabel')}</label>
                     <div className="flex gap-3">
                       {([
-                        { v: '',      label: 'Nicht festgelegt' },
-                        { v: 'short', label: '🏖️ Kurzzeitmiete'  },
-                        { v: 'long',  label: '🏠 Langzeitmiete'  },
+                        { v: '',      label: t('crm.pd.rentalNotSet') },
+                        { v: 'short', label: t('crm.pd.rentalShort')  },
+                        { v: 'long',  label: t('crm.pd.rentalLong')  },
                       ] as { v: 'short' | 'long' | ''; label: string }[]).map(({ v, label }) => (
                         <button
                           key={v}
@@ -2034,22 +2023,21 @@ export default function ProjectDetail() {
                   {/* Portal-Zugang */}
                   <div className="bg-blue-50 rounded-xl p-4 space-y-3">
                     <div>
-                      <p className="text-sm font-semibold text-gray-800">🔑 Käufer / Portalzugang</p>
+                      <p className="text-sm font-semibold text-gray-800">{t('crm.pd.buyerPortalAccess')}</p>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        Zugangsdaten erstellen und per E-Mail versenden.
-                        Tipp: Wohnung auf „Verkauft" setzen → Zugang wird automatisch angeboten.
+                        {t('crm.pd.portalAccessDesc')}
                       </p>
                     </div>
                     <input
                       className="w-full rounded-xl border border-blue-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
-                      placeholder="E-Mail des Käufers *"
+                      placeholder={t('crm.pd.buyerEmailPlaceholder')}
                       type="email"
                       value={portalEmail}
                       onChange={e => setPortalEmail(e.target.value)}
                     />
                     <input
                       className="w-full rounded-xl border border-blue-200 px-3 py-2 text-sm bg-white focus:outline-none focus:border-[#ff795d]"
-                      placeholder="Vollständiger Name *"
+                      placeholder={t('crm.pd.fullNamePlaceholder')}
                       value={portalName}
                       onChange={e => setPortalName(e.target.value)}
                     />
@@ -2058,7 +2046,7 @@ export default function ProjectDetail() {
                     )}
                     {portalSuccess && (
                       <p className="text-xs text-green-600 font-medium">
-                        ✅ Zugangsdaten wurden erfolgreich gesendet!
+                        {t('crm.pd.accessSent')}
                       </p>
                     )}
                     <button
@@ -2068,7 +2056,7 @@ export default function ProjectDetail() {
                       className="w-full py-2 text-xs font-medium text-white rounded-xl disabled:opacity-50"
                       style={{ backgroundColor: '#ff795d' }}
                     >
-                      {portalSending ? 'Wird gesendet…' : '📧 Zugang erstellen & senden'}
+                      {portalSending ? t('crm.pd.sending') : t('crm.pd.createSendAccess')}
                     </button>
                   </div>
                 </div>
@@ -2083,7 +2071,7 @@ export default function ProjectDetail() {
                     onClick={() => handleDeleteUnit(editUnit.id)}
                     className="text-sm text-red-400 hover:text-red-600"
                   >
-                    Wohnung löschen
+                    {t('crm.pd.deleteUnit')}
                   </button>
                 )}
               </div>
@@ -2092,7 +2080,7 @@ export default function ProjectDetail() {
                   onClick={closeModal}
                   className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50"
                 >
-                  Schließen
+                  {t('common.close')}
                 </button>
                 {(tab === 'grunddaten' || tab === 'verwaltung') && (
                   <button
@@ -2101,7 +2089,7 @@ export default function ProjectDetail() {
                     className="px-5 py-2 text-sm font-medium text-white rounded-xl disabled:opacity-50"
                     style={{ backgroundColor: '#ff795d' }}
                   >
-                    {saving ? 'Speichern…' : editUnit ? 'Aktualisieren' : 'Erstellen'}
+                    {saving ? t('common.saving') : editUnit ? t('crm.pd.update') : t('crm.pd.create')}
                   </button>
                 )}
               </div>
@@ -2122,24 +2110,24 @@ export default function ProjectDetail() {
             <div className="px-6 pt-6 pb-2">
               <div className="flex items-center gap-3 mb-1">
                 <span className="text-3xl">🎉</span>
-                <h2 className="text-lg font-bold text-gray-900">Wohnung verkauft!</h2>
+                <h2 className="text-lg font-bold text-gray-900">{t('crm.pd.unitSold')}</h2>
               </div>
               <p className="text-sm text-gray-500 mt-1">
-                Möchten Sie dem Käufer jetzt den Zugang zum Eigentümer-Portal senden?
+                {t('crm.pd.portalDialogDesc')}
               </p>
             </div>
 
             <div className="px-6 py-4 space-y-3">
               <input
                 className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:border-[#ff795d]"
-                placeholder="E-Mail des Käufers *"
+                placeholder={t('crm.pd.buyerEmailPlaceholder')}
                 type="email"
                 value={portalEmail}
                 onChange={e => setPortalEmail(e.target.value)}
               />
               <input
                 className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:outline-none focus:border-[#ff795d]"
-                placeholder="Vollständiger Name *"
+                placeholder={t('crm.pd.fullNamePlaceholder')}
                 value={portalName}
                 onChange={e => setPortalName(e.target.value)}
               />
@@ -2148,7 +2136,7 @@ export default function ProjectDetail() {
               )}
               {portalSuccess && (
                 <p className="text-xs text-green-600 font-medium">
-                  ✅ Zugangsdaten wurden erfolgreich gesendet!
+                  {t('crm.pd.accessSent')}
                 </p>
               )}
             </div>
@@ -2164,7 +2152,7 @@ export default function ProjectDetail() {
                 }}
                 className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50"
               >
-                Später
+                {t('crm.pd.later')}
               </button>
               <button
                 onClick={async () => {
@@ -2174,7 +2162,7 @@ export default function ProjectDetail() {
                 className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50"
                 style={{ backgroundColor: '#ff795d' }}
               >
-                {portalSending ? 'Wird gesendet…' : portalSuccess ? '✓ Gesendet' : '📧 Zugang senden'}
+                {portalSending ? t('crm.pd.sending') : portalSuccess ? t('crm.pd.sent') : t('crm.pd.sendAccess')}
               </button>
             </div>
           </div>
@@ -2189,9 +2177,9 @@ export default function ProjectDetail() {
           >
             <div className="px-6 pt-5 pb-3 border-b border-gray-100 flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">👤 Kunden zuweisen</h2>
+                <h2 className="text-lg font-bold text-gray-900">{t('crm.pd.assignCustomerTitle')}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  Einheit {assigningUnit.block ? `Block ${assigningUnit.block} · ` : ''}Nr. {assigningUnit.unit_number}
+                  {t('crm.pd.unitWord')} {assigningUnit.block ? `Block ${assigningUnit.block} · ` : ''}{t('crm.unitSelect.no')} {assigningUnit.unit_number}
                 </p>
               </div>
               <button
@@ -2207,7 +2195,7 @@ export default function ProjectDetail() {
                   type="text"
                   value={assignLeadQuery}
                   onChange={e => { setAssignLeadQuery(e.target.value); searchLeadsForAssign(e.target.value) }}
-                  placeholder="Name oder E-Mail suchen…"
+                  placeholder={t('crm.pd.searchNameEmail')}
                   className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm
                              focus:outline-none focus:border-[#ff795d] pr-8"
                   autoFocus
@@ -2236,7 +2224,7 @@ export default function ProjectDetail() {
                       <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2">
                         <span>{lead.email}</span>
                         {!lead.deal_id && (
-                          <span className="text-yellow-600 font-medium">⚠ Kein aktiver Deal</span>
+                          <span className="text-yellow-600 font-medium">{t('crm.pd.noActiveDeal')}</span>
                         )}
                       </div>
                     </button>
@@ -2246,13 +2234,13 @@ export default function ProjectDetail() {
 
               {assignLeadQuery.length >= 2 && !assignLeadSearching && assignLeadResults.length === 0 && (
                 <p className="text-sm text-gray-400 text-center py-4">
-                  Keine Leads gefunden.
+                  {t('crm.pd.noLeadsFound')}
                 </p>
               )}
 
               {assignLeadQuery.length < 2 && (
                 <p className="text-xs text-gray-400 text-center py-2">
-                  Mindestens 2 Zeichen eingeben…
+                  {t('crm.pd.minTwoChars')}
                 </p>
               )}
             </div>
@@ -2262,7 +2250,7 @@ export default function ProjectDetail() {
                 onClick={() => { setShowAssignModal(false); setAssignLeadQuery(''); setAssignLeadResults([]) }}
                 className="w-full py-2.5 text-sm text-gray-500 border border-gray-200 rounded-xl hover:bg-gray-50"
               >
-                Später zuweisen
+                {t('crm.pd.assignLater')}
               </button>
             </div>
           </div>
