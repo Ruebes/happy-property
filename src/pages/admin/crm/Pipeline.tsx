@@ -308,9 +308,10 @@ interface DealCardProps {
   deal: Deal
   onDragStart: (e: React.DragEvent, id: string) => void
   onClick: (leadId: string) => void
+  onContextMenu: (e: React.MouseEvent, deal: Deal) => void
 }
 
-function DealCard({ deal, onDragStart, onClick }: DealCardProps) {
+function DealCard({ deal, onDragStart, onClick, onContextMenu }: DealCardProps) {
   const { t } = useTranslation()
   const lead = deal.lead
   const source = (lead?.source ?? 'sonstiges') as keyof typeof SOURCE_BADGE_STYLE
@@ -338,6 +339,7 @@ function DealCard({ deal, onDragStart, onClick }: DealCardProps) {
       draggable
       onDragStart={e => onDragStart(e, deal.id)}
       onClick={() => lead?.id && onClick(lead.id)}
+      onContextMenu={e => onContextMenu(e, deal)}
       className="bg-white border border-gray-200 rounded-xl p-3 cursor-pointer hover:shadow-md transition-shadow select-none"
     >
       <div className="flex items-start justify-between gap-1 mb-2">
@@ -396,6 +398,17 @@ export default function Pipeline() {
   const [filterAssignee, setFilterAssignee] = useState('')
   const [search, setSearch] = useState('')
   const [toast, setToast] = useState('')
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; deal: Deal } | null>(null)
+
+  // Kontextmenü mit Escape schließen
+  useEffect(() => {
+    if (!ctxMenu) return
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') setCtxMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ctxMenu])
 
   const showToastMsg = (msg: string) => {
     setToast(msg)
@@ -493,39 +506,30 @@ export default function Pipeline() {
     }
   }
 
-  const handleDrop = async (e: React.DragEvent, targetPhase: DealPhase) => {
-    e.preventDefault()
-    setDragOver(null)
-    if (!dragId) return
-
-    const deal = deals.find(d => d.id === dragId)
-    if (!deal || deal.phase === targetPhase) {
-      setDragId(null)
-      return
-    }
+  // Zentrale Phasen-Wechsel-Logik — von Drag-Drop UND Rechtsklick-Menü genutzt.
+  const changePhase = async (deal: Deal, targetPhase: DealPhase) => {
+    if (deal.phase === targetPhase) return
 
     const oldPhase = deal.phase
 
     // Registrierung: show modal first, do NOT change phase yet
     if (targetPhase === 'registrierung') {
-      setDragId(null)
       setRegistrationDeal({ ...deal })
       return
     }
 
     // Optimistic update
     setDeals(prev =>
-      prev.map(d => (d.id === dragId ? { ...d, phase: targetPhase } : d))
+      prev.map(d => (d.id === deal.id ? { ...d, phase: targetPhase } : d))
     )
-    setDragId(null)
 
     const { error } = await supabase
       .from('deals')
       .update({ phase: targetPhase })
-      .eq('id', dragId)
+      .eq('id', deal.id)
 
     if (error) {
-      console.error('[Pipeline] drop update error', error)
+      console.error('[Pipeline] phase update error', error)
       // Roll back
       setDeals(prev =>
         prev.map(d => (d.id === deal.id ? { ...d, phase: oldPhase } : d))
@@ -561,6 +565,25 @@ export default function Pipeline() {
     triggerScheduleMessage(deal.lead_id, deal.id, targetPhase)
 
     showToastMsg(t('crm.phaseSaved', 'Phase gespeichert'))
+  }
+
+  const handleDrop = (e: React.DragEvent, targetPhase: DealPhase) => {
+    e.preventDefault()
+    setDragOver(null)
+    if (!dragId) return
+    const deal = deals.find(d => d.id === dragId)
+    setDragId(null)
+    if (!deal) return
+    changePhase(deal, targetPhase)
+  }
+
+  // Rechtsklick-Kontextmenü auf einer Karte: alle Phasen zum schnellen Wechsel
+  const openCtxMenu = (e: React.MouseEvent, deal: Deal) => {
+    e.preventDefault()
+    // Menü ~ 240px breit, ~ 470px hoch → am Viewport-Rand einklemmen
+    const x = Math.min(e.clientX, window.innerWidth - 248)
+    const y = Math.min(e.clientY, window.innerHeight - 470)
+    setCtxMenu({ x: Math.max(8, x), y: Math.max(8, y), deal })
   }
 
   const handleRegistrationConfirm = async (selectedDevelopers: string[], notes: string) => {
@@ -750,6 +773,7 @@ export default function Pipeline() {
                               setDragId(id)
                             }}
                             onClick={handleCardClick}
+                            onContextMenu={openCtxMenu}
                           />
                         ))
                       )}
@@ -793,6 +817,52 @@ export default function Pipeline() {
           onConfirm={handleRegistrationConfirm}
           onCancel={() => setRegistrationDeal(null)}
         />
+      )}
+
+      {/* Rechtsklick-Kontextmenü: Phase schnell wechseln */}
+      {ctxMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={e => { e.preventDefault(); setCtxMenu(null) }}
+          />
+          <div
+            className="fixed z-50 w-60 max-h-[80vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-gray-200 py-1 animate-fade-in"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          >
+            <p className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
+              {t('crm.pipeline.moveTo', 'Verschieben nach')}
+            </p>
+            {DEAL_PHASES.map(p => {
+              const isCurrent = ctxMenu.deal.phase === p
+              return (
+                <button
+                  key={p}
+                  disabled={isCurrent}
+                  onClick={() => {
+                    const d = ctxMenu.deal
+                    setCtxMenu(null)
+                    changePhase(d, p)
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors ${
+                    isCurrent
+                      ? 'bg-orange-50 text-orange-600 font-semibold cursor-default'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="text-base leading-none">{PHASE_ICONS[p]}</span>
+                  <span className="flex-1 truncate">{t(`crm.phases.${p}`, p)}</span>
+                  {isCurrent && (
+                    <span className="text-[10px] text-orange-400">
+                      {t('crm.pipeline.currentPhase', 'aktuell')}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </>
       )}
 
       {/* Toast */}

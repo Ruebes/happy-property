@@ -301,6 +301,22 @@ export interface DeveloperContact {
   updated_at:   string
 }
 
+// Freistehende Geschäftskontakte (Anwälte, Finanzierer, Partner, sonstige) —
+// nicht an einen Developer gebunden. Wählbar als Empfänger für Mail/WhatsApp.
+export interface BusinessContact {
+  id:         string
+  first_name: string
+  last_name:  string | null
+  company:    string | null
+  role:       string | null   // Funktion
+  email:      string | null
+  phone:      string | null
+  whatsapp:   string | null
+  notes:      string | null
+  created_at: string
+  updated_at: string
+}
+
 // ── Automation System Types ───────────────────────────────────────────────────
 
 export interface AutomationRule {

@@ -127,6 +127,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // „E-Mail Vorlagen" / „WhatsApp" / „Automation" (Routen bleiben registriert).
   const crmSettingsItems = [
     { to: '/admin/crm/settings',             key: 'crm.nav.developers' },
+    { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
     { to: '/admin/crm/settings/stages',      key: 'crm.nav.stages'      },
     { to: '/admin/crm/settings/adhoc',       key: 'crm.nav.adhoc'       },
     { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },

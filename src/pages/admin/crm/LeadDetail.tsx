@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample } from '../../../lib/crmTypes'
+import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
@@ -110,9 +110,15 @@ export default function LeadDetail() {
   const [taskForm, setTaskForm] = useState({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
   const [savingTask, setSavingTask] = useState(false)
 
-  // Email form
+  // Email / Nachrichten-Composer
   const [emailForm, setEmailForm] = useState({ templateId: '', subject: '', body: '' })
   const [sendingEmail, setSendingEmail] = useState(false)
+  // Empfängerauswahl + Kanal + Objekt-Bemerkungen
+  const [composeChannel, setComposeChannel] = useState<'email' | 'whatsapp'>('email')
+  const [composeTo,      setComposeTo]      = useState('client')   // 'client' | `bc:<id>` | `dc:<id>`
+  const [bemerkungen,    setBemerkungen]    = useState('')
+  const [businessContacts, setBusinessContacts] = useState<BusinessContact[]>([])
+  const [devContacts,      setDevContacts]      = useState<(DeveloperContact & { developer_name: string | null })[]>([])
 
   // Deal action form fields
   const [driveUrl, setDriveUrl] = useState('')
@@ -503,6 +509,34 @@ export default function LeadDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lead?.profile_id, deal?.unit_id, deal?.property_id])
 
+  // ── Empfänger-Kontakte laden (einmalig) ──────────────────────────────────────
+  // Geschäftskontakte + Developer-Ansprechpartner als wählbare Empfänger im
+  // Nachrichten-Composer. Robust ohne FK-Embed: Developer-Namen separat mappen.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [bcRes, dcRes, devRes] = await Promise.all([
+          supabase.from('crm_business_contacts').select('*').order('first_name'),
+          supabase.from('crm_developer_contacts').select('*').order('name'),
+          supabase.from('crm_developers').select('id, name'),
+        ])
+        if (cancelled) return
+        if (bcRes.data) setBusinessContacts(bcRes.data as BusinessContact[])
+        if (dcRes.data) {
+          const devMap = new Map(((devRes.data ?? []) as { id: string; name: string }[]).map(d => [d.id, d.name]))
+          setDevContacts((dcRes.data as DeveloperContact[]).map(c => ({
+            ...c,
+            developer_name: devMap.get(c.developer_id) ?? null,
+          })))
+        }
+      } catch (err) {
+        console.error('[LeadDetail] load recipient contacts:', err)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
   // ── E-Mail-Benachrichtigung beim Upload ──────────────────────────────────────
   const notifyCustomerUpload = (fileName: string, kind: 'Dokument' | 'Bild') => {
     if (!lead?.email) return
@@ -791,14 +825,47 @@ export default function LeadDetail() {
     }
   }
 
-  // ── Email ───────────────────────────────────────────────────────
+  // ── Email / Nachrichten-Composer ────────────────────────────────
+  // Objekt-Infos zum gekauften/zu kaufenden Objekt — als Referenz im Composer
+  // und als Platzhalter ({{developer}} {{projekt}} {{wohnung}} {{preis}}).
+  const objectInfo = () => {
+    const developer = deal?.developer ?? ''
+    const projekt   = dealProjects[0]?.project?.name ?? deal?.property?.project_name ?? ''
+    const wohnung   = pickedUnit?.unit.unit_number ?? deal?.property?.unit_number ?? ''
+    const preisNum  = pickedUnit?.unit.price_gross ?? null
+    const preis     = preisNum != null
+      ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(preisNum)
+      : ''
+    return { developer, projekt, wohnung, preis }
+  }
+
   const replacePlaceholders = (text: string): string => {
     if (!lead) return text
+    const o = objectInfo()
     return text
       .replace(/\{\{vorname\}\}/g, lead.first_name)
       .replace(/\{\{nachname\}\}/g, lead.last_name)
       .replace(/\{\{email\}\}/g, lead.email)
       .replace(/\{\{phone\}\}/g, lead.phone ?? '')
+      .replace(/\{\{developer\}\}/g, o.developer)
+      .replace(/\{\{projekt\}\}/g, o.projekt)
+      .replace(/\{\{wohnung\}\}/g, o.wohnung)
+      .replace(/\{\{preis\}\}/g, o.preis)
+    // {{bemerkungen}} wird erst beim Senden ersetzt (dynamisches Feld)
+  }
+
+  // Empfänger auflösen: Klient (Standard) oder gewählter Geschäfts-/Developer-Kontakt.
+  const resolveRecipient = (): { name: string; email: string | null; phone: string | null; whatsapp: string | null } | null => {
+    if (!lead) return null
+    if (composeTo.startsWith('bc:')) {
+      const c = businessContacts.find(x => x.id === composeTo.slice(3))
+      if (c) return { name: `${c.first_name} ${c.last_name ?? ''}`.trim(), email: c.email, phone: c.phone, whatsapp: c.whatsapp }
+    }
+    if (composeTo.startsWith('dc:')) {
+      const c = devContacts.find(x => x.id === composeTo.slice(3))
+      if (c) return { name: c.name, email: c.email, phone: c.phone, whatsapp: c.whatsapp }
+    }
+    return { name: `${lead.first_name} ${lead.last_name}`, email: lead.email, phone: lead.phone, whatsapp: lead.whatsapp }
   }
 
   const handleTemplateSelect = (templateId: string) => {
@@ -816,16 +883,20 @@ export default function LeadDetail() {
 
   const handleSendEmail = async () => {
     if (!lead || !emailForm.subject.trim() || !emailForm.body.trim()) return
+    const recipient = resolveRecipient()
+    const toEmail   = recipient?.email
+    if (!toEmail) { showToast(t('crm.compose.errNoEmail', '❌ Dieser Empfänger hat keine E-Mail-Adresse')); return }
+    const isClient  = composeTo === 'client'
     setSendingEmail(true)
     try {
-      const resolvedBody    = replacePlaceholders(emailForm.body)
-      const resolvedSubject = replacePlaceholders(emailForm.subject)
+      const resolvedBody    = replacePlaceholders(emailForm.body).replace(/\{\{bemerkungen\}\}/g, bemerkungen)
+      const resolvedSubject = replacePlaceholders(emailForm.subject).replace(/\{\{bemerkungen\}\}/g, bemerkungen)
 
-      console.log('[send-email] Rufe Edge Function auf …', { to: lead.email, subject: resolvedSubject })
+      console.log('[send-email] Rufe Edge Function auf …', { to: toEmail, subject: resolvedSubject })
 
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-email', {
         body: {
-          to:      lead.email,
+          to:      toEmail,
           subject: resolvedSubject,
           html:    resolvedBody,
           lead_id: id ?? null,
@@ -857,18 +928,64 @@ export default function LeadDetail() {
         deal_id:    deal?.id ?? null,
         type:       'email',
         direction:  'outbound',
-        subject:    resolvedSubject,
+        subject:    isClient ? resolvedSubject : `${resolvedSubject} → ${recipient?.name} <${toEmail}>`,
         content:    resolvedBody.replace(/<[^>]+>/g, '').slice(0, 500),
         created_by: profile?.id ?? null,
       })
 
       showToast(t('crm.email.sent', 'E-Mail gesendet! ✓'))
       setEmailForm({ templateId: '', subject: '', body: '' })
+      setBemerkungen(''); setComposeTo('client')
       await fetchAll(true)
     } catch (err) {
       console.error('[send-email] Kompletter Fehler:', err)
       console.error('[send-email] Details:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2))
       showToast(`❌ E-Mail Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`)
+    } finally {
+      setSendingEmail(false)
+    }
+  }
+
+  // Composer-WhatsApp: freie Nachricht an gewählten Empfänger (Klient/Kontakt).
+  // Routet über die no_show-Override-Schiene (Template ohne feste Empfänger →
+  // Nummer kommt aus lead_data.lead_whatsapp).
+  const handleSendComposerWhatsapp = async () => {
+    if (!lead || !emailForm.body.trim()) return
+    const recipient = resolveRecipient()
+    const phone = recipient?.whatsapp || recipient?.phone
+    if (!phone) { showToast(t('crm.compose.errNoPhone', '❌ Dieser Empfänger hat keine WhatsApp-/Telefonnummer')); return }
+    const body = replacePlaceholders(emailForm.body).replace(/\{\{bemerkungen\}\}/g, bemerkungen)
+    setSendingEmail(true)
+    try {
+      const res = await sendWhatsApp({
+        event_type: 'no_show',
+        lead_data: {
+          lead_name:     recipient?.name ?? '',
+          lead_phone:    recipient?.phone ?? '',
+          lead_whatsapp: phone,
+          lead_email:    recipient?.email ?? '',
+        },
+        lead_id:       null,            // Edge nicht loggen lassen — wir loggen selbst mit korrektem Empfänger
+        override_text: body,
+      })
+      if (!res.success) throw new Error(res.error || 'WhatsApp Fehler')
+      await supabase.from('activities').insert({
+        lead_id:    id,
+        deal_id:    deal?.id ?? null,
+        type:       'whatsapp',
+        direction:  'outbound',
+        subject:    `WhatsApp → ${recipient?.name} (${phone})`,
+        content:    body.slice(0, 500),
+        created_by: profile?.id ?? null,
+        completed_at: new Date().toISOString(),
+      })
+      showToast(t('crm.whatsappSent', '📱 WhatsApp gesendet'))
+      setEmailForm({ templateId: '', subject: '', body: '' })
+      setBemerkungen(''); setComposeTo('client')
+      await fetchAll(true)
+    } catch (err) {
+      console.error('[LeadDetail] composerWhatsapp:', err)
+      showToast(`❌ ${err instanceof Error ? err.message : 'WhatsApp Fehler'}`)
     } finally {
       setSendingEmail(false)
     }
@@ -1815,6 +1932,28 @@ export default function LeadDetail() {
       </DashboardLayout>
     )
   }
+
+  // ── Composer: abgeleitete Render-Werte (lead ist hier garantiert) ──────────
+  const composeObjInfo = objectInfo()
+  const composeRecipientOptions = [
+    { value: 'client', label: `👤 ${t('crm.compose.client', 'Klient')}: ${lead.first_name} ${lead.last_name}` },
+    ...businessContacts
+      .filter(c => (composeChannel === 'email' ? !!c.email : !!(c.whatsapp || c.phone)))
+      .map(c => ({
+        value: `bc:${c.id}`,
+        label: `📇 ${`${c.first_name} ${c.last_name ?? ''}`.trim()}${c.company ? ` · ${c.company}` : ''}${c.role ? ` (${c.role})` : ''}`,
+      })),
+    ...devContacts
+      .filter(c => (composeChannel === 'email' ? !!c.email : !!(c.whatsapp || c.phone)))
+      .map(c => ({
+        value: `dc:${c.id}`,
+        label: `🏗 ${c.name}${c.developer_name ? ` · ${c.developer_name}` : ''}${c.role ? ` (${c.role})` : ''}`,
+      })),
+  ]
+  const composeSel  = resolveRecipient()
+  const composeAddr = composeChannel === 'email'
+    ? (composeSel?.email ?? '—')
+    : (composeSel?.whatsapp || composeSel?.phone || '—')
 
   // ── Render ──────────────────────────────────────────────────────
   return (
@@ -3091,28 +3230,116 @@ export default function LeadDetail() {
             {/* ── Tab: E-Mails ──────────────────────────────────── */}
             {activeTab === 'emails' && (
               <div className="p-6 space-y-4">
+                {/* Kanal-Umschalter */}
+                <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+                  <button
+                    onClick={() => { setComposeChannel('email'); setComposeTo('client') }}
+                    className={`px-4 py-1.5 font-medium transition-colors ${composeChannel === 'email' ? 'bg-orange-50 text-orange-600' : 'bg-white text-gray-500 hover:text-gray-700'}`}
+                  >
+                    📧 {t('crm.compose.email', 'E-Mail')}
+                  </button>
+                  <button
+                    onClick={() => { setComposeChannel('whatsapp'); setComposeTo('client') }}
+                    className={`px-4 py-1.5 font-medium border-l border-gray-200 transition-colors ${composeChannel === 'whatsapp' ? 'bg-green-50 text-green-700' : 'bg-white text-gray-500 hover:text-gray-700'}`}
+                  >
+                    📱 {t('crm.compose.whatsapp', 'WhatsApp')}
+                  </button>
+                </div>
+
+                {/* Empfänger */}
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">{t('crm.emailTemplate', 'Vorlage')}</label>
+                  <label className="block text-xs text-gray-500 mb-1">{t('crm.compose.recipient', 'Empfänger')}</label>
                   <CustomSelect
-                    value={emailForm.templateId}
-                    onChange={val => handleTemplateSelect(val)}
+                    value={composeTo}
+                    onChange={setComposeTo}
                     className="w-full border border-gray-200 rounded-lg text-sm"
-                    options={[
-                      { value: '', label: t('crm.selectTemplate', '– Vorlage wählen –') },
-                      ...templates.map(tpl => ({ value: tpl.id, label: `${tpl.name} (${tpl.language.toUpperCase()})` })),
-                    ]}
+                    options={composeRecipientOptions}
                   />
+                  <p className="text-xs text-gray-400 mt-1">
+                    {composeChannel === 'email' ? '✉️' : '📱'} {composeAddr}
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">{t('crm.subject', 'Betreff')}</label>
-                  <input
-                    type="text"
-                    value={emailForm.subject}
-                    onChange={(e) => setEmailForm({ ...emailForm, subject: e.target.value })}
-                    placeholder={t('crm.subjectPlaceholder', 'Betreff eingeben…')}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-orange-400"
-                  />
+
+                {/* Objekt-Infos + Bemerkungen (Referenz beim Schreiben) */}
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {t('crm.compose.objectInfo', 'Klient & Objekt')}
+                  </p>
+                  <div className="space-y-1 text-xs">
+                    <div className="flex gap-2">
+                      <span className="w-24 text-gray-400 shrink-0">{t('crm.compose.client', 'Klient')}</span>
+                      <span className="text-gray-700">
+                        {lead.first_name} {lead.last_name}
+                        {lead.email ? ` · ${lead.email}` : ''}
+                        {lead.phone ? ` · ${lead.phone}` : ''}
+                      </span>
+                    </div>
+                    {composeObjInfo.developer && (
+                      <div className="flex gap-2">
+                        <span className="w-24 text-gray-400 shrink-0">{t('crm.developer', 'Entwickler')}</span>
+                        <span className="text-gray-700">{composeObjInfo.developer}</span>
+                      </div>
+                    )}
+                    {composeObjInfo.projekt && (
+                      <div className="flex gap-2">
+                        <span className="w-24 text-gray-400 shrink-0">{t('crm.compose.project', 'Projekt')}</span>
+                        <span className="text-gray-700">{composeObjInfo.projekt}</span>
+                      </div>
+                    )}
+                    {composeObjInfo.wohnung && (
+                      <div className="flex gap-2">
+                        <span className="w-24 text-gray-400 shrink-0">{t('crm.compose.unit', 'Wohnung')}</span>
+                        <span className="text-gray-700">{composeObjInfo.wohnung}</span>
+                      </div>
+                    )}
+                    {composeObjInfo.preis && (
+                      <div className="flex gap-2">
+                        <span className="w-24 text-gray-400 shrink-0">{t('crm.compose.price', 'Preis')}</span>
+                        <span className="text-gray-700">{composeObjInfo.preis}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">{t('crm.compose.remarks', 'Bemerkungen (frei)')}</label>
+                    <textarea
+                      value={bemerkungen}
+                      onChange={(e) => setBemerkungen(e.target.value)}
+                      rows={2}
+                      placeholder={t('crm.compose.remarksPh', 'Freitext — einsetzbar als {{bemerkungen}}')}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-y bg-white"
+                    />
+                  </div>
                 </div>
+
+                {/* Vorlage + Betreff: nur E-Mail */}
+                {composeChannel === 'email' && (
+                  <>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">{t('crm.emailTemplate', 'Vorlage')}</label>
+                      <CustomSelect
+                        value={emailForm.templateId}
+                        onChange={val => handleTemplateSelect(val)}
+                        className="w-full border border-gray-200 rounded-lg text-sm"
+                        options={[
+                          { value: '', label: t('crm.selectTemplate', '– Vorlage wählen –') },
+                          ...templates.map(tpl => ({ value: tpl.id, label: `${tpl.name} (${tpl.language.toUpperCase()})` })),
+                        ]}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">{t('crm.subject', 'Betreff')}</label>
+                      <input
+                        type="text"
+                        value={emailForm.subject}
+                        onChange={(e) => setEmailForm({ ...emailForm, subject: e.target.value })}
+                        placeholder={t('crm.subjectPlaceholder', 'Betreff eingeben…')}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-orange-400"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Nachricht */}
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">{t('crm.body', 'Nachricht')}</label>
                   <textarea
@@ -3123,17 +3350,29 @@ export default function LeadDetail() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-y font-mono"
                   />
                   <p className="text-xs text-gray-400 mt-1">
-                    {t('crm.placeholders', 'Platzhalter: {{vorname}}, {{nachname}}, {{email}}, {{phone}}')}
+                    {t('crm.placeholders', 'Platzhalter: {{vorname}}, {{nachname}}, {{email}}, {{phone}}, {{developer}}, {{projekt}}, {{wohnung}}, {{preis}}, {{bemerkungen}}')}
                   </p>
                 </div>
-                <button
-                  onClick={handleSendEmail}
-                  disabled={sendingEmail || !emailForm.subject.trim() || !emailForm.body.trim()}
-                  className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
-                  style={{ backgroundColor: '#ff795d' }}
-                >
-                  {sendingEmail ? t('crm.sending', 'Sendet…') : `📧 ${t('crm.sendEmail', 'E-Mail senden')} → ${lead.email}`}
-                </button>
+
+                {/* Senden */}
+                {composeChannel === 'email' ? (
+                  <button
+                    onClick={handleSendEmail}
+                    disabled={sendingEmail || !emailForm.subject.trim() || !emailForm.body.trim()}
+                    className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
+                    style={{ backgroundColor: '#ff795d' }}
+                  >
+                    {sendingEmail ? t('crm.sending', 'Sendet…') : `📧 ${t('crm.sendEmail', 'E-Mail senden')} → ${composeAddr}`}
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSendComposerWhatsapp}
+                    disabled={sendingEmail || !emailForm.body.trim()}
+                    className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 bg-green-600 hover:bg-green-700"
+                  >
+                    {sendingEmail ? t('crm.sending', 'Sendet…') : `📱 ${t('crm.sendWhatsapp', 'WhatsApp senden')} → ${composeAddr}`}
+                  </button>
+                )}
               </div>
             )}
 

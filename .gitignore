@@ -35,3 +35,6 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
+
+# Claude — persönliche, lokale Berechtigungs-Einstellungen (nicht teilen)
+.claude/settings.local.json
