@@ -36,6 +36,11 @@ export interface Lead {
   portal_access_sent_at: string | null   // wann wurde der Portalzugang verschickt?
   notes:             string | null
   calendly_event_id: string | null
+  // Werbe-Tracking (UTM) — aus Calendly payload.tracking bzw. Typeform Hidden Fields
+  utm_source:        string | null   // z.B. ig / fb / instagram / google
+  utm_medium:        string | null   // z.B. paid / cpc
+  utm_campaign:      string | null   // Kampagnenname
+  utm_content:       string | null   // Anzeige / Ad
   created_at:        string
   updated_at:        string
   // joined
@@ -129,6 +134,24 @@ export const SOURCE_COLORS: Record<LeadSource, string> = {
   google:     'bg-orange-100 text-orange-700',
   empfehlung: 'bg-green-100 text-green-700',
   sonstiges:  'bg-gray-100 text-gray-700',
+}
+
+// Werbekanal aus utm_source ableiten. Meta-Anzeigen liefern via {{site_source_name}}
+// z.B. fb/ig/an/msg; eigene UTM-Setups eher "facebook"/"instagram"/"google".
+// Gibt ein menschenlesbares Label zurück (oder den Rohwert), null wenn leer.
+export function adChannelLabel(utmSource: string | null | undefined): string | null {
+  if (!utmSource) return null
+  const s = utmSource.trim().toLowerCase()
+  if (!s) return null
+  if (s === 'ig'  || s.includes('insta'))                return 'Instagram'
+  if (s === 'fb'  || s.includes('facebook'))             return 'Facebook'
+  if (s === 'an'  || s.includes('audience'))             return 'Audience Network'
+  if (s === 'msg' || s.includes('messenger'))            return 'Messenger'
+  if (s.includes('meta'))                                return 'Meta'
+  if (s.includes('google'))                              return 'Google'
+  if (s.includes('tiktok'))                              return 'TikTok'
+  if (s.includes('youtube') || s === 'yt')               return 'YouTube'
+  return utmSource
 }
 
 // Inline styles for exact brand colors

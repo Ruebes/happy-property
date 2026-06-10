@@ -998,6 +998,7 @@
       "country": "Herkunftsland",
       "language": "Sprache",
       "source": "Quelle",
+      "channel": "Kanal",
       "status": "Status",
       "assignedTo": "Zuständig",
       "notes": "Notizen",

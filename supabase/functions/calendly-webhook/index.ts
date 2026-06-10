@@ -38,6 +38,19 @@ Deno.serve(async (req) => {
     const email      = (p.email as string) ?? ''
     const phone      = getTextResponse(p, 'phone') ?? getTextResponse(p, 'telefon') ?? null
 
+    // ── Werbe-Tracking (UTM) ─────────────────────────────────────────────────
+    // Calendly liefert UTM unter payload.tracking, GEFÜLLT wenn die Buchungsseite
+    // mit ?utm_source=…&utm_campaign=… aufgerufen wurde (z.B. aus der Meta-Anzeige).
+    // Komplett additiv & fehlertolerant — darf die Lead-Erstellung nie blockieren.
+    const tr = (p.tracking ?? {}) as Record<string, unknown>
+    const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+    const utmSource   = str(tr.utm_source)
+    const utmMedium   = str(tr.utm_medium)
+    const utmCampaign = str(tr.utm_campaign)
+    const utmContent  = str(tr.utm_content)
+    // Quelle aus utm_source ableiten; unbekannt → bleibt 'calendly'
+    const mappedSource = mapSource(utmSource)
+
     // Terminzeiten — end_time NOT NULL in DB, daher Fallback auf start_time + 1h
     const startTime  = (eventInfo.start_time as string) ?? new Date().toISOString()
     const endTimeRaw = (eventInfo.end_time as string) ?? null
@@ -116,6 +129,11 @@ Deno.serve(async (req) => {
       await supabase.from('leads').update({
         calendly_event_id: calendlyId,
         ...(phone ? { phone } : {}),
+        // UTM nur setzen wenn vorhanden — bestehende Werte nicht mit null überschreiben
+        ...(utmSource   ? { utm_source: utmSource }     : {}),
+        ...(utmMedium   ? { utm_medium: utmMedium }     : {}),
+        ...(utmCampaign ? { utm_campaign: utmCampaign } : {}),
+        ...(utmContent  ? { utm_content: utmContent }   : {}),
         status: 'contacted',
       }).eq('id', leadId)
     } else {
@@ -124,10 +142,14 @@ Deno.serve(async (req) => {
         last_name:         lastName,
         email:             email,
         phone:             phone,
-        source:            'calendly',
+        source:            mappedSource ?? 'calendly',
         calendly_event_id: calendlyId,
         status:            'contacted',
         language:          'de',
+        utm_source:        utmSource,
+        utm_medium:        utmMedium,
+        utm_campaign:      utmCampaign,
+        utm_content:       utmContent,
       }).select('id').single()
 
       if (error || !newLead) {
@@ -194,6 +216,17 @@ Deno.serve(async (req) => {
 })
 
 // ── Hilfsfunktionen ───────────────────────────────────────────────────────────
+
+// utm_source → CRM-Quelle (muss mit leads_source_check übereinstimmen).
+// Unbekannt → null, damit die Quelle 'calendly' erhalten bleibt.
+function mapSource(raw: string | null): 'meta' | 'google' | 'empfehlung' | null {
+  if (!raw) return null
+  const s = raw.toLowerCase()
+  if (s.includes('meta') || s.includes('facebook') || s.includes('instagram') || s === 'fb' || s === 'ig' || s === 'an' || s === 'msg') return 'meta'
+  if (s.includes('google'))                                                    return 'google'
+  if (s.includes('empfehlung') || s.includes('referral') || s.includes('ref')) return 'empfehlung'
+  return null
+}
 
 function getTextResponse(payload: Record<string, unknown>, keyword: string): string | null {
   try {

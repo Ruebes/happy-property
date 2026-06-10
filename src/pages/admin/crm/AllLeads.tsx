@@ -5,7 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, LeadSource } from '../../../lib/crmTypes'
-import { SOURCE_BADGE_STYLE } from '../../../lib/crmTypes'
+import { SOURCE_BADGE_STYLE, adChannelLabel } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 
 const SOURCES: Array<'' | LeadSource> = ['', 'meta', 'google', 'empfehlung', 'sonstiges']
@@ -280,6 +280,9 @@ export default function AllLeads() {
                         >
                           {sourceLabel[lead.source] ?? lead.source}
                         </span>
+                        {adChannelLabel(lead.utm_source) && (
+                          <span className="block text-[11px] text-gray-400 mt-0.5">{adChannelLabel(lead.utm_source)}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-gray-600">{statusLabel[lead.status] ?? lead.status}</td>
                       <td className="px-4 py-3 text-gray-600">{lead.assignee?.full_name ?? '–'}</td>

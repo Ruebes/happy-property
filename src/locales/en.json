@@ -998,6 +998,7 @@
       "country": "Country",
       "language": "Language",
       "source": "Source",
+      "channel": "Channel",
       "status": "Status",
       "assignedTo": "Assigned to",
       "notes": "Notes",

@@ -5,7 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
-import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS } from '../../../lib/crmTypes'
+import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
@@ -2634,6 +2634,18 @@ export default function LeadDetail() {
                           </span>
                         </dd>
                       </div>
+                      {(lead.utm_source || lead.utm_campaign || lead.utm_content) && (
+                        <div className="flex gap-2">
+                          <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.lead.channel', 'Kanal')}</dt>
+                          <dd className="text-gray-900">
+                            {adChannelLabel(lead.utm_source) && (
+                              <span className="font-medium">{adChannelLabel(lead.utm_source)}</span>
+                            )}
+                            {lead.utm_campaign && <span className="text-gray-500">{adChannelLabel(lead.utm_source) ? ' · ' : ''}{lead.utm_campaign}</span>}
+                            {lead.utm_content && <span className="text-gray-400"> · {lead.utm_content}</span>}
+                          </dd>
+                        </div>
+                      )}
                       <div className="flex gap-2">
                         <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.language', 'Sprache')}</dt>
                         <dd className="text-gray-900">{lead.language.toUpperCase()}</dd>
