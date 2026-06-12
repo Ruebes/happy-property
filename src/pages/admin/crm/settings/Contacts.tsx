@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
-import type { BusinessContact } from '../../../../lib/crmTypes'
+import type { BusinessContact, DeveloperContact } from '../../../../lib/crmTypes'
 
 // ── Geschäftskontakte ───────────────────────────────────────────────────────────
 // Freistehende Kontakte rund um den Deal-Prozess (Anwälte, Finanzierer, Partner,
@@ -152,6 +152,7 @@ export default function Contacts() {
   const { t } = useTranslation()
 
   const [items,   setItems]   = useState<BusinessContact[]>([])
+  const [devContacts, setDevContacts] = useState<(DeveloperContact & { developer_name: string | null })[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<{ contact: BusinessContact | null } | null>(null)
   const [toast,   setToast]   = useState('')
@@ -161,12 +162,20 @@ export default function Contacts() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('crm_business_contacts')
-        .select('*')
-        .order('first_name', { ascending: true })
-      if (error) throw error
-      setItems((data ?? []) as BusinessContact[])
+      // Eigenständige Geschäftskontakte + Developer-Ansprechpartner (read-only hier,
+      // werden in den Developer-Einstellungen gepflegt) — beide Gruppen sichtbar.
+      const [bcRes, dcRes, devRes] = await Promise.all([
+        supabase.from('crm_business_contacts').select('*').order('first_name', { ascending: true }),
+        supabase.from('crm_developer_contacts').select('*').order('name', { ascending: true }),
+        supabase.from('crm_developers').select('id, name'),
+      ])
+      if (bcRes.error) throw bcRes.error
+      setItems((bcRes.data ?? []) as BusinessContact[])
+      const devMap = new Map(((devRes.data ?? []) as { id: string; name: string }[]).map(d => [d.id, d.name]))
+      setDevContacts(((dcRes.data ?? []) as DeveloperContact[]).map(c => ({
+        ...c,
+        developer_name: devMap.get(c.developer_id) ?? null,
+      })))
     } catch (err) {
       console.error('[Contacts] fetch:', err)
     } finally {
@@ -253,6 +262,44 @@ export default function Contacts() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Developer-Ansprechpartner — read-only, gepflegt in den Developer-Einstellungen */}
+        {!loading && devContacts.length > 0 && (
+          <div className="pt-2">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              {t('crm.contacts.devSection', 'Developer-Ansprechpartner')}
+            </h2>
+            <div className="space-y-2">
+              {devContacts.map(c => (
+                <div key={c.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 text-lg mt-0.5">🏗</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900 text-sm">{c.name}</span>
+                        {c.is_primary && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">★</span>
+                        )}
+                        {c.role && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{c.role}</span>
+                        )}
+                        {c.developer_name && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">🏗 {c.developer_name}</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1 truncate">
+                        {[c.email, c.phone, c.whatsapp && `WA ${c.whatsapp}`].filter(Boolean).join(' · ') || '—'}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-300 shrink-0 italic whitespace-nowrap">
+                      {t('crm.contacts.managedInDeveloper', 'beim Developer')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>

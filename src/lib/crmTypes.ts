@@ -189,6 +189,7 @@ export interface CrmProject {
   location:        string | null
   latitude:        number | null
   longitude:       number | null
+  maps_url:        string | null   // Google-Maps-Pin/Link (auch Kurzlink); Koords daraus aufgelöst
   status:          ProjectStatus
   completion_date: string | null
   images:          string[]

@@ -46,6 +46,9 @@ interface ProjectForm {
   description_de: string
   description_en: string
   location:       string
+  maps_url:       string
+  latitude:       number | null
+  longitude:      number | null
   equipment_list: string
   video_url:      string
 }
@@ -100,15 +103,41 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     description_de:  project?.description_de ?? '',
     description_en:  project?.description_en ?? '',
     location:        project?.location ?? '',
+    maps_url:        project?.maps_url ?? '',
+    latitude:        project?.latitude ?? null,
+    longitude:       project?.longitude ?? null,
     equipment_list:  project?.equipment_list ?? '',
     video_url:       project?.video_url ?? '',
   })
+  const [resolvingPin, setResolvingPin] = useState(false)
+  const [pinMsg,       setPinMsg]       = useState('')
   const [images, setImages]     = useState<string[]>(project?.images ?? [])
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver]   = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const up = (k: keyof ProjectForm, v: string) => setForm(prev => ({ ...prev, [k]: v }))
+
+  // Google-Maps-Link (auch Kurzlink) → Koordinaten via Edge Function auflösen.
+  const resolvePin = async () => {
+    const link = form.maps_url.trim()
+    if (!link) { setPinMsg(''); return }
+    setResolvingPin(true); setPinMsg('')
+    try {
+      const { data, error } = await supabase.functions.invoke('resolve-maps-link', { body: { url: link } })
+      if (error) throw error
+      const r = data as { success: boolean; lat?: number; lng?: number; error?: string }
+      if (!r.success || r.lat == null || r.lng == null) {
+        throw new Error(r.error || t('crm.project.mapsPinFail', 'Konnte den Link nicht auflösen'))
+      }
+      setForm(prev => ({ ...prev, latitude: r.lat ?? null, longitude: r.lng ?? null }))
+      setPinMsg(`✓ ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`)
+    } catch (err) {
+      setPinMsg(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+    } finally {
+      setResolvingPin(false)
+    }
+  }
 
   // ── Image upload ──────────────────────────────────────────────
   const handleImageFiles = async (files: File[]) => {
@@ -160,6 +189,9 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         description_de:  form.description_de.trim() || null,
         description_en:  form.description_en.trim() || null,
         location:        form.location.trim() || null,
+        maps_url:        form.maps_url.trim() || null,
+        latitude:        form.latitude,
+        longitude:       form.longitude,
         equipment_list:  form.equipment_list.trim() || null,
         video_url:       form.video_url.trim() || null,
         images,
@@ -342,8 +374,33 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           )}
 
           {/* ── Lage ── */}
-          {activeTab === 'location' && (
+          {activeTab === 'location' && (() => {
+            const hasCoords = form.latitude != null && form.longitude != null
+            const mapQuery  = hasCoords ? `${form.latitude},${form.longitude}` : parseGoogleMapsLocation(form.location)
+            const hasMap    = hasCoords || !!form.location.trim()
+            const openHref  = form.maps_url.trim()
+              || (hasCoords ? `https://maps.google.com/?q=${form.latitude},${form.longitude}`
+                            : `https://maps.google.com/?q=${encodeURIComponent(form.location)}`)
+            return (
             <>
+              {/* Google Maps Pin (Link — auch Kurzlink) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  📍 {t('crm.project.mapsPin', 'Google Maps Pin (Link)')}
+                </label>
+                <input value={form.maps_url}
+                  onChange={e => { up('maps_url', e.target.value); setPinMsg('') }}
+                  onBlur={resolvePin}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                  placeholder="https://maps.app.goo.gl/…" />
+                <p className={`text-xs mt-1 ${pinMsg.startsWith('❌') ? 'text-red-500' : pinMsg.startsWith('✓') ? 'text-green-600' : 'text-gray-400'}`}>
+                  {resolvingPin
+                    ? t('crm.project.mapsPinResolving', 'Pin wird aufgelöst…')
+                    : pinMsg || t('crm.project.mapsPinHint', 'Google-Maps-Link einfügen (auch Kurzlink) — Pin wird automatisch übernommen.')}
+                </p>
+              </div>
+
+              {/* Adresse (optional, lesbarer Text) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('crm.project.location', 'Standort / Adresse')}
@@ -352,11 +409,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                   placeholder="z.B. Paphos, Zypern" />
                 <p className="text-xs text-gray-400 mt-1">
-                  {t('crm.project.locationHint', 'Adresse oder Google Maps Link eingeben.')}
+                  {t('crm.project.locationOptional', 'Optional — für die Text-Anzeige. Der Pin oben bestimmt die Karte.')}
                 </p>
               </div>
 
-              {form.location && (
+              {hasMap ? (
                 <>
                   <div className="rounded-xl overflow-hidden border border-gray-200">
                     <iframe
@@ -364,27 +421,26 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                       width="100%"
                       height="280"
                       loading="lazy"
-                      src={`https://maps.google.com/maps?q=${encodeURIComponent(parseGoogleMapsLocation(form.location))}&output=embed&z=14`}
+                      src={`https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&output=embed&z=15`}
                       style={{ border: 0 }}
                     />
                   </div>
                   <a
-                    href={`https://maps.google.com/?q=${encodeURIComponent(form.location)}`}
+                    href={openHref}
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1.5 text-sm text-orange-500 hover:underline font-medium"
                   >
                     🗺 {t('crm.project.openInMaps', 'In Google Maps öffnen')}
                   </a>
                 </>
-              )}
-
-              {!form.location && (
+              ) : (
                 <p className="text-sm text-gray-400 text-center py-8">
-                  {t('crm.project.enterLocationFirst', 'Standort eingeben um Karte anzuzeigen.')}
+                  {t('crm.project.enterLocationFirst', 'Pin-Link oder Adresse eingeben, um die Karte zu zeigen.')}
                 </p>
               )}
             </>
-          )}
+            )
+          })()}
 
           {/* ── Medien ── */}
           {activeTab === 'media' && (

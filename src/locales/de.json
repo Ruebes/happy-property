@@ -1131,7 +1131,9 @@
       "savedNew": "✅ Kontakt angelegt",
       "savedEdit": "✅ Kontakt gespeichert",
       "deleted": "Kontakt gelöscht",
-      "deleteConfirm": "Diesen Kontakt löschen?"
+      "deleteConfirm": "Diesen Kontakt löschen?",
+      "devSection": "Developer-Ansprechpartner",
+      "managedInDeveloper": "beim Developer"
     },
     "adhoc": {
       "title": "Sonstige Nachrichten",
@@ -1438,7 +1440,12 @@
       "enterLocationFirst": "Standort eingeben um Karte anzuzeigen.",
       "invalidVideoUrl": "Ungültige Video-URL (YouTube oder Vimeo)",
       "saveFirstForUnits": "Projekt zuerst speichern, dann Units hinzufügen.",
-      "locationHint": "Adresse oder Google Maps Link eingeben."
+      "locationHint": "Adresse oder Google Maps Link eingeben.",
+      "mapsPin": "Google Maps Pin (Link)",
+      "mapsPinHint": "Google-Maps-Link einfügen (auch Kurzlink) — Pin wird automatisch übernommen.",
+      "mapsPinResolving": "Pin wird aufgelöst…",
+      "mapsPinFail": "Konnte den Link nicht auflösen",
+      "locationOptional": "Optional — für die Text-Anzeige. Der Pin oben bestimmt die Karte."
     },
     "unit": {
       "title": "Unit",
