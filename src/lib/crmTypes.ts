@@ -353,6 +353,7 @@ export interface AutomationRule {
   email_template_id:    string | null
   whatsapp_event_type:  string | null
   is_active:            boolean
+  recipient:            string   // 'client' | 'bc:<id>' | 'dc:<id>'
   created_at:           string
   updated_at:           string
 }
@@ -373,6 +374,7 @@ export interface ScheduledMessage {
   whatsapp_text:  string | null
   error_message:  string | null
   rule_id:        string | null
+  recipient:      string         // 'client' | 'bc:<id>' | 'dc:<id>'
   created_at:     string
   // joined
   lead?: { first_name: string; last_name: string; email: string } | null
@@ -420,6 +422,7 @@ export interface CrmAdhocMessage {
   whatsapp_text: string | null
   scheduled_at:  string | null   // gewünschter Sendezeitpunkt (null = offen)
   status:        AdhocStatus
+  recipient:     string          // 'client' | 'bc:<id>' | 'dc:<id>'
   created_at:    string
   updated_at:    string
 }

@@ -1135,6 +1135,12 @@
       "devSection": "Developer-Ansprechpartner",
       "managedInDeveloper": "beim Developer"
     },
+    "recipient": {
+      "label": "Empfänger",
+      "toClient": "An den Klienten",
+      "noContacts": "– keine Kontakte angelegt –",
+      "selected": "Gewählter Kontakt"
+    },
     "adhoc": {
       "title": "Sonstige Nachrichten",
       "subtitle": "Einmalige WhatsApp- oder E-Mail-Nachrichten, unabhängig von der Pipeline.",

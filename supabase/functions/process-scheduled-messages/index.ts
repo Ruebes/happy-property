@@ -91,6 +91,27 @@ async function sendWhatsApp(params: {
   console.log(`[process-scheduled] ✓ WhatsApp an ${params.phone}`)
 }
 
+// ── Empfänger auflösen ────────────────────────────────────────────────────────
+// 'client' (Standard) → Lead. 'bc:<id>'/'dc:<id>' → fixer Kontakt.
+// Fehlender Kontakt → email/phone null (Versand schlägt sauber fehl, KEINE
+// versehentliche Zustellung an den Klienten).
+async function resolveRecipient(
+  supabase: ReturnType<typeof createClient>,
+  recipient: string | null,
+  lead: { email: string | null; phone: string | null; whatsapp: string | null },
+): Promise<{ email: string | null; phone: string | null }> {
+  if (recipient && (recipient.startsWith('bc:') || recipient.startsWith('dc:'))) {
+    const table = recipient.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
+    const { data } = await supabase.from(table)
+      .select('email, phone, whatsapp')
+      .eq('id', recipient.slice(3))
+      .maybeSingle()
+    const d = data as { email: string | null; phone: string | null; whatsapp: string | null } | null
+    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null }
+  }
+  return { email: lead.email, phone: lead.whatsapp || lead.phone }
+}
+
 // ── Aktivität im CRM loggen ───────────────────────────────────────────────────
 async function logActivity(supabase: ReturnType<typeof createClient>, params: {
   lead_id:   string
@@ -138,7 +159,7 @@ Deno.serve(async (req: Request) => {
       .update({ status: 'processing' })
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
-      .select('id, lead_id, deal_id, type, event_type, email_subject, email_body, whatsapp_text')
+      .select('id, lead_id, deal_id, type, event_type, email_subject, email_body, whatsapp_text, recipient')
       .limit(20)   // Maximal 20 pro Lauf, um Timeouts zu vermeiden
 
     if (fetchErr) throw fetchErr
@@ -162,6 +183,7 @@ Deno.serve(async (req: Request) => {
       email_subject: string | null
       email_body:    string | null
       whatsapp_text: string | null
+      recipient:     string | null
     }[]) {
       let success = true
       const errors: string[] = []
@@ -182,12 +204,19 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
+      // Empfänger auflösen: 'client' = Lead, sonst fixer Kontakt (bc:/dc:)
+      const rcpt = await resolveRecipient(supabase, msg.recipient, lead)
+
       // ── E-Mail senden ─────────────────────────────────────────────────────
       if ((msg.type === 'email' || msg.type === 'both') && msg.email_subject && msg.email_body) {
-        if (smtpUser && smtpPass) {
+        if (!rcpt.email) {
+          console.warn(`[process-scheduled] Kein Empfänger-E-Mail für ${msg.id} (recipient=${msg.recipient})`)
+          errors.push('email: kein Empfänger')
+          success = false
+        } else if (smtpUser && smtpPass) {
           try {
             await sendEmail({
-              to:       lead.email,
+              to:       rcpt.email,
               subject:  msg.email_subject,
               html:     msg.email_body,
               smtpUser, smtpPass,
@@ -207,7 +236,7 @@ Deno.serve(async (req: Request) => {
           }
         } else {
           // SMTP nicht konfiguriert → simulieren + loggen
-          console.warn(`[process-scheduled] SMTP nicht konfiguriert – simulierter Versand an ${lead.email}`)
+          console.warn(`[process-scheduled] SMTP nicht konfiguriert – simulierter Versand an ${rcpt.email}`)
           await logActivity(supabase, {
             lead_id: msg.lead_id,
             deal_id: msg.deal_id,
@@ -220,7 +249,7 @@ Deno.serve(async (req: Request) => {
 
       // ── WhatsApp senden ───────────────────────────────────────────────────
       if ((msg.type === 'whatsapp' || msg.type === 'both') && msg.whatsapp_text) {
-        const phone = lead.whatsapp || lead.phone
+        const phone = rcpt.phone
         if (phone) {
           if (waApiKey && waSender) {
             try {

@@ -4,6 +4,7 @@ import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import { DEAL_PHASES, PHASE_ICONS } from '../../../../lib/crmTypes'
 import type { AutomationRule, EmailTemplate, DealPhase } from '../../../../lib/crmTypes'
+import RecipientPicker from '../../../../components/crm/RecipientPicker'
 
 // ── Stages = „Neuer Lead" + alle Pipeline-Phasen ────────────────────────────────
 // Die event_types entsprechen exakt dem, was die schedule-message Engine als
@@ -83,6 +84,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
 
   const [name,        setName]        = useState(rule?.name ?? '')
   const [channel,     setChannel]     = useState<Channel>((rule?.message_type as Channel) ?? 'whatsapp')
+  const [recipient,   setRecipient]   = useState(rule?.recipient ?? 'client')
   const [delayValue,  setDelayValue]  = useState(initDelay.value)
   const [delayUnit,   setDelayUnit]   = useState<DelayUnit>(initDelay.unit)
   const [isActive,    setIsActive]    = useState(rule?.is_active ?? false)
@@ -189,6 +191,8 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
       }
 
       // ── Regel anlegen / aktualisieren ───────────────────────────────────────
+      const safeRecipient = (recipient === 'client' || recipient.startsWith('bc:') || recipient.startsWith('dc:'))
+        ? recipient : 'client'
       const rulePayload = {
         name:                name.trim() || `${stageLabel} – ${t('crm.stageEditor.step', 'Schritt')}`,
         event_type:          stage,
@@ -197,6 +201,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
         email_template_id:   emailTemplateId,
         whatsapp_event_type: waEventType,
         is_active:           isActive,
+        recipient:           safeRecipient,
         updated_at:          new Date().toISOString(),
       }
       if (rule) {
@@ -267,6 +272,12 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
                   : t('crm.stageEditor.afterHint', 'Verzögerung nach Stage-Wechsel')}
               </p>
             </div>
+          </div>
+
+          {/* Empfänger */}
+          <div>
+            <label className={labelCls}>{t('crm.recipient.label', 'Empfänger')}</label>
+            <RecipientPicker value={recipient} onChange={setRecipient} channel={channel} />
           </div>
 
           {/* Platzhalter */}

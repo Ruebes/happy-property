@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import type { CrmAdhocMessage, AdhocChannel, AdhocStatus } from '../../../../lib/crmTypes'
+import RecipientPicker from '../../../../components/crm/RecipientPicker'
 
 // ── Sonstige / Ad-hoc Nachrichten ──────────────────────────────────────────────
 // Einmalige WhatsApp/E-Mail-Nachrichten, NICHT an eine Pipeline-Phase gebunden.
@@ -45,6 +46,7 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
 
   const [label,        setLabel]        = useState(msg?.label ?? '')
   const [channel,      setChannel]      = useState<AdhocChannel>(msg?.channel ?? 'whatsapp')
+  const [recipient,    setRecipient]    = useState(msg?.recipient ?? 'client')
   const [waText,       setWaText]       = useState(msg?.whatsapp_text ?? '')
   const [emailSubject, setEmailSubject] = useState(msg?.email_subject ?? '')
   const [emailBody,    setEmailBody]    = useState(msg?.email_body ?? '')
@@ -70,6 +72,8 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
     }
     setSaving(true); setError('')
     try {
+      const safeRecipient = (recipient === 'client' || recipient.startsWith('bc:') || recipient.startsWith('dc:'))
+        ? recipient : 'client'
       const payload = {
         label:         label.trim(),
         channel,
@@ -79,6 +83,7 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
         whatsapp_text: !isEmail ? (waText.trim() || null)      : null,
         scheduled_at:  fromLocalInput(scheduledAt),
         status,
+        recipient:     safeRecipient,
         updated_at:    new Date().toISOString(),
       }
       if (msg) {
@@ -137,6 +142,12 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
                 {t('crm.adhoc.scheduledHint', 'Leer lassen = noch offen')}
               </p>
             </div>
+          </div>
+
+          {/* Empfänger */}
+          <div>
+            <label className={labelCls}>{t('crm.recipient.label', 'Empfänger')}</label>
+            <RecipientPicker value={recipient} onChange={setRecipient} channel={channel} />
           </div>
 
           {/* WhatsApp-Text */}

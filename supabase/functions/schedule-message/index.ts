@@ -135,6 +135,7 @@ Deno.serve(async (req: Request) => {
       delay_minutes: number
       email_template_id: string | null
       whatsapp_event_type: string | null
+      recipient: string | null
     }[]) {
       const scheduledAt = new Date(Date.now() + rule.delay_minutes * 60 * 1000)
 
@@ -205,6 +206,7 @@ Deno.serve(async (req: Request) => {
           email_body:    emailBody,
           whatsapp_text: waText,
           rule_id:       rule.id,
+          recipient:     rule.recipient ?? 'client',
         })
 
       if (insertErr) {

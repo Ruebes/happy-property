@@ -1135,6 +1135,12 @@
       "devSection": "Developer contacts",
       "managedInDeveloper": "in developer"
     },
+    "recipient": {
+      "label": "Recipient",
+      "toClient": "To the client",
+      "noContacts": "– no contacts yet –",
+      "selected": "Selected contact"
+    },
     "adhoc": {
       "title": "Other Messages",
       "subtitle": "One-off WhatsApp or email messages, independent of the pipeline.",
