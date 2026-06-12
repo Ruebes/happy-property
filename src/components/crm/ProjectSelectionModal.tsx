@@ -173,7 +173,11 @@ export default function ProjectSelectionModal({
             filtered.map(project => {
               const isSelected = selected.some(e => e.project.id === project.id)
               const entry = selected.find(e => e.project.id === project.id)
-              const availableUnits = ((project.units ?? []) as AvailableUnit[]).filter(u => u.status === 'available')
+              // Zuweisbare Einheiten: 'active' UND 'under_construction' (Off-Plan ist
+              // verkaufbar). Früher fälschlich auf 'available' gefiltert — das ist ein
+              // ProjectStatus, kein UnitStatus → Liste war IMMER leer (Bug).
+              const availableUnits = ((project.units ?? []) as AvailableUnit[])
+                .filter(u => u.status === 'active' || u.status === 'under_construction')
 
               return (
                 <div key={project.id}
