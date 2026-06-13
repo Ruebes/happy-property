@@ -7,6 +7,7 @@ import type { CrmProject, ProjectStatus } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
+import UnitImagesUploader from '../../../components/crm/UnitImagesUploader'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -552,6 +553,13 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   </p>
                 )}
               </div>
+
+              {/* Wohnungsbilder (Wohnung wählen → Bilder hochladen) */}
+              {project?.id && (
+                <div className="border-t border-gray-100 pt-4">
+                  <UnitImagesUploader projectId={project.id} />
+                </div>
+              )}
             </>
           )}
 
