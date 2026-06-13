@@ -6,9 +6,10 @@ import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
-  UnitType, UnitStatus, ConstructionPhoto,
+  UnitType, UnitStatus,
 } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
+import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -262,13 +263,6 @@ export default function ProjectDetail() {
   const [pendingFile, setPendingFile] = useState<File | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Baustellenfotos ──────────────────────────────────────────────────────────
-  const [constructionPhotos, setConstructionPhotos] = useState<ConstructionPhoto[]>([])
-  const [uploadingPhoto, setUploadingPhoto] = useState(false)
-  const [photoDate, setPhotoDate]           = useState(new Date().toISOString().slice(0, 10))
-  const [photoDesc, setPhotoDesc]           = useState('')
-  const constPhotoInputRef = useRef<HTMLInputElement>(null)
-
   // ── Projektbilder ────────────────────────────────────────────────────────────
   const [uploadingProjectImg, setUploadingProjectImg] = useState(false)
   const projectImgInputRef = useRef<HTMLInputElement>(null)
@@ -340,19 +334,6 @@ export default function ProjectDetail() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // ── Baustellenfotos laden ────────────────────────────────────────────────────
-  const fetchConstructionPhotos = useCallback(async () => {
-    if (!projectId) return
-    const { data } = await supabase
-      .from('construction_photos')
-      .select('*')
-      .eq('project_id', projectId)
-      .order('photo_date', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-    setConstructionPhotos((data ?? []) as ConstructionPhoto[])
-  }, [projectId])
-
-  useEffect(() => { fetchConstructionPhotos() }, [fetchConstructionPhotos])
 
   // ── Verknüpfbare Portal-Immobilien laden ─────────────────────────────────────
   async function fetchLinkableProperties(currentPropertyId?: string | null) {
@@ -724,77 +705,6 @@ export default function ProjectDetail() {
     const updated = (project.images ?? []).filter(u => u !== url)
     const { error } = await supabase.from('crm_projects').update({ images: updated }).eq('id', projectId)
     if (!error) setProject(p => p ? { ...p, images: updated } : p)
-  }
-
-  // ── Baustellenfotos Upload ───────────────────────────────────────────────────
-  async function handleUploadConstructionPhoto(files: FileList) {
-    if (!projectId || files.length === 0) return
-    setUploadingPhoto(true)
-    try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        const ext  = file.name.split('.').pop() ?? 'jpg'
-        const path = `${projectId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-        const { error: upErr } = await supabase.storage
-          .from('construction-photos')
-          .upload(path, file, { upsert: false })
-        if (upErr) { showToast(t('crm.pd.toastUploadFailedMsg', { msg: upErr.message })); continue }
-        const { data: urlData } = supabase.storage.from('construction-photos').getPublicUrl(path)
-        await supabase.from('construction_photos').insert({
-          project_id:  projectId,
-          file_path:   path,
-          file_name:   file.name,
-          file_size:   file.size,
-          photo_date:  photoDate || null,
-          description: photoDesc.trim() || null,
-          uploaded_by: profile?.id ?? null,
-        })
-        // Kunden benachrichtigen (alle mit Wohnungen in diesem Projekt)
-        if (urlData?.publicUrl) {
-          try {
-            const { data: unitCustomers } = await supabase
-              .from('crm_project_units')
-              .select('property_id')
-              .eq('project_id', projectId)
-              .not('property_id', 'is', null)
-            if (unitCustomers && unitCustomers.length > 0) {
-              const propIds = (unitCustomers as { property_id: string }[]).map(u => u.property_id)
-              const { data: owners } = await supabase
-                .from('properties')
-                .select('owner_id')
-                .in('id', propIds)
-              if (owners) {
-                const ownerIds = (owners as { owner_id: string }[]).map(o => o.owner_id)
-                const { data: ownerProfiles } = await supabase
-                  .from('profiles')
-                  .select('email, full_name')
-                  .in('id', ownerIds)
-                for (const p of (ownerProfiles ?? []) as { email: string; full_name: string }[]) {
-                  void notifyCustomerUpload(p.email, p.full_name.split(' ')[0], file.name, 'Baustellenfoto')
-                }
-              }
-            }
-          } catch (notifyErr) {
-            console.warn('[ProjectDetail] Baustellenfoto Notify error:', notifyErr)
-          }
-        }
-      }
-      showToast(t('crm.pd.toastConstructionUploaded', { count: files.length }))
-      setPhotoDesc('')
-      if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
-      await fetchConstructionPhotos()
-    } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : t('errors.generic')}`)
-    } finally {
-      setUploadingPhoto(false)
-    }
-  }
-
-  async function handleDeleteConstructionPhoto(photo: ConstructionPhoto) {
-    if (!window.confirm(t('crm.pd.confirmDeleteConstructionPhoto'))) return
-    await supabase.storage.from('construction-photos').remove([photo.file_path])
-    await supabase.from('construction_photos').delete().eq('id', photo.id)
-    await fetchConstructionPhotos()
   }
 
   // ── Price auto-calculation ───────────────────────────────────────────────────
@@ -1211,93 +1121,8 @@ export default function ProjectDetail() {
       </div>
 
       {/* ── Baustellenbilder ── */}
-      <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between gap-4">
-          <div>
-            <h2 className="font-semibold text-gray-900">{t('crm.pd.constructionMedia')}</h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {t('crm.pd.constructionMediaDesc')}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={photoDate}
-              onChange={e => setPhotoDate(e.target.value)}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-[#ff795d]"
-            />
-            <input
-              type="text"
-              value={photoDesc}
-              onChange={e => setPhotoDesc(e.target.value)}
-              placeholder={t('crm.pd.descriptionOptional')}
-              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs w-40 focus:outline-none focus:border-[#ff795d]"
-            />
-            <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
-              ${uploadingPhoto ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
-              {uploadingPhoto ? t('crm.pd.uploading') : t('crm.pd.uploadMedia')}
-              <input
-                ref={constPhotoInputRef}
-                type="file"
-                accept="image/*,video/mp4,video/quicktime,video/webm,video/mpeg"
-                multiple
-                disabled={uploadingPhoto}
-                className="hidden"
-                onChange={e => { if (e.target.files?.length) handleUploadConstructionPhoto(e.target.files) }}
-              />
-            </label>
-          </div>
-        </div>
-        {constructionPhotos.length === 0 ? (
-          <p className="text-center text-gray-400 text-sm py-10">
-            {t('crm.pd.noConstructionMedia')}
-          </p>
-        ) : (
-          <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-            {constructionPhotos.map(photo => {
-              const isVideo = /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(photo.file_name)
-              const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
-              return (
-                <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
-                  {isVideo ? (
-                    <video
-                      src={mediaUrl}
-                      className="w-full h-32 object-cover"
-                      controls
-                      preload="metadata"
-                    />
-                  ) : (
-                    <img
-                      src={mediaUrl}
-                      alt={photo.file_name}
-                      className="w-full h-32 object-cover cursor-pointer"
-                      onClick={() => window.open(mediaUrl, '_blank')}
-                      onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                    />
-                  )}
-                  <div className="px-2 py-1.5">
-                    {photo.photo_date && (
-                      <p className="text-[10px] font-medium text-gray-600">
-                        📅 {new Date(photo.photo_date).toLocaleDateString('de-DE')}
-                      </p>
-                    )}
-                    {photo.description && (
-                      <p className="text-[10px] text-gray-400 truncate">{photo.description}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => handleDeleteConstructionPhoto(photo)}
-                    className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
-                               opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
-                    title={t('crm.pd.delete')}
-                  >
-                    ×
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
+      <div className="mt-6">
+        {projectId && <ConstructionPhotos projectId={projectId} />}
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════════ */}

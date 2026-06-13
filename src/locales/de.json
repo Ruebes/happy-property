@@ -1446,6 +1446,7 @@
       "enterLocationFirst": "Standort eingeben um Karte anzuzeigen.",
       "invalidVideoUrl": "Ungültige Video-URL (YouTube oder Vimeo)",
       "saveFirstForUnits": "Projekt zuerst speichern, dann Units hinzufügen.",
+      "saveFirstForConstruction": "Projekt zuerst speichern, dann Baustellenbilder hochladen.",
       "locationHint": "Adresse oder Google Maps Link eingeben.",
       "mapsPin": "Google Maps Pin (Link)",
       "mapsPinHint": "Google-Maps-Link einfügen (auch Kurzlink) — Pin wird automatisch übernommen.",

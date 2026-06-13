@@ -1446,6 +1446,7 @@
       "enterLocationFirst": "Enter a location to show the map.",
       "invalidVideoUrl": "Invalid video URL (YouTube or Vimeo)",
       "saveFirstForUnits": "Save the project first, then add units.",
+      "saveFirstForConstruction": "Save the project first, then upload construction photos.",
       "locationHint": "Enter address or Google Maps link.",
       "mapsPin": "Google Maps Pin (link)",
       "mapsPinHint": "Paste a Google Maps link (short links too) — the pin is picked up automatically.",

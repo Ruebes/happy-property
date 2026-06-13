@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase'
 import type { CrmProject, ProjectStatus } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
+import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -540,6 +541,17 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   </div>
                 )
               })()}
+
+              {/* Baustellenbilder & -videos */}
+              <div className="border-t border-gray-100 pt-4">
+                {project?.id ? (
+                  <ConstructionPhotos projectId={project.id} />
+                ) : (
+                  <p className="text-sm text-gray-400 text-center py-6 border border-dashed border-gray-200 rounded-xl">
+                    {t('crm.project.saveFirstForConstruction', 'Projekt zuerst speichern, dann Baustellenbilder hochladen.')}
+                  </p>
+                )}
+              </div>
             </>
           )}
 
