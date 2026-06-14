@@ -69,6 +69,33 @@ async function shareFolder(token: string, fileId: string, email: string, role: '
   }
 }
 
+// Dateien/Ordner auflisten — Kinder eines Ordners und/oder Namensfilter.
+async function listFiles(token: string, opts: { parentId?: string; nameQuery?: string; foldersOnly?: boolean }): Promise<Array<{ id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }>> {
+  const clauses = ['trashed=false']
+  if (opts.parentId)   clauses.push(`'${opts.parentId}' in parents`)
+  if (opts.nameQuery)  clauses.push(`name contains '${opts.nameQuery.replace(/'/g, "\\'")}'`)
+  if (opts.foldersOnly) clauses.push(`mimeType='application/vnd.google-apps.folder'`)
+  const q = encodeURIComponent(clauses.join(' and '))
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,modifiedTime),incompleteSearch&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  const data = await res.json() as { files?: Array<{ id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }>; error?: unknown }
+  if (data.error) throw new Error(`Drive-Liste fehlgeschlagen: ${JSON.stringify(data.error)}`)
+  return data.files ?? []
+}
+
+// Datei-Inhalt als Base64 holen (Bilder → Storage, PDFs → Claude).
+async function downloadFile(token: string, fileId: string): Promise<{ base64: string; mimeType: string; name: string }> {
+  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  const meta = await metaRes.json() as { name?: string; mimeType?: string }
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`Download fehlgeschlagen (${res.status})`)
+  const buf = new Uint8Array(await res.arrayBuffer())
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < buf.length; i += chunk) binary += String.fromCharCode(...buf.subarray(i, i + chunk))
+  return { base64: btoa(binary), mimeType: meta.mimeType ?? 'application/octet-stream', name: meta.name ?? 'file' }
+}
+
 async function findFolder(token: string, name: string, parentId?: string): Promise<string | null> {
   const parentQuery = parentId ? ` and '${parentId}' in parents` : " and 'root' in parents"
   const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentQuery}`)
@@ -117,10 +144,12 @@ Deno.serve(async (req) => {
     )
 
     const body = await req.json() as {
-      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder'
+      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file'
       folder_name?:     string
       parent_folder_id?: string
       file_id?:         string
+      name_query?:      string              // für list_files (Namensfilter)
+      folders_only?:    boolean             // für list_files
       share_with?:      string | string[]   // eine oder mehrere E-Mails
       role?:            'reader' | 'writer'
       deal_id?:         string              // für create_deal_folder
@@ -212,6 +241,29 @@ Deno.serve(async (req) => {
 
       return new Response(
         JSON.stringify({ ok: true, folder_id: folderId, url, existing: false }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // ── list_files ────────────────────────────────────────────────────────────
+    if (body.action === 'list_files') {
+      const files = await listFiles(token, {
+        parentId:    body.parent_folder_id,
+        nameQuery:   body.name_query,
+        foldersOnly: body.folders_only,
+      })
+      return new Response(
+        JSON.stringify({ ok: true, files }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // ── download_file ─────────────────────────────────────────────────────────
+    if (body.action === 'download_file') {
+      if (!body.file_id) throw new Error('file_id fehlt')
+      const f = await downloadFile(token, body.file_id)
+      return new Response(
+        JSON.stringify({ ok: true, ...f }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
