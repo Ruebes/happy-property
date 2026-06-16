@@ -162,6 +162,27 @@ async function importImages(
   return out
 }
 
+// Eine beliebige Datei (z.B. Broschüre-PDF) nach Storage kopieren → öffentliche URL.
+// Byte-direkt (RAM-schonend), damit auch große PDFs (16 MB) klappen.
+async function importFile(
+  token: string,
+  supabase: ReturnType<typeof createClient>,
+  fileId: string,
+  prefix: string,
+): Promise<{ url: string; name: string; mimeType: string }> {
+  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  const meta = await metaRes.json() as { name?: string; mimeType?: string }
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!res.ok) throw new Error(`Download fehlgeschlagen (${res.status})`)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  const ext  = (meta.name?.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+  const { error } = await supabase.storage.from('deck-assets').upload(path, bytes, { contentType: meta.mimeType ?? 'application/octet-stream', upsert: false })
+  if (error) throw new Error(`Upload fehlgeschlagen: ${error.message}`)
+  const { data } = supabase.storage.from('deck-assets').getPublicUrl(path)
+  return { url: data.publicUrl, name: meta.name ?? 'file', mimeType: meta.mimeType ?? 'application/octet-stream' }
+}
+
 // Datei-Inhalt als Base64 holen (Bilder → Storage, PDFs → Claude).
 async function downloadFile(token: string, fileId: string): Promise<{ base64: string; mimeType: string; name: string }> {
   const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
@@ -223,7 +244,7 @@ Deno.serve(async (req) => {
     )
 
     const body = await req.json() as {
-      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file' | 'import_images'
+      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file' | 'import_images' | 'import_file'
       folder_name?:     string
       parent_folder_id?: string
       file_id?:         string
@@ -237,7 +258,7 @@ Deno.serve(async (req) => {
     }
 
     // Lese-Aktionen über Service-Account (dauerhaft); Schreib-Aktionen über OAuth.
-    const token = (body.action === 'list_files' || body.action === 'download_file' || body.action === 'import_images')
+    const token = (body.action === 'list_files' || body.action === 'download_file' || body.action === 'import_images' || body.action === 'import_file')
       ? await getReadToken()
       : await getAccessToken()
 
@@ -358,6 +379,16 @@ Deno.serve(async (req) => {
       const images = await importImages(token, supabase, body.parent_folder_id, body.prefix ?? body.parent_folder_id, body.limit ?? 14)
       return new Response(
         JSON.stringify({ ok: true, images }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // ── import_file ───────────────────────────────────────────────────────────
+    if (body.action === 'import_file') {
+      if (!body.file_id) throw new Error('file_id fehlt')
+      const f = await importFile(token, supabase, body.file_id, body.prefix ?? 'docs')
+      return new Response(
+        JSON.stringify({ ok: true, ...f }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
