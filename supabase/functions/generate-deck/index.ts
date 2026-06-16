@@ -40,7 +40,7 @@ REGELN:
 1. Beginne IMMER mit "cover", dann "letter". Ende IMMER mit "cta".
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
-4. Wähle 9–13 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll.
+4. Wähle 9–13 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
 5. Nutze NUR Fakten aus dem Input. Erfinde KEINE Zahlen/Preise/Entfernungen. Wenn ein Faktum fehlt, lass den Block/das Feld weg statt zu raten.
 6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).
 7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.`
@@ -50,7 +50,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; map?: string }
+type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string }
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages): void {
   const renders = images?.renders ?? []
   let ri = 0, pi = 0
@@ -58,7 +58,10 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
   for (const b of blocks) {
     const t = b.type
     if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
-    if (t === 'facts')     b.image = images?.map ?? nextRender()
+    if (t === 'facts') {
+      b.image = images?.map ?? nextRender()
+      if (images?.mapUrl) b.mapUrl = images.mapUrl   // Kartenausschnitt verlinkt auf Google Maps
+    }
     if (t === 'floorplan') b.image = images?.floorplan ?? nextRender()
     if (t === 'gallery' && Array.isArray(b.items)) {
       for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
@@ -74,7 +77,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; map?: string }
+      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
     }
     const recipient = body.recipient_name?.trim() || 'den Kunden'

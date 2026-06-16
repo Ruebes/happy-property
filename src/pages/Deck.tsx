@@ -2,7 +2,7 @@ import { useState, useEffect, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import type { DeckBlock, DeckContent } from '../lib/deckTypes'
-import { DECK_CONTACT } from '../lib/deckTypes'
+import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
 // Personalisierte Verkaufs-Microsite in Happy-Property-Optik. Datengetrieben aus
@@ -34,7 +34,7 @@ function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
     <section>
       <Img src={b.image} className="w-full h-[62vh] object-cover" />
       <div className="px-8 md:px-20 py-16" style={{ background: DARK }}>
-        <img src="/logo.jpg" alt="Happy Property" className="h-11 w-auto rounded-lg mb-6 shadow" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        <img src={DECK_LOGO} alt="Happy Property" className="h-16 w-auto mb-6" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
         <Accent />
         <Kicker>{b.kicker}</Kicker>
         <h1 className="font-heading font-bold text-white text-5xl md:text-7xl mt-3 leading-none">{b.title}</h1>
@@ -109,7 +109,14 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {b.image && <Img src={b.image} className="w-full h-72 object-cover rounded-xl mt-8" />}
+      {b.image && (b.mapUrl ? (
+        <a href={b.mapUrl} target="_blank" rel="noopener noreferrer" className="block relative mt-8 group">
+          <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
+          <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</span>
+        </a>
+      ) : (
+        <Img src={b.image} className="w-full h-80 object-cover rounded-xl mt-8" />
+      ))}
     </section>
   )
 }
@@ -306,21 +313,36 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
           ))}
         </div>
       )}
-      {/* Kontakt */}
-      <div className="mt-10 rounded-xl px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4 justify-between" style={{ background: 'rgba(194,161,94,0.1)' }}>
-        <div className="flex items-center gap-4">
-          <img src="/logo.jpg" alt="Happy Property" className="h-14 w-14 object-cover rounded-xl shadow shrink-0" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-          <div>
-            <p className="font-heading font-bold text-white text-xl">{DECK_CONTACT.name}</p>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] mt-0.5" style={{ color: GOLD }}>{DECK_CONTACT.company}</p>
-            <p className="text-xs text-gray-300 mt-2">{DECK_CONTACT.phone} · {DECK_CONTACT.email}</p>
-            <p className="text-xs text-gray-400">{DECK_CONTACT.web} · {DECK_CONTACT.address}</p>
-          </div>
+      {/* Kontakt + Foto */}
+      <div className="mt-12 grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-6 items-center rounded-2xl px-6 py-6" style={{ background: 'rgba(194,161,94,0.1)' }}>
+        <img src={DECK_PHOTO} alt={DECK_CONTACT.name} className="h-28 w-28 md:h-32 md:w-32 object-cover rounded-2xl shadow-lg shrink-0" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        <div>
+          <p className="font-heading font-bold text-white text-2xl">{DECK_CONTACT.name}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] mt-0.5" style={{ color: GOLD }}>{DECK_CONTACT.company}</p>
+          <p className="text-sm text-gray-300 mt-2">{DECK_CONTACT.phone} · {DECK_CONTACT.email}</p>
+          <p className="text-xs text-gray-400">{DECK_CONTACT.web} · {DECK_CONTACT.address}</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {DECK_CONTACT.socials.map((s, i) => (
-            <span key={i} className="text-[11px] text-gray-300 px-2 py-1 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }}>{s.label}</span>
-          ))}
+      </div>
+
+      {/* Folge mir — offensiv */}
+      <div className="mt-8">
+        <p className="font-heading font-bold text-white text-2xl md:text-3xl">Folge mir — ich nehme dich mit nach Zypern.</p>
+        <p className="text-sm text-gray-400 mt-1">Projekte, Baufortschritt, Markt-Insights — schau rein und folge:</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+          {DECK_CONTACT.socials.map((s, i) => {
+            const inner = (
+              <div className="flex items-center gap-3 rounded-xl px-4 py-3 transition-colors" style={{ background: 'rgba(255,255,255,0.06)' }}>
+                <span className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style={{ background: GOLD, color: DARK }}>{s.icon}</span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: GOLD }}>{s.platform}</p>
+                  <p className="text-sm text-white truncate">{s.handle}</p>
+                </div>
+              </div>
+            )
+            return s.url
+              ? <a key={i} href={s.url} target="_blank" rel="noopener noreferrer" className="hover:opacity-80 transition-opacity">{inner}</a>
+              : <div key={i}>{inner}</div>
+          })}
         </div>
       </div>
     </section>
@@ -381,9 +403,17 @@ export default function Deck() {
 
   return (
     <div className="font-body" style={{ background: CREAM, color: INK }}>
-      {content.blocks.map((b, i) => <Block key={i} block={b} />)}
+      {content.blocks.map((b, i) => (
+        <div key={i} className="relative">
+          <Block block={b} />
+          {/* Logo-Wasserzeichen auf jeder Seite — Diebstahlschutz */}
+          <img src={DECK_LOGO} alt="" aria-hidden="true"
+            className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        </div>
+      ))}
       <div className="text-center text-[11px] text-gray-400 py-6" style={{ background: CREAM }}>
-        Persönlich erstellt von Happy Property · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken
+        © Happy Property · Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken
       </div>
     </div>
   )

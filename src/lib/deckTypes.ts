@@ -15,7 +15,7 @@ export type DeckBlock =
   | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
   | { type: 'unit';    kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; note?: string; image?: string }
-  | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string }
+  | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string; mapUrl?: string }
   | { type: 'columns'; kicker?: string; headline?: string; image?: string; cols?: { title: string; sub?: string; text: string }[] }
   | { type: 'feature'; kicker?: string; headline?: string; image?: string; text?: string; quote?: string }
   | { type: 'gallery'; kicker?: string; headline?: string; items?: { image?: string; title?: string; caption?: string }[]; note?: string }
@@ -29,6 +29,10 @@ export interface DeckContent {
   blocks:  DeckBlock[]
 }
 
+// Happy-Property-Logo (dunkle Variante, passt zur Deck-Optik) + Svens Foto.
+export const DECK_LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+export const DECK_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+
 // Statischer Kontaktblock (Happy Property / Sven) — erscheint im CTA-Footer.
 export const DECK_CONTACT = {
   name:    'Sven Rüprich',
@@ -38,9 +42,9 @@ export const DECK_CONTACT = {
   web:     'happy-property.com',
   address: 'Pallados 1, 8046 Paphos',
   socials: [
-    { icon: '▶', label: 'HappyPropertyCyprus' },
-    { icon: '◎', label: 'happy_property_cyprus' },
-    { icon: 'f', label: 'Immobilien in Zypern' },
-    { icon: 'in', label: 'Sven Rüprich' },
+    { icon: '▶',  platform: 'YouTube',   handle: 'HappyPropertyCyprus',  url: 'https://www.youtube.com/@HappyPropertyCyprus' },
+    { icon: '◎',  platform: 'Instagram', handle: 'happy_property_cyprus', url: 'https://www.instagram.com/happy_property_cyprus' },
+    { icon: 'f',  platform: 'Facebook',  handle: 'Immobilien in Zypern',  url: '' },
+    { icon: 'in', platform: 'LinkedIn',  handle: 'Sven Rüprich',          url: '' },
   ],
 } as const
