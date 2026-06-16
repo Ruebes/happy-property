@@ -20,6 +20,7 @@ export type DeckBlock =
   | { type: 'feature'; kicker?: string; headline?: string; image?: string; text?: string; quote?: string }
   | { type: 'gallery'; kicker?: string; headline?: string; items?: { image?: string; title?: string; caption?: string }[]; note?: string }
   | { type: 'benefits';kicker?: string; headline?: string; cards?: { icon?: string; title: string; text: string }[] }
+  | { type: 'inventory';kicker?: string; headline?: string; intro?: string; image?: string; groups?: { title: string; icon?: string; items: string[] }[]; note?: string }
   | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[] }
   | { type: 'payment'; kicker?: string; headline?: string; intro?: string; phase1?: DeckPaymentPhase; phase2?: DeckPaymentPhase; note?: string }
   | { type: 'cta';     kicker?: string; headline?: string; text?: string; steps?: { n: string; title: string; text: string }[] }

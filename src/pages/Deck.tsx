@@ -217,6 +217,36 @@ function BenefitsBlock(b: Extract<DeckBlock, { type: 'benefits' }>) {
   )
 }
 
+function InventoryBlock(b: Extract<DeckBlock, { type: 'inventory' }>) {
+  const groups = b.groups ?? []
+  return (
+    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+      <Accent /><Kicker>{b.kicker}</Kicker>
+      {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
+      {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mt-8">
+        {groups.map((g, i) => (
+          <div key={i} className="bg-white rounded-xl p-6 border-t-2" style={{ borderColor: GOLD }}>
+            <div className="flex items-center gap-3 mb-4">
+              <span className="w-9 h-9 rounded-full flex items-center justify-center text-sm shrink-0" style={{ background: '#f3ead7', color: GOLD }}>{g.icon ?? '✦'}</span>
+              <h3 className="font-heading font-bold text-xl" style={{ color: INK }}>{g.title}</h3>
+            </div>
+            <ul className="space-y-2">
+              {(g.items ?? []).map((it, j) => (
+                <li key={j} className="flex gap-2.5 text-[14px] leading-snug text-gray-700">
+                  <span className="shrink-0 mt-0.5" style={{ color: GOLD }}>✓</span>
+                  <span>{it}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {b.note && <div className="mt-6 rounded-xl px-5 py-4 text-[14px] font-medium text-gray-800 border-l-2" style={{ background: '#fff', borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
+    </section>
+  )
+}
+
 function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
   return (
     <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
@@ -359,6 +389,7 @@ function Block({ block }: { block: DeckBlock }) {
     case 'feature':   return <FeatureBlock {...block} />
     case 'gallery':   return <GalleryBlock {...block} />
     case 'benefits':  return <BenefitsBlock {...block} />
+    case 'inventory': return <InventoryBlock {...block} />
     case 'floorplan': return <FloorplanBlock {...block} />
     case 'payment':   return <PaymentBlock {...block} />
     case 'cta':       return <CtaBlock {...block} />
