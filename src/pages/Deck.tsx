@@ -34,6 +34,7 @@ function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
     <section>
       <Img src={b.image} className="w-full h-[62vh] object-cover" />
       <div className="px-8 md:px-20 py-16" style={{ background: DARK }}>
+        <img src="/logo.jpg" alt="Happy Property" className="h-11 w-auto rounded-lg mb-6 shadow" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
         <Accent />
         <Kicker>{b.kicker}</Kicker>
         <h1 className="font-heading font-bold text-white text-5xl md:text-7xl mt-3 leading-none">{b.title}</h1>
@@ -307,11 +308,14 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
       )}
       {/* Kontakt */}
       <div className="mt-10 rounded-xl px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4 justify-between" style={{ background: 'rgba(194,161,94,0.1)' }}>
-        <div>
-          <p className="font-heading font-bold text-white text-xl">{DECK_CONTACT.name}</p>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.15em] mt-0.5" style={{ color: GOLD }}>{DECK_CONTACT.company}</p>
-          <p className="text-xs text-gray-300 mt-2">{DECK_CONTACT.phone} · {DECK_CONTACT.email}</p>
-          <p className="text-xs text-gray-400">{DECK_CONTACT.web} · {DECK_CONTACT.address}</p>
+        <div className="flex items-center gap-4">
+          <img src="/logo.jpg" alt="Happy Property" className="h-14 w-14 object-cover rounded-xl shadow shrink-0" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+          <div>
+            <p className="font-heading font-bold text-white text-xl">{DECK_CONTACT.name}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.15em] mt-0.5" style={{ color: GOLD }}>{DECK_CONTACT.company}</p>
+            <p className="text-xs text-gray-300 mt-2">{DECK_CONTACT.phone} · {DECK_CONTACT.email}</p>
+            <p className="text-xs text-gray-400">{DECK_CONTACT.web} · {DECK_CONTACT.address}</p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           {DECK_CONTACT.socials.map((s, i) => (

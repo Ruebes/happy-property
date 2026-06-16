@@ -8,6 +8,7 @@
 // Bild-Slots (Stufe 1: Platzhalter zum Beurteilen der Texte/Struktur).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { jsonrepair } from 'https://esm.sh/jsonrepair@3.8.0'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -41,23 +42,26 @@ REGELN:
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
 4. Wähle 9–13 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll.
 5. Nutze NUR Fakten aus dem Input. Erfinde KEINE Zahlen/Preise/Entfernungen. Wenn ein Faktum fehlt, lass den Block/das Feld weg statt zu raten.
-6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).`
+6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).
+7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.`
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 }
 
-// Platzhalter-Bilder in die Bild-Slots hängen (Stufe 1). Stufe 2 ersetzt durch Drive-Bilder.
-function injectPlaceholderImages(blocks: Array<Record<string, unknown>>): void {
-  let n = 0
-  const img = () => `https://picsum.photos/seed/deck${++n}/1600/1000`
+// Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
+type DeckImages = { renders?: string[]; floorplan?: string; map?: string }
+function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages): void {
+  const renders = images?.renders ?? []
+  let ri = 0, pi = 0
+  const nextRender = () => renders.length ? renders[ri++ % renders.length] : `https://picsum.photos/seed/deck${++pi}/1600/1000`
   for (const b of blocks) {
     const t = b.type
-    if (t === 'cover' || t === 'unit' || t === 'facts' || t === 'columns' || t === 'feature' || t === 'floorplan') {
-      if (!b.image) b.image = img()
-    }
+    if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
+    if (t === 'facts')     b.image = images?.map ?? nextRender()
+    if (t === 'floorplan') b.image = images?.floorplan ?? nextRender()
     if (t === 'gallery' && Array.isArray(b.items)) {
-      for (const it of b.items as Array<Record<string, unknown>>) if (!it.image) it.image = img()
+      for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
     }
   }
 }
@@ -70,6 +74,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
+      images?: { renders?: string[]; floorplan?: string; map?: string }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
     }
     const recipient = body.recipient_name?.trim() || 'den Kunden'
@@ -88,42 +93,91 @@ Deno.serve(async (req) => {
       body.facts.trim(),
     ].join('\n')
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key':         ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'Content-Type':      'application/json',
-      },
-      body: JSON.stringify({
-        model:       'claude-sonnet-4-6',
-        max_tokens:  16000,
-        system:      SYSTEM,
-        tools:       [{
-          name:        'emit_deck',
-          description: 'Gibt das fertige, personalisierte Sales-Deck als geordnete Block-Liste zurück.',
-          input_schema: {
-            type: 'object',
-            properties: { blocks: { type: 'array', items: { type: 'object' } } },
-            required: ['blocks'],
+    const reqBody = JSON.stringify({
+      model:       'claude-sonnet-4-6',
+      max_tokens:  16000,
+      system:      SYSTEM,
+      tools:       [{
+        name:        'emit_deck',
+        description: 'Gibt das fertige, personalisierte Sales-Deck als geordnete Block-Liste zurück.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            blocks: {
+              type: 'array',
+              description: 'Die geordnete Liste der Deck-Blöcke.',
+              items: {
+                type: 'object',
+                properties: {
+                  type:       { type: 'string', enum: ['cover','letter','unit','facts','columns','feature','gallery','benefits','floorplan','payment','cta'] },
+                  kicker:     { type: 'string' },
+                  title:      { type: 'string' },
+                  tagline:    { type: 'string' },
+                  forLine:    { type: 'string' },
+                  headline:   { type: 'string' },
+                  paragraphs: { type: 'array', items: { type: 'string' } },
+                  signoff:    { type: 'string' },
+                  signName:   { type: 'string' },
+                  number:     { type: 'string' },
+                  nickname:   { type: 'string' },
+                  specs:      { type: 'array', items: { type: 'string' } },
+                  priceMain:  { type: 'string' },
+                  priceSub:   { type: 'string' },
+                  note:       { type: 'string' },
+                  text:       { type: 'string' },
+                  quote:      { type: 'string' },
+                  intro:      { type: 'string' },
+                  items:      { type: 'array', items: { type: 'object' } },
+                  cols:       { type: 'array', items: { type: 'object' } },
+                  cards:      { type: 'array', items: { type: 'object' } },
+                  stats:      { type: 'array', items: { type: 'object' } },
+                  bullets:    { type: 'array', items: { type: 'object' } },
+                  steps:      { type: 'array', items: { type: 'object' } },
+                  phase1:     { type: 'object' },
+                  phase2:     { type: 'object' },
+                },
+                required: ['type'],
+              },
+            },
           },
-        }],
-        tool_choice: { type: 'tool', name: 'emit_deck' },
-        messages:    [{ role: 'user', content: userMsg }],
-      }),
+          required: ['blocks'],
+        },
+      }],
+      tool_choice: { type: 'tool', name: 'emit_deck' },
+      messages:    [{ role: 'user', content: userMsg }],
     })
-    if (!res.ok) {
-      const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
-      return json({ error: `Anthropic ${res.status}: ${e.error?.message ?? res.statusText}` }, 502)
+
+    // Ein Call (mehrere sprengen das Edge-CPU-Budget). "blocks" kommt als Array
+    // oder als String (dann parsen — durch die Anführungszeichen-Regel valide).
+    let blocks: Array<Record<string, unknown>> = []
+    let diag: Record<string, unknown> = {}
+    for (let attempt = 0; attempt < 1 && blocks.length === 0; attempt++) {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: reqBody,
+      })
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
+        diag = { http: res.status, msg: e.error?.message }
+        continue
+      }
+      const data = await res.json() as { content?: Array<{ type?: string; input?: { blocks?: unknown } }>; stop_reason?: string }
+      const tu = (data.content ?? []).find(c => c.type === 'tool_use')
+      const rawBlocks = tu?.input?.blocks
+      if (Array.isArray(rawBlocks)) {
+        blocks = rawBlocks as Array<Record<string, unknown>>
+      } else if (typeof rawBlocks === 'string') {
+        const candidates: string[] = [rawBlocks]
+        try { candidates.push(jsonrepair(rawBlocks)) } catch { /* Reparatur fehlgeschlagen */ }
+        for (const txt of candidates) {
+          try { const p = JSON.parse(txt); if (Array.isArray(p)) { blocks = p; break } } catch { /* nächster Kandidat */ }
+        }
+      }
+      diag = { stop_reason: data.stop_reason, blocksType: typeof rawBlocks, raw: typeof rawBlocks === 'string' ? rawBlocks : JSON.stringify(rawBlocks) }
     }
-    const data = await res.json() as {
-      content?: Array<{ type?: string; input?: { blocks?: Array<Record<string, unknown>> } }>
-      stop_reason?: string
-    }
-    const tu = (data.content ?? []).find(c => c.type === 'tool_use')
-    const blocks = tu?.input?.blocks ?? []
-    if (blocks.length === 0) return json({ error: 'Keine Blöcke generiert', stop_reason: data.stop_reason }, 502)
-    injectPlaceholderImages(blocks)
+    if (blocks.length === 0) return json({ error: 'Keine Blöcke generiert', ...diag }, 502)
+    assignImages(blocks, body.images)
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const { data: row, error } = await supabase.from('sales_decks').insert({

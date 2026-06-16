@@ -120,6 +120,48 @@ async function listFiles(token: string, opts: { parentId?: string; nameQuery?: s
   return data.files ?? []
 }
 
+// Bilder aus einem Ordner (+ 1 Unterordner-Ebene) nach Supabase-Storage importieren.
+// Gibt öffentliche URLs + Quell-Unterordner (für Kategorisierung) zurück.
+async function importImages(
+  token: string,
+  supabase: ReturnType<typeof createClient>,
+  parentId: string,
+  prefix: string,
+  limit: number,
+): Promise<Array<{ name: string; url: string; folder: string }>> {
+  const MAX_BYTES = 12_000_000
+  const top = await listFiles(token, { parentId })
+  const imgs: Array<{ id: string; name: string; mimeType: string; folder: string; size: number }> = []
+  const add = (f: { id: string; name: string; mimeType: string; size?: string }, folder: string) => {
+    if (!f.mimeType.startsWith('image/')) return
+    const size = f.size ? parseInt(f.size, 10) : 0
+    if (size && size > MAX_BYTES) return            // große Renders vorab überspringen
+    imgs.push({ id: f.id, name: f.name, mimeType: f.mimeType, folder, size })
+  }
+  for (const f of top) add(f, '')
+  for (const sub of top.filter(f => f.mimeType === 'application/vnd.google-apps.folder')) {
+    const kids = await listFiles(token, { parentId: sub.id })
+    for (const k of kids) add(k, sub.name)
+  }
+  const out: Array<{ name: string; url: string; folder: string }> = []
+  for (const im of imgs.slice(0, limit)) {
+    try {
+      // Bytes DIREKT laden (kein Base64 — RAM-schonend)
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${im.id}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) continue
+      const bytes = new Uint8Array(await res.arrayBuffer())
+      if (bytes.length > MAX_BYTES) continue
+      const ext  = (im.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg'
+      const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('deck-assets').upload(path, bytes, { contentType: im.mimeType, upsert: false })
+      if (error) continue
+      const { data } = supabase.storage.from('deck-assets').getPublicUrl(path)
+      out.push({ name: im.name, url: data.publicUrl, folder: im.folder })
+    } catch { /* einzelne überspringen */ }
+  }
+  return out
+}
+
 // Datei-Inhalt als Base64 holen (Bilder → Storage, PDFs → Claude).
 async function downloadFile(token: string, fileId: string): Promise<{ base64: string; mimeType: string; name: string }> {
   const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
@@ -181,19 +223,21 @@ Deno.serve(async (req) => {
     )
 
     const body = await req.json() as {
-      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file'
+      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file' | 'import_images'
       folder_name?:     string
       parent_folder_id?: string
       file_id?:         string
       name_query?:      string              // für list_files (Namensfilter)
       folders_only?:    boolean             // für list_files
+      prefix?:          string              // für import_images (Storage-Pfad-Präfix)
+      limit?:           number              // für import_images
       share_with?:      string | string[]   // eine oder mehrere E-Mails
       role?:            'reader' | 'writer'
       deal_id?:         string              // für create_deal_folder
     }
 
     // Lese-Aktionen über Service-Account (dauerhaft); Schreib-Aktionen über OAuth.
-    const token = (body.action === 'list_files' || body.action === 'download_file')
+    const token = (body.action === 'list_files' || body.action === 'download_file' || body.action === 'import_images')
       ? await getReadToken()
       : await getAccessToken()
 
@@ -304,6 +348,16 @@ Deno.serve(async (req) => {
       const f = await downloadFile(token, body.file_id)
       return new Response(
         JSON.stringify({ ok: true, ...f }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // ── import_images ─────────────────────────────────────────────────────────
+    if (body.action === 'import_images') {
+      if (!body.parent_folder_id) throw new Error('parent_folder_id fehlt')
+      const images = await importImages(token, supabase, body.parent_folder_id, body.prefix ?? body.parent_folder_id, body.limit ?? 14)
+      return new Response(
+        JSON.stringify({ ok: true, images }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
