@@ -1099,6 +1099,8 @@
       "condNone": "Always send",
       "condNo": "Only if NO appointment booked",
       "condHas": "Only if an appointment exists",
+      "condZoom": "Only for a Zoom appointment (with link)",
+      "condPhone": "Only for a phone appointment (no Zoom)",
       "condHint": "Checked right before sending (replaces the n8n logic).",
       "driveTrigger": "Create/ensure Drive client folder before sending",
       "driveShare": "Additional write access (e.g. financier, lawyer, developer):",

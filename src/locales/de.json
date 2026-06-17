@@ -1099,6 +1099,8 @@
       "condNone": "Immer senden",
       "condNo": "Nur wenn KEIN Termin gebucht",
       "condHas": "Nur wenn ein Termin existiert",
+      "condZoom": "Nur bei Zoom-Termin (mit Link)",
+      "condPhone": "Nur bei Telefon-Termin (ohne Zoom)",
       "condHint": "Wird direkt vor dem Versand geprüft (ersetzt n8n-Logik).",
       "driveTrigger": "Vor Versand Drive-Kundenordner anlegen/sicherstellen",
       "driveShare": "Zusätzlicher Schreibzugriff (z.B. Finanzierer, Anwalt, Developer):",

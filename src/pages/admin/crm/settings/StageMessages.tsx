@@ -302,6 +302,8 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
               <option value="none">{t('crm.stageEditor.condNone', 'Immer senden')}</option>
               <option value="no_appointment">{t('crm.stageEditor.condNo', 'Nur wenn KEIN Termin gebucht')}</option>
               <option value="has_appointment">{t('crm.stageEditor.condHas', 'Nur wenn ein Termin existiert')}</option>
+              <option value="has_zoom">{t('crm.stageEditor.condZoom', 'Nur bei Zoom-Termin (mit Link)')}</option>
+              <option value="no_zoom">{t('crm.stageEditor.condPhone', 'Nur bei Telefon-Termin (ohne Zoom)')}</option>
             </select>
             <p className="text-xs text-gray-400 mt-1">{t('crm.stageEditor.condHint', 'Wird direkt vor dem Versand geprüft (ersetzt n8n-Logik).')}</p>
           </div>

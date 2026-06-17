@@ -205,12 +205,19 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
-      // ── B) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
-      if (msg.appointment_condition === 'no_appointment' || msg.appointment_condition === 'has_appointment') {
+      // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
+      const cond = msg.appointment_condition
+      if (cond && cond !== 'none') {
         const { data: appt } = await supabase.from('crm_appointments')
-          .select('id').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString()).limit(1).maybeSingle()
+          .select('zoom_link').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+          .order('start_time', { ascending: true }).limit(1).maybeSingle()
         const hasAppt = !!appt
-        const shouldSend = msg.appointment_condition === 'has_appointment' ? hasAppt : !hasAppt
+        const hasZoom = !!(appt as { zoom_link?: string } | null)?.zoom_link
+        const shouldSend =
+          cond === 'has_appointment' ? hasAppt :
+          cond === 'no_appointment'  ? !hasAppt :
+          cond === 'has_zoom'        ? (hasAppt && hasZoom) :
+          cond === 'no_zoom'         ? (hasAppt && !hasZoom) : true
         if (!shouldSend) {
           await supabase.from('scheduled_messages')
             .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Bedingung ${msg.appointment_condition} nicht erfüllt` })
