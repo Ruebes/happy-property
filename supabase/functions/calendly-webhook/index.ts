@@ -36,7 +36,12 @@ Deno.serve(async (req) => {
     const firstName  = nameParts[0] ?? ''
     const lastName   = nameParts.slice(1).join(' ') || ''
     const email      = (p.email as string) ?? ''
-    const phone      = getTextResponse(p, 'phone') ?? getTextResponse(p, 'telefon') ?? null
+    // Telefon aus allen plausiblen Calendly-Feldern: SMS-Reminder-Nummer + Q&A-Keywords.
+    // (Liegt die Nummer nur im Typeform, kommt sie hier nicht an → Typeform-Webhook aktivieren.)
+    const phone =
+      (typeof p.text_reminder_number === 'string' && p.text_reminder_number.trim() ? p.text_reminder_number.trim() : null) ??
+      getTextResponse(p, 'phone') ?? getTextResponse(p, 'telefon') ?? getTextResponse(p, 'handy') ??
+      getTextResponse(p, 'mobil') ?? getTextResponse(p, 'whatsapp') ?? getTextResponse(p, 'nummer') ?? null
 
     // ── Werbe-Tracking (UTM) ─────────────────────────────────────────────────
     // Calendly liefert UTM unter payload.tracking, GEFÜLLT wenn die Buchungsseite
