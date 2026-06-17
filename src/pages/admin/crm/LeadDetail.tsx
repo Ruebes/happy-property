@@ -42,6 +42,26 @@ export default function LeadDetail() {
 
   // Core data
   const [lead, setLead] = useState<Lead | null>(null)
+
+  // ── Google-Drive-Kundenordner anlegen / öffnen ───────────────────────────────
+  const [driveBusy, setDriveBusy] = useState(false)
+  const createDriveFolder = async () => {
+    if (!lead || driveBusy) return
+    setDriveBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('create-client-drive-folder', {
+        body: { lead_id: lead.id, extra_emails: [] },
+      })
+      if (error) throw new Error(error.message)
+      const d = data as { folder_id?: string; folder_url?: string; error?: string }
+      if (d?.error) throw new Error(d.error)
+      if (d.folder_url) setLead({ ...lead, drive_folder_id: d.folder_id ?? null, drive_folder_url: d.folder_url })
+    } catch (e) {
+      alert(t('crm.lead.driveError', 'Drive-Ordner konnte nicht erstellt werden') + ': ' + (e instanceof Error ? e.message : ''))
+    } finally {
+      setDriveBusy(false)
+    }
+  }
   const [deal, setDeal] = useState<Deal | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
   const [tasks, setTasks] = useState<Activity[]>([])
@@ -2017,6 +2037,15 @@ export default function LeadDetail() {
                     >
                       📱 {lead.whatsapp}
                     </a>
+                  )}
+                  {lead.drive_folder_url ? (
+                    <a href={lead.drive_folder_url} target="_blank" rel="noreferrer" className="font-medium text-orange-600 hover:text-orange-700">
+                      📁 {t('crm.lead.driveOpen', 'Google Drive')}
+                    </a>
+                  ) : (
+                    <button type="button" onClick={createDriveFolder} disabled={driveBusy} className="text-gray-500 hover:text-orange-500 disabled:opacity-50">
+                      {driveBusy ? t('crm.lead.driveCreating', '📁 Ordner wird erstellt…') : t('crm.lead.driveCreate', '📁 Drive-Ordner erstellen')}
+                    </button>
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2 mt-2">

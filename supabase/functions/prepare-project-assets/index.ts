@@ -168,9 +168,35 @@ Deno.serve(async (req) => {
     if (!project_id) return json({ error: 'project_id fehlt' }, 400)
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { folderId: dbFolder, assets, project } = await loadAssets(supabase, project_id)
+    const token = await getReadToken()
+
+    // ── resolve ── Drive-Ordner zum Projekt automatisch finden (Projekte/Developer/Projekt).
+    // Braucht KEINEN bestehenden Ordner. Match per Developer + Projektname (enthält-Logik).
+    if (action === 'resolve') {
+      const ROOT = Deno.env.get('GOOGLE_DRIVE_PROJECTS_ROOT') || '1NZAb497G71DpHA3xa_ApeFpG_c_EKHMz'
+      const name = String(project.name ?? '').trim()
+      const dev  = String(project.developer ?? '').trim()
+      if (!name) return json({ error: 'Projekt hat keinen Namen' }, 400)
+      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+      const hit = (folderName: string, target: string) => { const a = norm(folderName), b = norm(target); return !!b && (a.includes(b) || b.includes(a)) }
+      const devFolders = (await listChildren(token, ROOT)).filter(f => isFolder(f.mimeType))
+      const devFolder = dev ? devFolders.find(f => hit(f.name, dev)) : undefined
+      let found: DriveFile | undefined
+      for (const df of (devFolder ? [devFolder] : devFolders)) {
+        const subs = (await listChildren(token, df.id)).filter(f => isFolder(f.mimeType))
+        found = subs.find(f => hit(f.name, name)) ?? (hit(df.name, name) ? df : undefined)
+        if (found) break
+      }
+      if (!found) {
+        const avail = (devFolder ? (await listChildren(token, devFolder.id)).filter(f => isFolder(f.mimeType)) : devFolders).map(f => f.name)
+        return json({ ok: true, found: false, hint: avail.join(', ') })
+      }
+      await supabase.from('crm_projects').update({ drive_folder_id: found.id }).eq('id', project_id)
+      return json({ ok: true, found: true, folder_id: found.id, folder_name: found.name })
+    }
+
     const folderId = folder_id?.trim() || dbFolder
     if (!folderId) return json({ error: 'Kein Drive-Ordner — drive_folder_id setzen oder folder_id übergeben' }, 400)
-    const token = await getReadToken()
 
     // ── images ────────────────────────────────────────────────────────────────
     if (action === 'images') {

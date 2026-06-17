@@ -134,10 +134,25 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     ]
     try {
       const summary: string[] = []
+      // Drive-Ordner automatisch finden, falls keiner verknüpft ist (Projekte/Developer/Projekt)
+      let folderId = form.drive_folder_id.trim()
+      if (!folderId) {
+        setIngestMsg({ ok: true, text: `⏳ ${t('crm.project.deck.resolving', 'Drive-Ordner suchen…')}` })
+        const { data, error } = await supabase.functions.invoke('prepare-project-assets', { body: { project_id: project.id, action: 'resolve' } })
+        if (error) throw new Error(error.message)
+        const rd = data as { found?: boolean; folder_id?: string; hint?: string; error?: string }
+        if (rd?.error) throw new Error(rd.error)
+        if (rd?.found && rd.folder_id) { folderId = rd.folder_id; up('drive_folder_id', folderId) }
+        else {
+          setIngestMsg({ ok: false, text: `${t('crm.project.deck.noFolder', 'Kein passender Drive-Ordner gefunden.')} ${rd?.hint ? t('crm.project.deck.available', 'Verfügbar') + ': ' + rd.hint + '. ' : ''}${t('crm.project.deck.enterManually', 'Bitte Ordner-ID manuell eintragen.')}` })
+          setIngesting(false)
+          return
+        }
+      }
       for (const { action, label } of steps) {
         setIngestMsg({ ok: true, text: `⏳ ${label}…` })
         const { data, error } = await supabase.functions.invoke('prepare-project-assets', {
-          body: { project_id: project.id, action, folder_id: form.drive_folder_id.trim() || undefined },
+          body: { project_id: project.id, action, folder_id: folderId || undefined },
         })
         if (error) throw new Error(error.message)
         const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number }
@@ -623,7 +638,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <button
                     type="button"
                     onClick={runIngest}
-                    disabled={ingesting || !project?.id || !form.drive_folder_id.trim()}
+                    disabled={ingesting || !project?.id}
                     className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
                   >
                     {ingesting ? t('crm.project.deck.loading', 'Lädt…') : t('crm.project.deck.load', 'Aus Drive laden')}

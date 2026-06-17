@@ -36,6 +36,8 @@ export interface Lead {
   portal_access_sent_at: string | null   // wann wurde der Portalzugang verschickt?
   notes:             string | null
   calendly_event_id: string | null
+  drive_folder_id:   string | null   // Google-Drive-Kundenordner (create-client-drive-folder)
+  drive_folder_url:  string | null
   // Werbe-Tracking (UTM) — aus Calendly payload.tracking bzw. Typeform Hidden Fields
   utm_source:        string | null   // z.B. ig / fb / instagram / google
   utm_medium:        string | null   // z.B. paid / cpc
