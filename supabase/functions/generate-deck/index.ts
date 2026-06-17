@@ -82,6 +82,7 @@ Deno.serve(async (req) => {
       images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       generic?: boolean
+      background?: boolean
     }
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
@@ -164,6 +165,9 @@ Deno.serve(async (req) => {
       messages:    [{ role: 'user', content: userMsg }],
     })
 
+    // Die eigentliche Generierung (Claude ~60-90s + Insert). Kann synchron laufen
+    // oder — fürs generische Deck im Browser — im Hintergrund (waitUntil).
+    const doGenerate = async (): Promise<{ token: string; blocks: number }> => {
     // Ein Call (mehrere sprengen das Edge-CPU-Budget). "blocks" kommt als Array
     // oder als String (dann parsen — durch die Anführungszeichen-Regel valide).
     let blocks: Array<Record<string, unknown>> = []
@@ -193,7 +197,7 @@ Deno.serve(async (req) => {
       }
       diag = { stop_reason: data.stop_reason, blocksType: typeof rawBlocks, raw: typeof rawBlocks === 'string' ? rawBlocks : JSON.stringify(rawBlocks) }
     }
-    if (blocks.length === 0) return json({ error: 'Keine Blöcke generiert', ...diag }, 502)
+    if (blocks.length === 0) throw new Error('Keine Blöcke generiert: ' + JSON.stringify(diag).slice(0, 300))
     assignImages(blocks, body.images)
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
@@ -239,14 +243,26 @@ Deno.serve(async (req) => {
       batch_id:   body.batch_id ?? null,
       created_by: body.created_by ?? null,
     }).select('token').single()
-    if (error) return json({ error: `DB: ${error.message}` }, 500)
+    if (error) throw new Error(`DB: ${error.message}`)
 
     const token = (row as { token: string }).token
     // Generisches Projekt-Deck → direkt am Projekt verankern (im Zoom teilbar).
     if (generic && body.project_id) {
       await supabase.from('crm_projects').update({ deck_token: token, deck_generated_at: new Date().toISOString() }).eq('id', body.project_id)
     }
-    return json({ ok: true, token, url: `/deck/${token}`, blocks: blocks.length })
+    return { token, blocks: blocks.length }
+    }   // ── Ende doGenerate ──
+
+    // Generisches Deck im Browser: lange Generierung (~80s) im HINTERGRUND laufen lassen
+    // → sofortige Antwort, kein Verbindungs-Timeout. Der Browser pollt danach
+    // crm_projects.deck_token. Sonstige/sync-Aufrufer warten normal auf das Ergebnis.
+    const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+    if (body.background && generic && er?.waitUntil) {
+      er.waitUntil(doGenerate().catch(() => {}))
+      return json({ ok: true, background: true })
+    }
+    const out = await doGenerate()
+    return json({ ok: true, token: out.token, url: `/deck/${out.token}`, blocks: out.blocks })
 
   } catch (err) {
     return json({ error: (err as Error).message }, 500)

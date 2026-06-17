@@ -178,19 +178,32 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     setDeckBusy(true)
     setDeckMsg(null)
     try {
-      // Frische Assets holen — Fakten werden im Hintergrund erzeugt, der project-Prop ist evtl. veraltet.
-      const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', project.id).maybeSingle()
+      // Frische Assets holen — Fakten + Deck laufen im Hintergrund, der project-Prop ist evtl. veraltet.
+      const { data: fresh } = await supabase.from('crm_projects').select('deck_assets, deck_token').eq('id', project.id).maybeSingle()
       const da = ((fresh?.deck_assets ?? project.deck_assets) ?? null) as DeckAssetsCache | null
       if (!da?.facts) { setDeckMsg({ ok: false, text: t('crm.project.deck.factsPending', 'Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut.') }); setDeckBusy(false); return }
+      const prevToken = ((fresh?.deck_token as string | null) ?? project.deck_token) ?? null
       const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
       const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+      setDeckMsg({ ok: true, text: `⏳ ${t('crm.project.deck.deckLoading', 'Erstelle Deck…')}` })
       const { data, error } = await supabase.functions.invoke('generate-deck', {
-        body: { generic: true, project_id: project.id, facts: da.facts, images, month_label: month },
+        body: { generic: true, background: true, project_id: project.id, facts: da.facts, images, month_label: month },
       })
       if (error) throw new Error(error.message)
-      const d = data as { token?: string; error?: string }
+      const d = data as { token?: string; background?: boolean; error?: string }
       if (d?.error) throw new Error(d.error)
-      setDeckMsg({ ok: true, text: t('crm.project.deck.deckReady', 'Allgemeines Deck erstellt.'), token: d.token })
+      // Hintergrund-Generierung (~80s): auf den neuen deck_token am Projekt pollen.
+      let token = d.token ?? null
+      if (!token && d.background) {
+        for (let i = 0; i < 30 && !token; i++) {
+          await new Promise(r => setTimeout(r, 5000))
+          const { data: pr } = await supabase.from('crm_projects').select('deck_token').eq('id', project.id).maybeSingle()
+          const nt = (pr?.deck_token as string | null) ?? null
+          if (nt && nt !== prevToken) token = nt
+        }
+      }
+      if (!token) { setDeckMsg({ ok: false, text: t('crm.project.deck.deckTimeout', 'Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen" prüfen.') }); return }
+      setDeckMsg({ ok: true, text: t('crm.project.deck.deckReady', 'Allgemeines Deck erstellt.'), token })
     } catch (e) {
       setDeckMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
     } finally {

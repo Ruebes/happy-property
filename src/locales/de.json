@@ -1486,7 +1486,8 @@
         "needAssets": "Erst Assets aus Drive laden (Fakten fehlen).",
         "deckReady": "Allgemeines Deck erstellt.",
         "factsBackground": "Fakten laufen im Hintergrund (~1 Min)",
-        "factsPending": "Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut."
+        "factsPending": "Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut.",
+        "deckTimeout": "Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen“ prüfen."
       }
     },
     "unit": {
