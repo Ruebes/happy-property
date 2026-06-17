@@ -18,7 +18,9 @@ interface OutboxRow {
   error_message: string | null
   created_at: string | null
   sent_at: string | null
-  lead?: { first_name: string; last_name: string } | null
+  email_sent_at: string | null
+  whatsapp_sent_at: string | null
+  lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null } | null
 }
 
 export default function Postausgang() {
@@ -32,7 +34,7 @@ export default function Postausgang() {
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase.from('deck_outbox')
-      .select('*, lead:leads(first_name,last_name)')
+      .select('*, lead:leads(first_name,last_name,phone,whatsapp)')
       .order('created_at', { ascending: false }).limit(100)
     setRows((data ?? []) as OutboxRow[])
     setLoading(false)
@@ -47,17 +49,42 @@ export default function Postausgang() {
     setBusyId(row.id)
     try {
       const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { to: row.recipient_email, subject: row.subject, html: row.body },
+        body: { to: row.recipient_email, subject: row.subject, html: row.body, lead_id: row.lead_id },
       })
       if (error) throw new Error(error.message)
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
-      await supabase.from('deck_outbox').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', row.id)
+      const nowIso = new Date().toISOString()
+      await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, email_sent_at: nowIso }).eq('id', row.id)
       flash(t('crm.outbox.sent', '✅ Gesendet'))
       void load()
     } catch (e) {
       await supabase.from('deck_outbox').update({ error_message: e instanceof Error ? e.message : 'Fehler' }).eq('id', row.id)
       flash(`${t('crm.outbox.sendFail', 'Senden fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)
       void load()
+    } finally { setBusyId(null) }
+  }
+
+  const sendWhatsApp = async (row: OutboxRow) => {
+    const phone = row.lead?.whatsapp || row.lead?.phone
+    if (!phone) { flash(t('crm.outbox.noPhone', 'Keine Telefonnummer am Lead.')); return }
+    const fn = row.lead?.first_name ?? ''
+    const base = window.location.origin
+    const links = (row.deck_tokens ?? []).map(tok => `${base}/deck/${tok}`).join('\n')
+    const text = `Hallo ${fn},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n${links}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property`
+    if (!window.confirm(t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
+    setBusyId(row.id)
+    try {
+      const { data, error } = await supabase.functions.invoke('send-whatsapp', {
+        body: { event_type: 'deck_angebot', override_text: text, lead_id: row.lead_id, lead_data: { lead_name: fn, lead_phone: phone } },
+      })
+      if (error) throw new Error(error.message)
+      if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
+      const nowIso = new Date().toISOString()
+      await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, whatsapp_sent_at: nowIso }).eq('id', row.id)
+      flash(t('crm.outbox.waSent', '✅ WhatsApp gesendet'))
+      void load()
+    } catch (e) {
+      flash(`${t('crm.outbox.waFail', 'WhatsApp fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)
     } finally { setBusyId(null) }
   }
 
@@ -98,13 +125,25 @@ export default function Postausgang() {
                     {r.lead ? `${r.lead.first_name} ${r.lead.last_name}` : '—'} · {r.recipient_email ?? t('crm.outbox.noEmailShort', 'keine E-Mail')} · {r.deck_tokens?.length ?? 0} {t('crm.outbox.decks', 'Decks')}
                   </p>
                 </button>
-                {r.status === 'draft' && (
-                  <div className="flex gap-2 shrink-0">
-                    <button onClick={() => discard(r)} className="text-xs text-gray-400 hover:text-red-500 px-2 py-1">{t('crm.outbox.discard', 'Verwerfen')}</button>
-                    <button onClick={() => send(r)} disabled={busyId === r.id}
-                      className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-                      {busyId === r.id ? t('crm.outbox.sending', 'Sendet…') : t('crm.outbox.send', 'Senden')}
-                    </button>
+                {r.status !== 'cancelled' && (
+                  <div className="flex gap-2 shrink-0 items-center">
+                    {r.email_sent_at    && <span className="text-[11px] text-green-600 font-medium">✅ Mail</span>}
+                    {r.whatsapp_sent_at && <span className="text-[11px] text-green-600 font-medium">✅ WA</span>}
+                    {!r.email_sent_at && (
+                      <button onClick={() => send(r)} disabled={busyId === r.id}
+                        className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                        {busyId === r.id ? t('crm.outbox.sending', 'Sendet…') : `📧 ${t('crm.outbox.sendEmail', 'E-Mail')}`}
+                      </button>
+                    )}
+                    {!r.whatsapp_sent_at && (
+                      <button onClick={() => sendWhatsApp(r)} disabled={busyId === r.id}
+                        className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#25D366' }}>
+                        {busyId === r.id ? t('crm.outbox.sending', 'Sendet…') : `💬 ${t('crm.outbox.sendWhatsapp', 'WhatsApp')}`}
+                      </button>
+                    )}
+                    {r.status === 'draft' && (
+                      <button onClick={() => discard(r)} className="text-xs text-gray-400 hover:text-red-500 px-2 py-1">{t('crm.outbox.discard', 'Verwerfen')}</button>
+                    )}
                   </div>
                 )}
               </div>
