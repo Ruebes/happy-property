@@ -197,6 +197,8 @@ export interface CrmProject {
   equipment_list:  string | null
   drive_folder_id: string | null   // Google-Drive-Ordner des Projekts (Quelle für Deck-Assets)
   deck_assets:     DeckAssetsCache | null  // gecachte Drive-Assets (prepare-project-assets)
+  deck_token:      string | null   // generisches Projekt-Deck (/deck/<token>) für Zoom
+  deck_generated_at: string | null
   created_at:      string
   updated_at:      string
   // joined

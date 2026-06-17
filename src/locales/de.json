@@ -1469,7 +1469,13 @@
         "factsMissing": "Fakten fehlen",
         "stepImages": "Bilder & Grundrisse",
         "stepDocs": "Dokumente",
-        "stepFacts": "Fakten (KI liest Broschüre)"
+        "stepFacts": "Fakten (KI liest Broschüre)",
+        "gen": "Allgemeines Deck erzeugen",
+        "regen": "Allgemeines Deck neu erzeugen",
+        "deckLoading": "Erstelle Deck…",
+        "openDeck": "Deck öffnen (Zoom)",
+        "needAssets": "Erst Assets aus Drive laden (Fakten fehlen).",
+        "deckReady": "Allgemeines Deck erstellt."
       }
     },
     "unit": {

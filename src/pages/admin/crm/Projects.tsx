@@ -152,6 +152,32 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       setIngesting(false)
     }
   }
+
+  // ── Generisches Projekt-Deck erzeugen (neutral, für Zoom) ─────────────────────
+  const [deckBusy, setDeckBusy] = useState(false)
+  const [deckMsg, setDeckMsg]   = useState<{ ok: boolean; text: string; token?: string } | null>(null)
+  const runGenericDeck = async () => {
+    if (!project?.id) return
+    const da = project.deck_assets
+    if (!da?.facts) { setDeckMsg({ ok: false, text: t('crm.project.deck.needAssets', 'Erst Assets aus Drive laden (Fakten fehlen).') }); return }
+    setDeckBusy(true)
+    setDeckMsg(null)
+    try {
+      const images = { renders: da.renders ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
+      const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+      const { data, error } = await supabase.functions.invoke('generate-deck', {
+        body: { generic: true, project_id: project.id, facts: da.facts, images, month_label: month },
+      })
+      if (error) throw new Error(error.message)
+      const d = data as { token?: string; error?: string }
+      if (d?.error) throw new Error(d.error)
+      setDeckMsg({ ok: true, text: t('crm.project.deck.deckReady', 'Allgemeines Deck erstellt.'), token: d.token })
+    } catch (e) {
+      setDeckMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
+    } finally {
+      setDeckBusy(false)
+    }
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const up = (k: keyof ProjectForm, v: string) => setForm(prev => ({ ...prev, [k]: v }))
@@ -613,6 +639,33 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <p className="text-xs text-gray-400 mt-2">
                     {t('crm.project.deck.cached', 'Im Cache')}: {project.deck_assets.renders?.length ?? 0} Bilder · {project.deck_assets.floorplans?.length ?? 0} Grundrisse · {project.deck_assets.facts ? t('crm.project.deck.factsReady', 'Fakten ✓') : t('crm.project.deck.factsMissing', 'Fakten fehlen')}
                   </p>
+                )}
+
+                {/* Generisches Projekt-Deck (zum Teilen im Zoom) */}
+                {project?.id && project.deck_assets?.facts && (
+                  <div className="mt-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={runGenericDeck}
+                        disabled={deckBusy}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {deckBusy
+                          ? t('crm.project.deck.deckLoading', 'Erstelle Deck…')
+                          : (project.deck_token ? t('crm.project.deck.regen', 'Allgemeines Deck neu erzeugen') : t('crm.project.deck.gen', 'Allgemeines Deck erzeugen'))}
+                      </button>
+                      {(deckMsg?.token || project.deck_token) && (
+                        <a href={`/deck/${deckMsg?.token ?? project.deck_token}`} target="_blank" rel="noopener noreferrer"
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-900 text-white hover:bg-gray-800">
+                          {t('crm.project.deck.openDeck', 'Deck öffnen (Zoom)')} ↗
+                        </a>
+                      )}
+                    </div>
+                    {deckMsg && (
+                      <p className={`text-xs mt-2 rounded-lg px-3 py-2 ${deckMsg.ok ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>{deckMsg.text}</p>
+                    )}
+                  </div>
                 )}
               </div>
 

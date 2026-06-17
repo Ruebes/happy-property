@@ -1469,7 +1469,13 @@
         "factsMissing": "Facts missing",
         "stepImages": "Images & floor plans",
         "stepDocs": "Documents",
-        "stepFacts": "Facts (AI reads brochure)"
+        "stepFacts": "Facts (AI reads brochure)",
+        "gen": "Generate general deck",
+        "regen": "Regenerate general deck",
+        "deckLoading": "Creating deck…",
+        "openDeck": "Open deck (Zoom)",
+        "needAssets": "Load assets from Drive first (facts missing).",
+        "deckReady": "General deck created."
       }
     },
     "unit": {

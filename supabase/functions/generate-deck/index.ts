@@ -81,12 +81,23 @@ Deno.serve(async (req) => {
       month_label?: string
       images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
+      generic?: boolean
     }
-    const recipient = body.recipient_name?.trim() || 'den Kunden'
+    const generic   = body.generic === true
+    const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
     const angle     = body.angle || 'lifestyle'
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
 
-    const userMsg = [
+    const userMsg = generic ? [
+      `GENERISCHES PROJEKT-DECK — KEIN spezifischer Kunde. Dieses Deck wird live im Zoom geteilt.`,
+      `MONAT: ${body.month_label || ''}`,
+      ``,
+      `AUFGABE: Stelle DAS PROJEKT vor — Lage, Architektur, Ausstattung, Amenities, die verfügbaren Wohnungs-Typen und den Zahlungsplan. Einladend, hochwertig, du-Form.`,
+      `SONDERREGELN FÜR DIESES DECK: KEIN persönliches Anschreiben und KEINE 'Für <Name>'-Zeile (forLine im cover weglassen). Statt eines 'letter' an eine Person ein einladender Projekt-Intro in du-Form (headline + 2–3 Absätze, ohne Namensanrede, signName nur 'Sven · Happy Property Cyprus'). Kein erfundener Kundenbezug.`,
+      ``,
+      `FAKTEN ZUM PROJEKT (nur diese verwenden):`,
+      body.facts.trim(),
+    ].join('\n') : [
       `KUNDE: ${recipient}`,
       `MONAT: ${body.month_label || ''}`,
       `WINKEL (angle): ${angle}`,
@@ -201,6 +212,10 @@ Deno.serve(async (req) => {
     if (error) return json({ error: `DB: ${error.message}` }, 500)
 
     const token = (row as { token: string }).token
+    // Generisches Projekt-Deck → direkt am Projekt verankern (im Zoom teilbar).
+    if (generic && body.project_id) {
+      await supabase.from('crm_projects').update({ deck_token: token, deck_generated_at: new Date().toISOString() }).eq('id', body.project_id)
+    }
     return json({ ok: true, token, url: `/deck/${token}`, blocks: blocks.length })
 
   } catch (err) {
