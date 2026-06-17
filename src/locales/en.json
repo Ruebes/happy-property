@@ -1468,6 +1468,7 @@
         "factsReady": "Facts ✓",
         "factsMissing": "Facts missing",
         "stepImages": "Images & floor plans",
+        "stepCategorize": "Sorting images (rooms)",
         "stepDocs": "Documents",
         "stepFacts": "Facts (AI reads brochure)",
         "gen": "Generate general deck",

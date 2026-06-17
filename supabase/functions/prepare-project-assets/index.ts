@@ -2,12 +2,13 @@
 // Importiert automatisch die Deck-Assets eines Projekts aus seinem Google-Drive-Ordner
 // (crm_projects.drive_folder_id) und cached sie in crm_projects.deck_assets.
 //
-// Drei Aktionen (getrennt wegen Edge-Zeit-/CPU-Budget; Caller ruft sie nacheinander):
-//   images → Renders + Grundrisse + Lagebild aus den Unterordnern → Storage
-//   docs   → Broschüre/Preisliste/Spec/Besteck/Wäsche → Storage-URLs (+ xlsx-Spec als Text)
-//   facts  → Claude liest Broschüre + Besteck + Wäsche (+ Spec) → apartment-sichere Fakten
+// Vier Aktionen (getrennt wegen Edge-Zeit-/CPU-Budget; Caller ruft sie nacheinander):
+//   images     → Renders + Grundrisse + Lagebild aus den Unterordnern → Storage
+//   categorize → Renders per Vision in Räume/Bereiche einsortieren (gallery)
+//   docs       → Broschüre/Preisliste/Spec/Besteck/Wäsche → Storage-URLs (+ xlsx-Spec als Text)
+//   facts      → Claude liest Broschüre + Besteck + Wäsche (+ Spec) → apartment-sichere Fakten
 //
-// Body: { project_id, action: 'images'|'docs'|'facts', force? }
+// Body: { project_id, action: 'images'|'categorize'|'docs'|'facts', force? }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import * as XLSX from 'https://esm.sh/xlsx@0.18.5'
 
@@ -17,6 +18,7 @@ const CORS = {
 }
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // ── Service-Account-Lesetoken (wie in google-drive) ──────────────────────────────
@@ -106,6 +108,7 @@ function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 
 
 type DeckAssets = {
   renders?: string[]
+  gallery?: Array<{ url: string; category: string; label: string }>   // kategorisierte Renders (Vision)
   floorplans?: Array<{ floor: number | null; label: string; url: string }>
   map?: string | null
   mapUrl?: string | null
@@ -127,6 +130,37 @@ async function saveAssets(supabase: ReturnType<typeof createClient>, projectId: 
   return merged
 }
 
+// ── Bild-Kategorisierung via Claude-Vision ───────────────────────────────────────
+// Klassifiziert jeden Render (Wohnzimmer/Schlafzimmer/Pool/Lobby/Außen …) + kurze
+// deutsche Bezeichnung → beschriftete Bildstrecken im generischen Projekt-Deck.
+const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'sonstiges']
+async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string }>> {
+  const fallback = urls.map(u => ({ url: u, category: 'sonstiges', label: '' }))
+  if (!ANTHROPIC_API_KEY || !urls.length) return fallback
+  const content: unknown[] = []
+  urls.forEach((u, i) => { content.push({ type: 'text', text: `Bild ${i}:` }); content.push({ type: 'image', source: { type: 'url', url: u } }) })
+  content.push({ type: 'text', text: `Das sind Renderings/Fotos eines Immobilien-Projekts auf Zypern. Ordne JEDES Bild (Index ab 0) einer Kategorie zu und gib eine kurze deutsche Bezeichnung. Kategorien: ${CATS.join(', ')}. label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). Rufe label_images mit genau einem Eintrag pro Bild auf.` })
+  const TOOL = {
+    name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
+    input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' } }, required: ['index', 'category'] } } }, required: ['items'] },
+  }
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, tools: [TOOL], tool_choice: { type: 'tool', name: 'label_images' }, messages: [{ role: 'user', content }] }),
+    })
+    if (!res.ok) return fallback
+    const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: unknown } }> }
+    let items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items
+    if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
+    const byIdx = new Map<number, { category: string; label: string }>()
+    for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
+      byIdx.set(Number(it.index), { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? '') })
+    }
+    return urls.map((u, i) => ({ url: u, category: byIdx.get(i)?.category ?? 'sonstiges', label: byIdx.get(i)?.label ?? '' }))
+  } catch { return fallback }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
@@ -140,7 +174,7 @@ Deno.serve(async (req) => {
 
     // ── images ────────────────────────────────────────────────────────────────
     if (action === 'images') {
-      const MAX = 12_000_000, RENDER_CAP = 9, FP_CAP = 5
+      const MAX = 12_000_000, RENDER_CAP = 18, FP_CAP = 5
       const children = await listChildren(token, folderId)
       const renderFiles: DriveFile[] = children.filter(f => isImg(f.mimeType))     // Bilder im Wurzelordner
       const fpFiles: DriveFile[] = []
@@ -180,6 +214,18 @@ Deno.serve(async (req) => {
       }
       await saveAssets(supabase, project_id, { renders, floorplans, map, mapUrl })
       return json({ ok: true, action, renders: renders.length, floorplans: floorplans.length, map: !!map, unitsMatched })
+    }
+
+    // ── categorize ──────────────────────────────────────────────────────────────
+    // Renders per Vision in Räume/Bereiche einsortieren → beschriftete Bildstrecken.
+    if (action === 'categorize') {
+      const renders = assets.renders ?? []
+      if (!renders.length) return json({ error: 'Keine Renders — erst action=images ausführen' }, 400)
+      const gallery = await categorizeImages(renders.slice(0, 18))
+      await saveAssets(supabase, project_id, { gallery })
+      const byCat: Record<string, number> = {}
+      for (const g of gallery) byCat[g.category] = (byCat[g.category] ?? 0) + 1
+      return json({ ok: true, action, gallery: gallery.length, categories: byCat })
     }
 
     // ── docs ──────────────────────────────────────────────────────────────────

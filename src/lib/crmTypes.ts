@@ -208,6 +208,7 @@ export interface CrmProject {
 // Cache der automatisch aus Drive importierten Deck-Assets (crm_projects.deck_assets).
 export interface DeckAssetsCache {
   renders?:    string[]
+  gallery?:    { url: string; category: string; label: string }[]
   floorplans?: { floor: number | null; label: string; url: string }[]
   map?:        string | null
   mapUrl?:     string | null

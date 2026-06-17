@@ -52,7 +52,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string }
+type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages): void {
   const renders = images?.renders ?? []
   let ri = 0, pi = 0
@@ -79,7 +79,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string }
+      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       generic?: boolean
     }
@@ -195,6 +195,36 @@ Deno.serve(async (req) => {
     }
     if (blocks.length === 0) return json({ error: 'Keine Blöcke generiert', ...diag }, 502)
     assignImages(blocks, body.images)
+
+    // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
+    // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,
+    // damit der Kunde im Zoom sieht, wie alles aussieht.
+    const gal = body.images?.gallery ?? []
+    if (generic && gal.length) {
+      const GROUPS: Array<{ cats: string[]; kicker: string; headline: string }> = [
+        { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Innenräume', headline: 'Wohnen & Essen' },
+        { cats: ['kueche'],                             kicker: 'Innenräume', headline: 'Küche' },
+        { cats: ['schlafzimmer'],                       kicker: 'Innenräume', headline: 'Schlafen' },
+        { cats: ['badezimmer'],                         kicker: 'Innenräume', headline: 'Bäder' },
+        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Dachpool & Sundeck' },
+        { cats: ['lobby', 'gym'],                       kicker: 'Anlage',     headline: 'Lobby & Gemeinschaft' },
+        { cats: ['aussenbereich', 'fassade', 'aussicht'], kicker: 'Projekt',  headline: 'Außen & Aussicht' },
+      ]
+      const used = new Set<string>()
+      const galleryBlocks: Array<Record<string, unknown>> = []
+      for (const g of GROUPS) {
+        const imgs = gal.filter(x => g.cats.includes(x.category) && !used.has(x.url)).slice(0, 6)
+        if (!imgs.length) continue
+        imgs.forEach(x => used.add(x.url))
+        galleryBlocks.push({ type: 'gallery', kicker: g.kicker, headline: g.headline, items: imgs.map(x => ({ image: x.url, title: x.label || undefined })) })
+      }
+      if (galleryBlocks.length) {
+        const filtered = blocks.filter(b => b.type !== 'gallery')   // Modell-Galerien ersetzen
+        const ctaIdx = filtered.findIndex(b => b.type === 'cta')
+        const at = ctaIdx >= 0 ? ctaIdx : filtered.length
+        blocks = [...filtered.slice(0, at), ...galleryBlocks, ...filtered.slice(at)]
+      }
+    }
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const { data: row, error } = await supabase.from('sales_decks').insert({

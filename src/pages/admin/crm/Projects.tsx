@@ -126,10 +126,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     if (!project?.id) return
     setIngesting(true)
     setIngestMsg(null)
-    const steps: { action: 'images' | 'docs' | 'facts'; label: string }[] = [
-      { action: 'images', label: t('crm.project.deck.stepImages', 'Bilder & Grundrisse') },
-      { action: 'docs',   label: t('crm.project.deck.stepDocs',   'Dokumente') },
-      { action: 'facts',  label: t('crm.project.deck.stepFacts',  'Fakten (KI liest Broschüre)') },
+    const steps: { action: 'images' | 'categorize' | 'docs' | 'facts'; label: string }[] = [
+      { action: 'images',     label: t('crm.project.deck.stepImages',     'Bilder & Grundrisse') },
+      { action: 'categorize', label: t('crm.project.deck.stepCategorize', 'Bilder einsortieren (Räume)') },
+      { action: 'docs',       label: t('crm.project.deck.stepDocs',       'Dokumente') },
+      { action: 'facts',      label: t('crm.project.deck.stepFacts',      'Fakten (KI liest Broschüre)') },
     ]
     try {
       const summary: string[] = []
@@ -139,11 +140,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           body: { project_id: project.id, action, folder_id: form.drive_folder_id.trim() || undefined },
         })
         if (error) throw new Error(error.message)
-        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; found?: Record<string, boolean>; facts_chars?: number }
+        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number }
         if (d?.error) throw new Error(d.error)
-        if (action === 'images') summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
-        if (action === 'docs')   summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
-        if (action === 'facts')  summary.push(`Fakten ${d.facts_chars ?? 0} Zeichen`)
+        if (action === 'images')     summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
+        if (action === 'categorize') summary.push(`${d.gallery ?? 0} Bilder einsortiert`)
+        if (action === 'docs')       summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
+        if (action === 'facts')      summary.push(`Fakten ${d.facts_chars ?? 0} Zeichen`)
       }
       setIngestMsg({ ok: true, text: `✓ ${summary.join(' · ')}` })
     } catch (e) {
@@ -163,7 +165,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     setDeckBusy(true)
     setDeckMsg(null)
     try {
-      const images = { renders: da.renders ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
+      const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
       const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
       const { data, error } = await supabase.functions.invoke('generate-deck', {
         body: { generic: true, project_id: project.id, facts: da.facts, images, month_label: month },
