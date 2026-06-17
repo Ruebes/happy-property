@@ -246,7 +246,7 @@ Deno.serve(async (req) => {
     // Renders per Vision in Räume/Bereiche einsortieren → beschriftete Bildstrecken.
     if (action === 'categorize') {
       const renders = assets.renders ?? []
-      if (!renders.length) return json({ error: 'Keine Renders — erst action=images ausführen' }, 400)
+      if (!renders.length) return json({ ok: true, action, gallery: 0, skipped: true, note: 'keine Renders' })
       const gallery = await categorizeImages(renders.slice(0, 18))
       await saveAssets(supabase, project_id, { gallery })
       const byCat: Record<string, number> = {}
@@ -301,7 +301,7 @@ Deno.serve(async (req) => {
         du.linen    && { url: du.linen,    label: 'Wäsche-Liste' },
         du.spec     && { url: du.spec,     label: 'Ausstattungs-Spezifikation' },
       ].filter(Boolean)
-      if (!docs.length && !assets.spec_text) return json({ error: 'Keine Dokumente — erst action=docs ausführen' }, 400)
+      if (!docs.length && !assets.spec_text) return json({ ok: true, action, facts_chars: 0, skipped: true, note: 'keine Dokumente' })
 
       const res = await fetch(`${SUPABASE_URL}/functions/v1/extract-project-facts`, {
         method: 'POST',
