@@ -45,7 +45,6 @@ Deno.serve(async (req) => {
       last_name:    clean(c.lastname) ?? '',
       phone:        clean(c.phone) ?? clean(c.mobilephone),
       whatsapp:     clean(c.mobilephone),
-      company_name: clean(c.company),
       country:      clean(c.country),
     })).filter(c => c.email.includes('@'))
     const skippedNoEmail = contacts.length - withEmail.length
@@ -55,7 +54,7 @@ Deno.serve(async (req) => {
       // Bestehende Leads dieser Seite laden
       const emails = [...new Set(withEmail.map(c => c.email))]
       const { data: existing } = await supabase.from('leads')
-        .select('id, email, first_name, last_name, phone, whatsapp, company_name, country').in('email', emails)
+        .select('id, email, first_name, last_name, phone, whatsapp, country').in('email', emails)
       const byEmail = new Map<string, Record<string, unknown>>()
       for (const l of (existing ?? []) as Array<Record<string, unknown>>) byEmail.set(String(l.email).toLowerCase(), l)
 
@@ -72,12 +71,11 @@ Deno.serve(async (req) => {
           if (!ex.whatsapp && c.whatsapp)         patch.whatsapp = c.whatsapp
           if (!ex.first_name && c.first_name)     patch.first_name = c.first_name
           if (!ex.last_name && c.last_name)       patch.last_name = c.last_name
-          if (!ex.company_name && c.company_name) patch.company_name = c.company_name
           if (!ex.country && c.country)           patch.country = c.country
           if (Object.keys(patch).length && !dry_run) { await supabase.from('leads').update(patch).eq('id', ex.id as string); updated++ }
           else if (Object.keys(patch).length) updated++
         } else {
-          toInsert.push({ first_name: c.first_name, last_name: c.last_name, email: c.email, phone: c.phone, whatsapp: c.whatsapp, company_name: c.company_name, country: c.country, source: 'hubspot', status: 'new', language: 'de' })
+          toInsert.push({ first_name: c.first_name, last_name: c.last_name, email: c.email, phone: c.phone, whatsapp: c.whatsapp, country: c.country, source: 'hubspot', status: 'new', language: 'de' })
         }
       }
       if (toInsert.length) {
