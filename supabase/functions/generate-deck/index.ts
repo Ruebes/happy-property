@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
     // → sofortige Antwort, kein Verbindungs-Timeout. Der Browser pollt danach
     // crm_projects.deck_token. Sonstige/sync-Aufrufer warten normal auf das Ergebnis.
     const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
-    if (body.background && generic && er?.waitUntil) {
+    if (body.background && er?.waitUntil) {   // generisch UND personalisiert (Batch im Wizard)
       er.waitUntil(doGenerate().catch(() => {}))
       return json({ ok: true, background: true })
     }

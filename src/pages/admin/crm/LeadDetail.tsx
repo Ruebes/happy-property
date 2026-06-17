@@ -10,6 +10,7 @@ import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
+import DeckWizard from '../../../components/crm/DeckWizard'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -42,6 +43,9 @@ export default function LeadDetail() {
 
   // Core data
   const [lead, setLead] = useState<Lead | null>(null)
+
+  // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
+  const [showWizard, setShowWizard] = useState(false)
 
   // ── Google-Drive-Kundenordner anlegen / öffnen ───────────────────────────────
   const [driveBusy, setDriveBusy] = useState(false)
@@ -2047,6 +2051,9 @@ export default function LeadDetail() {
                       {driveBusy ? t('crm.lead.driveCreating', '📁 Ordner wird erstellt…') : t('crm.lead.driveCreate', '📁 Drive-Ordner erstellen')}
                     </button>
                   )}
+                  <button type="button" onClick={() => setShowWizard(true)} className="font-medium text-orange-600 hover:text-orange-700">
+                    📑 {t('crm.lead.createDeck', 'Sales Deck erstellen')}
+                  </button>
                 </div>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {/* Source badge */}
@@ -4059,6 +4066,15 @@ export default function LeadDetail() {
           preselectedProjectId={unitPickerProjectId}
           onClose={() => { setShowUnitPicker(false); setUnitPickerProjectId(null) }}
           onSelect={handleUnitAssign}
+        />
+      )}
+
+      {/* ── Sales-Deck-Wizard ────────────────────────────────────────── */}
+      {showWizard && lead && (
+        <DeckWizard
+          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email }}
+          onClose={() => setShowWizard(false)}
+          onDone={(msg) => { setShowWizard(false); showToast(msg) }}
         />
       )}
 

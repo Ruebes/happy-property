@@ -35,6 +35,7 @@ const CrmArchived           = lazy(() => import('./pages/admin/crm/Archived'))
 const CrmProjects           = lazy(() => import('./pages/admin/crm/Projects'))
 const CrmProjectDetail      = lazy(() => import('./pages/admin/crm/ProjectDetail'))
 const CrmSettings           = lazy(() => import('./pages/admin/crm/Settings'))
+const CrmPostausgang        = lazy(() => import('./pages/admin/crm/Postausgang'))
 const CrmWhatsappTemplates  = lazy(() => import('./pages/admin/crm/settings/WhatsappTemplates'))
 const CrmAutomationRules    = lazy(() => import('./pages/admin/crm/settings/AutomationRules'))
 const CrmStageMessages      = lazy(() => import('./pages/admin/crm/settings/StageMessages'))
@@ -125,6 +126,7 @@ export default function App() {
               <Route path="/admin/crm/projects"       element={<CrmProjects />} />
               <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />
               <Route path="/admin/crm/settings"    element={<CrmSettings />} />
+              <Route path="/admin/crm/postausgang" element={<CrmPostausgang />} />
               <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
               <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />
               <Route path="/verwalter/properties/:id" element={<PropertyDetailRoute />} />

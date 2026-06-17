@@ -976,6 +976,7 @@
       "templates": "Email Templates",
       "archived": "Archived",
       "projects": "Projects",
+      "outbox": "Outbox",
       "settings": "Settings",
       "developers": "Manage Developers",
       "contacts": "Business Contacts",
