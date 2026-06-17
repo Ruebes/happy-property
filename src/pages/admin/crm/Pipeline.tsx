@@ -378,6 +378,114 @@ function DealCard({ deal, onDragStart, onClick, onContextMenu }: DealCardProps) 
   )
 }
 
+// ── DealModal: Deal für bestehenden Kunden anlegen ───────────────────────────
+interface PickLead { id: string; first_name: string; last_name: string; email: string }
+
+function DealModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const { t } = useTranslation()
+  const { profile } = useAuth()
+  const [leads, setLeads]       = useState<PickLead[]>([])
+  const [search, setSearch]     = useState('')
+  const [selected, setSelected] = useState<PickLead | null>(null)
+  const [phase, setPhase]       = useState<DealPhase>('erstkontakt')
+  const [existing, setExisting] = useState(0)
+  const [saving, setSaving]     = useState(false)
+
+  useEffect(() => {
+    void supabase.from('leads').select('id, first_name, last_name, email')
+      .order('created_at', { ascending: false }).limit(3000)
+      .then(({ data }) => setLeads((data ?? []) as PickLead[]))
+  }, [])
+
+  const filtered = search.trim().length >= 2
+    ? leads.filter(l => `${l.first_name} ${l.last_name} ${l.email}`.toLowerCase().includes(search.trim().toLowerCase())).slice(0, 8)
+    : []
+
+  const pick = async (l: PickLead) => {
+    setSelected(l); setSearch('')
+    const { data } = await supabase.from('deals').select('phase').eq('lead_id', l.id)
+    setExisting((data ?? []).filter(d => d.phase !== 'archiviert' && d.phase !== 'deal_verloren').length)
+  }
+
+  const handleSubmit = async () => {
+    if (!selected) return
+    setSaving(true)
+    try {
+      const { data: dealData, error } = await supabase.from('deals')
+        .insert({ lead_id: selected.id, phase }).select('id').single()
+      if (error) throw error
+      await supabase.from('activities').insert({
+        lead_id: selected.id, deal_id: dealData?.id ?? null, type: 'note', direction: 'outbound',
+        content: `Deal manuell angelegt (Phase: ${phase}).`, created_by: profile?.id ?? null,
+      })
+      onSaved(); onClose()
+    } catch (err) {
+      console.error('[DealModal] save error', err)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-800">{t('crm.deal.newDeal', 'Neuer Deal')}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+
+        {!selected ? (
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.deal.pickCustomer', 'Kunde aus der Datenbank')}</label>
+            <input autoFocus value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={t('crm.deal.searchPlaceholder', 'Name oder E-Mail suchen…')}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            {search.trim().length >= 2 && (
+              <div className="mt-2 border rounded-lg divide-y max-h-64 overflow-y-auto">
+                {filtered.length === 0 && <p className="px-3 py-2 text-sm text-gray-400">{t('crm.deal.noMatch', 'Kein Treffer')}</p>}
+                {filtered.map(l => (
+                  <button key={l.id} onClick={() => void pick(l)} className="w-full text-left px-3 py-2 hover:bg-orange-50">
+                    <p className="text-sm font-medium text-gray-800">{l.first_name} {l.last_name}</p>
+                    <p className="text-xs text-gray-500">{l.email}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mb-3 flex items-center justify-between bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-800 truncate">{selected.first_name} {selected.last_name}</p>
+              <p className="text-xs text-gray-500 truncate">{selected.email}</p>
+            </div>
+            <button onClick={() => { setSelected(null); setExisting(0) }} className="text-xs text-orange-600 hover:underline shrink-0 ml-2">{t('crm.deal.change', 'ändern')}</button>
+          </div>
+        )}
+
+        {selected && existing > 0 && (
+          <p className="mb-3 text-xs text-amber-600">{t('crm.deal.hasExisting', '⚠️ Dieser Kunde hat bereits {{n}} offene(n) Deal(s).', { n: existing })}</p>
+        )}
+
+        {selected && (
+          <div className="mb-4">
+            <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.deal.startPhase', 'Start-Phase')}</label>
+            <select value={phase} onChange={e => setPhase(e.target.value as DealPhase)}
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300">
+              {DEAL_PHASES.map(p => <option key={p} value={p}>{PHASE_ICONS[p]} {t(`crm.phases.${p}`, p)}</option>)}
+            </select>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-600 border hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+          <button onClick={() => void handleSubmit()} disabled={!selected || saving}
+            className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+            {saving ? t('crm.deal.creating', 'Wird angelegt…') : t('crm.deal.create', 'Deal anlegen')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Pipeline (main export) ───────────────────────────────────────────────────
 
 export default function Pipeline() {
@@ -390,6 +498,7 @@ export default function Pipeline() {
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<DealPhase | null>(null)
   const [showLeadModal, setShowLeadModal] = useState(false)
+  const [showDealModal, setShowDealModal] = useState(false)
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
@@ -668,13 +777,21 @@ export default function Pipeline() {
           <h1 className="text-xl font-bold text-gray-800">
             {t('crm.pipeline.title', 'Pipeline')}
           </h1>
-          <button
-            onClick={() => setShowLeadModal(true)}
-            className="px-4 py-2 text-sm rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: '#ff795d' }}
-          >
-            + {t('crm.pipeline.newLead', 'Neuer Lead')}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowDealModal(true)}
+              className="px-4 py-2 text-sm rounded-lg font-medium border border-orange-300 text-orange-600 hover:bg-orange-50 transition-colors"
+            >
+              + {t('crm.deal.newDeal', 'Neuer Deal')}
+            </button>
+            <button
+              onClick={() => setShowLeadModal(true)}
+              className="px-4 py-2 text-sm rounded-lg text-white font-medium hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: '#ff795d' }}
+            >
+              + {t('crm.pipeline.newLead', 'Neuer Lead')}
+            </button>
+          </div>
         </div>
 
         {/* Filter bar */}
@@ -791,6 +908,13 @@ export default function Pipeline() {
         <LeadModal
           staff={staff}
           onClose={() => setShowLeadModal(false)}
+          onSaved={fetchDeals}
+        />
+      )}
+
+      {showDealModal && (
+        <DealModal
+          onClose={() => setShowDealModal(false)}
           onSaved={fetchDeals}
         />
       )}
