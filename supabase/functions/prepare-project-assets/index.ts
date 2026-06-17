@@ -119,7 +119,7 @@ type DeckAssets = {
 }
 async function loadAssets(supabase: ReturnType<typeof createClient>, projectId: string): Promise<{ folderId: string | null; assets: DeckAssets; project: Record<string, unknown> }> {
   const { data } = await supabase.from('crm_projects')
-    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url').eq('id', projectId).maybeSingle()
+    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url, images').eq('id', projectId).maybeSingle()
   const p = (data ?? {}) as Record<string, unknown>
   return { folderId: (p.drive_folder_id as string) ?? null, assets: (p.deck_assets as DeckAssets) ?? {}, project: p }
 }
@@ -217,6 +217,10 @@ Deno.serve(async (req) => {
       const renders: string[] = []
       for (const f of renderFiles.filter(small).slice(0, RENDER_CAP)) {
         try { renders.push(await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)) } catch { /* skip */ }
+      }
+      // Fallback: keine Bilder im Drive-Ordner → bereits im CRM hinterlegte Projektbilder nutzen.
+      if (!renders.length && Array.isArray(project.images)) {
+        renders.push(...(project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')).slice(0, RENDER_CAP))
       }
       const floorplans: DeckAssets['floorplans'] = []
       for (const f of fpFiles.filter(small).slice(0, FP_CAP)) {
