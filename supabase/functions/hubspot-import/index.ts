@@ -19,9 +19,11 @@ const clean = (v: unknown): string | null => (typeof v === 'string' && v.trim() 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const token = Deno.env.get('HUBSPOT_TOKEN')
+    const rawTok = Deno.env.get('HUBSPOT_TOKEN') ?? Deno.env.get('Hubspot_Token') ?? Deno.env.get('hubspot_token')
+    const token = rawTok ? rawTok.trim().replace(/^["']+|["']+$/g, '') : null
     if (!token) return json({ error: 'HUBSPOT_TOKEN nicht gesetzt (Supabase-Secret anlegen).' }, 503)
-    const { after, dry_run } = await req.json().catch(() => ({})) as { after?: string; dry_run?: boolean }
+    const { after, dry_run, debug } = await req.json().catch(() => ({})) as { after?: string; dry_run?: boolean; debug?: boolean }
+    if (debug) return json({ ok: true, prefix: token.slice(0, 4), len: token.length, looksPrivateApp: token.startsWith('pat-') })
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     // 1) Eine HubSpot-Seite holen
