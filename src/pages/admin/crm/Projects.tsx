@@ -53,6 +53,7 @@ interface ProjectForm {
   longitude:      number | null
   equipment_list: string
   video_url:      string
+  drive_folder_id: string
 }
 
 interface ProjectModalProps {
@@ -110,12 +111,47 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     longitude:       project?.longitude ?? null,
     equipment_list:  project?.equipment_list ?? '',
     video_url:       project?.video_url ?? '',
+    drive_folder_id: project?.drive_folder_id ?? '',
   })
   const [resolvingPin, setResolvingPin] = useState(false)
   const [pinMsg,       setPinMsg]       = useState('')
   const [images, setImages]     = useState<string[]>(project?.images ?? [])
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver]   = useState(false)
+
+  // ── Deck-Assets aus Google Drive importieren (prepare-project-assets) ──────────
+  const [ingesting, setIngesting] = useState(false)
+  const [ingestMsg, setIngestMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const runIngest = async () => {
+    if (!project?.id) return
+    setIngesting(true)
+    setIngestMsg(null)
+    const steps: { action: 'images' | 'docs' | 'facts'; label: string }[] = [
+      { action: 'images', label: t('crm.project.deck.stepImages', 'Bilder & Grundrisse') },
+      { action: 'docs',   label: t('crm.project.deck.stepDocs',   'Dokumente') },
+      { action: 'facts',  label: t('crm.project.deck.stepFacts',  'Fakten (KI liest Broschüre)') },
+    ]
+    try {
+      const summary: string[] = []
+      for (const { action, label } of steps) {
+        setIngestMsg({ ok: true, text: `⏳ ${label}…` })
+        const { data, error } = await supabase.functions.invoke('prepare-project-assets', {
+          body: { project_id: project.id, action, folder_id: form.drive_folder_id.trim() || undefined },
+        })
+        if (error) throw new Error(error.message)
+        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; found?: Record<string, boolean>; facts_chars?: number }
+        if (d?.error) throw new Error(d.error)
+        if (action === 'images') summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
+        if (action === 'docs')   summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
+        if (action === 'facts')  summary.push(`Fakten ${d.facts_chars ?? 0} Zeichen`)
+      }
+      setIngestMsg({ ok: true, text: `✓ ${summary.join(' · ')}` })
+    } catch (e) {
+      setIngestMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler beim Import' })
+    } finally {
+      setIngesting(false)
+    }
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const up = (k: keyof ProjectForm, v: string) => setForm(prev => ({ ...prev, [k]: v }))
@@ -196,6 +232,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         longitude:       form.longitude,
         equipment_list:  form.equipment_list.trim() || null,
         video_url:       form.video_url.trim() || null,
+        drive_folder_id: form.drive_folder_id.trim() || null,
         images,
       }
       type DbResult = { error: { message: string } | null }
@@ -542,6 +579,42 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   </div>
                 )
               })()}
+
+              {/* Sales-Deck-Assets aus Google Drive */}
+              <div className="border-t border-gray-100 pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('crm.project.deck.title', 'Sales-Deck-Assets (Google Drive)')}
+                </label>
+                <p className="text-xs text-gray-400 mb-2">
+                  {t('crm.project.deck.help', 'Drive-Ordner-ID des Projekts. Der Import zieht automatisch Renders, Grundrisse (je Etage), Broschüre, Einrichtung/Besteck/Wäsche und erzeugt apartment-sichere Fakten.')}
+                </p>
+                <div className="flex gap-2">
+                  <input value={form.drive_folder_id} onChange={e => up('drive_folder_id', e.target.value)}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400"
+                    placeholder="z.B. 19wlu6PSKy14un9EJeTFZWtPAbpkk-4nU" />
+                  <button
+                    type="button"
+                    onClick={runIngest}
+                    disabled={ingesting || !project?.id || !form.drive_folder_id.trim()}
+                    className="px-4 py-2 rounded-lg text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  >
+                    {ingesting ? t('crm.project.deck.loading', 'Lädt…') : t('crm.project.deck.load', 'Aus Drive laden')}
+                  </button>
+                </div>
+                {!project?.id && (
+                  <p className="text-xs text-amber-600 mt-1.5">{t('crm.project.deck.saveFirst', 'Projekt zuerst speichern, dann Assets laden.')}</p>
+                )}
+                {ingestMsg && (
+                  <p className={`text-xs mt-2 rounded-lg px-3 py-2 ${ingestMsg.ok ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>
+                    {ingestMsg.text}
+                  </p>
+                )}
+                {project?.deck_assets?.updated_at && !ingestMsg && (
+                  <p className="text-xs text-gray-400 mt-2">
+                    {t('crm.project.deck.cached', 'Im Cache')}: {project.deck_assets.renders?.length ?? 0} Bilder · {project.deck_assets.floorplans?.length ?? 0} Grundrisse · {project.deck_assets.facts ? t('crm.project.deck.factsReady', 'Fakten ✓') : t('crm.project.deck.factsMissing', 'Fakten fehlen')}
+                  </p>
+                )}
+              </div>
 
               {/* Baustellenbilder & -videos */}
               <div className="border-t border-gray-100 pt-4">

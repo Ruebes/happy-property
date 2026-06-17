@@ -19,21 +19,25 @@ AMENITIES & BESONDERHEITEN: gemeinschaftliche Anlagen (Pool, Gym, Dachterrasse �
 EINRICHTUNGSPAKET: was ist enthalten (Möbel, Geräte, Küche, Marken), für welche Wohnungsgrößen.
 HIGHLIGHTS: 3–5 stärkste Verkaufsargumente.
 
-WICHTIG: NUR Fakten aus den Dokumenten, NICHTS erfinden. Wenn etwas nicht drinsteht, weglassen. Keine doppelten Anführungszeichen verwenden. Antworte als reiner Text (kein JSON).`
+WICHTIG: NUR Fakten aus den Dokumenten, NICHTS erfinden. Wenn etwas nicht drinsteht, weglassen. Keine doppelten Anführungszeichen verwenden. Antworte als reiner Text (kein JSON).
+
+APARTMENT-SICHERHEIT: Wenn es um eine Apartment-Wohnanlage geht und eine Spezifikation projektweite oder reine Villen-Merkmale enthält (eigener Privatgarten, Keller/Basement, privater Pool im Boden, interne Wendeltreppe zwischen Etagen), übernimm diese NICHT — sie gelten nicht für eine Wohnung. Aus der Spezifikation NUR Dinge übernehmen, die in einer Wohnung Sinn ergeben: Möbel-/Geräte-Marken, Küche, Bäder, Böden, Klima/Heizung, Fenster, Material-/Bauqualität, Sicherheit, Energie.`
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
 
   try {
-    const { docs } = await req.json() as { docs?: Array<{ url: string; label?: string }> }
-    if (!docs?.length) return json({ error: 'docs fehlt' }, 400)
+    const { docs, spec_text, context } = await req.json() as { docs?: Array<{ url: string; label?: string }>; spec_text?: string; context?: string }
+    if (!docs?.length && !spec_text?.trim()) return json({ error: 'docs oder spec_text fehlt' }, 400)
 
-    const content: unknown[] = docs.slice(0, 4).map(d => ({
+    const content: unknown[] = (docs ?? []).slice(0, 4).map(d => ({
       type:   'document',
       source: { type: 'url', url: d.url },
       title:  d.label ?? 'Dokument',
     }))
+    if (context?.trim())   content.push({ type: 'text', text: `KONTEXT: ${context.trim()}` })
+    if (spec_text?.trim()) content.push({ type: 'text', text: `AUSSTATTUNGS-SPEZIFIKATION (Rohtext, ggf. projektweit — apartment-sicher filtern):\n${spec_text.trim().slice(0, 8000)}` })
     content.push({ type: 'text', text: PROMPT })
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {

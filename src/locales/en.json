@@ -1457,7 +1457,20 @@
       "mapsPinHint": "Paste a Google Maps link (short links too) — the pin is picked up automatically.",
       "mapsPinResolving": "Resolving pin…",
       "mapsPinFail": "Could not resolve the link",
-      "locationOptional": "Optional — for the text display. The pin above sets the map."
+      "locationOptional": "Optional — for the text display. The pin above sets the map.",
+      "deck": {
+        "title": "Sales deck assets (Google Drive)",
+        "help": "Drive folder ID of the project. The import automatically pulls renders, floor plans (per floor), brochure, furnishing/cutlery/linen and generates apartment-safe facts.",
+        "load": "Load from Drive",
+        "loading": "Loading…",
+        "saveFirst": "Save the project first, then load assets.",
+        "cached": "Cached",
+        "factsReady": "Facts ✓",
+        "factsMissing": "Facts missing",
+        "stepImages": "Images & floor plans",
+        "stepDocs": "Documents",
+        "stepFacts": "Facts (AI reads brochure)"
+      }
     },
     "unit": {
       "title": "Unit",

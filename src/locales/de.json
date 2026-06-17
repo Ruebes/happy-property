@@ -1457,7 +1457,20 @@
       "mapsPinHint": "Google-Maps-Link einfügen (auch Kurzlink) — Pin wird automatisch übernommen.",
       "mapsPinResolving": "Pin wird aufgelöst…",
       "mapsPinFail": "Konnte den Link nicht auflösen",
-      "locationOptional": "Optional — für die Text-Anzeige. Der Pin oben bestimmt die Karte."
+      "locationOptional": "Optional — für die Text-Anzeige. Der Pin oben bestimmt die Karte.",
+      "deck": {
+        "title": "Sales-Deck-Assets (Google Drive)",
+        "help": "Drive-Ordner-ID des Projekts. Der Import zieht automatisch Renders, Grundrisse (je Etage), Broschüre, Einrichtung/Besteck/Wäsche und erzeugt apartment-sichere Fakten.",
+        "load": "Aus Drive laden",
+        "loading": "Lädt…",
+        "saveFirst": "Projekt zuerst speichern, dann Assets laden.",
+        "cached": "Im Cache",
+        "factsReady": "Fakten ✓",
+        "factsMissing": "Fakten fehlen",
+        "stepImages": "Bilder & Grundrisse",
+        "stepDocs": "Dokumente",
+        "stepFacts": "Fakten (KI liest Broschüre)"
+      }
     },
     "unit": {
       "title": "Unit",

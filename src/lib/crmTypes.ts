@@ -195,10 +195,24 @@ export interface CrmProject {
   images:          string[]
   video_url:       string | null
   equipment_list:  string | null
+  drive_folder_id: string | null   // Google-Drive-Ordner des Projekts (Quelle für Deck-Assets)
+  deck_assets:     DeckAssetsCache | null  // gecachte Drive-Assets (prepare-project-assets)
   created_at:      string
   updated_at:      string
   // joined
   units?:      CrmProjectUnit[]
+}
+
+// Cache der automatisch aus Drive importierten Deck-Assets (crm_projects.deck_assets).
+export interface DeckAssetsCache {
+  renders?:    string[]
+  floorplans?: { floor: number | null; label: string; url: string }[]
+  map?:        string | null
+  mapUrl?:     string | null
+  doc_urls?:   Record<string, string>
+  spec_text?:  string
+  facts?:      string
+  updated_at?: string
 }
 
 export type UnitRentalType = 'short' | 'long'
