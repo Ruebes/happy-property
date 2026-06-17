@@ -61,9 +61,9 @@ Deno.serve(async (req: Request) => {
     if (leadErr || !lead) throw new Error(`Lead ${lead_id} nicht gefunden: ${leadErr?.message}`)
 
     // Deal (+ verknüpfte Unit für objekt/unit/kaufpreis)
-    let dealData: { developer: string | null; commission_amount: number | null; unit_id: string | null } | null = null
+    let dealData: { developer: string | null; commission_amount: number | null; unit_id: string | null; registration_notes: string | null } | null = null
     if (deal_id) {
-      const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id').eq('id', deal_id).maybeSingle()
+      const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes').eq('id', deal_id).maybeSingle()
       dealData = data as typeof dealData
     }
     let unitNumber = '', objektName = '', kaufpreis = ''
@@ -97,6 +97,9 @@ Deno.serve(async (req: Request) => {
       email:        lead.email,
       phone:        lead.phone ?? '',
       developers:   dealData?.developer ?? '',
+      developer:    dealData?.developer ?? '',
+      bemerkung:    dealData?.registration_notes ?? '',
+      bemerkungen:  dealData?.registration_notes ?? '',
       commission_amount: eur(dealData?.commission_amount),
       // NEU (A):
       notiz:        lead.notes ?? '',

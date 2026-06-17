@@ -742,7 +742,7 @@ export default function LeadDetail() {
     setSavingReg(true)
     const oldPhase = deal.phase
     try {
-      await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null }).eq('id', deal.id).throwOnError()
+      await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null, developer: selectedDevelopers.join(', ') || null }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id:    id,
         deal_id:    deal.id,
