@@ -78,6 +78,19 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Registrierung: Developer + Bemerkung stehen evtl. nur in der Phasenwechsel-Aktivität,
+    // falls das Frontend deal.developer noch nicht gesetzt hat (robust gegen alten PWA-Cache).
+    let regDevelopers = dealData?.developer ?? ''
+    let regNotes = dealData?.registration_notes ?? ''
+    if (event_type === 'registrierung' && (!regDevelopers || !regNotes)) {
+      let aq = supabase.from('activities').select('content').eq('type', 'note').ilike('content', '%Registrierung gesendet an:%')
+      aq = deal_id ? aq.eq('deal_id', deal_id) : aq.eq('lead_id', lead_id)
+      const { data: act } = await aq.order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const c = (act as { content?: string } | null)?.content ?? ''
+      if (!regDevelopers) { const m = c.match(/Registrierung gesendet an:\s*([^.]+)/i); if (m) regDevelopers = m[1].trim() }
+      if (!regNotes)      { const m = c.match(/Bemerkung:\s*([\s\S]+)$/i);          if (m) regNotes = m[1].trim() }
+    }
+
     // Termine: nächster (zukünftig) für Timing/Bedingung, sonst letzter für zoom_link
     const nowIso = new Date().toISOString()
     const { data: nextAppt } = await supabase.from('crm_appointments')
@@ -96,10 +109,10 @@ Deno.serve(async (req: Request) => {
       nachname:     lead.last_name,
       email:        lead.email,
       phone:        lead.phone ?? '',
-      developers:   dealData?.developer ?? '',
-      developer:    dealData?.developer ?? '',
-      bemerkung:    dealData?.registration_notes ?? '',
-      bemerkungen:  dealData?.registration_notes ?? '',
+      developers:   regDevelopers,
+      developer:    regDevelopers,
+      bemerkung:    regNotes,
+      bemerkungen:  regNotes,
       commission_amount: eur(dealData?.commission_amount),
       // NEU (A):
       notiz:        lead.notes ?? '',
