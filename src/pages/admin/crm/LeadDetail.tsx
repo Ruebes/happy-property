@@ -568,6 +568,7 @@ export default function LeadDetail() {
     supabase.functions.invoke('send-email', {
       body: {
         to:      lead.email,
+        lead_id: id,
         subject: 'Neue Datei in Ihrem Happy Property Portal',
         html:    `<p>Hallo ${firstName},</p>
 <p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
