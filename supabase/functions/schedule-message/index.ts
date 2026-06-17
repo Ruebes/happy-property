@@ -177,6 +177,17 @@ Deno.serve(async (req: Request) => {
       else scheduled++
     }
 
+    // Sofort-Versand anstoßen: fällige (delay-0) Nachrichten gehen in Sekunden raus,
+    // statt bis zu 5 Min auf den Cron zu warten. Verzögerte bleiben liegen (Cron).
+    if (scheduled > 0) {
+      const trigger = fetch(`${SUPABASE_URL}/functions/v1/process-scheduled-messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
+        body: '{}',
+      }).catch(() => {})
+      const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+      if (er?.waitUntil) er.waitUntil(trigger); else await trigger
+    }
     return new Response(JSON.stringify({ ok: true, scheduled, skipped }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
