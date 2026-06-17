@@ -278,7 +278,7 @@ Deno.serve(async (req) => {
       await importDoc(brochure, 'brochure')
       await importDoc(cutlery, 'cutlery')
       await importDoc(linen, 'linen')
-      if (pricelist && pricelist.mimeType === 'application/pdf') await importDoc(pricelist, 'pricelist')
+      if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/'))) await importDoc(pricelist, 'pricelist')
 
       // Spec: xlsx → Text (für Claude in der facts-Phase); PDF → Storage
       let spec_text = assets.spec_text ?? ''

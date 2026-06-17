@@ -1487,7 +1487,10 @@
         "deckReady": "General deck created.",
         "factsBackground": "Facts running in the background (~1 min)",
         "factsPending": "Facts not ready yet (running in the background) — please wait a minute and retry.",
-        "deckTimeout": "The deck is taking unusually long — please check again with “Open deck” shortly."
+        "deckTimeout": "The deck is taking unusually long — please check again with “Open deck” shortly.",
+        "stepUnits": "Apartments from price list",
+        "unitsBackground": "Apartments are being created in the background (~½ min)",
+        "unitsCreated": "apartments created"
       }
     },
     "unit": {

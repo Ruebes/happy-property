@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
 
   try {
-    const body = await req.json() as { project_id?: string; url?: string; create?: boolean }
+    const body = await req.json() as { project_id?: string; url?: string; create?: boolean; background?: boolean }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     let url = body.url
@@ -92,6 +92,8 @@ Deno.serve(async (req) => {
       ? { type: 'document', source: { type: 'url', url } }
       : { type: 'image',    source: { type: 'url', url } }
 
+    // Die Generierung (Claude liest Preisliste ~25s + Insert). Sync oder im Hintergrund.
+    const runParse = async (): Promise<{ count: number; created: number; units: Unit[] }> => {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -110,14 +112,14 @@ Deno.serve(async (req) => {
     })
     if (!res.ok) {
       const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
-      return json({ error: `Anthropic ${res.status}: ${e.error?.message ?? res.statusText}` }, 502)
+      throw new Error(`Anthropic ${res.status}: ${e.error?.message ?? res.statusText}`)
     }
     const data = await res.json() as { content?: Array<{ type?: string; input?: { units?: unknown } }> }
     const tu = (data.content ?? []).find(c => c.type === 'tool_use')
     let raw = tu?.input?.units
     if (typeof raw === 'string') { try { raw = JSON.parse(raw) } catch { raw = [] } }
     const units = (Array.isArray(raw) ? raw : []) as Unit[]
-    if (!units.length) return json({ error: 'Keine Einheiten erkannt' }, 502)
+    if (!units.length) throw new Error('Keine Einheiten erkannt')
 
     let created = 0
     if (body.create && body.project_id) {
@@ -146,12 +148,23 @@ Deno.serve(async (req) => {
         }))
       if (rows.length) {
         const { error, count } = await supabase.from('crm_project_units').insert(rows, { count: 'exact' })
-        if (error) return json({ error: `Insert: ${error.message}`, units }, 500)
+        if (error) throw new Error(`Insert: ${error.message}`)
         created = count ?? rows.length
       }
     }
 
-    return json({ ok: true, count: units.length, created, units })
+      return { count: units.length, created, units }
+    }   // ── Ende runParse ──
+
+    // Preisliste lesen (~25s): bei create im HINTERGRUND, damit der Browser nicht
+    // am Verbindungs-Timeout abbricht. Die Wohnungen erscheinen kurz danach.
+    const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+    if (body.background && body.create && er?.waitUntil) {
+      er.waitUntil(runParse().catch(() => {}))
+      return json({ ok: true, background: true })
+    }
+    const out = await runParse()
+    return json({ ok: true, count: out.count, created: out.created, units: out.units })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

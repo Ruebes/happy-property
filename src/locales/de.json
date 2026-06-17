@@ -1487,7 +1487,10 @@
         "deckReady": "Allgemeines Deck erstellt.",
         "factsBackground": "Fakten laufen im Hintergrund (~1 Min)",
         "factsPending": "Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut.",
-        "deckTimeout": "Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen“ prüfen."
+        "deckTimeout": "Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen“ prüfen.",
+        "stepUnits": "Wohnungen aus Preisliste",
+        "unitsBackground": "Wohnungen werden im Hintergrund angelegt (~½ Min)",
+        "unitsCreated": "Wohnungen angelegt"
       }
     },
     "unit": {

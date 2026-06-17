@@ -162,6 +162,14 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (action === 'docs')       summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
         if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : `Fakten ${d.facts_chars ?? 0} Zeichen`)
       }
+      // Wohnungen aus der Preisliste anlegen (Vorschlags-Pool, nur im Deck-Wizard sichtbar) — im Hintergrund
+      setIngestMsg({ ok: true, text: `⏳ ${t('crm.project.deck.stepUnits', 'Wohnungen aus Preisliste')}…` })
+      try {
+        const { data: ud, error: uerr } = await supabase.functions.invoke('parse-pricelist', { body: { project_id: project.id, create: true, background: true } })
+        const u = (ud ?? {}) as { background?: boolean; created?: number; error?: string }
+        if (uerr || u.error) summary.push(`${t('crm.project.deck.stepUnits', 'Wohnungen')}: ${u.error ?? uerr?.message ?? 'Fehler'}`)
+        else summary.push(u.background ? t('crm.project.deck.unitsBackground', 'Wohnungen werden im Hintergrund angelegt') : `${u.created ?? 0} ${t('crm.project.deck.unitsCreated', 'Wohnungen angelegt')}`)
+      } catch { summary.push(`${t('crm.project.deck.stepUnits', 'Wohnungen')}: —`) }
       setIngestMsg({ ok: true, text: `✓ ${summary.join(' · ')}` })
     } catch (e) {
       setIngestMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler beim Import' })
