@@ -222,6 +222,11 @@ Deno.serve(async (req) => {
         imgs.forEach(x => used.add(x.url))
         galleryBlocks.push({ type: 'gallery', kicker: g.kicker, headline: g.headline, items: imgs.map(x => ({ image: x.url, title: x.label || undefined })) })
       }
+      // Konnten die Bilder nicht in Räume einsortiert werden (z.B. große Fotos, die
+      // Vision ablehnt) → trotzdem eine saubere Sammel-Bildstrecke zeigen.
+      if (!galleryBlocks.length && gal.length) {
+        galleryBlocks.push({ type: 'gallery', kicker: 'Projekt', headline: 'Eindrücke', items: gal.slice(0, 6).map(x => ({ image: x.url, title: x.label || undefined })) })
+      }
       if (galleryBlocks.length) {
         const filtered = blocks.filter(b => b.type !== 'gallery')   // Modell-Galerien ersetzen
         const ctaIdx = filtered.findIndex(b => b.type === 'cta')
