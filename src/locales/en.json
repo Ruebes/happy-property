@@ -1484,7 +1484,9 @@
         "deckLoading": "Creating deck…",
         "openDeck": "Open deck (Zoom)",
         "needAssets": "Load assets from Drive first (facts missing).",
-        "deckReady": "General deck created."
+        "deckReady": "General deck created.",
+        "factsBackground": "Facts running in the background (~1 min)",
+        "factsPending": "Facts not ready yet (running in the background) — please wait a minute and retry."
       }
     },
     "unit": {

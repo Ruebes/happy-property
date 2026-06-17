@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import type { CrmProject, ProjectStatus } from '../../../lib/crmTypes'
+import type { CrmProject, ProjectStatus, DeckAssetsCache } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
@@ -155,12 +155,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           body: { project_id: project.id, action, folder_id: folderId || undefined },
         })
         if (error) throw new Error(error.message)
-        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number }
+        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean }
         if (d?.error) throw new Error(d.error)
         if (action === 'images')     summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
         if (action === 'categorize') summary.push(`${d.gallery ?? 0} Bilder einsortiert`)
         if (action === 'docs')       summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
-        if (action === 'facts')      summary.push(`Fakten ${d.facts_chars ?? 0} Zeichen`)
+        if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : `Fakten ${d.facts_chars ?? 0} Zeichen`)
       }
       setIngestMsg({ ok: true, text: `✓ ${summary.join(' · ')}` })
     } catch (e) {
@@ -175,11 +175,13 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   const [deckMsg, setDeckMsg]   = useState<{ ok: boolean; text: string; token?: string } | null>(null)
   const runGenericDeck = async () => {
     if (!project?.id) return
-    const da = project.deck_assets
-    if (!da?.facts) { setDeckMsg({ ok: false, text: t('crm.project.deck.needAssets', 'Erst Assets aus Drive laden (Fakten fehlen).') }); return }
     setDeckBusy(true)
     setDeckMsg(null)
     try {
+      // Frische Assets holen — Fakten werden im Hintergrund erzeugt, der project-Prop ist evtl. veraltet.
+      const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', project.id).maybeSingle()
+      const da = ((fresh?.deck_assets ?? project.deck_assets) ?? null) as DeckAssetsCache | null
+      if (!da?.facts) { setDeckMsg({ ok: false, text: t('crm.project.deck.factsPending', 'Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut.') }); setDeckBusy(false); return }
       const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
       const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
       const { data, error } = await supabase.functions.invoke('generate-deck', {
@@ -659,7 +661,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 )}
 
                 {/* Generisches Projekt-Deck (zum Teilen im Zoom) */}
-                {project?.id && project.deck_assets?.facts && (
+                {project?.id && (project.deck_assets || form.drive_folder_id.trim()) && (
                   <div className="mt-3">
                     <div className="flex items-center gap-2 flex-wrap">
                       <button

@@ -164,7 +164,7 @@ async function categorizeImages(urls: string[]): Promise<Array<{ url: string; ca
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const { project_id, action, folder_id } = await req.json() as { project_id?: string; action?: string; folder_id?: string; force?: boolean }
+    const { project_id, action, folder_id, sync } = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean }
     if (!project_id) return json({ error: 'project_id fehlt' }, 400)
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { folderId: dbFolder, assets, project } = await loadAssets(supabase, project_id)
@@ -303,17 +303,25 @@ Deno.serve(async (req) => {
       ].filter(Boolean)
       if (!docs.length && !assets.spec_text) return json({ ok: true, action, facts_chars: 0, skipped: true, note: 'keine Dokumente' })
 
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/extract-project-facts`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docs, spec_text: assets.spec_text ?? '', context: `Projekt ${project.name ?? ''} (${project.developer ?? ''}), ${project.location ?? 'Paphos'}. Dies ist eine APARTMENT-Wohnanlage.` }),
-      })
-      const data = await res.json() as { facts?: string; error?: string }
-      if (!data.facts) return json({ error: `extract-project-facts: ${data.error ?? 'leer'}` }, 502)
-      const header = `=== PROJEKT ${project.name ?? ''} (${project.location ?? 'Paphos'}) ===\nBauträger: ${project.developer ?? ''}.`
-      const facts = `${header}\n\n${data.facts}`.trim()
-      await saveAssets(supabase, project_id, { facts })
-      return json({ ok: true, action, facts_chars: facts.length })
+      const runFacts = async () => {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/extract-project-facts`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docs, spec_text: assets.spec_text ?? '', context: `Projekt ${project.name ?? ''} (${project.developer ?? ''}), ${project.location ?? 'Paphos'}. Dies ist eine APARTMENT-Wohnanlage.` }),
+        })
+        const data = await res.json() as { facts?: string }
+        if (data.facts) {
+          const header = `=== PROJEKT ${project.name ?? ''} (${project.location ?? 'Paphos'}) ===\nBauträger: ${project.developer ?? ''}.`
+          await saveAssets(supabase, project_id, { facts: `${header}\n\n${data.facts}`.trim() })
+        }
+      }
+      // Claude liest die Broschüre (~60s). Im Browser-Fall im HINTERGRUND laufen lassen
+      // (EdgeRuntime.waitUntil) → sofortige Antwort, kein Verbindungs-Timeout. Server-
+      // Aufrufer (Scan) nutzen sync:true und warten das Ergebnis ab.
+      const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+      if (!sync && er?.waitUntil) { er.waitUntil(runFacts().catch(() => {})); return json({ ok: true, action, background: true }) }
+      await runFacts()
+      return json({ ok: true, action, background: false })
     }
 
     return json({ error: `Unbekannte action: ${action}` }, 400)
