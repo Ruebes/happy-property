@@ -159,7 +159,7 @@ Deno.serve(async (req: Request) => {
       .update({ status: 'processing' })
       .eq('status', 'pending')
       .lte('scheduled_at', new Date().toISOString())
-      .select('id, lead_id, deal_id, type, event_type, email_subject, email_body, whatsapp_text, recipient')
+      .select('id, lead_id, deal_id, type, event_type, email_subject, email_body, whatsapp_text, recipient, appointment_condition')
       .limit(20)   // Maximal 20 pro Lauf, um Timeouts zu vermeiden
 
     if (fetchErr) throw fetchErr
@@ -184,6 +184,7 @@ Deno.serve(async (req: Request) => {
       email_body:    string | null
       whatsapp_text: string | null
       recipient:     string | null
+      appointment_condition: string | null
     }[]) {
       let success = true
       const errors: string[] = []
@@ -202,6 +203,21 @@ Deno.serve(async (req: Request) => {
           .eq('id', msg.id)
         processed.push({ id: msg.id, result: 'failed:no_lead' })
         continue
+      }
+
+      // ── B) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
+      if (msg.appointment_condition === 'no_appointment' || msg.appointment_condition === 'has_appointment') {
+        const { data: appt } = await supabase.from('crm_appointments')
+          .select('id').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString()).limit(1).maybeSingle()
+        const hasAppt = !!appt
+        const shouldSend = msg.appointment_condition === 'has_appointment' ? hasAppt : !hasAppt
+        if (!shouldSend) {
+          await supabase.from('scheduled_messages')
+            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Bedingung ${msg.appointment_condition} nicht erfüllt` })
+            .eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'skipped:condition' })
+          continue
+        }
       }
 
       // Empfänger auflösen: 'client' = Lead, sonst fixer Kontakt (bc:/dc:)

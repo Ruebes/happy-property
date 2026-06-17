@@ -24,8 +24,9 @@ interface WaTpl {
 
 // Platzhalter, die die schedule-message Engine ersetzt
 const PLACEHOLDERS = [
-  '{{vorname}}', '{{nachname}}', '{{name}}', '{{email}}',
-  '{{phone}}', '{{developers}}', '{{commission_amount}}',
+  '{{vorname}}', '{{nachname}}', '{{name}}', '{{email}}', '{{phone}}',
+  '{{developers}}', '{{commission_amount}}',
+  '{{notiz}}', '{{zoom_link}}', '{{objekt}}', '{{unit}}', '{{kaufpreis}}', '{{drive_link}}',
 ]
 
 // Stage → Default-Kategorie für neu erzeugte E-Mail-Vorlagen
@@ -88,6 +89,10 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
   const [delayValue,  setDelayValue]  = useState(initDelay.value)
   const [delayUnit,   setDelayUnit]   = useState<DelayUnit>(initDelay.unit)
   const [isActive,    setIsActive]    = useState(rule?.is_active ?? false)
+  const [apptCond,    setApptCond]    = useState<string>(rule?.appointment_condition ?? 'none')
+  const [timingType,  setTimingType]  = useState<string>(rule?.timing_type ?? 'after_event')
+  const [driveTrigger, setDriveTrigger] = useState<boolean>(rule?.drive_trigger ?? false)
+  const [driveShare,  setDriveShare]  = useState<string[]>(rule?.drive_share ?? [])
   const [emailSubject, setEmailSubject] = useState(linkedEmail?.subject ?? '')
   const [emailBody,   setEmailBody]   = useState(linkedEmail?.body ?? '')
   const [emailHtml,   setEmailHtml]   = useState(linkedEmail?.html_body ?? '')
@@ -202,6 +207,10 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
         whatsapp_event_type: waEventType,
         is_active:           isActive,
         recipient:           safeRecipient,
+        appointment_condition: apptCond,
+        timing_type:         timingType,
+        drive_trigger:       driveTrigger,
+        drive_share:         driveTrigger && driveShare.length ? driveShare : null,
         updated_at:          new Date().toISOString(),
       }
       if (rule) {
@@ -256,7 +265,11 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
               </select>
             </div>
             <div>
-              <label className={labelCls}>{t('crm.stageEditor.timing', 'Wann nach Auslöser')}</label>
+              <label className={labelCls}>{t('crm.stageEditor.timing', 'Timing')}</label>
+              <select className={`${inputCls} mb-2`} value={timingType} onChange={e => setTimingType(e.target.value)}>
+                <option value="after_event">{t('crm.stageEditor.afterEvent', 'Nach Stage-Wechsel')}</option>
+                <option value="before_appointment">{t('crm.stageEditor.beforeAppt', 'Vor dem Termin')}</option>
+              </select>
               <div className="flex gap-2">
                 <input type="number" min={0} className={`${inputCls} w-24`}
                   value={delayValue} onChange={e => setDelayValue(Number(e.target.value))} />
@@ -267,9 +280,11 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
                 </select>
               </div>
               <p className="text-xs text-gray-400 mt-1">
-                {delayValue === 0
-                  ? t('crm.stageEditor.immediately', 'Sofort beim Auslöser')
-                  : t('crm.stageEditor.afterHint', 'Verzögerung nach Stage-Wechsel')}
+                {timingType === 'before_appointment'
+                  ? t('crm.stageEditor.beforeHint', 'Vor dem Calendly-Termin (nur wenn ein Termin existiert)')
+                  : delayValue === 0
+                    ? t('crm.stageEditor.immediately', 'Sofort beim Auslöser')
+                    : t('crm.stageEditor.afterHint', 'Verzögerung nach Stage-Wechsel')}
               </p>
             </div>
           </div>
@@ -278,6 +293,32 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
           <div>
             <label className={labelCls}>{t('crm.recipient.label', 'Empfänger')}</label>
             <RecipientPicker value={recipient} onChange={setRecipient} channel={channel} />
+          </div>
+
+          {/* Bedingung (Calendly-Termin) */}
+          <div>
+            <label className={labelCls}>{t('crm.stageEditor.condition', 'Bedingung (Calendly-Termin)')}</label>
+            <select className={inputCls} value={apptCond} onChange={e => setApptCond(e.target.value)}>
+              <option value="none">{t('crm.stageEditor.condNone', 'Immer senden')}</option>
+              <option value="no_appointment">{t('crm.stageEditor.condNo', 'Nur wenn KEIN Termin gebucht')}</option>
+              <option value="has_appointment">{t('crm.stageEditor.condHas', 'Nur wenn ein Termin existiert')}</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1">{t('crm.stageEditor.condHint', 'Wird direkt vor dem Versand geprüft (ersetzt n8n-Logik).')}</p>
+          </div>
+
+          {/* Drive-Trigger */}
+          <div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" checked={driveTrigger} onChange={e => setDriveTrigger(e.target.checked)} />
+              {t('crm.stageEditor.driveTrigger', 'Vor Versand Drive-Kundenordner anlegen/sicherstellen')}
+            </label>
+            {driveTrigger && (
+              <div className="mt-2">
+                <p className="text-xs text-gray-500 mb-1">{t('crm.stageEditor.driveShare', 'Zusätzlicher Schreibzugriff (z.B. Finanzierer, Anwalt, Developer):')}</p>
+                <RecipientPicker value={driveShare[0] ?? ''} onChange={v => setDriveShare(v ? [v] : [])} channel="email" />
+                <p className="text-xs text-gray-400 mt-1">{t('crm.stageEditor.driveHint', 'Kunde + Sven haben immer Zugriff. {{drive_link}} im Text nutzbar.')}</p>
+              </div>
+            )}
           </div>
 
           {/* Platzhalter */}

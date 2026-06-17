@@ -373,11 +373,15 @@ export interface AutomationRule {
   whatsapp_event_type:  string | null
   is_active:            boolean
   recipient:            string   // 'client' | 'bc:<id>' | 'dc:<id>'
+  appointment_condition: 'none' | 'no_appointment' | 'has_appointment'
+  timing_type:          'after_event' | 'before_appointment'
+  drive_trigger:        boolean
+  drive_share:          string[] | null
   created_at:           string
   updated_at:           string
 }
 
-export type ScheduledMessageStatus = 'pending' | 'processing' | 'sent' | 'cancelled' | 'failed'
+export type ScheduledMessageStatus = 'pending' | 'processing' | 'sent' | 'cancelled' | 'failed' | 'skipped'
 
 export interface ScheduledMessage {
   id:             string
