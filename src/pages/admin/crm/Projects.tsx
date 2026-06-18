@@ -772,6 +772,8 @@ export default function Projects() {
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]             = useState('')
   const [editProject, setEditProject]   = useState<CrmProject | null | undefined>(undefined)
+  const [scanBusy, setScanBusy]         = useState(false)
+  const [scanMsg, setScanMsg]           = useState<string | null>(null)
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -810,6 +812,23 @@ export default function Projects() {
     await fetchAll()
   }
 
+  // Neue Projekte aus dem Google Drive ziehen (legt an + Assets/Deck im Hintergrund)
+  const scanDrive = async () => {
+    setScanBusy(true); setScanMsg(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('scan-drive-projects', { body: { ingest: true } })
+      if (error) throw new Error(error.message)
+      const d = data as { created?: number; scanned?: number; error?: string }
+      if (d?.error) throw new Error(d.error)
+      setScanMsg(t('crm.project.scanResult', '✅ {{created}} neue(s) Projekt(e) angelegt ({{scanned}} im Drive gefunden). Bilder + Deck werden im Hintergrund erzeugt (ein paar Minuten).', { created: d.created ?? 0, scanned: d.scanned ?? 0 }))
+      await fetchAll()
+    } catch (e) {
+      setScanMsg(`❌ ${e instanceof Error ? e.message : 'Fehler beim Scannen'}`)
+    } finally {
+      setScanBusy(false)
+    }
+  }
+
   return (
     <DashboardLayout basePath="/admin/crm">
       <div className="space-y-6">
@@ -819,14 +838,29 @@ export default function Projects() {
           <h1 className="text-2xl font-bold text-gray-900">
             {t('crm.project.title', 'Projekte')}
           </h1>
-          <button
-            onClick={() => setEditProject(null)}
-            className="px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
-            style={{ backgroundColor: '#ff795d' }}
-          >
-            + {t('crm.project.new', 'Neues Projekt')}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={scanDrive}
+              disabled={scanBusy}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-orange-300 text-orange-600 hover:bg-orange-50 disabled:opacity-50 transition-colors"
+            >
+              {scanBusy ? t('crm.project.scanning', 'Scanne Drive…') : `↻ ${t('crm.project.scanDrive', 'Neue Projekte aus Drive')}`}
+            </button>
+            <button
+              onClick={() => setEditProject(null)}
+              className="px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: '#ff795d' }}
+            >
+              + {t('crm.project.new', 'Neues Projekt')}
+            </button>
+          </div>
         </div>
+
+        {scanMsg && (
+          <div className={`text-sm rounded-xl px-4 py-3 ${scanMsg.startsWith('❌') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+            {scanMsg}
+          </div>
+        )}
 
         {/* Filter bar */}
         <div className="flex gap-3 flex-wrap">
