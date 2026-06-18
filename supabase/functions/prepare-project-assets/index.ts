@@ -96,8 +96,9 @@ function floorFromName(name: string): number | null {
   const d = name.match(/\b(\d+)\s*\.?\s*(og|floor|etage|stock)\b/i); if (d) return parseInt(d[1], 10)
   return null
 }
-function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 'linen' | null {
+function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 'linen' | 'payment' | null {
   const n = name.toLowerCase()
+  if (/zahlungsplan|payment.?plan|payment.?schedule|ratenplan|payment.?terms/.test(n)) return 'payment'
   if (/cutlery|cutler|cultery|besteck|geschirr|crockery/.test(n)) return 'cutlery'
   if (/linen|w[äa]sche|bett|towel/.test(n))                       return 'linen'
   if (/price\s*list|preisliste|pricelist|price/.test(n))          return 'pricelist'
@@ -280,7 +281,7 @@ Deno.serve(async (req) => {
       // Broschüre: Namens-Treffer, sonst größtes PDF im Projektordner
       let brochure = projectFiles.find(f => docType(f.name) === 'brochure')
       if (!brochure) brochure = projectFiles.filter(f => f.mimeType === 'application/pdf').sort((a, b) => (parseInt(b.size ?? '0', 10)) - (parseInt(a.size ?? '0', 10)))[0]
-      const cutlery = pick('cutlery'), linen = pick('linen'), pricelist = pick('pricelist'), spec = pick('spec')
+      const cutlery = pick('cutlery'), linen = pick('linen'), pricelist = pick('pricelist'), spec = pick('spec'), payment = pick('payment')
 
       const doc_urls: Record<string, string> = { ...(assets.doc_urls ?? {}) }
       const importDoc = async (f: DriveFile | undefined, key: string) => {
@@ -290,6 +291,7 @@ Deno.serve(async (req) => {
       await importDoc(brochure, 'brochure')
       await importDoc(cutlery, 'cutlery')
       await importDoc(linen, 'linen')
+      if (payment && payment.mimeType === 'application/pdf') await importDoc(payment, 'payment')   // Zahlungsplan (i.d.R. im Developer-Ordner)
       if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/'))) await importDoc(pricelist, 'pricelist')
 
       // Spec: xlsx → Text (für Claude in der facts-Phase); PDF → Storage
@@ -305,7 +307,7 @@ Deno.serve(async (req) => {
         }
       }
       await saveAssets(supabase, project_id, { doc_urls, spec_text }, spec_text ? { equipment_list: spec_text } : undefined)
-      return json({ ok: true, action, found: { brochure: !!brochure, cutlery: !!cutlery, linen: !!linen, pricelist: !!pricelist, spec: !!spec }, spec_chars: spec_text.length, doc_urls: Object.keys(doc_urls) })
+      return json({ ok: true, action, found: { brochure: !!brochure, cutlery: !!cutlery, linen: !!linen, pricelist: !!pricelist, spec: !!spec, payment: !!payment }, spec_chars: spec_text.length, doc_urls: Object.keys(doc_urls) })
     }
 
     // ── facts ───────────────────────────────────────────────────────────────────
@@ -316,6 +318,7 @@ Deno.serve(async (req) => {
         du.cutlery  && { url: du.cutlery,  label: 'Geschirr/Besteck-Liste' },
         du.linen    && { url: du.linen,    label: 'Wäsche-Liste' },
         du.spec     && { url: du.spec,     label: 'Ausstattungs-Spezifikation' },
+        du.payment  && { url: du.payment,  label: 'Zahlungsplan (Payment Plan) — exakte Raten/Prozente übernehmen' },
       ].filter(Boolean)
       if (!docs.length && !assets.spec_text) return json({ ok: true, action, facts_chars: 0, skipped: true, note: 'keine Dokumente' })
 
