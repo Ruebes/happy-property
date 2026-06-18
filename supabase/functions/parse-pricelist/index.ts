@@ -121,12 +121,38 @@ Deno.serve(async (req) => {
     const units = (Array.isArray(raw) ? raw : []) as Unit[]
     if (!units.length) throw new Error('Keine Einheiten erkannt')
 
-    let created = 0
+    let created = 0, deleted = 0
     if (body.create && body.project_id) {
-      const { data: existing } = await supabase.from('crm_project_units').select('unit_number').eq('project_id', body.project_id)
-      const have = new Set((existing ?? []).map(r => String((r as { unit_number: string }).unit_number).trim().toLowerCase()))
+      const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source').eq('project_id', body.project_id)
+      const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
+      // An eigene Deals gebundene Units NIE anfassen
+      const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
+      const dealLinked = new Set((dealUnits ?? []).map(d => (d as { unit_id: string }).unit_id))
+      // Verfügbarkeit aus der aktuellen Preisliste je Unit-Nummer
+      const avail = new Map<string, string>()
+      for (const u of units) if (u.unit_number) avail.set(norm(u.unit_number), (u.availability as string) || 'available')
+
+      // (C) Nicht mehr verfügbare Units löschen: nur Drive-Import-Units, die der Developer
+      // jetzt als sold/reserved markiert, und die NICHT an einen unserer Deals hängen.
+      // Manuell angelegte Units + Deal-Units bleiben unangetastet. (Bloße Abwesenheit aus
+      // der Liste löscht NICHT — schützt vor Parse-Aussetzern.)
+      const toDelete = (existing ?? [])
+        .filter(r => {
+          const row = r as { id: string; unit_number: string; source: string | null }
+          if (row.source !== 'drive_import' || dealLinked.has(row.id)) return false
+          const av = avail.get(norm(row.unit_number))
+          return av === 'sold' || av === 'reserved'
+        })
+        .map(r => (r as { id: string }).id)
+      if (toDelete.length) {
+        const { error } = await supabase.from('crm_project_units').delete().in('id', toDelete)
+        if (!error) deleted = toDelete.length
+      }
+
+      // Neue VERFÜGBARE Units anlegen (sold/reserved aus der Liste nicht aufnehmen)
       const rows = units
-        .filter(u => u.unit_number && !have.has(String(u.unit_number).trim().toLowerCase()))
+        .filter(u => u.unit_number && !have.has(norm(u.unit_number)) && u.availability !== 'sold' && u.availability !== 'reserved')
         .map((u, i) => ({
           project_id:  body.project_id,
           unit_number: String(u.unit_number).trim(),
@@ -140,9 +166,7 @@ Deno.serve(async (req) => {
           price_net:   num(u.price_net),
           price_gross: num(u.price_gross),
           vat_rate:    num(u.vat_rate) ?? 19,
-          // Verfügbarkeit → Status: frei wird 'proposal' (nur im Wizard vorschlagbar),
-          // verkauft/reserviert behalten ihren echten Status (nicht vorschlagbar).
-          status:      u.availability === 'sold' ? 'sold' : u.availability === 'reserved' ? 'reserved' : 'proposal',
+          status:      'proposal',   // nur verfügbare Units → im Wizard vorschlagbar
           source:      'drive_import',
           sort_order:  i,
         }))
@@ -153,7 +177,7 @@ Deno.serve(async (req) => {
       }
     }
 
-      return { count: units.length, created, units }
+      return { count: units.length, created, deleted, units }
     }   // ── Ende runParse ──
 
     // Preisliste lesen (~25s): bei create im HINTERGRUND, damit der Browser nicht

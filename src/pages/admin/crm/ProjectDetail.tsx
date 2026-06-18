@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
@@ -88,13 +88,14 @@ const EMPTY_PAY = {
 // ── UnitCard ──────────────────────────────────────────────────────────────────
 
 function UnitCard({
-  unit, onClick, customer, onCustomerClick, onAssignCustomer,
+  unit, onClick, customer, onCustomerClick, onAssignCustomer, onContextMenu,
 }: {
   unit: CrmProjectUnit
   onClick: () => void
   customer?: UnitLead
   onCustomerClick?: () => void
   onAssignCustomer?: () => void
+  onContextMenu?: (e: ReactMouseEvent) => void
 }) {
   const { t } = useTranslation()
   const price = unit.price_gross ?? unit.price_net
@@ -103,6 +104,7 @@ function UnitCard({
       className="bg-white rounded-2xl border border-gray-100 shadow-sm
                  hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer overflow-hidden"
       onClick={onClick}
+      onContextMenu={onContextMenu}
     >
       {/* Unit image thumbnail (if available) */}
       {unit.images?.length > 0 ? (
@@ -277,6 +279,7 @@ export default function ProjectDetail() {
   // ── Customer assignment ──────────────────────────────────────────────────────
   const [showAssignModal,  setShowAssignModal]  = useState(false)
   const [assigningUnit,    setAssigningUnit]    = useState<CrmProjectUnit | null>(null)
+  const [unitCtx,          setUnitCtx]          = useState<{ x: number; y: number; unit: CrmProjectUnit } | null>(null)
   const [assignLeadQuery,  setAssignLeadQuery]  = useState('')
   const [assignLeadResults, setAssignLeadResults] = useState<Array<{
     id: string; first_name: string; last_name: string; email: string; deal_id: string | null
@@ -333,6 +336,17 @@ export default function ProjectDetail() {
   }, [projectId])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // ── Einheit löschen (Rechtsklick-Kontextmenü auf der Kachel) ─────────────────
+  const deleteUnit = async (u: CrmProjectUnit) => {
+    setUnitCtx(null)
+    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', u.id).maybeSingle()
+    if (linked) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
+    if (!window.confirm(t('crm.pd.unitDeleteConfirm', 'Einheit {{n}} wirklich löschen?', { n: u.unit_number }))) return
+    const { error } = await supabase.from('crm_project_units').delete().eq('id', u.id)
+    if (error) { alert('Fehler: ' + error.message); return }
+    await fetchData()
+  }
 
 
   // ── Verknüpfbare Portal-Immobilien laden ─────────────────────────────────────
@@ -1060,6 +1074,7 @@ export default function ProjectDetail() {
                     customer={unitLeadMap[u.id] ?? undefined}
                     onCustomerClick={() => navigate(`/admin/crm/leads/${unitLeadMap[u.id]?.id}`)}
                     onAssignCustomer={() => { setAssigningUnit(u); setShowAssignModal(true) }}
+                    onContextMenu={(e) => { e.preventDefault(); setUnitCtx({ x: e.clientX, y: e.clientY, unit: u }) }}
                   />
                 ))}
               </div>
@@ -2080,6 +2095,21 @@ export default function ProjectDetail() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Rechtsklick-Kontextmenü auf einer Unit-Kachel */}
+      {unitCtx && (
+        <>
+          <div className="fixed inset-0 z-[60]" onClick={() => setUnitCtx(null)}
+            onContextMenu={(e) => { e.preventDefault(); setUnitCtx(null) }} />
+          <div className="fixed z-[61] bg-white rounded-xl shadow-2xl border border-gray-100 py-1 min-w-[170px]"
+            style={{ top: unitCtx.y, left: unitCtx.x }}>
+            <button onClick={() => deleteUnit(unitCtx.unit)}
+              className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2">
+              🗑 {t('crm.pd.unitDelete', 'Einheit löschen')} · {unitCtx.unit.unit_number}
+            </button>
+          </div>
+        </>
       )}
     </DashboardLayout>
   )

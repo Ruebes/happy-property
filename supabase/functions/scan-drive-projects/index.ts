@@ -46,11 +46,11 @@ async function getReadToken(): Promise<string> {
   return data.access_token
 }
 
-type DriveFile = { id: string; name: string; mimeType: string }
+type DriveFile = { id: string; name: string; mimeType: string; modifiedTime?: string }
 const isFolder = (m: string) => m === 'application/vnd.google-apps.folder'
 async function listChildren(token: string, parentId: string): Promise<DriveFile[]> {
   const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`)
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,modifiedTime)&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   const data = await res.json() as { files?: DriveFile[] }
   return data.files ?? []
@@ -82,10 +82,13 @@ async function ingestProject(supabase: ReturnType<typeof createClient>, projectI
 
   const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', projectId).maybeSingle()
   const da = (fresh?.deck_assets ?? null) as { facts?: string; renders?: unknown[]; gallery?: unknown[]; floorplans?: { url?: string }[]; map?: string; mapUrl?: string } | null
-  if (!da?.facts) return   // ohne Fakten kein Deck — nächster Lauf holt es nach
-  const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
-  const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
-  await callFn('generate-deck', { generic: true, background: false, project_id: projectId, facts: da.facts, images, month_label: month })
+  if (da?.facts) {
+    const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
+    const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+    await callFn('generate-deck', { generic: true, background: false, project_id: projectId, facts: da.facts, images, month_label: month })
+  }
+  // Sync-Zeitpunkt merken → nächste Nacht nur dann re-ingest, wenn sich im Ordner etwas geändert hat
+  await supabase.from('crm_projects').update({ drive_synced_at: new Date().toISOString() }).eq('id', projectId)
 }
 
 Deno.serve(async (req: Request) => {
@@ -96,8 +99,8 @@ Deno.serve(async (req: Request) => {
     const token = await getReadToken()
 
     // bestehende Projekte
-    type Ex = { id: string; developer: string | null; deck_token: string | null; drive_folder_id: string | null }
-    const { data: existing } = await supabase.from('crm_projects').select('id, name, developer, drive_folder_id, deck_token')
+    type Ex = { id: string; developer: string | null; deck_token: string | null; drive_folder_id: string | null; drive_synced_at: string | null }
+    const { data: existing } = await supabase.from('crm_projects').select('id, name, developer, drive_folder_id, deck_token, drive_synced_at')
     const byFolder = new Map<string, Ex>()
     const byName   = new Map<string, Ex>()
     for (const p of (existing ?? []) as Array<Ex & { name: string }>) {
@@ -123,19 +126,27 @@ Deno.serve(async (req: Request) => {
     const result: Array<{ name: string; developer: string; folder_id: string; status: string; project_id?: string }> = []
     const needIngest: string[] = []
 
+    const maxMod = (files: DriveFile[]): string => files.reduce((m, f) => (f.modifiedTime && f.modifiedTime > m ? f.modifiedTime : m), '')
+
     for (const dev of devFolders) {
       const developer = await canonicalDeveloper(dev.name)
-      const projFolders = (await listChildren(token, dev.id)).filter(f => isFolder(f.mimeType))
+      const devChildren = await listChildren(token, dev.id)
+      const devFilesMax = maxMod(devChildren.filter(f => !isFolder(f.mimeType)))   // Developer-weite Docs (Zahlungsplan etc.)
+      const projFolders = devChildren.filter(f => isFolder(f.mimeType))
       for (const pf of projFolders) {
         if (isAssetFolder(pf.name)) { result.push({ name: pf.name, developer, folder_id: pf.id, status: 'skipped (Asset-Ordner)' }); continue }
+        // Letzte Änderung im Ordner (Projektdateien + Developer-Docs) → Nacht-Prüfung
+        let folderMax = maxMod(await listChildren(token, pf.id))
+        if (devFilesMax > folderMax) folderMax = devFilesMax
         const match = byFolder.get(pf.id) ?? byName.get(norm(pf.name))
         if (match) {
           const upd: Record<string, unknown> = {}
           if (!match.drive_folder_id) upd.drive_folder_id = pf.id
           if (match.developer !== developer) upd.developer = developer
           if (Object.keys(upd).length && !dry_run) await supabase.from('crm_projects').update(upd).eq('id', match.id)
-          if (!match.deck_token) needIngest.push(match.id)
-          result.push({ name: pf.name, developer, folder_id: pf.id, status: 'existing', project_id: match.id })
+          const changed = !match.drive_synced_at || (!!folderMax && folderMax > match.drive_synced_at)
+          if (!match.deck_token || changed) needIngest.push(match.id)
+          result.push({ name: pf.name, developer, folder_id: pf.id, status: !match.deck_token ? 'existing (kein Deck)' : changed ? 'existing (geändert)' : 'existing', project_id: match.id })
           continue
         }
         if (dry_run) { result.push({ name: pf.name, developer, folder_id: pf.id, status: 'new' }); continue }
