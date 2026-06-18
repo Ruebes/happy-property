@@ -96,12 +96,26 @@ Deno.serve(async (req: Request) => {
     const token = await getReadToken()
 
     // bestehende Projekte
-    const { data: existing } = await supabase.from('crm_projects').select('id, name, drive_folder_id, deck_token')
-    const byFolder = new Map<string, { id: string; deck_token: string | null; drive_folder_id: string | null }>()
-    const byName   = new Map<string, { id: string; deck_token: string | null; drive_folder_id: string | null }>()
-    for (const p of (existing ?? []) as Array<{ id: string; name: string; drive_folder_id: string | null; deck_token: string | null }>) {
+    type Ex = { id: string; developer: string | null; deck_token: string | null; drive_folder_id: string | null }
+    const { data: existing } = await supabase.from('crm_projects').select('id, name, developer, drive_folder_id, deck_token')
+    const byFolder = new Map<string, Ex>()
+    const byName   = new Map<string, Ex>()
+    for (const p of (existing ?? []) as Array<Ex & { name: string }>) {
       if (p.drive_folder_id) byFolder.set(p.drive_folder_id, p)
       byName.set(norm(p.name), p)
+    }
+
+    // Developer kanonisch aus crm_developers (case-insensitive); unbekannte anlegen → im Projekt-Formular auswählbar
+    const { data: devRows } = await supabase.from('crm_developers').select('name')
+    const devByLower = new Map<string, string>()
+    for (const d of (devRows ?? []) as Array<{ name: string }>) devByLower.set(d.name.toLowerCase().trim(), d.name)
+    const canonicalDeveloper = async (folderName: string): Promise<string> => {
+      const key = folderName.toLowerCase().trim()
+      const hit = devByLower.get(key)
+      if (hit) return hit
+      if (!dry_run) await supabase.from('crm_developers').insert({ name: folderName, active: true })
+      devByLower.set(key, folderName)
+      return folderName
     }
 
     // ROOT → Developer-Ordner → Projekt-Ordner
@@ -110,23 +124,27 @@ Deno.serve(async (req: Request) => {
     const needIngest: string[] = []
 
     for (const dev of devFolders) {
+      const developer = await canonicalDeveloper(dev.name)
       const projFolders = (await listChildren(token, dev.id)).filter(f => isFolder(f.mimeType))
       for (const pf of projFolders) {
-        if (isAssetFolder(pf.name)) { result.push({ name: pf.name, developer: dev.name, folder_id: pf.id, status: 'skipped (Asset-Ordner)' }); continue }
+        if (isAssetFolder(pf.name)) { result.push({ name: pf.name, developer, folder_id: pf.id, status: 'skipped (Asset-Ordner)' }); continue }
         const match = byFolder.get(pf.id) ?? byName.get(norm(pf.name))
         if (match) {
-          if (!match.drive_folder_id && !dry_run) await supabase.from('crm_projects').update({ drive_folder_id: pf.id }).eq('id', match.id)
+          const upd: Record<string, unknown> = {}
+          if (!match.drive_folder_id) upd.drive_folder_id = pf.id
+          if (match.developer !== developer) upd.developer = developer
+          if (Object.keys(upd).length && !dry_run) await supabase.from('crm_projects').update(upd).eq('id', match.id)
           if (!match.deck_token) needIngest.push(match.id)
-          result.push({ name: pf.name, developer: dev.name, folder_id: pf.id, status: 'existing', project_id: match.id })
+          result.push({ name: pf.name, developer, folder_id: pf.id, status: 'existing', project_id: match.id })
           continue
         }
-        if (dry_run) { result.push({ name: pf.name, developer: dev.name, folder_id: pf.id, status: 'new' }); continue }
+        if (dry_run) { result.push({ name: pf.name, developer, folder_id: pf.id, status: 'new' }); continue }
         const { data: ins, error } = await supabase.from('crm_projects')
-          .insert({ name: pf.name, developer: dev.name, status: 'under_construction', drive_folder_id: pf.id })
+          .insert({ name: pf.name, developer, status: 'under_construction', drive_folder_id: pf.id })
           .select('id').single()
-        if (error || !ins) { result.push({ name: pf.name, developer: dev.name, folder_id: pf.id, status: `error: ${error?.message}` }); continue }
+        if (error || !ins) { result.push({ name: pf.name, developer, folder_id: pf.id, status: `error: ${error?.message}` }); continue }
         needIngest.push(ins.id as string)
-        result.push({ name: pf.name, developer: dev.name, folder_id: pf.id, status: 'created', project_id: ins.id as string })
+        result.push({ name: pf.name, developer, folder_id: pf.id, status: 'created', project_id: ins.id as string })
       }
     }
 

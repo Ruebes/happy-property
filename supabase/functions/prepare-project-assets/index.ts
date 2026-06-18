@@ -243,7 +243,12 @@ Deno.serve(async (req) => {
         }
       }
       await saveAssets(supabase, project_id, { renders, floorplans, map, mapUrl })
-      return json({ ok: true, action, renders: renders.length, floorplans: floorplans.length, map: !!map, unitsMatched })
+      // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur setzen, wenn noch leer
+      const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
+      if (renders.length && curImgs.length === 0) {
+        await supabase.from('crm_projects').update({ images: renders.slice(0, 3) }).eq('id', project_id)
+      }
+      return json({ ok: true, action, renders: renders.length, floorplans: floorplans.length, map: !!map, unitsMatched, projectImages: renders.length && curImgs.length === 0 ? Math.min(3, renders.length) : curImgs.length })
     }
 
     // ── categorize ──────────────────────────────────────────────────────────────
