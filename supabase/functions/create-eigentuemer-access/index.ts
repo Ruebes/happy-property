@@ -263,8 +263,12 @@ Deno.serve(async (req: Request) => {
       // Nicht fatal – User existiert, Profil kann manuell angelegt werden
     }
 
-    // ── 4. Willkommens-E-Mail senden ──────────────────────────────────────────
-    const { subject, html } = buildWelcomeEmail({
+    // ── 4. Willkommens-E-Mail bauen ───────────────────────────────────────────
+    // Vorrang: per-Send-Customizing (custom_message). Sonst die editierbare
+    // DB-Vorlage „Portal-Zugang". Sicherheitsnetz: enthält das gerenderte
+    // Ergebnis das Passwort nicht (Platzhalter entfernt), bleibt der fest
+    // eingebaute Fallback — die Zugangsdaten gehen NIE verloren.
+    let mail = buildWelcomeEmail({
       fullName:      full_name,
       email,
       password,
@@ -272,6 +276,21 @@ Deno.serve(async (req: Request) => {
       customSubject: custom_subject,
       customMessage: custom_message,
     })
+    if (!custom_message?.trim()) {
+      try {
+        const { data: tpl } = await adminClient.from('email_templates')
+          .select('subject, html_body').eq('id', '37b1724c-f71c-4e8b-9116-b92d18f03915').maybeSingle()
+        const raw = (tpl?.html_body as string | null | undefined)?.trim()
+        if (raw) {
+          const firstName = full_name.split(' ')[0]
+          const vars: Record<string, string> = { vorname: firstName, name: full_name, email, password, login_url: `${appUrl}/login` }
+          let h = raw, s = (tpl?.subject as string | undefined)?.trim() || mail.subject
+          for (const [k, v] of Object.entries(vars)) { h = h.split(`{{${k}}}`).join(v); s = s.split(`{{${k}}}`).join(v) }
+          if (h.includes(password)) mail = { subject: s, html: h }
+        }
+      } catch { /* Vorlage nicht ladbar → Fallback bleibt */ }
+    }
+    const { subject, html } = mail
 
     if (smtpUser && smtpPass) {
       const client = new SMTPClient({
