@@ -758,23 +758,10 @@ export default function LeadDetail() {
         bemerkungen: notes,
       })
 
-      // WhatsApp an Registrierungs-Empfänger (fire-and-forget)
-      sendWhatsApp({
-        event_type: 'registration',
-        lead_data: {
-          lead_name:    `${lead?.first_name ?? ''} ${lead?.last_name ?? ''}`.trim(),
-          lead_phone:   lead?.phone     ?? '',
-          lead_email:   lead?.email     ?? '',
-          lead_whatsapp: lead?.whatsapp ?? '',
-        },
-        extra_data: {
-          developers: selectedDevelopers.join(', '),
-          notes:      notes ?? '',
-        },
-        lead_id: id,
-      }).catch(e => console.warn('[WhatsApp] registration failed:', e))
-
-      // Automations-Queue befüllen (fire-and-forget)
+      // Registrierung an die Developer läuft über die Stage-Automatik (Path B):
+      // triggerScheduleMessage → stage_registrierung-Regeln an die bc:-Kontakte.
+      // KEIN direktes sendWhatsApp('registration') mehr — dieses interne Template hat
+      // recipients=[] und ginge sonst an die KUNDEN-Nummer zurück (Datenleck, bestätigt).
       triggerScheduleMessage('registrierung')
 
       setShowRegistrationModal(false)
