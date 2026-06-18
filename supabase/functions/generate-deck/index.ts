@@ -236,24 +236,40 @@ Deno.serve(async (req) => {
     }
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const { data: row, error } = await supabase.from('sales_decks').insert({
-      recipient_name: body.recipient_name ?? null,
-      angle,
-      status:     'ready',
-      content:    { blocks },
-      lead_id:    body.lead_id ?? null,
-      deal_id:    body.deal_id ?? null,
-      project_id: body.project_id ?? null,
-      unit_id:    body.unit_id ?? null,
-      batch_id:   body.batch_id ?? null,
-      created_by: body.created_by ?? null,
-    }).select('token').single()
-    if (error) throw new Error(`DB: ${error.message}`)
 
-    const token = (row as { token: string }).token
-    // Generisches Projekt-Deck → direkt am Projekt verankern (im Zoom teilbar).
+    // Generisches Projekt-Deck: bestehenden Token IN-PLACE überschreiben → stabiler Link
+    // (Sven kann denselben Link teilen; Re-Grab/Feinschliff ändert die URL nicht).
+    let existingToken: string | null = null
     if (generic && body.project_id) {
-      await supabase.from('crm_projects').update({ deck_token: token, deck_generated_at: new Date().toISOString() }).eq('id', body.project_id)
+      const { data: pr } = await supabase.from('crm_projects').select('deck_token').eq('id', body.project_id).maybeSingle()
+      existingToken = (pr as { deck_token?: string | null } | null)?.deck_token ?? null
+    }
+
+    let token: string
+    if (existingToken) {
+      const { error } = await supabase.from('sales_decks')
+        .update({ content: { blocks }, status: 'ready', angle }).eq('token', existingToken)
+      if (error) throw new Error(`DB: ${error.message}`)
+      token = existingToken
+      await supabase.from('crm_projects').update({ deck_generated_at: new Date().toISOString() }).eq('id', body.project_id!)
+    } else {
+      const { data: row, error } = await supabase.from('sales_decks').insert({
+        recipient_name: body.recipient_name ?? null,
+        angle,
+        status:     'ready',
+        content:    { blocks },
+        lead_id:    body.lead_id ?? null,
+        deal_id:    body.deal_id ?? null,
+        project_id: body.project_id ?? null,
+        unit_id:    body.unit_id ?? null,
+        batch_id:   body.batch_id ?? null,
+        created_by: body.created_by ?? null,
+      }).select('token').single()
+      if (error) throw new Error(`DB: ${error.message}`)
+      token = (row as { token: string }).token
+      if (generic && body.project_id) {
+        await supabase.from('crm_projects').update({ deck_token: token, deck_generated_at: new Date().toISOString() }).eq('id', body.project_id)
+      }
     }
     return { token, blocks: blocks.length }
     }   // ── Ende doGenerate ──

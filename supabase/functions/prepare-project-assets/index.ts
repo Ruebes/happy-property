@@ -214,8 +214,15 @@ Deno.serve(async (req) => {
         else renderFiles.push(...kids.filter(k => isImg(k.mimeType)))
       }
       const small = (f: DriveFile) => !f.size || parseInt(f.size, 10) <= MAX
+      // Lose Kartenbilder im Ordner (z.B. "Google Maps Azure.png", "Lageplan.png") als KARTE erkennen,
+      // nicht als Render — sonst landet die Karte in der Galerie und der Karten-Slot bleibt leer.
+      const MAP_RE = /(google.?maps|karte|lageplan|standort|\bmaps?\b)/i
+      if (!locFile) {
+        const cands = renderFiles.filter(f => MAP_RE.test(f.name))
+        locFile = cands.find(small) ?? cands[0] ?? null
+      }
       const renders: string[] = []
-      for (const f of renderFiles.filter(small).slice(0, RENDER_CAP)) {
+      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
         try { renders.push(await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)) } catch { /* skip */ }
       }
       // Fallback: keine Bilder im Drive-Ordner → bereits im CRM hinterlegte Projektbilder nutzen.
