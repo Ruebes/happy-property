@@ -31,16 +31,30 @@ function substitute(template: string, data: Record<string, string>): string {
   return result.replace(/\{\{[^}]+\}\}/g, '–')
 }
 
+// Finanzierung-DE-Dokumente → langlebige Signed-URLs (Bucket privat, 10 Jahre gültig)
+async function finDocs(supabase: ReturnType<typeof createClient>): Promise<{ doc_vollmacht: string; doc_unterlagen: string }> {
+  try {
+    const { data: files } = await supabase.storage.from('workflow-documents').list('finanzierung_de', { limit: 100 })
+    const sign = async (re: RegExp): Promise<string> => {
+      const f = (files ?? []).find((x: { name: string }) => re.test(x.name))
+      if (!f) return ''
+      const { data } = await supabase.storage.from('workflow-documents').createSignedUrl(`finanzierung_de/${f.name}`, 315360000)
+      return data?.signedUrl ?? ''
+    }
+    return { doc_vollmacht: await sign(/vollmacht/i), doc_unterlagen: await sign(/kapitalbeschaffung/i) }
+  } catch { return { doc_vollmacht: '', doc_unterlagen: '' } }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
 
   try {
-    const { lead_id, deal_id, event_type } = await req.json() as { lead_id: string; deal_id?: string | null; event_type: string }
+    const { lead_id, deal_id, event_type, probe_docs } = await req.json() as { lead_id?: string; deal_id?: string | null; event_type?: string; probe_docs?: boolean }
+    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
+    if (probe_docs) return new Response(JSON.stringify(await finDocs(supabase)), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     if (!lead_id || !event_type) {
       return new Response(JSON.stringify({ error: 'lead_id und event_type sind Pflichtfelder' }), { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } })
     }
-
-    const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
 
     // 1. Opt-Out
     const { data: optOut } = await supabase.from('communication_optouts').select('id').eq('lead_id', lead_id).maybeSingle()
@@ -91,21 +105,9 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // P4: Finanzierung-DE-Dokumente → langlebige Signed-URLs (Bucket privat, 10 Jahre gültig)
-    let docVollmacht = '', docUnterlagen = ''
-    if (event_type === 'finanzierung_de') {
-      try {
-        const { data: files } = await supabase.storage.from('workflow-documents').list('finanzierung_de', { limit: 100 })
-        const sign = async (re: RegExp): Promise<string> => {
-          const f = (files ?? []).find(x => re.test(x.name))
-          if (!f) return ''
-          const { data } = await supabase.storage.from('workflow-documents').createSignedUrl(`finanzierung_de/${f.name}`, 315360000)
-          return data?.signedUrl ?? ''
-        }
-        docVollmacht  = await sign(/vollmacht/i)
-        docUnterlagen = await sign(/kapitalbeschaffung/i)
-      } catch { /* Datei/Bucket fehlt → Platzhalter bleibt '–' */ }
-    }
+    // P4: Finanzierung-DE-Dokumente (langlebige Signed-URLs) nur für diese Stage
+    const { doc_vollmacht: docVollmacht, doc_unterlagen: docUnterlagen } =
+      event_type === 'finanzierung_de' ? await finDocs(supabase) : { doc_vollmacht: '', doc_unterlagen: '' }
 
     // Registrierung: Developer + Bemerkung stehen evtl. nur in der Phasenwechsel-Aktivität,
     // falls das Frontend deal.developer noch nicht gesetzt hat (robust gegen alten PWA-Cache).
