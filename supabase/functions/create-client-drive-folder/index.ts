@@ -95,7 +95,8 @@ Deno.serve(async (req) => {
     const folderUrl = created.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`
 
     // 2) Schreibrechte verteilen (ohne Benachrichtigungsmail — Sven entscheidet, wann der Kunde informiert wird)
-    const emails = Array.from(new Set([lead.email, OWNER_EMAIL, ...(Array.isArray(extra_emails) ? extra_emails : [])]
+    // Kunde + Google-Owner (happypropertycyprus@gmail.com) + Sven + zusätzliche Empfänger
+    const emails = Array.from(new Set([lead.email, OWNER_EMAIL, 'sven@happy-property.com', ...(Array.isArray(extra_emails) ? extra_emails : [])]
       .map(e => (e ?? '').trim()).filter(isEmail)))
     const shared: string[] = []
     const shareErrors: Record<string, string> = {}

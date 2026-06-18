@@ -27,6 +27,7 @@ const PLACEHOLDERS = [
   '{{vorname}}', '{{nachname}}', '{{name}}', '{{email}}', '{{phone}}',
   '{{developers}}', '{{commission_amount}}',
   '{{notiz}}', '{{zoom_link}}', '{{objekt}}', '{{unit}}', '{{kaufpreis}}', '{{drive_link}}',
+  '{{doc_vollmacht}}', '{{doc_unterlagen}}',
 ]
 
 // Stage → Default-Kategorie für neu erzeugte E-Mail-Vorlagen

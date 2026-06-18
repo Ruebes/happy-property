@@ -99,7 +99,25 @@ async function resolveRecipient(
   supabase: ReturnType<typeof createClient>,
   recipient: string | null,
   lead: { email: string | null; phone: string | null; whatsapp: string | null },
+  dealId: string | null,
 ): Promise<{ email: string | null; phone: string | null }> {
+  // Dynamisch: Developer-Kontakt der vom Lead gewählten Unit (Reservierung etc.)
+  if (recipient === 'unit_developer') {
+    if (!dealId) return { email: null, phone: null }
+    const { data: deal } = await supabase.from('deals').select('unit_id').eq('id', dealId).maybeSingle()
+    const unitId = (deal as { unit_id?: string } | null)?.unit_id
+    if (!unitId) return { email: null, phone: null }
+    const { data: unit } = await supabase.from('crm_project_units').select('crm_projects(developer)').eq('id', unitId).maybeSingle()
+    const devName = (unit as { crm_projects?: { developer?: string } } | null)?.crm_projects?.developer
+    if (!devName) return { email: null, phone: null }
+    const { data: dev } = await supabase.from('crm_developers').select('id').ilike('name', devName).maybeSingle()
+    const devId = (dev as { id?: string } | null)?.id
+    if (!devId) return { email: null, phone: null }
+    const { data } = await supabase.from('crm_developer_contacts')
+      .select('email, phone, whatsapp').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
+    const d = data as { email: string | null; phone: string | null; whatsapp: string | null } | null
+    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null }
+  }
   if (recipient && (recipient.startsWith('bc:') || recipient.startsWith('dc:'))) {
     const table = recipient.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
     const { data } = await supabase.from(table)
@@ -228,7 +246,7 @@ Deno.serve(async (req: Request) => {
       }
 
       // Empfänger auflösen: 'client' = Lead, sonst fixer Kontakt (bc:/dc:)
-      const rcpt = await resolveRecipient(supabase, msg.recipient, lead)
+      const rcpt = await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
 
       // ── E-Mail senden ─────────────────────────────────────────────────────
       if ((msg.type === 'email' || msg.type === 'both') && msg.email_subject && msg.email_body) {

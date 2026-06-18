@@ -49,6 +49,8 @@ export default function RecipientPicker({ value, onChange, channel = 'both' }: P
   :                          !!(c.email || c.whatsapp || c.phone)
 
   const options = [
+    // Dynamisch zur Laufzeit aufgelöst: der Developer-Kontakt der vom Lead gewählten Unit
+    { value: 'unit_developer', label: t('crm.recipient.unitDeveloper', '🏗 Developer der gewählten Wohnung (automatisch)') },
     ...business.filter(usable).map(c => ({
       value: `bc:${c.id}`,
       label: `📇 ${`${c.first_name} ${c.last_name ?? ''}`.trim()}${c.company ? ` · ${c.company}` : ''}${c.role ? ` (${c.role})` : ''}`,

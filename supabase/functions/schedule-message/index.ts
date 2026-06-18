@@ -66,16 +66,45 @@ Deno.serve(async (req: Request) => {
       const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes').eq('id', deal_id).maybeSingle()
       dealData = data as typeof dealData
     }
-    let unitNumber = '', objektName = '', kaufpreis = ''
+    let unitNumber = '', objektName = '', kaufpreis = '', unitDevEmail = '', unitDevPhone = ''
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
-        .select('unit_number, price_net, price_gross, project_id, crm_projects(name)').eq('id', dealData.unit_id).maybeSingle()
-      const u = unit as { unit_number?: string; price_net?: number; price_gross?: number; crm_projects?: { name?: string } } | null
+        .select('unit_number, price_net, price_gross, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
+      const u = unit as { unit_number?: string; price_net?: number; price_gross?: number; crm_projects?: { name?: string; developer?: string } } | null
       if (u) {
         unitNumber = u.unit_number ?? ''
         objektName = u.crm_projects?.name ?? ''
         kaufpreis  = eur(u.price_gross ?? u.price_net)
+        // Developer-Kontakt der gewählten Unit (für dynamischen Empfänger 'unit_developer')
+        const devName = u.crm_projects?.developer ?? ''
+        if (devName) {
+          const { data: dev } = await supabase.from('crm_developers').select('id').ilike('name', devName).maybeSingle()
+          const devId = (dev as { id?: string } | null)?.id
+          if (devId) {
+            const { data: c } = await supabase.from('crm_developer_contacts')
+              .select('email, phone, whatsapp').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
+            const cc = c as { email?: string; phone?: string; whatsapp?: string } | null
+            unitDevEmail = cc?.email ?? ''
+            unitDevPhone = (cc?.whatsapp || cc?.phone) ?? ''
+          }
+        }
       }
+    }
+
+    // P4: Finanzierung-DE-Dokumente → langlebige Signed-URLs (Bucket privat, 10 Jahre gültig)
+    let docVollmacht = '', docUnterlagen = ''
+    if (event_type === 'finanzierung_de') {
+      try {
+        const { data: files } = await supabase.storage.from('workflow-documents').list('finanzierung_de', { limit: 100 })
+        const sign = async (re: RegExp): Promise<string> => {
+          const f = (files ?? []).find(x => re.test(x.name))
+          if (!f) return ''
+          const { data } = await supabase.storage.from('workflow-documents').createSignedUrl(`finanzierung_de/${f.name}`, 315360000)
+          return data?.signedUrl ?? ''
+        }
+        docVollmacht  = await sign(/vollmacht/i)
+        docUnterlagen = await sign(/kapitalbeschaffung/i)
+      } catch { /* Datei/Bucket fehlt → Platzhalter bleibt '–' */ }
     }
 
     // Registrierung: Developer + Bemerkung stehen evtl. nur in der Phasenwechsel-Aktivität,
@@ -124,6 +153,8 @@ Deno.serve(async (req: Request) => {
       kaufpreis:    kaufpreis,
       preis:        kaufpreis,
       drive_link:   lead.drive_folder_url ?? '',
+      doc_vollmacht:  docVollmacht,
+      doc_unterlagen: docUnterlagen,
     }
 
     // Empfänger-Tokens → E-Mails (für Drive-Schreibzugriff)
@@ -132,6 +163,7 @@ Deno.serve(async (req: Request) => {
       for (const tk of tokens ?? []) {
         if (!tk) continue
         if (tk === 'client') { if (lead.email) out.push(lead.email) }
+        else if (tk === 'unit_developer') { if (unitDevEmail) out.push(unitDevEmail) }
         else if (tk.startsWith('bc:') || tk.startsWith('dc:')) {
           const table = tk.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
           const { data } = await supabase.from(table).select('email').eq('id', tk.slice(3)).maybeSingle()
