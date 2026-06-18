@@ -7,6 +7,7 @@ import { useAuth } from '../../../lib/auth'
 import type { Lead, LeadSource } from '../../../lib/crmTypes'
 import { SOURCE_BADGE_STYLE, adChannelLabel } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
+import LeadQuickSend, { type QuickSendMode } from '../../../components/crm/LeadQuickSend'
 
 const SOURCES: Array<'' | LeadSource> = ['', 'meta', 'google', 'empfehlung', 'sonstiges']
 const STATUSES = ['', 'new', 'contacted', 'qualified', 'registered', 'property_selection', 'financing', 'sold', 'archived'] as const
@@ -72,6 +73,9 @@ export default function AllLeads() {
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [newLeadForm, setNewLeadForm] = useState<NewLeadForm>(DEFAULT_FORM)
   const [creating, setCreating] = useState(false)
+  const [view, setView] = useState<'list' | 'tiles'>('list')
+  const [leadCtx, setLeadCtx] = useState<{ x: number; y: number; lead: Lead } | null>(null)
+  const [quickSend, setQuickSend] = useState<{ lead: Lead; mode: QuickSendMode } | null>(null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -245,15 +249,40 @@ export default function AllLeads() {
             ]}
             placeholder={t('crm.allLeads.allStatuses')}
           />
+          <div className="ml-auto flex rounded-xl border border-gray-200 overflow-hidden h-fit">
+            <button onClick={() => setView('list')} className={`px-3 py-2 text-sm ${view === 'list' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={view === 'list' ? { backgroundColor: '#ff795d' } : undefined}>☰ {t('crm.allLeads.viewList', 'Liste')}</button>
+            <button onClick={() => setView('tiles')} className={`px-3 py-2 text-sm ${view === 'tiles' ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={view === 'tiles' ? { backgroundColor: '#ff795d' } : undefined}>▦ {t('crm.allLeads.viewTiles', 'Kacheln')}</button>
+          </div>
         </div>
 
-        {/* Table */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          {loading ? (
-            <p className="p-6 text-gray-400 text-sm">{t('common.loading')}</p>
-          ) : filteredLeads.length === 0 ? (
-            <p className="p-6 text-gray-400 text-sm">{t('crm.allLeads.noLeads')}</p>
-          ) : (
+        {/* Liste oder Kacheln */}
+        {loading ? (
+          <p className="bg-white rounded-2xl shadow-sm p-6 text-gray-400 text-sm">{t('common.loading')}</p>
+        ) : filteredLeads.length === 0 ? (
+          <p className="bg-white rounded-2xl shadow-sm p-6 text-gray-400 text-sm">{t('crm.allLeads.noLeads')}</p>
+        ) : view === 'tiles' ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {filteredLeads.map(lead => (
+              <div key={lead.id}
+                onClick={() => navigate(`/admin/crm/leads/${lead.id}`)}
+                onContextMenu={e => { e.preventDefault(); setLeadCtx({ x: e.clientX, y: e.clientY, lead }) }}
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-semibold text-gray-900 text-sm">{lead.first_name} {lead.last_name}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0" style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}>{sourceLabel[lead.source] ?? lead.source}</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1.5 truncate">✉ {lead.email || '–'}</p>
+                <p className="text-xs text-gray-500 truncate">📞 {lead.phone || lead.whatsapp || '–'}</p>
+                <div className="mt-2 flex items-center justify-between">
+                  <span className="text-[11px] text-gray-400">{statusLabel[lead.status] ?? lead.status}</span>
+                  <span className="text-[11px] text-gray-300">{formatDate(lead.created_at)}</span>
+                </div>
+                <p className="text-[10px] text-gray-300 mt-1.5">{t('crm.allLeads.rightClickHint', '↳ Rechtsklick zum Senden')}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -310,8 +339,29 @@ export default function AllLeads() {
                 </tbody>
               </table>
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Rechtsklick-Kontextmenü auf einer Lead-Kachel */}
+        {leadCtx && (
+          <>
+            <div className="fixed inset-0 z-[65]" onClick={() => setLeadCtx(null)} onContextMenu={e => { e.preventDefault(); setLeadCtx(null) }} />
+            <div className="fixed z-[66] bg-white rounded-xl shadow-2xl border border-gray-100 py-1 min-w-[200px]" style={{ top: leadCtx.y, left: leadCtx.x }}>
+              <button onClick={() => { setQuickSend({ lead: leadCtx.lead, mode: 'whatsapp' }); setLeadCtx(null) }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">📱 {t('crm.quick.menuWa', 'WhatsApp an Kunden')}</button>
+              <button onClick={() => { setQuickSend({ lead: leadCtx.lead, mode: 'mail' }); setLeadCtx(null) }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">📧 {t('crm.quick.menuMail', 'Mail an Kunden')}</button>
+              <button onClick={() => { setQuickSend({ lead: leadCtx.lead, mode: 'forward' }); setLeadCtx(null) }}
+                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2">↗ {t('crm.quick.menuFwd', 'Versenden (an Partner/Developer)')}</button>
+            </div>
+          </>
+        )}
+
+        {quickSend && (
+          <LeadQuickSend lead={quickSend.lead} mode={quickSend.mode}
+            onClose={() => setQuickSend(null)}
+            onSent={(m) => { setQuickSend(null); setToast(m); setTimeout(() => setToast(''), 3500) }} />
+        )}
 
         {/* New lead modal */}
         {showModal && (
