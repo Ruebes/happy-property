@@ -1793,34 +1793,14 @@ export default function LeadDetail() {
     setPortalError('')
     setPortalOpen(true)
 
-    // Vorlage der Kategorie 'portal' laden und Platzhalter vorausfüllen
+    // Betreff/Text bewusst LEER lassen → create-eigentuemer-access sendet die
+    // gestaltete HTML-Vorlage „Portalzugang" (email_templates, category portal).
+    // Die Felder unten sind nur ein optionaler Override für eine abweichende
+    // Einzel-Mail (dann als einfacher Text OHNE HTML-Layout).
     setLoadingPortalTpl(true)
     try {
-      const lang = lead?.language ?? 'de'
-      const { data } = await supabase
-        .from('email_templates')
-        .select('subject, body')
-        .eq('category', 'portal')
-        .eq('language', lang)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      const firstName = lead?.first_name ?? ''
-      const name      = lead ? `${lead.first_name} ${lead.last_name}`.trim() : ''
-      const email     = lead?.email ?? ''
-      const subst     = (s: string) => s
-        .replace(/\{\{vorname\}\}/g, firstName)
-        .replace(/\{\{name\}\}/g,    name)
-        .replace(/\{\{email\}\}/g,   email)
-      if (data) {
-        setPortalSubject(subst(data.subject))
-        setPortalMessage(subst(data.body))
-      } else {
-        setPortalSubject('Dein Zugang zum Happy Property Portal')
-        setPortalMessage(
-          `Hallo ${firstName},\n\ndein Zugang zum Happy Property Eigentümer-Portal ist jetzt eingerichtet.\n\nIm Portal findest du deine Immobiliendaten, Kaufunterlagen und Zahlungsübersichten.\n\nViele Grüße\nSven Rüprich\nHappy Property`
-        )
-      }
+      setPortalSubject('')
+      setPortalMessage('')
     } finally {
       setLoadingPortalTpl(false)
     }
@@ -4125,7 +4105,7 @@ export default function LeadDetail() {
 
               {/* Subject */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">{t('crm.template.subject')}</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('crm.template.subject')} <span className="text-gray-400">({t('crm.portal.optional', 'optional')})</span></label>
                 <input
                   type="text"
                   value={portalSubject}
@@ -4139,7 +4119,7 @@ export default function LeadDetail() {
 
               {/* Message */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.message')}</label>
+                <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.message')} <span className="text-gray-400">({t('crm.portal.optional', 'optional')})</span></label>
                 <textarea
                   rows={7}
                   value={portalMessage}
@@ -4150,8 +4130,9 @@ export default function LeadDetail() {
                              font-mono leading-relaxed"
                   placeholder={t('crm.portal.messagePlaceholder')}
                 />
-                <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-600 space-y-0.5">
-                  <p className="font-semibold">{t('crm.portal.availablePlaceholders')}</p>
+                <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-600 space-y-1">
+                  <p className="font-semibold text-blue-700">{t('crm.portal.htmlNote', 'Leer lassen → es wird die gestaltete HTML-Vorlage „Portalzugang" gesendet (bearbeitbar unter Nachrichten → Weitere). Nur ausfüllen, wenn DIESE Mail abweichend sein soll — dann als einfacher Text ohne HTML-Layout.')}</p>
+                  <p className="font-semibold pt-0.5">{t('crm.portal.availablePlaceholders')}</p>
                   <p>
                     <code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> ·{' '}
                     <code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> ·{' '}
