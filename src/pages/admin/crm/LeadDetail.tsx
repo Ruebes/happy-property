@@ -189,15 +189,7 @@ export default function LeadDetail() {
   const [resendingPortal,      setResendingPortal]      = useState(false)
 
   // Portal access (always accessible)
-  const [portalOpen,       setPortalOpen]       = useState(false)
-  const [portalEmail,      setPortalEmail]       = useState('')
-  const [portalName,       setPortalName]        = useState('')
-  const [portalSubject,    setPortalSubject]     = useState('')
-  const [portalMessage,    setPortalMessage]     = useState('')
-  const [loadingPortalTpl, setLoadingPortalTpl] = useState(false)
-  const [portalSending,    setPortalSending]     = useState(false)
-  const [portalSuccess,    setPortalSuccess]     = useState(false)
-  const [portalError,      setPortalError]       = useState('')
+  // (Portalzugang-Modal entfernt — Versand läuft jetzt direkt per Klick, siehe openPortal)
 
   // Unit picker project pre-filter (when activated from a deal_project card)
   const [unitPickerProjectId, setUnitPickerProjectId] = useState<string | null>(null)
@@ -1784,71 +1776,35 @@ export default function LeadDetail() {
   }
 
   // ── Portal access send ───────────────────────────────────────────
+  // Portalzugang direkt senden (KEIN Dialog): Eigentümer-Account anlegen und die
+  // gestaltete HTML-Vorlage „Portalzugang" per E-Mail an den Kunden. Ohne
+  // custom_message nutzt create-eigentuemer-access die DB-Vorlage (mit Sicherheitsnetz).
   async function openPortal() {
-    if (lead) {
-      setPortalEmail(lead.email)
-      setPortalName(`${lead.first_name} ${lead.last_name}`.trim())
-    }
-    setPortalSuccess(false)
-    setPortalError('')
-    setPortalOpen(true)
-
-    // Betreff/Text bewusst LEER lassen → create-eigentuemer-access sendet die
-    // gestaltete HTML-Vorlage „Portalzugang" (email_templates, category portal).
-    // Die Felder unten sind nur ein optionaler Override für eine abweichende
-    // Einzel-Mail (dann als einfacher Text OHNE HTML-Layout).
-    setLoadingPortalTpl(true)
+    if (!lead?.email) { showToast('❌ Keine E-Mail am Lead hinterlegt'); return }
+    setResendingPortal(true)
     try {
-      setPortalSubject('')
-      setPortalMessage('')
-    } finally {
-      setLoadingPortalTpl(false)
-    }
-  }
-
-  async function sendPortalAccess() {
-    if (!portalEmail.trim() || !portalName.trim()) return
-    setPortalSending(true)
-    setPortalError('')
-    try {
-      const { error } = await supabase.functions.invoke('create-eigentuemer-access', {
-        body: {
-          email:          portalEmail.trim(),
-          full_name:      portalName.trim(),
-          custom_subject: portalSubject.trim() || undefined,
-          custom_message: portalMessage.trim() || undefined,
-        },
+      const fullName = `${lead.first_name} ${lead.last_name}`.trim()
+      const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
+        body: { email: lead.email, full_name: fullName },
       })
-      if (error) throw error
-
-      // Activity log
+      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? 'Fehler')
       await supabase.from('activities').insert({
-        lead_id:     id,
-        deal_id:     deal?.id ?? null,
-        type:        'email',
-        direction:   'outbound',
-        subject:     'Portal-Zugangsdaten gesendet',
-        content:     `Eigentümer-Portalzugang wurde an ${portalEmail.trim()} erstellt und per E-Mail zugestellt.`,
-        created_by:  profile?.id ?? null,
+        lead_id:      id,
+        deal_id:      deal?.id ?? null,
+        type:         'email',
+        direction:    'outbound',
+        subject:      'Portalzugang gesendet',
+        content:      `Eigentümer-Portalzugang an ${lead.email} erstellt und per E-Mail gesendet.`,
+        created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
-
-      // portal_access_sent_at setzen
-      if (id) {
-        await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
-      }
-
-      setPortalSuccess(true)
-      showToast('✅ Portalzugang erfolgreich gesendet')
-      setTimeout(() => {
-        setPortalOpen(false)
-        setPortalSuccess(false)
-      }, 4000)
+      if (id) await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
+      showToast('✅ Portalzugang an den Kunden gesendet')
       await fetchAll(true)
     } catch (err) {
-      setPortalError(err instanceof Error ? err.message : String(err))
+      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Senden'}`)
     } finally {
-      setPortalSending(false)
+      setResendingPortal(false)
     }
   }
 
@@ -4047,141 +4003,7 @@ export default function LeadDetail() {
       )}
 
       {/* ── Portal-Zugang Dialog ─────────────────────────────────────── */}
-      {portalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Header */}
-            <div className="px-6 pt-6 pb-3 flex-shrink-0">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-bold text-gray-900">{t('crm.portal.title')}</h2>
-                <button
-                  onClick={() => { setPortalOpen(false); setPortalSuccess(false); setPortalError('') }}
-                  className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-                >
-                  ✕
-                </button>
-              </div>
-              <p className="text-xs text-gray-500 mt-1">{t('crm.portal.intro')}</p>
-            </div>
-
-            {/* Body — scrollable */}
-            <div className="px-6 py-3 space-y-3 overflow-y-auto flex-1">
-
-              {/* Empfänger */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.email')} *</label>
-                  <input
-                    type="email"
-                    value={portalEmail}
-                    onChange={e => setPortalEmail(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
-                               focus:outline-none focus:border-[#ff795d]"
-                    placeholder="kunde@example.com"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.fullName')} *</label>
-                  <input
-                    value={portalName}
-                    onChange={e => setPortalName(e.target.value)}
-                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
-                               focus:outline-none focus:border-[#ff795d]"
-                    placeholder={t('crm.portal.namePlaceholder')}
-                  />
-                </div>
-              </div>
-
-              {/* Template loading indicator */}
-              {loadingPortalTpl && (
-                <div className="flex items-center gap-2 text-xs text-gray-400">
-                  <span className="w-3.5 h-3.5 border-2 border-gray-300 border-t-[#ff795d] rounded-full animate-spin" />
-                  {t('crm.portal.loadingTemplate')}
-                </div>
-              )}
-
-              {/* Subject */}
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">{t('crm.template.subject')} <span className="text-gray-400">({t('crm.portal.optional', 'optional')})</span></label>
-                <input
-                  type="text"
-                  value={portalSubject}
-                  onChange={e => setPortalSubject(e.target.value)}
-                  disabled={loadingPortalTpl}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
-                             focus:outline-none focus:border-[#ff795d] disabled:opacity-50"
-                  placeholder={t('crm.portal.subjectPlaceholder')}
-                />
-              </div>
-
-              {/* Message */}
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">{t('crm.portal.message')} <span className="text-gray-400">({t('crm.portal.optional', 'optional')})</span></label>
-                <textarea
-                  rows={7}
-                  value={portalMessage}
-                  onChange={e => setPortalMessage(e.target.value)}
-                  disabled={loadingPortalTpl}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
-                             focus:outline-none focus:border-[#ff795d] resize-y disabled:opacity-50
-                             font-mono leading-relaxed"
-                  placeholder={t('crm.portal.messagePlaceholder')}
-                />
-                <div className="mt-1.5 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 text-[11px] text-blue-600 space-y-1">
-                  <p className="font-semibold text-blue-700">{t('crm.portal.htmlNote', 'Leer lassen → es wird die gestaltete HTML-Vorlage „Portalzugang" gesendet (bearbeitbar unter Nachrichten → Weitere). Nur ausfüllen, wenn DIESE Mail abweichend sein soll — dann als einfacher Text ohne HTML-Layout.')}</p>
-                  <p className="font-semibold pt-0.5">{t('crm.portal.availablePlaceholders')}</p>
-                  <p>
-                    <code className="bg-blue-100 px-1 rounded">{'{{name}}'}</code> ·{' '}
-                    <code className="bg-blue-100 px-1 rounded">{'{{email}}'}</code> ·{' '}
-                    <code className="bg-blue-100 px-1 rounded">{'{{password}}'}</code> ·{' '}
-                    <code className="bg-blue-100 px-1 rounded">{'{{login_url}}'}</code>
-                  </p>
-                  <p className="text-blue-400">{t('crm.portal.credentialsAppended')}</p>
-                </div>
-              </div>
-
-              {portalError && (
-                <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{portalError}</p>
-              )}
-              {portalSuccess && (
-                <p className="text-xs text-green-700 bg-green-50 rounded-lg px-3 py-2 font-medium">
-                  {t('crm.portal.sentSuccess')}
-                </p>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
-              <button
-                onClick={() => { setPortalOpen(false); setPortalSuccess(false); setPortalError('') }}
-                className="flex-1 py-2.5 text-sm text-gray-600 border border-gray-200
-                           rounded-xl hover:bg-gray-50"
-              >
-                {t('common.close')}
-              </button>
-              <button
-                onClick={sendPortalAccess}
-                disabled={!portalEmail.trim() || !portalName.trim() || portalSending || portalSuccess || loadingPortalTpl}
-                className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50
-                           flex items-center justify-center gap-2"
-                style={{ backgroundColor: '#ff795d' }}
-              >
-                {portalSending && (
-                  <span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                )}
-                {portalSending
-                  ? t('crm.portal.sending')
-                  : portalSuccess
-                    ? t('crm.portal.sent')
-                    : t('crm.portal.createAndSend')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Portalzugang-Modal entfernt — „Zugang senden" sendet jetzt direkt (HTML-Vorlage) */}
 
       {/* ── Einheit-Auswahl Modal (vorhandene Units bei Aktivieren) ── */}
       {showUnitSelect && (
