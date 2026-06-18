@@ -17,6 +17,8 @@ export type DealPhase =
   | 'kaufvertrag'
   | 'anzahlung'
   | 'provision_erhalten'
+  | 'hold'
+  | 'kontakt_uebergeben'
   | 'deal_verloren'
   | 'archiviert'
 
@@ -112,6 +114,7 @@ export const DEAL_PHASES: DealPhase[] = [
   'finanzierung_de', 'finanzierung_cy',
   'immobilienauswahl', 'reservierung',
   'kaufvertrag', 'anzahlung', 'provision_erhalten',
+  'hold', 'kontakt_uebergeben',
   'deal_verloren',
 ]
 
@@ -127,6 +130,8 @@ export const PHASE_ICONS: Record<DealPhase, string> = {
   kaufvertrag:        '📝',
   anzahlung:          '✅',
   provision_erhalten: '🎉',
+  hold:               '⏸️',
+  kontakt_uebergeben: '🤝',
   deal_verloren:      '🚫',
   archiviert:         '📦',
 }

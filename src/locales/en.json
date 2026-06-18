@@ -1052,6 +1052,8 @@
       "kaufvertrag": "Purchase Contract",
       "anzahlung": "Deposit",
       "provision_erhalten": "Commission Received",
+      "hold": "Hold",
+      "kontakt_uebergeben": "Hand Over Contact",
       "deal_verloren": "Deal Lost",
       "archiviert": "Archived"
     },

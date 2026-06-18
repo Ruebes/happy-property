@@ -502,6 +502,11 @@ export default function Pipeline() {
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
+  const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
+  const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
+  const [holdContact,  setHoldContact]  = useState(true)
+  const [handoverText, setHandoverText] = useState('')
+  const [modalBusy,    setModalBusy]    = useState(false)
   const [savingReg, setSavingReg] = useState(false)
   const [filterSource, setFilterSource] = useState('')
   const [filterAssignee, setFilterAssignee] = useState('')
@@ -626,6 +631,10 @@ export default function Pipeline() {
       setRegistrationDeal({ ...deal })
       return
     }
+    // Hold: Popup mit Kontaktaufnahme-Häkchen
+    if (targetPhase === 'hold') { setHoldDeal({ ...deal }); return }
+    // Kontakt übergeben: Popup mit Freitext → sofort an Burkhard + Ioulia
+    if (targetPhase === 'kontakt_uebergeben') { setHandoverDeal({ ...deal }); return }
 
     // Optimistic update
     setDeals(prev =>
@@ -684,6 +693,48 @@ export default function Pipeline() {
     setDragId(null)
     if (!deal) return
     changePhase(deal, targetPhase)
+  }
+
+  // Hold bestätigen (mit/ohne Kontaktaufnahme). last_hold_msg_at=jetzt → erste 6-Wochen-Mail in 6 Wochen.
+  const confirmHold = async () => {
+    if (!holdDeal) return
+    const deal = holdDeal
+    setModalBusy(true)
+    try {
+      const now = new Date().toISOString()
+      await supabase.from('deals').update({ phase: 'hold', hold_contact: holdContact, last_hold_msg_at: now }).eq('id', deal.id)
+      setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'hold' } : d))
+      await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
+        content: `Auf Hold gesetzt. Kontaktaufnahme alle 6 Wochen: ${holdContact ? 'JA' : 'nein'}.`, created_by: profile?.id ?? null })
+      setHoldDeal(null); setHoldContact(true)
+      showToastMsg(t('crm.phaseSaved', 'Phase gespeichert'))
+    } finally { setModalBusy(false) }
+  }
+
+  // Kontakt übergeben: Freitext speichern + sofort WhatsApp an Burkhard + Ioulia.
+  const confirmHandover = async () => {
+    if (!handoverDeal) return
+    const deal = handoverDeal
+    setModalBusy(true)
+    try {
+      const now = new Date().toISOString()
+      await supabase.from('deals').update({ phase: 'kontakt_uebergeben', handover_notes: handoverText.trim() || null, handover_at: now, last_handover_ping_at: now }).eq('id', deal.id)
+      setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'kontakt_uebergeben' } : d))
+      const { data: lead } = await supabase.from('leads').select('first_name,last_name,phone,whatsapp,email').eq('id', deal.lead_id).maybeSingle()
+      const l = lead as { first_name?: string; last_name?: string; phone?: string; whatsapp?: string; email?: string } | null
+      const ln = l ? `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() : ''
+      const msg = `Bitte bearbeite diesen Kontakt:\n${ln}\nTel: ${l?.phone || l?.whatsapp || '–'}\nE-Mail: ${l?.email || '–'}${handoverText.trim() ? `\n\n${handoverText.trim()}` : ''}`
+      const { data: contacts } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone')
+        .in('id', ['6c9da3ce-9826-4660-9a50-6ff9fc8e70b4', '809bbc0b-fb61-47a5-8f04-e8f7d9ab3c34'])
+      for (const c of (contacts ?? []) as Array<{ first_name: string; whatsapp: string | null; phone: string | null }>) {
+        const tel = c.whatsapp || c.phone; if (!tel) continue
+        await sendWhatsApp({ event_type: 'no_show', override_text: msg, lead_id: deal.lead_id, lead_data: { lead_name: c.first_name, lead_phone: tel } }).catch(() => {})
+      }
+      await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'whatsapp', direction: 'outbound',
+        subject: 'Kontakt übergeben an Burkhard + Ioulia', content: msg, created_by: profile?.id ?? null })
+      setHandoverDeal(null); setHandoverText('')
+      showToastMsg(t('crm.handoverSent', 'Kontakt übergeben'))
+    } finally { setModalBusy(false) }
   }
 
   // Rechtsklick-Kontextmenü auf einer Karte: alle Phasen zum schnellen Wechsel
@@ -941,6 +992,39 @@ export default function Pipeline() {
           onConfirm={handleRegistrationConfirm}
           onCancel={() => setRegistrationDeal(null)}
         />
+      )}
+
+      {holdDeal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">⏸️ {t('crm.hold.title', 'Auf Hold setzen')}</h2>
+            <p className="text-xs text-gray-500 mb-4">{holdDeal.lead ? `${holdDeal.lead.first_name} ${holdDeal.lead.last_name}` : ''}</p>
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input type="checkbox" checked={holdContact} onChange={e => setHoldContact(e.target.checked)} className="w-4 h-4 mt-0.5 accent-orange-500" />
+              <span className="text-sm text-gray-700">{t('crm.hold.contact', 'Kontaktaufnahme: alle 6 Wochen anschreiben (Mail + WhatsApp), bis ich ihn rausziehe oder er abbestellt.')}</span>
+            </label>
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => { setHoldDeal(null); setHoldContact(true) }} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void confirmHold()} disabled={modalBusy} className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{t('common.confirm', 'Bestätigen')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {handoverDeal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">🤝 {t('crm.handover.title', 'Kontakt übergeben')}</h2>
+            <p className="text-xs text-gray-500 mb-3">{t('crm.handover.hint', 'Geht sofort per WhatsApp an Burkhard + Ioulia. Dein Text wird angehängt.')}</p>
+            <textarea rows={4} value={handoverText} onChange={e => setHandoverText(e.target.value)}
+              placeholder={t('crm.handover.ph', 'Notiz für Burkhard/Ioulia (z.B. Hintergrund, Wunsch, Dringlichkeit)…')}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => { setHandoverDeal(null); setHandoverText('') }} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void confirmHandover()} disabled={modalBusy} className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{modalBusy ? t('crm.handover.sending', 'Sende…') : t('crm.handover.send', 'Übergeben & senden')}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Rechtsklick-Kontextmenü: Phase schnell wechseln */}

@@ -1052,6 +1052,8 @@
       "kaufvertrag": "Kaufvertrag",
       "anzahlung": "Anzahlung",
       "provision_erhalten": "Provision erhalten",
+      "hold": "Hold",
+      "kontakt_uebergeben": "Kontakt übergeben",
       "deal_verloren": "Deal verloren",
       "archiviert": "Archiviert"
     },
