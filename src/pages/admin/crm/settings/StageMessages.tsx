@@ -437,6 +437,188 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
 }
 
 // ── Hauptseite ──────────────────────────────────────────────────────────────────
+// ── Weitere Nachrichten: feste System-Events außerhalb der Pipeline ─────────────
+// Jeder Eintrag bearbeitet die WIRKLICH verwendete Vorlage (Mail und/oder WhatsApp).
+interface SystemEvent {
+  key:               string
+  icon:              string
+  label:             string
+  desc:              string
+  emailTemplateId?:  string
+  whatsappEventType?: string
+  placeholders:      string[]
+  note?:             string
+}
+const SYSTEM_EVENTS: SystemEvent[] = [
+  {
+    key:             'portal_access',
+    icon:            '🔑',
+    label:           'Portalzugang',
+    desc:            'Zugangsdaten-Mail an neue Nutzer/Eigentümer (Login + Passwort). Geht automatisch raus bei Konto-Anlage und „Portal-Zugang senden“.',
+    emailTemplateId: '37b1724c-f71c-4e8b-9116-b92d18f03915',
+    placeholders:    ['{{vorname}}', '{{email}}', '{{password}}', '{{login_url}}'],
+    note:            '{{password}} und {{login_url}} bitte drin lassen — sonst sendet das System automatisch die fest eingebaute Sicherheits-Mail.',
+  },
+]
+
+const fillSysPreview = (h: string): string => h
+  .split('{{vorname}}').join('Anna')
+  .split('{{name}}').join('Anna Beispiel')
+  .split('{{email}}').join('anna@beispiel.de')
+  .split('{{password}}').join('Xk7mZ9q')
+  .split('{{login_url}}').join('https://portal.happy-property.com/login')
+
+function SystemMessageModal({ event, onClose, onSaved }: {
+  event:   SystemEvent
+  onClose: () => void
+  onSaved: (m: string) => void
+}) {
+  const { t } = useTranslation()
+  const hasEmail = !!event.emailTemplateId
+  const hasWa    = !!event.whatsappEventType
+  const [tab,     setTab]     = useState<'email' | 'whatsapp'>(hasEmail ? 'email' : 'whatsapp')
+  const [subject, setSubject] = useState('')
+  const [body,    setBody]    = useState('')
+  const [html,    setHtml]    = useState('')
+  const [waText,  setWaText]  = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [preview, setPreview] = useState(false)
+  const [copied,  setCopied]  = useState<string | null>(null)
+  const [error,   setError]   = useState('')
+
+  useEffect(() => {
+    let active = true
+    const load = async () => {
+      if (event.emailTemplateId) {
+        const { data } = await supabase.from('email_templates').select('subject, body, html_body').eq('id', event.emailTemplateId).maybeSingle()
+        const tpl = data as { subject?: string; body?: string | null; html_body?: string | null } | null
+        if (active && tpl) { setSubject(tpl.subject ?? ''); setBody(tpl.body ?? ''); setHtml(tpl.html_body ?? '') }
+      }
+      if (event.whatsappEventType) {
+        const { data } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', event.whatsappEventType).maybeSingle()
+        const tpl = data as { message_template?: string } | null
+        if (active && tpl) setWaText(tpl.message_template ?? '')
+      }
+      if (active) setLoading(false)
+    }
+    void load()
+    return () => { active = false }
+  }, [event])
+
+  const copy = (k: string) => { navigator.clipboard.writeText(k).catch(() => {}); setCopied(k); setTimeout(() => setCopied(null), 1500) }
+
+  const handleSave = async () => {
+    setSaving(true); setError('')
+    try {
+      if (tab === 'email' && event.emailTemplateId) {
+        if (!subject.trim()) { setError(t('crm.sys.errSubject', 'Betreff ist Pflicht')); setSaving(false); return }
+        const { error: e } = await supabase.from('email_templates')
+          .update({ subject: subject.trim(), body: body.trim() || null, html_body: html.trim() || null })
+          .eq('id', event.emailTemplateId)
+        if (e) throw e
+      } else if (tab === 'whatsapp' && event.whatsappEventType) {
+        if (!waText.trim()) { setError(t('crm.sys.errWa', 'WhatsApp-Text ist Pflicht')); setSaving(false); return }
+        const { error: e } = await supabase.from('whatsapp_templates')
+          .update({ message_template: waText.trim() }).eq('event_type', event.whatsappEventType)
+        if (e) throw e
+      }
+      onSaved(t('crm.sys.saved', '✅ Vorlage gespeichert'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6 flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
+          <h2 className="text-lg font-semibold text-gray-900">{event.icon} {event.label}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
+        ) : (
+          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+            <p className="text-xs text-gray-500">{event.desc}</p>
+            {event.note && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800">⚠️ {event.note}</div>
+            )}
+
+            {hasEmail && hasWa && (
+              <div className="flex gap-1 border-b border-gray-200">
+                <button type="button" onClick={() => setTab('email')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'email' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>📧 E-Mail</button>
+                <button type="button" onClick={() => setTab('whatsapp')}
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'whatsapp' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>📱 WhatsApp</button>
+              </div>
+            )}
+
+            {/* Platzhalter */}
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.sys.placeholders', 'Platzhalter (klicken zum Kopieren)')}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {event.placeholders.map(p => (
+                  <button key={p} type="button" onClick={() => copy(p)}
+                    className={`text-xs px-2 py-1 rounded-lg border transition-all ${copied === p ? 'bg-green-100 border-green-300 text-green-700' : 'bg-white border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-600'}`}>
+                    {copied === p ? t('crm.sys.copied', 'kopiert!') : p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {tab === 'email' && hasEmail && (
+              <>
+                <div>
+                  <label className={labelCls}>{t('crm.sys.subject', 'Betreff')} *</label>
+                  <input className={inputCls} value={subject} onChange={e => setSubject(e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelCls}>{t('crm.sys.body', 'Text (einfache Version)')}</label>
+                  <textarea rows={5} className={`${inputCls} resize-y`} value={body} onChange={e => setBody(e.target.value)} />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={labelCls + ' mb-0'}>{t('crm.sys.html', 'HTML-Layout (wird beim Versand bevorzugt)')}</span>
+                    <button type="button" onClick={() => setPreview(p => !p)}
+                      className="text-xs px-2 py-1 rounded-lg border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600">
+                      {preview ? t('crm.sys.previewClose', '✕ Vorschau') : t('crm.sys.preview', '👁 Vorschau')}
+                    </button>
+                  </div>
+                  <textarea rows={9} className={`${inputCls} text-xs font-mono resize-y`} value={html} onChange={e => setHtml(e.target.value)} />
+                  {preview && html && (
+                    <div className="border border-gray-200 rounded-xl overflow-hidden mt-2">
+                      <iframe srcDoc={fillSysPreview(html)} title="Vorschau" className="w-full" style={{ height: 360, border: 'none' }} sandbox="allow-same-origin" />
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            {tab === 'whatsapp' && hasWa && (
+              <div>
+                <label className={labelCls}>{t('crm.sys.waText', 'WhatsApp-Text')} *</label>
+                <textarea rows={7} className={`${inputCls} resize-y`} value={waText} onChange={e => setWaText(e.target.value)} />
+              </div>
+            )}
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+          <button onClick={handleSave} disabled={saving || loading}
+            className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+            {saving ? t('common.saving', 'Speichert…') : t('common.save', 'Speichern')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function StageMessages() {
   const { t } = useTranslation()
 
@@ -446,6 +628,8 @@ export default function StageMessages() {
   const [loading,   setLoading]   = useState(true)
   const [selected,  setSelected]  = useState<string>('lead_created')
   const [editing,   setEditing]   = useState<{ rule: AutomationRule | null } | null>(null)
+  const [editingSystem, setEditingSystem] = useState<SystemEvent | null>(null)
+  const [pipelineOpen,  setPipelineOpen]  = useState(false)
   const [toast,     setToast]     = useState('')
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
@@ -528,13 +712,29 @@ export default function StageMessages() {
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {t('crm.stageEditor.title', 'Nachrichten je Stage')}
+            {t('crm.stageEditor.title', 'Nachrichten')}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {t('crm.stageEditor.subtitle', 'Pro Lead-Stage festlegen, welche Nachrichten (WhatsApp/E-Mail) in welchen Abständen rausgehen.')}
+            {t('crm.stageEditor.subtitle2', 'Pipeline-Nachrichten je Lead-Phase und weitere System-Nachrichten — Texte und Vorlagen hier bearbeiten.')}
           </p>
         </div>
 
+        {/* ── Pipeline (aufklappbar) ── */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <button onClick={() => setPipelineOpen(o => !o)}
+            className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50 transition-colors">
+            <span className="flex items-center gap-2.5">
+              <span className="text-lg">📊</span>
+              <span className="text-left">
+                <span className="block font-semibold text-gray-900">{t('crm.stageEditor.pipelineTitle', 'Pipeline')}</span>
+                <span className="block text-xs text-gray-500">{t('crm.stageEditor.pipelineDesc', 'Nachrichten je Lead-Phase (WhatsApp / E-Mail)')}</span>
+              </span>
+            </span>
+            <span className="text-gray-400 text-sm">{pipelineOpen ? '▲' : '▼'}</span>
+          </button>
+
+          {pipelineOpen && (
+          <div className="border-t border-gray-100 px-5 pb-5 pt-4 space-y-4">
         {/* Safety-Hinweis */}
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
           {t('crm.stageEditor.safetyNote', 'Solange der automatische Versand nicht scharfgeschaltet ist, wird nichts verschickt. „Aktiv" bedeutet: geht raus, sobald das System live ist.')}
@@ -640,7 +840,46 @@ export default function StageMessages() {
             </div>
           </div>
         )}
+          </div>
+          )}
+        </div>
+
+        {/* ── Weitere Nachrichten (feste Liste) ── */}
+        <div className="space-y-2">
+          <div>
+            <h2 className="text-lg font-semibold text-gray-900">{t('crm.stageEditor.otherTitle', 'Weitere Nachrichten')}</h2>
+            <p className="text-xs text-gray-500">{t('crm.stageEditor.otherDesc', 'System-Nachrichten außerhalb der Pipeline — reinklicken zum Bearbeiten.')}</p>
+          </div>
+          {SYSTEM_EVENTS.map(ev => (
+            <div key={ev.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+              <div className="flex items-start gap-3">
+                <span className="shrink-0 text-lg mt-0.5">{ev.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-900 text-sm">{ev.label}</span>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{t('crm.stageEditor.active2', 'Aktiv')}</span>
+                    {ev.emailTemplateId && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">📧 Mail</span>}
+                    {ev.whatsappEventType && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">📱 WhatsApp</span>}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">{ev.desc}</p>
+                </div>
+                <button onClick={() => setEditingSystem(ev)}
+                  className="text-sm text-gray-500 hover:text-gray-800 font-medium shrink-0">
+                  {t('common.edit', 'Bearbeiten')}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
+
+      {editingSystem && (
+        <SystemMessageModal
+          event={editingSystem}
+          onClose={() => setEditingSystem(null)}
+          onSaved={(m) => { setEditingSystem(null); showToast(m) }}
+        />
+      )}
 
       {editing && (
         <StepModal

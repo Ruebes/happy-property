@@ -127,15 +127,11 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // Nachrichten je Stage (stages) ersetzt die alten Einzelseiten
   // „E-Mail Vorlagen" / „WhatsApp" / „Automation" (Routen bleiben registriert).
   const crmSettingsItems: ({ to: string; key: string } | { heading: string })[] = [
-    { heading: 'crm.nav.groupPipeline' },
-    { to: '/admin/crm/settings/stages',      key: 'crm.nav.stages'         },
-    { to: '/admin/crm/settings/adhoc',       key: 'crm.nav.adhoc'          },
-    { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'             },
-    { heading: 'crm.nav.groupSystem' },
-    { to: '/admin/crm/templates',            key: 'crm.nav.emailTemplates' },
-    { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'      },
-    { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'       },
-    { to: '/admin/crm/settings',             key: 'crm.nav.developers'     },
+    { to: '/admin/crm/settings/stages',      key: 'crm.nav.stages'      },
+    { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },
+    { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
+    { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
+    { to: '/admin/crm/settings',             key: 'crm.nav.developers'  },
   ]
 
   // ── Sign out ─────────────────────────────────────────────────────────────
@@ -340,7 +336,6 @@ export default function DashboardLayout({ children, basePath }: Props) {
                           { to: '/admin/crm',           key: 'crm.nav.pipeline'    },
                           { to: '/admin/crm/leads',     key: 'crm.nav.leads'       },
                           { to: '/admin/crm/projects',  key: 'crm.nav.projects'    },
-                          { to: '/admin/crm/templates', key: 'crm.nav.templates'   },
                           { to: '/admin/crm/settings',  key: 'crm.nav.developers'  },
                         ].map(({ to, key }) => (
                           <Link key={to} to={to}

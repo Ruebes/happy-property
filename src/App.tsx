@@ -30,7 +30,6 @@ const CrmPipeline           = lazy(() => import('./pages/admin/crm/Pipeline'))
 const CrmDashboard          = lazy(() => import('./pages/admin/crm/CrmDashboard'))
 const CrmLeadDetail         = lazy(() => import('./pages/admin/crm/LeadDetail'))
 const CrmAllLeads           = lazy(() => import('./pages/admin/crm/AllLeads'))
-const CrmTemplates          = lazy(() => import('./pages/admin/crm/Templates'))
 const CrmArchived           = lazy(() => import('./pages/admin/crm/Archived'))
 const CrmProjects           = lazy(() => import('./pages/admin/crm/Projects'))
 const CrmProjectDetail      = lazy(() => import('./pages/admin/crm/ProjectDetail'))
@@ -39,7 +38,6 @@ const CrmPostausgang        = lazy(() => import('./pages/admin/crm/Postausgang')
 const CrmWhatsappTemplates  = lazy(() => import('./pages/admin/crm/settings/WhatsappTemplates'))
 const CrmAutomationRules    = lazy(() => import('./pages/admin/crm/settings/AutomationRules'))
 const CrmStageMessages      = lazy(() => import('./pages/admin/crm/settings/StageMessages'))
-const CrmAdhocMessages      = lazy(() => import('./pages/admin/crm/settings/AdhocMessages'))
 const CrmAiAgent            = lazy(() => import('./pages/admin/crm/settings/AiAgent'))
 const CrmDocuments          = lazy(() => import('./pages/admin/crm/settings/Documents'))
 const CrmContacts           = lazy(() => import('./pages/admin/crm/settings/Contacts'))
@@ -106,7 +104,6 @@ export default function App() {
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
               <Route path="/admin/crm/settings/stages"      element={<CrmStageMessages />} />
-              <Route path="/admin/crm/settings/adhoc"       element={<CrmAdhocMessages />} />
               <Route path="/admin/crm/settings/ai"          element={<CrmAiAgent />} />
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
@@ -121,7 +118,6 @@ export default function App() {
               <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
               <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
               <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetailRoute />} />
-              <Route path="/admin/crm/templates"   element={<CrmTemplates />} />
               <Route path="/admin/crm/archived"    element={<CrmArchived />} />
               <Route path="/admin/crm/projects"       element={<CrmProjects />} />
               <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />
