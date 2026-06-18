@@ -89,7 +89,13 @@ Deno.serve(async (req) => {
     const angle     = body.angle || 'lifestyle'
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
 
-    const userMsg = generic ? [
+    // Gelernte Vorgaben (deck_ai_rules) → fließen in JEDES Deck ein (Auto-Grab + Feinschliff)
+    const sbRules = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const { data: aiRules } = await sbRules.from('deck_ai_rules').select('rule').eq('active', true)
+    const learnedTxt = (aiRules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
+    const learnedBlock = learnedTxt ? `GELERNTE VORGABEN (immer beachten):\n${learnedTxt}\n\n` : ''
+
+    const userMsg = learnedBlock + (generic ? [
       `GENERISCHES PROJEKT-DECK — KEIN spezifischer Kunde. Dieses Deck wird live im Zoom geteilt.`,
       `MONAT: ${body.month_label || ''}`,
       ``,
@@ -108,7 +114,7 @@ Deno.serve(async (req) => {
       ``,
       `FAKTEN ZUM PROJEKT & APARTMENT (nur diese verwenden):`,
       body.facts.trim(),
-    ].join('\n')
+    ].join('\n'))
 
     const reqBody = JSON.stringify({
       model:       'claude-sonnet-4-6',
