@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
-import { buildWelcomeEmail } from '../../lib/welcomeEmail'
+import { renderPortalAccessEmail } from '../../lib/welcomeEmail'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -474,7 +474,7 @@ export default function AdminUsers() {
         await performUnitAssignment(result.userId, form.email.trim())
       }
       // Willkommens-E-Mail mit Zugangsdaten automatisch senden
-      const welcomeHtml = buildWelcomeEmail(
+      const { subject: welcomeSubject, html: welcomeHtml } = await renderPortalAccessEmail(
         form.firstName.trim(),
         form.email.trim(),
         result.password,
@@ -482,7 +482,7 @@ export default function AdminUsers() {
       supabase.functions.invoke('send-email', {
         body: {
           to:      form.email.trim(),
-          subject: 'Dein Zugang zum Happy Property Portal',
+          subject: welcomeSubject,
           html:    welcomeHtml,
         },
       }).catch(() => { /* Fehler im Hintergrund ignorieren */ })

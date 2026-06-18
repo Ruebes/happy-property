@@ -986,6 +986,9 @@
       "stages": "Messages",
       "adhoc": "Other Messages",
       "ai": "AI Reply Agent",
+      "emailTemplates": "Email Templates",
+      "groupPipeline": "Pipeline",
+      "groupSystem": "System",
       "calendar": "Calendar",
       "statistics": "Statistics"
     },

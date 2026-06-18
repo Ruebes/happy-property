@@ -126,13 +126,16 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // CRM Settings-Untermenü-Einträge
   // Nachrichten je Stage (stages) ersetzt die alten Einzelseiten
   // „E-Mail Vorlagen" / „WhatsApp" / „Automation" (Routen bleiben registriert).
-  const crmSettingsItems = [
-    { to: '/admin/crm/settings',             key: 'crm.nav.developers' },
-    { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
-    { to: '/admin/crm/settings/stages',      key: 'crm.nav.stages'      },
-    { to: '/admin/crm/settings/adhoc',       key: 'crm.nav.adhoc'       },
-    { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },
-    { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
+  const crmSettingsItems: ({ to: string; key: string } | { heading: string })[] = [
+    { heading: 'crm.nav.groupPipeline' },
+    { to: '/admin/crm/settings/stages',      key: 'crm.nav.stages'         },
+    { to: '/admin/crm/settings/adhoc',       key: 'crm.nav.adhoc'          },
+    { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'             },
+    { heading: 'crm.nav.groupSystem' },
+    { to: '/admin/crm/templates',            key: 'crm.nav.emailTemplates' },
+    { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'      },
+    { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'       },
+    { to: '/admin/crm/settings',             key: 'crm.nav.developers'     },
   ]
 
   // ── Sign out ─────────────────────────────────────────────────────────────
@@ -264,23 +267,30 @@ export default function DashboardLayout({ children, basePath }: Props) {
                     {settingsOpen && (
                       <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200
                                       rounded-xl shadow-lg z-50 min-w-[200px] py-1.5 overflow-hidden">
-                        {crmSettingsItems.map(({ to, key }) => (
-                          <Link key={to} to={to}
-                            className={`flex items-center gap-2.5 px-4 py-2 text-sm font-body
-                                        transition-colors ${
-                              isActive(to)
-                                ? 'font-semibold'
-                                : 'text-gray-700 hover:bg-gray-50 hover:text-hp-black'
-                            }`}
-                            style={isActive(to) ? { color: '#ff795d' } : undefined}
-                          >
-                            {/* aktiver Indikator-Balken */}
-                            <span
-                              className="w-1 h-4 rounded-full shrink-0"
-                              style={{ backgroundColor: isActive(to) ? '#ff795d' : 'transparent' }}
-                            />
-                            {t(key)}
-                          </Link>
+                        {crmSettingsItems.map((item) => (
+                          'heading' in item ? (
+                            <div key={item.heading}
+                              className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 select-none">
+                              {t(item.heading)}
+                            </div>
+                          ) : (
+                            <Link key={item.to} to={item.to}
+                              className={`flex items-center gap-2.5 px-4 py-2 text-sm font-body
+                                          transition-colors ${
+                                isActive(item.to)
+                                  ? 'font-semibold'
+                                  : 'text-gray-700 hover:bg-gray-50 hover:text-hp-black'
+                              }`}
+                              style={isActive(item.to) ? { color: '#ff795d' } : undefined}
+                            >
+                              {/* aktiver Indikator-Balken */}
+                              <span
+                                className="w-1 h-4 rounded-full shrink-0"
+                                style={{ backgroundColor: isActive(item.to) ? '#ff795d' : 'transparent' }}
+                              />
+                              {t(item.key)}
+                            </Link>
+                          )
                         ))}
                       </div>
                     )}

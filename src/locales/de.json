@@ -986,6 +986,9 @@
       "stages": "Nachrichten",
       "adhoc": "Sonstige Nachrichten",
       "ai": "KI-Antwort-Agent",
+      "emailTemplates": "E-Mail-Vorlagen",
+      "groupPipeline": "Pipeline",
+      "groupSystem": "System",
       "calendar": "Kalender",
       "statistics": "Statistiken"
     },

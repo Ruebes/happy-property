@@ -8,7 +8,7 @@ import type { CrmProjectUnit } from '../lib/crmTypes'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import { CustomSelect } from '../components/CustomSelect'
-import { buildWelcomeEmail } from '../lib/welcomeEmail'
+import { renderPortalAccessEmail } from '../lib/welcomeEmail'
 
 // ── Types ──────────────────────────────────────────────────────
 interface Property {
@@ -658,12 +658,9 @@ export default function Objekte() {
       // Zugangsdaten automatisch per E-Mail senden
       if (data?.password && data?.userId) {
         const email = ownerModal.email.trim().toLowerCase()
+        const { subject, html } = await renderPortalAccessEmail(ownerModal.first_name.trim(), email, data.password)
         supabase.functions.invoke('send-email', {
-          body: {
-            to:      email,
-            subject: 'Dein Zugang zum Happy Property Portal',
-            html:    buildWelcomeEmail(ownerModal.first_name.trim(), email, data.password),
-          },
+          body: { to: email, subject, html },
         }).catch(() => {})
       }
       setOwnerModalSuccess(true)

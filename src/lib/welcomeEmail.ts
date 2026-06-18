@@ -2,8 +2,12 @@
  * Gemeinsames Welcome-Email-Template für alle Nutzertypen.
  * Wird verwendet in: Users.tsx, Objekte.tsx (Owner-Anlage)
  */
+import { supabase } from './supabase'
 
 export const PORTAL_URL = 'https://portal.happy-property.com'
+
+// Editierbare „Portal-Zugang"-Vorlage (email_templates, category portal)
+const PORTAL_TEMPLATE_ID = '37b1724c-f71c-4e8b-9116-b92d18f03915'
 
 export function buildWelcomeEmail(
   firstName: string,
@@ -42,4 +46,49 @@ export function buildWelcomeEmail(
 </td></tr>
 </table>
 </body></html>`
+}
+
+/**
+ * Rendert die Zugangs-Mail aus der editierbaren DB-Vorlage „Portal-Zugang".
+ * Sicherheitsnetz: fehlt die Vorlage, ist sie leer ODER enthält das gerenderte
+ * Ergebnis das Passwort nicht (z.B. Platzhalter versehentlich entfernt), wird
+ * automatisch das fest eingebaute buildWelcomeEmail genutzt — die Zugangsdaten
+ * gehen also NIE verloren, egal wie die Vorlage bearbeitet wurde.
+ */
+export async function renderPortalAccessEmail(
+  firstName: string,
+  email: string,
+  password: string,
+): Promise<{ subject: string; html: string }> {
+  const fallback = {
+    subject: 'Dein Zugang zum Happy Property Portal',
+    html:    buildWelcomeEmail(firstName, email, password),
+  }
+  try {
+    const { data } = await supabase
+      .from('email_templates')
+      .select('subject, html_body')
+      .eq('id', PORTAL_TEMPLATE_ID)
+      .maybeSingle()
+    const tpl = data as { subject?: string; html_body?: string | null } | null
+    const raw = tpl?.html_body?.trim()
+    if (!tpl || !raw) return fallback
+    const vars: Record<string, string> = {
+      vorname:   firstName,
+      name:      firstName,
+      email,
+      password,
+      login_url: `${PORTAL_URL}/login`,
+    }
+    let html = raw
+    let subject = tpl.subject?.trim() || fallback.subject
+    for (const [k, v] of Object.entries(vars)) {
+      html    = html.split(`{{${k}}}`).join(v)
+      subject = subject.split(`{{${k}}}`).join(v)
+    }
+    if (!html.includes(password)) return fallback   // Sicherheitsnetz
+    return { subject, html }
+  } catch {
+    return fallback
+  }
 }
