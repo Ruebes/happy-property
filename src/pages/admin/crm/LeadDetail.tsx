@@ -1057,24 +1057,28 @@ export default function LeadDetail() {
     const amount = commissionAmount ? `€ ${commissionAmount}` : '—'
     setSaving(true)
     try {
-      await sendWhatsApp({
-        event_type: 'commission',
-        lead_data: {
-          lead_name:  `${lead.first_name} ${lead.last_name}`,
-          lead_phone: lead.phone ?? '',
-          lead_email: lead.email ?? '',
-        },
-        extra_data: {
-          project_name:      projectName,
-          commission_amount: amount,
-        },
-        lead_id: id,
+      // INTERNE Provisions-Anfrage → an Burkhard (Buchhaltung), NICHT an den Kunden.
+      // (Vorher ging event_type 'commission' mit recipients=[] über den Fallback an die Kundennummer = Leck.)
+      const { data: bk } = await supabase.from('crm_business_contacts')
+        .select('first_name, whatsapp, phone').eq('id', '6c9da3ce-9826-4660-9a50-6ff9fc8e70b4').maybeSingle()
+      const b = bk as { first_name?: string; whatsapp?: string | null; phone?: string | null } | null
+      const tel = b?.whatsapp || b?.phone
+      if (!tel) { showToast('❌ Burkhard hat keine WhatsApp-/Telefonnummer hinterlegt'); return }
+      const msg = `🎉 Deal abgeschlossen!\nKunde: ${lead.first_name} ${lead.last_name}\nProjekt: ${projectName}\nProvision: ${amount}\n\nBitte Provision veranlassen.`
+      const res = await sendWhatsApp({
+        event_type: 'no_show', override_text: msg, lead_id: id,
+        lead_data: { lead_name: b?.first_name ?? 'Burkhard', lead_phone: tel },
       })
-      showToast(t('crm.whatsappSent', '📱 WhatsApp gesendet'))
+      if (!res.success) throw new Error(res.error || 'WhatsApp Fehler')
+      await supabase.from('activities').insert({
+        lead_id: id, deal_id: deal.id, type: 'whatsapp', direction: 'outbound',
+        subject: 'Provisions-Anfrage an Burkhard', content: msg, created_by: profile?.id ?? null,
+      })
+      showToast(t('crm.commissionSentBurkhard', '📱 Provisions-Anfrage an Burkhard gesendet'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] commissionWhatsapp:', err)
-      showToast('❌ WhatsApp Fehler')
+      showToast(`❌ ${err instanceof Error ? err.message : 'WhatsApp Fehler'}`)
     } finally {
       setSaving(false)
     }

@@ -61,15 +61,20 @@ Deno.serve(async (req) => {
     // ── Empfänger bestimmen ───────────────────────────────────────
     let recipients: Recipient[] = (template.recipients as Recipient[]) ?? []
 
-    if (recipients.length === 0) {
-      // Kein fester Empfänger → direkt an Lead-Nummer
-      const phone =
-        (lead_data?.lead_whatsapp as string | undefined) ??
-        (lead_data?.lead_phone   as string | undefined) ??
-        null
-      if (phone) {
-        recipients = [{ name: (lead_data?.lead_name as string) ?? 'Lead', phone }]
-      }
+    const explicitPhone =
+      (lead_data?.lead_whatsapp as string | undefined) ??
+      (lead_data?.lead_phone   as string | undefined) ??
+      null
+
+    if (override_text && explicitPhone) {
+      // Direktsend (Composer / interne Übergabe / Provision): die explizit übergebene
+      // Nummer hat IMMER Vorrang vor template.recipients. Verhindert, dass ein Template
+      // mit festen Empfängern den gewählten Empfänger überschreibt — und macht den
+      // Versand deterministisch (das Template ist hier nur das Pflicht-Vehikel).
+      recipients = [{ name: (lead_data?.lead_name as string) ?? 'Empfänger', phone: explicitPhone }]
+    } else if (recipients.length === 0 && explicitPhone) {
+      // Kein fester Empfänger im Template → direkt an die übergebene (Lead-)Nummer
+      recipients = [{ name: (lead_data?.lead_name as string) ?? 'Lead', phone: explicitPhone }]
     }
 
     if (recipients.length === 0) {

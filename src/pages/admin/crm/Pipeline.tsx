@@ -702,7 +702,8 @@ export default function Pipeline() {
     setModalBusy(true)
     try {
       const now = new Date().toISOString()
-      await supabase.from('deals').update({ phase: 'hold', hold_contact: holdContact, last_hold_msg_at: now }).eq('id', deal.id)
+      const { error: upErr } = await supabase.from('deals').update({ phase: 'hold', hold_contact: holdContact, last_hold_msg_at: now }).eq('id', deal.id)
+      if (upErr) { showToastMsg(`❌ ${upErr.message}`); return }
       setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'hold' } : d))
       await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
         content: `Auf Hold gesetzt. Kontaktaufnahme alle 6 Wochen: ${holdContact ? 'JA' : 'nein'}.`, created_by: profile?.id ?? null })
@@ -720,7 +721,8 @@ export default function Pipeline() {
     setModalBusy(true)
     try {
       const now = new Date().toISOString()
-      await supabase.from('deals').update({ phase: 'kontakt_uebergeben', handover_notes: handoverText.trim() || null, handover_at: now, last_handover_ping_at: now }).eq('id', deal.id)
+      const { error: upErr } = await supabase.from('deals').update({ phase: 'kontakt_uebergeben', handover_notes: handoverText.trim() || null, handover_at: now, last_handover_ping_at: now }).eq('id', deal.id)
+      if (upErr) { showToastMsg(`❌ ${upErr.message}`); return }
       setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'kontakt_uebergeben' } : d))
       const { data: lead } = await supabase.from('leads').select('first_name,last_name,phone,whatsapp,email').eq('id', deal.lead_id).maybeSingle()
       const l = lead as { first_name?: string; last_name?: string; phone?: string; whatsapp?: string; email?: string } | null
@@ -782,7 +784,8 @@ export default function Pipeline() {
     const deal = registrationDeal
     const oldPhase = deal.phase
     try {
-      await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null }).eq('id', deal.id)
+      const { error: upErr } = await supabase.from('deals').update({ phase: 'registrierung', registration_notes: notes || null }).eq('id', deal.id)
+      if (upErr) throw upErr
       setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'registrierung' } : d))
 
       await supabase.from('activities').insert({
@@ -799,21 +802,10 @@ export default function Pipeline() {
         bemerkungen: notes,
       })
 
-      // WhatsApp an Registrierungs-Empfänger (fire-and-forget)
-      sendWhatsApp({
-        event_type: 'registration',
-        lead_data: {
-          lead_name:    `${deal.lead?.first_name ?? ''} ${deal.lead?.last_name ?? ''}`.trim(),
-          lead_phone:   deal.lead?.phone     ?? '',
-          lead_email:   deal.lead?.email     ?? '',
-          lead_whatsapp: deal.lead?.whatsapp ?? '',
-        },
-        extra_data: {
-          developers: selectedDevelopers.join(', '),
-          notes:      notes ?? '',
-        },
-        lead_id: deal.lead_id,
-      }).catch(e => console.warn('[WhatsApp] registration failed:', e))
+      // KEIN direktes sendWhatsApp('registration') — dieses INTERNE Template hat
+      // recipients=[] und würde über den Fallback an die KUNDEN-Nummer gehen (Datenleck).
+      // Der Developer-Versand läuft korrekt über die Stage-Automatik unten
+      // (triggerScheduleMessage('registrierung') → stage_registrierung-Regeln an die bc:-Kontakte).
 
       // Automations-Queue befüllen (fire-and-forget)
       triggerScheduleMessage(deal.lead_id, deal.id, 'registrierung')

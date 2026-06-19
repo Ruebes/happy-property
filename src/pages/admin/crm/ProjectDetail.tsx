@@ -820,6 +820,10 @@ export default function ProjectDetail() {
 
   // ── Delete unit ──────────────────────────────────────────────────────────────
   async function handleDeleteUnit(id: string) {
+    // Erst prüfen, ob die Einheit einem Deal zugeordnet ist — sonst würde ein
+    // aktiver Deal verwaisen (gleicher Schutz wie im Rechtsklick-Löschpfad).
+    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', id).maybeSingle()
+    if (linked) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
     if (!window.confirm(t('crm.pd.confirmDeleteUnit'))) return
     try {
       // Verknüpftes Portal-Objekt (properties) mit aufräumen, damit es nicht
@@ -873,18 +877,22 @@ export default function ProjectDetail() {
 
   async function handleDeletePayment(id: string) {
     if (!editUnit) return
+    if (!window.confirm(t('crm.pd.confirmDeletePayment', 'Diese Zahlung wirklich löschen?'))) return
     const { error } = await supabase.from('crm_unit_payments').delete().eq('id', id)
     if (error) { showToast(t('crm.pd.toastError', { msg: error.message })); return }
     await fetchPayments(editUnit.id)
   }
 
   async function togglePaid(pay: CrmUnitPayment) {
+    if (savingPay) return   // Doppelklick-Schutz (Race vermeiden)
+    setSavingPay(true)
     const { error } = await supabase.from('crm_unit_payments').update({
       is_paid:   !pay.is_paid,
       paid_date: !pay.is_paid ? new Date().toISOString().slice(0, 10) : null,
     }).eq('id', pay.id)
-    if (error) { showToast(t('crm.pd.toastError', { msg: error.message })); return }
+    if (error) { showToast(t('crm.pd.toastError', { msg: error.message })); setSavingPay(false); return }
     if (editUnit) await fetchPayments(editUnit.id)
+    setSavingPay(false)
   }
 
   // ── Portal access ────────────────────────────────────────────────────────────

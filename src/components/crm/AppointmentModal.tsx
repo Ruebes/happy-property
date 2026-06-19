@@ -281,6 +281,27 @@ export default function AppointmentModal({
         if (actErr) console.warn('[AppointmentModal] Activity-Log Fehler:', actErr)
       }
 
+      // Optional: Terminbestätigung per E-Mail an den Lead (nur wenn angehakt)
+      if (sendEmailInvite && selectedLeadId) {
+        try {
+          const { data: ld } = await supabase.from('leads').select('email, first_name').eq('id', selectedLeadId).maybeSingle()
+          const le = ld as { email?: string | null; first_name?: string | null } | null
+          if (le?.email) {
+            const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+            const where = zoomLink
+              ? `<p>Zoom-Link: <a href="${zoomLink}">${zoomLink}</a></p>`
+              : locationUrl ? `<p>Ort: <a href="${locationUrl}">${location || locationUrl}</a></p>`
+              : location ? `<p>Ort: ${location}</p>`
+              : phoneNumber ? `<p>Wir rufen dich an unter: ${phoneNumber}</p>` : ''
+            const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${le.first_name || ''},</p><p>hiermit bestätige ich unseren Termin:</p><p><strong>${title}</strong><br>${dateStr}<br>${von}–${bis} Uhr</p>${where}<p>Ich freue mich auf das Gespräch!</p><p>Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+            const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { to: le.email, subject: `Terminbestätigung: ${title}`, html, lead_id: selectedLeadId } })
+            if (mailErr) console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr.message)
+          } else {
+            console.warn('[AppointmentModal] Einladungs-Mail übersprungen — keine E-Mail am Lead.')
+          }
+        } catch (mailErr) { console.warn('[AppointmentModal] Einladungs-Mail Fehler:', mailErr) }
+      }
+
       onCreated()
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : t('crm.appt.saveError', 'Fehler beim Speichern.')

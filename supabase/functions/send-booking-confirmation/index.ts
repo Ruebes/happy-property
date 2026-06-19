@@ -77,7 +77,7 @@ serve(async (req: Request) => {
 
     // E-Mail senden via Resend
     const resendKey = Deno.env.get('RESEND_API_KEY')
-    const fromEmail = Deno.env.get('FROM_EMAIL') ?? 'noreply@happyproperty.app'
+    const fromEmail = Deno.env.get('FROM_EMAIL') ?? 'noreply@happy-property.com'
 
     if (!resendKey) {
       console.warn('[send-booking-confirmation] RESEND_API_KEY not set – email not sent')

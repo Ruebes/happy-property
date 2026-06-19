@@ -206,8 +206,16 @@ Deno.serve(async (req: Request) => {
 
       let emailSubject: string | null = null, emailBody: string | null = null, waText: string | null = null
       if ((rule.message_type === 'email' || rule.message_type === 'both') && rule.email_template_id) {
-        const { data: tpl } = await supabase.from('email_templates').select('subject, body').eq('id', rule.email_template_id).single()
-        if (tpl) { emailSubject = substitute(tpl.subject, ph); emailBody = substitute(tpl.body, ph) }
+        const { data: tpl } = await supabase.from('email_templates').select('subject, body, html_body').eq('id', rule.email_template_id).maybeSingle()
+        if (tpl) {
+          emailSubject = substitute(tpl.subject, ph)
+          // HTML-Vorlage bevorzugen (gestylt); nur Plain-body → in pre-wrap-HTML kapseln,
+          // damit Zeilenumbrüche erhalten bleiben (sonst geht der Text als Roh-HTML mit
+          // verschluckten Umbrüchen raus — gleiche Falle wie der Portalzugang-Bug).
+          emailBody = tpl.html_body
+            ? substitute(tpl.html_body, ph)
+            : `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${substitute(tpl.body ?? '', ph).replace(/</g, '&lt;')}</div>`
+        }
       }
       if ((rule.message_type === 'whatsapp' || rule.message_type === 'both') && rule.whatsapp_event_type) {
         const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()

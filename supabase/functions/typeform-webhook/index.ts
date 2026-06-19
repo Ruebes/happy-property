@@ -98,7 +98,10 @@ Deno.serve(async (req) => {
     }
 
     const sourceFromHidden = mapSource(utmSource)
-    const sourceFromForm   = (getAnswer('quelle') ?? getAnswer('source') ?? null) as 'meta' | 'google' | 'empfehlung' | null
+    // WICHTIG: Formular-Antwort ebenfalls durch mapSource() — sonst landet ein
+    // Roh-Label (z.B. „Instagram") in leads.source und verletzt den DB-Constraint
+    // leads_source_check → Insert crasht → Lead geht verloren.
+    const sourceFromForm   = mapSource(getAnswer('quelle') ?? getAnswer('source') ?? null)
     const source = sourceFromHidden ?? sourceFromForm
 
     if (!email && !firstName) {

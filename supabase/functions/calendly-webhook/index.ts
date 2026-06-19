@@ -163,12 +163,15 @@ Deno.serve(async (req) => {
       leadId = newLead.id
     }
 
-    // Deal mit Phase termin_gebucht anlegen (nur wenn keiner existiert)
-    const { data: existingDeal } = await supabase
+    // Deal mit Phase termin_gebucht anlegen (nur wenn keiner existiert).
+    // NICHT maybeSingle() — wirft, sobald der Lead mehr als einen Deal hat
+    // (dann ginge der ganze Webhook in den 500er und die Buchung würde nicht verarbeitet).
+    const { data: existingDeals } = await supabase
       .from('deals')
       .select('id')
       .eq('lead_id', leadId)
-      .maybeSingle()
+      .limit(1)
+    const existingDeal = existingDeals?.[0] ?? null
 
     let dealId: string | null
 
@@ -176,10 +179,12 @@ Deno.serve(async (req) => {
       dealId = existingDeal.id
       await supabase.from('deals').update({ phase: 'termin_gebucht' }).eq('id', dealId)
     } else {
-      const { data: newDeal } = await supabase.from('deals').insert({
+      const { data: newDeal, error: dealErr } = await supabase.from('deals').insert({
         lead_id: leadId,
         phase:   'termin_gebucht',
       }).select('id').single()
+      // Insert-Fehler NICHT verschlucken — sonst Aktivität + n8n-„Buchung" ohne echten Deal.
+      if (dealErr) throw new Error(`Deal-Erstellung fehlgeschlagen: ${dealErr.message}`)
       dealId = newDeal?.id ?? null
     }
 

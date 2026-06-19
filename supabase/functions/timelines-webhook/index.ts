@@ -51,12 +51,27 @@ Deno.serve(async (req) => {
       return new Response('OK', { headers: corsHeaders })
     }
 
-    // Lead anhand Telefonnummer suchen
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('id')
-      .or(`phone.eq.${phone},whatsapp.eq.${phone}`)
-      .maybeSingle()
+    // Lead anhand Telefonnummer suchen.
+    // Schutz gegen PostgREST-Filter-Injection: nur einfache Telefonzeichen zulassen
+    // (Komma/Klammern würden den .or()-Filter zerlegen). Bei mehreren Leads mit der
+    // gleichen Nummer NICHT maybeSingle() (würde werfen) → limit(1), neuesten nehmen.
+    const phoneStr = String(phone)
+    let lead: { id: string } | null = null
+    if (/^[+0-9 .\-]{4,25}$/.test(phoneStr)) {
+      const { data: rows, error: lErr } = await supabase
+        .from('leads')
+        .select('id')
+        .or(`phone.eq.${phoneStr},whatsapp.eq.${phoneStr}`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+      if (lErr) {
+        // DB-Fehler NICHT verschlucken — sonst ginge eine eingehende „STOPP"-Abmeldung
+        // verloren (Function meldete 200, Provider würde nicht erneut zustellen).
+        console.error('[timelines-webhook] Lead-Lookup Fehler:', lErr.message)
+        return new Response(JSON.stringify({ error: lErr.message }), { status: 500, headers: corsHeaders })
+      }
+      lead = rows?.[0] ?? null
+    }
 
     if (lead) {
       await supabase

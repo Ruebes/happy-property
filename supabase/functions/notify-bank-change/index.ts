@@ -8,7 +8,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const RESEND_API_KEY   = Deno.env.get('RESEND_API_KEY') ?? ''
-const FROM_EMAIL       = Deno.env.get('NOTIFY_FROM_EMAIL') ?? 'noreply@happyproperty.de'
+const FROM_EMAIL       = Deno.env.get('NOTIFY_FROM_EMAIL') ?? 'noreply@happy-property.com'
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const SUPABASE_URL     = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
@@ -48,7 +49,7 @@ Deno.serve(async (req) => {
         <table style="width: 100%; border-collapse: collapse; background: #f9fafb; border-radius: 12px; overflow: hidden;">
           <tr>
             <td style="padding: 12px 16px; font-size: 13px; color: #6b7280; width: 40%;">Eigentümer</td>
-            <td style="padding: 12px 16px; font-size: 13px; font-weight: 600;">${owner_name}</td>
+            <td style="padding: 12px 16px; font-size: 13px; font-weight: 600;">${esc(owner_name)}</td>
           </tr>
           <tr style="background: #fff;">
             <td style="padding: 12px 16px; font-size: 13px; color: #6b7280;">Datum</td>
@@ -75,8 +76,9 @@ Deno.serve(async (req) => {
       </div>
     `
 
-    // Send to all managers
-    const sends = managers.map(m =>
+    // Send to all managers — Resend-Fehler NICHT verschlucken (sonst meldet die Function
+    // „gesendet", obwohl keine Manager-Mail ankam → IBAN-Änderung bliebe unbemerkt).
+    const results = await Promise.allSettled(managers.map(m =>
       fetch('https://api.resend.com/emails', {
         method:  'POST',
         headers: {
@@ -90,11 +92,18 @@ Deno.serve(async (req) => {
           html,
         }),
       })
-    )
-    await Promise.all(sends)
+    ))
+    let sent = 0
+    const failed: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && r.value.ok) sent++
+      else failed.push(managers[i].email)
+    })
+    if (failed.length) console.error('[notify-bank-change] Versand fehlgeschlagen an:', failed.join(', '))
 
-    return new Response(JSON.stringify({ sent: managers.length }), {
-      status:  200,
+    return new Response(JSON.stringify({ sent, failed: failed.length }), {
+      // Wenn ALLE fehlschlagen → 502, damit der Aufrufer es mitbekommt.
+      status:  failed.length === managers.length ? 502 : 200,
       headers: { 'Content-Type': 'application/json' },
     })
   } catch (err) {

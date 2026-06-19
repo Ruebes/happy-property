@@ -10,7 +10,7 @@
 // ── Secrets ──
 //   SMTP_USER  = sven@happy-property.com
 //   SMTP_PASS  = [Ionos Passwort]
-//   APP_URL    = https://happy-property.app  (oder Produktions-URL)
+//   APP_URL    = https://portal.happy-property.com  (Produktions-Portal; NIEMALS happy-property.app — tote Domain)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
@@ -195,6 +195,26 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({ error: 'email und full_name sind Pflichtfelder' }),
         { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
       )
+    }
+
+    // ── Auth-Guard ──────────────────────────────────────────────────────────────
+    // Läuft mit --no-verify-jwt; daher Rolle server-seitig prüfen. Diese Function legt
+    // Konten an / setzt Passwörter zurück — NUR eingeloggte Admins dürfen sie aufrufen
+    // (sonst Account-Übernahme/Spam über den öffentlichen anon-Key möglich).
+    {
+      const guardUrl  = Deno.env.get('SUPABASE_URL')!
+      const authHeader = req.headers.get('Authorization') ?? ''
+      const jwt = authHeader.replace(/^Bearer\s+/i, '')
+      const caller = jwt
+        ? (await createClient(guardUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
+        : null
+      const respHdr = { ...CORS, 'Content-Type': 'application/json' }
+      if (!caller) return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: respHdr })
+      const guardAdmin = createClient(guardUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      const { data: cProf } = await guardAdmin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
+      if ((cProf as { role?: string } | null)?.role !== 'admin') {
+        return new Response(JSON.stringify({ error: 'Keine Berechtigung' }), { status: 403, headers: respHdr })
+      }
     }
 
     const supabaseUrl        = Deno.env.get('SUPABASE_URL')!

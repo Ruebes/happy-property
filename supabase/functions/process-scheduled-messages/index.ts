@@ -167,18 +167,17 @@ Deno.serve(async (req: Request) => {
   const waSender    = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
 
   const processed: { id: string; result: string }[] = []
+  let claimedIds: string[] = []
 
   try {
-    // ── Schritt 1: Fällige Nachrichten atomar auf 'processing' setzen ─────────
-    // Durch direktes UPDATE ... RETURNING verhindert dies Race Conditions
-    // wenn zwei Instanzen gleichzeitig laufen.
+    // ── Schritt 1: Fällige Nachrichten ATOMAR claimen ────────────────────────
+    // ACHTUNG (alter Bug): PostgREST .update().limit(n) begrenzt nur die ZURÜCK-
+    // GEGEBENEN Zeilen, NICHT das UPDATE selbst — es kippten ALLE fälligen Zeilen auf
+    // 'processing', die über n hinaus blieben für immer hängen; bei Überlappung zweier
+    // Läufe drohte Doppelversand. Daher echter Claim via DB-Funktion mit
+    // FOR UPDATE SKIP LOCKED LIMIT n (begrenzt wirklich + race-sicher).
     const { data: messages, error: fetchErr } = await supabase
-      .from('scheduled_messages')
-      .update({ status: 'processing' })
-      .eq('status', 'pending')
-      .lte('scheduled_at', new Date().toISOString())
-      .select('id, lead_id, deal_id, type, event_type, email_subject, email_body, whatsapp_text, recipient, appointment_condition')
-      .limit(20)   // Maximal 20 pro Lauf, um Timeouts zu vermeiden
+      .rpc('claim_scheduled_messages', { p_limit: 20 })
 
     if (fetchErr) throw fetchErr
     if (!messages || messages.length === 0) {
@@ -189,6 +188,7 @@ Deno.serve(async (req: Request) => {
       )
     }
 
+    claimedIds = (messages as Array<{ id: string }>).map(m => m.id)
     console.log(`[process-scheduled] Verarbeite ${messages.length} Nachricht(en)`)
 
     // ── Schritt 2: Jede Nachricht senden ─────────────────────────────────────
@@ -353,13 +353,17 @@ Deno.serve(async (req: Request) => {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[process-scheduled] Kritischer Fehler:', msg)
 
-    // Alle 'processing' Nachrichten wieder auf 'pending' zurücksetzen
-    // damit sie beim nächsten Lauf erneut versucht werden
-    await supabase
-      .from('scheduled_messages')
-      .update({ status: 'pending' })
-      .eq('status', 'processing')
-      .catch(console.error)
+    // NUR die in DIESEM Lauf geclaimten, noch nicht finalisierten Nachrichten
+    // zurücksetzen (nicht global — sonst würde ein parallel laufender Versand
+    // mitgerissen). Beim nächsten Lauf werden sie erneut versucht.
+    if (claimedIds.length) {
+      await supabase
+        .from('scheduled_messages')
+        .update({ status: 'pending' })
+        .in('id', claimedIds)
+        .eq('status', 'processing')
+        .catch(console.error)
+    }
 
     return new Response(
       JSON.stringify({ ok: false, error: msg }),
