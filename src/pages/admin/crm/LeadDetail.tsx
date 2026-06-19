@@ -11,6 +11,7 @@ import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
+import RechnerWizard from '../../../components/crm/RechnerWizard'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -46,6 +47,7 @@ export default function LeadDetail() {
 
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
   const [showWizard, setShowWizard] = useState(false)
+  const [showRechner, setShowRechner] = useState(false)
 
   // ── Google-Drive-Kundenordner anlegen / öffnen ───────────────────────────────
   const [driveBusy, setDriveBusy] = useState(false)
@@ -2005,6 +2007,7 @@ export default function LeadDetail() {
                 { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => setActiveTab('tasks') },
                 { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },
                 { key: 'deck', icon: '📑', label: t('crm.action.deck', 'Sales Deck erstellen'), cls: 'bg-rose-50 text-rose-700 hover:bg-rose-100',       on: () => setShowWizard(true) },
+                { key: 'calc', icon: '📊', label: t('crm.action.calc', 'Rechnung erstellen'),   cls: 'bg-teal-50 text-teal-700 hover:bg-teal-100',       on: () => setShowRechner(true) },
               ] as const).map(a => (
                 <button key={a.key} onClick={a.on}
                   className={`flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors ${a.cls}`}>
@@ -4001,6 +4004,15 @@ export default function LeadDetail() {
           lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email }}
           onClose={() => setShowWizard(false)}
           onDone={(msg) => { setShowWizard(false); showToast(msg) }}
+        />
+      )}
+
+      {/* ── Rechner-/Vergleichs-Wizard ───────────────────────────────── */}
+      {showRechner && lead && (
+        <RechnerWizard
+          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+          onClose={() => setShowRechner(false)}
+          onDone={(msg) => { setShowRechner(false); showToast(msg) }}
         />
       )}
 

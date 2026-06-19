@@ -14,6 +14,7 @@ import SetPassword from './pages/SetPassword'
 
 const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
+const Rechnung = lazy(() => import('./pages/Rechnung'))
 
 // Role-Dashboards
 const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'))
@@ -94,6 +95,8 @@ export default function App() {
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
+            {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
+            <Route path="/rechnung/:token" element={<Rechnung />} />
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
             <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
 
