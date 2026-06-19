@@ -1,104 +1,133 @@
 // Supabase Edge Function: compose-deck-mail
-// Schreibt aus Kunden-Briefing + Wohnungs-Auswahl die persönliche Begleit-Mail
-// (Claude) — ausführlich, locker-herzlich, KEIN Straßenslang. Liefert subject +
-// fertiges HTML (Deck-Links werden serverseitig sauber eingebaut). Es wird NICHTS
-// gesendet — die Mail landet als Entwurf im Postausgang (Freigabe durch Sven).
+// Schreibt aus Kunden-Briefing + ECHTEN Projekt-Fakten die persönliche Begleit-Mail
+// (Claude) — verkaufsorientiert, locker-herzlich, KEIN Slang, mit konkreten Argumenten
+// pro Objekt + Pflicht-CTA (neuer Zoom-Termin / Feedback per Mail/WhatsApp). Liefert
+// subject + fertiges HTML. Es wird NICHTS gesendet — Entwurf landet im Postausgang.
 //
 // Body: { recipient_name, first_name?, briefing?, angle?,
-//         items: [{ label, link, project?, unit?, bedrooms?, size_sqm?, terrace_sqm?, floor?, price? }] }
+//   items: [{ label, link, project?, unit?, bedrooms?, size_sqm?, terrace_sqm?, floor?,
+//             price?, facts?, available_count?, total_count? }] }
 // Antwort: { subject, html }
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
+const SVEN_EMAIL = 'sven@happy-property.com'
+const WA_NUMBER = (Deno.env.get('TIMELINES_WA_SENDER') ?? '').replace(/[^\d]/g, '')   // wa.me-Link
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const SYSTEM = `Du bist Sven von Happy Property Cyprus — einer Brokerage, die deutschsprachigen Kapitalanlegern hochwertige Immobilien auf Zypern (Paphos) vermittelt. Du schreibst die persönliche Begleit-Mail, mit der du einem Kunden seine individuell zusammengestellten Sales-Decks (Wohnungs-Vorschläge mit je einem Link) schickst.
+const SYSTEM = `Du bist Sven von Happy Property Cyprus — Brokerage für deutschsprachige Kapitalanleger, die auf Zypern (Paphos) in Immobilien investieren. Du schreibst die persönliche Begleit-Mail, mit der du einem Kunden seine individuell zusammengestellten Sales-Decks (Wohnungs-Vorschläge mit je einem Link) schickst.
 
-TONFALL: locker und herzlich, per DU, wie an einen Menschen, mit dem du schon gesprochen hast. Sympathisch, kompetent, nahbar — aber NIEMALS Straßenslang, keine flapsigen Sprüche, kein 'Hey Digga', kein übertriebener Werbe-Schaum. Du klingst wie ein guter Berater, der sich wirklich Zeit nimmt.
+ZIEL DER MAIL: Der Kunde soll die Decks öffnen, sich für ein Objekt begeistern und HANDELN — einen neuen Termin buchen oder dir Feedback geben. Die Mail verkauft. Nicht marktschreierisch, aber überzeugend: Du bist der Profi, der genau weiß, warum diese Objekte zu ihm passen.
 
-LÄNGE: AUSFÜHRLICH. Keine dürren Stichworte, keine Telegramm-Sätze. Schreib echte, runde Absätze, sodass der Kunde merkt, dass du dir Gedanken gemacht hast. Aber kein Geschwafel — jeder Satz trägt etwas bei.
+TONFALL: locker und herzlich, per DU, wie an einen Menschen, mit dem du schon gesprochen hast. Sympathisch, kompetent, selbstbewusst — NIEMALS Straßenslang, keine flapsigen Sprüche, kein Werbe-Geschrei.
 
-INHALT:
-- Nimm das Kunden-Briefing direkt auf (seine Situation, sein Motiv, was ihm wichtig ist) und spiegele es in eigenen Worten wider — schreib es nicht 1:1 ab.
-- Erkläre kurz und glaubwürdig, warum du genau diese Wohnung(en) für ihn herausgesucht hast.
-- Mach Lust, die Decks in Ruhe anzuschauen, ohne zu drängen.
-- Lade entspannt zum nächsten Schritt ein (Fragen, kurze Rückmeldung, gemeinsamer Call).
+DAS WICHTIGSTE — KONKRETE ARGUMENTE PRO OBJEKT:
+Zu jedem Objekt bekommst du echte FAKTEN (Bauträger, Lage, Amenities, Einheiten, Verfügbarkeit). Schreib pro Objekt 2 bis 4 Sätze, die die STÄRKSTEN Verkaufsargunmente aus genau diesen Fakten herausziehen — so wie ein guter Makler, der weiß, was zählt:
+- konkrete Amenities, die Miete/Wert treiben (Pool, Gym, Dachterrasse, Concierge, Strandnähe …)
+- Lagevorteile (Meerblick, Entfernung zu Marina/Strand/Zentrum, Bauträger-Qualität)
+- Knappheit, WENN echt (z.B. 'von X Einheiten nur noch Y frei' — nur wenn die Zahlen im Input stehen)
+- was die konkrete Wohnung besonders macht (Etage, Terrasse, Ausstattung)
+Schreib BILDHAFT und konkret, nicht generisch. 'Pool, Gym und Dachterrasse mit Meerblick' schlägt 'hochwertige Ausstattung'.
+
+PERSÖNLICHE EMPFEHLUNG: Wenn sich aus Briefing + Fakten eine klare Empfehlung ergibt (welches Objekt für genau diesen Kunden am besten passt und warum), gib sie als 'recommendation' ab — ehrlich begründet. Wenn nicht eindeutig, lass 'recommendation' leer.
+
+HARTE REGELN:
+- Nutze NUR Fakten aus dem Input. Erfinde NIEMALS Zahlen, Renditen, Cashflow, Fertigstellungs-Daten, Entfernungen oder Eigenschaften. Steht ein Fakt nicht da, behaupte ihn nicht.
+- Nimm das Kunden-Briefing auf (Situation, Motiv, Budget-Hinweise) und spiegele es — schreib es nicht 1:1 ab.
+- Durchgehend Deutsch, Du-Form.
+- deck_lines MUSS exakt so viele Einträge haben wie Objekte im Input (gleiche Reihenfolge).
+- Schreib die Links/Buttons NICHT selbst — die werden automatisch eingefügt.
+- KRITISCH für gültiges JSON: in ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze einfache 'so' oder gar keine.
 
 Du rufst das Tool emit_mail auf:
-- subject: persönliche, ruhige Betreffzeile (kein Spam-Sprech, keine Großbuchstaben-Schreierei, keine Emojis im Betreff)
-- greeting: die Anrede, z.B. 'Hallo Nico,'
-- body_paragraphs: 2 bis 4 Absätze VOR der Wohnungs-Liste (warmer Einstieg, Bezug aufs Briefing, warum diese Auswahl)
-- deck_lines: GENAU EINE Zeile pro Wohnung, in derselben Reihenfolge wie die Wohnungen im Input — ein warmer, konkreter Satz, warum genau dieses Apartment zu ihm passt
-- closing_paragraphs: 1 bis 2 Absätze NACH der Liste (in Ruhe anschauen, jederzeit melden, lockerer Hinweis auf den nächsten Schritt)
-- signoff: z.B. 'Bis bald,' oder 'Liebe Grüße,'
-- signName: 'Sven · Happy Property Cyprus'
-
-REGELN:
-- Nutze NUR Fakten aus dem Input. Erfinde KEINE Preise, Zahlen, Lagen oder Eigenschaften.
-- Durchgehend Deutsch und Du-Form.
-- deck_lines MUSS exakt so viele Einträge haben wie Wohnungen im Input — gleiche Reihenfolge.
-- Schreib die Links NICHT selbst in den Text; die Buttons werden automatisch eingefügt.
-- KRITISCH für gültiges JSON: Verwende in ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze einfache 'so' oder gar keine.`
+- subject: persönliche, neugierig machende Betreffzeile (kein Spam-Sprech, keine Emojis)
+- greeting: Anrede, z.B. 'Hallo Nico,'
+- body_paragraphs: 1 bis 2 Absätze VOR der Objekt-Liste (warmer Einstieg, Briefing-Bezug, warum genau diese Auswahl)
+- deck_lines: pro Objekt 2 bis 4 Sätze mit konkreten Verkaufsargumenten (gleiche Reihenfolge wie Input)
+- recommendation: optionale klare Empfehlung mit Begründung (sonst leer)
+- cta_paragraph: 1 Absatz, der zum nächsten Schritt einlädt — neuen Termin buchen ODER kurzes Feedback per Mail/WhatsApp; verbindlich, aber ohne Druck (die Buttons kommen automatisch darunter)
+- signoff: z.B. 'Bis bald,'
+- signName: 'Sven · Happy Property Cyprus'`
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
 }
 
-const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 interface MailItem {
   label?: string; link?: string; project?: string; unit?: string
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null
-  floor?: number | null; price?: string
+  floor?: number | null; price?: string; facts?: string
+  available_count?: number | null; total_count?: number | null
 }
 
-function itemFacts(it: MailItem, i: number): string {
-  const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Wohnung ${i + 1}`
-  const parts: string[] = []
-  if (it.bedrooms != null) parts.push(`${it.bedrooms} Schlafzimmer`)
-  if (it.size_sqm != null) parts.push(`${it.size_sqm} m² Wohnfläche`)
-  if (it.terrace_sqm) parts.push(`${it.terrace_sqm} m² Terrasse`)
-  if (it.floor != null) parts.push(`${it.floor}. Etage`)
-  if (it.price) parts.push(it.price)
-  return `${i + 1}. ${label}${parts.length ? ' — ' + parts.join(', ') : ''}`
+function itemBrief(it: MailItem, i: number): string {
+  const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
+  const specs: string[] = []
+  if (it.bedrooms != null) specs.push(`${it.bedrooms} Schlafzimmer`)
+  if (it.size_sqm != null) specs.push(`${it.size_sqm} m² Wohnfläche`)
+  if (it.terrace_sqm) specs.push(`${it.terrace_sqm} m² Terrasse`)
+  if (it.floor != null) specs.push(`${it.floor}. Etage`)
+  if (it.price) specs.push(`Preis ${it.price}`)
+  const avail = (it.available_count != null && it.total_count != null && it.total_count > 0)
+    ? `\nVERFÜGBARKEIT: von ${it.total_count} Einheiten im Projekt aktuell ${it.available_count} frei.`
+    : ''
+  const facts = it.facts?.trim() ? `\nPROJEKT-FAKTEN (nur diese verwenden):\n${it.facts.trim()}` : ''
+  return `OBJEKT ${i + 1}: ${label}\nDiese Wohnung: ${specs.join(', ') || '–'}.${avail}${facts}`
 }
 
-// Branded, E-Mail-sicheres HTML (Inline-Styles, Coral-Buttons) aus den Claude-Texten bauen.
+const P = (s: string) => `<p style="margin:0 0 16px">${esc(s)}</p>`
+const btn = (href: string, label: string, bg: string, color: string, border = 'none') =>
+  `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${color};text-decoration:none;font-weight:600;font-size:15px;padding:11px 22px;border-radius:10px;border:${border};margin:0 8px 8px 0">${esc(label)}</a>`
+
+// Branded, E-Mail-sicheres HTML aus den Claude-Texten + Objekt-Karten + CTA bauen.
 function buildHtml(
-  m: { greeting?: string; body_paragraphs?: string[]; deck_lines?: string[]; closing_paragraphs?: string[]; signoff?: string; signName?: string },
+  m: { greeting?: string; body_paragraphs?: string[]; deck_lines?: string[]; recommendation?: string; cta_paragraph?: string; signoff?: string; signName?: string },
   items: MailItem[],
 ): string {
-  const P = (s: string) => `<p style="margin:0 0 16px">${esc(s)}</p>`
   const greeting = m.greeting ? P(m.greeting) : ''
   const intro = (m.body_paragraphs ?? []).map(P).join('')
   const cards = items.map((it, i) => {
-    const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Wohnung ${i + 1}`
+    const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
     const line = (m.deck_lines ?? [])[i]
-    const href = it.link || '#'
-    return `<div style="border:1px solid #eeeeee;border-radius:14px;padding:18px 20px;margin:0 0 14px;background:#fafafa">`
-      + `<div style="font-weight:700;font-size:17px;color:#1a1a1a;margin:0 0 4px">${esc(label)}</div>`
-      + (line ? `<div style="color:#555555;margin:0 0 14px;line-height:1.55">${esc(line)}</div>` : '<div style="margin:0 0 14px"></div>')
-      + `<a href="${esc(href)}" style="display:inline-block;background:#ff795d;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:10px 20px;border-radius:10px">Dein Sales Deck ansehen →</a>`
+    return `<div style="border:1px solid #eeeeee;border-radius:14px;padding:20px;margin:0 0 14px;background:#fafafa">`
+      + `<div style="font-weight:700;font-size:18px;color:#1a1a1a;margin:0 0 8px">${esc(label)}</div>`
+      + (line ? `<div style="color:#444444;margin:0 0 16px;line-height:1.6">${esc(line)}</div>` : '<div style="margin:0 0 16px"></div>')
+      + btn(it.link || '#', 'Dein Sales Deck ansehen →', '#ff795d', '#ffffff')
       + `</div>`
   }).join('')
-  const closing = (m.closing_paragraphs ?? []).map(P).join('')
+  const reco = m.recommendation?.trim()
+    ? `<div style="margin:0 0 20px;padding:16px 18px;border-radius:12px;background:#fff5f2;border-left:4px solid #ff795d"><strong style="color:#c2410c">Meine Empfehlung:</strong> <span style="color:#444">${esc(m.recommendation)}</span></div>`
+    : ''
+  // CTA-Block (Pflicht): neuer Termin + Feedback per WhatsApp/Mail
+  const waBtn = WA_NUMBER ? btn(`https://wa.me/${WA_NUMBER}`, '💬 Per WhatsApp', '#25D366', '#ffffff') : ''
+  const cta = `<div style="margin:26px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a">`
+    + `<div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 8px">Wie geht es weiter?</div>`
+    + `<div style="color:#d4d4d4;line-height:1.6;margin:0 0 16px">${esc(m.cta_paragraph || 'Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.')}</div>`
+    + btn(CALENDLY, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')
+    + waBtn
+    + btn(`mailto:${SVEN_EMAIL}`, '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')
+    + `</div>`
   const sign = `<p style="margin:24px 0 0">${esc(m.signoff || 'Bis bald,')}<br><strong>${esc(m.signName || 'Sven · Happy Property Cyprus')}</strong></p>`
   return `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto">`
     + greeting + intro
     + `<div style="margin:24px 0">${cards}</div>`
-    + closing + sign
+    + reco + cta + sign
     + `</div>`
 }
 
-// Schlanker Fallback, falls Claude/Key mal nicht greift — nie ohne Mail dastehen.
+// Schlanker, aber vollständiger Fallback (mit CTA), falls Claude/Key mal nicht greift.
 function fallback(firstName: string, items: MailItem[]): { subject: string; html: string } {
   const m = {
     greeting: `Hallo ${firstName || 'zusammen'},`,
-    body_paragraphs: ['wie besprochen habe ich dir deine persönlichen Wohnungs-Vorschläge zusammengestellt. Schau sie dir in Ruhe an — ich freue mich auf deine Rückmeldung.'],
+    body_paragraphs: ['wie besprochen habe ich dir deine persönlichen Wohnungs-Vorschläge zusammengestellt. Schau sie dir in Ruhe an — ich bin gespannt, welches dich am meisten anspricht.'],
     deck_lines: items.map(() => ''),
-    closing_paragraphs: ['Melde dich jederzeit, wenn du Fragen hast oder wir die Optionen gemeinsam durchgehen sollen.'],
+    recommendation: '',
+    cta_paragraph: 'Wenn du tiefer einsteigen willst, buch dir einfach einen neuen Termin — oder gib mir kurz per WhatsApp oder E-Mail Bescheid, was dir gefällt.',
     signoff: 'Bis bald,',
     signName: 'Sven · Happy Property Cyprus',
   }
@@ -124,20 +153,21 @@ Deno.serve(async (req) => {
       `KUNDE: ${body.recipient_name?.trim() || firstName || 'der Kunde'}`,
       `WINKEL: ${angle} (${angle === 'investment' ? 'Rendite, Vermietung, Wertentwicklung' : 'Wohnen, Lebensgefühl, selbst nutzen'})`,
       ``,
-      `KUNDEN-BRIEFING (Svens Notizen zum Kunden — als Grundlage fürs Anschreiben):`,
-      body.briefing?.trim() || '(kein Briefing — halte die Mail allgemein, aber persönlich und warm)',
+      `KUNDEN-BRIEFING (Svens Notizen — Grundlage fürs Anschreiben + Empfehlung):`,
+      body.briefing?.trim() || '(kein Briefing — halte die Mail allgemein, aber persönlich und überzeugend)',
       ``,
-      `DIESE WOHNUNGEN HAST DU FÜR IHN ZUSAMMENGESTELLT (Reihenfolge = Reihenfolge der deck_lines):`,
-      ...items.map((it, i) => itemFacts(it, i)),
+      `DIESE OBJEKTE HAST DU FÜR IHN ZUSAMMENGESTELLT (Reihenfolge = Reihenfolge der deck_lines):`,
+      ``,
+      ...items.map((it, i) => itemBrief(it, i)),
     ].join('\n')
 
     const reqBody = JSON.stringify({
       model:      'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 3000,
       system:     SYSTEM,
       tools: [{
         name:        'emit_mail',
-        description: 'Gibt die fertige Begleit-Mail in Bausteinen zurück.',
+        description: 'Gibt die fertige, verkaufsorientierte Begleit-Mail in Bausteinen zurück.',
         input_schema: {
           type: 'object',
           properties: {
@@ -145,11 +175,12 @@ Deno.serve(async (req) => {
             greeting:           { type: 'string' },
             body_paragraphs:    { type: 'array', items: { type: 'string' } },
             deck_lines:         { type: 'array', items: { type: 'string' } },
-            closing_paragraphs: { type: 'array', items: { type: 'string' } },
+            recommendation:     { type: 'string' },
+            cta_paragraph:      { type: 'string' },
             signoff:            { type: 'string' },
             signName:           { type: 'string' },
           },
-          required: ['subject', 'greeting', 'body_paragraphs', 'deck_lines', 'closing_paragraphs', 'signoff', 'signName'],
+          required: ['subject', 'greeting', 'body_paragraphs', 'deck_lines', 'cta_paragraph', 'signoff', 'signName'],
         },
       }],
       tool_choice: { type: 'tool', name: 'emit_mail' },
@@ -161,13 +192,13 @@ Deno.serve(async (req) => {
       headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: reqBody,
     })
-    if (!res.ok) return json(fallback(firstName, items))   // bei API-Fehler nie ohne Mail dastehen
+    if (!res.ok) return json(fallback(firstName, items))
 
     const data = await res.json() as { content?: Array<{ type?: string; input?: Record<string, unknown> }> }
     const tu = (data.content ?? []).find(c => c.type === 'tool_use')
     const m = (tu?.input ?? null) as null | {
       subject?: string; greeting?: string; body_paragraphs?: string[]; deck_lines?: string[]
-      closing_paragraphs?: string[]; signoff?: string; signName?: string
+      recommendation?: string; cta_paragraph?: string; signoff?: string; signName?: string
     }
     if (!m || !m.subject) return json(fallback(firstName, items))
 

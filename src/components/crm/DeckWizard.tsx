@@ -95,11 +95,23 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // Begleit-Mail von der KI schreiben lassen (ausführlich, locker, kein Slang) → Postausgang (Entwurf).
       // Fällt bei Fehler/fehlendem Key auf eine schlanke Vorlage zurück, damit nie ohne Mail dastehen.
       const origin = window.location.origin
+      // Verfügbarkeit je Projekt (Knappheit als echtes Verkaufsargument in der Mail)
+      const projIds = [...new Set(links.map(l => l.item.projectId))]
+      const availByProject: Record<string, { available: number; total: number }> = {}
+      for (const pid of projIds) {
+        const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
+        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).eq('status', 'proposal')
+        availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
+      }
       const mailItems = links.map(l => ({
         label: l.label, link: `${origin}/deck/${l.token}`,
         project: l.item.projectName, unit: l.item.unit.unit_number,
         bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm,
         floor: l.item.unit.floor, price: eur(l.item.unit.price_gross ?? l.item.unit.price_net),
+        // echte Projekt-Fakten (Amenities/Lage/Bauträger) → KI zieht Verkaufsargumente daraus
+        facts: (l.item.assets?.facts ?? '').slice(0, 2600),
+        available_count: availByProject[l.item.projectId]?.available ?? null,
+        total_count:     availByProject[l.item.projectId]?.total ?? null,
       }))
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
