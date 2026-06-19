@@ -20,6 +20,28 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-heading);
 }
 
+/* ── Moderne native Dropdowns ──────────────────────────────────────────────
+   Ersetzt den altbackenen Browser-Standardpfeil durch einen sauberen eigenen
+   Chevron und entfernt das native Select-Aussehen. Greift global auf JEDES
+   <select>; die jeweiligen Tailwind-Klassen (Rand, Radius, Padding, Focus)
+   bleiben erhalten. padding-right erzwungen, damit der Text den Pfeil nie
+   überlappt (sonst gewinnt Tailwind px-*). */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.85rem;
+  padding-right: 2.2rem !important;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+select::-ms-expand { display: none; }
+select:disabled { cursor: not-allowed; opacity: 0.6; }
+select option { color: #1a1a1a; }
+
 
 @keyframes dropdownOpen {
   from { opacity: 0; transform: scaleY(0.92) translateY(-4px); }
