@@ -37,6 +37,8 @@ export default function EigentuemerProperties() {
   useEffect(() => {
     if (!profile?.id) return
     let cancelled = false
+    // Sicherheits-Timeout: Spinner nie ewig hängen lassen (Safari/Query-Timing)
+    const safety = setTimeout(() => { if (!cancelled) setLoading(false) }, 12_000)
 
     async function load() {
       setLoading(true)
@@ -77,7 +79,7 @@ export default function EigentuemerProperties() {
     }
 
     load()
-    return () => { cancelled = true }
+    return () => { cancelled = true; clearTimeout(safety) }
   }, [profile?.id])
 
   // ── Filter ─────────────────────────────────────────────────

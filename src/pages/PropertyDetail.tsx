@@ -782,18 +782,21 @@ export default function PropertyDetail() {
   const fetchProperty = useCallback(async () => {
     if (!id) return
     setLoading(true)
-    try {
-      const { data } = await supabase
-        .from('properties')
-        .select('*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website, ansprechpartner, ansprechpartner_phone, ansprechpartner_email)')
-        .eq('id', id)
-        .single()
-      setProperty(data as PropertyFull ?? null)
-    } catch (err) {
-      console.error('[PropertyDetail] fetchProperty:', err)
-    } finally {
-      setLoading(false)
+    const sel = '*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website, ansprechpartner, ansprechpartner_phone, ansprechpartner_email)'
+    // Mit 1 Retry: ein einmaliger Aussetzer (langsame Antwort/Timing) heilt sich selbst,
+    // statt die Seite leer/„nicht gefunden" zu lassen.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const { data, error } = await supabase.from('properties').select(sel).eq('id', id).single()
+        if (error) throw error
+        setProperty((data as PropertyFull) ?? null)
+        break
+      } catch (err) {
+        if (attempt >= 2) { console.error('[PropertyDetail] fetchProperty:', err) }
+        else { await new Promise(r => setTimeout(r, 400)) }
+      }
     }
+    setLoading(false)
   }, [id])
 
   // ── Fetch documents ──────────────────────────────────────
@@ -838,6 +841,15 @@ export default function PropertyDetail() {
     fetchProperty()
     fetchDocs()
   }, [fetchProperty, fetchDocs])
+
+  // Sicherheits-Timeout (wie auth.tsx): der Lade-Spinner darf NIE ewig hängen.
+  // Wenn eine Query in Safari durch navigator.locks-/Token-Refresh-Timing blockiert
+  // (gleiche Klasse wie der alte CRM-Spinner-Deadlock), wird die Seite nach 12s
+  // freigegeben; nachgeladene Daten erscheinen, sobald die Query doch zurückkommt.
+  useEffect(() => {
+    const t = setTimeout(() => setLoading(prev => prev ? false : prev), 12_000)
+    return () => clearTimeout(t)
+  }, [id])
 
   useEffect(() => {
     if (canEdit) fetchContracts()
@@ -921,6 +933,9 @@ export default function PropertyDetail() {
       } else {
         setCrmProjectCoords(null)
       }
+    } catch (err) {
+      // Fehler beim Nachladen der CRM-/Zahlungsdaten dürfen die Seite NICHT blockieren
+      console.error('[PropertyDetail] fetchUnitPayments:', err)
     } finally {
       setUnitPayLoading(false)
     }
@@ -1100,11 +1115,18 @@ export default function PropertyDetail() {
         <div className="flex flex-col items-center justify-center py-32 text-gray-400 font-body">
           <div className="text-5xl mb-4">🏚️</div>
           <p className="text-sm">{t('propertyDetail.notFound')}</p>
-          <button onClick={() => navigate('/objekte')}
-            className="mt-4 text-sm font-semibold underline"
-            style={{ color: 'var(--color-highlight)' }}>
-            {t('propertyDetail.back')}
-          </button>
+          <div className="flex items-center gap-4 mt-4">
+            <button onClick={() => fetchProperty()}
+              className="text-sm font-semibold px-4 py-2 rounded-lg text-white"
+              style={{ backgroundColor: 'var(--color-highlight)' }}>
+              ↻ {t('common.reload', 'Neu laden')}
+            </button>
+            <button onClick={() => navigate('/objekte')}
+              className="text-sm font-semibold underline"
+              style={{ color: 'var(--color-highlight)' }}>
+              {t('propertyDetail.back')}
+            </button>
+          </div>
         </div>
       </DashboardLayout>
     )
