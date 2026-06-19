@@ -712,6 +712,8 @@ export default function Pipeline() {
   }
 
   // Kontakt übergeben: Freitext speichern + sofort WhatsApp an Burkhard + Ioulia.
+  // Nachrichtentext kommt aus der editierbaren Pipeline-Stufe „Kontakt übergeben"
+  // (Fallback = Standardtext). Sendefehler werden SICHTBAR gemeldet, nicht verschluckt.
   const confirmHandover = async () => {
     if (!handoverDeal) return
     const deal = handoverDeal
@@ -723,17 +725,45 @@ export default function Pipeline() {
       const { data: lead } = await supabase.from('leads').select('first_name,last_name,phone,whatsapp,email').eq('id', deal.lead_id).maybeSingle()
       const l = lead as { first_name?: string; last_name?: string; phone?: string; whatsapp?: string; email?: string } | null
       const ln = l ? `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() : ''
-      const msg = `Bitte bearbeite diesen Kontakt:\n${ln}\nTel: ${l?.phone || l?.whatsapp || '–'}\nE-Mail: ${l?.email || '–'}${handoverText.trim() ? `\n\n${handoverText.trim()}` : ''}`
+      const note = handoverText.trim()
+      // Basis-Text aus der editierbaren Pipeline-Stufe „Kontakt übergeben" laden (sonst Standard)
+      const { data: stageTpl } = await supabase.from('whatsapp_templates')
+        .select('message_template').like('event_type', 'stage_kontakt_uebergeben_%').eq('active', true).limit(1).maybeSingle()
+      const baseTpl = (stageTpl as { message_template?: string } | null)?.message_template?.trim() || ''
+      let msg: string
+      if (baseTpl) {
+        const vars: Record<string, string> = {
+          name: ln, vorname: l?.first_name ?? '', nachname: l?.last_name ?? '',
+          phone: l?.phone || l?.whatsapp || '–', whatsapp: l?.whatsapp || l?.phone || '–',
+          email: l?.email || '–', notiz: note, bemerkung: note, bemerkungen: note,
+        }
+        msg = baseTpl
+        for (const [k, v] of Object.entries(vars)) msg = msg.split(`{{${k}}}`).join(v || '–')
+        msg = msg.replace(/\{\{[^}]+\}\}/g, '–')
+        if (note && !/\{\{(notiz|bemerkung|bemerkungen)\}\}/.test(baseTpl)) msg += `\n\n${note}`
+      } else {
+        msg = `Bitte bearbeite diesen Kontakt:\n${ln}\nTel: ${l?.phone || l?.whatsapp || '–'}\nE-Mail: ${l?.email || '–'}${note ? `\n\n${note}` : ''}`
+      }
       const { data: contacts } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone')
         .in('id', ['6c9da3ce-9826-4660-9a50-6ff9fc8e70b4', '809bbc0b-fb61-47a5-8f04-e8f7d9ab3c34'])
-      for (const c of (contacts ?? []) as Array<{ first_name: string; whatsapp: string | null; phone: string | null }>) {
-        const tel = c.whatsapp || c.phone; if (!tel) continue
-        await sendWhatsApp({ event_type: 'no_show', override_text: msg, lead_id: deal.lead_id, lead_data: { lead_name: c.first_name, lead_phone: tel } }).catch(() => {})
+      const list = (contacts ?? []) as Array<{ first_name: string; whatsapp: string | null; phone: string | null }>
+      const fails: string[] = []
+      let sent = 0
+      if (!list.length) fails.push('Burkhard/Ioulia nicht in den Geschäftskontakten gefunden')
+      for (const c of list) {
+        const tel = c.whatsapp || c.phone
+        if (!tel) { fails.push(`${c.first_name}: keine Nummer hinterlegt`); continue }
+        try {
+          const res = await sendWhatsApp({ event_type: 'no_show', override_text: msg, lead_id: deal.lead_id, lead_data: { lead_name: c.first_name, lead_phone: tel } })
+          if (res.success) sent++
+          else fails.push(`${c.first_name}: ${res.error || 'unbekannter Fehler'}`)
+        } catch (e) { fails.push(`${c.first_name}: ${e instanceof Error ? e.message : 'Fehler'}`) }
       }
       await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'whatsapp', direction: 'outbound',
         subject: 'Kontakt übergeben an Burkhard + Ioulia', content: msg, created_by: profile?.id ?? null })
       setHandoverDeal(null); setHandoverText('')
-      showToastMsg(t('crm.handoverSent', 'Kontakt übergeben'))
+      if (fails.length) showToastMsg(`⚠️ Übergeben — WhatsApp-Problem: ${fails.join(' · ')}`)
+      else showToastMsg(`✅ ${t('crm.handoverSent', 'Kontakt übergeben')} — WhatsApp an ${sent} gesendet`)
     } finally { setModalBusy(false) }
   }
 

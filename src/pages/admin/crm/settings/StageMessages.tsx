@@ -460,23 +460,8 @@ const SYSTEM_EVENTS: SystemEvent[] = [
     placeholders:    ['{{vorname}}', '{{email}}', '{{password}}', '{{login_url}}'],
     note:            '{{password}} und {{login_url}} bitte drin lassen — sonst sendet das System automatisch die fest eingebaute Sicherheits-Mail.',
   },
-  {
-    key:              'hold_reengagement',
-    icon:             '⏸️',
-    label:            'Hold-Reaktivierung (alle 6 Wochen)',
-    desc:             'Geht an Kunden in der Stufe „Hold" mit Häkchen Kontaktaufnahme — alle 6 Wochen Mail + WhatsApp, bis du ihn rausziehst oder er abbestellt.',
-    emailTemplateId:  '99862a76-e7f0-4498-b04b-4230bbcbf5fe',
-    whatsappEventType: 'hold_reengagement',
-    placeholders:     ['{{vorname}}', '{{name}}', '{{email}}'],
-  },
-  {
-    key:              'handover_status',
-    icon:             '🤝',
-    label:            'Kontakt-Übergabe: Nachfrage an Burkhard (alle 5 Wochen)',
-    desc:             'WhatsApp an Burkhard, solange ein Kontakt in der Stufe „Kontakt übergeben" steht. Text wird zur Laufzeit mit Name + Datum gefüllt.',
-    whatsappEventType: 'handover_status',
-    placeholders:     ['{{vorname}}', '{{name}}'],
-  },
+  // Hinweis: Die Nachrichten für die Stufen „Hold" und „Kontakt übergeben" werden
+  // in der PIPELINE (oben) bei der jeweiligen Stufe bearbeitet — nicht hier.
 ]
 
 const fillSysPreview = (h: string): string => h

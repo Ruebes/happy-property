@@ -1966,18 +1966,6 @@ export default function LeadDetail() {
                       📱 {lead.whatsapp}
                     </a>
                   )}
-                  {lead.drive_folder_url ? (
-                    <a href={lead.drive_folder_url} target="_blank" rel="noreferrer" className="font-medium text-orange-600 hover:text-orange-700">
-                      📁 {t('crm.lead.driveOpen', 'Google Drive')}
-                    </a>
-                  ) : (
-                    <button type="button" onClick={createDriveFolder} disabled={driveBusy} className="text-gray-500 hover:text-orange-500 disabled:opacity-50">
-                      {driveBusy ? t('crm.lead.driveCreating', '📁 Ordner wird erstellt…') : t('crm.lead.driveCreate', '📁 Drive-Ordner erstellen')}
-                    </button>
-                  )}
-                  <button type="button" onClick={() => setShowWizard(true)} className="font-medium text-orange-600 hover:text-orange-700">
-                    📑 {t('crm.lead.createDeck', 'Sales Deck erstellen')}
-                  </button>
                 </div>
                 <div className="flex flex-wrap gap-2 mt-2">
                   {/* Source badge */}
@@ -2002,35 +1990,45 @@ export default function LeadDetail() {
                 </div>
               </div>
 
-              {/* Quick actions */}
-              <div className="flex flex-wrap gap-2 flex-shrink-0">
-                <button
-                  onClick={() => setActiveTab('emails')}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 font-medium"
-                >
-                  📧 {t('crm.sendEmail', 'E-Mail senden')}
+            </div>
+
+            {/* ── Direkt-Aktionen (große Felder) ────────────────────── */}
+            <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {([
+                { key: 'mail', icon: '📧', label: t('crm.action.mail', 'Mail senden'),         cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100',  on: () => { setComposeChannel('email'); setActiveTab('emails') } },
+                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp senden'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { setComposeChannel('whatsapp'); setActiveTab('emails') } },
+                { key: 'note', icon: '📝', label: t('crm.action.note', 'Notiz erstellen'),      cls: 'bg-slate-100 text-slate-700 hover:bg-slate-200',   on: () => setActiveTab('activities') },
+                { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => setActiveTab('tasks') },
+                { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },
+                { key: 'deck', icon: '📑', label: t('crm.action.deck', 'Sales Deck erstellen'), cls: 'bg-rose-50 text-rose-700 hover:bg-rose-100',       on: () => setShowWizard(true) },
+              ] as const).map(a => (
+                <button key={a.key} onClick={a.on}
+                  className={`flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors ${a.cls}`}>
+                  <span className="text-2xl leading-none">{a.icon}</span>
+                  <span className="text-center leading-tight">{a.label}</span>
                 </button>
-                <button
-                  onClick={() => setActiveTab('tasks')}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 font-medium"
-                >
-                  ✅ {t('crm.addTask', 'Aufgabe anlegen')}
+              ))}
+              {/* Drive: öffnen wenn vorhanden, sonst anlegen */}
+              {lead.drive_folder_url ? (
+                <a href={lead.drive_folder_url} target="_blank" rel="noreferrer"
+                  className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100">
+                  <span className="text-2xl leading-none">📁</span>
+                  <span className="text-center leading-tight">{t('crm.action.driveOpen', 'Drive öffnen')}</span>
+                </a>
+              ) : (
+                <button onClick={createDriveFolder} disabled={driveBusy}
+                  className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-50">
+                  <span className="text-2xl leading-none">📁</span>
+                  <span className="text-center leading-tight">{driveBusy ? t('crm.action.driveCreating', 'Erstelle…') : t('crm.action.driveCreate', 'Drive erstellen')}</span>
                 </button>
-                <button
-                  onClick={() => setActiveTab('activities')}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 font-medium"
-                >
-                  📝 {t('crm.addNote', 'Notiz')}
-                </button>
-                <button
-                  onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
-                  disabled={resendingPortal}
-                  className="px-3 py-1.5 text-sm rounded-lg font-medium text-white disabled:opacity-60 transition-colors"
-                  style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
-                >
-                  {resendingPortal ? '⏳' : lead?.portal_access_sent_at ? '✅ Zugang' : '🔑 Portalzugang'}
-                </button>
-              </div>
+              )}
+              {/* Portalzugang */}
+              <button onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal} disabled={resendingPortal}
+                className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors text-white disabled:opacity-60"
+                style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}>
+                <span className="text-2xl leading-none">{resendingPortal ? '⏳' : '🔑'}</span>
+                <span className="text-center leading-tight">{lead?.portal_access_sent_at ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
+              </button>
             </div>
           </div>
 
