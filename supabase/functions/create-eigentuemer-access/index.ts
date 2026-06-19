@@ -283,6 +283,61 @@ Deno.serve(async (req: Request) => {
       // Nicht fatal – User existiert, Profil kann manuell angelegt werden
     }
 
+    // ── 3b. Lead↔Profil verknüpfen + Portal-Objekte nachziehen ────────────────
+    // Wird eine Wohnung VOR dem Portalzugang zugewiesen (Normalfall), existiert kein
+    // Eigentümer-Profil → handleUnitAssign legt keine `properties`-Zeile an, und der
+    // Eigentümer sieht im Portal NICHTS. Hier holen wir das beim Zugang-Anlegen nach:
+    // Lead per E-Mail finden, profile_id setzen und für jede zugewiesene Deal-Wohnung
+    // eine Property (owner_id = neuer User) erzeugen/zuordnen. Idempotent.
+    try {
+      const { data: leadRow } = await adminClient.from('leads').select('id').ilike('email', email).maybeSingle()
+      if (leadRow) {
+        const leadId = (leadRow as { id: string }).id
+        await adminClient.from('leads').update({ profile_id: userId }).eq('id', leadId).is('profile_id', null)
+        const { data: deals } = await adminClient.from('deals')
+          .select('id, unit_id, property_id').eq('lead_id', leadId).not('unit_id', 'is', null)
+        for (const d of (deals ?? []) as Array<{ id: string; unit_id: string; property_id: string | null }>) {
+          const { data: unit } = await adminClient.from('crm_project_units')
+            .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, floor, type, rental_type, is_furnished, price_net, price_gross, status, block, property_id, project:crm_projects(name, location)')
+            .eq('id', d.unit_id).maybeSingle()
+          if (!unit) continue
+          const u = unit as Record<string, unknown> & { property_id?: string | null; project?: { name?: string; location?: string } | null }
+          if (u.property_id) {
+            // Property existiert schon → nur Eigentümer setzen, falls noch offen
+            await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string).is('owner_id', null)
+            continue
+          }
+          const loc = u.project?.location ?? null
+          const { data: newProp } = await adminClient.from('properties').insert({
+            project_name:         u.project?.name ?? '',
+            unit_number:          (u.unit_number as string) ?? null,
+            type:                 (u.type as string) ?? 'apartment',
+            bedrooms:             (u.bedrooms as number) ?? 0,
+            size_sqm:             u.size_sqm ?? null,
+            terrace_sqm:          u.terrace_sqm ?? null,
+            floor:                u.floor ?? null,
+            block:                (u.block as string) ?? null,
+            is_furnished:         (u.is_furnished as boolean) ?? false,
+            rental_type:          u.rental_type === 'short' ? 'shortterm' : 'longterm',
+            city:                 (typeof loc === 'string' && !loc.startsWith('http')) ? loc : null,
+            purchase_price_net:   u.price_net ?? null,
+            purchase_price_gross: u.price_gross ?? null,
+            property_status:      u.status === 'under_construction' ? 'under_construction' : 'active',
+            owner_id:             userId,
+            created_by:           userId,
+            images:               [],
+          }).select('id').single()
+          if (newProp) {
+            const pid = (newProp as { id: string }).id
+            await adminClient.from('crm_project_units').update({ property_id: pid }).eq('id', u.id as string)
+            await adminClient.from('deals').update({ property_id: pid }).eq('id', d.id)
+          }
+        }
+      }
+    } catch (linkErr) {
+      console.warn('[create-eigentuemer-access] Property-Backfill Fehler:', (linkErr as Error).message)
+    }
+
     // ── 4. Willkommens-E-Mail bauen ───────────────────────────────────────────
     // Vorrang: per-Send-Customizing (custom_message). Sonst die editierbare
     // DB-Vorlage „Portal-Zugang". Sicherheitsnetz: enthält das gerenderte
