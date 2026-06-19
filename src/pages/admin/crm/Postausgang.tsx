@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -30,6 +30,9 @@ export default function Postausgang() {
   const [openId, setOpenId]   = useState<string | null>(null)
   const [busyId, setBusyId]   = useState<string | null>(null)
   const [toast, setToast]     = useState('')
+  const [editId, setEditId]   = useState<string | null>(null)
+  const [editSubject, setEditSubject] = useState('')
+  const bodyRef = useRef<HTMLDivElement | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -86,6 +89,24 @@ export default function Postausgang() {
     } catch (e) {
       flash(`${t('crm.outbox.waFail', 'WhatsApp fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)
     } finally { setBusyId(null) }
+  }
+
+  const startEdit = (row: OutboxRow) => {
+    setOpenId(row.id)
+    setEditSubject(row.subject ?? '')
+    setEditId(row.id)   // innerHTML wird per Callback-Ref gesetzt, sobald der Editor gerendert ist
+  }
+
+  const saveEdit = async (row: OutboxRow) => {
+    const newBody = bodyRef.current?.innerHTML ?? row.body ?? ''
+    const newSubject = editSubject.trim() || row.subject
+    setBusyId(row.id)
+    const { error } = await supabase.from('deck_outbox').update({ subject: newSubject, body: newBody }).eq('id', row.id)
+    setBusyId(null)
+    if (error) { flash(`${t('crm.outbox.saveFail', 'Speichern fehlgeschlagen')}: ${error.message}`); return }
+    setEditId(null)
+    flash(t('crm.outbox.saved', '✅ Gespeichert'))
+    void load()
   }
 
   const discard = async (row: OutboxRow) => {
@@ -149,15 +170,44 @@ export default function Postausgang() {
               </div>
               {openId === r.id && (
                 <div className="border-t border-gray-100 px-4 py-3">
-                  <div className="flex flex-wrap gap-2 mb-3">
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
                     {(r.deck_tokens ?? []).map((tok, i) => (
                       <a key={tok} href={`/deck/${tok}`} target="_blank" rel="noreferrer"
                         className="text-xs font-medium px-2.5 py-1 rounded-lg bg-gray-900 text-white">🔗 Deck {i + 1}</a>
                     ))}
+                    {r.status !== 'cancelled' && editId !== r.id && (
+                      <button onClick={() => startEdit(r)}
+                        className="ml-auto text-xs font-medium px-2.5 py-1 rounded-lg border border-gray-300 text-gray-700 hover:border-orange-400 hover:text-orange-600">
+                        ✏️ {t('crm.outbox.edit', 'Bearbeiten')}
+                      </button>
+                    )}
                   </div>
-                  <div className="text-sm text-gray-700 border border-gray-100 rounded-lg p-3 bg-gray-50 max-h-72 overflow-y-auto"
-                    dangerouslySetInnerHTML={{ __html: r.body ?? '' }} />
-                  {r.error_message && <p className="text-xs text-red-500 mt-2">{r.error_message}</p>}
+                  {editId === r.id ? (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-gray-500">{t('crm.outbox.subject', 'Betreff')}</label>
+                      <input value={editSubject} onChange={e => setEditSubject(e.target.value)}
+                        className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:border-orange-400" />
+                      <label className="block text-xs font-medium text-gray-500 pt-1">{t('crm.outbox.mailText', 'Mailtext')}</label>
+                      <div
+                        ref={el => { bodyRef.current = el; if (el && el.getAttribute('data-init') !== r.id) { el.innerHTML = r.body ?? ''; el.setAttribute('data-init', r.id) } }}
+                        contentEditable suppressContentEditableWarning
+                        className="text-sm text-gray-800 border border-gray-300 rounded-lg p-3 bg-white max-h-96 overflow-y-auto focus:outline-none focus:border-orange-400" />
+                      <p className="text-[11px] text-gray-400">{t('crm.outbox.editHint', 'Du kannst direkt im Text schreiben — die Formatierung und die Deck-Links bleiben erhalten.')}</p>
+                      <div className="flex gap-2 pt-1">
+                        <button onClick={() => saveEdit(r)} disabled={busyId === r.id}
+                          className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                          {busyId === r.id ? t('crm.outbox.saving', 'Speichert…') : `💾 ${t('crm.outbox.save', 'Speichern')}`}
+                        </button>
+                        <button onClick={() => setEditId(null)} className="text-xs text-gray-500 hover:text-gray-800 px-3 py-1.5">{t('common.cancel', 'Abbrechen')}</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="text-sm text-gray-700 border border-gray-100 rounded-lg p-3 bg-gray-50 max-h-72 overflow-y-auto"
+                        dangerouslySetInnerHTML={{ __html: r.body ?? '' }} />
+                      {r.error_message && <p className="text-xs text-red-500 mt-2">{r.error_message}</p>}
+                    </>
+                  )}
                 </div>
               )}
             </div>

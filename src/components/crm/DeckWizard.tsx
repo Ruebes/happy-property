@@ -57,7 +57,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const removeFromBasket = (unitId: string) => setBasket(b => b.filter(x => x.unit.id !== unitId))
 
   // Ein personalisiertes Deck pro Wohnung erzeugen (Hintergrund) + auf Token pollen
-  const genOne = async (item: BasketItem): Promise<{ token: string; label: string } | null> => {
+  const genOne = async (item: BasketItem): Promise<{ token: string; label: string; item: BasketItem } | null> => {
     const a = item.assets
     if (!a?.facts) throw new Error(`${item.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
     const u = item.unit
@@ -76,7 +76,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       await sleep(5000)
       const { data: row } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('unit_id', u.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
       const tok = (row as { token?: string } | null)?.token ?? null
-      if (tok && tok !== prevTok) return { token: tok, label: `${item.projectName} · ${u.unit_number}` }
+      if (tok && tok !== prevTok) return { token: tok, label: `${item.projectName} · ${u.unit_number}`, item }
     }
     return null
   }
@@ -85,19 +85,35 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     if (!basket.length) return
     setBusy(true); setErr('')
     try {
-      const links: { token: string; label: string }[] = []
+      const links: { token: string; label: string; item: BasketItem }[] = []
       for (let i = 0; i < basket.length; i++) {
         setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${basket.length} — ${basket[i].projectName} · ${basket[i].unit.unit_number}…`)
         const r = await genOne(basket[i])
         if (r) links.push(r)
       }
       if (!links.length) throw new Error(t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
-      // Begleit-Mail zusammenstellen → Postausgang (Entwurf)
+      // Begleit-Mail von der KI schreiben lassen (ausführlich, locker, kein Slang) → Postausgang (Entwurf).
+      // Fällt bei Fehler/fehlendem Key auf eine schlanke Vorlage zurück, damit nie ohne Mail dastehen.
       const origin = window.location.origin
-      const items = links.map(l => `<li><a href="${origin}/deck/${l.token}">${l.label}</a></li>`).join('')
-      const intro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
-      const body = `<p>Hallo ${lead.first_name},</p>${intro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${items}</ul><p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
-      const subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
+      const mailItems = links.map(l => ({
+        label: l.label, link: `${origin}/deck/${l.token}`,
+        project: l.item.projectName, unit: l.item.unit.unit_number,
+        bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm,
+        floor: l.item.unit.floor, price: eur(l.item.unit.price_gross ?? l.item.unit.price_net),
+      }))
+      setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
+      let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
+      const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a></li>`).join('')
+      const fbIntro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
+      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul><p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
+      try {
+        const { data: mail } = await supabase.functions.invoke('compose-deck-mail', { body: {
+          recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
+          briefing, angle, items: mailItems,
+        } })
+        const mm = mail as { subject?: string; html?: string } | null
+        if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html }
+      } catch { /* Fallback-Vorlage bleibt */ }
       const { error: oErr } = await supabase.from('deck_outbox').insert({
         lead_id: lead.id, recipient_email: lead.email, subject, body, deck_tokens: links.map(l => l.token), status: 'draft',
       })
