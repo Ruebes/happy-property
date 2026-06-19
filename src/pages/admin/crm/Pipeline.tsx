@@ -12,6 +12,7 @@ import {
   PHASE_WEBHOOK_EVENTS,
 } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
+import DeckWizard from '../../../components/crm/DeckWizard'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -501,6 +502,7 @@ export default function Pipeline() {
   const [showDealModal, setShowDealModal] = useState(false)
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
+  const [deckDeal, setDeckDeal] = useState<Deal | null>(null)   // Angebot-Wizard (Deck + optional Berechnung + Mail)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
@@ -674,9 +676,9 @@ export default function Pipeline() {
       await sendWebhook(webhookEvent, updatedDeal)
     }
 
-    // Projektauswahl-Modal automatisch öffnen
+    // Angebot-Wizard (Deck + optional Berechnung/Vergleich + Mail) automatisch öffnen
     if (targetPhase === 'immobilienauswahl') {
-      setProjectModalDeal({ ...deal, phase: targetPhase })
+      setDeckDeal({ ...deal, phase: targetPhase })
     }
 
     // Automations-Queue befüllen (fire-and-forget)
@@ -1004,6 +1006,15 @@ export default function Pipeline() {
         />
       )}
 
+      {/* Angebot-Wizard: Deck + optional Berechnung/Vergleich + Mail → Postausgang */}
+      {deckDeal && deckDeal.lead && (
+        <DeckWizard
+          lead={{ id: deckDeal.lead_id, first_name: deckDeal.lead.first_name, last_name: deckDeal.lead.last_name, email: deckDeal.lead.email ?? null }}
+          onClose={() => setDeckDeal(null)}
+          onDone={(msg) => { setDeckDeal(null); showToastMsg(msg) }}
+        />
+      )}
+
       {/* Registrierung Modal */}
       {registrationDeal && (
         <RegistrationModal
@@ -1061,6 +1072,11 @@ export default function Pipeline() {
             className="fixed z-50 w-60 max-h-[80vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-gray-200 py-1 animate-fade-in"
             style={{ left: ctxMenu.x, top: ctxMenu.y }}
           >
+            <button
+              onClick={() => { const d = ctxMenu.deal; setCtxMenu(null); setDeckDeal(d) }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left font-medium text-orange-700 hover:bg-orange-50 border-b border-gray-100">
+              📑 {t('crm.pipeline.createDeck', 'Deck / Angebot erstellen')}
+            </button>
             <p className="px-3 py-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wide">
               {t('crm.pipeline.moveTo', 'Verschieben nach')}
             </p>

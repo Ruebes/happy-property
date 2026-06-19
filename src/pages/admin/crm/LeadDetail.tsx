@@ -12,6 +12,7 @@ import RegistrationModal from '../../../components/crm/RegistrationModal'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
+import LeadAngebote from '../../../components/crm/LeadAngebote'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -2543,6 +2544,8 @@ export default function LeadDetail() {
             {/* ── Tab: Overview ─────────────────────────────────── */}
             {activeTab === 'overview' && (
               <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
+                {/* Gesendete Angebote (Decks/Berechnungen/Mails) — dauerhafte Historie */}
+                <div className="sm:col-span-2"><LeadAngebote leadId={lead.id} /></div>
                 {/* Stammdaten */}
                 <div>
                   <div className="flex items-center justify-between mb-3">

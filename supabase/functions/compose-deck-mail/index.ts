@@ -88,6 +88,7 @@ const btn = (href: string, label: string, bg: string, color: string, border = 'n
 function buildHtml(
   m: { greeting?: string; body_paragraphs?: string[]; deck_lines?: string[]; recommendation?: string; cta_paragraph?: string; signoff?: string; signName?: string },
   items: MailItem[],
+  calc?: { link: string; label: string } | null,
 ): string {
   const greeting = m.greeting ? P(m.greeting) : ''
   const intro = (m.body_paragraphs ?? []).map(P).join('')
@@ -112,16 +113,24 @@ function buildHtml(
     + waBtn
     + btn(`mailto:${SVEN_EMAIL}`, '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')
     + `</div>`
+  // Optionaler Berechnungs-/Vergleichs-Block (Rendite-Rechnung)
+  const calcBlock = calc?.link
+    ? `<div style="margin:0 0 20px;padding:18px 20px;border-radius:14px;background:#f0f7f4;border:1px solid #d4e9df">`
+      + `<div style="font-weight:700;font-size:16px;color:#1a1a1a;margin:0 0 6px">📊 ${esc(calc.label || 'Deine Rendite-Berechnung')}</div>`
+      + `<div style="color:#555;margin:0 0 14px;line-height:1.55">Ich habe dir die Zahlen aufbereitet — Eigenkapital, Cashflow und Rendite über 10 Jahre, schwarz auf weiß.</div>`
+      + btn(calc.link, 'Berechnung ansehen →', '#2f6b4f', '#ffffff')
+      + `</div>`
+    : ''
   const sign = `<p style="margin:24px 0 0">${esc(m.signoff || 'Bis bald,')}<br><strong>${esc(m.signName || 'Sven · Happy Property Cyprus')}</strong></p>`
   return `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto">`
     + greeting + intro
     + `<div style="margin:24px 0">${cards}</div>`
-    + reco + cta + sign
+    + reco + calcBlock + cta + sign
     + `</div>`
 }
 
 // Schlanker, aber vollständiger Fallback (mit CTA), falls Claude/Key mal nicht greift.
-function fallback(firstName: string, items: MailItem[]): { subject: string; html: string } {
+function fallback(firstName: string, items: MailItem[], calc?: { link: string; label: string } | null): { subject: string; html: string } {
   const m = {
     greeting: `Hallo ${firstName || 'zusammen'},`,
     body_paragraphs: ['wie besprochen habe ich dir deine persönlichen Wohnungs-Vorschläge zusammengestellt. Schau sie dir in Ruhe an — ich bin gespannt, welches dich am meisten anspricht.'],
@@ -132,7 +141,7 @@ function fallback(firstName: string, items: MailItem[]): { subject: string; html
     signName: 'Sven · Happy Property Cyprus',
   }
   const subject = items.length > 1 ? 'Deine Wohnungs-Vorschläge von Happy Property' : `Dein Vorschlag: ${items[0]?.label ?? ''}`.trim()
-  return { subject, html: buildHtml(m, items) }
+  return { subject, html: buildHtml(m, items, calc) }
 }
 
 Deno.serve(async (req) => {
@@ -140,13 +149,14 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json() as {
       recipient_name?: string; first_name?: string; briefing?: string; angle?: string
-      items?: MailItem[]
+      items?: MailItem[]; calc_link?: string; calc_label?: string
     }
     const items = (body.items ?? []).filter(it => it && it.link)
     if (!items.length) return json({ error: 'items fehlt' }, 400)
     const firstName = body.first_name?.trim() || (body.recipient_name?.trim().split(' ')[0] ?? '')
+    const calc = body.calc_link ? { link: body.calc_link, label: body.calc_label ?? '' } : null
 
-    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items))
+    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items, calc))
 
     const angle = body.angle === 'investment' ? 'investment' : 'lifestyle'
     const userMsg = [
@@ -200,9 +210,9 @@ Deno.serve(async (req) => {
       subject?: string; greeting?: string; body_paragraphs?: string[]; deck_lines?: string[]
       recommendation?: string; cta_paragraph?: string; signoff?: string; signName?: string
     }
-    if (!m || !m.subject) return json(fallback(firstName, items))
+    if (!m || !m.subject) return json(fallback(firstName, items, calc))
 
-    return json({ subject: m.subject, html: buildHtml(m, items) })
+    return json({ subject: m.subject, html: buildHtml(m, items, calc) })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

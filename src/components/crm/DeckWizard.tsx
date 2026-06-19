@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
+import { DEFAULT_PARAMS, type CalcParams, type CalcItem } from '../../lib/rechner'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
 // Aus dem Kunden heraus: Projekt → Vorschlags-Wohnung(en) → Freitext → ins Paket;
@@ -20,7 +21,10 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void }) {
   const { t } = useTranslation()
   const [projects, setProjects] = useState<ProjectRow[]>([])
+  const [developer, setDeveloper] = useState('')   // Filter: Developer-Name
   const [projectId, setProjectId] = useState('')
+  const [withCalc, setWithCalc] = useState(false)
+  const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   const [units, setUnits]       = useState<UnitRow[]>([])
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
@@ -113,15 +117,34 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         available_count: availByProject[l.item.projectId]?.available ?? null,
         total_count:     availByProject[l.item.projectId]?.total ?? null,
       }))
+      // Optional: Rendite-Berechnung / Vergleich erstellen (eigener Token-Link, läuft nicht ab)
+      let calcLink: string | undefined, calcLabel: string | undefined
+      if (withCalc) {
+        setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung…'))
+        const calcItems: CalcItem[] = links.map(l => ({
+          label: l.label, project: l.item.projectName, unit: l.item.unit.unit_number,
+          bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm, floor: l.item.unit.floor,
+          price_net: l.item.unit.price_net, price_gross: l.item.unit.price_gross,
+          params: { ...calcParams, dealType: 'single', priceNet: l.item.unit.price_net ?? calcParams.priceNet, bedrooms: l.item.unit.bedrooms ?? 2 },
+        }))
+        const calcContent = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items: calcItems }
+        const { data: calcRow } = await supabase.from('property_calculations').insert({
+          lead_id: lead.id, recipient_name: calcContent.recipient_name,
+          title: links.length > 1 ? 'Immobilienvergleich' : `Rechnung ${links[0].label}`, with_calc: true, content: calcContent,
+        }).select('token').single()
+        const tok = (calcRow as { token?: string } | null)?.token
+        if (tok) { calcLink = `${origin}/rechnung/${tok}`; calcLabel = links.length > 1 ? 'Dein Immobilienvergleich' : 'Deine Rendite-Berechnung' }
+      }
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
       const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a></li>`).join('')
       const fbIntro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
-      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul><p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
+      const fbCalc = calcLink ? `<p>📊 <a href="${calcLink}">${calcLabel}</a></p>` : ''
+      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul>${fbCalc}<p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
       try {
         const { data: mail } = await supabase.functions.invoke('compose-deck-mail', { body: {
           recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
-          briefing, angle, items: mailItems,
+          briefing, angle, items: mailItems, calc_link: calcLink, calc_label: calcLabel,
         } })
         const mm = mail as { subject?: string; html?: string } | null
         if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html }
@@ -140,6 +163,27 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white'
 
+  // Kompakte Rechner-Parameter (inline Render-Funktionen — keine verschachtelten Komponenten)
+  const setCp = (k: keyof CalcParams, v: number | string | boolean) => setCalcParams(prev => ({ ...prev, [k]: v }) as CalcParams)
+  const numF = (label: string, k: keyof CalcParams, step = '1', suffix?: string) => (
+    <label key={k} className="block">
+      <span className="block text-[11px] text-gray-500 mb-0.5">{label}{suffix ? ` (${suffix})` : ''}</span>
+      <input type="number" step={step} value={String(calcParams[k] ?? '')} onChange={e => setCp(k, parseFloat(e.target.value) || 0)}
+        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400" />
+    </label>
+  )
+  const seg = (label: string, k: keyof CalcParams, opts: [string, string][]) => (
+    <div key={k}>
+      <span className="block text-[11px] text-gray-500 mb-0.5">{label}</span>
+      <div className="flex rounded-lg overflow-hidden border border-gray-200">
+        {opts.map(([val, lab]) => (
+          <button key={val} type="button" onClick={() => setCp(k, val)}
+            className={`flex-1 px-1.5 py-1 text-[11px] font-medium ${String(calcParams[k]) === val ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>{lab}</button>
+        ))}
+      </div>
+    </div>
+  )
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -152,10 +196,17 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           {/* Projekt + Wohnungen */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.developer', 'Developer')}</label>
+              <select className={inputCls} value={developer} onChange={e => { setDeveloper(e.target.value); setProjectId('') }}>
+                <option value="">{t('crm.wizard.allDevelopers', 'Alle')}</option>
+                {[...new Set(projects.map(p => p.developer).filter(Boolean))].sort().map(d => <option key={d} value={d as string}>{d}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.project', 'Projekt')}</label>
               <select className={inputCls} value={projectId} onChange={e => setProjectId(e.target.value)}>
                 <option value="">{t('crm.wizard.choose', '— wählen —')}</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.developer ? `${p.developer} · ` : ''}{p.name}</option>)}
+                {projects.filter(p => !developer || p.developer === developer).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             </div>
           </div>
@@ -209,6 +260,35 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                 <option value="investment">{t('crm.wizard.investment', 'Investment')}</option>
               </select>
             </div>
+          </div>
+
+          {/* Mit / ohne Berechnung */}
+          <div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={withCalc} onChange={e => setWithCalc(e.target.checked)} className="w-4 h-4 accent-orange-500" />
+              <span className="text-sm font-medium text-gray-700">📊 {t('crm.wizard.withCalc', 'Mit Rendite-Berechnung / Vergleich')}</span>
+            </label>
+            {withCalc && (
+              <div className="mt-3 space-y-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {seg('Steuersitz', 'res', [['de', 'DE'], ['cy', 'CY']])}
+                  {seg('Finanzierung', 'fin', [['yes', 'Ja'], ['no', 'Cash']])}
+                  {seg('Vermietung', 'letType', [['short', 'Kurz'], ['long', 'Lang']])}
+                  {seg('Tilgung', 'mode', [['ann', 'Annuität'], ['tilg', 'Fix']])}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {numF('Eigenkapital', 'equity', '1000', '€')}
+                  {numF('Zins', 'interestPct', '0.1', '%')}
+                  {numF('Laufzeit', 'termYears', '1', 'J')}
+                  {numF('Rendite', 'yieldPct', '0.1', '%')}
+                  {numF('Mietsteig.', 'rentGrowth', '0.1', '%')}
+                  {numF('Verwaltung', 'mgmtPct', '0.5', '%')}
+                  {numF('Wertsteig.', 'appreciationPct', '0.1', '%')}
+                  {calcParams.res === 'de' && numF('DE-Steuer', 'deTaxPct', '1', '%')}
+                </div>
+                <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Bei mehreren Wohnungen entsteht ein Vergleich.')}</p>
+              </div>
+            )}
           </div>
 
           {err && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{err}</p>}
