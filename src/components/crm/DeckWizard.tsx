@@ -27,9 +27,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   // Pro Wohnung eigene Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
   // Leer = es gilt der globale Standardwert aus calcParams.
-  const [perUnit, setPerUnit] = useState<Record<string, { yieldPct?: number; appreciationPct?: number }>>({})
-  const setPu = (id: string, k: 'yieldPct' | 'appreciationPct', v: number) =>
-    setPerUnit(p => ({ ...p, [id]: { ...p[id], [k]: v } }))
+  // Per-Wohnung-Overrides: Rendite, Wertsteigerung, Einrichtungspaket-Preis (wichtig für
+  // die Möbel-AfA), Möbelpaket kostenfrei, Hotelkonzept. Leer = globaler Standard.
+  const [perUnit, setPerUnit] = useState<Record<string, { yieldPct?: number; appreciationPct?: number; furnCost?: number; furnFree?: boolean; hotelConcept?: boolean }>>({})
+  const setPu = (id: string, patch: Partial<{ yieldPct: number; appreciationPct: number; furnCost: number; furnFree: boolean; hotelConcept: boolean }>) =>
+    setPerUnit(p => ({ ...p, [id]: { ...p[id], ...patch } }))
   const [units, setUnits]       = useState<UnitRow[]>([])
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
@@ -135,6 +137,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             bedrooms:        l.item.unit.bedrooms ?? 2,
             yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
             appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
+            furnCost:        pu.furnCost ?? calcParams.furnCost,
+            furnFree:        pu.furnFree ?? calcParams.furnFree,
+            hotelConcept:    pu.hotelConcept ?? calcParams.hotelConcept,
           }
           const calcItem: CalcItem = {
             label: l.label, project: l.item.projectName, unit: l.item.unit.unit_number,
@@ -343,28 +348,45 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                   {cpToggle('Einrichtung kostenfrei', 'furnFree')}
                   {calcParams.letType === 'short' && cpToggle('🏨 Hotelkonzept', 'hotelConcept')}
                 </div>
-                {/* Pro Wohnung: Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
+                {/* Pro Wohnung: Rendite, Wertsteigerung, Einrichtungspaket-Preis (Möbel-AfA!),
+                    Möbelpaket kostenfrei, Hotelkonzept — unterscheiden sich je Objekt.
                     Werte oben gelten als Standard; hier je Wohnung feinjustieren. */}
                 {basket.length > 0 && (
                   <div className="border-t border-gray-200 pt-3 space-y-2">
-                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung: Rendite & Wertsteigerung')}</div>
-                    {basket.map(b => (
-                      <div key={b.unit.id} className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 px-2.5 py-1.5">
-                        <span className="flex-1 truncate text-xs text-gray-700">{b.projectName} · {b.unit.unit_number}</span>
-                        <label className="flex items-center gap-1 text-[11px] text-gray-500">
-                          {t('crm.wizard.rendite', 'Rendite')}
-                          <input type="number" step="0.1" value={String(perUnit[b.unit.id]?.yieldPct ?? calcParams.yieldPct ?? '')}
-                            onChange={e => setPu(b.unit.id, 'yieldPct', parseFloat(e.target.value) || 0)}
-                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />%
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung: Rendite, Wertsteigerung, Einrichtung')}</div>
+                    {basket.map(b => {
+                      const pu = perUnit[b.unit.id] ?? {}
+                      const ff = pu.furnFree ?? calcParams.furnFree
+                      const hc = pu.hotelConcept ?? calcParams.hotelConcept
+                      const miniInput = (lab: string, val: string, on: (v: number) => void, step = '0.1', suf = '%') => (
+                        <label className="flex items-center gap-1 text-[11px] text-gray-500">{lab}
+                          <input type="number" step={step} value={val} onChange={e => on(parseFloat(e.target.value) || 0)}
+                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />{suf}
                         </label>
-                        <label className="flex items-center gap-1 text-[11px] text-gray-500">
-                          {t('crm.wizard.wertsteig', 'Wertsteig.')}
-                          <input type="number" step="0.1" value={String(perUnit[b.unit.id]?.appreciationPct ?? calcParams.appreciationPct ?? '')}
-                            onChange={e => setPu(b.unit.id, 'appreciationPct', parseFloat(e.target.value) || 0)}
-                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />%
-                        </label>
-                      </div>
-                    ))}
+                      )
+                      return (
+                        <div key={b.unit.id} className="bg-white rounded-lg border border-gray-100 px-2.5 py-2 space-y-1.5">
+                          <div className="text-xs font-medium text-gray-700 truncate">{b.projectName} · {b.unit.unit_number}</div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                            {miniInput(t('crm.wizard.rendite', 'Rendite'), String(pu.yieldPct ?? calcParams.yieldPct ?? ''), v => setPu(b.unit.id, { yieldPct: v }))}
+                            {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
+                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                            <button type="button" onClick={() => setPu(b.unit.id, { furnFree: !ff })}
+                              className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${ff ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+                              <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${ff ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{ff ? '✓' : ''}</span>
+                              {t('crm.wizard.furnFree', 'Möbel gratis')}
+                            </button>
+                            {calcParams.letType === 'short' && (
+                              <button type="button" onClick={() => setPu(b.unit.id, { hotelConcept: !hc })}
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${hc ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+                                <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${hc ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{hc ? '✓' : ''}</span>
+                                🏨 {t('crm.wizard.hotel', 'Hotelkonzept')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
                 <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Jede Wohnung erhält eine EIGENE Berechnung (eigener Link). Voller Funktionsumfang (Sondertilgung, Share-Deal) im dedizierten Rechner.')}</p>

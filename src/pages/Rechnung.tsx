@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode, type CSSProperties } from
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { compute, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
+import { DECK_LOGO } from '../lib/deckTypes'
 
 // ── Öffentliche Rendite-Rechnung / Immobilienvergleich (HTML-Microsite) ───────
 // /rechnung/:token — Einzelobjekt = detaillierte Auswertung (8 Abschnitte, exakt
@@ -61,7 +62,7 @@ export default function Rechnung() {
       <div style={{ maxWidth: 1080, margin: '0 auto', padding: '28px 22px 64px' }}>
         {/* Kopf wie im Original-Export */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
-          <div style={{ width: 46, height: 46, borderRadius: 11, background: DARK, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SERIF, fontWeight: 800, fontSize: 20, flexShrink: 0 }}>HP</div>
+          <img src={DECK_LOGO} alt="Happy Property Cyprus" style={{ height: 46, width: 'auto', borderRadius: 8, flexShrink: 0 }} />
           <div>
             <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 800, color: DARK, lineHeight: 1.1 }}>
               {isCompare ? 'Immobilienvergleich' : 'Rendite & Cashflow – Übersicht'}
