@@ -90,8 +90,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     return null
   }
 
-  const generateAll = async () => {
+  const generateAll = async (background = false) => {
     if (!basket.length) return
+    // Hintergrund-Modus: Fenster sofort schließen, alles läuft detached weiter. Am Ende
+    // meldet ein kleines Popup (onDone-Toast auf der Lead-Seite), dass Deck/Rechnung/
+    // Vergleich/Mail fertig sind und im Postausgang liegen — Sven kann derweil weiterarbeiten.
+    if (background) onClose()
     setBusy(true); setErr('')
     try {
       const links: { token: string; label: string; item: BasketItem }[] = []
@@ -169,9 +173,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         lead_id: lead.id, recipient_email: lead.email, subject, body, deck_tokens: links.map(l => l.token), status: 'draft',
       })
       if (oErr) throw new Error(oErr.message)
-      onDone(`${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')}`)
+      onDone(`✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')}`)
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Fehler')
+      const msg = e instanceof Error ? e.message : 'Fehler'
+      // Im Hintergrund-Modus ist das Fenster schon zu → Fehler als Popup melden statt inline.
+      if (background) onDone(`❌ ${t('crm.wizard.bgError', 'Erstellung fehlgeschlagen')}: ${msg}`)
+      else setErr(msg)
     } finally {
       setBusy(false); setProgress('')
     }
@@ -354,7 +361,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           <p className="text-xs text-gray-400">{t('crm.wizard.hint', 'Jede Wohnung → eigenes Deck. Eine Mail in den Postausgang.')}</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200">{t('common.cancel', 'Abbrechen')}</button>
-            <button onClick={generateAll} disabled={busy || basket.length === 0}
+            {/* Im Hintergrund: Fenster schließt sofort, Sven kann weiterarbeiten; Popup am Ende. */}
+            <button onClick={() => void generateAll(true)} disabled={busy || basket.length === 0}
+              className="px-4 py-2 rounded-lg text-sm font-medium border disabled:opacity-40"
+              style={{ borderColor: '#ff795d', color: '#ff795d' }}>
+              {t('crm.wizard.createBg', 'Im Hintergrund erstellen')}
+            </button>
+            <button onClick={() => void generateAll(false)} disabled={busy || basket.length === 0}
               className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
               {busy ? t('crm.wizard.creating', 'Erstelle…') : `${t('crm.wizard.createAll', 'Alle Decks erstellen')} (${basket.length})`}
             </button>
