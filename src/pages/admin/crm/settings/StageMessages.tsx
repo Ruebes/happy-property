@@ -738,11 +738,6 @@ export default function StageMessages() {
 
           {pipelineOpen && (
           <div className="border-t border-gray-100 px-5 pb-5 pt-4 space-y-4">
-        {/* Safety-Hinweis */}
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-          {t('crm.stageEditor.safetyNote', 'Solange der automatische Versand nicht scharfgeschaltet ist, wird nichts verschickt. „Aktiv" bedeutet: geht raus, sobald das System live ist.')}
-        </div>
-
         {loading ? (
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />

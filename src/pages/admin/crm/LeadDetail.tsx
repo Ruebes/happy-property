@@ -1231,6 +1231,24 @@ export default function LeadDetail() {
     }
   }
 
+  // Deal endgültig löschen (z.B. versehentlich mehrfach angelegt). Der Kontakt/Lead
+  // bleibt erhalten; nur dieser Deal + seine geplanten Nachrichten/Projekt-Verknüpfungen
+  // verschwinden (FKs: activities/Termine→SET NULL, deal_projects/scheduled_messages→CASCADE).
+  const handleDeleteDeal = async () => {
+    if (!deal) return
+    if (!window.confirm(t('crm.deleteDealConfirm', 'Diesen Deal wirklich löschen? Der Deal und seine geplanten Nachrichten werden unwiderruflich entfernt. Der Kontakt selbst bleibt erhalten.'))) return
+    setSaving(true)
+    try {
+      await supabase.from('deals').delete().eq('id', deal.id).throwOnError()
+      showToast(t('crm.deleteDealSuccess', 'Deal gelöscht'))
+      navigate('/admin/crm')
+    } catch (err) {
+      console.error('[LeadDetail] delete deal:', err)
+      showToast('❌ ' + t('crm.deleteDealError', 'Löschen fehlgeschlagen'))
+      setSaving(false)
+    }
+  }
+
   const handleSaveDriveUrl = async () => {
     if (!deal) return
     try {
@@ -2037,6 +2055,14 @@ export default function LeadDetail() {
                 <span className="text-2xl leading-none">{resendingPortal ? '⏳' : '🔑'}</span>
                 <span className="text-center leading-tight">{lead?.portal_access_sent_at ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
               </button>
+              {/* Deal löschen (z.B. versehentlich mehrfach angelegt) — Kontakt bleibt erhalten */}
+              {deal && (
+                <button onClick={handleDeleteDeal} disabled={saving}
+                  className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-50">
+                  <span className="text-2xl leading-none">🗑</span>
+                  <span className="text-center leading-tight">{t('crm.action.deleteDeal', 'Deal löschen')}</span>
+                </button>
+              )}
             </div>
           </div>
 

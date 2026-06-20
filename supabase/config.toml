@@ -1,0 +1,16 @@
+# Supabase-Projektkonfiguration.
+# WICHTIG: Externe Provider-Webhooks (Timelines/Calendly/Typeform) können KEINEN
+# Supabase-JWT mitschicken → sie MÜSSEN verify_jwt = false haben, sonst weist das
+# Gateway sie mit 401 ab (Function läuft nie an). Ein `supabase functions deploy`
+# OHNE --no-verify-jwt setzt verify_jwt sonst auf true zurück und bricht den Webhook.
+# Diese Einträge sorgen dafür, dass jeder Deploy die Endpunkte öffentlich hält.
+project_id = "vjlwgajmtqlwjjreowbu"
+
+[functions.timelines-webhook]
+verify_jwt = false
+
+[functions.calendly-webhook]
+verify_jwt = false
+
+[functions.typeform-webhook]
+verify_jwt = false
