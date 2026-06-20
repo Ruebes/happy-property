@@ -120,7 +120,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // sich je Projekt/Standort. Jede Wohnung bekommt ihren eigenen /rechnung-Link
       // (läuft nicht ab) mit den für sie gesetzten Werten.
       const calcLinkByToken: Record<string, string> = {}
+      let compareLink: string | undefined
       if (withCalc) {
+        const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
+        const compareItems: CalcItem[] = []
+        // 1) Pro Wohnung eine EIGENE Berechnung (Einzelobjekt, detaillierte Auswertung)
         for (let i = 0; i < links.length; i++) {
           const l = links[i]
           setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${links.length}…`)
@@ -137,12 +141,24 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm, floor: l.item.unit.floor,
             price_net: l.item.unit.price_net, price_gross: l.item.unit.price_gross, params,
           }
-          const content = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items: [calcItem] }
+          compareItems.push(calcItem)
+          const content = { with_calc: true, recipient_name: recipientName, items: [calcItem] }
           const { data: calcRow } = await supabase.from('property_calculations').insert({
-            lead_id: lead.id, recipient_name: content.recipient_name, title: `Rechnung ${l.label}`, with_calc: true, content,
+            lead_id: lead.id, recipient_name: recipientName, title: `Rechnung ${l.label}`, with_calc: true, content,
           }).select('token').single()
           const tok = (calcRow as { token?: string } | null)?.token
           if (tok) calcLinkByToken[l.token] = `${origin}/rechnung/${tok}`
+        }
+        // 2) Abschließend ein separater Immobilienvergleich ALLER Wohnungen (≥2 Objekte) —
+        //    dieselben Per-Wohnung-Parameter, nur alle in EINER Vergleichs-Ansicht.
+        if (compareItems.length >= 2) {
+          setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
+          const content = { with_calc: true, recipient_name: recipientName, items: compareItems }
+          const { data: cmpRow } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
+          }).select('token').single()
+          const tok = (cmpRow as { token?: string } | null)?.token
+          if (tok) compareLink = `${origin}/rechnung/${tok}`
         }
       }
       const mailItems = links.map(l => ({
@@ -158,13 +174,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       }))
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
+      const compareLabel = t('crm.wizard.compareLabel', 'Dein Immobilienvergleich – alle Wohnungen direkt gegenübergestellt')
       const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a>${m.calc_link ? ` — <a href="${m.calc_link}">📊 Rendite-Berechnung</a>` : ''}</li>`).join('')
       const fbIntro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
-      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul><p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
+      const fbCompare = compareLink ? `<p>📊 <a href="${compareLink}">${compareLabel}</a></p>` : ''
+      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul>${fbCompare}<p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
       try {
         const { data: mail } = await supabase.functions.invoke('compose-deck-mail', { body: {
           recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
           briefing, angle, items: mailItems,
+          calc_link: compareLink, calc_label: compareLabel,   // abschließender Gesamt-Vergleich
         } })
         const mm = mail as { subject?: string; html?: string } | null
         if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html }

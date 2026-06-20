@@ -114,12 +114,13 @@ function buildHtml(
     + waBtn
     + btn(`mailto:${SVEN_EMAIL}`, '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')
     + `</div>`
-  // Optionaler Berechnungs-/Vergleichs-Block (Rendite-Rechnung)
+  // Abschließender Gesamt-Vergleich aller Wohnungen (die einzelnen Berechnungen je
+  // Wohnung hängen bereits an der jeweiligen Objekt-Karte).
   const calcBlock = calc?.link
     ? `<div style="margin:0 0 20px;padding:18px 20px;border-radius:14px;background:#f0f7f4;border:1px solid #d4e9df">`
-      + `<div style="font-weight:700;font-size:16px;color:#1a1a1a;margin:0 0 6px">📊 ${esc(calc.label || 'Deine Rendite-Berechnung')}</div>`
-      + `<div style="color:#555;margin:0 0 14px;line-height:1.55">Ich habe dir die Zahlen aufbereitet — Eigenkapital, Cashflow und Rendite über 10 Jahre, schwarz auf weiß.</div>`
-      + btn(calc.link, 'Berechnung ansehen →', '#2f6b4f', '#ffffff')
+      + `<div style="font-weight:700;font-size:16px;color:#1a1a1a;margin:0 0 6px">📊 ${esc(calc.label || 'Dein Immobilienvergleich')}</div>`
+      + `<div style="color:#555;margin:0 0 14px;line-height:1.55">Und damit du die Wohnungen direkt nebeneinander hast: hier der komplette Vergleich — Eigenkapital, Cashflow, Rendite und Wertentwicklung über 10 Jahre, schwarz auf weiß.</div>`
+      + btn(calc.link, 'Immobilienvergleich ansehen →', '#2f6b4f', '#ffffff')
       + `</div>`
     : ''
   const sign = `<p style="margin:24px 0 0">${esc(m.signoff || 'Bis bald,')}<br><strong>${esc(m.signName || 'Sven · Happy Property Cyprus')}</strong></p>`
