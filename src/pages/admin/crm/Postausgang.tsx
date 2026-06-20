@@ -107,6 +107,17 @@ export default function Postausgang() {
     setEditId(null)
     flash(t('crm.outbox.saved', '✅ Gespeichert'))
     void load()
+    // Aus der Korrektur lernen (Hintergrund): die KI destilliert verallgemeinerbare
+    // Stil-Vorgaben aus Original→Bearbeitung → fließen in künftige Mails (deck_ai_rules).
+    const orig = row.body ?? ''
+    if (newBody && orig && newBody !== orig) {
+      void supabase.functions.invoke('learn-mail', { body: { before: orig, after: newBody } })
+        .then(({ data }) => {
+          const learned = (data as { rules?: string[] } | null)?.rules ?? []
+          if (learned.length) flash(`💡 ${t('crm.outbox.learned', 'Aus deiner Änderung gelernt')}: ${learned[0]}${learned.length > 1 ? ` (+${learned.length - 1})` : ''}`)
+        })
+        .catch(() => { /* Lernen optional */ })
+    }
   }
 
   const discard = async (row: OutboxRow) => {

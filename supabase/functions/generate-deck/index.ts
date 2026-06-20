@@ -97,9 +97,12 @@ Deno.serve(async (req) => {
     const angle     = body.angle || 'lifestyle'
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
 
-    // Gelernte Vorgaben (deck_ai_rules) → fließen in JEDES Deck ein (Auto-Grab + Feinschliff)
+    // Gelernte Vorgaben (deck_ai_rules, kind='deck') → fließen in JEDES Deck ein (Auto-Grab +
+    // Feinschliff). Global (project_id null) immer; projektspezifische nur für DIESES Projekt.
     const sbRules = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const { data: aiRules } = await sbRules.from('deck_ai_rules').select('rule').eq('active', true)
+    let rulesQ = sbRules.from('deck_ai_rules').select('rule').eq('active', true).eq('kind', 'deck')
+    rulesQ = body.project_id ? rulesQ.or(`project_id.is.null,project_id.eq.${body.project_id}`) : rulesQ.is('project_id', null)
+    const { data: aiRules } = await rulesQ
     const learnedTxt = (aiRules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
     const learnedBlock = learnedTxt ? `GELERNTE VORGABEN (immer beachten):\n${learnedTxt}\n\n` : ''
 

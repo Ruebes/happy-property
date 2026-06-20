@@ -22,7 +22,34 @@ export default function AiAgent() {
   const [saving,  setSaving]  = useState(false)
   const [toast,   setToast]   = useState('')
 
+  // Gelernte KI-Vorgaben (deck_ai_rules): Stil-/Inhaltsregeln, die in Decks (kind 'deck')
+  // bzw. Begleit-Mails (kind 'mail') einfließen. Das System lernt sie automatisch aus
+  // Svens Korrekturen; hier sichtbar, abschaltbar, löschbar, manuell ergänzbar.
+  const [rules, setRules] = useState<{ id: string; kind: string; rule: string; active: boolean }[]>([])
+  const [newRule, setNewRule] = useState('')
+  const [newKind, setNewKind] = useState<'deck' | 'mail'>('mail')
+
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
+
+  const loadRules = useCallback(async () => {
+    const { data } = await supabase.from('deck_ai_rules').select('id, kind, rule, active').order('created_at', { ascending: false })
+    setRules((data ?? []) as { id: string; kind: string; rule: string; active: boolean }[])
+  }, [])
+  useEffect(() => { void loadRules() }, [loadRules])
+
+  const addRule = async () => {
+    const r = newRule.trim()
+    if (!r) return
+    const { error } = await supabase.from('deck_ai_rules').insert({ kind: newKind, scope: 'global', rule: r, active: true })
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setNewRule(''); void loadRules(); showToast(t('crm.aiAgent.ruleAdded', 'Vorgabe gespeichert'))
+  }
+  const toggleRule = async (id: string, active: boolean) => {
+    await supabase.from('deck_ai_rules').update({ active: !active }).eq('id', id); void loadRules()
+  }
+  const deleteRule = async (id: string) => {
+    await supabase.from('deck_ai_rules').delete().eq('id', id); void loadRules()
+  }
 
   const fetchSetting = useCallback(async () => {
     setLoading(true)
@@ -148,6 +175,62 @@ export default function AiAgent() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* ── Gelernte KI-Vorgaben (Decks + Mails) ───────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">🧠 {t('crm.aiAgent.rulesTitle', 'Gelernte Vorgaben für Decks & Mails')}</h2>
+            <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+              {t('crm.aiAgent.rulesDesc', 'Das System lernt automatisch aus deinen Änderungen: Was du im Deck-Chatfenster anpasst (mit „merken") und was du an Begleit-Mails im Postausgang korrigierst, wird hier zu Vorgaben — und fließt in jedes neue Deck bzw. jede neue Mail. Du kannst Vorgaben abschalten, löschen oder selbst hinzufügen.')}
+            </p>
+          </div>
+
+          {/* Manuell hinzufügen */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select value={newKind} onChange={e => setNewKind(e.target.value as 'deck' | 'mail')}
+              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white shrink-0">
+              <option value="mail">{t('crm.aiAgent.kindMail', '✉️ Mails')}</option>
+              <option value="deck">{t('crm.aiAgent.kindDeck', '📑 Decks')}</option>
+            </select>
+            <input value={newRule} onChange={e => setNewRule(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void addRule() }}
+              placeholder={t('crm.aiAgent.rulePlaceholder', 'z.B. Immer mit dem stärksten Argument beginnen, kurze Sätze, keine Floskeln')}
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <button onClick={() => void addRule()} disabled={!newRule.trim()}
+              className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 shrink-0" style={{ backgroundColor: '#ff795d' }}>
+              {t('crm.aiAgent.ruleAdd', 'Hinzufügen')}
+            </button>
+          </div>
+
+          {/* Liste */}
+          {(['mail', 'deck'] as const).map(kind => {
+            const list = rules.filter(r => r.kind === kind)
+            return (
+              <div key={kind}>
+                <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+                  {kind === 'mail' ? t('crm.aiAgent.forMails', 'Für Begleit-Mails') : t('crm.aiAgent.forDecks', 'Für Sales-Decks')} ({list.length})
+                </div>
+                {list.length === 0 ? (
+                  <p className="text-xs text-gray-400 italic mb-2">{t('crm.aiAgent.noneYet', 'Noch nichts gelernt — bearbeite eine Mail/ein Deck, dann erscheint es hier.')}</p>
+                ) : (
+                  <ul className="space-y-1.5 mb-2">
+                    {list.map(r => (
+                      <li key={r.id} className={`flex items-center gap-2 text-sm border rounded-lg px-3 py-2 ${r.active ? 'border-gray-100 bg-gray-50' : 'border-gray-100 bg-white opacity-50'}`}>
+                        <span className="flex-1">{r.rule}</span>
+                        <button onClick={() => void toggleRule(r.id, r.active)} title={r.active ? t('crm.aiAgent.deactivate', 'Deaktivieren') : t('crm.aiAgent.activate', 'Aktivieren')}
+                          className={`text-[11px] px-2 py-0.5 rounded shrink-0 ${r.active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                          {r.active ? t('crm.aiAgent.active', 'aktiv') : t('crm.aiAgent.inactive', 'aus')}
+                        </button>
+                        <button onClick={() => void deleteRule(r.id)} title={t('common.delete', 'Löschen')}
+                          className="text-gray-300 hover:text-red-500 shrink-0 px-1">🗑</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </DashboardLayout>

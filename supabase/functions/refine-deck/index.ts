@@ -78,8 +78,10 @@ Deno.serve(async (req: Request) => {
       })
     }
 
-    // Gelernte Vorgaben (global + projektspezifisch)
-    const { data: rules } = await supabase.from('deck_ai_rules').select('rule').eq('active', true)
+    // Gelernte Vorgaben (kind='deck'): global immer + projektspezifische dieses Decks
+    let rulesQ = supabase.from('deck_ai_rules').select('rule').eq('active', true).eq('kind', 'deck')
+    rulesQ = deck.project_id ? rulesQ.or(`project_id.is.null,project_id.eq.${deck.project_id}`) : rulesQ.is('project_id', null)
+    const { data: rules } = await rulesQ
     const rulesTxt = (rules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n') || '(noch keine)'
 
     const userMsg = [
@@ -109,7 +111,7 @@ Deno.serve(async (req: Request) => {
 
     await supabase.from('sales_decks').update({ prev_content: deck.content, content: { blocks: newBlocks } }).eq('token', token)
     if (learn && instruction.trim()) {
-      await supabase.from('deck_ai_rules').insert({ scope: 'global', rule: instruction.trim() })
+      await supabase.from('deck_ai_rules').insert({ kind: 'deck', scope: 'global', rule: instruction.trim() })
     }
     return json({ ok: true, blocks: newBlocks.length, learned: !!learn })
   } catch (err) {

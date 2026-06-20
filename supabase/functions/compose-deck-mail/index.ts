@@ -9,6 +9,8 @@
 //             price?, facts?, available_count?, total_count? }] }
 // Antwort: { subject, html }
 
+import { createClient } from 'jsr:@supabase/supabase-js@2'
+
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
 const SVEN_EMAIL = 'sven@happy-property.com'
@@ -160,8 +162,18 @@ Deno.serve(async (req) => {
 
     if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items, calc))
 
+    // GELERNTE VORGABEN: Stil-Regeln, die das System aus Svens Mail-Korrekturen gelernt hat
+    // (deck_ai_rules kind='mail'). Fließen in JEDE neue Mail → wird über die Zeit besser.
+    let learnedBlock = ''
+    try {
+      const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      const { data: rules } = await supabase.from('deck_ai_rules').select('rule').eq('kind', 'mail').eq('active', true).is('project_id', null)
+      const txt = (rules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
+      if (txt) learnedBlock = `GELERNTE VORGABEN (aus Svens früheren Korrekturen — IMMER beachten):\n${txt}\n\n`
+    } catch { /* Regeln optional */ }
+
     const angle = body.angle === 'investment' ? 'investment' : 'lifestyle'
-    const userMsg = [
+    const userMsg = learnedBlock + [
       `KUNDE: ${body.recipient_name?.trim() || firstName || 'der Kunde'}`,
       `WINKEL: ${angle} (${angle === 'investment' ? 'Rendite, Vermietung, Wertentwicklung' : 'Wohnen, Lebensgefühl, selbst nutzen'})`,
       ``,
