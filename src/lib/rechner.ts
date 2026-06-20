@@ -78,6 +78,24 @@ export function cyTax(inc: number): number {
   return Math.round(t2)
 }
 
+// Tilgungslaufzeit aus Annuität (Bisektion) — für „Rate optimieren" (1:1 aus Original)
+export function solveTerm(loan: number, ir: number, annPay: number, max = 35): number {
+  if (loan <= 0 || annPay <= 0) return 20
+  if (ir <= 0) return Math.min(max, Math.max(5, loan / annPay))
+  const f = (n: number) => { const p = ir * Math.pow(1 + ir, n) / (Math.pow(1 + ir, n) - 1); return loan * p - annPay }
+  let lo = 0.5, hi = max; if (f(hi) > 0) return max
+  for (let k = 0; k < 80; k++) { const m = (lo + hi) / 2, v = f(m); if (Math.abs(v) < 1e-4) return m; if (v > 0) lo = m; else hi = m }
+  return (lo + hi) / 2
+}
+
+// Tilgungslaufzeit aus vorgegebener Monatsrate (1:1 aus Original)
+export function termFromMonthly(loan: number, annR: number, mo: number): number {
+  if (loan <= 0 || mo <= 0) return 20
+  if (annR <= 0) return Math.min(35, Math.max(5, loan / (mo * 12)))
+  const r = annR / 12; if (mo <= loan * r) return 35
+  return Math.min(35, Math.max(5, -Math.log(1 - loan * r / mo) / Math.log(1 + r) / 12))
+}
+
 // IRR via Bisektion über den NPV
 export function irrCalc(cfs: number[]): number {
   const npv = (r: number) => cfs.reduce((v, c, i) => v + c / Math.pow(1 + r, i), 0)

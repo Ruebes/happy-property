@@ -183,6 +183,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       </div>
     </div>
   )
+  const cpToggle = (label: string, k: keyof CalcParams) => (
+    <button key={k} type="button" onClick={() => setCp(k, !calcParams[k])}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium ${calcParams[k] ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] ${calcParams[k] ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{calcParams[k] ? '✓' : ''}</span>
+      {label}
+    </button>
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -285,8 +292,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                   {numF('Verwaltung', 'mgmtPct', '0.5', '%')}
                   {numF('Wertsteig.', 'appreciationPct', '0.1', '%')}
                   {calcParams.res === 'de' && numF('DE-Steuer', 'deTaxPct', '1', '%')}
+                  {calcParams.res === 'cy' && numF('CY Bestand', 'cyBI', '500', '€')}
+                  {calcParams.mode === 'tilg' && numF('Tilgung', 'amortPct', '0.1', '%')}
+                  {numF('Rabatt', 'discountPct', '0.5', '%')}
+                  {numF('Einrichtung', 'furnCost', '500', '€')}
                 </div>
-                <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Bei mehreren Wohnungen entsteht ein Vergleich.')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {cpToggle('Einrichtung kostenfrei', 'furnFree')}
+                  {calcParams.letType === 'short' && cpToggle('🏨 Hotelkonzept', 'hotelConcept')}
+                </div>
+                <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Mehrere Wohnungen → Vergleich. Voller Funktionsumfang (Sondertilgung, Share-Deal) im dedizierten Rechner.')}</p>
               </div>
             )}
           </div>
