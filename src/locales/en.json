@@ -1497,6 +1497,7 @@
         "stepImages": "Images & floor plans",
         "stepCategorize": "Sorting images (rooms)",
         "stepDocs": "Documents",
+        "stepBrochure": "Parse brochure (interior images)",
         "stepFacts": "Facts (AI reads brochure)",
         "gen": "Generate general deck",
         "regen": "Regenerate general deck",

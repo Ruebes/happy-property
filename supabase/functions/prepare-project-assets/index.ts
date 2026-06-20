@@ -73,12 +73,12 @@ async function driveBytes(token: string, fileId: string): Promise<Uint8Array> {
   if (!res.ok) throw new Error(`Download ${res.status}`)
   return new Uint8Array(await res.arrayBuffer())
 }
-async function uploadBytes(supabase: ReturnType<typeof createClient>, bytes: Uint8Array, mime: string, prefix: string, name: string): Promise<string> {
+async function uploadBytes(supabase: ReturnType<typeof createClient>, bytes: Uint8Array, mime: string, prefix: string, name: string, bucket = 'deck-assets'): Promise<string> {
   const ext  = (name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
   const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-  const { error } = await supabase.storage.from('deck-assets').upload(path, bytes, { contentType: mime, upsert: false })
+  const { error } = await supabase.storage.from(bucket).upload(path, bytes, { contentType: mime, upsert: false })
   if (error) throw new Error(error.message)
-  return supabase.storage.from('deck-assets').getPublicUrl(path).data.publicUrl
+  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
 }
 
 // ── Klassifizierung ──────────────────────────────────────────────────────────────
@@ -135,11 +135,97 @@ async function saveAssets(supabase: ReturnType<typeof createClient>, projectId: 
 // Klassifiziert jeden Render (Wohnzimmer/Schlafzimmer/Pool/Lobby/Außen …) + kurze
 // deutsche Bezeichnung → beschriftete Bildstrecken im generischen Projekt-Deck.
 const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'sonstiges']
+// Supabase-Bild-Transformation → verkleinerte Variante (Vision lehnt große Originale
+// >5MB/hohe Megapixel ab; Originale waren ~4MB → immer Fallback). 1280px reicht für
+// die Raum-Erkennung und ist klein/sicher.
+function thumb(u: string): string {
+  if (u.includes('/storage/v1/object/public/')) {
+    return u.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + (u.includes('?') ? '&' : '?') + 'width=1280&quality=80'
+  }
+  return u
+}
+function toBase64(bytes: Uint8Array): string {
+  let bin = ''; const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  return btoa(bin)
+}
+
+// ── Broschüre auswerten: eingebettete JPEGs extrahieren ──────────────────────────
+// Developer-Broschüren (PDF) enthalten die schönen Innen-/Außen-Renderings + teils
+// Grundrisse als eingebettete JPEGs. Wir ziehen sie heraus, damit das Deck echte
+// Raumbilder zeigt (Sven: „arbeite die Broschüren besser durch"). Robust ohne
+// PDF-Lib: jeder DCTDecode-Stream beginnt mit FFD8FF und liegt roh im File (auch
+// bei PDF 1.5+, da Bilddaten nie in komprimierten Objekt-Streams stehen).
+function bytesIndexOf(hay: Uint8Array, needle: number[], from: number): number {
+  outer: for (let i = from; i <= hay.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer
+    return i
+  }
+  return -1
+}
+function jpegDims(buf: Uint8Array): [number, number] {
+  let i = 2
+  while (i < buf.length - 8) {
+    if (buf[i] !== 0xFF) { i++; continue }
+    const m = buf[i + 1]
+    if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) {
+      return [(buf[i + 7] << 8) | buf[i + 8], (buf[i + 5] << 8) | buf[i + 6]]
+    }
+    if (m === 0xD8 || m === 0xD9 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue }
+    const len = (buf[i + 2] << 8) | buf[i + 3]
+    if (len < 2) break
+    i += 2 + len
+  }
+  return [0, 0]
+}
+const STREAM_KW = [0x73, 0x74, 0x72, 0x65, 0x61, 0x6d]                         // "stream"
+const ENDSTREAM_KW = [0x65, 0x6e, 0x64, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d]    // "endstream"
+function extractBrochureJpegs(pdf: Uint8Array): Uint8Array[] {
+  const out: Uint8Array[] = []
+  const seen = new Set<number>()   // gleiche Byte-Länge ⇒ identisches Bild (Broschüren wiederholen Renders)
+  for (let i = 0; i < pdf.length - 6; i++) {
+    if (pdf[i] !== 0x73) continue
+    let kw = true
+    for (let k = 1; k < 6; k++) if (pdf[i + k] !== STREAM_KW[k]) { kw = false; break }
+    if (!kw) continue
+    let s = i + 6
+    if (pdf[s] === 0x0d) s++
+    if (pdf[s] === 0x0a) s++
+    if (!(pdf[s] === 0xFF && pdf[s + 1] === 0xD8 && pdf[s + 2] === 0xFF)) continue
+    const end = bytesIndexOf(pdf, ENDSTREAM_KW, s)
+    if (end < 0) break
+    let e = end
+    while (e > s && (pdf[e - 1] === 0x0a || pdf[e - 1] === 0x0d)) e--
+    i = end                                       // hinter diesen Stream springen
+    const jpg = pdf.subarray(s, e)
+    if (jpg.length < 30000 || seen.has(jpg.length)) continue   // Icons/Logos + Duplikate raus
+    const [w, h] = jpegDims(jpg)
+    if (w < 700 || h < 700) continue              // zu klein
+    const ar = w / h
+    if (ar < 0.5 || ar > 2.2) continue            // dünne Deko-/Banner-Streifen raus
+    seen.add(jpg.length)
+    out.push(jpg.slice())
+  }
+  return out
+}
+let lastVisionError = ''
 async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string }>> {
   const fallback = urls.map(u => ({ url: u, category: 'sonstiges', label: '' }))
-  if (!ANTHROPIC_API_KEY || !urls.length) return fallback
+  lastVisionError = ''
+  if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return fallback }
+  if (!urls.length) return fallback
+  // Bytes selbst laden (verkleinert) und als base64 senden — Anthropic darf NICHT
+  // selbst die URL ziehen (Supabase-Transform ist zu langsam → Download-Timeout).
   const content: unknown[] = []
-  urls.forEach((u, i) => { content.push({ type: 'text', text: `Bild ${i}:` }); content.push({ type: 'image', source: { type: 'url', url: u } }) })
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      const r = await fetch(thumb(urls[i]))
+      if (!r.ok) continue
+      content.push({ type: 'text', text: `Bild ${i}:` })
+      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: toBase64(new Uint8Array(await r.arrayBuffer())) } })
+    } catch { /* Bild überspringen */ }
+  }
+  if (content.length === 0) { lastVisionError = 'kein Bild ladbar'; return fallback }
   content.push({ type: 'text', text: `Das sind Renderings/Fotos eines Immobilien-Projekts auf Zypern. Ordne JEDES Bild (Index ab 0) einer Kategorie zu und gib eine kurze deutsche Bezeichnung. Kategorien: ${CATS.join(', ')}. label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). Rufe label_images mit genau einem Eintrag pro Bild auf.` })
   const TOOL = {
     name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
@@ -150,16 +236,17 @@ async function categorizeImages(urls: string[]): Promise<Array<{ url: string; ca
       method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, tools: [TOOL], tool_choice: { type: 'tool', name: 'label_images' }, messages: [{ role: 'user', content }] }),
     })
-    if (!res.ok) return fallback
+    if (!res.ok) { lastVisionError = `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`; return fallback }
     const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: unknown } }> }
     let items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items
     if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
+    if (!Array.isArray(items) || !items.length) lastVisionError = `keine items: ${JSON.stringify(data).slice(0, 300)}`
     const byIdx = new Map<number, { category: string; label: string }>()
     for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
       byIdx.set(Number(it.index), { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? '') })
     }
     return urls.map((u, i) => ({ url: u, category: byIdx.get(i)?.category ?? 'sonstiges', label: byIdx.get(i)?.label ?? '' }))
-  } catch { return fallback }
+  } catch (e) { lastVisionError = `exception: ${(e as Error).message}`; return fallback }
 }
 
 Deno.serve(async (req) => {
@@ -194,6 +281,38 @@ Deno.serve(async (req) => {
       }
       await supabase.from('crm_projects').update({ drive_folder_id: found.id }).eq('id', project_id)
       return json({ ok: true, found: true, folder_id: found.id, folder_name: found.name })
+    }
+
+    // ── brochure ── eingebettete Renders/Grundrisse aus der Broschüre (PDF) ziehen,
+    // kategorisieren und in Gallery/Renders/Grundrisse einspeisen. Braucht KEINEN
+    // Drive-Ordner — nutzt die bereits gespeicherte doc_urls.brochure (docs zuvor).
+    if (action === 'brochure') {
+      const brochureUrl = assets.doc_urls?.brochure
+      if (!brochureUrl) return json({ ok: true, action, skipped: true, note: 'keine Broschüre (docs zuerst laufen lassen)' })
+      const pdf = new Uint8Array(await (await fetch(brochureUrl)).arrayBuffer())
+      const jpegs = extractBrochureJpegs(pdf).slice(0, 16)
+      if (!jpegs.length) return json({ ok: true, action, extracted: 0, note: 'keine extrahierbaren Bilder' })
+      const urls: string[] = []
+      for (const j of jpegs) {
+        try { urls.push(await uploadBytes(supabase, j, 'image/jpeg', `projects/${project_id}/brochure`, 'b.jpg', 'crm-project-images')) } catch { /* skip */ }
+      }
+      const cat = await categorizeImages(urls)
+      const EXT = new Set(['fassade', 'aussenbereich', 'aussicht'])
+      const exteriors  = cat.filter(c => EXT.has(c.category)).map(c => c.url)
+      const grundrisse = cat.filter(c => c.category === 'grundriss')
+      const galleryNew = cat.filter(c => c.category !== 'sonstiges' && c.category !== 'grundriss')
+      // Idempotent: frühere Broschüren-Beiträge (Pfad /brochure/) erst entfernen,
+      // dann frisch mergen — Mehrfach-Läufe stapeln keine Duplikate.
+      const keep = (u: string) => !u.includes('/brochure/')
+      // Außenbilder dürfen ins Cover/Feature wandern (sicher), Innenräume nur in die
+      // beschriftete Gallery; Grundrisse zu den Floorplans.
+      const renders = Array.from(new Set([...(assets.renders ?? []).filter(keep), ...exteriors]))
+      const gallery = [...(assets.gallery ?? []).filter(g => keep(g.url)), ...galleryNew]
+      const floorplans = [...(assets.floorplans ?? []).filter(f => keep(f.url)), ...grundrisse.map((g, i) => ({ floor: null, label: g.label || `Grundriss ${i + 1}`, url: g.url }))]
+      await saveAssets(supabase, project_id, { renders, gallery, floorplans })
+      const byCat: Record<string, number> = {}
+      for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
+      return json({ ok: true, action, extracted: jpegs.length, uploaded: urls.length, categories: byCat, gallery: gallery.length, floorplans: floorplans.length, debug: lastVisionError })
     }
 
     const folderId = folder_id?.trim() || dbFolder
@@ -251,6 +370,11 @@ Deno.serve(async (req) => {
         }
       }
       await saveAssets(supabase, project_id, { renders, floorplans, map, mapUrl })
+      // Renders SOFORT per Vision kategorisieren → beschriftete Gallery (Außen + je Raum),
+      // damit der categorize-Schritt nicht vergessen wird und Bilder korrekt beschriftet sind.
+      if (renders.length) {
+        try { const gallery = await categorizeImages(renders.slice(0, 18)); await saveAssets(supabase, project_id, { gallery }) } catch { /* Gallery optional */ }
+      }
       // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur setzen, wenn noch leer
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
       if (renders.length && curImgs.length === 0) {
@@ -268,7 +392,7 @@ Deno.serve(async (req) => {
       await saveAssets(supabase, project_id, { gallery })
       const byCat: Record<string, number> = {}
       for (const g of gallery) byCat[g.category] = (byCat[g.category] ?? 0) + 1
-      return json({ ok: true, action, gallery: gallery.length, categories: byCat })
+      return json({ ok: true, action, gallery: gallery.length, categories: byCat, debug: lastVisionError })
     }
 
     // ── docs ──────────────────────────────────────────────────────────────────

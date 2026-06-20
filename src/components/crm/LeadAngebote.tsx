@@ -13,6 +13,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const [outbox, setOutbox] = useState<OutboxRow[]>([])
   const [calcs, setCalcs]   = useState<CalcRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [busy, setBusy]     = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -29,6 +30,25 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
     })()
     return () => { cancelled = true; clearTimeout(safety) }
   }, [leadId])
+
+  // Angebot löschen: Begleit-Bündel inkl. der zugehörigen Decks (Links sterben mit),
+  // damit Sven misslungene Decks wieder los wird. Rechnungen löschen ihren Token.
+  const delOutbox = async (o: OutboxRow) => {
+    if (!window.confirm('Dieses Angebot inkl. der enthaltenen Deck-Links löschen? Die Links sind danach nicht mehr erreichbar.')) return
+    setBusy(o.id)
+    const tokens = o.deck_tokens ?? []
+    if (tokens.length) await supabase.from('sales_decks').delete().in('token', tokens)
+    await supabase.from('deck_outbox').delete().eq('id', o.id)
+    setOutbox(prev => prev.filter(x => x.id !== o.id))
+    setBusy(null)
+  }
+  const delCalc = async (c: CalcRow) => {
+    if (!window.confirm('Diese Berechnung löschen? Der Link ist danach nicht mehr erreichbar.')) return
+    setBusy(c.id)
+    await supabase.from('property_calculations').delete().eq('id', c.id)
+    setCalcs(prev => prev.filter(x => x.id !== c.id))
+    setBusy(null)
+  }
 
   const origin = window.location.origin
   const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
@@ -52,6 +72,8 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
             <span className="text-[11px] text-green-600 shrink-0 w-20 text-right">
               {o.email_sent_at ? '✅ Mail' : o.whatsapp_sent_at ? '✅ WA' : '⏳ Entwurf'}
             </span>
+            <button onClick={() => void delOutbox(o)} disabled={busy === o.id} title="Angebot löschen"
+              className="text-gray-300 hover:text-red-500 disabled:opacity-40 shrink-0 px-1">🗑</button>
           </div>
         ))}
         {calcs.map(c => (
@@ -59,6 +81,8 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
             <span className="text-xs text-gray-400 w-24 shrink-0">{fmt(c.created_at)}</span>
             <span className="flex-1 truncate">📊 {c.title ?? 'Rendite-Berechnung'}</span>
             <a href={`${origin}/rechnung/${c.token}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: '#2f6b4f' }}>Ansehen</a>
+            <button onClick={() => void delCalc(c)} disabled={busy === c.id} title="Berechnung löschen"
+              className="text-gray-300 hover:text-red-500 disabled:opacity-40 shrink-0 px-1">🗑</button>
           </div>
         ))}
       </div>

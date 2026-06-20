@@ -218,15 +218,18 @@ Deno.serve(async (req) => {
     // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,
     // damit der Kunde im Zoom sieht, wie alles aussieht.
     const gal = body.images?.gallery ?? []
-    if (generic && gal.length) {
+    if (gal.length) {
+      // Reihenfolge: zuerst Außen/Projekt (Sven: „immer Außenbilder zeigen"),
+      // dann ein Rundgang durch die Wohnung. Jedes Bild trägt sein echtes
+      // Vision-Label als Titel → Beschriftung passt garantiert zum Bildinhalt.
       const GROUPS: Array<{ cats: string[]; kicker: string; headline: string }> = [
+        { cats: ['fassade', 'aussenbereich', 'aussicht'], kicker: 'Projekt',  headline: 'Außenansicht & Lage' },
         { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Innenräume', headline: 'Wohnen & Essen' },
         { cats: ['kueche'],                             kicker: 'Innenräume', headline: 'Küche' },
         { cats: ['schlafzimmer'],                       kicker: 'Innenräume', headline: 'Schlafen' },
         { cats: ['badezimmer'],                         kicker: 'Innenräume', headline: 'Bäder' },
-        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Dachpool & Sundeck' },
+        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Pool & Sundeck' },
         { cats: ['lobby', 'gym'],                       kicker: 'Anlage',     headline: 'Lobby & Gemeinschaft' },
-        { cats: ['aussenbereich', 'fassade', 'aussicht'], kicker: 'Projekt',  headline: 'Außen & Aussicht' },
       ]
       const used = new Set<string>()
       const galleryBlocks: Array<Record<string, unknown>> = []

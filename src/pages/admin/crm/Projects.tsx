@@ -126,10 +126,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     if (!project?.id) return
     setIngesting(true)
     setIngestMsg(null)
-    const steps: { action: 'images' | 'categorize' | 'docs' | 'facts'; label: string }[] = [
+    const steps: { action: 'images' | 'categorize' | 'docs' | 'brochure' | 'facts'; label: string }[] = [
       { action: 'images',     label: t('crm.project.deck.stepImages',     'Bilder & Grundrisse') },
       { action: 'categorize', label: t('crm.project.deck.stepCategorize', 'Bilder einsortieren (Räume)') },
       { action: 'docs',       label: t('crm.project.deck.stepDocs',       'Dokumente') },
+      { action: 'brochure',   label: t('crm.project.deck.stepBrochure',   'Broschüre auswerten (Innenbilder)') },
       { action: 'facts',      label: t('crm.project.deck.stepFacts',      'Fakten (KI liest Broschüre)') },
     ]
     try {
@@ -155,11 +156,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           body: { project_id: project.id, action, folder_id: folderId || undefined },
         })
         if (error) throw new Error(error.message)
-        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean }
+        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean; extracted?: number; uploaded?: number }
         if (d?.error) throw new Error(d.error)
         if (action === 'images')     summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
         if (action === 'categorize') summary.push(`${d.gallery ?? 0} Bilder einsortiert`)
         if (action === 'docs')       summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
+        if (action === 'brochure')   summary.push(`${d.extracted ?? 0} Broschüren-Bilder (${d.gallery ?? 0} in Gallery)`)
         if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : `Fakten ${d.facts_chars ?? 0} Zeichen`)
       }
       // Wohnungen aus der Preisliste anlegen (Vorschlags-Pool, nur im Deck-Wizard sichtbar) — im Hintergrund
