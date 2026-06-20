@@ -164,6 +164,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (action === 'brochure')   summary.push(`${d.extracted ?? 0} Broschüren-Bilder (${d.gallery ?? 0} in Gallery)`)
         if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : `Fakten ${d.facts_chars ?? 0} Zeichen`)
       }
+      // Vollausstattung (xlsx-Spec) → Text, in eigener schlanker Funktion (memory-sicher)
+      void supabase.functions.invoke('parse-spec-xlsx', { body: { project_id: project.id } }).catch(() => {})
       // Wohnungen aus der Preisliste anlegen (Vorschlags-Pool, nur im Deck-Wizard sichtbar) — im Hintergrund
       setIngestMsg({ ok: true, text: `⏳ ${t('crm.project.deck.stepUnits', 'Wohnungen aus Preisliste')}…` })
       try {

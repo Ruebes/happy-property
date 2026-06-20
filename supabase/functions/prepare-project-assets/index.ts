@@ -10,7 +10,9 @@
 //
 // Body: { project_id, action: 'images'|'categorize'|'docs'|'facts', force? }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import * as XLSX from 'https://esm.sh/xlsx@0.18.5'
+// XLSX wird NUR im Spec-Zweig der docs-Aktion dynamisch geladen (memory-schwere
+// Library) — sonst belastet sie jede Invocation (auch categorize/brochure) und
+// trieb docs ins „Memory limit exceeded".
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -52,13 +54,13 @@ async function getReadToken(): Promise<string> {
 }
 
 // ── Drive-Helfer ─────────────────────────────────────────────────────────────────
-type DriveFile = { id: string; name: string; mimeType: string; size?: string }
+type DriveFile = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }
 const isFolder = (m: string) => m === 'application/vnd.google-apps.folder'
 const isImg    = (m: string) => m.startsWith('image/')
 
 async function listChildren(token: string, parentId: string): Promise<DriveFile[]> {
   const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`)
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size)&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   const data = await res.json() as { files?: DriveFile[] }
   return data.files ?? []
@@ -397,41 +399,66 @@ Deno.serve(async (req) => {
 
     // ── docs ──────────────────────────────────────────────────────────────────
     if (action === 'docs') {
-      const projectFiles = (await listChildren(token, folderId)).filter(f => !isFolder(f.mimeType))
+      const children = await listChildren(token, folderId)
+      const projectFiles = children.filter(f => !isFolder(f.mimeType))
+      // Doc-Unterordner (Price List, Payment Plan, Documents …) eine Ebene tief
+      // mitnehmen — viele Developer legen Preisliste/Zahlungsplan in einen Unterordner
+      // (z.B. Arca: Preisliste in „ Price List"). Render-/Bilder-Ordner bleiben außen vor.
+      const docSubfolders = children.filter(f => isFolder(f.mimeType) && /price|preis|payment|zahlung|ratenplan|plan|document|dokument|broch|catalog/i.test(f.name))
+      const subFiles: DriveFile[] = []
+      for (const sf of docSubfolders.slice(0, 6)) {
+        try { subFiles.push(...(await listChildren(token, sf.id)).filter(f => !isFolder(f.mimeType))) } catch { /* Unterordner überspringen */ }
+      }
       const devFolder = await getParentId(token, folderId)
       const devFiles = devFolder ? (await listChildren(token, devFolder)).filter(f => !isFolder(f.mimeType)) : []
-      const all = [...projectFiles, ...devFiles]
+      const all = [...projectFiles, ...subFiles, ...devFiles]
       const pick = (t: string) => all.find(f => docType(f.name) === t)
-      // Broschüre: Namens-Treffer, sonst größtes PDF im Projektordner
-      let brochure = projectFiles.find(f => docType(f.name) === 'brochure')
+      // Preisliste: bei mehreren Versionen die NEUESTE nehmen (Developer laden regelmäßig
+      // aktualisierte Gesamtlisten hoch — sonst zeigt das CRM veraltete Verfügbarkeiten).
+      const newestPricelist = all.filter(f => docType(f.name) === 'pricelist')
+        .sort((a, b) => (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? ''))[0]
+      // Broschüre: Namens-Treffer (auch Unterordner), sonst größtes PDF im Projektordner
+      let brochure = all.find(f => docType(f.name) === 'brochure')
       if (!brochure) brochure = projectFiles.filter(f => f.mimeType === 'application/pdf').sort((a, b) => (parseInt(b.size ?? '0', 10)) - (parseInt(a.size ?? '0', 10)))[0]
-      const cutlery = pick('cutlery'), linen = pick('linen'), pricelist = pick('pricelist'), spec = pick('spec'), payment = pick('payment')
+      const cutlery = pick('cutlery'), linen = pick('linen'), pricelist = newestPricelist, spec = pick('spec'), payment = pick('payment')
 
       const doc_urls: Record<string, string> = { ...(assets.doc_urls ?? {}) }
+      const skippedLarge: string[] = []
+      // Edge-Memory-Schutz: sehr große Dateien (z.B. Mamba-Broschüre 157 MB) NICHT in den
+      // Speicher laden — das killte den Worker („Memory limit exceeded"). 50 MB reicht für
+      // normale Broschüren/Preislisten; Riesen-PDFs werden übersprungen statt alles abzubrechen.
+      const MAX_DOC_BYTES = 50 * 1024 * 1024
       const importDoc = async (f: DriveFile | undefined, key: string) => {
         if (!f) return
+        if (f.size && parseInt(f.size, 10) > MAX_DOC_BYTES) { skippedLarge.push(`${key} (${Math.round(parseInt(f.size, 10) / 1024 / 1024)} MB)`); return }
         try { doc_urls[key] = await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/docs`, f.name) } catch { /* skip */ }
       }
-      await importDoc(brochure, 'brochure')
+      // WICHTIG — Reihenfolge nach Speicher-Risiko + sofortiges Zwischenspeichern:
+      // Die Preisliste (kritisch für die Wohnungen) zuerst importieren UND sichern,
+      // damit sie einen späteren Memory-Spike (große Broschüre / xlsx) überlebt.
+      // Beobachtet: docs lief bei Mamba ins „Memory limit exceeded" — die inkrementelle
+      // Sicherung stellt sicher, dass die Preisliste trotzdem ankommt.
+      if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/'))) {
+        await importDoc(pricelist, 'pricelist')
+        await saveAssets(supabase, project_id, { doc_urls })
+      }
       await importDoc(cutlery, 'cutlery')
       await importDoc(linen, 'linen')
       if (payment && payment.mimeType === 'application/pdf') await importDoc(payment, 'payment')   // Zahlungsplan (i.d.R. im Developer-Ordner)
-      if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/'))) await importDoc(pricelist, 'pricelist')
+      await saveAssets(supabase, project_id, { doc_urls })
+      // Broschüre kann groß sein (Arca: 27 MB) → erst nach dem Sichern der Kerndokumente;
+      // Riesen-PDFs (>50 MB) überspringt importDoc selbst.
+      await importDoc(brochure, 'brochure')
 
-      // Spec: xlsx → Text (für Claude in der facts-Phase); PDF → Storage
-      let spec_text = assets.spec_text ?? ''
-      if (spec) {
-        if (/sheet|excel|xlsx/.test(spec.mimeType) || spec.name.toLowerCase().endsWith('.xlsx')) {
-          try {
-            const wb = XLSX.read(await driveBytes(token, spec.id), { type: 'array' })
-            spec_text = wb.SheetNames.map(s => XLSX.utils.sheet_to_csv(wb.Sheets[s])).join('\n').replace(/"/g, '').slice(0, 8000)
-          } catch { /* xlsx parse fehlgeschlagen */ }
-        } else if (spec.mimeType === 'application/pdf') {
-          await importDoc(spec, 'spec')
-        }
-      }
-      await saveAssets(supabase, project_id, { doc_urls, spec_text }, spec_text ? { equipment_list: spec_text } : undefined)
-      return json({ ok: true, action, found: { brochure: !!brochure, cutlery: !!cutlery, linen: !!linen, pricelist: !!pricelist, spec: !!spec, payment: !!payment }, spec_chars: spec_text.length, doc_urls: Object.keys(doc_urls) })
+      // Spec-PDF direkt sichern (Claude liest es in der facts-Phase). xlsx wird NUR als
+      // Datei abgelegt — die Text-Extraktion (memory-schwere XLSX-Lib, trieb docs bei
+      // Mamba ins „Memory limit exceeded") macht die schlanke Funktion parse-spec-xlsx.
+      const specXlsx = spec && (/sheet|excel|xlsx/.test(spec.mimeType) || spec.name.toLowerCase().endsWith('.xlsx')) ? spec : null
+      if (spec && spec.mimeType === 'application/pdf') await importDoc(spec, 'spec')
+      else if (specXlsx) await importDoc(specXlsx, 'spec_xlsx')
+      await saveAssets(supabase, project_id, { doc_urls })
+
+      return json({ ok: true, action, found: { brochure: !!doc_urls.brochure, cutlery: !!cutlery, linen: !!linen, pricelist: !!pricelist, spec: !!spec, payment: !!payment }, spec_xlsx: !!specXlsx, skippedLarge, doc_urls: Object.keys(doc_urls) })
     }
 
     // ── facts ───────────────────────────────────────────────────────────────────

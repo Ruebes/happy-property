@@ -33,6 +33,10 @@ Pro Einheit:
 - vat_rate: MwSt-Satz als Zahl (z.B. 19), falls erkennbar
 - availability: available, reserved oder sold — falls die Liste den Status markiert, sonst weglassen
 
+ZUSAMMENGEFASSTE / COMPOSITE-EINHEITEN: Manche Listen fassen mehrere Teile (z.B. A1a + A1b, oft als „Composite room type") zu EINER Einheit mit EINEM gemeinsamen Preis zusammen — erkennbar an einer über beide Zeilen verbundenen Preis-Zelle. Dann gib EINE Einheit aus (z.B. unit_number A1), NICHT zwei. Den gemeinsamen Preis NICHT auf beide Teile duplizieren. Flächen der Teile zur Gesamt-Wohnfläche summieren; Schlafzimmer = Summe der Teile.
+
+PREIS-EINORDNUNG: Ein einzelner Preis OHNE ausdrücklichen MwSt-/VAT-Hinweis ist der NETTOPREIS → price_net. Nur wenn die Liste „inkl. MwSt/VAT" o.ä. ausweist → price_gross.
+
 WICHTIG: Nur Werte aus der Liste, nichts erfinden/schätzen. Fehlende Felder weglassen. Zahlen ohne Tausenderpunkte und ohne Währungssymbol. Rufe das Tool emit_units mit dem Array auf.`
 
 const TOOL = {
@@ -81,11 +85,26 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     let url = body.url
-    if (!url && body.project_id) {
-      const { data } = await supabase.from('crm_projects').select('deck_assets').eq('id', body.project_id).maybeSingle()
-      url = (data?.deck_assets as { doc_urls?: { pricelist?: string } } | null)?.doc_urls?.pricelist
+    let projectName = '', developer = ''
+    if (body.project_id) {
+      const { data } = await supabase.from('crm_projects').select('name, developer, deck_assets').eq('id', body.project_id).maybeSingle()
+      projectName = (data?.name as string) ?? ''
+      developer   = (data?.developer as string) ?? ''
+      if (!url) url = (data?.deck_assets as { doc_urls?: { pricelist?: string } } | null)?.doc_urls?.pricelist
     }
     if (!url) return json({ error: 'Keine Preislisten-URL (url oder project_id mit importierter Preisliste nötig)' }, 400)
+
+    // Viele Developer führen EINE Sammel-Preisliste über ALLE Projekte (z.B. Medousa:
+    // 13 Projekte in einer PDF). Ohne Fokus extrahiert Claude nichts/das Falsche →
+    // hier hart auf den Projekt-Abschnitt einschränken.
+    const focus = projectName
+      ? `\n\nWICHTIG — PROJEKT-FOKUS: Diese Datei kann eine SAMMEL-Preisliste mit MEHREREN Projekten sein (Developer-Gesamtliste). Extrahiere AUSSCHLIESSLICH die Einheiten des Projekts „${projectName}"${developer ? ` (Bauträger ${developer})` : ''}. Suche die Abschnitts-Überschrift „${projectName}" und nimm NUR die Einheiten darunter bis zur nächsten Projekt-Überschrift. Alle anderen Projekte/Abschnitte vollständig ignorieren. Enthält die Liste nur dieses eine Projekt, nimm alle Einheiten.`
+      : ''
+    const availRule = `\n\nVERFÜGBARKEIT bestimmen — maßgeblich ist die PREIS-Spalte JEDER EINZELNEN Zeile:
+- Steht dort „SOLD"/„VERKAUFT" → availability sold.
+- Steht dort „RESERVED"/„RESERVIERT" → availability reserved.
+- Steht dort ein KONKRETER Zeilen-Preis (Zahl) → availability available, und übernimm GENAU diesen Zeilen-Preis.
+NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Überschrift als Preis einer Einheit verwenden. Zeigt die Preis-Spalte einer Zeile „RESERVED" oder „SOLD", ist die Einheit reserved/sold — niemals available, auch wenn die Überschrift einen Richtpreis nennt. Im Zweifel availability=reserved und KEINEN Preis erfinden.`
 
     const isPdf = url.toLowerCase().split('?')[0].endsWith('.pdf')
     const docBlock = isPdf
@@ -107,7 +126,7 @@ Deno.serve(async (req) => {
         max_tokens:  8000,
         tools:       [TOOL],
         tool_choice: { type: 'tool', name: 'emit_units' },
-        messages:    [{ role: 'user', content: [docBlock, { type: 'text', text: PROMPT }] }],
+        messages:    [{ role: 'user', content: [docBlock, { type: 'text', text: PROMPT + focus + availRule }] }],
       }),
     })
     if (!res.ok) {
