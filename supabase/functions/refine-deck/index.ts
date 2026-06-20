@@ -34,7 +34,7 @@ const BLOCK_ITEM = {
     signoff: { type: 'string' }, signName: { type: 'string' }, number: { type: 'string' }, nickname: { type: 'string' },
     specs: { type: 'array', items: { type: 'string' } }, priceMain: { type: 'string' }, priceSub: { type: 'string' },
     note: { type: 'string' }, text: { type: 'string' }, quote: { type: 'string' }, intro: { type: 'string' },
-    image: { type: 'string' }, mapUrl: { type: 'string' },
+    image: { type: 'string' }, mapUrl: { type: 'string' }, mapLabel: { type: 'string' },
     items: { type: 'array', items: { type: 'object' } }, cols: { type: 'array', items: { type: 'object' } },
     cards: { type: 'array', items: { type: 'object' } }, groups: { type: 'array', items: { type: 'object' } },
     stats: { type: 'array', items: { type: 'object' } }, bullets: { type: 'array', items: { type: 'object' } },

@@ -109,14 +109,25 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {b.image && (b.mapUrl ? (
-        <a href={b.mapUrl} target="_blank" rel="noopener noreferrer" className="block relative mt-8 group">
-          <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
-          <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</span>
-        </a>
-      ) : (
-        <Img src={b.image} className="w-full h-80 object-cover rounded-xl mt-8" />
-      ))}
+      {b.image && (
+        <div className="relative mt-8">
+          {b.mapUrl ? (
+            <a href={b.mapUrl} target="_blank" rel="noopener noreferrer" className="block group">
+              <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
+              <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</span>
+            </a>
+          ) : (
+            <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
+          )}
+          {/* Deck-Standard: oranger Kreis um die Lage + Objektname (mittig auf der Karte) */}
+          {b.mapLabel && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+              <span style={{ width: 56, height: 56, borderRadius: '9999px', border: '4px solid #ff795d', boxShadow: '0 0 0 5px rgba(255,121,93,0.22)' }} />
+              <span className="mt-2 text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg" style={{ background: '#ff795d' }}>{b.mapLabel}</span>
+            </div>
+          )}
+        </div>
+      )}
     </section>
   )
 }

@@ -61,7 +61,7 @@ function json(body: unknown, status = 200) {
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
 type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
-function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages): void {
+function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   const renders = images?.renders ?? []
   let ri = 0, pi = 0
   const nextRender = () => renders.length ? renders[ri++ % renders.length] : `https://picsum.photos/seed/deck${++pi}/1600/1000`
@@ -69,7 +69,10 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
     const t = b.type
     if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
     if (t === 'facts') {
-      b.image = images?.map ?? nextRender()
+      // Nur eine ECHTE Karte bekommt den orangen Standort-Kreis + Objektnamen; ohne Karte
+      // ein neutrales Bild (kein Kreis auf einem zufälligen Foto).
+      if (images?.map) { b.image = images.map; if (projName) b.mapLabel = projName }
+      else b.image = nextRender()
       if (images?.mapUrl) b.mapUrl = images.mapUrl   // Kartenausschnitt verlinkt auf Google Maps
     }
     if (t === 'floorplan') b.image = images?.floorplan ?? nextRender()
@@ -215,7 +218,9 @@ Deno.serve(async (req) => {
       diag = { stop_reason: data.stop_reason, blocksType: typeof rawBlocks, raw: typeof rawBlocks === 'string' ? rawBlocks : JSON.stringify(rawBlocks) }
     }
     if (blocks.length === 0) throw new Error('Keine Blöcke generiert: ' + JSON.stringify(diag).slice(0, 300))
-    assignImages(blocks, body.images)
+    // Projektname für den Standort-Kreis auf der Karte (aus dem Fakten-Header „=== PROJEKT X (…)").
+    const projName = (body.facts ?? '').match(/===\s*PROJEKT\s+(.+?)\s*[(\n]/)?.[1]?.trim() || ''
+    assignImages(blocks, body.images, projName)
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
     // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,
