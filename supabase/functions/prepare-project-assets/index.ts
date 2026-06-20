@@ -136,7 +136,23 @@ async function saveAssets(supabase: ReturnType<typeof createClient>, projectId: 
 // ── Bild-Kategorisierung via Claude-Vision ───────────────────────────────────────
 // Klassifiziert jeden Render (Wohnzimmer/Schlafzimmer/Pool/Lobby/Außen …) + kurze
 // deutsche Bezeichnung → beschriftete Bildstrecken im generischen Projekt-Deck.
-const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'sonstiges']
+const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'karte', 'preisliste', 'dokument', 'sonstiges']
+// Zeigbare Außen-/Raumbilder (kommen ins Deck, beschriftet). Alles andere wird
+// umgeroutet (grundriss→Floorplans, karte→Karte) oder verworfen (preisliste/dokument).
+const ROOM_EXT = new Set(['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht'])
+const EXTERIOR = new Set(['aussenbereich', 'fassade', 'aussicht'])
+// Vision-Ergebnis sortieren: jedes Bild ist geprüft → nur Sinnvolles bleibt.
+function sortCategorized(cat: Array<{ url: string; category: string; label: string }>) {
+  const gallery   = cat.filter(c => ROOM_EXT.has(c.category))                 // beschriftete Strecken (Außen + Räume)
+  const grundriss = cat.filter(c => c.category === 'grundriss')
+  const karte     = cat.find(c => c.category === 'karte')?.url ?? null
+  const sonst     = cat.filter(c => c.category === 'sonstiges').map(c => c.url) // echte, aber unklare Fotos → nur Notnagel
+  // Renders (Cover/Feature) = gute beschriftete Bilder; nur wenn zu wenige, mit
+  // unklaren Fotos auffüllen. Preisliste/Dokument kommen NIRGENDS rein.
+  const good    = gallery.map(g => g.url)
+  const renders = good.length >= 2 ? good : [...good, ...sonst]
+  return { gallery, grundriss, karte, renders }
+}
 // Supabase-Bild-Transformation → verkleinerte Variante (Vision lehnt große Originale
 // >5MB/hohe Megapixel ab; Originale waren ~4MB → immer Fallback). 1280px reicht für
 // die Raum-Erkennung und ist klein/sicher.
@@ -210,45 +226,57 @@ function extractBrochureJpegs(pdf: Uint8Array): Uint8Array[] {
   }
   return out
 }
+const VISION_PROMPT = `Das sind Bilder aus den Unterlagen eines Immobilien-Projekts auf Zypern — darunter können auch Bilder sein, die NICHT ins Verkaufs-Deck gehören. Ordne JEDES Bild (Index ab 0) GENAU einer Kategorie zu und gib eine kurze deutsche Bezeichnung. Kategorien: ${CATS.join(', ')}.
+- Räume/Außen (kommen ins Deck): wohnzimmer, schlafzimmer, kueche, badezimmer, esszimmer, pool, lobby, gym, aussenbereich, fassade, aussicht.
+- grundriss = Grundriss/Wohnungsplan (Linienzeichnung mit Räumen/Maßen).
+- karte = Landkarte, Lageplan, Standort-Karte, Masterplan-Übersicht.
+- preisliste = Preisliste/Preis-Tabelle/Verfügbarkeitstabelle (Spalten mit Einheiten/Preisen).
+- dokument = Text-Seite, Logo, Deckblatt mit viel Text, Diagramm, Datenblatt, Banner, Farbverlauf — alles, was KEIN echtes Foto/Rendering eines Raums oder der Anlage ist.
+WICHTIG: Im Zweifel, ob ein Bild ein echtes Raum-/Außen-Rendering ist, ordne es preisliste/dokument zu (lieber aussortieren als Müll ins Deck). label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). Rufe label_images mit genau einem Eintrag pro Bild auf.`
+const VISION_TOOL = {
+  name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
+  input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' } }, required: ['index', 'category'] } } }, required: ['items'] },
+}
 let lastVisionError = ''
 async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string }>> {
-  const fallback = urls.map(u => ({ url: u, category: 'sonstiges', label: '' }))
   lastVisionError = ''
-  if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return fallback }
-  if (!urls.length) return fallback
-  // Bytes selbst laden (verkleinert) und als base64 senden — Anthropic darf NICHT
-  // selbst die URL ziehen (Supabase-Transform ist zu langsam → Download-Timeout).
-  const content: unknown[] = []
-  for (let i = 0; i < urls.length; i++) {
-    try {
-      const r = await fetch(thumb(urls[i]))
-      if (!r.ok) continue
-      content.push({ type: 'text', text: `Bild ${i}:` })
-      content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: toBase64(new Uint8Array(await r.arrayBuffer())) } })
-    } catch { /* Bild überspringen */ }
-  }
-  if (content.length === 0) { lastVisionError = 'kein Bild ladbar'; return fallback }
-  content.push({ type: 'text', text: `Das sind Renderings/Fotos eines Immobilien-Projekts auf Zypern. Ordne JEDES Bild (Index ab 0) einer Kategorie zu und gib eine kurze deutsche Bezeichnung. Kategorien: ${CATS.join(', ')}. label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). Rufe label_images mit genau einem Eintrag pro Bild auf.` })
-  const TOOL = {
-    name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
-    input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' } }, required: ['index', 'category'] } } }, required: ['items'] },
-  }
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 2000, tools: [TOOL], tool_choice: { type: 'tool', name: 'label_images' }, messages: [{ role: 'user', content }] }),
-    })
-    if (!res.ok) { lastVisionError = `HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`; return fallback }
-    const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: unknown } }> }
-    let items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items
-    if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
-    if (!Array.isArray(items) || !items.length) lastVisionError = `keine items: ${JSON.stringify(data).slice(0, 300)}`
-    const byIdx = new Map<number, { category: string; label: string }>()
-    for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
-      byIdx.set(Number(it.index), { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? '') })
+  if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return urls.map(u => ({ url: u, category: 'sonstiges', label: '' })) }
+  // In KLEINEN Batches (sonst sprengt base64 mehrerer Bilder das Anthropic-Request-Limit → 413).
+  const BATCH = 6
+  const result = new Map<string, { category: string; label: string }>()
+  for (let start = 0; start < urls.length; start += BATCH) {
+    const batch = urls.slice(start, start + BATCH)
+    const content: unknown[] = []
+    const local: string[] = []   // tatsächlich geladene Bilder dieses Batches (Index = Position)
+    for (const u of batch) {
+      try {
+        const r = await fetch(thumb(u))
+        if (!r.ok) continue
+        let ct = (r.headers.get('content-type') || 'image/jpeg').split(';')[0].trim().toLowerCase()
+        if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(ct)) ct = 'image/jpeg'
+        content.push({ type: 'text', text: `Bild ${local.length}:` })
+        content.push({ type: 'image', source: { type: 'base64', media_type: ct, data: toBase64(new Uint8Array(await r.arrayBuffer())) } })
+        local.push(u)
+      } catch { /* Bild überspringen */ }
     }
-    return urls.map((u, i) => ({ url: u, category: byIdx.get(i)?.category ?? 'sonstiges', label: byIdx.get(i)?.label ?? '' }))
-  } catch (e) { lastVisionError = `exception: ${(e as Error).message}`; return fallback }
+    if (!content.length) { lastVisionError ||= 'kein Bild ladbar'; continue }
+    content.push({ type: 'text', text: VISION_PROMPT })
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, tools: [VISION_TOOL], tool_choice: { type: 'tool', name: 'label_images' }, messages: [{ role: 'user', content }] }),
+      })
+      if (!res.ok) { lastVisionError = `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`; continue }
+      const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: unknown } }> }
+      let items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items
+      if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
+      for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
+        const u = local[Number(it.index)]
+        if (u) result.set(u, { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? '') })
+      }
+    } catch (e) { lastVisionError = `exception: ${(e as Error).message}` }
+  }
+  return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '' }))
 }
 
 Deno.serve(async (req) => {
@@ -298,20 +326,21 @@ Deno.serve(async (req) => {
       for (const j of jpegs) {
         try { urls.push(await uploadBytes(supabase, j, 'image/jpeg', `projects/${project_id}/brochure`, 'b.jpg', 'crm-project-images')) } catch { /* skip */ }
       }
+      // Vision-Gate (gleiches Sieb wie bei Drive-Bildern): nur echte Außen-/Raumbilder,
+      // Preislisten/Dokumente raus, Grundrisse/Karten umrouten.
       const cat = await categorizeImages(urls)
-      const EXT = new Set(['fassade', 'aussenbereich', 'aussicht'])
-      const exteriors  = cat.filter(c => EXT.has(c.category)).map(c => c.url)
-      const grundrisse = cat.filter(c => c.category === 'grundriss')
-      const galleryNew = cat.filter(c => c.category !== 'sonstiges' && c.category !== 'grundriss')
+      const s = sortCategorized(cat)
+      const exteriors  = s.gallery.filter(g => EXTERIOR.has(g.category)).map(g => g.url)
       // Idempotent: frühere Broschüren-Beiträge (Pfad /brochure/) erst entfernen,
       // dann frisch mergen — Mehrfach-Läufe stapeln keine Duplikate.
       const keep = (u: string) => !u.includes('/brochure/')
       // Außenbilder dürfen ins Cover/Feature wandern (sicher), Innenräume nur in die
-      // beschriftete Gallery; Grundrisse zu den Floorplans.
+      // beschriftete Gallery; Grundrisse zu den Floorplans; Lagekarte als Karte.
       const renders = Array.from(new Set([...(assets.renders ?? []).filter(keep), ...exteriors]))
-      const gallery = [...(assets.gallery ?? []).filter(g => keep(g.url)), ...galleryNew]
-      const floorplans = [...(assets.floorplans ?? []).filter(f => keep(f.url)), ...grundrisse.map((g, i) => ({ floor: null, label: g.label || `Grundriss ${i + 1}`, url: g.url }))]
-      await saveAssets(supabase, project_id, { renders, gallery, floorplans })
+      const gallery = [...(assets.gallery ?? []).filter(g => keep(g.url)), ...s.gallery]
+      const floorplans = [...(assets.floorplans ?? []).filter(f => keep(f.url)), ...s.grundriss.map((g, i) => ({ floor: null, label: g.label || `Grundriss ${i + 1}`, url: g.url }))]
+      const map = assets.map ?? s.karte ?? null
+      await saveAssets(supabase, project_id, { renders, gallery, floorplans, map })
       const byCat: Record<string, number> = {}
       for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
       return json({ ok: true, action, extracted: jpegs.length, uploaded: urls.length, categories: byCat, gallery: gallery.length, floorplans: floorplans.length, debug: lastVisionError })
@@ -339,12 +368,15 @@ Deno.serve(async (req) => {
       // Lose Kartenbilder im Ordner (z.B. "Google Maps Azure.png", "Lageplan.png") als KARTE erkennen,
       // nicht als Render — sonst landet die Karte in der Galerie und der Karten-Slot bleibt leer.
       const MAP_RE = /(google.?maps|karte|lageplan|standort|\bmaps?\b)/i
+      // Offensichtlicher Nicht-Render-Müll schon am Dateinamen aussieben (spart Vision +
+      // schützt das 18er-Limit für echte Bilder). Das Vision-Gate fängt den Rest ab.
+      const JUNK_RE = /(preisliste|pricelist|price.?list|\bprice\b|zahlungsplan|payment|\blogo\b|datasheet|fact.?sheet|spec(ification)?s?|brosch|brochure)/i
       if (!locFile) {
         const cands = renderFiles.filter(f => MAP_RE.test(f.name))
         locFile = cands.find(small) ?? cands[0] ?? null
       }
       const renders: string[] = []
-      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
+      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name) && !JUNK_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
         try { renders.push(await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)) } catch { /* skip */ }
       }
       // Fallback: keine Bilder im Drive-Ordner → bereits im CRM hinterlegte Projektbilder nutzen.
@@ -360,6 +392,21 @@ Deno.serve(async (req) => {
       const mapUrl = (project.google_maps_url as string) || (project.maps_url as string) ||
         `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${project.name ?? ''} ${project.location ?? 'Paphos'}`)}`
 
+      // ── Vision-Gate: JEDES Kandidatenbild prüfen → nur sinnvolle Außen-/Raumbilder
+      // behalten + beschriften, Preislisten/Dokumente/Logos verwerfen, versteckte
+      // Grundrisse/Karten umrouten. So landet nie Müll (z.B. eine Preisliste) im Deck.
+      let gallery: DeckAssets['gallery'] = []
+      let vetted = renders
+      if (renders.length) {
+        try {
+          const s = sortCategorized(await categorizeImages(renders.slice(0, 18)))
+          if (s.renders.length) vetted = s.renders
+          gallery = s.gallery
+          for (const g of s.grundriss) floorplans.push({ floor: null, label: g.label || `Grundriss ${floorplans.length + 1}`, url: g.url })
+          if (!map && s.karte) map = s.karte
+        } catch { /* Vision optional — Kandidaten bleiben */ }
+      }
+
       // Grundriss je Unit (best effort) nach Etage zuordnen
       let unitsMatched = 0
       if (floorplans.length) {
@@ -371,30 +418,31 @@ Deno.serve(async (req) => {
           if (match) { await supabase.from('crm_project_units').update({ floorplan_url: match.url }).eq('id', u.id as string); unitsMatched++ }
         }
       }
-      await saveAssets(supabase, project_id, { renders, floorplans, map, mapUrl })
-      // Renders SOFORT per Vision kategorisieren → beschriftete Gallery (Außen + je Raum),
-      // damit der categorize-Schritt nicht vergessen wird und Bilder korrekt beschriftet sind.
-      if (renders.length) {
-        try { const gallery = await categorizeImages(renders.slice(0, 18)); await saveAssets(supabase, project_id, { gallery }) } catch { /* Gallery optional */ }
-      }
-      // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur setzen, wenn noch leer
+      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl })
+      // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur GEPRÜFTE Bilder
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
-      if (renders.length && curImgs.length === 0) {
-        await supabase.from('crm_projects').update({ images: renders.slice(0, 3) }).eq('id', project_id)
+      if (vetted.length && curImgs.length === 0) {
+        await supabase.from('crm_projects').update({ images: vetted.slice(0, 3) }).eq('id', project_id)
       }
-      return json({ ok: true, action, renders: renders.length, floorplans: floorplans.length, map: !!map, unitsMatched, projectImages: renders.length && curImgs.length === 0 ? Math.min(3, renders.length) : curImgs.length })
+      return json({ ok: true, action, renders: vetted.length, dropped: renders.length - vetted.length, gallery: gallery.length, floorplans: floorplans.length, map: !!map, unitsMatched })
     }
 
     // ── categorize ──────────────────────────────────────────────────────────────
-    // Renders per Vision in Räume/Bereiche einsortieren → beschriftete Bildstrecken.
+    // Vision-Gate: Renders prüfen → beschriftete Bildstrecken (Außen + je Raum),
+    // Müll (Preisliste/Dokument) raus, Grundrisse/Karten umrouten.
     if (action === 'categorize') {
       const renders = assets.renders ?? []
       if (!renders.length) return json({ ok: true, action, gallery: 0, skipped: true, note: 'keine Renders' })
-      const gallery = await categorizeImages(renders.slice(0, 18))
-      await saveAssets(supabase, project_id, { gallery })
+      const cat = await categorizeImages(renders.slice(0, 18))
+      const s = sortCategorized(cat)
+      const floorplans = [...(assets.floorplans ?? [])]
+      const seenFp = new Set(floorplans.map(f => f.url))
+      for (const g of s.grundriss) if (!seenFp.has(g.url)) floorplans.push({ floor: null, label: g.label || `Grundriss ${floorplans.length + 1}`, url: g.url })
+      const map = assets.map ?? s.karte ?? null
+      await saveAssets(supabase, project_id, { renders: s.renders.length ? s.renders : renders, gallery: s.gallery, floorplans, map })
       const byCat: Record<string, number> = {}
-      for (const g of gallery) byCat[g.category] = (byCat[g.category] ?? 0) + 1
-      return json({ ok: true, action, gallery: gallery.length, categories: byCat, debug: lastVisionError })
+      for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
+      return json({ ok: true, action, gallery: s.gallery.length, kept: s.renders.length, dropped: renders.length - s.renders.length, categories: byCat, debug: lastVisionError })
     }
 
     // ── docs ──────────────────────────────────────────────────────────────────
