@@ -59,7 +59,7 @@ function json(body: unknown, status = 200) {
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 interface MailItem {
-  label?: string; link?: string; project?: string; unit?: string
+  label?: string; link?: string; calc_link?: string; project?: string; unit?: string
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null
   floor?: number | null; price?: string; facts?: string
   available_count?: number | null; total_count?: number | null
@@ -99,6 +99,7 @@ function buildHtml(
       + `<div style="font-weight:700;font-size:18px;color:#1a1a1a;margin:0 0 8px">${esc(label)}</div>`
       + (line ? `<div style="color:#444444;margin:0 0 16px;line-height:1.6">${esc(line)}</div>` : '<div style="margin:0 0 16px"></div>')
       + btn(it.link || '#', 'Dein Sales Deck ansehen →', '#ff795d', '#ffffff')
+      + (it.calc_link ? btn(it.calc_link, '📊 Rendite-Berechnung →', '#2f6b4f', '#ffffff') : '')
       + `</div>`
   }).join('')
   const reco = m.recommendation?.trim()

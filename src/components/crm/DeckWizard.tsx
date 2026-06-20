@@ -25,6 +25,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [projectId, setProjectId] = useState('')
   const [withCalc, setWithCalc] = useState(false)
   const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
+  // Pro Wohnung eigene Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
+  // Leer = es gilt der globale Standardwert aus calcParams.
+  const [perUnit, setPerUnit] = useState<Record<string, { yieldPct?: number; appreciationPct?: number }>>({})
+  const setPu = (id: string, k: 'yieldPct' | 'appreciationPct', v: number) =>
+    setPerUnit(p => ({ ...p, [id]: { ...p[id], [k]: v } }))
   const [units, setUnits]       = useState<UnitRow[]>([])
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
@@ -107,8 +112,38 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).eq('status', 'proposal')
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
+      // Pro Wohnung eine EIGENE Rendite-Berechnung — Wertentwicklung & Rendite unterscheiden
+      // sich je Projekt/Standort. Jede Wohnung bekommt ihren eigenen /rechnung-Link
+      // (läuft nicht ab) mit den für sie gesetzten Werten.
+      const calcLinkByToken: Record<string, string> = {}
+      if (withCalc) {
+        for (let i = 0; i < links.length; i++) {
+          const l = links[i]
+          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${links.length}…`)
+          const pu = perUnit[l.item.unit.id] ?? {}
+          const params: CalcParams = {
+            ...calcParams, dealType: 'single',
+            priceNet:        l.item.unit.price_net ?? calcParams.priceNet,
+            bedrooms:        l.item.unit.bedrooms ?? 2,
+            yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
+            appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
+          }
+          const calcItem: CalcItem = {
+            label: l.label, project: l.item.projectName, unit: l.item.unit.unit_number,
+            bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm, floor: l.item.unit.floor,
+            price_net: l.item.unit.price_net, price_gross: l.item.unit.price_gross, params,
+          }
+          const content = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items: [calcItem] }
+          const { data: calcRow } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: content.recipient_name, title: `Rechnung ${l.label}`, with_calc: true, content,
+          }).select('token').single()
+          const tok = (calcRow as { token?: string } | null)?.token
+          if (tok) calcLinkByToken[l.token] = `${origin}/rechnung/${tok}`
+        }
+      }
       const mailItems = links.map(l => ({
         label: l.label, link: `${origin}/deck/${l.token}`,
+        calc_link: calcLinkByToken[l.token],   // eigene Rendite-Berechnung je Wohnung
         project: l.item.projectName, unit: l.item.unit.unit_number,
         bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm,
         floor: l.item.unit.floor, price: eur(l.item.unit.price_gross ?? l.item.unit.price_net),
@@ -117,34 +152,15 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         available_count: availByProject[l.item.projectId]?.available ?? null,
         total_count:     availByProject[l.item.projectId]?.total ?? null,
       }))
-      // Optional: Rendite-Berechnung / Vergleich erstellen (eigener Token-Link, läuft nicht ab)
-      let calcLink: string | undefined, calcLabel: string | undefined
-      if (withCalc) {
-        setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung…'))
-        const calcItems: CalcItem[] = links.map(l => ({
-          label: l.label, project: l.item.projectName, unit: l.item.unit.unit_number,
-          bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm, floor: l.item.unit.floor,
-          price_net: l.item.unit.price_net, price_gross: l.item.unit.price_gross,
-          params: { ...calcParams, dealType: 'single', priceNet: l.item.unit.price_net ?? calcParams.priceNet, bedrooms: l.item.unit.bedrooms ?? 2 },
-        }))
-        const calcContent = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items: calcItems }
-        const { data: calcRow } = await supabase.from('property_calculations').insert({
-          lead_id: lead.id, recipient_name: calcContent.recipient_name,
-          title: links.length > 1 ? 'Immobilienvergleich' : `Rechnung ${links[0].label}`, with_calc: true, content: calcContent,
-        }).select('token').single()
-        const tok = (calcRow as { token?: string } | null)?.token
-        if (tok) { calcLink = `${origin}/rechnung/${tok}`; calcLabel = links.length > 1 ? 'Dein Immobilienvergleich' : 'Deine Rendite-Berechnung' }
-      }
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
-      const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a></li>`).join('')
+      const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a>${m.calc_link ? ` — <a href="${m.calc_link}">📊 Rendite-Berechnung</a>` : ''}</li>`).join('')
       const fbIntro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
-      const fbCalc = calcLink ? `<p>📊 <a href="${calcLink}">${calcLabel}</a></p>` : ''
-      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul>${fbCalc}<p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
+      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul><p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
       try {
         const { data: mail } = await supabase.functions.invoke('compose-deck-mail', { body: {
           recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
-          briefing, angle, items: mailItems, calc_link: calcLink, calc_label: calcLabel,
+          briefing, angle, items: mailItems,
         } })
         const mm = mail as { subject?: string; html?: string } | null
         if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html }
@@ -301,7 +317,31 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                   {cpToggle('Einrichtung kostenfrei', 'furnFree')}
                   {calcParams.letType === 'short' && cpToggle('🏨 Hotelkonzept', 'hotelConcept')}
                 </div>
-                <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Mehrere Wohnungen → Vergleich. Voller Funktionsumfang (Sondertilgung, Share-Deal) im dedizierten Rechner.')}</p>
+                {/* Pro Wohnung: Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
+                    Werte oben gelten als Standard; hier je Wohnung feinjustieren. */}
+                {basket.length > 0 && (
+                  <div className="border-t border-gray-200 pt-3 space-y-2">
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung: Rendite & Wertsteigerung')}</div>
+                    {basket.map(b => (
+                      <div key={b.unit.id} className="flex items-center gap-2 bg-white rounded-lg border border-gray-100 px-2.5 py-1.5">
+                        <span className="flex-1 truncate text-xs text-gray-700">{b.projectName} · {b.unit.unit_number}</span>
+                        <label className="flex items-center gap-1 text-[11px] text-gray-500">
+                          {t('crm.wizard.rendite', 'Rendite')}
+                          <input type="number" step="0.1" value={String(perUnit[b.unit.id]?.yieldPct ?? calcParams.yieldPct ?? '')}
+                            onChange={e => setPu(b.unit.id, 'yieldPct', parseFloat(e.target.value) || 0)}
+                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />%
+                        </label>
+                        <label className="flex items-center gap-1 text-[11px] text-gray-500">
+                          {t('crm.wizard.wertsteig', 'Wertsteig.')}
+                          <input type="number" step="0.1" value={String(perUnit[b.unit.id]?.appreciationPct ?? calcParams.appreciationPct ?? '')}
+                            onChange={e => setPu(b.unit.id, 'appreciationPct', parseFloat(e.target.value) || 0)}
+                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />%
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[11px] text-gray-400">{t('crm.wizard.calcHint', 'Kaufpreis je Wohnung kommt automatisch. Jede Wohnung erhält eine EIGENE Berechnung (eigener Link). Voller Funktionsumfang (Sondertilgung, Share-Deal) im dedizierten Rechner.')}</p>
               </div>
             )}
           </div>
