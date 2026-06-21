@@ -11,9 +11,9 @@ import { DEFAULT_PARAMS, type CalcParams, type CalcItem } from '../../lib/rechne
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null }
+interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null }
-interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow }
+interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -42,7 +42,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [err, setErr]           = useState('')
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -61,7 +61,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const addToBasket = () => {
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id))
-      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u }))
+      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included }))
     setBasket(b => [...b, ...adds])
     setSel(new Set())
   }
@@ -74,7 +74,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const u = item.unit
     const unitFacts = `\n\n=== DIESE WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.\nPreis: ${eur(u.price_gross ?? u.price_net)}${u.price_gross && u.price_net ? ` (netto ${eur(u.price_net)})` : ''}.`
     const fp = (a.floorplans ?? []).find(f => f.floor === u.floor)?.url ?? (a.floorplans ?? [])[0]?.url
-    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fp, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined }
+    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fp, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined }
     // letztes bestehendes Deck dieser Wohnung merken → auf NEUES Token pollen
     const { data: prev } = await supabase.from('sales_decks').select('token, created_at').eq('lead_id', lead.id).eq('unit_id', u.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     const prevTok = (prev as { token?: string } | null)?.token ?? null
@@ -131,14 +131,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           const l = links[i]
           setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${links.length}…`)
           const pu = perUnit[l.item.unit.id] ?? {}
+          // Möbel-Default-Kette: manuelle Eingabe je Wohnung → Projekt-Standard
+          // (crm_projects.furniture_cost/_included) → globaler Wizard-Wert.
           const params: CalcParams = {
             ...calcParams, dealType: 'single',
             priceNet:        l.item.unit.price_net ?? calcParams.priceNet,
             bedrooms:        l.item.unit.bedrooms ?? 2,
             yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
             appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
-            furnCost:        pu.furnCost ?? calcParams.furnCost,
-            furnFree:        pu.furnFree ?? calcParams.furnFree,
+            furnCost:        pu.furnCost ?? l.item.furnitureCost ?? calcParams.furnCost,
+            furnFree:        pu.furnFree ?? l.item.furnitureIncluded ?? calcParams.furnFree,
             hotelConcept:    pu.hotelConcept ?? calcParams.hotelConcept,
           }
           const calcItem: CalcItem = {
@@ -377,7 +379,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                     <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung: Rendite, Wertsteigerung, Einrichtung')}</div>
                     {basket.map(b => {
                       const pu = perUnit[b.unit.id] ?? {}
-                      const ff = pu.furnFree ?? calcParams.furnFree
+                      const ff = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
                       const hc = pu.hotelConcept ?? calcParams.hotelConcept
                       const miniInput = (lab: string, val: string, on: (v: number) => void, step = '0.1', suf = '%') => (
                         <label className="flex items-center gap-1 text-[11px] text-gray-500">{lab}
@@ -391,7 +393,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                             {miniInput(t('crm.wizard.rendite', 'Rendite'), String(pu.yieldPct ?? calcParams.yieldPct ?? ''), v => setPu(b.unit.id, { yieldPct: v }))}
                             {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
-                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
                             <button type="button" onClick={() => setPu(b.unit.id, { furnFree: !ff })}
                               className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${ff ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
                               <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${ff ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{ff ? '✓' : ''}</span>

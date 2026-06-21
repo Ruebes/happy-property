@@ -119,12 +119,25 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           ) : (
             <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
           )}
-          {/* Deck-Standard: oranger Kreis um die Lage + Objektname (mittig auf der Karte) */}
+          {/* Deck-Standard: oranger Kreis um die Lage + Objektname. Position aus
+              mapMarker (vom Vision-Detektor erkannt, %-Koordinaten); ohne Marker
+              mittig als Fallback. */}
           {b.mapLabel && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span style={{ width: 56, height: 56, borderRadius: '9999px', border: '4px solid #ff795d', boxShadow: '0 0 0 5px rgba(255,121,93,0.22)' }} />
-              <span className="mt-2 text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg" style={{ background: '#ff795d' }}>{b.mapLabel}</span>
-            </div>
+            b.mapMarker ? (
+              <div
+                className="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${b.mapMarker.x}%`, top: `${b.mapMarker.y}%` }}
+              >
+                {/* Ring exakt auf dem Pin-Punkt; Label hängt direkt darunter */}
+                <span className="block" style={{ width: 48, height: 48, borderRadius: '9999px', border: '4px solid #ff795d', boxShadow: '0 0 0 5px rgba(255,121,93,0.22)' }} />
+                <span className="absolute left-1/2 top-full -translate-x-1/2 mt-2 text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg whitespace-nowrap" style={{ background: '#ff795d' }}>{b.mapLabel}</span>
+              </div>
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                <span style={{ width: 56, height: 56, borderRadius: '9999px', border: '4px solid #ff795d', boxShadow: '0 0 0 5px rgba(255,121,93,0.22)' }} />
+                <span className="mt-2 text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg" style={{ background: '#ff795d' }}>{b.mapLabel}</span>
+              </div>
+            )
           )}
         </div>
       )}

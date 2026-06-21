@@ -202,6 +202,8 @@ export interface CrmProject {
   images:          string[]
   video_url:       string | null
   equipment_list:  string | null
+  furniture_cost:     number | null   // Preis Einrichtungspaket (netto, €) — Default für Möbel-AfA in Berechnungen
+  furniture_included: boolean | null  // Möbel im Kaufpreis enthalten (kostenfrei) → keine separate AfA
   drive_folder_id: string | null   // Google-Drive-Ordner des Projekts (Quelle für Deck-Assets)
   deck_assets:     DeckAssetsCache | null  // gecachte Drive-Assets (prepare-project-assets)
   deck_token:      string | null   // generisches Projekt-Deck (/deck/<token>) für Zoom
@@ -219,6 +221,7 @@ export interface DeckAssetsCache {
   floorplans?: { floor: number | null; label: string; url: string }[]
   map?:        string | null
   mapUrl?:     string | null
+  mapMarker?:  { x: number; y: number } | null   // %-Position des echten Standort-Pins auf der Karte (Vision-erkannt)
   doc_urls?:   Record<string, string>
   spec_text?:  string
   facts?:      string

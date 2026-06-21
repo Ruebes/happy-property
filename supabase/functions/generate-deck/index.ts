@@ -52,8 +52,9 @@ REGELN:
 4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
 4b. AUSSTATTUNG: Sobald im Input ein Einrichtungspaket / Ausstattung / Möbelliste / Geschirr / Besteck (cutlery) / Wäsche (linen) steht, MUSST du das prominent zeigen — als ein bis zwei "inventory"-Blöcke (ein bis zwei Seiten). Empfehlung: Block 1 = Möbel, Geräte & Premium-Marken (gruppiert, z.B. Wohnen, Küche & Geräte, Schlafen, Bad — mit den echten Markennamen aus den Fakten wie BOSCH, Neff, GROHE, LAUFEN, Samsung, Tomasella, DUPEN); Block 2 = die Komplett-Checkliste (Geschirr & Besteck mit Stückzahlen, Wäsche & Bettwäsche). Botschaft durchgängig: schlüsselfertig & voll möbliert, sofort bezugs- und vermietfertig — der Kunde packt nur die Koffer. Nutze NUR die im Input gelisteten Gegenstände/Marken, erfinde nichts dazu.
 4c. ZAHLUNGSPLAN (payment) — HART: Alle Beträge und Prozente kommen AUSSCHLIESSLICH aus den Zahlungsplan-Daten der Fakten UND dem Kaufpreis GENAU DIESER Wohnung. Prozente müssen rechnerisch zum Kaufpreis passen (z.B. 30 % von 430.000 € = 129.000 €, NICHT 300.000 €). Übernimm NIEMALS Zahlen aus dem Kunden-Briefing/Anschreiben (z.B. „300k Eigenkapital") in den Zahlungsplan — das Briefing beschreibt den Kunden, nicht den Preis dieses Objekts. Liegen keine echten Raten/Prozente in den Fakten vor: nutze nur die Prozentstufen und schreibe als value „gemäß Bauträger-Konditionen" statt einen Betrag zu erfinden. Plausibilität prüfen: kein einzelner Schritt darf größer als der Kaufpreis sein, Summe der Schritte = 100 % des Preises.
+4d. ZAHLUNGSPLAN-NARRATIV (kicker, headline, intro, note, phase-label/title, advantage) — HART, gleiche Klasse wie 5b: Beschreibe NUR die Stufen sachlich. Erfinde KEINE Aussage über das ZEITLICHE Verhältnis der Zahlungen zum Baufortschritt, die nicht WÖRTLICH in den Fakten steht. STRIKT VERBOTEN (nie schreiben, egal wie verkaufsfördernd): „du zahlst erst nach Fertigstellung", „erst wenn gebaut wurde", „der Löwenanteil/Großteil kommt bei oder nach der Übergabe", „du finanzierst keinen Baufortschritt, den du nicht siehst", „du zahlst nicht auf Kredit des Bauträgers", „nach echtem Baufortschritt — jede Phase muss abgeschlossen sein, bevor die nächste Rate fällig wird", „das schützt dich/deine Liquidität", „Planungssicherheit" — und jede andere Käufer-Schutz- oder Sicherheits-Story rund um den Zahlungsplan. Grund: Zypern-Neubau wird typischerweise BAUFORTSCHRITTS-BEGLEITEND und front-lastig gezahlt (Reservierung + Anzahlung bei Vertragsunterzeichnung, weitere Raten WÄHREND des Baus), NICHT nachgelagert — solche Sicherheits-Narrative sind faktisch falsch. Erlaubte neutrale Headlines: „Der Zahlungsplan im Überblick", „430.000 € — in klaren Stufen", „Transparent über die Bauphasen verteilt". Phase-Labels nur, wenn die Phasen wörtlich in den Fakten stehen; sonst generisch (Reservierung / Bei Vertrag / Baufortschritt / Bei Übergabe).
 5. Nutze NUR Fakten aus dem Input. Erfinde KEINE Zahlen/Preise/Entfernungen. Wenn ein Faktum fehlt, lass den Block/das Feld weg statt zu raten. Zahlen aus dem Kunden-Briefing sind KEINE Objekt-Fakten — niemals als Preis/Fläche/Rate eines Objekts verwenden.
-5b. WAHRHEIT vor Verkauf: Werte Begriffe NICHT auf und kombiniere keine zwei Fakten zu einer stärkeren Aussage. VERBOTEN: aus '5 Jahre Garantie' wird 'Mietgarantie'/'Rendite-Garantie'; aus 'Hotelkonzept' wird 'garantierte Miete'/'gesicherte Auslastung'/'garantierte Rendite'. Ein Hotelkonzept ist eine Vermietungs-OPTION, keine Zusicherung. Garantien/Renditen/Auslastungen nur nennen, wenn sie WÖRTLICH in den Fakten stehen. Im Zweifel weglassen.
+5b. WAHRHEIT vor Verkauf: Werte Begriffe NICHT auf und kombiniere keine zwei Fakten zu einer stärkeren Aussage. VERBOTEN: aus '5 Jahre Garantie' wird 'Mietgarantie'/'Rendite-Garantie'; aus 'Hotelkonzept' wird 'garantierte Miete'/'gesicherte Auslastung'/'garantierte Rendite'/'sorgt ab dem ersten Tag für Auslastung'/'immer vermietet'/'der Hotelbetreiber kümmert sich um die Vermietung' (es sei denn das steht wörtlich so da). Ein Hotelkonzept ist eine Vermietungs-OPTION, keine Zusicherung auf Miete, Auslastung oder Rendite. Garantien/Renditen/Auslastungen/Belegungsquoten nur nennen, wenn sie WÖRTLICH in den Fakten stehen. Im Zweifel weglassen.
 6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).
 7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.`
 
@@ -62,7 +63,62 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; gallery?: Array<{ url: string; category: string; label: string }> }
+// Deterministischer Wahrheits-Backstop: filtert bekannte erfundene Behauptungen
+// raus, falls das Modell die Prompt-Regeln (4d / 5b) doch mal ignoriert. Greift
+// SATZWEISE (entfernt nur den betroffenen Satz, nicht den ganzen Block).
+const FORBIDDEN_GLOBAL: RegExp[] = [
+  /mietgarantie|rendite-?garantie|garantierte (miete|rendite|auslastung)/i,
+  /erst nach (der )?fertigstellung/i,
+  /(du )?zahlst erst,? wenn gebaut wurde/i,
+  /wenn das apartment steht/i,
+  /nicht auf kredit des bauträgers/i,
+  /(sorgt|ab dem ersten tag)[^.!?]*auslastung/i,
+  /immer vermietet|gesicherte auslastung|garantierte auslastung/i,
+]
+// Nur im Zahlungsplan-Block problematisch (Käufer-Schutz-/Liquiditäts-Narrativ):
+const FORBIDDEN_PAYMENT: RegExp[] = [
+  /finanzierst keinen baufortschritt/i,
+  /schützt (dich|deine)/i,
+  /planungssicherheit/i,
+  /(löwenanteil|großteil)[^.!?]*(übergabe|fertig)/i,
+  /jede phase muss abgeschlossen sein,? bevor die nächste rate/i,
+]
+function dropBadSentences(s: unknown, res: RegExp[]): string {
+  if (typeof s !== 'string' || !s) return typeof s === 'string' ? s : ''
+  const parts = s.split(/(?<=[.!?…])\s+/)
+  const kept = parts.filter(p => !res.some(re => re.test(p)))
+  return kept.join(' ').trim()
+}
+function scrubNarrative(blocks: Array<Record<string, unknown>>): void {
+  for (const b of blocks) {
+    const isPay = b.type === 'payment'
+    const res = isPay ? [...FORBIDDEN_GLOBAL, ...FORBIDDEN_PAYMENT] : FORBIDDEN_GLOBAL
+    for (const f of ['intro', 'note', 'text', 'quote']) {
+      if (typeof b[f] === 'string') b[f] = dropBadSentences(b[f], res)
+    }
+    if (Array.isArray(b.paragraphs)) {
+      b.paragraphs = (b.paragraphs as unknown[]).map(p => dropBadSentences(p, res)).filter(Boolean)
+    }
+    for (const phKey of ['phase1', 'phase2']) {
+      const ph = b[phKey] as Record<string, unknown> | undefined
+      if (ph && typeof ph === 'object') {
+        for (const f of ['advantage', 'title', 'label']) {
+          if (typeof ph[f] === 'string') ph[f] = dropBadSentences(ph[f], res)
+        }
+      }
+    }
+    // Headline/Kicker: nur im Zahlungsplan hart neutralisieren, wenn verboten —
+    // sonst bliebe eine erfundene Schlagzeile stehen.
+    if (isPay && (typeof b.headline === 'string') && res.some(re => re.test(b.headline as string))) {
+      b.headline = 'Der Zahlungsplan im Überblick'
+    }
+    if (isPay && (typeof b.kicker === 'string') && res.some(re => re.test(b.kicker as string))) {
+      b.kicker = 'Zahlungsplan'
+    }
+  }
+}
+
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   const renders = images?.renders ?? []
   let ri = 0, pi = 0
@@ -73,7 +129,11 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
     if (t === 'facts') {
       // Nur eine ECHTE Karte bekommt den orangen Standort-Kreis + Objektnamen; ohne Karte
       // ein neutrales Bild (kein Kreis auf einem zufälligen Foto).
-      if (images?.map) { b.image = images.map; if (projName) b.mapLabel = projName }
+      if (images?.map) {
+        b.image = images.map
+        if (projName) b.mapLabel = projName
+        if (images.mapMarker) b.mapMarker = images.mapMarker   // %-Position des echten Pins (Vision)
+      }
       else b.image = nextRender()
       if (images?.mapUrl) b.mapUrl = images.mapUrl   // Kartenausschnitt verlinkt auf Google Maps
     }
@@ -92,7 +152,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; gallery?: Array<{ url: string; category: string; label: string }> }
+      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       generic?: boolean
       background?: boolean
@@ -223,6 +283,7 @@ Deno.serve(async (req) => {
     // Projektname für den Standort-Kreis auf der Karte (aus dem Fakten-Header „=== PROJEKT X (…)").
     const projName = (body.facts ?? '').match(/===\s*PROJEKT\s+(.+?)\s*[(\n]/)?.[1]?.trim() || ''
     assignImages(blocks, body.images, projName)
+    scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
     // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,

@@ -52,6 +52,8 @@ interface ProjectForm {
   latitude:       number | null
   longitude:      number | null
   equipment_list: string
+  furniture_cost:     string   // € netto; leer = nicht gesetzt
+  furniture_included: boolean  // im Kaufpreis enthalten
   video_url:      string
   drive_folder_id: string
 }
@@ -110,6 +112,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     latitude:        project?.latitude ?? null,
     longitude:       project?.longitude ?? null,
     equipment_list:  project?.equipment_list ?? '',
+    furniture_cost:     project?.furniture_cost != null ? String(project.furniture_cost) : '',
+    furniture_included: project?.furniture_included ?? false,
     video_url:       project?.video_url ?? '',
     drive_folder_id: project?.drive_folder_id ?? '',
   })
@@ -199,7 +203,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       const da = ((fresh?.deck_assets ?? project.deck_assets) ?? null) as DeckAssetsCache | null
       if (!da?.facts) { setDeckMsg({ ok: false, text: t('crm.project.deck.factsPending', 'Fakten noch nicht fertig (laufen im Hintergrund) — bitte 1 Minute warten und erneut.') }); setDeckBusy(false); return }
       const prevToken = ((fresh?.deck_token as string | null) ?? project.deck_token) ?? null
-      const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined }
+      const images = { renders: da.renders ?? [], gallery: da.gallery ?? [], floorplan: da.floorplans?.[0]?.url, map: da.map ?? undefined, mapUrl: da.mapUrl ?? undefined, mapMarker: da.mapMarker ?? undefined }
       const month = new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
       setDeckMsg({ ok: true, text: `⏳ ${t('crm.project.deck.deckLoading', 'Erstelle Deck…')}` })
       const { data, error } = await supabase.functions.invoke('generate-deck', {
@@ -329,6 +333,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         latitude:        form.latitude,
         longitude:       form.longitude,
         equipment_list:  form.equipment_list.trim() || null,
+        furniture_cost:     form.furniture_cost.trim() ? Number(form.furniture_cost.replace(/[^\d.]/g, '')) || null : null,
+        furniture_included: form.furniture_included,
         video_url:       form.video_url.trim() || null,
         drive_folder_id: form.drive_folder_id.trim() || null,
         images,
@@ -506,6 +512,32 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 <textarea rows={4} value={form.equipment_list} onChange={e => up('equipment_list', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none"
                   placeholder="z.B. Klimaanlage, Pool, Smart Home, Tiefgarage…" />
+              </div>
+
+              {/* Einrichtungspaket: Default für die Möbel-AfA in jeder Rendite-Berechnung
+                  dieses Projekts (Wizard zieht sich den Wert hier raus). */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('crm.project.furniture', 'Einrichtungspaket (Möbel)')}
+                </label>
+                <label className="flex items-center gap-2 mb-2 text-sm text-gray-700 cursor-pointer select-none">
+                  <input type="checkbox" checked={form.furniture_included}
+                    onChange={e => setForm(prev => ({ ...prev, furniture_included: e.target.checked }))}
+                    className="w-4 h-4 rounded border-gray-300 text-orange-500 focus:ring-orange-300" />
+                  {t('crm.project.furnitureIncluded', 'Möbel im Kaufpreis enthalten (kostenfrei)')}
+                </label>
+                {!form.furniture_included && (
+                  <div className="relative max-w-[220px]">
+                    <input type="number" step="500" value={form.furniture_cost}
+                      onChange={e => up('furniture_cost', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                      placeholder="z.B. 19000" />
+                    <span className="absolute right-3 top-2.5 text-sm text-gray-400">€ netto</span>
+                  </div>
+                )}
+                <p className="mt-1 text-xs text-gray-400">
+                  {t('crm.project.furnitureHint', 'Wird automatisch als Möbel-AfA in alle Berechnungen dieses Projekts übernommen.')}
+                </p>
               </div>
             </>
           )}

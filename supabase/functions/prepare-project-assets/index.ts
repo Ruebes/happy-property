@@ -115,6 +115,7 @@ type DeckAssets = {
   floorplans?: Array<{ floor: number | null; label: string; url: string }>
   map?: string | null
   mapUrl?: string | null
+  mapMarker?: { x: number; y: number } | null   // %-Position des echten Standort-Pins (Vision)
   doc_urls?: Record<string, string>
   spec_text?: string
   facts?: string
@@ -279,6 +280,40 @@ async function categorizeImages(urls: string[]): Promise<Array<{ url: string; ca
   return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '' }))
 }
 
+// ── Standort-Pin auf der Karte lokalisieren (Vision) ─────────────────────────
+// Der orangene Deck-Marker soll auf dem ECHTEN Pin sitzen (nicht in Bildmitte).
+// Liefert %-Koordinaten (x von links, y von oben, an der Pin-Spitze) oder null.
+async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number } | null> {
+  if (!ANTHROPIC_API_KEY) return null
+  try {
+    const r = await fetch(thumb(mapUrl))   // width=1280, Seitenverhältnis bleibt → %-Koords gültig
+    if (!r.ok) return null
+    let ct = (r.headers.get('content-type') || 'image/png').split(';')[0].trim().toLowerCase()
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(ct)) ct = 'image/png'
+    const b64 = toBase64(new Uint8Array(await r.arrayBuffer()))
+    const tool = {
+      name: 'emit_marker', description: 'Position des Standort-Pins als Prozent.',
+      input_schema: { type: 'object', properties: {
+        found: { type: 'boolean' },
+        x: { type: 'number', description: '0-100, horizontal von links (Pin-Spitze)' },
+        y: { type: 'number', description: '0-100, vertikal von oben (Pin-Spitze)' },
+      }, required: ['found'] },
+    }
+    const prompt = 'Das ist ein Karten-Ausschnitt (z.B. Google-Maps-Screenshot) zu einem Immobilien-Projekt. Finde den EINEN Standort-Marker/Pin des Projekts — meist ein roter/farbiger Tropfen-Pin, oft mit Beschriftung (Projektname). Gib seine Position als Prozent zurück: x = Abstand vom linken Rand (0-100), y = Abstand vom oberen Rand (0-100), gemessen an der SPITZE des Pins (dem exakt markierten Punkt, NICHT der Mitte der Beschriftung). Gibt es keinen eindeutigen Pin, found=false.'
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 300, tools: [tool], tool_choice: { type: 'tool', name: 'emit_marker' },
+        messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: ct, data: b64 } }, { type: 'text', text: prompt }] }] }),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { content?: Array<{ type?: string; input?: { found?: boolean; x?: number; y?: number } }> }
+    const inp = (data.content ?? []).find(c => c.type === 'tool_use')?.input
+    if (!inp?.found || typeof inp.x !== 'number' || typeof inp.y !== 'number') return null
+    const clamp = (n: number) => Math.max(2, Math.min(98, Math.round(n)))
+    return { x: clamp(inp.x), y: clamp(inp.y) }
+  } catch { return null }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
@@ -418,7 +453,11 @@ Deno.serve(async (req) => {
           if (match) { await supabase.from('crm_project_units').update({ floorplan_url: match.url }).eq('id', u.id as string); unitsMatched++ }
         }
       }
-      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl })
+      // Echten Standort-Pin auf der Karte lokalisieren (Vision) → Deck-Marker sitzt
+      // genau dort statt in der Bildmitte. Nur neu rechnen, wenn Karte neu/ungeprüft.
+      let mapMarker = assets.mapMarker ?? null
+      if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
+      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker })
       // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur GEPRÜFTE Bilder
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
       if (vetted.length && curImgs.length === 0) {
@@ -439,7 +478,9 @@ Deno.serve(async (req) => {
       const seenFp = new Set(floorplans.map(f => f.url))
       for (const g of s.grundriss) if (!seenFp.has(g.url)) floorplans.push({ floor: null, label: g.label || `Grundriss ${floorplans.length + 1}`, url: g.url })
       const map = assets.map ?? s.karte ?? null
-      await saveAssets(supabase, project_id, { renders: s.renders.length ? s.renders : renders, gallery: s.gallery, floorplans, map })
+      let mapMarker = assets.mapMarker ?? null
+      if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
+      await saveAssets(supabase, project_id, { renders: s.renders.length ? s.renders : renders, gallery: s.gallery, floorplans, map, mapMarker })
       const byCat: Record<string, number> = {}
       for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
       return json({ ok: true, action, gallery: s.gallery.length, kept: s.renders.length, dropped: renders.length - s.renders.length, categories: byCat, debug: lastVisionError })
