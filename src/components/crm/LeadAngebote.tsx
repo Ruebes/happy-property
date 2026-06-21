@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
+import DeckChat from './DeckChat'
 
 // ── Gesendete Angebote ───────────────────────────────────────────────────────
 // Dauerhafte Historie pro Kunde: welche Decks, Berechnungen/Vergleiche und
@@ -14,6 +15,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const [calcs, setCalcs]   = useState<CalcRow[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]     = useState<string | null>(null)
+  const [chat, setChat]     = useState<{ token: string; label: string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -66,7 +68,11 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
             <span className="flex-1 truncate">📑 {o.subject ?? 'Angebot'}</span>
             <span className="flex gap-1 shrink-0">
               {(o.deck_tokens ?? []).map((tok, i) => (
-                <a key={tok} href={`${origin}/deck/${tok}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded bg-gray-900 text-white">Deck {i + 1}</a>
+                <span key={tok} className="inline-flex items-center rounded overflow-hidden">
+                  <a href={`${origin}/deck/${tok}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 bg-gray-900 text-white">Deck {i + 1}</a>
+                  <button onClick={() => setChat({ token: tok, label: `Deck ${i + 1}` })} title="Deck per Chat anpassen"
+                    className="text-[11px] px-1.5 py-0.5 bg-gray-700 text-white hover:bg-orange-500">✏️</button>
+                </span>
               ))}
             </span>
             <span className="text-[11px] text-green-600 shrink-0 w-20 text-right">
@@ -86,7 +92,8 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
           </div>
         ))}
       </div>
-      <p className="text-[11px] text-gray-400 mt-2">Diese Links bleiben dauerhaft gültig — du siehst hier jederzeit, was du dem Kunden geschickt hast.</p>
+      <p className="text-[11px] text-gray-400 mt-2">Diese Links bleiben dauerhaft gültig — du siehst hier jederzeit, was du dem Kunden geschickt hast. ✏️ = Deck per Chat anpassen.</p>
+      {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} />}
     </div>
   )
 }

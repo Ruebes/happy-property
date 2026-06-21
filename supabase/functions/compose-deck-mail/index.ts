@@ -61,7 +61,7 @@ function json(body: unknown, status = 200) {
 const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 interface MailItem {
-  label?: string; link?: string; calc_link?: string; project?: string; unit?: string
+  label?: string; link?: string; calc_link?: string; image?: string; project?: string; unit?: string
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null
   floor?: number | null; price?: string; facts?: string
   available_count?: number | null; total_count?: number | null
@@ -97,7 +97,9 @@ function buildHtml(
   const cards = items.map((it, i) => {
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
     const line = (m.deck_lines ?? [])[i]
-    return `<div style="border:1px solid #eeeeee;border-radius:14px;padding:20px;margin:0 0 14px;background:#fafafa">`
+    const photo = it.image ? `<a href="${esc(it.link || '#')}" style="display:block;text-decoration:none"><img src="${esc(it.image)}" alt="${esc(label)}" width="100%" style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin:0 0 14px;display:block" /></a>` : ''
+    return `<div style="border:1px solid #eeeeee;border-radius:14px;padding:18px;margin:0 0 14px;background:#fafafa">`
+      + photo
       + `<div style="font-weight:700;font-size:18px;color:#1a1a1a;margin:0 0 8px">${esc(label)}</div>`
       + (line ? `<div style="color:#444444;margin:0 0 16px;line-height:1.6">${esc(line)}</div>` : '<div style="margin:0 0 16px"></div>')
       + btn(it.link || '#', 'Dein Sales Deck ansehen →', '#ff795d', '#ffffff')

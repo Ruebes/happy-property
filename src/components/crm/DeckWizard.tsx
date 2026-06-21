@@ -169,6 +169,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       const mailItems = links.map(l => ({
         label: l.label, link: `${origin}/deck/${l.token}`,
         calc_link: calcLinkByToken[l.token],   // eigene Rendite-Berechnung je Wohnung
+        image: l.item.assets?.renders?.[0] ?? l.item.assets?.gallery?.[0]?.url,   // Projektbild für die Mail-Kachel
         project: l.item.projectName, unit: l.item.unit.unit_number,
         bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm,
         floor: l.item.unit.floor, price: eur(l.item.unit.price_gross ?? l.item.unit.price_net),
@@ -180,19 +181,37 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
       const compareLabel = t('crm.wizard.compareLabel', 'Dein Immobilienvergleich – alle Wohnungen direkt gegenübergestellt')
-      const fbItems = mailItems.map(m => `<li><a href="${m.link}">${m.label}</a>${m.calc_link ? ` — <a href="${m.calc_link}">📊 Rendite-Berechnung</a>` : ''}</li>`).join('')
-      const fbIntro = briefing.trim() ? `<p>${briefing.trim()}</p>` : ''
-      const fbCompare = compareLink ? `<p>📊 <a href="${compareLink}">${compareLabel}</a></p>` : ''
-      let body = `<p>Hallo ${lead.first_name},</p>${fbIntro}<p>wie besprochen findest du hier deine persönlichen Sales Decks:</p><ul>${fbItems}</ul>${fbCompare}<p>Melde dich jederzeit bei Fragen.</p><p>Bis bald,<br>Sven · Happy Property Cyprus</p>`
-      try {
-        const { data: mail } = await supabase.functions.invoke('compose-deck-mail', { body: {
-          recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
-          briefing, angle, items: mailItems,
-          calc_link: compareLink, calc_label: compareLabel,   // abschließender Gesamt-Vergleich
-        } })
-        const mm = mail as { subject?: string; html?: string } | null
-        if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html }
-      } catch { /* Fallback-Vorlage bleibt */ }
+      // Hochwertiger HTML-Fallback im CI (mit CTA + Buttons + Projektbild) — falls der
+      // KI-Aufruf ausnahmsweise nicht durchkommt, ist die Mail trotzdem ordentlich.
+      const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
+      const mbtn = (href: string, label: string, bg: string, color: string, border = 'none') =>
+        `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${color};text-decoration:none;font-weight:600;font-size:15px;padding:11px 22px;border-radius:10px;border:${border};margin:0 8px 8px 0">${esc(label)}</a>`
+      const fbCards = mailItems.map(m =>
+        `<div style="border:1px solid #eee;border-radius:14px;padding:18px;margin:0 0 14px;background:#fafafa">`
+        + (m.image ? `<img src="${esc(m.image)}" width="100%" style="width:100%;max-height:200px;object-fit:cover;border-radius:10px;margin:0 0 14px;display:block" />` : '')
+        + `<div style="font-weight:700;font-size:18px;color:#1a1a1a;margin:0 0 12px">${esc(m.label)}</div>`
+        + mbtn(m.link, 'Dein Sales Deck ansehen →', '#ff795d', '#ffffff')
+        + (m.calc_link ? mbtn(m.calc_link, '📊 Rendite-Berechnung →', '#2f6b4f', '#ffffff') : '')
+        + `</div>`).join('')
+      const fbCompare = compareLink ? `<div style="margin:0 0 18px;padding:16px 18px;border-radius:12px;background:#f0f7f4;border:1px solid #d4e9df"><div style="font-weight:700;margin:0 0 10px">📊 ${esc(compareLabel)}</div>${mbtn(compareLink, 'Immobilienvergleich ansehen →', '#2f6b4f', '#ffffff')}</div>` : ''
+      const fbCta = `<div style="margin:24px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a"><div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 12px">Wie geht es weiter?</div><div style="color:#d4d4d4;line-height:1.6;margin:0 0 14px">Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.</div>${mbtn(CALENDLY, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')}${mbtn('mailto:sven@happy-property.com', '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')}</div>`
+      const fbIntro = briefing.trim() ? `<p style="margin:0 0 16px">${esc(briefing.trim())}</p>` : ''
+      let body = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto"><p style="margin:0 0 16px">Hallo ${esc(lead.first_name)},</p>${fbIntro}<p style="margin:0 0 16px">wie besprochen findest du hier deine persönlichen Vorschläge:</p>${fbCards}${fbCompare}${fbCta}<p style="margin:24px 0 0">Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+      // KI-Mail mit Retry (lange Hintergrund-Läufe lassen den ersten Invoke gelegentlich
+      // ins Leere laufen → einmal nachfassen, bevor wir auf den Fallback zurückfallen).
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const { data: mail, error: mErr } = await supabase.functions.invoke('compose-deck-mail', { body: {
+            recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
+            briefing, angle, items: mailItems,
+            calc_link: compareLink, calc_label: compareLabel,   // abschließender Gesamt-Vergleich
+          } })
+          if (mErr) throw mErr
+          const mm = mail as { subject?: string; html?: string } | null
+          if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html; break }
+        } catch { if (attempt === 0) await sleep(2500) }
+      }
       const { error: oErr } = await supabase.from('deck_outbox').insert({
         lead_id: lead.id, recipient_email: lead.email, subject, body, deck_tokens: links.map(l => l.token), status: 'draft',
       })
