@@ -41,9 +41,12 @@ Außerdem:
 - intro: 1-2 Sätze, dass du die Decks bewusst unterschiedlich positioniert hast, damit er sie nebeneinanderlegen kann.
 - closing: 1-2 Sätze, die das KUNDENPROFIL aus dem Briefing aufgreifen (z.B. Eigennutzung/Familienzeit, Steuer, Kapital), plus „Schau dir die Decks an, melde dich mit Fragen."
 
-HARTE REGELN:
-- Nutze NUR Fakten aus dem Input. Erfinde KEINE Zahlen/Preise/Renditen/Entfernungen. Fehlt etwas, lass es weg.
+HARTE REGELN (Wahrheit vor Verkauf — das ist NICHT verhandelbar):
+- Nutze NUR Fakten, die WÖRTLICH in den Objekt-Fakten stehen. Erfinde KEINE Zahlen/Preise/Renditen/Entfernungen/Garantien.
+- Werte Begriffe NICHT auf und KOMBINIERE keine zwei Fakten zu einer stärkeren Aussage. Beispiele für VERBOTENES: aus '5 Jahre Garantie' wird NICHT 'Mietgarantie' oder 'Rendite-Garantie'; aus 'Hotelkonzept' wird NICHT 'garantierte Miete' oder 'gesicherte Auslastung'; aus 'nahe Marina' wird KEINE konkrete Wertsteigerungs-Prozentzahl. Steht 'Garantie' ohne Zusatz da, schreib genau 'Garantie' — NIE was es garantiert dazudichten.
+- Ein Hotelkonzept ist eine Vermietungs-OPTION, KEINE Garantie auf Miete/Auslastung/Rendite. Formuliere es nie als Zusicherung.
 - Zahlen aus dem Briefing (z.B. Eigenkapital des Kunden) gehören NICHT als Objekt-Fakt in den Text.
+- Im Zweifel WEGLASSEN. Eine schwächere, wahre Aussage ist besser als eine starke erfundene.
 - In ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze 'einfache' oder keine. Außer den <b>-Tags KEINE weiteren HTML-Tags.
 - deck_lines MUSS exakt so viele Einträge haben wie Objekte im Input (gleiche Reihenfolge).`
 
@@ -171,6 +174,31 @@ function fallback(firstName: string, items: MailItem[]): { subject: string; html
   return { subject: m.subject!, html: buildHtml(m, items) }
 }
 
+// FAKTENCHECK: zweite KI-Stufe, die jeden Objekt-Text gegen die echten Fakten prüft und
+// unbelegte/aufgewertete Behauptungen entfernt (Garantien, Renditen, kombinierte Aussagen).
+// Belt-and-suspenders für die Automatisierung — bei Fehler bleibt der Originaltext.
+async function verifyClaims(lines: Array<{ kicker?: string; text?: string }>, items: MailItem[]): Promise<typeof lines> {
+  if (!lines.length) return lines
+  try {
+    const blocks = items.map((it, i) => `OBJEKT ${i + 1} (${it.label || it.project || ''}):\nTEXT: ${lines[i]?.text ?? ''}\nFAKTEN:\n${(it.facts || '(keine Fakten — dann darf der Text KEINE konkreten Behauptungen enthalten)').slice(0, 2200)}`).join('\n\n---\n\n')
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 2000,
+        system: `Du bist Compliance-Prüfer für Immobilien-Marketing. Du bekommst je Objekt einen Verkaufstext und die ECHTEN Fakten. Streiche oder entschärfe JEDE Behauptung im Text, die NICHT eindeutig aus den Fakten hervorgeht — besonders: Garantien (Miet-/Rendite-/Auslastungsgarantie), konkrete Zahlen/Prozente/Renditen, Zusicherungen, sowie aus zwei Fakten zusammengebaute stärkere Aussagen. 'Hotelkonzept' ist eine Vermietungs-Option, KEINE garantierte Miete. '5 Jahre Garantie' ohne Zusatz bleibt 'Garantie' (NIE zu 'Mietgarantie' machen). Gib pro Objekt den bereinigten Text zurück — gleiche Anzahl und Reihenfolge, Stil und Länge möglichst erhalten, nur Unbelegtes raus oder abschwächen. <b>...</b> darf bleiben, sonst keine HTML-Tags, keine doppelten Anführungszeichen.`,
+        tools: [{ name: 'emit_checked', description: 'Bereinigte Texte je Objekt (gleiche Reihenfolge).', input_schema: { type: 'object', properties: { texts: { type: 'array', items: { type: 'string' } } }, required: ['texts'] } }],
+        tool_choice: { type: 'tool', name: 'emit_checked' },
+        messages: [{ role: 'user', content: blocks }],
+      }),
+    })
+    if (!res.ok) return lines
+    const data = await res.json() as { content?: Array<{ type?: string; input?: { texts?: unknown } }> }
+    const texts = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.texts
+    if (!Array.isArray(texts)) return lines
+    return lines.map((l, i) => ({ ...l, text: (typeof texts[i] === 'string' && (texts[i] as string).trim()) ? texts[i] as string : l.text }))
+  } catch { return lines }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
@@ -222,6 +250,8 @@ Deno.serve(async (req) => {
     const data = await res.json() as { content?: Array<{ type?: string; input?: Mail }> }
     const m = (data.content ?? []).find(c => c.type === 'tool_use')?.input
     if (!m || !m.subject) return json(fallback(firstName, items))
+    // Faktencheck: unbelegte Behauptungen (z.B. erfundene 'Mietgarantie') rausfiltern.
+    if (m.deck_lines) m.deck_lines = await verifyClaims(m.deck_lines, items)
     return json({ subject: m.subject, html: buildHtml(m, items) })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
