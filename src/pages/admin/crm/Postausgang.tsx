@@ -38,6 +38,7 @@ export default function Postausgang() {
     setLoading(true)
     const { data } = await supabase.from('deck_outbox')
       .select('*, lead:leads(first_name,last_name,phone,whatsapp)')
+      .neq('status', 'cancelled')   // bereits verworfene Einträge nicht mehr anzeigen
       .order('created_at', { ascending: false }).limit(100)
     setRows((data ?? []) as OutboxRow[])
     setLoading(false)
@@ -121,9 +122,11 @@ export default function Postausgang() {
   }
 
   const discard = async (row: OutboxRow) => {
-    if (!window.confirm(t('crm.outbox.confirmDiscard', 'Entwurf verwerfen?'))) return
-    await supabase.from('deck_outbox').update({ status: 'cancelled' }).eq('id', row.id)
-    void load()
+    if (!window.confirm(t('crm.outbox.confirmDiscard', 'Entwurf verwerfen? Der Eintrag wird entfernt.'))) return
+    // Verwerfen = Eintrag löschen (nicht nur als „verworfen" markieren). Die zugrunde-
+    // liegenden Decks bleiben — die löscht Sven bei Bedarf beim Kunden („Gesendete Angebote").
+    await supabase.from('deck_outbox').delete().eq('id', row.id)
+    setRows(prev => prev.filter(r => r.id !== row.id))
   }
 
   const badge = (s: string) => s === 'sent' ? 'bg-green-100 text-green-700' : s === 'cancelled' ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-700'
