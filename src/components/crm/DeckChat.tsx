@@ -6,26 +6,46 @@ import { supabase } from '../../lib/supabase'
 // IN-PLACE (gleicher Link). Für die individuellen Kunden-Decks aus dem Wizard,
 // damit man sie nach dem Erstellen noch anpassen kann (wie beim Projekt-Deck).
 // „Für alle Decks merken" speichert die Anweisung als gelernte Vorgabe.
+//
+// Standard: Hintergrund-Lauf — „Anwenden" feuert die KI ab und SCHLIESST sofort,
+// damit Sven das nächste Deck prüfen/bearbeiten kann. Der Status (läuft / fertig /
+// Farbe) erscheint in der Angebots-Liste (onStarted → Polling dort). Undo bleibt
+// synchron (schnell, kein Claude-Call).
 
-export default function DeckChat({ token, label, onClose }: { token: string; label?: string; onClose: () => void }) {
+export default function DeckChat({ token, label, onClose, onStarted }: { token: string; label?: string; onClose: () => void; onStarted?: (token: string) => void }) {
   const [input, setInput] = useState('')
   const [busy, setBusy]   = useState(false)
   const [learn, setLearn] = useState(false)
   const [msg, setMsg]     = useState<{ ok: boolean; text: string } | null>(null)
   const origin = window.location.origin
 
-  const run = async (undo = false) => {
-    if (busy || (!undo && !input.trim())) return
+  // Anwenden → Hintergrund. Feuert ab, meldet dem Eltern-Element den Start und schließt.
+  const apply = async () => {
+    if (busy || !input.trim()) return
     setBusy(true); setMsg(null)
     try {
-      const { data, error } = await supabase.functions.invoke('refine-deck', {
-        body: undo ? { token, action: 'undo' } : { token, instruction: input.trim(), learn },
+      const { error } = await supabase.functions.invoke('refine-deck', {
+        body: { token, instruction: input.trim(), learn, background: true },
       })
       if (error) throw new Error(error.message)
-      const d = data as { error?: string; undone?: boolean; blocks?: number } | null
+      onStarted?.(token)
+      onClose()
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
+      setBusy(false)
+    }
+  }
+
+  const undo = async () => {
+    if (busy) return
+    setBusy(true); setMsg(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, action: 'undo' } })
+      if (error) throw new Error(error.message)
+      const d = data as { error?: string } | null
       if (d?.error) throw new Error(d.error)
-      setMsg({ ok: true, text: undo ? 'Rückgängig gemacht.' : `Angepasst (${d?.blocks ?? 0} Blöcke) — Deck-Link neu laden zum Ansehen.` })
-      if (!undo) setInput('')
+      setMsg({ ok: true, text: 'Rückgängig gemacht — Deck-Link neu laden zum Ansehen.' })
+      onStarted?.(token)
     } catch (e) {
       setMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
     } finally { setBusy(false) }
@@ -47,15 +67,16 @@ export default function DeckChat({ token, label, onClose }: { token: string; lab
             <input type="checkbox" checked={learn} onChange={e => setLearn(e.target.checked)} className="accent-orange-500 w-4 h-4" />
             Für alle künftigen Decks merken
           </label>
+          <p className="text-[11px] text-gray-400 leading-relaxed">Läuft im Hintergrund — du kannst direkt das nächste Deck prüfen. Sobald fertig, wechselt die Farbe des Deck-Buttons in der Angebots-Liste.</p>
           {msg && <p className={`text-sm rounded-lg px-3 py-2 ${msg.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>{msg.text}</p>}
           <div className="flex items-center justify-between gap-2 pt-1">
             <div className="flex items-center gap-3">
               <a href={`${origin}/deck/${token}`} target="_blank" rel="noreferrer" className="text-xs text-gray-500 underline">Deck öffnen</a>
-              <button onClick={() => void run(true)} disabled={busy} className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-40">↶ Rückgängig</button>
+              <button onClick={() => void undo()} disabled={busy} className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-40">↶ Rückgängig</button>
             </div>
-            <button onClick={() => void run(false)} disabled={busy || !input.trim()}
+            <button onClick={() => void apply()} disabled={busy || !input.trim()}
               className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-              {busy ? 'Wird angewendet…' : 'Anwenden'}
+              {busy ? 'Wird gestartet…' : 'Anwenden'}
             </button>
           </div>
         </div>

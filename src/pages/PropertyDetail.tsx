@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../components/DashboardLayout'
+import ImageLightbox from '../components/ImageLightbox'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -617,6 +618,8 @@ export default function PropertyDetail() {
   const [property, setProperty]   = useState<PropertyFull | null>(null)
   const [loading, setLoading]     = useState(true)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
+  // Bild-Lightbox: nach dem Öffnen durch alle Bilder der jeweiligen Strecke blättern.
+  const [lightbox, setLightbox]   = useState<{ images: string[]; index: number } | null>(null)
 
   // All docs (mietvertrag + rechnung filtered in each tab)
   const [docs, setDocs]               = useState<DocRecord[]>([])
@@ -2697,6 +2700,11 @@ export default function PropertyDetail() {
   // ── Tab 5: Bilder ─────────────────────────────────────
   function renderImages() {
     const ownImages = property!.images ?? []
+    // Baustellen-FOTOS (ohne Videos) als blätterbare Lightbox-Strecke.
+    const isVid = (name: string) => /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(name)
+    const constructionImgs = constructionPhotos
+      .filter(p => !isVid(p.file_name))
+      .map(p => `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${p.file_path}`)
 
     // Helper: image grid (read-only)
     function ImageGrid({ images, emptyText }: { images: string[]; emptyText: string }) {
@@ -2708,7 +2716,7 @@ export default function PropertyDetail() {
           {images.map((url, i) => (
             <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
               <img src={url} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
-                   onClick={() => window.open(url, '_blank')} />
+                   onClick={() => setLightbox({ images, index: i })} />
             </div>
           ))}
         </div>
@@ -2743,7 +2751,7 @@ export default function PropertyDetail() {
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {constructionPhotos.map(photo => {
-                const isVideo = /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(photo.file_name)
+                const isVideo = isVid(photo.file_name)
                 const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
                 return (
                   <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-100 border border-gray-100">
@@ -2759,7 +2767,7 @@ export default function PropertyDetail() {
                         src={mediaUrl}
                         alt={photo.file_name}
                         className="w-full aspect-square object-cover cursor-pointer transition-transform hover:scale-105"
-                        onClick={() => window.open(mediaUrl, '_blank')}
+                        onClick={() => setLightbox({ images: constructionImgs, index: Math.max(0, constructionImgs.indexOf(mediaUrl)) })}
                       />
                     )}
                     {(photo.photo_date || photo.description) && (
@@ -3368,6 +3376,10 @@ export default function PropertyDetail() {
 
   return (
     <DashboardLayout basePath={basePath}>
+
+      {lightbox && (
+        <ImageLightbox images={lightbox.images} startIndex={lightbox.index} onClose={() => setLightbox(null)} />
+      )}
 
       {/* Back + Edit */}
       <div className="flex items-center justify-between mb-5">

@@ -238,16 +238,32 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     if (!undo && !refineInput.trim()) return
     setRefineBusy(true); setRefineMsg(null)
     try {
-      const { data, error } = await supabase.functions.invoke('refine-deck', {
-        body: undo ? { token, action: 'undo' } : { token, instruction: refineInput.trim(), learn: refineLearn },
-      })
-      if (error) throw new Error(error.message)
-      const d = data as { ok?: boolean; error?: string; undone?: boolean; learned?: boolean }
-      if (d?.error) throw new Error(d.error)
-      setRefineMsg({ ok: true, text: undo
-        ? t('crm.project.deck.refineUndone', 'Letzte Änderung rückgängig gemacht.')
-        : t('crm.project.deck.refineDone', '✅ Deck angepasst — Deck neu öffnen zum Prüfen.') + (d.learned ? ' (gemerkt für alle Decks)' : '') })
-      if (!undo) setRefineInput('')
+      if (undo) {
+        const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, action: 'undo' } })
+        if (error) throw new Error(error.message)
+        const d = data as { error?: string }
+        if (d?.error) throw new Error(d.error)
+        setRefineMsg({ ok: true, text: t('crm.project.deck.refineUndone', 'Letzte Änderung rückgängig gemacht.') })
+      } else {
+        // Hintergrund-Lauf (sonst Edge-Timeout „Failed to send a request") → auf Fertig pollen.
+        const learnedNow = refineLearn
+        const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, instruction: refineInput.trim(), learn: refineLearn, background: true } })
+        if (error) throw new Error(error.message)
+        const d = data as { error?: string }
+        if (d?.error) throw new Error(d.error)
+        setRefineInput('')
+        setRefineMsg({ ok: true, text: '⏳ ' + t('crm.project.deck.refineRunning', 'Wird im Hintergrund angepasst…') })
+        for (let i = 0; i < 45; i++) {
+          await new Promise(r => setTimeout(r, 4000))
+          const { data: row } = await supabase.from('sales_decks').select('refining, refine_error').eq('token', token).maybeSingle()
+          const r2 = row as { refining?: boolean; refine_error?: string | null } | null
+          if (!r2 || r2.refining === false) {
+            if (r2?.refine_error) throw new Error(r2.refine_error)
+            setRefineMsg({ ok: true, text: t('crm.project.deck.refineDone', '✅ Deck angepasst — Deck neu öffnen zum Prüfen.') + (learnedNow ? ' (gemerkt für alle Decks)' : '') })
+            break
+          }
+        }
+      }
     } catch (e) {
       setRefineMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
     } finally {
