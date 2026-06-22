@@ -37,6 +37,18 @@ async function logEvent(type: string, token: string | null) {
     }
   } catch { /* Auflösung best-effort */ }
 
+  // Mail-Öffnung NUR loggen, wenn die Mail mit diesem Deck-Token auch WIRKLICH an
+  // den Kunden gesendet wurde (deck_outbox.email_sent_at). Sonst stammt die Öffnung
+  // aus einer Vorschau/internen Mail (z.B. Test an die eigene Adresse) → kein echtes
+  // Kundenverhalten, nicht zählen.
+  if (type === 'email_open') {
+    try {
+      const { data: sent } = await supabase.from('deck_outbox')
+        .select('id').contains('deck_tokens', [token]).not('email_sent_at', 'is', null).limit(1)
+      if (!sent || !sent.length) return
+    } catch { return }
+  }
+
   // Dedupe: gleiches Ereignis innerhalb von 2 h nicht doppelt loggen.
   try {
     const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
