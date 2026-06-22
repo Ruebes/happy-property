@@ -124,9 +124,12 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   // Sätze in Absätze trennen — toleriert echte Zeilenumbrüche UND literales '\n'
   // (das Modell liefert manchmal die zwei Zeichen Backslash-n statt eines Umbruchs).
   const splitLines = (s: string) => s.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean)
-  const intros = (m.intro ? splitLines(m.intro) : []).map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p>`).join('')
-  const closing = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.'])
-    .map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${esc(p)}</p>`).join('')
+  // Outlook-robust: Abstände über Tabellen-Zellen-Padding statt <p>-Margins
+  // (Outlook mangelt <p>/<div>-Margins → riesige/zufällige Lücken). Jeder Satz = eine Zeile.
+  const introRows = (m.intro ? splitLines(m.intro) : []).map(p =>
+    `<tr><td style="padding:14px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p></td></tr>`).join('')
+  const closingRows = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.']).map((p, idx) =>
+    `<tr><td style="padding:${idx === 0 ? 28 : 12}px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${esc(p)}</p></td></tr>`).join('')
   // Gesamt-Vergleich (alle Objekte gegenübergestellt) — eigener Block unter den Karten.
   const compareBlock = compare?.link ? `
   <tr><td style="padding:32px 40px 0 40px;">
@@ -139,7 +142,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   </td></tr>` : ''
 
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${C.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}}</style></head>
+<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${C.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}}</style></head>
 <body style="margin:0;padding:0;background-color:${C.cream};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${C.cream};"><tr><td align="center" style="padding:32px 16px;">
 <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:${C.cream};">
@@ -151,7 +154,8 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   </td></tr>
   <tr><td style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${C.coral};"></div></td></tr>
   <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${C.navy};">${esc(m.headline || 'Deine Paphos-Auswahl.')}</h1></td></tr>
-  <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}</p>${intros}</td></tr>
+  <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}</p></td></tr>
+  ${introRows}
   ${props}
   ${compareBlock}
   <tr><td style="padding:32px 40px 0 40px;">
@@ -160,7 +164,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
       <p style="margin:8px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Sobald du eine Vorentscheidung hast, rechne ich dir <b>Cashflow, IRR und Finanzierungsbedarf</b> für dein Wunsch-Objekt konkret durch. Du bekommst saubere Zahlen — keine Marketing-Folien.</p>
     </td></tr></table>
   </td></tr>
-  <tr><td style="padding:28px 40px 0 40px;">${closing}</td></tr>
+  ${closingRows}
   <tr><td style="padding:22px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.coral}" style="border-radius:2px;">
       <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Neuen Termin buchen</a>
@@ -177,8 +181,8 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   <tr><td style="padding:40px 40px 24px 40px;">
     <div style="height:1px;background-color:${C.line};margin-bottom:18px;"></div>
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td align="left" style="font-family:${SANS};font-size:10px;line-height:1.5;color:${C.mute};letter-spacing:0.06em;">Sveru Ltd. · Pallados 1 · 8046 Paphos · Zypern</td>
-      <td align="right" style="font-family:${SANS};font-size:10px;color:${C.mute};">
+      <td align="left" style="font-family:${SANS};font-size:10px;line-height:1.5;color:${C.mute};white-space:nowrap;">Sveru Ltd. · Pallados 1 · 8046 Paphos · Zypern</td>
+      <td align="right" style="font-family:${SANS};font-size:10px;color:${C.mute};white-space:nowrap;">
         <a href="https://www.instagram.com/happy_property_cyprus" target="_blank" style="color:${C.mute};text-decoration:none;">Instagram</a> ·
         <a href="https://www.youtube.com/@HappyPropertyCyprus" target="_blank" style="color:${C.mute};text-decoration:none;">YouTube</a>
       </td>
