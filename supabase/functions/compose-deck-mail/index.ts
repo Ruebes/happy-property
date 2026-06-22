@@ -22,6 +22,14 @@ const PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public
 // sonst quetscht width=height=56 das Bild. Supabase-Transform resize=cover (2x für Retina).
 const PHOTO_SQ = PHOTO.replace('/object/public/', '/render/image/public/') + '?width=112&height=112&resize=cover&quality=80'
 const C = { cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#999' }
+// Social-Footer im Deck-Stil (dunkler Block, Gold-Akzent) — = Deck.tsx DARK/GOLD.
+const DARK = '#1b1b22', GOLD = '#C2A15E'
+const SOCIALS = [
+  { icon: '▶',  platform: 'YouTube',   handle: 'HappyPropertyCyprus',  url: 'https://www.youtube.com/@HappyPropertyCyprus' },
+  { icon: '◎',  platform: 'Instagram', handle: 'happy_property_cyprus', url: 'https://www.instagram.com/happy_property_cyprus' },
+  { icon: 'f',  platform: 'Facebook',  handle: 'Immobilien in Zypern',  url: '' },
+  { icon: 'in', platform: 'LinkedIn',  handle: 'Sven Rüprich',          url: '' },
+]
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -138,6 +146,29 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   // mit <br><br> getrennt — das rendert in JEDEM Client identisch.
   const introHtml = (m.intro ? splitLines(m.intro) : []).map(esc).join('<br><br>')
   const closingHtml = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.']).map(esc).join('<br><br>')
+
+  // Social-Kachel im Deck-Stil: Gold-Kreis (Icon) + Plattform (gold) + Handle (weiß), dunkle Karte.
+  const socialCard = (s: typeof SOCIALS[number]) => {
+    const inner = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#2a2a33;border-radius:10px;"><tr>
+      <td width="52" valign="middle" style="padding:11px 0 11px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td width="34" height="34" align="center" valign="middle" style="width:34px;height:34px;background-color:${GOLD};border-radius:17px;font-family:${SANS};font-size:14px;font-weight:700;color:${DARK};">${s.icon}</td></tr></table></td>
+      <td valign="middle" style="padding:11px 12px 11px 10px;"><div style="font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${GOLD};">${s.platform}</div><div style="font-family:${SANS};font-size:13px;color:#ffffff;">${esc(s.handle)}</div></td>
+    </tr></table>`
+    return s.url ? `<a href="${esc(s.url)}" target="_blank" style="text-decoration:none;">${inner}</a>` : inner
+  }
+  const socialRow = (a: typeof SOCIALS[number], b: typeof SOCIALS[number]) =>
+    `<tr><td width="50%" valign="top" style="padding:0 5px 10px 0;">${socialCard(a)}</td><td width="50%" valign="top" style="padding:0 0 10px 5px;">${socialCard(b)}</td></tr>`
+  const socialBlock = `
+  <tr><td style="padding:36px 0 0 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${DARK};"><tr><td style="padding:32px 36px;">
+      <div style="font-family:${SERIF};font-size:23px;font-weight:700;line-height:1.2;color:#ffffff;">Folge mir — ich nehme dich mit nach Zypern.</div>
+      <div style="font-family:${SANS};font-size:13px;color:#9a9aa3;margin-top:6px;">Projekte, Baufortschritt, Markt-Insights — schau rein und folge:</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
+        ${socialRow(SOCIALS[0], SOCIALS[1])}
+        ${socialRow(SOCIALS[2], SOCIALS[3])}
+      </table>
+      <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
+    </td></tr></table>
+  </td></tr>`
   // Gesamt-Vergleich (alle Objekte gegenübergestellt) — eigener Block unter den Karten.
   const compareBlock = compare?.link ? `
   <tr><td style="padding:32px 40px 0 40px;">
@@ -185,13 +216,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
     </tr></table>
   </td></tr>
   <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${C.ink};"><a href="mailto:sven@happy-property.com" style="color:${C.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
-  <tr><td style="padding:40px 40px 24px 40px;">
-    <div style="height:1px;background-color:${C.line};margin-bottom:16px;"></div>
-    <div style="font-family:${SANS};font-size:11px;line-height:1.7;color:${C.mute};text-align:center;">
-      <a href="https://www.instagram.com/happy_property_cyprus" target="_blank" style="color:${C.mute};text-decoration:none;">Instagram</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/@HappyPropertyCyprus" target="_blank" style="color:${C.mute};text-decoration:none;">YouTube</a><br>
-      Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern
-    </div>
-  </td></tr>
+  ${socialBlock}
 </table></td></tr></table></body></html>`
 }
 
