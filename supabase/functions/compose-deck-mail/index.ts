@@ -97,8 +97,14 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
     const dl = lines[i] || {}
     const btnLabel = `${it.project || 'Objekt'} Deck ansehen →`
+    // Render-Bilder sind riesig (bis 6 MB / 3240px / hochkant) → würden in Apple Mail
+    // 1000-2350px hoch und blähen die Mail auf. Server-seitig auf feste 560×300
+    // (cover-crop) zuschneiden + EXPLIZITE width/height → kompakt + Client kennt die Maße.
+    const imgSrc = it.image && it.image.includes('/storage/v1/object/public/')
+      ? it.image.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=560&height=300&resize=cover&quality=72'
+      : it.image
     const img = it.image
-      ? `<tr><td><a href="${esc(it.link || '#')}" target="_blank"><img src="${esc(it.image)}" width="600" alt="${esc(label)}" style="width:100%;max-width:600px;height:auto;display:block;"></a></td></tr>`
+      ? `<tr><td style="padding:0 40px;"><a href="${esc(it.link || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
       : ''
     return `<tr><td style="padding:36px 0 0 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
