@@ -37,9 +37,14 @@ PRO OBJEKT lieferst du:
 
 Außerdem:
 - headline: kurze Überschrift, z.B. „Deine drei Paphos-Optionen." (Zahl an die Objektanzahl anpassen).
-- greeting: „Liebe/Lieber <Vorname>,".
-- intro: 1-2 Sätze, dass du die Decks bewusst unterschiedlich positioniert hast, damit er sie nebeneinanderlegen kann.
-- closing: 1-2 Sätze, die das KUNDENPROFIL aus dem Briefing aufgreifen (z.B. Eigennutzung/Familienzeit, Steuer, Kapital), plus „Schau dir die Decks an, melde dich mit Fragen."
+- greeting: „Hallo <Vorname>," (locker, per DU; NICHT „Liebe/Lieber").
+- intro: das persönliche ANSCHREIBEN in 3-4 kurzen Sätzen, GENAU in dieser Reihenfolge, jeder Satz als eigener Absatz (echter Zeilenumbruch zwischen den Sätzen):
+  1) Dank fürs Gespräch — z.B. „vielen Dank für das sympathische Gespräch."
+  2) „Du möchtest …" — fasse in EINEM Satz die WÜNSCHE/SITUATION DES KUNDEN aus dem Briefing zusammen (z.B. verfügbares Eigenkapital, was er sucht, wie er es nutzen will, Strategie). NUR das Kundenprofil — NIEMALS objekt-spezifische Verkaufsnotizen aus dem Briefing und KEINE Gewinn-/Rendite-/Wertsteigerungs-Versprechen (z.B. „20-30% Gewinn") in den Intro übernehmen.
+  3) „Ich habe dir ein paar Objekte herausgesucht und hoffe, dass das ein oder andere deinen Vorstellungen entspricht."
+  4) „Gib mir bitte zeitnah Feedback, da der Markt hier sehr dynamisch ist und ich dir eine Immobilie nicht reservieren kann."
+  Schreibe diese Sätze natürlich aus (nicht als Liste), aber halte Reihenfolge und Inhalt ein.
+- closing: GENAU ein Satz, eine freundliche Feedback-Einladung — „Ich freue mich von dir zu hören." (NICHT das Kundenprofil wiederholen, KEINE Decks-Aufforderung mehr).
 
 HARTE REGELN (Wahrheit vor Verkauf — das ist NICHT verhandelbar):
 - Nutze NUR Fakten, die WÖRTLICH in den Objekt-Fakten stehen. Erfinde KEINE Zahlen/Preise/Renditen/Entfernungen/Garantien.
@@ -82,7 +87,7 @@ const SANS = `'Montserrat', Arial, Helvetica, sans-serif`
 const SERIF = `'Playfair Display', Georgia, 'Times New Roman', serif`
 
 // Branded, E-Mail-sicheres HTML im CI bauen (Tabellen-Layout, wie Svens Vorlage).
-function buildHtml(m: Mail, items: MailItem[]): string {
+function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
   const lines = m.deck_lines ?? []
   const props = items.map((it, i) => {
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
@@ -109,8 +114,11 @@ function buildHtml(m: Mail, items: MailItem[]): string {
     <tr><td style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${C.line};"></div></td></tr>`
   }).join('')
 
-  const intros = (m.intro ? [m.intro] : []).map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p>`).join('')
-  const closing = (m.closing ? m.closing.split('\n').filter(Boolean) : ['Schau dir die Decks an, melde dich mit Fragen.'])
+  // Sätze in Absätze trennen — toleriert echte Zeilenumbrüche UND literales '\n'
+  // (das Modell liefert manchmal die zwei Zeichen Backslash-n statt eines Umbruchs).
+  const splitLines = (s: string) => s.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean)
+  const intros = (m.intro ? splitLines(m.intro) : []).map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p>`).join('')
+  const closing = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.'])
     .map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${esc(p)}</p>`).join('')
 
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -126,7 +134,7 @@ function buildHtml(m: Mail, items: MailItem[]): string {
   </td></tr>
   <tr><td style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${C.coral};"></div></td></tr>
   <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${C.navy};">${esc(m.headline || 'Deine Paphos-Auswahl.')}</h1></td></tr>
-  <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || 'Hallo,')}</p>${intros}</td></tr>
+  <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}</p>${intros}</td></tr>
   ${props}
   <tr><td style="padding:32px 40px 0 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border-left:3px solid ${C.coral};"><tr><td style="padding:22px 26px;">
@@ -140,7 +148,8 @@ function buildHtml(m: Mail, items: MailItem[]): string {
       <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;">📅 Neuen Termin buchen</a>
     </td></tr></table>
   </td></tr>
-  <tr><td style="padding:36px 40px 0 40px;">
+  <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Liebe Grüße</p></td></tr>
+  <tr><td style="padding:14px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
       <td valign="middle" width="64"><img src="${PHOTO}" width="56" height="56" alt="Sven" style="width:56px;height:56px;border-radius:50%;display:block;"></td>
       <td valign="middle" style="padding-left:14px;"><div style="font-family:${SERIF};font-size:18px;color:${C.navy};">Sven</div><div style="font-family:${SANS};font-size:12px;color:#888;margin-top:2px;">Happy Property Cyprus</div></td>
@@ -167,14 +176,18 @@ function fallback(firstName: string, items: MailItem[]): { subject: string; html
     subject: items.length > 1 ? `Deine ${items.length} Paphos-Optionen · Sales Decks` : `Dein Paphos-Vorschlag · ${items[0]?.label ?? ''}`.trim(),
     headline: items.length > 1 ? `Deine ${items.length} Paphos-Optionen.` : 'Dein Paphos-Vorschlag.',
     greeting: `Hallo ${firstName || ''},`.trim(),
-    intro: 'wie besprochen findest du hier deine persönlich ausgewählten Sales Decks — schau sie dir in Ruhe an.',
+    intro: [
+      'vielen Dank für das sympathische Gespräch.',
+      'Ich habe dir ein paar Objekte herausgesucht und hoffe, dass das ein oder andere deinen Vorstellungen entspricht.',
+      'Gib mir bitte zeitnah Feedback, da der Markt hier sehr dynamisch ist und ich dir eine Immobilie nicht reservieren kann.',
+    ].join('\n'),
     deck_lines: items.map((it, i) => ({
       kicker: DEF[Math.min(i, DEF.length - 1)],
       text: [it.bedrooms != null ? `${it.bedrooms} Schlafzimmer` : '', it.size_sqm != null ? `${it.size_sqm} m²` : '', it.price ? `Preis ${it.price}` : ''].filter(Boolean).join(' · ') + '.',
     })),
-    closing: 'Schau dir die Decks an, melde dich mit Fragen — dann rechnen wir konkret durch.',
+    closing: 'Ich freue mich von dir zu hören.',
   }
-  return { subject: m.subject!, html: buildHtml(m, items) }
+  return { subject: m.subject!, html: buildHtml(m, items, firstName) }
 }
 
 // FAKTENCHECK: zweite KI-Stufe, die jeden Objekt-Text gegen die echten Fakten prüft und
@@ -255,7 +268,7 @@ Deno.serve(async (req) => {
     if (!m || !m.subject) return json(fallback(firstName, items))
     // Faktencheck: unbelegte Behauptungen (z.B. erfundene 'Mietgarantie') rausfiltern.
     if (m.deck_lines) m.deck_lines = await verifyClaims(m.deck_lines, items)
-    return json({ subject: m.subject, html: buildHtml(m, items) })
+    return json({ subject: m.subject, html: buildHtml(m, items, firstName) })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

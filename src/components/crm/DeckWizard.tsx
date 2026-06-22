@@ -198,8 +198,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         + `</div>`).join('')
       const fbCompare = compareLink ? `<div style="margin:0 0 18px;padding:16px 18px;border-radius:12px;background:#f0f7f4;border:1px solid #d4e9df"><div style="font-weight:700;margin:0 0 10px">📊 ${esc(compareLabel)}</div>${mbtn(compareLink, 'Immobilienvergleich ansehen →', '#2f6b4f', '#ffffff')}</div>` : ''
       const fbCta = `<div style="margin:24px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a"><div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 12px">Wie geht es weiter?</div><div style="color:#d4d4d4;line-height:1.6;margin:0 0 14px">Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.</div>${mbtn(CALENDLY, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')}${mbtn('mailto:sven@happy-property.com', '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')}</div>`
-      const fbIntro = briefing.trim() ? `<p style="margin:0 0 16px">${esc(briefing.trim())}</p>` : ''
-      let body = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto"><p style="margin:0 0 16px">Hallo ${esc(lead.first_name)},</p>${fbIntro}<p style="margin:0 0 16px">wie besprochen findest du hier deine persönlichen Vorschläge:</p>${fbCards}${fbCompare}${fbCta}<p style="margin:24px 0 0">Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+      // Warmes Anschreiben (KEIN Roh-Briefing-Dump — das Briefing sind Svens interne Notizen).
+      const fbIntro = ['vielen Dank für das sympathische Gespräch.',
+        'Ich habe dir ein paar Objekte herausgesucht und hoffe, dass das ein oder andere deinen Vorstellungen entspricht.',
+        'Gib mir bitte zeitnah Feedback, da der Markt hier sehr dynamisch ist und ich dir eine Immobilie nicht reservieren kann.']
+        .map(p => `<p style="margin:0 0 16px">${esc(p)}</p>`).join('')
+      let body = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto"><p style="margin:0 0 16px">Hallo ${esc(lead.first_name)},</p>${fbIntro}${fbCards}${fbCompare}${fbCta}<p style="margin:24px 0 4px">Ich freue mich von dir zu hören.</p><p style="margin:0">Liebe Grüße,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
       // KI-Mail mit Retry (lange Hintergrund-Läufe lassen den ersten Invoke gelegentlich
       // ins Leere laufen → einmal nachfassen, bevor wir auf den Fallback zurückfallen).
       for (let attempt = 0; attempt < 2; attempt++) {
