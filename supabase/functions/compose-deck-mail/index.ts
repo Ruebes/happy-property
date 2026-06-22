@@ -59,11 +59,12 @@ HARTE REGELN (Wahrheit vor Verkauf — das ist NICHT verhandelbar):
 - deck_lines MUSS exakt so viele Einträge haben wie Objekte im Input (gleiche Reihenfolge).`
 
 interface MailItem {
-  label?: string; link?: string; image?: string; project?: string; unit?: string
+  label?: string; link?: string; calc_link?: string; image?: string; project?: string; unit?: string
   bedrooms?: number | null; size_sqm?: number | null; terrace_sqm?: number | null
   floor?: number | null; price?: string; facts?: string
   available_count?: number | null; total_count?: number | null
 }
+interface Compare { link?: string; label?: string }
 type Mail = { subject?: string; headline?: string; greeting?: string; intro?: string; deck_lines?: Array<{ kicker?: string; text?: string }>; closing?: string }
 
 function itemBrief(it: MailItem, i: number): string {
@@ -87,7 +88,7 @@ const SANS = `'Montserrat', Arial, Helvetica, sans-serif`
 const SERIF = `'Playfair Display', Georgia, 'Times New Roman', serif`
 
 // Branded, E-Mail-sicheres HTML im CI bauen (Tabellen-Layout, wie Svens Vorlage).
-function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
+function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare): string {
   const lines = m.deck_lines ?? []
   const props = items.map((it, i) => {
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
@@ -105,9 +106,15 @@ function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
           ${dl.text ? `<p style="margin:14px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${richText(dl.text)}</p>` : ''}
         </td></tr>
         <tr><td style="padding:22px 40px 0 40px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.navy}" style="border-radius:2px;">
-            <a href="${esc(it.link || '#')}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;">${esc(btnLabel)}</a>
-          </td></tr></table>
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td bgcolor="${C.navy}" style="border-radius:2px;">
+              <a href="${esc(it.link || '#')}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">${esc(btnLabel)}</a>
+            </td>
+            ${it.calc_link ? `<td style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
+            <td style="border:1px solid ${C.navy};border-radius:2px;">
+              <a href="${esc(it.calc_link)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${C.navy};text-decoration:none;white-space:nowrap;">Berechnung ansehen</a>
+            </td>` : ''}
+          </tr></table>
         </td></tr>
       </table>
     </td></tr>
@@ -120,6 +127,16 @@ function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
   const intros = (m.intro ? splitLines(m.intro) : []).map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p>`).join('')
   const closing = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.'])
     .map(p => `<p style="margin:16px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${esc(p)}</p>`).join('')
+  // Gesamt-Vergleich (alle Objekte gegenübergestellt) — eigener Block unter den Karten.
+  const compareBlock = compare?.link ? `
+  <tr><td style="padding:32px 40px 0 40px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f0f7f4;border:1px solid #d4e9df;border-radius:6px;"><tr><td style="padding:20px 24px;">
+      <div style="font-family:${SANS};font-size:14px;font-weight:700;color:${C.navy};margin-bottom:12px;">📊 ${esc(compare.label || 'Dein Immobilienvergleich — alle Wohnungen direkt gegenübergestellt')}</div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#2f6b4f" style="border-radius:2px;">
+        <a href="${esc(compare.link)}" target="_blank" style="display:inline-block;padding:12px 24px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Immobilienvergleich ansehen →</a>
+      </td></tr></table>
+    </td></tr></table>
+  </td></tr>` : ''
 
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${C.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}}</style></head>
@@ -136,16 +153,17 @@ function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
   <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${C.navy};">${esc(m.headline || 'Deine Paphos-Auswahl.')}</h1></td></tr>
   <tr><td style="padding:16px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}</p>${intros}</td></tr>
   ${props}
+  ${compareBlock}
   <tr><td style="padding:32px 40px 0 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border-left:3px solid ${C.coral};"><tr><td style="padding:22px 26px;">
-      <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${C.coral};font-weight:700;">Cashflow &amp; IRR</div>
+      <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${C.coral};font-weight:700;white-space:nowrap;">Cashflow &amp; IRR</div>
       <p style="margin:8px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Sobald du eine Vorentscheidung hast, rechne ich dir <b>Cashflow, IRR und Finanzierungsbedarf</b> für dein Wunsch-Objekt konkret durch. Du bekommst saubere Zahlen — keine Marketing-Folien.</p>
     </td></tr></table>
   </td></tr>
   <tr><td style="padding:28px 40px 0 40px;">${closing}</td></tr>
   <tr><td style="padding:22px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.coral}" style="border-radius:2px;">
-      <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;">📅 Neuen Termin buchen</a>
+      <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Neuen Termin buchen</a>
     </td></tr></table>
   </td></tr>
   <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Liebe Grüße</p></td></tr>
@@ -170,7 +188,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = ''): string {
 }
 
 // Fallback (ohne KI): gleiche Vorlage, neutrale Positionierung aus den Eckdaten.
-function fallback(firstName: string, items: MailItem[]): { subject: string; html: string } {
+function fallback(firstName: string, items: MailItem[], compare?: Compare): { subject: string; html: string } {
   const DEF = ['Das Premium-Objekt', 'Solide Kapitalanlage', 'Der Mittelweg', 'Weitere Option']
   const m: Mail = {
     subject: items.length > 1 ? `Deine ${items.length} Paphos-Optionen · Sales Decks` : `Dein Paphos-Vorschlag · ${items[0]?.label ?? ''}`.trim(),
@@ -187,7 +205,7 @@ function fallback(firstName: string, items: MailItem[]): { subject: string; html
     })),
     closing: 'Ich freue mich von dir zu hören.',
   }
-  return { subject: m.subject!, html: buildHtml(m, items, firstName) }
+  return { subject: m.subject!, html: buildHtml(m, items, firstName, compare) }
 }
 
 // FAKTENCHECK: zweite KI-Stufe, die jeden Objekt-Text gegen die echten Fakten prüft und
@@ -218,11 +236,12 @@ async function verifyClaims(lines: Array<{ kicker?: string; text?: string }>, it
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { recipient_name?: string; first_name?: string; briefing?: string; angle?: string; items?: MailItem[] }
+    const body = await req.json() as { recipient_name?: string; first_name?: string; briefing?: string; angle?: string; items?: MailItem[]; calc_link?: string; calc_label?: string }
     const items = (body.items ?? []).filter(it => it && it.link)
+    const compare: Compare = { link: body.calc_link, label: body.calc_label }
     if (!items.length) return json({ error: 'items fehlt' }, 400)
     const firstName = body.first_name?.trim() || (body.recipient_name?.trim().split(' ')[0] ?? '')
-    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items))
+    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items, compare))
 
     // GELERNTE VORGABEN aus Svens Mail-Korrekturen (deck_ai_rules kind='mail').
     let learnedBlock = ''
@@ -262,13 +281,13 @@ Deno.serve(async (req) => {
         messages: [{ role: 'user', content: userMsg }],
       }),
     })
-    if (!res.ok) return json(fallback(firstName, items))
+    if (!res.ok) return json(fallback(firstName, items, compare))
     const data = await res.json() as { content?: Array<{ type?: string; input?: Mail }> }
     const m = (data.content ?? []).find(c => c.type === 'tool_use')?.input
-    if (!m || !m.subject) return json(fallback(firstName, items))
+    if (!m || !m.subject) return json(fallback(firstName, items, compare))
     // Faktencheck: unbelegte Behauptungen (z.B. erfundene 'Mietgarantie') rausfiltern.
     if (m.deck_lines) m.deck_lines = await verifyClaims(m.deck_lines, items)
-    return json({ subject: m.subject, html: buildHtml(m, items, firstName) })
+    return json({ subject: m.subject, html: buildHtml(m, items, firstName, compare) })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }
