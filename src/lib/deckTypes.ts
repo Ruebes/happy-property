@@ -45,7 +45,7 @@ export const DECK_CONTACT = {
   socials: [
     { icon: '▶',  platform: 'YouTube',   handle: 'HappyPropertyCyprus',  url: 'https://www.youtube.com/@HappyPropertyCyprus' },
     { icon: '◎',  platform: 'Instagram', handle: 'happy_property_cyprus', url: 'https://www.instagram.com/happy_property_cyprus' },
-    { icon: 'f',  platform: 'Facebook',  handle: 'Immobilien in Zypern',  url: '' },
-    { icon: 'in', platform: 'LinkedIn',  handle: 'Sven Rüprich',          url: '' },
+    { icon: 'f',  platform: 'Facebook',  handle: 'Immobilien in Zypern',  url: 'https://www.facebook.com/profile.php?id=61573780546599' },
+    { icon: 'in', platform: 'LinkedIn',  handle: 'Sven Rüprich',          url: 'https://www.linkedin.com/in/sven-r%C3%BCprich/' },
   ],
 } as const
