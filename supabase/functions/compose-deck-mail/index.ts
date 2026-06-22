@@ -18,6 +18,9 @@ const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
 // Marke / Kontakt (= deckTypes DECK_LOGO/DECK_PHOTO/DECK_CONTACT)
 const LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
 const PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+// Foto ist nicht quadratisch (5672×3781) → server-seitig quadratisch zuschneiden,
+// sonst quetscht width=height=56 das Bild. Supabase-Transform resize=cover (2x für Retina).
+const PHOTO_SQ = PHOTO.replace('/object/public/', '/render/image/public/') + '?width=112&height=112&resize=cover&quality=80'
 const C = { cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#999' }
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -124,12 +127,11 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   // Sätze in Absätze trennen — toleriert echte Zeilenumbrüche UND literales '\n'
   // (das Modell liefert manchmal die zwei Zeichen Backslash-n statt eines Umbruchs).
   const splitLines = (s: string) => s.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean)
-  // Outlook-robust: Abstände über Tabellen-Zellen-Padding statt <p>-Margins
-  // (Outlook mangelt <p>/<div>-Margins → riesige/zufällige Lücken). Jeder Satz = eine Zeile.
-  const introRows = (m.intro ? splitLines(m.intro) : []).map(p =>
-    `<tr><td style="padding:14px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(p)}</p></td></tr>`).join('')
-  const closingRows = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.']).map((p, idx) =>
-    `<tr><td style="padding:${idx === 0 ? 28 : 12}px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.65;color:${C.ink};">${esc(p)}</p></td></tr>`).join('')
+  // Bulletproof: KEINE <p>-Margins, KEINE Extra-Tabellenzeilen (beides bläht in
+  // Outlook die Abstände auf). Anschreiben/Abschluss je als EIN Text-Block, Sätze
+  // mit <br><br> getrennt — das rendert in JEDEM Client identisch.
+  const introHtml = (m.intro ? splitLines(m.intro) : []).map(esc).join('<br><br>')
+  const closingHtml = (m.closing ? splitLines(m.closing) : ['Ich freue mich von dir zu hören.']).map(esc).join('<br><br>')
   // Gesamt-Vergleich (alle Objekte gegenübergestellt) — eigener Block unter den Karten.
   const compareBlock = compare?.link ? `
   <tr><td style="padding:32px 40px 0 40px;">
@@ -148,14 +150,13 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
 <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:${C.cream};">
   <tr><td style="padding:8px 40px 28px 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td align="left" valign="middle"><img src="${LOGO}" width="44" height="44" alt="HP" style="display:inline-block;vertical-align:middle;border-radius:4px;"><span style="display:inline-block;vertical-align:middle;margin-left:12px;font-family:${SERIF};font-size:18px;color:${C.navy};letter-spacing:0.02em;">Happy Property Cyprus</span></td>
+      <td align="left" valign="middle"><img src="${LOGO}" width="120" height="37" alt="Happy Property Cyprus" style="display:block;width:120px;height:37px;"></td>
       <td align="right" valign="middle" style="font-family:${SANS};font-size:11px;color:${C.mute};letter-spacing:0.12em;text-transform:uppercase;">Paphos · Zypern</td>
     </tr></table>
   </td></tr>
   <tr><td style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${C.coral};"></div></td></tr>
   <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${C.navy};">${esc(m.headline || 'Deine Paphos-Auswahl.')}</h1></td></tr>
-  <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:15px;line-height:1.6;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}</p></td></tr>
-  ${introRows}
+  <tr><td style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${C.ink};">${esc(m.greeting || `Hallo ${firstName || ''},`.trim())}<br><br>${introHtml}</td></tr>
   ${props}
   ${compareBlock}
   <tr><td style="padding:32px 40px 0 40px;">
@@ -164,7 +165,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
       <p style="margin:8px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Sobald du eine Vorentscheidung hast, rechne ich dir <b>Cashflow, IRR und Finanzierungsbedarf</b> für dein Wunsch-Objekt konkret durch. Du bekommst saubere Zahlen — keine Marketing-Folien.</p>
     </td></tr></table>
   </td></tr>
-  ${closingRows}
+  <tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${C.ink};">${closingHtml}</td></tr>
   <tr><td style="padding:22px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.coral}" style="border-radius:2px;">
       <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Neuen Termin buchen</a>
@@ -173,20 +174,17 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Liebe Grüße</p></td></tr>
   <tr><td style="padding:14px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td valign="middle" width="64"><img src="${PHOTO}" width="56" height="56" alt="Sven" style="width:56px;height:56px;border-radius:50%;display:block;"></td>
+      <td valign="middle" width="64"><img src="${PHOTO_SQ}" width="56" height="56" alt="Sven" style="width:56px;height:56px;border-radius:50%;display:block;"></td>
       <td valign="middle" style="padding-left:14px;"><div style="font-family:${SERIF};font-size:18px;color:${C.navy};">Sven</div><div style="font-family:${SANS};font-size:12px;color:#888;margin-top:2px;">Happy Property Cyprus</div></td>
     </tr></table>
   </td></tr>
   <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${C.ink};"><a href="mailto:sven@happy-property.com" style="color:${C.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
   <tr><td style="padding:40px 40px 24px 40px;">
-    <div style="height:1px;background-color:${C.line};margin-bottom:18px;"></div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td align="left" style="font-family:${SANS};font-size:10px;line-height:1.5;color:${C.mute};white-space:nowrap;">Sveru Ltd. · Pallados 1 · 8046 Paphos · Zypern</td>
-      <td align="right" style="font-family:${SANS};font-size:10px;color:${C.mute};white-space:nowrap;">
-        <a href="https://www.instagram.com/happy_property_cyprus" target="_blank" style="color:${C.mute};text-decoration:none;">Instagram</a> ·
-        <a href="https://www.youtube.com/@HappyPropertyCyprus" target="_blank" style="color:${C.mute};text-decoration:none;">YouTube</a>
-      </td>
-    </tr></table>
+    <div style="height:1px;background-color:${C.line};margin-bottom:16px;"></div>
+    <div style="font-family:${SANS};font-size:11px;line-height:1.7;color:${C.mute};text-align:center;">
+      <a href="https://www.instagram.com/happy_property_cyprus" target="_blank" style="color:${C.mute};text-decoration:none;">Instagram</a> &nbsp;·&nbsp; <a href="https://www.youtube.com/@HappyPropertyCyprus" target="_blank" style="color:${C.mute};text-decoration:none;">YouTube</a><br>
+      Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern
+    </div>
   </td></tr>
 </table></td></tr></table></body></html>`
 }
