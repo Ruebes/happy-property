@@ -40,6 +40,12 @@ export default function Rechnung() {
     setLoading(false)
   })() }, [token])
 
+  // Engagement-Tracking (fire-and-forget): loggt den Berechnungs-Aufruf fürs CRM-Dashboard.
+  useEffect(() => {
+    if (!token) return
+    void supabase.functions.invoke('track-engagement', { body: { type: 'calc_view', token } }).catch(() => { /* egal */ })
+  }, [token])
+
   const rows: Row[] = useMemo(() => {
     if (!content?.items) return []
     return content.items.map((item, i) => ({

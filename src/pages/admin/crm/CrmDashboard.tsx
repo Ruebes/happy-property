@@ -14,6 +14,22 @@ interface TaskActivity {
   scheduled_at: string | null
   lead: { id: string; first_name: string; last_name: string } | null
 }
+// Was das System automatisch verschickt hat (scheduled_messages, status='sent')
+interface SysActivity {
+  id: string
+  type: string                 // whatsapp | email | both
+  event_type: string | null    // registrierung | termin_gebucht | no_show | anzahlung | …
+  sent_at: string | null
+  lead: { first_name: string; last_name: string } | null
+}
+// Kunden-Engagement (engagement_events): Deck/Berechnung angesehen, Mail geöffnet
+interface EngageEvent {
+  id: string
+  type: string                 // deck_view | calc_view | email_open
+  label: string | null
+  occurred_at: string
+  lead: { first_name: string; last_name: string } | null
+}
 
 interface DashboardState {
   totalLeads: number
@@ -23,6 +39,8 @@ interface DashboardState {
   commissionMonth: number
   commissionYear: number
   openTasksToday: TaskActivity[]
+  systemActivity: SysActivity[]
+  engagement: EngageEvent[]
   loading: boolean
 }
 
@@ -38,6 +56,8 @@ export default function CrmDashboard() {
     commissionWeek: 0,
     commissionMonth: 0,
     commissionYear: 0,
+    systemActivity: [],
+    engagement: [],
     openTasksToday: [],
     loading: true,
   })
@@ -62,6 +82,8 @@ export default function CrmDashboard() {
         dealsPhaseRes,
         commissionsRes,
         openTasksRes,
+        sysActivityRes,
+        engagementRes,
       ] = await Promise.all([
         supabase.from('leads').select('id', { count: 'exact', head: true }),
         supabase
@@ -81,6 +103,19 @@ export default function CrmDashboard() {
           .eq('type', 'task')
           .is('completed_at', null)
           .lte('scheduled_at', now.toISOString()),
+        // Widget 1: was das System automatisch verschickt hat
+        supabase
+          .from('scheduled_messages')
+          .select('id, type, event_type, sent_at, lead:leads(first_name, last_name)')
+          .eq('status', 'sent')
+          .order('sent_at', { ascending: false })
+          .limit(20),
+        // Widget 2: Kunden-Engagement (Deck/Berechnung angesehen, Mail geöffnet)
+        supabase
+          .from('engagement_events')
+          .select('id, type, label, occurred_at, lead:leads(first_name, last_name)')
+          .order('occurred_at', { ascending: false })
+          .limit(30),
       ])
 
       // Group deals per phase
@@ -111,6 +146,8 @@ export default function CrmDashboard() {
         commissionMonth,
         commissionYear,
         openTasksToday: (openTasksRes.data ?? []) as unknown as TaskActivity[],
+        systemActivity: (sysActivityRes.data ?? []) as unknown as SysActivity[],
+        engagement: (engagementRes.data ?? []) as unknown as EngageEvent[],
         loading: false,
       })
     } catch (err) {
@@ -138,12 +175,93 @@ export default function CrmDashboard() {
   const formatDate = (iso: string) =>
     new Date(iso).toLocaleDateString(locale, { day: '2-digit', month: '2-digit', year: '2-digit' })
 
+  // „vor 3 Min / 2 Std / 4 Tagen" — knapp für die Aktivitäts-Feeds
+  const relTime = (iso: string | null) => {
+    if (!iso) return ''
+    const diff = Date.now() - new Date(iso).getTime()
+    const min = Math.floor(diff / 60000)
+    if (min < 1) return t('crm.dashboard.justNow', 'gerade eben')
+    if (min < 60) return t('crm.dashboard.minAgo', 'vor {{n}} Min', { n: min })
+    const h = Math.floor(min / 60)
+    if (h < 24) return t('crm.dashboard.hAgo', 'vor {{n}} Std', { n: h })
+    const d = Math.floor(h / 24)
+    return t('crm.dashboard.dAgo', 'vor {{n}} Tg', { n: d })
+  }
+  const leadName = (l: { first_name: string; last_name: string } | null) =>
+    l ? `${l.first_name} ${l.last_name}`.trim() : t('crm.dashboard.someone', 'Jemand')
+  // System-Nachrichten-Anlass in Klartext
+  const EVENT_LABELS: Record<string, string> = {
+    registrierung: t('crm.dashboard.evReg', 'Willkommens-Nachricht'),
+    termin_gebucht: t('crm.dashboard.evBooked', 'Termin-Bestätigung'),
+    no_show: t('crm.dashboard.evNoShow', 'No-Show-Nachfassen'),
+    anzahlung: t('crm.dashboard.evDeposit', 'Anzahlungs-Info'),
+    reservierung: t('crm.dashboard.evReserv', 'Reservierungs-Info'),
+  }
+  const channelIcon = (type: string) => type === 'email' ? '📧' : type === 'both' ? '📨' : '💬'
+  const channelName = (type: string) => type === 'email' ? 'E-Mail' : type === 'both' ? 'E-Mail + WhatsApp' : 'WhatsApp'
+  // Engagement-Ereignis als Satz: „… hat sich das Deck Mamba angesehen"
+  const engageAction = (e: EngageEvent) => {
+    if (e.type === 'deck_view')  return t('crm.dashboard.engDeck', 'hat sich das Deck {{x}} angesehen', { x: e.label || 'Projekt' })
+    if (e.type === 'calc_view')  return t('crm.dashboard.engCalc', 'hat sich die Berechnung {{x}} angesehen', { x: e.label || '' }).trim()
+    if (e.type === 'email_open') return t('crm.dashboard.engOpen', 'hat deine E-Mail geöffnet')
+    return e.type
+  }
+  const engageIcon = (type: string) => type === 'email_open' ? '✉️' : type === 'calc_view' ? '📊' : '🏠'
+
   const maxPhaseCount = Math.max(1, ...Object.values(state.dealsPerPhase))
 
   return (
     <DashboardLayout basePath="/admin/crm">
       <div className="p-6 space-y-6">
         <h1 className="text-2xl font-bold text-gray-900">{t('crm.dashboard.title')}</h1>
+
+        {/* ── Aktivitäts-Widgets: was das System tat + wie Kunden reagieren ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Widget 1: System-Aktivität */}
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="text-lg font-semibold text-gray-800">🤖 {t('crm.dashboard.systemActivity', 'Was das System gemacht hat')}</h2>
+            <p className="text-xs text-gray-400 mt-0.5 mb-4">{t('crm.dashboard.systemActivityHint', 'Automatisch versendete Mails & WhatsApp-Nachrichten')}</p>
+            {state.loading ? (
+              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+            ) : state.systemActivity.length === 0 ? (
+              <p className="text-gray-400 text-sm">{t('crm.dashboard.noSystemActivity', 'Noch nichts automatisch versendet.')}</p>
+            ) : (
+              <ul className="space-y-2.5 max-h-80 overflow-y-auto">
+                {state.systemActivity.map(a => (
+                  <li key={a.id} className="flex items-start gap-2.5 text-sm">
+                    <span className="text-base shrink-0 mt-0.5">{channelIcon(a.type)}</span>
+                    <span className="flex-1 min-w-0 text-gray-700">
+                      <b>{EVENT_LABELS[a.event_type ?? ''] ?? (a.event_type ?? channelName(a.type))}</b> {t('crm.dashboard.sentTo', 'an')} {leadName(a.lead)}
+                      <span className="text-gray-400"> · {channelName(a.type)}</span>
+                    </span>
+                    <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{relTime(a.sent_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Widget 2: Kunden-Aktivität (Engagement) */}
+          <div className="bg-white rounded-2xl shadow-sm p-5">
+            <h2 className="text-lg font-semibold text-gray-800">👀 {t('crm.dashboard.engagement', 'Kunden-Aktivität')}</h2>
+            <p className="text-xs text-gray-400 mt-0.5 mb-4">{t('crm.dashboard.engagementHint', 'Wer sich Decks/Berechnungen angesehen oder Mails geöffnet hat')}</p>
+            {state.loading ? (
+              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+            ) : state.engagement.length === 0 ? (
+              <p className="text-gray-400 text-sm">{t('crm.dashboard.noEngagement', 'Noch keine Kunden-Aktivität erfasst.')}</p>
+            ) : (
+              <ul className="space-y-2.5 max-h-80 overflow-y-auto">
+                {state.engagement.map(e => (
+                  <li key={e.id} className="flex items-start gap-2.5 text-sm">
+                    <span className="text-base shrink-0 mt-0.5">{engageIcon(e.type)}</span>
+                    <span className="flex-1 min-w-0 text-gray-700"><b>{leadName(e.lead)}</b> {engageAction(e)}</span>
+                    <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{relTime(e.occurred_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
 
         {/* Top stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

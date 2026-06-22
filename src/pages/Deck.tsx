@@ -446,6 +446,13 @@ export default function Deck() {
     return () => { cancelled = true }
   }, [token])
 
+  // Engagement-Tracking (fire-and-forget, blockiert das Rendern nicht): loggt den
+  // Deck-Aufruf → erscheint im CRM-Dashboard („X hat sich Deck Y angesehen").
+  useEffect(() => {
+    if (!token) return
+    void supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token } }).catch(() => { /* egal */ })
+  }, [token])
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: CREAM }}>

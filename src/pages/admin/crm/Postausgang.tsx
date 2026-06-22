@@ -118,7 +118,7 @@ export default function Postausgang() {
     setBusyId(row.id)
     try {
       const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { to: row.recipient_email, subject: row.subject, html: row.body, lead_id: row.lead_id },
+        body: { to: row.recipient_email, subject: row.subject, html: row.body, lead_id: row.lead_id, open_token: (row.deck_tokens ?? [])[0] ?? null },
       })
       if (error) throw new Error(error.message)
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)

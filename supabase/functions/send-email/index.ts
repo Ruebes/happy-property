@@ -88,9 +88,10 @@ Deno.serve(async (req: Request) => {
       lead_id?:         string | null
       deal_id?:         string | null
       attach_category?: string | null
+      open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
     }
 
-    const { to, lead_id, deal_id, attach_category } = body
+    const { to, lead_id, deal_id, attach_category, open_token } = body
     let { subject = '', html = '' } = body
 
     if (!to) {
@@ -152,6 +153,13 @@ Deno.serve(async (req: Request) => {
       } else {
         console.warn(`[send-email] Kein aktives Dokument für Kategorie "${attach_category}" gefunden`)
       }
+    }
+
+    // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
+    // track-engagement (Engagement-Tracking fürs CRM-Dashboard).
+    if (open_token && html.includes('</body>')) {
+      const px = `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/track-engagement?type=email_open&token=${encodeURIComponent(open_token)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
+      html = html.replace('</body>', `${px}</body>`)
     }
 
     // ── SMTP-Versand via denomailer ───────────────────────────────────────────

@@ -115,7 +115,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
   // CRM-Einzel-Links (ohne Settings-Gruppe)
   const crmTopItems = [
-    { to: '/admin/crm',               key: 'crm.nav.pipeline'   },
+    { to: '/admin/crm',               key: 'crm.nav.dashboard'  },
+    { to: '/admin/crm/pipeline',      key: 'crm.nav.pipeline'   },
     { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
     { to: '/admin/crm/projects',      key: 'crm.nav.projects'   },
     { to: '/admin/crm/postausgang',   key: 'crm.nav.outbox'     },
@@ -333,7 +334,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
                                       opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50
                                       min-w-[180px] py-1">
                         {[
-                          { to: '/admin/crm',           key: 'crm.nav.pipeline'    },
+                          { to: '/admin/crm',           key: 'crm.nav.dashboard'   },
+                          { to: '/admin/crm/pipeline',  key: 'crm.nav.pipeline'    },
                           { to: '/admin/crm/leads',     key: 'crm.nav.leads'       },
                           { to: '/admin/crm/projects',  key: 'crm.nav.projects'    },
                           { to: '/admin/crm/settings',  key: 'crm.nav.developers'  },

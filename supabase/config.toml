@@ -14,3 +14,8 @@ verify_jwt = false
 
 [functions.typeform-webhook]
 verify_jwt = false
+
+# Öffentliches Tracking (Deck/Rechnung-Aufrufe + Mail-Öffnungs-Pixel) — wird ohne
+# Login/JWT von öffentlichen Seiten und aus E-Mails heraus aufgerufen.
+[functions.track-engagement]
+verify_jwt = false

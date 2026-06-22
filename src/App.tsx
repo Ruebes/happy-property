@@ -117,7 +117,8 @@ export default function App() {
 
             {/* ── Admin + Verwalter (CRM + Verwaltung) ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter']} />}>
-              <Route path="/admin/crm"             element={<CrmPipeline />} />
+              <Route path="/admin/crm"             element={<CrmDashboard />} />
+              <Route path="/admin/crm/pipeline"    element={<CrmPipeline />} />
               <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
               <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
               <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetailRoute />} />
