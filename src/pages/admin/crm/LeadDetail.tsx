@@ -117,6 +117,13 @@ export default function LeadDetail() {
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const tabsRef = useRef<HTMLDivElement | null>(null)
+  // Tab wechseln UND hinscrollen — sonst wechselt der Tab unsichtbar weit unten
+  // (Direkt-Aktions-Kacheln „Mail/WhatsApp/Notiz/Aufgabe" wirkten dadurch tot).
+  const goTab = (tab: TabId) => {
+    setActiveTab(tab)
+    setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+  }
   const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
@@ -2020,10 +2027,10 @@ export default function LeadDetail() {
             {/* ── Direkt-Aktionen (große Felder) ────────────────────── */}
             <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {([
-                { key: 'mail', icon: '📧', label: t('crm.action.mail', 'Mail senden'),         cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100',  on: () => { setComposeChannel('email'); setActiveTab('emails') } },
-                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp senden'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { setComposeChannel('whatsapp'); setActiveTab('emails') } },
-                { key: 'note', icon: '📝', label: t('crm.action.note', 'Notiz erstellen'),      cls: 'bg-slate-100 text-slate-700 hover:bg-slate-200',   on: () => setActiveTab('activities') },
-                { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => setActiveTab('tasks') },
+                { key: 'mail', icon: '📧', label: t('crm.action.mail', 'Mail senden'),         cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100',  on: () => { setComposeChannel('email'); setComposeTo('client'); goTab('emails') } },
+                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp senden'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { setComposeChannel('whatsapp'); setComposeTo('client'); goTab('emails') } },
+                { key: 'note', icon: '📝', label: t('crm.action.note', 'Notiz erstellen'),      cls: 'bg-slate-100 text-slate-700 hover:bg-slate-200',   on: () => goTab('activities') },
+                { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => goTab('tasks') },
                 { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },
                 { key: 'deck', icon: '📑', label: t('crm.action.deck', 'Sales Deck erstellen'), cls: 'bg-rose-50 text-rose-700 hover:bg-rose-100',       on: () => setShowWizard(true) },
                 { key: 'calc', icon: '📊', label: t('crm.action.calc', 'Rechnung erstellen'),   cls: 'bg-teal-50 text-teal-700 hover:bg-teal-100',       on: () => setShowRechner(true) },
@@ -2529,7 +2536,7 @@ export default function LeadDetail() {
           )}
 
           {/* ── Tabs ─────────────────────────────────────────────── */}
-          <div className="bg-white rounded-2xl shadow overflow-hidden">
+          <div ref={tabsRef} className="bg-white rounded-2xl shadow overflow-hidden scroll-mt-4">
             {/* Tab bar */}
             <div className="flex border-b border-gray-100 overflow-x-auto">
               {([

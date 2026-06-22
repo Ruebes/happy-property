@@ -62,6 +62,31 @@ export default function CrmDashboard() {
     loading: true,
   })
 
+  // ── Austauschbare Widgets: Reihenfolge + an/aus pro Nutzer (localStorage) ──
+  // Neue Widgets einfach hier registrieren — sie tauchen automatisch im
+  // „Widgets anpassen"-Menü auf.
+  const ALL_WIDGET_IDS = ['stats', 'system_activity', 'engagement', 'deals_phase', 'open_tasks'] as const
+  type WidgetId = typeof ALL_WIDGET_IDS[number]
+  const LS_KEY = 'crm_dashboard_widgets'
+  const [layout, setLayout] = useState<WidgetId[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
+      if (Array.isArray(saved)) {
+        const valid = saved.filter((x: string) => (ALL_WIDGET_IDS as readonly string[]).includes(x)) as WidgetId[]
+        if (valid.length) return valid
+      }
+    } catch { /* Default unten */ }
+    return [...ALL_WIDGET_IDS]
+  })
+  const [managing, setManaging] = useState(false)
+  const saveLayout = (next: WidgetId[]) => { setLayout(next); try { localStorage.setItem(LS_KEY, JSON.stringify(next)) } catch { /* egal */ } }
+  const toggleWidget = (id: WidgetId) => saveLayout(layout.includes(id) ? layout.filter(x => x !== id) : [...layout, id])
+  const moveWidget = (id: WidgetId, dir: -1 | 1) => {
+    const i = layout.indexOf(id); const j = i + dir
+    if (i < 0 || j < 0 || j >= layout.length) return
+    const next = [...layout];[next[i], next[j]] = [next[j], next[i]]; saveLayout(next)
+  }
+
   const fetchData = useCallback(async () => {
     setState(prev => ({ ...prev, loading: true }))
 
@@ -210,144 +235,141 @@ export default function CrmDashboard() {
 
   const maxPhaseCount = Math.max(1, ...Object.values(state.dealsPerPhase))
 
-  return (
-    <DashboardLayout basePath="/admin/crm">
-      <div className="p-6 space-y-6">
-        <h1 className="text-2xl font-bold text-gray-900">{t('crm.dashboard.title')}</h1>
+  // Titel + Breite (full = volle Zeile) je Widget — auch fürs „anpassen"-Menü.
+  const WIDGET_META: Record<WidgetId, { title: string; full?: boolean }> = {
+    stats:           { title: t('crm.dashboard.wStats', 'Kennzahlen'), full: true },
+    system_activity: { title: t('crm.dashboard.systemActivity', 'Was das System gemacht hat') },
+    engagement:      { title: t('crm.dashboard.engagement', 'Kunden-Aktivität') },
+    deals_phase:     { title: t('crm.dashboard.dealsPerPhase', 'Deals pro Phase'), full: true },
+    open_tasks:      { title: t('crm.dashboard.openTasksToday', 'Offene Aufgaben heute'), full: true },
+  }
 
-        {/* ── Aktivitäts-Widgets: was das System tat + wie Kunden reagieren ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Widget 1: System-Aktivität */}
-          <div className="bg-white rounded-2xl shadow-sm p-5">
+  const renderWidget = (id: WidgetId) => {
+    switch (id) {
+      case 'stats':
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white rounded-2xl shadow-sm p-5"><p className="text-sm text-gray-500">{t('crm.dashboard.totalLeads')}</p><p className="text-3xl font-bold text-gray-900 mt-1">{state.totalLeads}</p></div>
+            <div className="bg-white rounded-2xl shadow-sm p-5"><p className="text-sm text-gray-500">{t('crm.dashboard.newThisWeek')}</p><p className="text-3xl font-bold text-gray-900 mt-1">{state.newThisWeek}</p></div>
+            <div className="bg-white rounded-2xl shadow-sm p-5"><p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisMonth')}</p><p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionMonth)}</p></div>
+            <div className="bg-white rounded-2xl shadow-sm p-5"><p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisYear')}</p><p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionYear)}</p></div>
+          </div>
+        )
+      case 'system_activity':
+        return (
+          <div className="bg-white rounded-2xl shadow-sm p-5 h-full">
             <h2 className="text-lg font-semibold text-gray-800">🤖 {t('crm.dashboard.systemActivity', 'Was das System gemacht hat')}</h2>
             <p className="text-xs text-gray-400 mt-0.5 mb-4">{t('crm.dashboard.systemActivityHint', 'Automatisch versendete Mails & WhatsApp-Nachrichten')}</p>
-            {state.loading ? (
-              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
-            ) : state.systemActivity.length === 0 ? (
-              <p className="text-gray-400 text-sm">{t('crm.dashboard.noSystemActivity', 'Noch nichts automatisch versendet.')}</p>
-            ) : (
-              <ul className="space-y-2.5 max-h-80 overflow-y-auto">
-                {state.systemActivity.map(a => (
+            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+              : state.systemActivity.length === 0 ? <p className="text-gray-400 text-sm">{t('crm.dashboard.noSystemActivity', 'Noch nichts automatisch versendet.')}</p>
+              : <ul className="space-y-2.5 max-h-80 overflow-y-auto">{state.systemActivity.map(a => (
                   <li key={a.id} className="flex items-start gap-2.5 text-sm">
                     <span className="text-base shrink-0 mt-0.5">{channelIcon(a.type)}</span>
-                    <span className="flex-1 min-w-0 text-gray-700">
-                      <b>{EVENT_LABELS[a.event_type ?? ''] ?? (a.event_type ?? channelName(a.type))}</b> {t('crm.dashboard.sentTo', 'an')} {leadName(a.lead)}
-                      <span className="text-gray-400"> · {channelName(a.type)}</span>
-                    </span>
+                    <span className="flex-1 min-w-0 text-gray-700"><b>{EVENT_LABELS[a.event_type ?? ''] ?? (a.event_type ?? channelName(a.type))}</b> {t('crm.dashboard.sentTo', 'an')} {leadName(a.lead)}<span className="text-gray-400"> · {channelName(a.type)}</span></span>
                     <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{relTime(a.sent_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+                  </li>))}</ul>}
           </div>
-
-          {/* Widget 2: Kunden-Aktivität (Engagement) */}
-          <div className="bg-white rounded-2xl shadow-sm p-5">
+        )
+      case 'engagement':
+        return (
+          <div className="bg-white rounded-2xl shadow-sm p-5 h-full">
             <h2 className="text-lg font-semibold text-gray-800">👀 {t('crm.dashboard.engagement', 'Kunden-Aktivität')}</h2>
             <p className="text-xs text-gray-400 mt-0.5 mb-4">{t('crm.dashboard.engagementHint', 'Wer sich Decks/Berechnungen angesehen oder Mails geöffnet hat')}</p>
-            {state.loading ? (
-              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
-            ) : state.engagement.length === 0 ? (
-              <p className="text-gray-400 text-sm">{t('crm.dashboard.noEngagement', 'Noch keine Kunden-Aktivität erfasst.')}</p>
-            ) : (
-              <ul className="space-y-2.5 max-h-80 overflow-y-auto">
-                {state.engagement.map(e => (
+            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+              : state.engagement.length === 0 ? <p className="text-gray-400 text-sm">{t('crm.dashboard.noEngagement', 'Noch keine Kunden-Aktivität erfasst.')}</p>
+              : <ul className="space-y-2.5 max-h-80 overflow-y-auto">{state.engagement.map(e => (
                   <li key={e.id} className="flex items-start gap-2.5 text-sm">
                     <span className="text-base shrink-0 mt-0.5">{engageIcon(e.type)}</span>
                     <span className="flex-1 min-w-0 text-gray-700"><b>{leadName(e.lead)}</b> {engageAction(e)}</span>
                     <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{relTime(e.occurred_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
+                  </li>))}</ul>}
           </div>
-        </div>
-
-        {/* Top stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        )
+      case 'deals_phase':
+        return (
           <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">{t('crm.dashboard.totalLeads')}</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1">{state.totalLeads}</p>
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.dealsPerPhase')}</h2>
+            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+              : <div className="space-y-2">{DEAL_PHASES.map(phase => {
+                  const count = state.dealsPerPhase[phase] ?? 0
+                  const widthPct = Math.round((count / maxPhaseCount) * 100)
+                  return (
+                    <div key={phase} className="flex items-center gap-3">
+                      <span className="text-lg w-6 text-center">{PHASE_ICONS[phase]}</span>
+                      <span className="text-sm text-gray-600 w-36 truncate capitalize">{phase.replace(/_/g, ' ')}</span>
+                      <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden"><div className="h-4 rounded-full transition-all" style={{ width: `${widthPct}%`, backgroundColor: '#ff795d' }} /></div>
+                      <span className="text-sm font-semibold text-gray-700 w-6 text-right">{count}</span>
+                    </div>)
+                })}</div>}
           </div>
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">{t('crm.dashboard.newThisWeek')}</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1">{state.newThisWeek}</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisMonth')}</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionMonth)}</p>
-          </div>
-          <div className="bg-white rounded-2xl shadow-sm p-5">
-            <p className="text-sm text-gray-500">{t('crm.dashboard.commissionThisYear')}</p>
-            <p className="text-3xl font-bold text-gray-900 mt-1">{formatCurrency(state.commissionYear)}</p>
-          </div>
-        </div>
-
-        {/* Deals per phase */}
-        <div className="bg-white rounded-2xl shadow-sm p-5">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.dealsPerPhase')}</h2>
-          {state.loading ? (
-            <p className="text-gray-400 text-sm">{t('common.loading')}</p>
-          ) : (
-            <div className="space-y-2">
-              {DEAL_PHASES.map(phase => {
-                const count = state.dealsPerPhase[phase] ?? 0
-                const widthPct = Math.round((count / maxPhaseCount) * 100)
-                return (
-                  <div key={phase} className="flex items-center gap-3">
-                    <span className="text-lg w-6 text-center">{PHASE_ICONS[phase]}</span>
-                    <span className="text-sm text-gray-600 w-36 truncate capitalize">{phase.replace(/_/g, ' ')}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
-                      <div
-                        className="h-4 rounded-full transition-all"
-                        style={{ width: `${widthPct}%`, backgroundColor: '#ff795d' }}
-                      />
-                    </div>
-                    <span className="text-sm font-semibold text-gray-700 w-6 text-right">{count}</span>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Bottom two columns */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Open tasks today */}
+        )
+      case 'open_tasks':
+        return (
           <div className="bg-white rounded-2xl shadow-sm p-5">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.openTasksToday')}</h2>
-            {state.loading ? (
-              <p className="text-gray-400 text-sm">{t('common.loading')}</p>
-            ) : state.openTasksToday.length === 0 ? (
-              <p className="text-gray-400 text-sm">{t('crm.dashboard.noOpenTasks')}</p>
-            ) : (
-              <ul className="space-y-3">
-                {state.openTasksToday.map(task => (
+            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+              : state.openTasksToday.length === 0 ? <p className="text-gray-400 text-sm">{t('crm.dashboard.noOpenTasks')}</p>
+              : <ul className="space-y-3">{state.openTasksToday.map(task => (
                   <li key={task.id} className="flex items-start justify-between gap-2 border-b border-gray-100 pb-3 last:border-0 last:pb-0">
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-gray-800 text-sm truncate">{task.subject ?? task.content ?? '–'}</p>
-                      {task.lead && (
-                        <p className="text-xs text-gray-500">
-                          {task.lead.first_name} {task.lead.last_name}
-                        </p>
-                      )}
-                      {task.scheduled_at && (
-                        <p className="text-xs text-gray-400">{formatDate(task.scheduled_at)}</p>
-                      )}
+                      {task.lead && <p className="text-xs text-gray-500">{task.lead.first_name} {task.lead.last_name}</p>}
+                      {task.scheduled_at && <p className="text-xs text-gray-400">{formatDate(task.scheduled_at)}</p>}
                     </div>
-                    <button
-                      onClick={() => handleCompleteTask(task.id)}
-                      className="shrink-0 text-xs px-3 py-1 rounded-lg text-white font-medium"
-                      style={{ backgroundColor: '#ff795d' }}
-                    >
-                      {t('crm.dashboard.taskDone')}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+                    <button onClick={() => handleCompleteTask(task.id)} className="shrink-0 text-xs px-3 py-1 rounded-lg text-white font-medium" style={{ backgroundColor: '#ff795d' }}>{t('crm.dashboard.taskDone')}</button>
+                  </li>))}</ul>}
           </div>
+        )
+    }
+  }
 
+  return (
+    <DashboardLayout basePath="/admin/crm">
+      <div className="p-6 space-y-6">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold text-gray-900">{t('crm.dashboard.title')}</h1>
+          <button onClick={() => setManaging(m => !m)}
+            className="text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-orange-400 hover:text-orange-600 shrink-0">
+            ⚙ {t('crm.dashboard.manageWidgets', 'Widgets anpassen')}
+          </button>
+        </div>
+
+        {/* Anpassen-Panel: Widgets an/aus + Reihenfolge */}
+        {managing && (
+          <div className="bg-white rounded-2xl shadow-sm p-5 border border-orange-100">
+            <p className="text-sm font-semibold text-gray-700 mb-3">{t('crm.dashboard.manageHint', 'Widgets ein-/ausblenden und sortieren — wird pro Browser gespeichert.')}</p>
+            <ul className="space-y-2">
+              {(ALL_WIDGET_IDS as readonly WidgetId[]).slice().sort((a, b) => {
+                const ia = layout.indexOf(a), ib = layout.indexOf(b)
+                return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+              }).map(id => {
+                const on = layout.includes(id)
+                return (
+                  <li key={id} className="flex items-center gap-3 text-sm">
+                    <label className="flex items-center gap-2 flex-1 cursor-pointer">
+                      <input type="checkbox" checked={on} onChange={() => toggleWidget(id)} className="w-4 h-4 accent-orange-500" />
+                      <span className={on ? 'text-gray-800' : 'text-gray-400'}>{WIDGET_META[id].title}</span>
+                    </label>
+                    {on && (
+                      <span className="flex gap-1 shrink-0">
+                        <button onClick={() => moveWidget(id, -1)} disabled={layout.indexOf(id) === 0} className="px-2 py-0.5 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30">↑</button>
+                        <button onClick={() => moveWidget(id, 1)} disabled={layout.indexOf(id) === layout.length - 1} className="px-2 py-0.5 rounded border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30">↓</button>
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
+
+        {/* Widgets in gewählter Reihenfolge — full = volle Zeile, sonst 2-spaltig */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {layout.map(id => (
+            <div key={id} className={WIDGET_META[id].full ? 'lg:col-span-2' : ''}>
+              {renderWidget(id)}
+            </div>
+          ))}
         </div>
       </div>
     </DashboardLayout>

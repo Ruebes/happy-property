@@ -24,13 +24,24 @@ function replacePlaceholders(text: string, vars: Record<string, string>): string
 }
 
 // ── HTML → Plaintext ──────────────────────────────────────────────────────────
+// HTML → saubere Text-Alternative (multipart/alternative für Empfänger ohne HTML).
+// WICHTIG: Link-URLs aus <a href> bewahren, sonst hätte die Textversion keine Links.
 function stripHtml(html: string): string {
   return html
+    // <a href="URL">Label</a> → "Label: URL" (mailto/tel ohne Doppelung)
+    .replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, url, label) => {
+      const text = String(label).replace(/<[^>]+>/g, '').trim()
+      if (/^(mailto:|tel:)/i.test(url)) return text || url.replace(/^(mailto:|tel:)/i, '')
+      return text ? `${text}: ${url}` : url
+    })
+    .replace(/<img\b[^>]*>/gi, '')                    // Bilder raus (inkl. Tracking-Pixel)
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/(p|tr|h1|h2|h3|div|li)>/gi, '\n')
+    .replace(/<\/td>/gi, ' ')
     .replace(/<[^>]+>/g, '')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+    .replace(/&nbsp;/g, ' ').replace(/&middot;|·/g, '·')
+    .replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 // ── PDF von URL als Uint8Array herunterladen ──────────────────────────────────
