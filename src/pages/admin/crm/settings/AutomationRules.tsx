@@ -3,6 +3,15 @@ import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import type { AutomationRule, ScheduledMessage } from '../../../../lib/crmTypes'
 
+// Ergebnis des Trockenlaufs (simulate-automations)
+interface SimRule {
+  id: string; name: string; event_type: string; message_type: string; timing: string
+  recipient_label: string; recipient_email: string | null; recipient_phone: string | null
+  subject: string | null; mail_body: string | null; whatsapp_text: string | null
+  ok: boolean; issues: string[]
+}
+interface SimResult { lead_used: string; total: number; ready: number; problems: number; rules: SimRule[] }
+
 // ── Konstanten ────────────────────────────────────────────────────────────────
 
 const EVENT_TYPES: { value: string; label: string; icon: string }[] = [
@@ -304,6 +313,20 @@ export default function AutomationRules() {
   const [cancelling,    setCancelling]    = useState<string | null>(null)
   const [toast,         setToast]         = useState('')
   const [queueFilter,   setQueueFilter]   = useState('pending')
+  // Trockenlauf-Simulation (rendert alle aktiven Automatiken, sendet nichts)
+  const [simBusy, setSimBusy] = useState(false)
+  const [sim, setSim] = useState<SimResult | null>(null)
+  const runSimulation = async () => {
+    setSimBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('simulate-automations', { body: {} })
+      if (error) throw new Error(error.message)
+      setSim(data as SimResult)
+    } catch (e) {
+      setToast(`❌ Simulation fehlgeschlagen: ${e instanceof Error ? e.message : ''}`)
+      setTimeout(() => setToast(''), 4000)
+    } finally { setSimBusy(false) }
+  }
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3500) }
 
@@ -434,6 +457,14 @@ export default function AutomationRules() {
             </p>
           </div>
           <div className="flex gap-2">
+            <button
+              onClick={() => void runSimulation()}
+              disabled={simBusy}
+              className="px-3 py-2 rounded-lg text-xs font-medium border border-orange-200 text-orange-700 hover:bg-orange-50 flex items-center gap-1.5 disabled:opacity-50"
+              title="Alle aktiven Automatiken rendern, ohne zu senden"
+            >
+              {simBusy ? '⏳ Simuliere…' : '🧪 Alle simulieren'}
+            </button>
             <button
               onClick={handleManualTrigger}
               className="px-3 py-2 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 flex items-center gap-1.5"
@@ -644,6 +675,48 @@ export default function AutomationRules() {
           onClose={() => { setShowModal(false); setSelectedRule(null) }}
           onSaved={() => { fetchRules(); if (tab === 'queue') fetchQueue() }}
         />
+      )}
+
+      {/* ── Trockenlauf-Vorschau: zeigt, was jede aktive Automatik senden würde ── */}
+      {sim && (
+        <div className="fixed inset-0 z-[70] bg-black/40 flex items-start justify-center p-4 overflow-y-auto" onClick={() => setSim(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl">
+              <div>
+                <h3 className="font-semibold text-gray-900">🧪 Automatik-Simulation</h3>
+                <p className="text-xs text-gray-500">Beispielkunde „{sim.lead_used}" · {sim.total} aktive Regeln · <span className="text-green-600">{sim.ready} versandfertig</span>{sim.problems ? <span className="text-red-600"> · {sim.problems} mit Problem</span> : null} · es wird nichts gesendet</p>
+              </div>
+              <button onClick={() => setSim(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none shrink-0">✕</button>
+            </div>
+            <div className="p-5 space-y-3">
+              {sim.rules.map(r => (
+                <div key={r.id} className={`rounded-xl border p-4 ${r.ok ? 'border-gray-100' : 'border-red-200 bg-red-50/40'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800 text-sm">{r.name}</p>
+                      <p className="text-xs text-gray-400">{r.event_type} · {r.timing} · {r.message_type} · → {r.recipient_label}</p>
+                    </div>
+                    <span className={`text-xs font-medium shrink-0 px-2 py-0.5 rounded-full ${r.ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{r.ok ? '✅ bereit' : '⚠️ Problem'}</span>
+                  </div>
+                  {!r.ok && <p className="text-xs text-red-600 mt-2">⚠️ {r.issues.join(' · ')}</p>}
+                  {r.subject && (
+                    <div className="mt-2.5">
+                      <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">📧 E-Mail an {r.recipient_email || '—'}</p>
+                      <p className="text-sm font-medium text-gray-800 mt-0.5">{r.subject}</p>
+                      {r.mail_body && <p className="text-xs text-gray-500 mt-1 whitespace-pre-wrap line-clamp-4">{r.mail_body}</p>}
+                    </div>
+                  )}
+                  {r.whatsapp_text && (
+                    <div className="mt-2.5">
+                      <p className="text-[11px] uppercase tracking-wide text-gray-400 font-semibold">💬 WhatsApp an {r.recipient_phone || '—'}</p>
+                      <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap bg-green-50 rounded-lg p-2.5 line-clamp-6">{r.whatsapp_text}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </DashboardLayout>
   )
