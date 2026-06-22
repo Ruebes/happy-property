@@ -109,15 +109,20 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {b.image && (
+      {b.image && (() => {
+      // Mit Marker: Karte als VOLLBILD (natürliches Seitenverhältnis) — sonst würde
+      // object-cover das Bild beschneiden und die %-Marker-Position verrutschen.
+      // Ohne Marker: bisheriger 320px-Band-Look (zentrierter Ring egal beim Crop).
+      const imgCls = b.mapMarker ? 'w-full h-auto rounded-xl' : 'w-full h-80 object-cover rounded-xl'
+      return (
         <div className="relative mt-8">
           {b.mapUrl ? (
             <a href={b.mapUrl} target="_blank" rel="noopener noreferrer" className="block group">
-              <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
+              <Img src={b.image} className={imgCls} />
               <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</span>
             </a>
           ) : (
-            <Img src={b.image} className="w-full h-80 object-cover rounded-xl" />
+            <Img src={b.image} className={imgCls} />
           )}
           {/* Deck-Standard: oranger Kreis um die Lage + Objektname. Position aus
               mapMarker (vom Vision-Detektor erkannt, %-Koordinaten); ohne Marker
@@ -140,7 +145,8 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
             )
           )}
         </div>
-      )}
+      )
+      })()}
     </section>
   )
 }
