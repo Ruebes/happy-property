@@ -28,7 +28,7 @@ interface OutboxRow {
   sent_at: string | null
   email_sent_at: string | null
   whatsapp_sent_at: string | null
-  lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null } | null
+  lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null; email: string | null } | null
 }
 interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null }
 interface CalcRow { id: string; token: string; title: string | null; lead_id: string | null; approved_at: string | null }
@@ -73,7 +73,7 @@ export default function Postausgang() {
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase.from('deck_outbox')
-      .select('*, lead:leads(first_name,last_name,phone,whatsapp)')
+      .select('*, lead:leads(first_name,last_name,phone,whatsapp,email)')
       .neq('status', 'cancelled')   // bereits verworfene Einträge nicht mehr anzeigen
       .order('created_at', { ascending: false }).limit(100)
     const list = (data ?? []) as OutboxRow[]
@@ -124,19 +124,29 @@ export default function Postausgang() {
 
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) }
 
-  const send = async (row: OutboxRow) => {
-    if (!row.recipient_email) { flash(t('crm.outbox.noEmail', 'Kein Empfänger — E-Mail am Lead fehlt.')); return }
-    if (!window.confirm(t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?') + `\n\n${row.recipient_email}`)) return
+  const send = async (row: OutboxRow, resend = false) => {
+    // Immer die AKTUELLE Mailadresse aus dem Lead ziehen — Sven korrigiert sie im
+    // Kunden; recipient_email auf dem Postausgang-Eintrag kann veraltet sein.
+    let to = row.recipient_email
+    if (row.lead_id) {
+      const { data: l } = await supabase.from('leads').select('email').eq('id', row.lead_id).maybeSingle()
+      const fresh = (l as { email?: string | null } | null)?.email
+      if (fresh) to = fresh
+    }
+    if (!to) { flash(t('crm.outbox.noEmail', 'Kein Empfänger — E-Mail am Lead fehlt.')); return }
+    if (!window.confirm((resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
     setBusyId(row.id)
     try {
+      // Korrigierte Adresse auf dem Eintrag festhalten (Anzeige + nächster Versand)
+      if (to !== row.recipient_email) await supabase.from('deck_outbox').update({ recipient_email: to }).eq('id', row.id)
       const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { to: row.recipient_email, subject: row.subject, html: row.body, lead_id: row.lead_id, open_token: (row.deck_tokens ?? [])[0] ?? null },
+        body: { to, subject: row.subject, html: row.body, lead_id: row.lead_id, open_token: (row.deck_tokens ?? [])[0] ?? null },
       })
       if (error) throw new Error(error.message)
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
       const nowIso = new Date().toISOString()
-      await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, email_sent_at: nowIso }).eq('id', row.id)
-      flash(t('crm.outbox.sent', '✅ Gesendet'))
+      await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, email_sent_at: nowIso, error_message: null }).eq('id', row.id)
+      flash(resend ? t('crm.outbox.resent', '✅ Erneut gesendet') : t('crm.outbox.sent', '✅ Gesendet'))
       void load()
     } catch (e) {
       await supabase.from('deck_outbox').update({ error_message: e instanceof Error ? e.message : 'Fehler' }).eq('id', row.id)
@@ -246,7 +256,15 @@ export default function Postausgang() {
                 </button>
                 {r.status !== 'cancelled' && (
                   <div className="flex gap-2 shrink-0 items-center">
-                    {r.email_sent_at    && <span className="text-[11px] text-green-600 font-medium">✅ Mail</span>}
+                    {r.email_sent_at && (
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-green-600 font-medium">✅ Mail</span>
+                        <button onClick={() => send(r, true)} disabled={busyId === r.id} title={t('crm.outbox.resendTitle', 'Mail erneut senden — mit der aktuellen Adresse aus dem Kunden')}
+                          className="text-[11px] font-medium rounded-lg px-2 py-1 border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+                          {busyId === r.id ? '…' : `🔄 ${t('crm.outbox.resend', 'Erneut senden')}`}
+                        </button>
+                      </span>
+                    )}
                     {r.whatsapp_sent_at && <span className="text-[11px] text-green-600 font-medium">✅ WA</span>}
                     {!r.email_sent_at && (
                       <button onClick={() => send(r)} disabled={busyId === r.id}
