@@ -46,7 +46,7 @@ Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder 
 - cta:      { type, kicker, headline, text, steps:[{n,title,text}] }  // n = "01"/"02"/"03"
 
 REGELN:
-1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block) → (d) facts (STANDORT/Lage) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt.
+1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block — bei MEHREREN Wohnungen JE Wohnung ein eigener unit-Block mit number=Wohnungsnummer, direkt hintereinander, danach optional je ein floorplan) → (d) facts (STANDORT/Lage) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt.
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
 4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
@@ -69,7 +69,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
 // Deterministischer Wahrheits-Backstop: filtert bekannte erfundene Behauptungen
 // raus, falls das Modell die Prompt-Regeln (4d / 5b) doch mal ignoriert. Greift
 // SATZWEISE (entfernt nur den betroffenen Satz, nicht den ganzen Block).
@@ -127,7 +127,7 @@ function scrubNarrative(blocks: Array<Record<string, unknown>>): void {
 
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   const renders = images?.renders ?? []
-  let ri = 0, pi = 0
+  let ri = 0, pi = 0, fpi = 0
   const nextRender = () => renders.length ? renders[ri++ % renders.length] : `https://picsum.photos/seed/deck${++pi}/1600/1000`
   for (const b of blocks) {
     const t = b.type
@@ -153,7 +153,8 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
       }
       if (images?.mapUrl) b.mapUrl = images.mapUrl   // verlinkt auf Google Maps
     }
-    if (t === 'floorplan') b.image = images?.floorplan ?? nextRender()
+    // Mehrere Grundrisse (eine pro Wohnung) der Reihe nach auf die floorplan-Blöcke verteilen.
+    if (t === 'floorplan') { const fps = images?.floorplans ?? []; b.image = (fps.length ? fps[fpi++ % fps.length] : images?.floorplan) ?? nextRender() }
     if (t === 'gallery' && Array.isArray(b.items)) {
       for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
     }
@@ -168,8 +169,10 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
+      images?: { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
+      // Mehrere Wohnungen EINES Projekts in EINEM Deck (je eigener unit-Block + Preis).
+      units?: Array<{ unit_number?: string; price_net?: number | null }>
       generic?: boolean
       background?: boolean
     }
@@ -191,27 +194,44 @@ Deno.serve(async (req) => {
     // Fertigstellung — aus der DB, damit die KI NICHT selbst rechnet. priceLines
     // werden später deterministisch in den unit-Block gesetzt.
     const eur = (n: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
-    let priceLines: Array<{ label: string; value: string; strong?: boolean }> | null = null
+    const normU = (s: unknown) => String(s ?? '').trim().toLowerCase()
+    // priceLines JE Wohnung (Schlüssel = normalisierte Wohnungsnummer) — so kann EIN Deck
+    // mehrere Wohnungen eines Projekts mit je eigenem Preis-Block enthalten.
+    const priceLinesByUnit: Record<string, Array<{ label: string; value: string; strong?: boolean }>> = {}
     let extraFacts = ''
-    if (body.unit_id && body.project_id) {
+    if (body.project_id) {
       try {
-        const { data: u } = await sbRules.from('crm_project_units').select('price_net').eq('id', body.unit_id).maybeSingle()
+        let unitList: Array<{ unit_number: string; price_net: number }> = []
+        if (body.units?.length) {
+          unitList = body.units.filter(u => u.unit_number).map(u => ({ unit_number: String(u.unit_number), price_net: Number(u.price_net) || 0 }))
+        } else if (body.unit_id) {
+          const { data: u } = await sbRules.from('crm_project_units').select('unit_number, price_net').eq('id', body.unit_id).maybeSingle()
+          const uu = u as { unit_number?: string; price_net?: number } | null
+          if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0 }]
+        }
         const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date').eq('id', body.project_id).maybeSingle()
-        const baseNet = Number((u as { price_net?: number } | null)?.price_net) || 0
-        if (baseNet > 0) {
-          const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
-          const furnNet = furnIncluded ? 0 : (Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0)
+        const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
+        const furnNet = furnIncluded ? 0 : (Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0)
+        const buildLines = (baseNet: number) => {
           const totalNet = baseNet + furnNet
           const vat = Math.round(totalNet * 0.19)
           const brutto = totalNet + vat
-          priceLines = [
+          const lines: Array<{ label: string; value: string; strong?: boolean }> = [
             { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
             { label: 'zzgl. MwSt (19 %)', value: eur(vat) },
             { label: 'Bruttopreis', value: eur(brutto), strong: true },
           ]
-          if (furnNet > 0) priceLines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * 1.19))} brutto` })
-          else if (furnIncluded) priceLines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
-          extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLines.map(l => `${l.label}: ${l.value}`).join('\n')}`
+          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * 1.19))} brutto` })
+          else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+          return lines
+        }
+        const priced = unitList.filter(u => u.price_net > 0)
+        for (const u of priced) priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net)
+        if (priced.length === 1) {
+          extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLinesByUnit[normU(priced[0].unit_number)].map(l => `${l.label}: ${l.value}`).join('\n')}`
+        } else if (priced.length > 1) {
+          const parts = priced.map(u => `WOHNUNG ${u.unit_number}:\n${priceLinesByUnit[normU(u.unit_number)].map(l => `  ${l.label}: ${l.value}`).join('\n')}`)
+          extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN JE WOHNUNG (für JEDE Wohnung EINEN eigenen 'unit'-Block mit number=Wohnungsnummer und GENAU diesen Werten als priceLines; NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${parts.join('\n\n')}`
         }
         const cd = (p as { completion_date?: string } | null)?.completion_date
         if (cd) { const d = new Date(cd); extraFacts += `\n\n=== FERTIGSTELLUNG (muss im Deck genannt werden): ${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ===` }
@@ -335,9 +355,20 @@ Deno.serve(async (req) => {
     scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
-    if (priceLines) {
-      const ub = blocks.find(b => b.type === 'unit')
-      if (ub) { ub.priceLines = priceLines; delete ub.priceMain; delete ub.priceSub }
+    const plKeys = Object.keys(priceLinesByUnit)
+    if (plKeys.length) {
+      const unitBlocks = blocks.filter(b => b.type === 'unit')
+      if (plKeys.length === 1 && unitBlocks.length) {
+        // Einzel-Wohnung: robust auf den ersten unit-Block (auch falls number leicht abweicht).
+        const ub = unitBlocks[0]
+        ub.priceLines = priceLinesByUnit[plKeys[0]]; delete ub.priceMain; delete ub.priceSub
+      } else {
+        // Mehrere Wohnungen: je unit-Block per Wohnungsnummer (number/nickname) zuordnen.
+        for (const ub of unitBlocks) {
+          const pl = priceLinesByUnit[normU(ub.number)] ?? priceLinesByUnit[normU(ub.nickname)]
+          if (pl) { ub.priceLines = pl; delete ub.priceMain; delete ub.priceSub }
+        }
+      }
     }
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,

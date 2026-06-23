@@ -90,27 +90,35 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   }
   const removeFromBasket = (unitId: string) => setBasket(b => b.filter(x => x.unit.id !== unitId))
 
-  // Ein personalisiertes Deck pro Wohnung erzeugen (Hintergrund) + auf Token pollen
-  const genOne = async (item: BasketItem): Promise<{ token: string; label: string; item: BasketItem } | null> => {
-    const a = item.assets
-    if (!a?.facts) throw new Error(`${item.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
-    const u = item.unit
-    const unitFacts = `\n\n=== DIESE WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.\nPreis: ${eur(u.price_gross ?? u.price_net)}${u.price_gross && u.price_net ? ` (netto ${eur(u.price_net)})` : ''}.`
-    const fp = (a.floorplans ?? []).find(f => f.floor === u.floor)?.url ?? (a.floorplans ?? [])[0]?.url
-    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fp, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined, mapLat: item.lat ?? undefined, mapLng: item.lng ?? undefined }
-    // letztes bestehendes Deck dieser Wohnung merken → auf NEUES Token pollen
-    const { data: prev } = await supabase.from('sales_decks').select('token, created_at').eq('lead_id', lead.id).eq('unit_id', u.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+  // EIN Deck pro PROJEKT erzeugen — mit allen gewählten Wohnungen des Projekts (je
+  // eigener unit-Block + Preis). Hintergrund + auf neues Token pollen (per Projekt).
+  const genProject = async (items: BasketItem[]): Promise<{ token: string; label: string; items: BasketItem[] } | null> => {
+    const first = items[0]
+    const a = first.assets
+    if (!a?.facts) throw new Error(`${first.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
+    const unitFacts = items.map(it => {
+      const u = it.unit
+      return `\n\n=== WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.`
+    }).join('')
+    // Grundrisse je Wohnung (nach Etage), Dubletten raus
+    const floorplans = [...new Set(items.map(it => (a.floorplans ?? []).find(f => f.floor === it.unit.floor)?.url).filter(Boolean) as string[])]
+    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: floorplans[0] ?? (a.floorplans ?? [])[0]?.url, floorplans, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined, mapLat: first.lat ?? undefined, mapLng: first.lng ?? undefined }
+    const units = items.map(it => ({ unit_number: it.unit.unit_number, price_net: it.unit.price_net }))
+    const label = items.length > 1 ? `${first.projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})` : `${first.projectName} · ${first.unit.unit_number}`
+    // letztes Deck dieses Projekts für den Lead merken → auf NEUES Token pollen
+    const { data: prev } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
     const prevTok = (prev as { token?: string } | null)?.token ?? null
     const { error } = await supabase.functions.invoke('generate-deck', { body: {
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
-      facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: item.projectId, unit_id: u.id,
+      facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId,
+      unit_id: items.length === 1 ? first.unit.id : null, units,
     } })
     if (error) throw new Error(error.message)
     for (let i = 0; i < 36; i++) {   // bis ~3 Min
       await sleep(5000)
-      const { data: row } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('unit_id', u.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const { data: row } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
       const tok = (row as { token?: string } | null)?.token ?? null
-      if (tok && tok !== prevTok) return { token: tok, label: `${item.projectName} · ${u.unit_number}`, item }
+      if (tok && tok !== prevTok) return { token: tok, label, items }
     }
     return null
   }
@@ -123,67 +131,74 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     if (background) onClose()
     setBusy(true); setErr('')
     try {
-      const links: { token: string; label: string; item: BasketItem }[] = []
-      for (let i = 0; i < basket.length; i++) {
-        setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${basket.length} — ${basket[i].projectName} · ${basket[i].unit.unit_number}…`)
-        const r = await genOne(basket[i])
+      // Korb nach PROJEKT gruppieren → pro Projekt EIN Deck + EINE Berechnung (mit allen
+      // gewählten Wohnungen des Projekts). Reihenfolge = erste Auswahl-Reihenfolge.
+      const groupsMap = new Map<string, BasketItem[]>()
+      for (const b of basket) { const g = groupsMap.get(b.projectId); if (g) g.push(b); else groupsMap.set(b.projectId, [b]) }
+      const groups = [...groupsMap.values()]
+      const links: { token: string; label: string; items: BasketItem[] }[] = []
+      for (let i = 0; i < groups.length; i++) {
+        setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${groups.length} — ${groups[i][0].projectName}…`)
+        const r = await genProject(groups[i])
         if (r) links.push(r)
       }
       if (!links.length) throw new Error(t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
-      // Begleit-Mail von der KI schreiben lassen (ausführlich, locker, kein Slang) → Postausgang (Entwurf).
-      // Fällt bei Fehler/fehlendem Key auf eine schlanke Vorlage zurück, damit nie ohne Mail dastehen.
+      // Begleit-Mail von der KI schreiben lassen → Postausgang (Entwurf). Fällt bei Fehler
+      // auf eine schlanke CI-Vorlage zurück, damit nie ohne Mail dastehen.
       const origin = window.location.origin
-      // Verfügbarkeit je Projekt (Knappheit als echtes Verkaufsargument in der Mail)
-      const projIds = [...new Set(links.map(l => l.item.projectId))]
+      // Verfügbarkeit je Projekt (Knappheit als Verkaufsargument in der Mail)
+      const projIds = [...new Set(links.map(l => l.items[0].projectId))]
       const availByProject: Record<string, { available: number; total: number }> = {}
       for (const pid of projIds) {
         const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
         const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)')
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
-      // Pro Wohnung eine EIGENE Rendite-Berechnung — Wertentwicklung & Rendite unterscheiden
-      // sich je Projekt/Standort. Jede Wohnung bekommt ihren eigenen /rechnung-Link
-      // (läuft nicht ab) mit den für sie gesetzten Werten.
+      // Möbel-Default-Kette: manuelle Eingabe je Wohnung → Projekt-Standard → globaler Wizard-Wert.
+      const buildCalcItem = (it: BasketItem): CalcItem => {
+        const pu = perUnit[it.unit.id] ?? {}
+        const params: CalcParams = {
+          ...calcParams, dealType: 'single',
+          priceNet:        it.unit.price_net ?? calcParams.priceNet,
+          bedrooms:        it.unit.bedrooms ?? 2,
+          yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
+          appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
+          furnCost:        pu.furnCost ?? it.furnitureCost ?? calcParams.furnCost,
+          furnFree:        pu.furnFree ?? it.furnitureIncluded ?? calcParams.furnFree,
+          hotelConcept:    pu.hotelConcept ?? calcParams.hotelConcept,
+        }
+        return {
+          label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
+          bedrooms: it.unit.bedrooms, size_sqm: it.unit.size_sqm, terrace_sqm: it.unit.terrace_sqm, floor: it.unit.floor,
+          price_net: it.unit.price_net, price_gross: it.unit.price_gross, params,
+        }
+      }
       const calcLinkByToken: Record<string, string> = {}
       let compareLink: string | undefined
       if (withCalc) {
         const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
-        const compareItems: CalcItem[] = []
-        // 1) Pro Wohnung eine EIGENE Berechnung (Einzelobjekt, detaillierte Auswertung)
+        const allItems: CalcItem[] = []
+        // EINE Berechnung PRO PROJEKT — alle Wohnungen des Projekts als Items (Zahlen je
+        // Wohnung unterscheiden sich). Ein /rechnung-Link je Projekt-Deck.
         for (let i = 0; i < links.length; i++) {
           const l = links[i]
           setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${links.length}…`)
-          const pu = perUnit[l.item.unit.id] ?? {}
-          // Möbel-Default-Kette: manuelle Eingabe je Wohnung → Projekt-Standard
-          // (crm_projects.furniture_cost/_included) → globaler Wizard-Wert.
-          const params: CalcParams = {
-            ...calcParams, dealType: 'single',
-            priceNet:        l.item.unit.price_net ?? calcParams.priceNet,
-            bedrooms:        l.item.unit.bedrooms ?? 2,
-            yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
-            appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
-            furnCost:        pu.furnCost ?? l.item.furnitureCost ?? calcParams.furnCost,
-            furnFree:        pu.furnFree ?? l.item.furnitureIncluded ?? calcParams.furnFree,
-            hotelConcept:    pu.hotelConcept ?? calcParams.hotelConcept,
-          }
-          const calcItem: CalcItem = {
-            label: l.label, project: l.item.projectName, unit: l.item.unit.unit_number,
-            bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm, floor: l.item.unit.floor,
-            price_net: l.item.unit.price_net, price_gross: l.item.unit.price_gross, params,
-          }
-          compareItems.push(calcItem)
-          const content = { with_calc: true, recipient_name: recipientName, items: [calcItem] }
+          const items = l.items.map(buildCalcItem)
+          allItems.push(...items)
+          const title = items.length > 1
+            ? `Berechnung ${l.items[0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
+            : `Rechnung ${items[0].label}`
+          const content = { with_calc: true, recipient_name: recipientName, items }
           const { data: calcRow } = await supabase.from('property_calculations').insert({
-            lead_id: lead.id, recipient_name: recipientName, title: `Rechnung ${l.label}`, with_calc: true, content,
+            lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
           }).select('token').single()
           const tok = (calcRow as { token?: string } | null)?.token
           if (tok) calcLinkByToken[l.token] = `${origin}/rechnung/${tok}`
         }
-        // 2) Abschließend ein separater Immobilienvergleich ALLER Wohnungen (≥2 Objekte) —
-        //    dieselben Per-Wohnung-Parameter, nur alle in EINER Vergleichs-Ansicht.
-        if (compareItems.length >= 2) {
+        // Projektübergreifender Gesamt-Vergleich NUR bei ≥2 PROJEKTEN (vergleicht die Projekte).
+        if (links.length >= 2) {
           setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
-          const content = { with_calc: true, recipient_name: recipientName, items: compareItems }
+          const content = { with_calc: true, recipient_name: recipientName, items: allItems }
           const { data: cmpRow } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
           }).select('token').single()
@@ -191,18 +206,21 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           if (tok) compareLink = `${origin}/rechnung/${tok}`
         }
       }
-      const mailItems = links.map(l => ({
-        label: l.label, link: `${origin}/deck/${l.token}`,
-        calc_link: calcLinkByToken[l.token],   // eigene Rendite-Berechnung je Wohnung
-        image: l.item.assets?.renders?.[0] ?? l.item.assets?.gallery?.[0]?.url,   // Projektbild für die Mail-Kachel
-        project: l.item.projectName, unit: l.item.unit.unit_number,
-        bedrooms: l.item.unit.bedrooms, size_sqm: l.item.unit.size_sqm, terrace_sqm: l.item.unit.terrace_sqm,
-        floor: l.item.unit.floor, price: eur(l.item.unit.price_gross ?? l.item.unit.price_net),
-        // echte Projekt-Fakten (Amenities/Lage/Bauträger) → KI zieht Verkaufsargumente daraus
-        facts: (l.item.assets?.facts ?? '').slice(0, 2600),
-        available_count: availByProject[l.item.projectId]?.available ?? null,
-        total_count:     availByProject[l.item.projectId]?.total ?? null,
-      }))
+      const mailItems = links.map(l => {
+        const f = l.items[0]
+        return {
+          label: l.label, link: `${origin}/deck/${l.token}`,
+          calc_link: calcLinkByToken[l.token],   // Rendite-Berechnung des Projekts (alle Wohnungen)
+          image: f.assets?.renders?.[0] ?? f.assets?.gallery?.[0]?.url,   // Projektbild für die Mail-Kachel
+          project: f.projectName, unit: l.items.map(it => it.unit.unit_number).join(', '),
+          bedrooms: f.unit.bedrooms, size_sqm: f.unit.size_sqm, terrace_sqm: f.unit.terrace_sqm,
+          floor: f.unit.floor,
+          price: l.items.length > 1 ? `${l.items.length} ${t('crm.wizard.apartments', 'Wohnungen')}` : eur(f.unit.price_gross ?? f.unit.price_net),
+          facts: (f.assets?.facts ?? '').slice(0, 2600),
+          available_count: availByProject[f.projectId]?.available ?? null,
+          total_count:     availByProject[f.projectId]?.total ?? null,
+        }
+      })
       setProgress(t('crm.wizard.composingMail', 'Schreibe Begleit-Mail…'))
       let subject = links.length > 1 ? t('crm.wizard.subjectMulti', 'Deine Wohnungs-Vorschläge von Happy Property') : `${t('crm.wizard.subjectOne', 'Dein Vorschlag')}: ${links[0].label}`
       const compareLabel = t('crm.wizard.compareLabel', 'Dein Immobilienvergleich – alle Wohnungen direkt gegenübergestellt')
