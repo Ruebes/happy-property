@@ -122,7 +122,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // ROOT → Developer-Ordner → Projekt-Ordner
-    const devFolders = (await listChildren(token, ROOT)).filter(f => isFolder(f.mimeType))
+    const rootDevFolders = (await listChildren(token, ROOT)).filter(f => isFolder(f.mimeType))
+    // Externe Developer-Quellen (Developer-Drive, der mit unserem SA geteilt ist) —
+    // werden wie ein zusätzlicher Developer-Ordner behandelt (eigener Name).
+    const { data: extSrc } = await supabase.from('drive_external_sources').select('folder_id, developer_name').eq('active', true)
+    const extDevFolders = ((extSrc ?? []) as Array<{ folder_id: string; developer_name: string }>)
+      .map(s => ({ id: s.folder_id, name: s.developer_name, mimeType: 'application/vnd.google-apps.folder', modifiedTime: '' }))
+    const devFolders = [...rootDevFolders, ...extDevFolders]
     const result: Array<{ name: string; developer: string; folder_id: string; status: string; project_id?: string }> = []
     const needIngest: string[] = []
 
