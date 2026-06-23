@@ -1,6 +1,8 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { supabase } from '../../lib/supabase'
 import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem } from '../../lib/rechner'
+import { CustomSelect } from '../CustomSelect'
+import { NumberStepper } from '../NumberStepper'
 
 // ── Rendite-Rechner-Wizard ───────────────────────────────────────────────────
 // Voller Funktionsumfang des Original-Rechners (1:1-Engine): Einzelkauf + Share-Deal,
@@ -122,11 +124,7 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
   const numF = (label: string, k: keyof CalcParams, suffix?: string, step = '1') => (
     <div key={k}>
       <span className="block text-xs font-medium text-gray-500 mb-1.5">{label}</span>
-      <div className="relative">
-        <input type="number" step={step} value={String(p[k] ?? '')} onChange={e => set(k, num(e.target.value))}
-          className="w-full border border-gray-200 rounded-xl pl-3 pr-9 py-2.5 text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" />
-        {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">{suffix}</span>}
-      </div>
+      <NumberStepper value={Number(p[k] ?? 0)} onChange={v => set(k, v)} step={parseFloat(step)} suffix={suffix} />
     </div>
   )
   const toggle = (label: string, k: keyof CalcParams, hint?: string) => (
@@ -157,19 +155,21 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <span className="block text-xs font-medium text-gray-500 mb-1.5">Developer</span>
-                <select value={developer} onChange={e => { setDeveloper(e.target.value); setProjectId('') }}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                  <option value="">Alle</option>
-                  {[...new Set(projects.map(pr => pr.developer).filter(Boolean))].sort().map(d => <option key={d} value={d as string}>{d}</option>)}
-                </select>
+                <CustomSelect
+                  value={developer}
+                  onChange={v => { setDeveloper(v); setProjectId('') }}
+                  options={[{ value: '', label: 'Alle' },
+                    ...[...new Set(projects.map(pr => pr.developer).filter(Boolean))].sort().map(d => ({ value: d as string, label: d as string }))]}
+                />
               </div>
               <div>
                 <span className="block text-xs font-medium text-gray-500 mb-1.5">Projekt</span>
-                <select value={projectId} onChange={e => setProjectId(e.target.value)}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 bg-white">
-                  <option value="">— wählen —</option>
-                  {projects.filter(pr => !developer || pr.developer === developer).map(pr => <option key={pr.id} value={pr.id}>{pr.name}</option>)}
-                </select>
+                <CustomSelect
+                  value={projectId}
+                  onChange={setProjectId}
+                  placeholder="— wählen —"
+                  options={projects.filter(pr => !developer || pr.developer === developer).map(pr => ({ value: pr.id, label: pr.name }))}
+                />
               </div>
             </div>
             {units.length > 0 && (
@@ -270,9 +270,9 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
                   {p.ppVals.map((v, i) => (
                     <div key={i}>
                       <span className="block text-[10px] text-gray-400 text-center">J{i + 1}</span>
-                      <input type="number" step="500" value={v || ''} placeholder="0"
+                      <input type="text" inputMode="decimal" value={v || ''} placeholder="0"
                         onChange={e => { const pp = [...p.ppVals]; pp[i] = num(e.target.value); set('ppVals', pp) }}
-                        className="w-full border border-gray-200 rounded-lg px-1 py-1 text-xs text-center focus:outline-none focus:border-orange-400" />
+                        className="w-full border border-gray-200 rounded-lg px-1 py-1.5 text-xs text-center focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" />
                     </div>
                   ))}
                 </div>

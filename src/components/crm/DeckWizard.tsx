@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, type CalcParams, type CalcItem } from '../../lib/rechner'
+import { CustomSelect } from '../CustomSelect'
+import { NumberStepper } from '../NumberStepper'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
 // Aus dem Kunden heraus: Projekt → Vorschlags-Wohnung(en) → Freitext → ins Paket;
@@ -242,9 +244,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const setCp = (k: keyof CalcParams, v: number | string | boolean) => setCalcParams(prev => ({ ...prev, [k]: v }) as CalcParams)
   const numF = (label: string, k: keyof CalcParams, step = '1', suffix?: string) => (
     <label key={k} className="block">
-      <span className="block text-[11px] text-gray-500 mb-0.5">{label}{suffix ? ` (${suffix})` : ''}</span>
-      <input type="number" step={step} value={String(calcParams[k] ?? '')} onChange={e => setCp(k, parseFloat(e.target.value) || 0)}
-        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400" />
+      <span className="block text-xs font-medium text-gray-500 mb-1">{label}</span>
+      <NumberStepper value={Number(calcParams[k] ?? 0)} onChange={v => setCp(k, v)} step={parseFloat(step)} suffix={suffix} />
     </label>
   )
   const seg = (label: string, k: keyof CalcParams, opts: [string, string][]) => (
@@ -281,17 +282,21 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.developer', 'Developer')}</label>
-              <select className={inputCls} value={developer} onChange={e => { setDeveloper(e.target.value); setProjectId('') }}>
-                <option value="">{t('crm.wizard.allDevelopers', 'Alle')}</option>
-                {[...new Set(projects.map(p => p.developer).filter(Boolean))].sort().map(d => <option key={d} value={d as string}>{d}</option>)}
-              </select>
+              <CustomSelect
+                value={developer}
+                onChange={v => { setDeveloper(v); setProjectId('') }}
+                options={[{ value: '', label: t('crm.wizard.allDevelopers', 'Alle') },
+                  ...[...new Set(projects.map(p => p.developer).filter(Boolean))].sort().map(d => ({ value: d as string, label: d as string }))]}
+              />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.project', 'Projekt')}</label>
-              <select className={inputCls} value={projectId} onChange={e => setProjectId(e.target.value)}>
-                <option value="">{t('crm.wizard.choose', '— wählen —')}</option>
-                {projects.filter(p => !developer || p.developer === developer).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <CustomSelect
+                value={projectId}
+                onChange={setProjectId}
+                placeholder={t('crm.wizard.choose', '— wählen —')}
+                options={projects.filter(p => !developer || p.developer === developer).map(p => ({ value: p.id, label: p.name }))}
+              />
             </div>
           </div>
 
@@ -339,10 +344,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.angle', 'Winkel')}</label>
-              <select className={inputCls} value={angle} onChange={e => setAngle(e.target.value as 'lifestyle' | 'investment')}>
-                <option value="lifestyle">{t('crm.wizard.lifestyle', 'Lifestyle')}</option>
-                <option value="investment">{t('crm.wizard.investment', 'Investment')}</option>
-              </select>
+              <CustomSelect
+                value={angle}
+                onChange={v => setAngle(v as 'lifestyle' | 'investment')}
+                options={[{ value: 'lifestyle', label: t('crm.wizard.lifestyle', 'Lifestyle') },
+                  { value: 'investment', label: t('crm.wizard.investment', 'Investment') }]}
+              />
             </div>
           </div>
 
@@ -389,9 +396,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                       const ff = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
                       const hc = pu.hotelConcept ?? calcParams.hotelConcept
                       const miniInput = (lab: string, val: string, on: (v: number) => void, step = '0.1', suf = '%') => (
-                        <label className="flex items-center gap-1 text-[11px] text-gray-500">{lab}
-                          <input type="number" step={step} value={val} onChange={e => on(parseFloat(e.target.value) || 0)}
-                            className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-orange-300" />{suf}
+                        <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                          <span>{lab}</span>
+                          <NumberStepper value={parseFloat(val) || 0} onChange={on} step={parseFloat(step)} suffix={suf} className="w-32" />
                         </label>
                       )
                       return (
