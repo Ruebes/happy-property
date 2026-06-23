@@ -106,10 +106,30 @@ Deno.serve(async (req) => {
 - Steht dort ein KONKRETER Zeilen-Preis (Zahl) → availability available, und übernimm GENAU diesen Zeilen-Preis.
 NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Überschrift als Preis einer Einheit verwenden. Zeigt die Preis-Spalte einer Zeile „RESERVED" oder „SOLD", ist die Einheit reserved/sold — niemals available, auch wenn die Überschrift einen Richtpreis nennt. Im Zweifel availability=reserved und KEINEN Preis erfinden.`
 
-    const isPdf = url.toLowerCase().split('?')[0].endsWith('.pdf')
+    const ext = url.toLowerCase().split('?')[0]
+    const isPdf  = ext.endsWith('.pdf')
+    const isXlsx = ext.endsWith('.xlsx') || ext.endsWith('.xls')
+
+    // Viele Developer (z.B. Olias) führen die Gesamt-Preisliste als EXCEL, nicht PDF.
+    // Claude kann xlsx nicht direkt lesen → hier per SheetJS in CSV-Text wandeln und
+    // als Text-Block schicken. Pro Blatt eine Tabelle; „"-Anführungszeichen raus.
+    let xlsxText = ''
+    if (isXlsx) {
+      const xr = await fetch(url)
+      if (!xr.ok) throw new Error(`Preislisten-Download ${xr.status}`)
+      const bytes = new Uint8Array(await xr.arrayBuffer())
+      const XLSX = await import('https://esm.sh/xlsx@0.18.5')
+      const wb = XLSX.read(bytes, { type: 'array' })
+      xlsxText = wb.SheetNames
+        .map(s => `--- Blatt: ${s} ---\n${XLSX.utils.sheet_to_csv(wb.Sheets[s])}`)
+        .join('\n\n').replace(/"/g, '').slice(0, 60000)
+    }
     const docBlock = isPdf
       ? { type: 'document', source: { type: 'url', url } }
       : { type: 'image',    source: { type: 'url', url } }
+    const content = isXlsx
+      ? [{ type: 'text', text: `${PROMPT}${focus}${availRule}\n\n=== PREISLISTE (Excel als CSV) ===\n${xlsxText}` }]
+      : [docBlock, { type: 'text', text: PROMPT + focus + availRule }]
 
     // Die Generierung (Claude liest Preisliste ~25s + Insert). Sync oder im Hintergrund.
     const runParse = async (): Promise<{ count: number; created: number; units: Unit[] }> => {
@@ -126,7 +146,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         max_tokens:  8000,
         tools:       [TOOL],
         tool_choice: { type: 'tool', name: 'emit_units' },
-        messages:    [{ role: 'user', content: [docBlock, { type: 'text', text: PROMPT + focus + availRule }] }],
+        messages:    [{ role: 'user', content }],
       }),
     })
     if (!res.ok) {

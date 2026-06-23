@@ -500,7 +500,19 @@ Deno.serve(async (req) => {
       }
       const devFolder = await getParentId(token, folderId)
       const devFiles = devFolder ? (await listChildren(token, devFolder)).filter(f => !isFolder(f.mimeType)) : []
-      const all = [...projectFiles, ...subFiles, ...devFiles]
+      // Externe Developer-Quelle (z.B. Olias-Drive): getParentId scheitert bei
+      // geteilten Ordnern oft → entwicklerweite Preisliste/Zahlungsplan zusätzlich
+      // über drive_external_sources (per Developer-Name) holen.
+      let extFiles: DriveFile[] = []
+      try {
+        const devName = String(project.developer ?? '').trim()
+        if (devName) {
+          const { data: src } = await supabase.from('drive_external_sources').select('folder_id').eq('developer_name', devName).eq('active', true).maybeSingle()
+          const extFolderId = (src as { folder_id?: string } | null)?.folder_id
+          if (extFolderId && extFolderId !== devFolder) extFiles = (await listChildren(token, extFolderId)).filter(f => !isFolder(f.mimeType))
+        }
+      } catch { /* externe Quelle optional */ }
+      const all = [...projectFiles, ...subFiles, ...devFiles, ...extFiles]
       const pick = (t: string) => all.find(f => docType(f.name) === t)
       // Preisliste: bei mehreren Versionen die NEUESTE nehmen (Developer laden regelmäßig
       // aktualisierte Gesamtlisten hoch — sonst zeigt das CRM veraltete Verfügbarkeiten).
@@ -527,7 +539,10 @@ Deno.serve(async (req) => {
       // damit sie einen späteren Memory-Spike (große Broschüre / xlsx) überlebt.
       // Beobachtet: docs lief bei Mamba ins „Memory limit exceeded" — die inkrementelle
       // Sicherung stellt sicher, dass die Preisliste trotzdem ankommt.
-      if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/'))) {
+      // Preisliste hochladen: PDF, Bild ODER xlsx/xls (Olias u.a. führen die Gesamtliste
+      // als Excel — parse-pricelist wandelt xlsx selbst per SheetJS in Text).
+      const plIsXlsx = !!pricelist && (/sheet|excel|xlsx/.test(pricelist.mimeType) || /\.xls[x]?$/i.test(pricelist.name))
+      if (pricelist && (pricelist.mimeType === 'application/pdf' || pricelist.mimeType.startsWith('image/') || plIsXlsx)) {
         await importDoc(pricelist, 'pricelist')
         await saveAssets(supabase, project_id, { doc_urls })
       }
