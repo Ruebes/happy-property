@@ -120,11 +120,11 @@ const H2 = ({ children }: { children: ReactNode }) => (
 const Note = ({ children }: { children: ReactNode }) => (
   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.55, background: '#f5f2ec', borderRadius: 8, padding: '10px 13px', marginTop: 14, borderLeft: `3px solid ${CORAL}` }}>{children}</div>
 )
-function KV({ k, v, color }: { k: ReactNode; v: ReactNode; color?: string }) {
+function KV({ k, v, color, strong }: { k: ReactNode; v: ReactNode; color?: string; strong?: boolean }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #eee', padding: '7px 0', fontSize: 13 }}>
-      <span style={{ color: '#888' }}>{k}</span>
-      <span style={{ fontWeight: 700, color: color || '#1a1a1a', textAlign: 'right' }}>{v}</span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderBottom: strong ? '2px solid #1a1a1a' : '1px solid #eee', padding: strong ? '9px 0' : '7px 0', fontSize: strong ? 15 : 13 }}>
+      <span style={{ color: strong ? '#1a1a1a' : '#888', fontWeight: strong ? 700 : 400 }}>{k}</span>
+      <span style={{ fontWeight: strong ? 800 : 700, color: color || '#1a1a1a', textAlign: 'right' }}>{v}</span>
     </div>
   )
 }
@@ -156,11 +156,15 @@ function Single({ row }: { row: Row; today: string }) {
           </>) : <KV k="Kaufpreis netto" v={eur(r.pNet)} />}
           <KV k="Umsatzsteuer (19%)" v={eur(r.vatAmt)} />
           <KV k="Kaufpreis brutto" v={eur(r.pGross)} />
+          {/* Transparente Gesamtkosten: Kaufpreis + Einrichtung extra = Gesamtpreis.
+              Bei inkludierter Einrichtung (z.B. Infinity) „inklusive", sonst Aufschlag
+              (z.B. Emerald Park +19.000 netto). furnForIRR = furnFree ? 0 : furnCost. */}
+          {(r.furnFree || r.furnCost > 0) && <KV k={r.furnFree ? 'Einrichtung' : 'Einrichtung (netto)'} v={r.furnFree ? 'inklusive' : `+ ${eur(r.furnCost)}`} color={r.furnFree ? GREEN : CORAL} />}
+          {(r.furnFree || r.furnCost > 0) && <KV k="Gesamtpreis" v={eur(r.pGross + r.furnForIRR)} strong />}
           <KV k="Anwaltskosten (1%)" v={eur(r.costs)} />
           <KV k="Eigenkapital (Start)" v={eur(r.ekStart)} />
           <KV k="Fremdfinanzierung" v={eur(r.loan)} />
           <KV k="Schlafzimmer" v={String(r.bedrooms)} />
-          {r.furnCost > 0 && <KV k="Einrichtungspaket" v={r.furnFree ? 'inklusive' : eur(r.furnCost)} color={r.furnFree ? GREEN : CORAL} />}
         </Card>
         <Card>
           <H2>Summen & Kennzahlen (10 Jahre)</H2>
@@ -410,6 +414,8 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row('Bruttorendite', r => pct(r.res?.yPct ?? null))}
               {sect('FINANZIERUNG')}
               {row('Kaufpreis brutto', r => eur(r.res?.pGross))}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row('Einrichtung', r => r.res ? (r.res.furnFree ? 'inklusive' : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnCost)}` : '–')) : '–')}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row('Gesamtpreis', r => eur(r.res ? r.res.pGross + r.res.furnForIRR : null), rows.map(() => true))}
               {row('Eigenkapital + NK', r => eur(r.res?.ekStart))}
               {row('Finanzierung', r => r.res && r.res.loan > 0 ? eur(r.res.loan) : 'Cash')}
               {row('Cashflow Jahr 1', r => eur(r.res ? r.res.cfA[0] - (r.res.vatA[0] || 0) : null))}
@@ -510,6 +516,8 @@ function SpecsCard({ rows }: { rows: Row[] }) {
             {row('Terrasse', r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
             {row('Etage', r => r.item.floor != null ? `${r.item.floor}` : '–')}
             {row('Kaufpreis', r => eur(r.item.price_gross ?? r.item.price_net))}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row('Einrichtung', r => { const pa = r.item.params; return pa ? (pa.furnFree ? 'inklusive' : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost)}` : '–')) : '–' })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row('Gesamtpreis', r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? (pa.furnCost ?? 0) : 0; return eur(base + f) })}
           </tbody>
         </table>
       </div>
