@@ -883,6 +883,7 @@ export default function Projects() {
   const [filterBed, setFilterBed]       = useState<'all' | '1' | '2' | '3' | '4'>('all')
   const [filterMin, setFilterMin]       = useState(0)
   const [filterMax, setFilterMax]       = useState(0)
+  const [takenUnits, setTakenUnits]     = useState<Set<string>>(new Set())
   const [editProject, setEditProject]   = useState<CrmProject | null | undefined>(undefined)
   const [scanBusy, setScanBusy]         = useState(false)
   const [scanMsg, setScanMsg]           = useState<string | null>(null)
@@ -896,6 +897,9 @@ export default function Projects() {
         .order('created_at', { ascending: false })
       if (error) throw error
       setProjects((data ?? []) as unknown as CrmProject[])
+      // Wohnungen an aktiven Deals (nicht archiviert, nicht verloren) = vergeben → im Filter raus
+      const { data: dealRows } = await supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null)
+      setTakenUnits(new Set((dealRows ?? []).map(d => (d as { unit_id: string }).unit_id)))
     } catch (err) {
       console.error('[Projects]', err)
       setProjects([])
@@ -911,9 +915,9 @@ export default function Projects() {
   const unitFilterActive = filterBed !== 'all' || filterMin > 0 || filterMax > 0
   const projectHasMatch = (p: CrmProject) => {
     if (!unitFilterActive) return true
-    const units = (p as unknown as { units?: Array<{ status: string | null; bedrooms: number | null; price_net: number | null; price_gross: number | null }> }).units ?? []
+    const units = (p as unknown as { units?: Array<{ id: string; status: string | null; bedrooms: number | null; price_net: number | null; price_gross: number | null }> }).units ?? []
     return units.some(u => {
-      if (u.status === 'sold' || u.status === 'reserved') return false
+      if (u.status === 'sold' || u.status === 'reserved' || takenUnits.has(u.id)) return false
       if (filterBed !== 'all') {
         const bed = u.bedrooms ?? 0
         if (filterBed === '4' ? bed < 4 : String(u.bedrooms ?? '') !== filterBed) return false

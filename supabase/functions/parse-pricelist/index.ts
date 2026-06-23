@@ -160,33 +160,56 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
     const units = (Array.isArray(raw) ? raw : []) as Unit[]
     if (!units.length) throw new Error('Keine Einheiten erkannt')
 
-    let created = 0, deleted = 0
+    let created = 0, deleted = 0, updated = 0
     if (body.create && body.project_id) {
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source').eq('project_id', body.project_id)
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_gross').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
       const dealLinked = new Set((dealUnits ?? []).map(d => (d as { unit_id: string }).unit_id))
-      // Verfügbarkeit aus der aktuellen Preisliste je Unit-Nummer
+      // Verfügbarkeit + Preis aus der aktuellen Preisliste je Unit-Nummer
       const avail = new Map<string, string>()
-      for (const u of units) if (u.unit_number) avail.set(norm(u.unit_number), (u.availability as string) || 'available')
+      const listByNum = new Map<string, Unit>()
+      for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      // (C) Nicht mehr verfügbare Units löschen: nur Drive-Import-Units, die der Developer
-      // jetzt als sold/reserved markiert, und die NICHT an einen unserer Deals hängen.
-      // Manuell angelegte Units + Deal-Units bleiben unangetastet. (Bloße Abwesenheit aus
-      // der Liste löscht NICHT — schützt vor Parse-Aussetzern.)
-      const toDelete = (existing ?? [])
-        .filter(r => {
-          const row = r as { id: string; unit_number: string; source: string | null }
-          if (row.source !== 'drive_import' || dealLinked.has(row.id)) return false
-          const av = avail.get(norm(row.unit_number))
-          return av === 'sold' || av === 'reserved'
-        })
-        .map(r => (r as { id: string }).id)
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_gross: number | null }
+      const driveAll  = (existing ?? []).filter(r => (r as ExRow).source === 'drive_import') as ExRow[]
+      const driveFree = driveAll.filter(r => !dealLinked.has(r.id))   // löschbar (Deal-Units bleiben)
+      // „Vollständige" Liste? Mind. so viele Einträge wie wir Drive-Units haben → dann ist
+      // sicher, dass komplett VERSCHWUNDENE Units = verkauft sind (schützt vor Parse-Aussetzern).
+      const listComplete = units.length >= driveAll.length
+      const isUnavail = (r: ExRow) => {
+        const av = avail.get(norm(r.unit_number))
+        return av === 'sold' || av === 'reserved' || (!av && listComplete)
+      }
+
+      // (1) LÖSCHEN: freie Drive-Units, die jetzt sold/reserved oder (bei vollständiger Liste)
+      // ganz verschwunden sind. Manuelle + Deal-Units bleiben unangetastet.
+      const toDelete = driveFree.filter(isUnavail).map(r => r.id)
       if (toDelete.length) {
         const { error } = await supabase.from('crm_project_units').delete().in('id', toDelete)
         if (!error) deleted = toDelete.length
+      }
+
+      // Hinweis: Units an AKTIVEN Deals (driveDeal) werden NICHT gelöscht und NICHT im Status
+      // geändert (Unit-Status ist nur under_construction|active, „reserved" würde per Trigger
+      // eh überschrieben). Sie werden in den Angebots-Ansichten über die Deal-Bindung ausgeblendet.
+
+      // (2) AKTUALISIEREN: bestehende, verfügbar gebliebene freie Drive-Units — Preis nachziehen.
+      const delSet = new Set(toDelete)
+      for (const r of driveFree) {
+        if (delSet.has(r.id) || isUnavail(r)) continue
+        const lu = listByNum.get(norm(r.unit_number))
+        if (!lu) continue
+        const newNet = num(lu.price_net), newGross = num(lu.price_gross)
+        const patch: Record<string, number> = {}
+        if (newNet != null && Number(newNet) !== Number(r.price_net)) patch.price_net = newNet
+        if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
+        if (Object.keys(patch).length) {
+          const { error } = await supabase.from('crm_project_units').update(patch).eq('id', r.id)
+          if (!error) updated++
+        }
       }
 
       // Neue VERFÜGBARE Units anlegen (sold/reserved aus der Liste nicht aufnehmen)
@@ -216,7 +239,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       }
     }
 
-      return { count: units.length, created, deleted, units }
+      return { count: units.length, created, deleted, updated, units }
     }   // ── Ende runParse ──
 
     // Preisliste lesen (~25s): bei create im HINTERGRUND, damit der Browser nicht
@@ -227,7 +250,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       return json({ ok: true, background: true })
     }
     const out = await runParse()
-    return json({ ok: true, count: out.count, created: out.created, units: out.units })
+    return json({ ok: true, count: out.count, created: out.created, deleted: out.deleted, updated: out.updated, units: out.units })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

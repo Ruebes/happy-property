@@ -55,12 +55,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     setSel(new Set())
     if (!projectId) { setUnits([]); return }
     // Alle ANBIETBAREN Wohnungen — nicht nur status='proposal'. Off-Plan-Wohnungen
-    // (under_construction) UND manuell angelegte sind verkaufbar; nur verkauft/
-    // reserviert wird ausgeblendet. (Bug: manuelle Unit 103 war under_construction → unsichtbar.)
-    const { data } = await supabase.from('crm_project_units')
-      .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor')
-      .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').order('unit_number')
-    setUnits((data ?? []) as UnitRow[])
+    // (under_construction) UND manuell angelegte sind verkaufbar; verkauft/reserviert
+    // UND an einen aktiven Deal gebundene Wohnungen werden ausgeblendet (= schon weg).
+    const [{ data }, { data: dealRows }] = await Promise.all([
+      supabase.from('crm_project_units')
+        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor')
+        .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').order('unit_number'),
+      supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null),
+    ])
+    const taken = new Set((dealRows ?? []).map(d => (d as { unit_id: string }).unit_id))
+    setUnits((data ?? []).filter(u => !taken.has((u as { id: string }).id)) as UnitRow[])
   })() }, [projectId])
 
   const project = projects.find(p => p.id === projectId)
