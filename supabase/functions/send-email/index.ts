@@ -194,7 +194,7 @@ Deno.serve(async (req: Request) => {
           // Absender = das konfigurierte SMTP-Postfach (smtpUser). Stellt Sven den SMTP-Login
           // auf info@ um, wird der Absender automatisch info@ — kein Code/Secret-Timing nötig,
           // und From passt immer zum authentifizierten Konto (sonst lehnt IONOS ab).
-          from:    `Sven Rüprich <${smtpUser}>`,
+          from:    `Sven von Happy Property Cyprus <${smtpUser}>`,
           // Antworten laufen ins info@-Postfach (von dort liest sie künftig der CRM-Posteingang).
           replyTo: `info@happy-property.com`,
           to:      to,

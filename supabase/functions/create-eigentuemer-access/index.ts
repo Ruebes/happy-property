@@ -378,7 +378,7 @@ Deno.serve(async (req: Request) => {
       })
       try {
         await client.send({
-          from:    `Sven Rüprich <sven@happy-property.com>`,
+          from:    `Sven von Happy Property Cyprus <${smtpUser}>`,
           to:      email,
           subject,
           html,

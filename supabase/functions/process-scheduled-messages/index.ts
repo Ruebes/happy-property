@@ -53,7 +53,7 @@ async function sendEmail(params: {
   })
   try {
     await client.send({
-      from:    `Sven Rüprich <sven@happy-property.com>`,
+      from:    `Sven von Happy Property Cyprus <${params.smtpUser}>`,
       to:      params.to,
       subject: params.subject,
       html:    params.html,

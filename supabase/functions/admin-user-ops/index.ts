@@ -88,7 +88,7 @@ async function sendAccessEmail(fullName: string, email: string, password: string
   })
   try {
     await client.send({
-      from:    `Sven Rüprich <sven@happy-property.com>`,
+      from:    `Sven von Happy Property Cyprus <${smtpUser}>`,
       to:      email,
       subject: 'Deine neuen Zugangsdaten – Happy Property Portal',
       html:    buildAccessEmail(fullName, email, password, appUrl),
