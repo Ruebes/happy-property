@@ -69,7 +69,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
 // Deterministischer Wahrheits-Backstop: filtert bekannte erfundene Behauptungen
 // raus, falls das Modell die Prompt-Regeln (4d / 5b) doch mal ignoriert. Greift
 // SATZWEISE (entfernt nur den betroffenen Satz, nicht den ganzen Block).
@@ -133,15 +133,25 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
     const t = b.type
     if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
     if (t === 'facts') {
-      // Nur eine ECHTE Karte bekommt den orangen Standort-Kreis + Objektnamen; ohne Karte
-      // ein neutrales Bild (kein Kreis auf einem zufälligen Foto).
-      if (images?.map) {
+      // Standort-Karte, in Prioritäts-Reihenfolge:
+      // 1) Echte Koordinaten (lat/lng) → interaktive Google-Maps-Einbettung im Deck
+      //    (Deck.tsx baut den iframe). Pin sitzt IMMER exakt richtig (kein Vision-Marker
+      //    mehr, kein manueller Screenshot, funktioniert auch für Projekte ohne Drive).
+      // 2) Statischer Karten-Screenshot (Alt-Projekte) → Bild + Vision-Marker-Kreis.
+      // 3) Keine Karte → neutrales Render (kein Kreis auf zufälligem Foto).
+      if (images?.mapLat != null && images?.mapLng != null) {
+        b.mapLat = images.mapLat
+        b.mapLng = images.mapLng
+        if (projName) b.mapLabel = projName
+        if (images?.map) b.image = images.map   // optionaler statischer Fallback (PDF/Alt-Clients)
+      } else if (images?.map) {
         b.image = images.map
         if (projName) b.mapLabel = projName
         if (images.mapMarker) b.mapMarker = images.mapMarker   // %-Position des echten Pins (Vision)
+      } else {
+        b.image = nextRender()
       }
-      else b.image = nextRender()
-      if (images?.mapUrl) b.mapUrl = images.mapUrl   // Kartenausschnitt verlinkt auf Google Maps
+      if (images?.mapUrl) b.mapUrl = images.mapUrl   // verlinkt auf Google Maps
     }
     if (t === 'floorplan') b.image = images?.floorplan ?? nextRender()
     if (t === 'gallery' && Array.isArray(b.items)) {
@@ -158,7 +168,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; gallery?: Array<{ url: string; category: string; label: string }> }
+      images?: { renders?: string[]; floorplan?: string; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       generic?: boolean
       background?: boolean

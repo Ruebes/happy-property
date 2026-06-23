@@ -11,9 +11,9 @@ import { DEFAULT_PARAMS, type CalcParams, type CalcItem } from '../../lib/rechne
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null }
+interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null }
-interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null }
+interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -42,7 +42,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [err, setErr]           = useState('')
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, latitude, longitude').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -64,7 +64,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const addToBasket = () => {
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id))
-      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included }))
+      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included, lat: project.latitude, lng: project.longitude }))
     setBasket(b => [...b, ...adds])
     setSel(new Set())
   }
@@ -77,7 +77,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const u = item.unit
     const unitFacts = `\n\n=== DIESE WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.\nPreis: ${eur(u.price_gross ?? u.price_net)}${u.price_gross && u.price_net ? ` (netto ${eur(u.price_net)})` : ''}.`
     const fp = (a.floorplans ?? []).find(f => f.floor === u.floor)?.url ?? (a.floorplans ?? [])[0]?.url
-    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fp, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined }
+    const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: fp, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined, mapLat: item.lat ?? undefined, mapLng: item.lng ?? undefined }
     // letztes bestehendes Deck dieser Wohnung merken → auf NEUES Token pollen
     const { data: prev } = await supabase.from('sales_decks').select('token, created_at').eq('lead_id', lead.id).eq('unit_id', u.id).order('created_at', { ascending: false }).limit(1).maybeSingle()
     const prevTok = (prev as { token?: string } | null)?.token ?? null

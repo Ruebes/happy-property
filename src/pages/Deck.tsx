@@ -118,7 +118,32 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {b.image && (() => {
+      {(b.mapLat != null && b.mapLng != null) ? (() => {
+      // INTERAKTIVE Karte: Pin sitzt exakt auf den Projekt-Koordinaten. Keyless Google-
+      // Embed (output=embed, kein API-Key), im Browser zoom-/verschiebbar. Ersetzt den
+      // manuellen Screenshot UND den fehleranfälligen Vision-Marker-Kreis.
+      const q = `${b.mapLat},${b.mapLng}`
+      const openHref = b.mapUrl || `https://www.google.com/maps?q=${q}`
+      return (
+        <div className="mt-8">
+          <div className="relative w-full overflow-hidden rounded-xl border border-gray-200" style={{ aspectRatio: '16 / 9' }}>
+            <iframe
+              title={b.mapLabel ? `Standort ${b.mapLabel}` : 'Standort'}
+              src={`https://maps.google.com/maps?q=${q}&z=15&output=embed`}
+              className="absolute inset-0 h-full w-full"
+              style={{ border: 0 }}
+              loading="lazy"
+              referrerPolicy="no-referrer-when-downgrade"
+              allowFullScreen
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            {b.mapLabel && <span className="text-sm font-semibold px-3 py-1 rounded-full text-white" style={{ background: '#ff795d' }}>📍 {b.mapLabel}</span>}
+            <a href={openHref} target="_blank" rel="noopener noreferrer" className="text-xs font-medium px-3 py-1.5 rounded-full text-white shadow ml-auto" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</a>
+          </div>
+        </div>
+      )
+      })() : b.image && (() => {
       // Mit Marker: Karte als VOLLBILD (natürliches Seitenverhältnis) — sonst würde
       // object-cover das Bild beschneiden und die %-Marker-Position verrutschen.
       // Ohne Marker: bisheriger 320px-Band-Look (zentrierter Ring egal beim Crop).
