@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase'
 import type { CrmProject, ProjectStatus, DeckAssetsCache } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
+import { NumberStepper } from '../../../components/NumberStepper'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 import UnitImagesUploader from '../../../components/crm/UnitImagesUploader'
 
@@ -879,6 +880,9 @@ export default function Projects() {
   const [loading, setLoading]           = useState(true)
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]             = useState('')
+  const [filterBed, setFilterBed]       = useState<'all' | '1' | '2' | '3' | '4'>('all')
+  const [filterMin, setFilterMin]       = useState(0)
+  const [filterMax, setFilterMax]       = useState(0)
   const [editProject, setEditProject]   = useState<CrmProject | null | undefined>(undefined)
   const [scanBusy, setScanBusy]         = useState(false)
   const [scanMsg, setScanMsg]           = useState<string | null>(null)
@@ -888,7 +892,7 @@ export default function Projects() {
     try {
       const { data, error } = await supabase
         .from('crm_projects')
-        .select('*, units:crm_project_units(id,status)')
+        .select('*, units:crm_project_units(id,status,bedrooms,price_net,price_gross)')
         .order('created_at', { ascending: false })
       if (error) throw error
       setProjects((data ?? []) as unknown as CrmProject[])
@@ -902,6 +906,25 @@ export default function Projects() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
+  // Preis-/Schlafzimmer-Filter: Projekt erscheint, wenn ≥1 ANBIETBARE Wohnung
+  // (nicht verkauft/reserviert) zu Schlafzimmern UND Preis-Spanne passt.
+  const unitFilterActive = filterBed !== 'all' || filterMin > 0 || filterMax > 0
+  const projectHasMatch = (p: CrmProject) => {
+    if (!unitFilterActive) return true
+    const units = (p as unknown as { units?: Array<{ status: string | null; bedrooms: number | null; price_net: number | null; price_gross: number | null }> }).units ?? []
+    return units.some(u => {
+      if (u.status === 'sold' || u.status === 'reserved') return false
+      if (filterBed !== 'all') {
+        const bed = u.bedrooms ?? 0
+        if (filterBed === '4' ? bed < 4 : String(u.bedrooms ?? '') !== filterBed) return false
+      }
+      const price = u.price_gross ?? u.price_net ?? 0
+      if (filterMin > 0 && price < filterMin) return false
+      if (filterMax > 0 && price > filterMax) return false
+      return true
+    })
+  }
+
   const filtered = projects.filter(p => {
     if (filterStatus && p.status !== filterStatus) return false
     if (search) {
@@ -910,6 +933,7 @@ export default function Projects() {
           !(p.developer ?? '').toLowerCase().includes(q) &&
           !(p.location ?? '').toLowerCase().includes(q)) return false
     }
+    if (!projectHasMatch(p)) return false
     return true
   })
 
@@ -971,22 +995,46 @@ export default function Projects() {
         )}
 
         {/* Filter bar */}
-        <div className="flex gap-3 flex-wrap">
+        <div className="flex gap-3 flex-wrap items-end">
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('crm.project.search', 'Suchen nach Name, Developer, Ort…')}
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 min-w-[220px]"
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 min-w-[220px] self-center"
           />
           <CustomSelect
             value={filterStatus}
             onChange={val => setFilterStatus(val)}
-            className="border border-gray-200 rounded-lg text-sm bg-white"
+            className="border border-gray-200 rounded-lg text-sm bg-white self-center"
             options={[
               { value: '', label: `— ${t('crm.project.allStatuses', 'Alle Status')} —` },
               ...(['available', 'under_construction', 'sold_out', 'completed'] as ProjectStatus[]).map(s => ({ value: s, label: t(`crm.project.statuses.${s}`, s) })),
             ]}
           />
+          {/* Wohnungs-Filter: Schlafzimmer + Preis-Spanne */}
+          <div>
+            <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.project.bedrooms', 'Schlafzimmer')}</span>
+            <div className="flex rounded-lg overflow-hidden border border-gray-200">
+              {(['all', '1', '2', '3', '4'] as const).map(b => (
+                <button key={b} type="button" onClick={() => setFilterBed(b)}
+                  className={`px-2.5 py-2 text-xs font-medium border-l first:border-l-0 border-gray-200 ${filterBed === b ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                  {b === 'all' ? t('crm.project.all', 'Alle') : b === '4' ? '4+' : b}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.project.priceFrom', 'Preis von')}</span>
+            <NumberStepper value={filterMin} onChange={setFilterMin} step={25000} suffix="€" className="w-36" />
+          </div>
+          <div>
+            <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.project.priceTo', 'bis')}</span>
+            <NumberStepper value={filterMax} onChange={setFilterMax} step={25000} suffix="€" className="w-36" />
+          </div>
+          {unitFilterActive && (
+            <button type="button" onClick={() => { setFilterBed('all'); setFilterMin(0); setFilterMax(0) }}
+              className="text-xs text-gray-400 hover:text-gray-600 underline self-center pb-2">{t('crm.project.resetFilter', 'zurücksetzen')}</button>
+          )}
         </div>
 
         {/* Grid */}
@@ -996,7 +1044,9 @@ export default function Projects() {
           </div>
         ) : filtered.length === 0 ? (
           <p className="text-gray-400 text-center py-16">
-            {t('crm.project.noProjects', 'Noch keine Projekte angelegt.')}
+            {(search || filterStatus || unitFilterActive)
+              ? t('crm.project.noFilterMatch', 'Keine Projekte passen zum Filter.')
+              : t('crm.project.noProjects', 'Noch keine Projekte angelegt.')}
           </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
