@@ -18,7 +18,7 @@ interface BasketItem { project: ProjectRow; unit: UnitRow }
 const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d : n }
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
-export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void }) {
+export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [developer, setDeveloper] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -34,6 +34,13 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
     const { data } = await supabase.from('crm_projects').select('id, name, developer, location').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
+
+  // Bearbeiten: bestehende Berechnung laden → geteilte Parameter (Eigenkapital, Zins …)
+  // aus dem ersten Objekt vorbefüllen. Die Objekte selbst bleiben unverändert.
+  useEffect(() => {
+    const it0 = editCalc?.content?.items?.[0]
+    if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params })
+  }, [editCalc])
 
   useEffect(() => { void (async () => {
     setSel(new Set())
@@ -71,9 +78,24 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
   }
 
   const generate = async () => {
-    if (p.dealType === 'single' && !basket.length) { setErr('Bitte mindestens eine Wohnung wählen.'); return }
+    if (!editCalc && p.dealType === 'single' && !basket.length) { setErr('Bitte mindestens eine Wohnung wählen.'); return }
     setBusy(true); setErr('')
     try {
+      // ── Bearbeiten: gleiche Objekte behalten, nur (geteilte) Parameter neu anwenden,
+      //    Preis/Schlafzimmer je Objekt bewahren → bestehenden Token aktualisieren. ──
+      if (editCalc) {
+        const items = editCalc.content.items.map(it => ({
+          ...it,
+          params: { ...p, priceNet: it.params?.priceNet ?? p.priceNet, bedrooms: it.params?.bedrooms ?? p.bedrooms, dealType: it.params?.dealType ?? p.dealType },
+        }))
+        const content = { with_calc: true, recipient_name: editCalc.content.recipient_name ?? `${lead.first_name} ${lead.last_name}`.trim(), items }
+        const { error } = await supabase.from('property_calculations').update({ content }).eq('token', editCalc.token)
+        if (error) throw new Error(error.message)
+        window.open(`${window.location.origin}/rechnung/${editCalc.token}`, '_blank')
+        onDone('Berechnung aktualisiert.')
+        setBusy(false)
+        return
+      }
       let items: CalcItem[]
       if (p.dealType === 'share') {
         items = [{
@@ -144,12 +166,23 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
-          <h2 className="text-lg font-bold text-gray-900">📊 Rendite-Rechnung — {lead.first_name} {lead.last_name}</h2>
+          <h2 className="text-lg font-bold text-gray-900">📊 {editCalc ? 'Berechnung bearbeiten' : 'Rendite-Rechnung'} — {lead.first_name} {lead.last_name}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
         </div>
 
         <div className="px-6 py-5 space-y-6">
           {/* ── Objekte ── */}
+          {editCalc ? (
+            <div>
+              <SectionLabel>Objekt(e)</SectionLabel>
+              <div className="flex flex-wrap gap-2">
+                {editCalc.content.items.map((it, i) => (
+                  <span key={i} className="inline-flex items-center text-xs bg-gray-100 rounded-xl px-2.5 py-1.5">{it.label}</span>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-2">Objekte bleiben gleich — du änderst nur die Werte unten und speicherst.</p>
+            </div>
+          ) : (
           <div>
             <SectionLabel>Objekt{p.dealType === 'single' ? '(e)' : ' / Portfolio'}</SectionLabel>
             <div className="grid sm:grid-cols-2 gap-3">
@@ -198,6 +231,7 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
               </div>
             )}
           </div>
+          )}
 
           {/* ── Kauf ── */}
           <div>
@@ -285,12 +319,12 @@ export default function RechnerWizard({ lead, onClose, onDone }: { lead: LeadLit
         </div>
 
         <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100 sticky bottom-0 bg-white rounded-b-2xl">
-          <p className="text-xs text-gray-400">{basket.length > 1 ? 'Mehrere Wohnungen → Vergleich.' : 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.'}</p>
+          <p className="text-xs text-gray-400">{editCalc ? 'Werte ändern → Speichern aktualisiert dieselbe Berechnung.' : basket.length > 1 ? 'Mehrere Wohnungen → Vergleich.' : 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.'}</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">Abbrechen</button>
-            <button onClick={() => void generate()} disabled={busy || (p.dealType === 'single' && !basket.length)}
+            <button onClick={() => void generate()} disabled={busy || (!editCalc && p.dealType === 'single' && !basket.length)}
               className="px-5 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-              {busy ? 'Erstellt…' : basket.length > 1 ? 'Vergleich erstellen' : 'Rechnung erstellen'}
+              {busy ? (editCalc ? 'Speichert…' : 'Erstellt…') : editCalc ? 'Speichern' : basket.length > 1 ? 'Vergleich erstellen' : 'Rechnung erstellen'}
             </button>
           </div>
         </div>

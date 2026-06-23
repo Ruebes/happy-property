@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import DeckChat from '../../../components/crm/DeckChat'
+import RechnerWizard from '../../../components/crm/RechnerWizard'
+import type { CalcItem } from '../../../lib/rechner'
 
 // ── Postausgang ──────────────────────────────────────────────────────────────
 // Erzeugte Begleit-Mails (mit Deck-Links) aus dem Deck-Wizard. Sven prüft und
@@ -49,6 +51,7 @@ export default function Postausgang() {
   const [editId, setEditId]   = useState<string | null>(null)
   const [editSubject, setEditSubject] = useState('')
   const [chat, setChat]       = useState<{ token: string; label: string } | null>(null)
+  const [editCalc, setEditCalc] = useState<{ token: string; content: { items: CalcItem[]; recipient_name?: string }; lead: { id: string; first_name: string; last_name: string } } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const origin = window.location.origin
 
@@ -108,6 +111,15 @@ export default function Postausgang() {
     const val = c.approved_at ? null : new Date().toISOString()
     setCalcs(prev => prev.map(x => x.id === c.id ? { ...x, approved_at: val } : x))
     await supabase.from('property_calculations').update({ approved_at: val }).eq('id', c.id)
+  }
+
+  // Berechnung bearbeiten: vollen content laden + Rechner im Edit-Modus öffnen
+  // (gleicher Token, gleiche Objekte — nur Werte ändern, z.B. Eingabefehler beim EK).
+  const openCalcEdit = async (token: string, row: OutboxRow) => {
+    const { data } = await supabase.from('property_calculations').select('content').eq('token', token).single()
+    const content = (data as { content?: { items: CalcItem[]; recipient_name?: string } } | null)?.content
+    if (!content?.items?.length) { flash('❌ Berechnung konnte nicht geladen werden'); return }
+    setEditCalc({ token, content, lead: { id: row.lead_id ?? '', first_name: row.lead?.first_name ?? '', last_name: row.lead?.last_name ?? '' } })
   }
 
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) }
@@ -216,7 +228,12 @@ export default function Postausgang() {
 
         <div className="space-y-3">
           {rows.map(r => {
-            const rowCalcs = calcs.filter(c => c.lead_id === r.lead_id)
+            // Nur die Berechnungen anzeigen, die in DIESER Mail verlinkt sind — sonst
+            // erscheinen alle (auch alte Duplikate aus früheren Wizard-Läufen) und die
+            // Unterlagen wirken doppelt. Fallback: hat der Body keine /rechnung/-Links,
+            // alle des Leads zeigen.
+            const calcTokensInBody = new Set([...(r.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
+            const rowCalcs = calcs.filter(c => c.lead_id === r.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
             return (
             <div key={r.id} className="border border-gray-200 rounded-xl bg-white">
               <div className="flex items-center gap-3 px-4 py-3">
@@ -299,13 +316,15 @@ export default function Postausgang() {
                             <div key={c.id} className="flex items-center gap-2">
                               <span className="flex-1 truncate text-xs text-gray-700">📊 {c.title ?? 'Berechnung'}{approved && <span className="ml-1 text-green-600 font-medium">· ✓ fertig</span>}</span>
                               <a href={`${origin}/rechnung/${c.token}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>{t('crm.outbox.view', 'Ansehen')}</a>
+                              <button onClick={() => void openCalcEdit(c.token, r)} title={t('crm.outbox.editCalc', 'Werte bearbeiten')}
+                                className="text-[11px] px-1.5 py-0.5 rounded shrink-0 bg-gray-100 text-gray-500 hover:bg-orange-100 hover:text-orange-700">✏️</button>
                               <button onClick={() => void toggleCalcApprove(c)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
                                 className={`text-[11px] px-1.5 py-0.5 rounded shrink-0 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
                             </div>
                           )
                         })}
                       </div>
-                      <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.outbox.calcHint', 'Zahlen ändern: Berechnung beim Kunden über den Rechner neu erstellen.')}</p>
+                      <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.outbox.calcHint2', 'Eingabefehler? ✏️ öffnet die Berechnung zum Bearbeiten — gleicher Link, Werte werden aktualisiert.')}</p>
                     </div>
                   )}
 
@@ -355,6 +374,14 @@ export default function Postausgang() {
         </div>
       </div>
       {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
+      {editCalc && (
+        <RechnerWizard
+          lead={editCalc.lead}
+          editCalc={{ token: editCalc.token, content: editCalc.content }}
+          onClose={() => setEditCalc(null)}
+          onDone={(msg) => { setEditCalc(null); flash(msg); void load() }}
+        />
+      )}
     </DashboardLayout>
   )
 }
