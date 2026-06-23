@@ -28,6 +28,19 @@ const ACTIVITY_ICONS: Record<string, string> = {
   task: '✅',
 }
 
+// WhatsApp „Click to chat": Nummer auf internationales Format bringen (ohne + / ohne
+// führende 0, DE-Default 49) und wa.me-Link bilden — öffnet WhatsApp Desktop/Web/iPhone
+// mit dem Chat des Kontakts. Was Sven dort sendet, synct TimelinesAI zurück ins CRM.
+function waLink(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let d = raw.replace(/[^\d+]/g, '')
+  if (d.startsWith('+'))       d = d.slice(1)
+  else if (d.startsWith('00')) d = d.slice(2)
+  else if (d.startsWith('0'))  d = '49' + d.slice(1)
+  d = d.replace(/\D/g, '')
+  return d.length >= 8 ? `https://wa.me/${d}` : null
+}
+
 // KI-Antwort: Badge-Farben je Status (Label kommt aus i18n: crm.ai.st_<status>)
 const AI_STATUS_CLS: Record<string, string> = {
   approved:  'bg-green-100 text-green-700',
@@ -2028,7 +2041,7 @@ export default function LeadDetail() {
             <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {([
                 { key: 'mail', icon: '📧', label: t('crm.action.mail', 'Mail senden'),         cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100',  on: () => { setComposeChannel('email'); setComposeTo('client'); goTab('emails') } },
-                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp senden'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { setComposeChannel('whatsapp'); setComposeTo('client'); goTab('emails') } },
+                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp öffnen'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { const link = waLink(lead.whatsapp || lead.phone); if (link) window.open(link, '_blank', 'noopener'); else showToast(t('crm.compose.errNoPhone', '❌ Dieser Kontakt hat keine WhatsApp-/Telefonnummer')); } },
                 { key: 'note', icon: '📝', label: t('crm.action.note', 'Notiz erstellen'),      cls: 'bg-slate-100 text-slate-700 hover:bg-slate-200',   on: () => goTab('activities') },
                 { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => goTab('tasks') },
                 { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },

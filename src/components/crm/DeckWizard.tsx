@@ -35,6 +35,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const setPu = (id: string, patch: Partial<{ yieldPct: number; appreciationPct: number; furnCost: number; furnFree: boolean; hotelConcept: boolean }>) =>
     setPerUnit(p => ({ ...p, [id]: { ...p[id], ...patch } }))
   const [units, setUnits]       = useState<UnitRow[]>([])
+  const [filterBed, setFilterBed] = useState<'all' | '1' | '2' | '3' | '4'>('all')
+  const [filterMin, setFilterMin] = useState(0)
+  const [filterMax, setFilterMax] = useState(0)
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
   const [briefing, setBriefing] = useState('')
@@ -62,6 +65,17 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
 
   const project = projects.find(p => p.id === projectId)
   const toggle = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  // Filter: Schlafzimmer + Preis-Spanne (Preis = brutto, sonst netto — wie in der Liste).
+  const matchBed = (n: number | null) =>
+    filterBed === 'all' ? true : filterBed === '4' ? (n ?? 0) >= 4 : String(n ?? '') === filterBed
+  const shownUnits = units.filter(u => {
+    const price = u.price_gross ?? u.price_net ?? 0
+    if (!matchBed(u.bedrooms)) return false
+    if (filterMin > 0 && price < filterMin) return false
+    if (filterMax > 0 && price > filterMax) return false
+    return true
+  })
 
   const addToBasket = () => {
     if (!project) return
@@ -302,10 +316,39 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
 
           {projectId && (
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.units', 'Vorschlags-Wohnungen')} ({units.length})</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.units', 'Vorschlags-Wohnungen')} ({shownUnits.length}{shownUnits.length !== units.length ? ` / ${units.length}` : ''})</label>
               {units.length === 0 && <p className="text-sm text-gray-400">{t('crm.wizard.noUnits', 'Keine Vorschlags-Wohnungen — im Projekt „Aus Drive laden" ausführen.')}</p>}
+              {/* Filter: Schlafzimmer + Preis-Spanne */}
+              {units.length > 0 && (
+                <div className="flex flex-wrap items-end gap-3 mb-2.5">
+                  <div>
+                    <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.wizard.bedrooms', 'Schlafzimmer')}</span>
+                    <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                      {(['all', '1', '2', '3', '4'] as const).map(b => (
+                        <button key={b} type="button" onClick={() => setFilterBed(b)}
+                          className={`px-2.5 py-1.5 text-xs font-medium border-l first:border-l-0 border-gray-200 ${filterBed === b ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                          {b === 'all' ? t('crm.wizard.all', 'Alle') : b === '4' ? '4+' : b}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.wizard.priceFrom', 'Preis von')}</span>
+                    <NumberStepper value={filterMin} onChange={setFilterMin} step={25000} suffix="€" className="w-36" />
+                  </div>
+                  <div>
+                    <span className="block text-[11px] font-medium text-gray-500 mb-1">{t('crm.wizard.priceTo', 'bis')}</span>
+                    <NumberStepper value={filterMax} onChange={setFilterMax} step={25000} suffix="€" className="w-36" />
+                  </div>
+                  {(filterBed !== 'all' || filterMin > 0 || filterMax > 0) && (
+                    <button type="button" onClick={() => { setFilterBed('all'); setFilterMin(0); setFilterMax(0) }}
+                      className="text-xs text-gray-400 hover:text-gray-600 underline pb-2">{t('crm.wizard.resetFilter', 'zurücksetzen')}</button>
+                  )}
+                </div>
+              )}
+              {units.length > 0 && shownUnits.length === 0 && <p className="text-sm text-gray-400 mb-2">{t('crm.wizard.noFilterMatch', 'Keine Wohnung im gewählten Filter.')}</p>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-52 overflow-y-auto">
-                {units.map(u => (
+                {shownUnits.map(u => (
                   <label key={u.id} className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer ${sel.has(u.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`}>
                     <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} />
                     <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m² · {eur(u.price_gross ?? u.price_net)}</span>
