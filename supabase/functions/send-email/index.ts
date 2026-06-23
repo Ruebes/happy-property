@@ -192,6 +192,9 @@ Deno.serve(async (req: Request) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mailPayload: Record<string, any> = {
           from:    `Sven Rüprich <sven@happy-property.com>`,
+          // Antworten der Kunden laufen ins DEDIZIERTE info@-Postfach (getrennt von Svens
+          // privatem sven@-Postfach; von dort liest sie künftig der CRM-Posteingang).
+          replyTo: `info@happy-property.com`,
           to:      to,
           subject: subject,
           html:    html,
