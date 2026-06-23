@@ -121,7 +121,15 @@ Deno.serve(async (req: Request) => {
           revision: ((deck.revision as number) ?? 0) + 1, refining: false, refine_error: null,
         }).eq('token', token)
         if (learn && instruction!.trim()) {
-          await supabase.from('deck_ai_rules').insert({ kind: 'deck', scope: 'global', rule: instruction!.trim() })
+          // Korrektur auf das PROJEKT dieses Decks scopen — eine Deck-Chat-Korrektur betrifft
+          // fast immer nur dieses Projekt. Sonst landet jede Korrektur global und verseucht
+          // ALLE Decks (widersprüchliche Vorgaben). Nur ohne Projekt-Bezug → global.
+          await supabase.from('deck_ai_rules').insert({
+            kind: 'deck',
+            scope: deck.project_id ? 'project' : 'global',
+            project_id: deck.project_id ?? null,
+            rule: instruction!.trim(),
+          })
         }
         return { blocks: newBlocks.length }
       } catch (e) {
