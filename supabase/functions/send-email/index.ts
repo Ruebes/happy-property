@@ -191,9 +191,11 @@ Deno.serve(async (req: Request) => {
         // denomailer erwartet attachments als Array von Objekten
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mailPayload: Record<string, any> = {
-          from:    `Sven Rüprich <sven@happy-property.com>`,
-          // Antworten der Kunden laufen ins DEDIZIERTE info@-Postfach (getrennt von Svens
-          // privatem sven@-Postfach; von dort liest sie künftig der CRM-Posteingang).
+          // Absender = das konfigurierte SMTP-Postfach (smtpUser). Stellt Sven den SMTP-Login
+          // auf info@ um, wird der Absender automatisch info@ — kein Code/Secret-Timing nötig,
+          // und From passt immer zum authentifizierten Konto (sonst lehnt IONOS ab).
+          from:    `Sven Rüprich <${smtpUser}>`,
+          // Antworten laufen ins info@-Postfach (von dort liest sie künftig der CRM-Posteingang).
           replyTo: `info@happy-property.com`,
           to:      to,
           subject: subject,
