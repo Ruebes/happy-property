@@ -75,7 +75,16 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
             {b.specs.map((s, i) => <p key={i} className={i === 0 ? 'font-semibold text-gray-900' : ''}>{s}</p>)}
           </div>
         )}
-        {(b.priceMain || b.priceSub) && (
+        {b.priceLines && b.priceLines.length > 0 ? (
+          <div className="mt-6 rounded-xl px-5 py-4 space-y-1.5" style={{ background: DARK }}>
+            {b.priceLines.map((l, i) => (
+              <div key={i} className={`flex items-baseline justify-between gap-4 ${l.strong ? 'pt-1.5 mt-1.5 border-t border-white/15' : ''}`}>
+                <span className={`${l.strong ? 'text-white font-semibold' : 'text-gray-400'} text-[13px]`}>{l.label}</span>
+                <span className={`font-heading ${l.strong ? 'text-white text-2xl font-bold' : 'text-gray-200 text-base'} whitespace-nowrap`} style={l.strong ? undefined : { color: '#e5e0d5' }}>{l.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : (b.priceMain || b.priceSub) && (
           <div className="mt-6 rounded-xl px-5 py-4" style={{ background: DARK }}>
             {b.priceSub && <p className="text-[11px] font-semibold uppercase tracking-[0.15em]" style={{ color: GOLD }}>{b.priceSub.split('·')[0]}</p>}
             <p className="font-heading font-bold text-white text-4xl mt-1">{b.priceMain}</p>

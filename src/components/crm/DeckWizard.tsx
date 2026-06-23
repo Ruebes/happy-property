@@ -49,9 +49,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   useEffect(() => { void (async () => {
     setSel(new Set())
     if (!projectId) { setUnits([]); return }
+    // Alle ANBIETBAREN Wohnungen — nicht nur status='proposal'. Off-Plan-Wohnungen
+    // (under_construction) UND manuell angelegte sind verkaufbar; nur verkauft/
+    // reserviert wird ausgeblendet. (Bug: manuelle Unit 103 war under_construction → unsichtbar.)
     const { data } = await supabase.from('crm_project_units')
       .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor')
-      .eq('project_id', projectId).eq('status', 'proposal').order('unit_number')
+      .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').order('unit_number')
     setUnits((data ?? []) as UnitRow[])
   })() }, [projectId])
 
@@ -115,7 +118,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       const availByProject: Record<string, { available: number; total: number }> = {}
       for (const pid of projIds) {
         const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
-        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).eq('status', 'proposal')
+        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)')
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
       // Pro Wohnung eine EIGENE Rendite-Berechnung — Wertentwicklung & Rendite unterscheiden

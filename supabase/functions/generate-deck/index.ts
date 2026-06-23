@@ -34,7 +34,7 @@ Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder 
 
 - cover:    { type, kicker, title, tagline, forLine }   // forLine = "Für <Name> — <Monat Jahr>"
 - letter:   { type, kicker, headline, paragraphs:[string], signoff, signName }  // das persönliche Anschreiben
-- unit:     { type, kicker, number, nickname, specs:[string], priceMain, priceSub, note }
+- unit:     { type, kicker, number, nickname, specs:[string], priceLines:[{label,value,strong}], note }  // priceLines = Preis-Aufstellung; setze sie NUR aus den VERBINDLICHEN PREISANGABEN (Netto/MwSt/Brutto/Einrichtung), Brutto-Zeile strong:true
 - facts:    { type, kicker, headline, items:[{min,label}] }   // Lage/Entfernungen, min z.B. "5 min"
 - columns:  { type, kicker, headline, cols:[{title,sub,text}] } // 3 Spalten (Terrassen, „ein Tag", o.ä.)
 - feature:  { type, kicker, headline, text, quote }    // ein Highlight (Pool, Dachterrasse…)
@@ -46,17 +46,20 @@ Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder 
 - cta:      { type, kicker, headline, text, steps:[{n,title,text}] }  // n = "01"/"02"/"03"
 
 REGELN:
-1. Beginne IMMER mit "cover", dann "letter". Ende IMMER mit "cta".
+1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block) → (d) facts (STANDORT/Lage) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt.
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
 4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
 4b. AUSSTATTUNG: Sobald im Input ein Einrichtungspaket / Ausstattung / Möbelliste / Geschirr / Besteck (cutlery) / Wäsche (linen) steht, MUSST du das prominent zeigen — als ein bis zwei "inventory"-Blöcke (ein bis zwei Seiten). Empfehlung: Block 1 = Möbel, Geräte & Premium-Marken (gruppiert, z.B. Wohnen, Küche & Geräte, Schlafen, Bad — mit den echten Markennamen aus den Fakten wie BOSCH, Neff, GROHE, LAUFEN, Samsung, Tomasella, DUPEN); Block 2 = die Komplett-Checkliste (Geschirr & Besteck mit Stückzahlen, Wäsche & Bettwäsche). Botschaft durchgängig: schlüsselfertig & voll möbliert, sofort bezugs- und vermietfertig — der Kunde packt nur die Koffer. Nutze NUR die im Input gelisteten Gegenstände/Marken, erfinde nichts dazu.
 4c. ZAHLUNGSPLAN (payment) — HART: Alle Beträge und Prozente kommen AUSSCHLIESSLICH aus den Zahlungsplan-Daten der Fakten UND dem Kaufpreis GENAU DIESER Wohnung. Prozente müssen rechnerisch zum Kaufpreis passen (z.B. 30 % von 430.000 € = 129.000 €, NICHT 300.000 €). Übernimm NIEMALS Zahlen aus dem Kunden-Briefing/Anschreiben (z.B. „300k Eigenkapital") in den Zahlungsplan — das Briefing beschreibt den Kunden, nicht den Preis dieses Objekts. Liegen keine echten Raten/Prozente in den Fakten vor: nutze nur die Prozentstufen und schreibe als value „gemäß Bauträger-Konditionen" statt einen Betrag zu erfinden. Plausibilität prüfen: kein einzelner Schritt darf größer als der Kaufpreis sein, Summe der Schritte = 100 % des Preises.
 4d. ZAHLUNGSPLAN-NARRATIV (kicker, headline, intro, note, phase-label/title, advantage) — HART, gleiche Klasse wie 5b: Beschreibe NUR die Stufen sachlich. Erfinde KEINE Aussage über das ZEITLICHE Verhältnis der Zahlungen zum Baufortschritt, die nicht WÖRTLICH in den Fakten steht. STRIKT VERBOTEN (nie schreiben, egal wie verkaufsfördernd): „du zahlst erst nach Fertigstellung", „erst wenn gebaut wurde", „der Löwenanteil/Großteil kommt bei oder nach der Übergabe", „du finanzierst keinen Baufortschritt, den du nicht siehst", „du zahlst nicht auf Kredit des Bauträgers", „nach echtem Baufortschritt — jede Phase muss abgeschlossen sein, bevor die nächste Rate fällig wird", „das schützt dich/deine Liquidität", „Planungssicherheit" — und jede andere Käufer-Schutz- oder Sicherheits-Story rund um den Zahlungsplan. Grund: Zypern-Neubau wird typischerweise BAUFORTSCHRITTS-BEGLEITEND und front-lastig gezahlt (Reservierung + Anzahlung bei Vertragsunterzeichnung, weitere Raten WÄHREND des Baus), NICHT nachgelagert — solche Sicherheits-Narrative sind faktisch falsch. Erlaubte neutrale Headlines: „Der Zahlungsplan im Überblick", „430.000 € — in klaren Stufen", „Transparent über die Bauphasen verteilt". Phase-Labels nur, wenn die Phasen wörtlich in den Fakten stehen; sonst generisch (Reservierung / Bei Vertrag / Baufortschritt / Bei Übergabe).
+4e. PREIS (unit-Block) — HART: Stehen im Input "VERBINDLICHE PREISANGABEN", setze sie EXAKT als priceLines (gleiche Labels + Werte, Reihenfolge: Nettopreis, MwSt, Bruttopreis[strong:true], dann Einrichtung). Rechne NICHTS selbst, runde nichts, erfinde keinen Preis. Wiederhole den Preis NICHT in anderen Blöcken (kein „X € netto" im letter/feature/cta). Ohne verbindliche Preisangaben: lass priceLines weg.
+4f. FERTIGSTELLUNG: Steht im Input "FERTIGSTELLUNG: MM/JJJJ", nenne sie konkret im payment-Block (z.B. Zeile „Geplante Fertigstellung: 10/2027" oder im intro). Steht keine Fertigstellung da, erfinde keine.
 5. Nutze NUR Fakten aus dem Input. Erfinde KEINE Zahlen/Preise/Entfernungen. Wenn ein Faktum fehlt, lass den Block/das Feld weg statt zu raten. Zahlen aus dem Kunden-Briefing sind KEINE Objekt-Fakten — niemals als Preis/Fläche/Rate eines Objekts verwenden.
 5c. BRIEFING ≠ OBJEKT-FAKT (HART): Das Kunden-Briefing/Anschreiben beschreibt den KUNDEN (seine Situation, Wünsche, Interessen) — NIEMALS das Objekt. Erwähnt das Briefing ein Konzept/Feature/eine Garantie (z.B. 'Hotelkonzept interessiert', 'will Mietgarantie', 'sucht Meerblick'), darfst du das NICHT als bestätigtes Objekt-Merkmal behaupten ('das Hotelkonzept des Projekts…', 'mit Mietgarantie', 'mit Meerblick'), es sei denn, GENAU dieses Merkmal steht auch in den OBJEKT-Fakten. Du darfst das Kundeninteresse im Anschreiben höchstens als WUNSCH des Kunden spiegeln ('du hast Interesse an…'), nie als Tatsache des Objekts.
 5d. KEINE ERFUNDENE VERKNAPPUNG: Behaupte Knappheit/Verfügbarkeit ('nur noch wenige Einheiten', 'eine der letzten', 'fast ausverkauft') NUR, wenn eine konkrete Einheiten-/Verfügbarkeitszahl in den Fakten steht. Steht 'Anzahl Einheiten: keine Angabe' o.ä., formuliere die Reservierungs-CTA neutral ohne Knappheits-Behauptung.
 5e. KEINE ERFUNDENEN MARKT-/NACHFRAGE-AUSSAGEN: Aussagen über Mieternachfrage, Zielgruppen, Marktstabilität, 'keine Überhitzung/Blase', erzielbare Mieten, Wertsteigerungs-Tempo oder Lage-Vorzüge (Hügel, Infrastruktur, Ruhe) nur, wenn sie WÖRTLICH in den Fakten stehen. Keine allgemeine Markt-Rhetorik dazudichten.
+5f. KEIN WEITERVERKAUF-/EXIT-NARRATIV (HART): Das Deck verkauft ein Objekt zum Eigennutz/zur Vermietung — NICHT als Spekulation. STRIKT VERBOTEN: 'vor Fertigstellung verkaufen', 'Exit-Szenario', 'mit X % Gewinn/Wertzuwachs weiterverkaufen', 'in 2-4 Jahren verkaufen', 'flippen', 'Wiederverkauf mit Gewinn', oder ein eigener Block/Spalten über Verkaufs-/Exit-Strategien. KEINE konkreten Wertsteigerungs-Prozente/Renditen erfinden. Wenn der Kunde im Briefing über Weiterverkauf spricht, NICHT als Objekt-Strategie ausarbeiten.
 5b. WAHRHEIT vor Verkauf: Werte Begriffe NICHT auf und kombiniere keine zwei Fakten zu einer stärkeren Aussage. VERBOTEN: aus '5 Jahre Garantie' wird 'Mietgarantie'/'Rendite-Garantie'; aus 'Hotelkonzept' wird 'garantierte Miete'/'gesicherte Auslastung'/'garantierte Rendite'/'sorgt ab dem ersten Tag für Auslastung'/'immer vermietet'/'der Hotelbetreiber kümmert sich um die Vermietung' (es sei denn das steht wörtlich so da). Ein Hotelkonzept ist eine Vermietungs-OPTION, keine Zusicherung auf Miete, Auslastung oder Rendite. Garantien/Renditen/Auslastungen/Belegungsquoten nur nennen, wenn sie WÖRTLICH in den Fakten stehen. Im Zweifel weglassen.
 6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).
 7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.`
@@ -174,6 +177,38 @@ Deno.serve(async (req) => {
     const learnedTxt = (aiRules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
     const learnedBlock = learnedTxt ? `GELERNTE VORGABEN (immer beachten):\n${learnedTxt}\n\n` : ''
 
+    // ── VERBINDLICHE Preisangaben (Netto/MwSt/Brutto + Einrichtungs-Ausweis) +
+    // Fertigstellung — aus der DB, damit die KI NICHT selbst rechnet. priceLines
+    // werden später deterministisch in den unit-Block gesetzt.
+    const eur = (n: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
+    let priceLines: Array<{ label: string; value: string; strong?: boolean }> | null = null
+    let extraFacts = ''
+    if (body.unit_id && body.project_id) {
+      try {
+        const { data: u } = await sbRules.from('crm_project_units').select('price_net').eq('id', body.unit_id).maybeSingle()
+        const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date').eq('id', body.project_id).maybeSingle()
+        const baseNet = Number((u as { price_net?: number } | null)?.price_net) || 0
+        if (baseNet > 0) {
+          const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
+          const furnNet = furnIncluded ? 0 : (Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0)
+          const totalNet = baseNet + furnNet
+          const vat = Math.round(totalNet * 0.19)
+          const brutto = totalNet + vat
+          priceLines = [
+            { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
+            { label: 'zzgl. MwSt (19 %)', value: eur(vat) },
+            { label: 'Bruttopreis', value: eur(brutto), strong: true },
+          ]
+          if (furnNet > 0) priceLines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * 1.19))} brutto` })
+          else if (furnIncluded) priceLines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+          extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLines.map(l => `${l.label}: ${l.value}`).join('\n')}`
+        }
+        const cd = (p as { completion_date?: string } | null)?.completion_date
+        if (cd) { const d = new Date(cd); extraFacts += `\n\n=== FERTIGSTELLUNG (muss im Deck genannt werden): ${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ===` }
+      } catch { /* best effort — ohne Preisangaben generiert die KI wie bisher */ }
+    }
+    const factsAug = body.facts.trim() + extraFacts
+
     const userMsg = learnedBlock + (generic ? [
       `GENERISCHES PROJEKT-DECK — KEIN spezifischer Kunde. Dieses Deck wird live im Zoom geteilt.`,
       `MONAT: ${body.month_label || ''}`,
@@ -182,7 +217,7 @@ Deno.serve(async (req) => {
       `SONDERREGELN FÜR DIESES DECK: KEIN persönliches Anschreiben und KEINE 'Für <Name>'-Zeile (forLine im cover weglassen). Statt eines 'letter' an eine Person ein einladender Projekt-Intro in du-Form (headline + 2–3 Absätze, ohne Namensanrede, signName nur 'Sven · Happy Property Cyprus'). Kein erfundener Kundenbezug.`,
       ``,
       `FAKTEN ZUM PROJEKT (nur diese verwenden):`,
-      body.facts.trim(),
+      factsAug,
     ].join('\n') : [
       `KUNDE: ${recipient}`,
       `MONAT: ${body.month_label || ''}`,
@@ -192,7 +227,7 @@ Deno.serve(async (req) => {
       body.briefing?.trim() || '(kein Briefing — halte das Anschreiben allgemein, aber persönlich)',
       ``,
       `FAKTEN ZUM PROJEKT & APARTMENT (nur diese verwenden):`,
-      body.facts.trim(),
+      factsAug,
     ].join('\n'))
 
     const reqBody = JSON.stringify({
@@ -225,6 +260,7 @@ Deno.serve(async (req) => {
                   specs:      { type: 'array', items: { type: 'string' } },
                   priceMain:  { type: 'string' },
                   priceSub:   { type: 'string' },
+                  priceLines: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, value: { type: 'string' }, strong: { type: 'boolean' } }, required: ['label', 'value'] } },
                   note:       { type: 'string' },
                   text:       { type: 'string' },
                   quote:      { type: 'string' },
@@ -287,6 +323,12 @@ Deno.serve(async (req) => {
     const projName = (body.facts ?? '').match(/===\s*PROJEKT\s+(.+?)\s*[(\n]/)?.[1]?.trim() || ''
     assignImages(blocks, body.images, projName)
     scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
+    // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
+    // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
+    if (priceLines) {
+      const ub = blocks.find(b => b.type === 'unit')
+      if (ub) { ub.priceLines = priceLines; delete ub.priceMain; delete ub.priceSub }
+    }
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
     // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,

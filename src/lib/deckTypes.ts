@@ -14,7 +14,7 @@ export interface DeckPaymentPhase {
 export type DeckBlock =
   | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
-  | { type: 'unit';    kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; note?: string; image?: string }
+  | { type: 'unit';    kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean }[]; note?: string; image?: string }
   | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string; mapUrl?: string; mapLabel?: string; mapMarker?: { x: number; y: number } }
   | { type: 'columns'; kicker?: string; headline?: string; image?: string; cols?: { title: string; sub?: string; text: string }[] }
   | { type: 'feature'; kicker?: string; headline?: string; image?: string; text?: string; quote?: string }
