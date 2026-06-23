@@ -45,9 +45,10 @@ Deno.serve(async (req) => {
 
     // Antwort nach Field-Titel-Keyword finden
     function getAnswer(keyword: string): string | null {
-      const field = fields.find(f => f.title.toLowerCase().includes(keyword.toLowerCase()))
+      const field = fields.find(f => f.title?.toLowerCase().includes(keyword.toLowerCase()))
       if (!field) return null
-      const answer = answers.find(a => a.field.id === field.id)
+      // a.field?.id — manche Antworten/Test-Payloads haben kein field-Objekt → sonst wirft .id (500).
+      const answer = answers.find(a => a.field?.id === field.id)
       if (!answer) return null
       switch (answer.type) {
         case 'text':         return answer.text ?? null
