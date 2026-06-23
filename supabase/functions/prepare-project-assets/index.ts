@@ -317,11 +317,29 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const { project_id, action, folder_id, sync } = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean }
+    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string }
+    const { project_id, action, folder_id, sync } = body
     if (!project_id) return json({ error: 'project_id fehlt' }, 400)
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { folderId: dbFolder, assets, project } = await loadAssets(supabase, project_id)
     const token = await getReadToken()
+
+    // ── importfile (Debug/Spezialfall): EINE Drive-Datei per ID in Storage holen ──
+    if (action === 'importfile') {
+      const fid = body.file_id
+      if (!fid) return json({ error: 'file_id fehlt' }, 400)
+      const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { name?: string; mimeType?: string }
+      const url = await uploadBytes(supabase, await driveBytes(token, fid), meta.mimeType ?? 'application/octet-stream', `projects/${project_id}/import`, meta.name ?? fid)
+      return json({ ok: true, url, name: meta.name, mimeType: meta.mimeType })
+    }
+
+    // ── uploadimage: ein fertig aufbereitetes Bild (base64) in Storage ablegen ────
+    if (action === 'uploadimage') {
+      if (!body.data_base64) return json({ error: 'data_base64 fehlt' }, 400)
+      const bytes = Uint8Array.from(atob(body.data_base64), c => c.charCodeAt(0))
+      const url = await uploadBytes(supabase, bytes, body.mime ?? 'image/png', `projects/${project_id}/floorplans`, body.name ?? 'floorplan.png')
+      return json({ ok: true, url })
+    }
 
     // ── resolve ── Drive-Ordner zum Projekt automatisch finden (Projekte/Developer/Projekt).
     // Braucht KEINEN bestehenden Ordner. Match per Developer + Projektname (enthält-Logik).
@@ -383,6 +401,17 @@ Deno.serve(async (req) => {
 
     const folderId = folder_id?.trim() || dbFolder
     if (!folderId) return json({ error: 'Kein Drive-Ordner — drive_folder_id setzen oder folder_id übergeben' }, 400)
+
+    // ── listfiles (Debug): rohe Dateiliste des Ordners + Unterordner (SA) ────────
+    if (action === 'listfiles') {
+      const top = await listChildren(token, folderId)
+      const out: Array<{ name: string; id: string; mimeType: string; size?: string; folder: string }> = []
+      for (const f of top) out.push({ name: f.name, id: f.id, mimeType: f.mimeType, size: f.size, folder: '/' })
+      for (const sub of top.filter(f => isFolder(f.mimeType))) {
+        try { for (const k of await listChildren(token, sub.id)) out.push({ name: k.name, id: k.id, mimeType: k.mimeType, size: k.size, folder: `/${sub.name}` }) } catch { /* skip */ }
+      }
+      return json({ ok: true, action, folderId, count: out.length, files: out })
+    }
 
     // ── images ────────────────────────────────────────────────────────────────
     if (action === 'images') {

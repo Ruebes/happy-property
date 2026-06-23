@@ -316,31 +316,29 @@ function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
     <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-        <Img src={b.image} className="w-full h-[420px] object-contain bg-white rounded-xl border border-gray-200 p-2" />
-        <div>
-          {b.stats && (
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              {b.stats.map((s, i) => (
-                <div key={i} className="rounded-xl p-4 border-t-2 bg-white" style={{ borderColor: GOLD }}>
-                  <p className="font-heading font-bold text-3xl" style={{ color: INK }}>{s.value}<span className="text-sm text-gray-400 ml-1">{s.unit}</span></p>
-                  <p className="text-[11px] uppercase tracking-wide text-gray-500 mt-1">{s.label}</p>
-                </div>
-              ))}
+      {/* Grundriss VOLLBREIT + groß — Detailpläne (Maße/Raumnamen) müssen lesbar sein.
+          object-contain = nicht verzerrt; heller Rahmen für Kontrast auf CREAM. */}
+      <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />
+      {b.stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
+          {b.stats.map((s, i) => (
+            <div key={i} className="rounded-xl p-4 border-t-2 bg-white" style={{ borderColor: GOLD }}>
+              <p className="font-heading font-bold text-3xl" style={{ color: INK }}>{s.value}<span className="text-sm text-gray-400 ml-1">{s.unit}</span></p>
+              <p className="text-[11px] uppercase tracking-wide text-gray-500 mt-1">{s.label}</p>
             </div>
-          )}
-          {b.bullets && (
-            <div className="space-y-2.5">
-              {b.bullets.map((bl, i) => (
-                <div key={i} className="flex gap-3 text-[14px] text-gray-700">
-                  <span style={{ color: GOLD }}>—</span>
-                  <span>{bl.strong && <strong className="text-gray-900">{bl.strong} </strong>}{bl.text}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
-      </div>
+      )}
+      {b.bullets && (
+        <div className="space-y-2.5 mt-6 max-w-3xl">
+          {b.bullets.map((bl, i) => (
+            <div key={i} className="flex gap-3 text-[14px] text-gray-700">
+              <span style={{ color: GOLD }}>—</span>
+              <span>{bl.strong && <strong className="text-gray-900">{bl.strong} </strong>}{bl.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }
