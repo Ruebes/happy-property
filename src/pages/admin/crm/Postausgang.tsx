@@ -251,7 +251,7 @@ export default function Postausgang() {
                 <button onClick={() => setOpenId(openId === r.id ? null : r.id)} className="flex-1 text-left min-w-0">
                   <p className="text-sm font-semibold text-gray-900 truncate">{r.subject ?? '—'}</p>
                   <p className="text-xs text-gray-500 truncate">
-                    {r.lead ? `${r.lead.first_name} ${r.lead.last_name}` : '—'} · {r.recipient_email ?? t('crm.outbox.noEmailShort', 'keine E-Mail')} · {r.deck_tokens?.length ?? 0} {t('crm.outbox.decks', 'Decks')}
+                    {r.lead ? `${r.lead.first_name} ${r.lead.last_name}` : '—'} · {(r.lead?.email ?? r.recipient_email) ?? t('crm.outbox.noEmailShort', 'keine E-Mail')}{r.lead?.email && r.recipient_email && r.lead.email !== r.recipient_email && <span className="text-orange-500"> (aktualisiert)</span>} · {r.deck_tokens?.length ?? 0} {t('crm.outbox.decks', 'Decks')}
                   </p>
                 </button>
                 {r.status !== 'cancelled' && (
