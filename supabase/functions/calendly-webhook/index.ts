@@ -14,13 +14,14 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders })
   }
 
+  const supabase = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+  )
+  let rawForErr: unknown = null
   try {
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-    )
-
     const body = await req.json()
+    rawForErr = body
     const event = body.event as string
 
     // ── Calendly v2 Payload-Struktur ─────────────────────────────────────────
@@ -218,6 +219,7 @@ Deno.serve(async (req) => {
 
   } catch (err) {
     console.error('[calendly-webhook] Fehler:', err)
+    try { await supabase.from('webhook_errors').insert({ source: 'calendly', error: String(err), payload: rawForErr }) } catch { /* best effort */ }
     return new Response(
       JSON.stringify({ error: String(err) }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
