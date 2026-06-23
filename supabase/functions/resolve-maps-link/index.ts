@@ -34,8 +34,10 @@ function extractCoords(u: string): { lat: number; lng: number } | null {
   // @<lat>,<lng> = Kartenmittelpunkt
   m = u.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/)
   if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }
-  // ?q=<lat>,<lng> oder /place/<lat>,<lng>
-  m = u.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/) ?? u.match(/\/place\/(-?\d+\.\d+),(-?\d+\.\d+)/)
+  // ?q=/?query=<lat>,<lng> (auch mit „+"/Leerzeichen) oder /search//place/<lat>,<lng>
+  // (App-Kurzlinks landen oft auf /maps/search/34.8,+32.4)
+  m = u.match(/[?&](?:q|query)=(-?\d+\.\d+),\s*\+?\s*(-?\d+\.\d+)/)
+    ?? u.match(/\/(?:place|search)\/(-?\d+\.\d+),\s*\+?\s*(-?\d+\.\d+)/)
   if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) }
   return null
 }
@@ -62,7 +64,9 @@ Deno.serve(async (req) => {
       const res = await fetch(current, {
         method:   'GET',
         redirect: 'manual',
-        headers:  { 'User-Agent': 'Mozilla/5.0 (compatible; HappyPropertyCRM/1.0)' },
+        // Echter Mobile-Safari-UA: Googles Kurzlink-Dienst blockt generische/Bot-UAs
+        // mit einer „/sorry/"-CAPTCHA-Seite (so scheiterte die Azure-Auflösung).
+        headers:  { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
       })
       const loc = res.headers.get('location')
       if (loc) {
