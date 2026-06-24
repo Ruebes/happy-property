@@ -24,7 +24,7 @@ const json = (b: unknown, s = 200) =>
 
 const SUPABASE_URL  = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const PUBLIC_BASE   = Deno.env.get('PUBLIC_SITE_URL') ?? 'https://analytics.happy-property.com'
+const PUBLIC_BASE   = Deno.env.get('PUBLIC_SITE_URL') ?? 'https://portal.happy-property.com'
 const BUCKET        = 'invoice-documents'
 
 // ── CI-Farben ─────────────────────────────────────────────────────────────────
