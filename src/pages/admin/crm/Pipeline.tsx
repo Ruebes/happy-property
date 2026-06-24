@@ -15,6 +15,7 @@ import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
+import PhaseRunToast from '../../../components/crm/PhaseRunToast'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import { CustomSelect } from '../../../components/CustomSelect'
 
@@ -508,6 +509,7 @@ export default function Pipeline() {
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
   const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Anzahlung → Rechnungs-Modal
+  const [phaseRun, setPhaseRun] = useState<{ deal: Deal; phase: DealPhase; since: string } | null>(null)  // grüne Live-Meldung
   const [holdContact,  setHoldContact]  = useState(true)
   const [handoverText, setHandoverText] = useState('')
   const [modalBusy,    setModalBusy]    = useState(false)
@@ -686,10 +688,10 @@ export default function Pipeline() {
       setDeckDeal({ ...deal, phase: targetPhase })
     }
 
-    // Automations-Queue befüllen (fire-and-forget)
+    // Automations-Queue befüllen + grüne Live-Meldung anzeigen
+    const since = new Date(Date.now() - 5000).toISOString()
     triggerScheduleMessage(deal.lead_id, deal.id, targetPhase)
-
-    showToastMsg(t('crm.phaseSaved', 'Phase gespeichert'))
+    setPhaseRun({ deal: { ...deal, phase: targetPhase }, phase: targetPhase, since })
   }
 
   const handleDrop = (e: React.DragEvent, targetPhase: DealPhase) => {
@@ -814,11 +816,11 @@ export default function Pipeline() {
       // Der Developer-Versand läuft korrekt über die Stage-Automatik unten
       // (triggerScheduleMessage('registrierung') → stage_registrierung-Regeln an die bc:-Kontakte).
 
-      // Automations-Queue befüllen (fire-and-forget)
+      // Automations-Queue befüllen + grüne Live-Meldung anzeigen
+      const since = new Date(Date.now() - 5000).toISOString()
       triggerScheduleMessage(deal.lead_id, deal.id, 'registrierung')
-
       setRegistrationDeal(null)
-      showToastMsg(t('crm.registrationSent', 'Registrierung gesendet'))
+      setPhaseRun({ deal: { ...deal, phase: 'registrierung' }, phase: 'registrierung', since })
     } catch (err) {
       console.error('[Pipeline] registrationConfirm:', err)
       showToastMsg('❌ Fehler beim Senden')
@@ -1026,6 +1028,16 @@ export default function Pipeline() {
           deal={depositDeal}
           onClose={() => setDepositDeal(null)}
           onDone={(msg) => { setDepositDeal(null); showToastMsg(msg); void fetchDeals(true) }}
+        />
+      )}
+
+      {/* Grüne Live-Meldung: zeigt nach Phasenwechsel jeden automatischen Schritt */}
+      {phaseRun && (
+        <PhaseRunToast
+          deal={phaseRun.deal}
+          phase={phaseRun.phase}
+          since={phaseRun.since}
+          onClose={() => setPhaseRun(null)}
         />
       )}
 
