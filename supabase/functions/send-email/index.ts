@@ -11,6 +11,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
