@@ -52,6 +52,7 @@ export default function EigentuemerProperties() {
         if (cancelled) return
         const propList = (data ?? []) as PropertyCard[]
         setProperties(propList)
+        setLoading(false)   // Objekte da → Spinner sofort weg; Bilder laden im Hintergrund nach
 
         // Fetch CRM project images for properties without own images
         const noImgIds = propList.filter(p => !p.images?.length).map(p => p.id)
