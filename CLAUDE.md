@@ -113,8 +113,21 @@ abgeschlossener Initial-Session-Prüfung **niemals** `loading: true` setzen.
 `SIGNED_IN`-/`TOKEN_REFRESHED`-Events nach Init nur State aktualisieren,
 nie erneut in den Loading-Zustand zurückfallen.
 
+### #2 — Spinner-Hänger durch veralteten Lazy-Chunk nach Deploy
+**Symptom:** Navigation auf eine Route hängt im Vollbild-Spinner; **nur ein manueller
+Reload** (Return in der Adressleiste) hilft, Warten nicht. Tritt v.a. bei lange offener
+Tab-Session nach einem (oder mehreren) Deploys auf — auch im Eigentümer-/Kundenportal.
+**Ursache:** Die alte `index.html` referenziert alte JS-Chunknamen; nach dem Deploy
+existieren die nicht mehr → `import()` der Lazy-Route schlägt fehl → `<Suspense>` hat
+kein Error-Handling → Spinner hängt ewig. (NICHT der Auth-Deadlock aus #1 — der ist
+in `auth.tsx`/`supabase.ts` gehärtet.)
+**Regel:** Lazy-Routen **immer** über `lazyWithReload` aus `src/lib/lazyWithReload.ts`
+laden (nicht direkt `React.lazy`). Der Wrapper lädt bei Chunk-Ladefehler einmalig
+automatisch neu (sessionStorage-Guard gegen Reload-Loop) + globaler
+`vite:preloadError`-Handler. So recovert die App selbst, statt zu hängen.
+
 <!-- Weitere gelöste Bugs hier ergänzen, sobald sie auftreten:
-### #2 — <Titel>
+### #3 — <Titel>
 **Symptom:** ...
 **Ursache:** ...
 **Regel:** ...
