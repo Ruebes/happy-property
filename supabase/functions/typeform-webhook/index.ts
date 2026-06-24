@@ -187,6 +187,25 @@ Deno.serve(async (req) => {
       completed_at: new Date().toISOString(),
     })
 
+    // Erstkontakt-Automatik anstoßen (nur bei NEU angelegtem Deal) — die Nudge-
+    // Sequenz für Leads ohne Termin. Ohne diesen Aufruf bekämen Typeform-Leads,
+    // die direkt in „Erstkontakt" landen, NIE die Stage-Nachrichten (sie laufen
+    // sonst nur beim Pipeline-Phasenwechsel). Fire-and-forget, blockiert die
+    // Webhook-Antwort nicht.
+    if (!existingDeal && dealId) {
+      const trigger = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/schedule-message`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          apikey:        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' }),
+      }).then(() => {}).catch(() => {})
+      const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+      if (er?.waitUntil) er.waitUntil(trigger); else await trigger
+    }
+
     console.log('[typeform-webhook] Erfolg:', { leadId, dealId })
 
     return new Response(
