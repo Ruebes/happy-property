@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
       address_line1: settings.address_line1, postal_code: settings.postal_code, city: settings.city,
       country: settings.country, vat_number: settings.vat_number, reg_number: settings.reg_number,
       email: settings.email, bank_name: settings.bank_name, iban: settings.iban, bic: settings.bic,
-      intermediary_bic: settings.intermediary_bic,
+      intermediary_bic: settings.intermediary_bic, logo_url: settings.logo_url,
     }
     const customerSnap = {
       company_name: customer.company_name, contact_name: customer.contact_name,
@@ -272,8 +272,9 @@ async function buildPdf(d: {
     }
   } catch { /* Logo optional */ }
   if (logo) {
-    const lw = 132
-    const lh = (logo.height / logo.width) * lw
+    // In eine max. Box einpassen (quadratisches Marken-Logo ohne Schriftzug → ~60x60)
+    const scale = Math.min(150 / logo.width, 60 / logo.height)
+    const lw = logo.width * scale, lh = logo.height * scale
     page.drawImage(logo, { x: M, y: y - lh + 6, width: lw, height: lh })
   } else {
     text(String(d.settings.brand_name ?? 'Happy Property'), M, y - 12, 20, head, DARK)
@@ -314,7 +315,6 @@ async function buildPdf(d: {
   const C = d.customerSnap
   text(String(C.company_name ?? ''), M, y, 11, bold, DARK); y -= 14
   const cLines = [
-    C.contact_name ? `z. Hd. ${C.contact_name}` : '',
     String(C.address_line1 ?? ''),
     String(C.address_line2 ?? ''),
     `${C.postal_code ?? ''} ${C.city ?? ''}, ${C.country ?? ''}`.trim(),

@@ -63,7 +63,7 @@ export default function Invoice() {
         <div style={{ background: '#fff', borderRadius: 18, boxShadow: '0 1px 3px rgba(0,0,0,0.04),0 10px 30px rgba(0,0,0,0.06)', padding: '38px 40px 30px' }}>
           {/* Kopf */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <img src={DECK_LOGO} alt={String(I.brand_name ?? 'Happy Property')} style={{ height: 52, width: 'auto', borderRadius: 8 }} />
+            <img src={I.logo_url ?? DECK_LOGO} alt={String(I.brand_name ?? 'Happy Property')} style={{ height: 56, width: 'auto', borderRadius: 10 }} />
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 800, color: DARK, lineHeight: 1 }}>RECHNUNG</div>
               <div style={{ fontSize: 10, letterSpacing: 2, color: '#999', marginTop: 3 }}>INVOICE</div>
@@ -96,7 +96,6 @@ export default function Invoice() {
             <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.5, color: GOLD, marginBottom: 6 }}>RECHNUNG AN</div>
             <div style={{ fontWeight: 700, fontSize: 14.5, color: DARK }}>{C.company_name}</div>
             <div style={{ fontSize: 12, color: '#777', lineHeight: 1.5, marginTop: 2 }}>
-              {C.contact_name && <div>z. Hd. {C.contact_name}</div>}
               {C.address_line1 && <div>{C.address_line1}</div>}
               {C.address_line2 && <div>{C.address_line2}</div>}
               <div>{[C.postal_code, C.city].filter(Boolean).join(' ')}{C.country ? `, ${C.country}` : ''}</div>
