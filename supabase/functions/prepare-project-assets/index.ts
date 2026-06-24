@@ -88,7 +88,7 @@ function folderCategory(name: string): 'floorplan' | 'location' | 'render' | nul
   const n = name.toLowerCase()
   if (/floor\s*plan|grundriss|drawings?/.test(n)) return 'floorplan'
   if (/location|lage|master\s*plan/.test(n))      return 'location'
-  if (/picture|photo|render|3d|gallery|interior|exterior|pool|view/.test(n)) return 'render'
+  if (/picture|photo|render|3d|gallery|interior|exterior|pool|view|cgi/.test(n)) return 'render'
   return null
 }
 function floorFromName(name: string): number | null {
