@@ -1057,7 +1057,11 @@ export default function Projects() {
             {filtered.map(p => {
               const totalUnits     = p.units?.length ?? 0
               const activeUnits = p.units?.filter((u: { status: string }) => u.status === 'active').length ?? 0
+              // Vorschau: eigene Bilder zuerst, sonst aus den importierten Deck-Assets
+              // (Renders/Gallery) — sonst bleibt die Kachel bei externen Projekten leer.
               const mainImage      = p.images?.[0]
+                ?? p.deck_assets?.renders?.[0]
+                ?? p.deck_assets?.gallery?.[0]?.url
 
               return (
                 <div
