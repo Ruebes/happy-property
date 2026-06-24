@@ -15,6 +15,7 @@ import SetPassword from './pages/SetPassword'
 const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
+const Invoice  = lazy(() => import('./pages/Invoice'))
 
 // Role-Dashboards
 const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'))
@@ -42,6 +43,8 @@ const CrmStageMessages      = lazy(() => import('./pages/admin/crm/settings/Stag
 const CrmAiAgent            = lazy(() => import('./pages/admin/crm/settings/AiAgent'))
 const CrmDocuments          = lazy(() => import('./pages/admin/crm/settings/Documents'))
 const CrmContacts           = lazy(() => import('./pages/admin/crm/settings/Contacts'))
+const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
+const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 
@@ -97,6 +100,8 @@ export default function App() {
             <Route path="/deck/:token/print" element={<Deck />} />
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
             <Route path="/rechnung/:token" element={<Rechnung />} />
+            {/* Öffentliche Rechnung (per Token, kein Login) */}
+            <Route path="/re/:token" element={<Invoice />} />
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
             <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
 
@@ -112,6 +117,7 @@ export default function App() {
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
               <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />
               <Route path="/admin/crm/settings/contacts"    element={<CrmContacts />} />
+              <Route path="/admin/crm/settings/invoices"    element={<CrmInvoiceSettings />} />
               <Route path="/admin/properties/:id"        element={<PropertyDetailRoute />} />
             </Route>
 
@@ -127,6 +133,7 @@ export default function App() {
               <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />
               <Route path="/admin/crm/settings"    element={<CrmSettings />} />
               <Route path="/admin/crm/postausgang" element={<CrmPostausgang />} />
+              <Route path="/admin/crm/invoices"    element={<CrmInvoices />} />
               <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
               <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />
               <Route path="/verwalter/properties/:id" element={<PropertyDetailRoute />} />

@@ -120,6 +120,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
     { to: '/admin/crm/projects',      key: 'crm.nav.projects'   },
     { to: '/admin/crm/postausgang',   key: 'crm.nav.outbox'     },
+    { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'   },
     { to: '/admin/crm/calendar',      key: 'crm.nav.calendar'   },
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics' },
   ]
@@ -132,6 +133,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },
     { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
     { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
+    { to: '/admin/crm/settings/invoices',    key: 'crm.nav.invoiceSettings' },
     { to: '/admin/crm/settings',             key: 'crm.nav.developers'  },
   ]
 

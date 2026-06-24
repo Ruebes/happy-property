@@ -100,6 +100,8 @@ Deno.serve(async (req: Request) => {
       deal_id?:         string | null
       attach_category?: string | null
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
+      // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
+      attachment?:      { filename: string; content_base64: string; content_type?: string } | null
     }
 
     const { to, lead_id, deal_id, attach_category, open_token } = body
@@ -149,9 +151,26 @@ Deno.serve(async (req: Request) => {
     const smtpPass = Deno.env.get('SMTP_PASS') ?? ''
 
     // ── PDF-Anhang vorbereiten ────────────────────────────────────────────────
-    let pdfAttachment: { filename: string; content: Uint8Array } | null = null
+    let pdfAttachment: { filename: string; content: Uint8Array; contentType?: string } | null = null
 
-    if (attach_category) {
+    // Direkter Base64-Anhang (z.B. Rechnung aus generate-invoice) hat Vorrang.
+    if (body.attachment?.content_base64) {
+      try {
+        const bin = atob(body.attachment.content_base64)
+        const bytes = new Uint8Array(bin.length)
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+        pdfAttachment = {
+          filename: body.attachment.filename || 'anhang.pdf',
+          content: bytes,
+          contentType: body.attachment.content_type || 'application/pdf',
+        }
+        console.log(`[send-email] Direkter Anhang: ${pdfAttachment.filename} (${bytes.byteLength} Bytes)`)
+      } catch (e) {
+        console.warn('[send-email] Anhang-Dekodierung fehlgeschlagen:', e)
+      }
+    }
+
+    if (!pdfAttachment && attach_category) {
       const pdfInfo = await getPdfForCategory(supabase, attach_category)
       if (pdfInfo) {
         const bytes = await fetchPdfBytes(pdfInfo.url)
@@ -208,7 +227,7 @@ Deno.serve(async (req: Request) => {
             {
               filename:    pdfAttachment.filename,
               content:     pdfAttachment.content,
-              contentType: 'application/pdf',
+              contentType: pdfAttachment.contentType ?? 'application/pdf',
               encoding:    'base64',
             },
           ]

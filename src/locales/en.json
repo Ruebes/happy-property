@@ -977,6 +977,8 @@
       "archived": "Archived",
       "projects": "Projects",
       "outbox": "Outbox",
+      "invoices": "Invoices",
+      "invoiceSettings": "Invoices",
       "settings": "Settings",
       "developers": "Manage Developers",
       "contacts": "Business Contacts",

@@ -14,6 +14,7 @@ import {
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
+import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import { CustomSelect } from '../../../components/CustomSelect'
 
@@ -506,6 +507,7 @@ export default function Pipeline() {
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
+  const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Anzahlung → Rechnungs-Modal
   const [holdContact,  setHoldContact]  = useState(true)
   const [handoverText, setHandoverText] = useState('')
   const [modalBusy,    setModalBusy]    = useState(false)
@@ -637,6 +639,9 @@ export default function Pipeline() {
     if (targetPhase === 'hold') { setHoldDeal({ ...deal }); return }
     // Kontakt übergeben: Popup mit Freitext → sofort an Burkhard + Ioulia
     if (targetPhase === 'kontakt_uebergeben') { setHandoverDeal({ ...deal }); return }
+    // Anzahlung: Rechnungs-Modal (Netto eingeben → Rechnung an Burkhard). Phase wird
+    // erst nach Erstellung im Modal gesetzt.
+    if (targetPhase === 'anzahlung') { setDepositDeal({ ...deal }); return }
 
     // Optimistic update
     setDeals(prev =>
@@ -1016,6 +1021,14 @@ export default function Pipeline() {
       )}
 
       {/* Registrierung Modal */}
+      {depositDeal && (
+        <DepositInvoiceModal
+          deal={depositDeal}
+          onClose={() => setDepositDeal(null)}
+          onDone={(msg) => { setDepositDeal(null); showToastMsg(msg); void fetchDeals(true) }}
+        />
+      )}
+
       {registrationDeal && (
         <RegistrationModal
           leadName={registrationDeal.lead

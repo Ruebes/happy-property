@@ -228,6 +228,122 @@ export interface DeckAssetsCache {
   updated_at?: string
 }
 
+// ── Rechnungstool ─────────────────────────────────────────────────────────────
+
+export type VatTreatment =
+  | 'standard_19' | 'reduced_9' | 'reduced_5' | 'reduced_3'
+  | 'zero' | 'reverse_charge_eu' | 'third_country' | 'exempt'
+export type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'canceled'
+export type CustomerMode  = 'cyprus' | 'eu' | 'third'
+export type PlanInterval  = 'monthly' | 'quarterly' | 'yearly'
+
+export interface InvoiceCustomer {
+  id:            string
+  company_name:  string
+  contact_name:  string | null
+  address_line1: string | null
+  address_line2: string | null
+  postal_code:   string | null
+  city:          string | null
+  country:       string | null
+  vat_number:    string | null
+  email:         string | null
+  country_mode:  CustomerMode
+  is_default:    boolean
+  notes:         string | null
+  created_at:    string
+  updated_at:    string
+}
+
+export interface InvoiceArticle {
+  id:          string
+  name:        string
+  description: string | null
+  unit:        string
+  net_price:   number
+  active:      boolean
+  created_at:  string
+  updated_at:  string
+}
+
+export interface SubscriptionPlan {
+  id:          string
+  name:        string
+  description: string | null
+  interval:    PlanInterval
+  net_price:   number
+  active:      boolean
+  created_at:  string
+  updated_at:  string
+}
+
+export interface InvoiceSettings {
+  id:                boolean
+  legal_name:        string
+  brand_name:        string
+  address_line1:     string | null
+  address_line2:     string | null
+  postal_code:       string | null
+  city:              string | null
+  country:           string | null
+  vat_number:        string | null
+  reg_number:        string | null
+  email:             string | null
+  phone:             string | null
+  bank_name:         string | null
+  iban:              string | null
+  bic:               string | null
+  intermediary_bic:  string | null
+  logo_url:          string | null
+  default_due_days:  number
+  invoice_prefix:    string
+  next_number:       number
+  footer_note:       string | null
+  auto_send_deposit: boolean
+  updated_at:        string
+}
+
+export interface InvoiceItem {
+  id:             string
+  invoice_id:     string
+  description:    string
+  quantity:       number
+  unit_price_net: number
+  line_net:       number
+  sort:           number
+}
+
+export interface Invoice {
+  id:                string
+  invoice_number:    string
+  token:             string
+  customer_id:       string | null
+  deal_id:           string | null
+  lead_id:           string | null
+  issuer_snapshot:   Record<string, unknown> | null
+  customer_snapshot: Record<string, unknown> | null
+  issue_date:        string
+  supply_date:       string | null
+  due_date:          string | null
+  vat_treatment:     VatTreatment
+  vat_rate:          number
+  subtotal_net:      number
+  vat_amount:        number
+  total_gross:       number
+  currency:          string
+  status:            InvoiceStatus
+  vat_note:          string | null
+  notes:             string | null
+  pdf_path:          string | null
+  sent_at:           string | null
+  paid_at:           string | null
+  created_at:        string
+  updated_at:        string
+  // joined / public
+  items?:            InvoiceItem[]
+  customer?:         InvoiceCustomer | null
+}
+
 export type UnitRentalType = 'short' | 'long'
 export type UnitDocType   = 'kaufvertrag' | 'mietvertrag' | 'zahlungsbeleg' | 'grundriss' | 'rechnung' | 'sonstiges'
 
