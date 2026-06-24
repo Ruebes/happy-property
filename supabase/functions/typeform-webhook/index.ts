@@ -107,9 +107,13 @@ Deno.serve(async (req) => {
     const source = sourceFromHidden ?? sourceFromForm
 
     if (!email && !firstName) {
+      // WICHTIG: NICHT mit 4xx/5xx antworten — Typeform markiert die Webhook-Zustellung
+      // dann als fehlgeschlagen („rot"), auch bei reinen Test-/Verifizierungs-Pings ohne
+      // Formulardaten. Wir bestätigen mit 200 und protokollieren den Fall still.
+      try { await supabase.from('webhook_errors').insert({ source: 'typeform', error: 'Kein Name/E-Mail im Payload (ignoriert, 200 quittiert)', payload: rawForErr }) } catch { /* best effort */ }
       return new Response(
-        JSON.stringify({ error: 'Kein Name oder E-Mail im Payload gefunden.' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: true, ignored: true, reason: 'Kein Name oder E-Mail im Payload' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -193,9 +197,12 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error('[typeform-webhook] Fehler:', err)
     try { await supabase.from('webhook_errors').insert({ source: 'typeform', error: String(err), payload: rawForErr }) } catch { /* best effort */ }
+    // Bewusst 200 statt 500: Typeform soll die Zustellung nicht als „rot" markieren und
+    // nicht in einen Retry-Sturm gehen. Der vollständige Payload liegt in webhook_errors
+    // und kann jederzeit nachverarbeitet werden.
     return new Response(
-      JSON.stringify({ success: false, error: String(err) }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ success: false, logged: true, error: String(err) }),
+      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   }
 })
