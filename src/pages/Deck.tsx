@@ -118,20 +118,21 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {((b.mapLat != null && b.mapLng != null) || b.mapQuery) ? (() => {
+      {((b.mapLat != null && b.mapLng != null) || b.mapQuery || b.mapEmbed) ? (() => {
       // INTERAKTIVE Karte (Deck-Standard): scroll-/zoombares keyless Google-Embed
-      // (output=embed, kein API-Key). Koordinaten bevorzugt (Pin exakt); sonst Such-
-      // Query aus Projektname+Ort. Ersetzt den manuellen Screenshot + Vision-Marker.
+      // (output=embed, kein API-Key). mapEmbed (z.B. Routen-/Richtungs-Karte) hat
+      // Vorrang; sonst exakte Koordinaten; sonst Such-Query aus Projektname+Ort.
       const hasCoords = b.mapLat != null && b.mapLng != null
-      const q = hasCoords ? `${b.mapLat},${b.mapLng}` : encodeURIComponent(b.mapQuery as string)
+      const q = hasCoords ? `${b.mapLat},${b.mapLng}` : encodeURIComponent(b.mapQuery ?? '')
       const z = hasCoords ? 15 : 14
+      const src = b.mapEmbed ?? `https://maps.google.com/maps?q=${q}&z=${z}&output=embed`
       const openHref = b.mapUrl || `https://www.google.com/maps?q=${q}`
       return (
         <div className="mt-8">
           <div className="relative w-full overflow-hidden rounded-xl border border-gray-200" style={{ aspectRatio: '16 / 9' }}>
             <iframe
               title={b.mapLabel ? `Standort ${b.mapLabel}` : 'Standort'}
-              src={`https://maps.google.com/maps?q=${q}&z=${z}&output=embed`}
+              src={src}
               className="absolute inset-0 h-full w-full"
               style={{ border: 0 }}
               loading="lazy"
