@@ -451,6 +451,8 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
   const dist  = b.distance ?? '~5 km'
   const drive = b.drive ?? 'direkt um die Ecke'
   const pct   = b.valuePct ?? '+30%'
+  const fromSub = b.fromSub                              // Ort des Objekts (z.B. „Tala", „Chlorakas") — projektabhängig
+  const toSub   = b.toSub ?? 'Potima Bay · Kissonerga'  // Marina-Standort (überall gleich)
   return (
     <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent />
@@ -471,7 +473,7 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
                 <rect x="86" y="134" width="16" height="16" rx="1.5" fill={GOLD} />
               </g>
               <text x="76" y="200" textAnchor="middle" fontSize="14" fontWeight="700" fill={INK} fontFamily="Montserrat, sans-serif">{from}</text>
-              <text x="76" y="219" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">Tala</text>
+              {fromSub && <text x="76" y="219" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">{fromSub}</text>}
               {/* Marina rechts: Wasser + Segelboote */}
               <g>
                 <ellipse cx="482" cy="172" rx="70" ry="20" fill="#bfe0ea" />
@@ -480,7 +482,7 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
                 <g transform="translate(496,132)"><path d="M11 0 L11 30 L0 30 Z" fill={CORAL} /><rect x="-2" y="30" width="28" height="6" rx="3" fill={DARK} /></g>
               </g>
               <text x="482" y="206" textAnchor="middle" fontSize="14" fontWeight="700" fill={INK} fontFamily="Montserrat, sans-serif">{to}</text>
-              <text x="482" y="225" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">Potima Bay · Kissonerga</text>
+              <text x="482" y="225" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">{toSub}</text>
               {/* Entfernungs-Pille auf der Route */}
               <g transform="translate(286,74)">
                 <path d="M0 22 L0 64" stroke={GOLD} strokeWidth="2" strokeDasharray="2 4" />
