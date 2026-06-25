@@ -50,6 +50,8 @@ export default function Postausgang() {
   const [toast, setToast]     = useState('')
   const [editId, setEditId]   = useState<string | null>(null)
   const [editSubject, setEditSubject] = useState('')
+  const [editEmailId, setEditEmailId] = useState<string | null>(null)
+  const [emailDraft, setEmailDraft]   = useState('')
   const [chat, setChat]       = useState<{ token: string; label: string } | null>(null)
   const [editCalc, setEditCalc] = useState<{ token: string; content: { items: CalcItem[]; recipient_name?: string }; lead: { id: string; first_name: string; last_name: string } } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
@@ -160,7 +162,19 @@ export default function Postausgang() {
     if (!phone) { flash(t('crm.outbox.noPhone', 'Keine Telefonnummer am Lead.')); return }
     const fn = row.lead?.first_name ?? ''
     const base = window.location.origin
-    const links = (row.deck_tokens ?? []).map(tok => `${base}/deck/${tok}`).join('\n')
+    // Decks UND Berechnungen verlinken (vorher fehlten die Rechnungen ganz; bei einem
+    // reinen Rechnungs-Eintrag ohne deck_tokens war die Nachricht link-leer → der Kunde
+    // landete beim Portal-Login). Jeder Link mit klarem Label, damit klar ist, was was ist.
+    const deckToks = row.deck_tokens ?? []
+    const deckLines = deckToks.map((tok, i) =>
+      `🏠 ${t('crm.outbox.waDeckLabel', 'Sales Deck')}${deckToks.length > 1 ? ` ${i + 1}` : ''}: ${base}/deck/${tok}`)
+    // Gleiche Berechnungs-Auswahl wie in der Zeile angezeigt (im Body verlinkte, sonst alle des Leads)
+    const calcTokensInBody = new Set([...(row.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
+    const calcLines = calcs
+      .filter(c => c.lead_id === row.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
+      .map(c => `📊 ${c.title?.trim() || t('crm.outbox.waCalcLabel', 'Deine Berechnung')}: ${base}/rechnung/${c.token}`)
+    const links = [...deckLines, ...calcLines].join('\n')
+    if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck- oder Berechnungs-Links an diesem Eintrag.')); return }
     const text = `Hallo ${fn},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n${links}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property`
     if (!window.confirm(t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
     setBusyId(row.id)
@@ -183,6 +197,22 @@ export default function Postausgang() {
     setOpenId(row.id)
     setEditSubject(row.subject ?? '')
     setEditId(row.id)   // innerHTML wird per Callback-Ref gesetzt, sobald der Editor gerendert ist
+  }
+
+  // Empfänger-Adresse korrigieren: am Eintrag UND am Lead — so zeigt die Liste die richtige
+  // Adresse, der nächste Versand (zieht frische leads.email) nutzt sie, und der Kunde ist
+  // dauerhaft korrigiert. Danach „🔄 Erneut senden" bzw. „📧 E-Mail" verschickt damit.
+  const saveEmail = async (row: OutboxRow) => {
+    const email = emailDraft.trim()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { flash(t('crm.outbox.badEmail', 'Bitte eine gültige E-Mail-Adresse eingeben.')); return }
+    setBusyId(row.id)
+    const { error } = await supabase.from('deck_outbox').update({ recipient_email: email }).eq('id', row.id)
+    if (!error && row.lead_id) await supabase.from('leads').update({ email }).eq('id', row.lead_id)
+    setBusyId(null)
+    if (error) { flash(`${t('crm.outbox.saveFail', 'Speichern fehlgeschlagen')}: ${error.message}`); return }
+    setEditEmailId(null)
+    flash(t('crm.outbox.emailSaved', '✅ Adresse geändert'))
+    void load()
   }
 
   const saveEdit = async (row: OutboxRow) => {
@@ -256,6 +286,11 @@ export default function Postausgang() {
                 </button>
                 {r.status !== 'cancelled' && (
                   <div className="flex gap-2 shrink-0 items-center">
+                    <button onClick={() => { setEmailDraft((r.lead?.email ?? r.recipient_email) ?? ''); setEditEmailId(editEmailId === r.id ? null : r.id) }}
+                      title={t('crm.outbox.editEmailTitle', 'Empfänger-E-Mail ändern')}
+                      className="text-[11px] font-medium rounded-lg px-2 py-1 border border-gray-200 text-gray-600 hover:bg-gray-50">
+                      ✏️ {t('crm.outbox.editEmail', 'E-Mail')}
+                    </button>
                     {r.email_sent_at && (
                       <span className="flex items-center gap-1.5">
                         <span className="text-[11px] text-green-600 font-medium">✅ Mail</span>
@@ -265,7 +300,15 @@ export default function Postausgang() {
                         </button>
                       </span>
                     )}
-                    {r.whatsapp_sent_at && <span className="text-[11px] text-green-600 font-medium">✅ WA</span>}
+                    {r.whatsapp_sent_at && (
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-[11px] text-green-600 font-medium">✅ WA</span>
+                        <button onClick={() => sendWhatsApp(r)} disabled={busyId === r.id} title={t('crm.outbox.resendWaTitle', 'WhatsApp erneut senden — mit Deck- und Berechnungs-Links')}
+                          className="text-[11px] font-medium rounded-lg px-2 py-1 border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
+                          {busyId === r.id ? '…' : `🔄 ${t('crm.outbox.resend', 'Erneut senden')}`}
+                        </button>
+                      </span>
+                    )}
                     {!r.email_sent_at && (
                       <button onClick={() => send(r)} disabled={busyId === r.id}
                         className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
@@ -284,6 +327,20 @@ export default function Postausgang() {
                   </div>
                 )}
               </div>
+              {editEmailId === r.id && (
+                <div className="border-t border-gray-100 px-4 py-2.5 flex items-center gap-2 bg-gray-50 flex-wrap">
+                  <span className="text-xs text-gray-500 shrink-0">📧 {t('crm.outbox.emailLabel', 'Empfänger-E-Mail')}:</span>
+                  <input value={emailDraft} onChange={e => setEmailDraft(e.target.value)} type="email" autoFocus
+                    onKeyDown={e => { if (e.key === 'Enter') void saveEmail(r); if (e.key === 'Escape') setEditEmailId(null) }}
+                    placeholder="name@beispiel.de"
+                    className="flex-1 min-w-[200px] text-sm border border-gray-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-300" />
+                  <button onClick={() => void saveEmail(r)} disabled={busyId === r.id}
+                    className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                    {busyId === r.id ? '…' : t('common.save', 'Speichern')}
+                  </button>
+                  <button onClick={() => setEditEmailId(null)} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1">{t('common.cancel', 'Abbrechen')}</button>
+                </div>
+              )}
               {openId === r.id && (
                 <div className="border-t border-gray-100 px-4 py-3 space-y-4">
                   {/* ── Decks: ansehen · per Chat anpassen (Hintergrund) · als fertig bestätigen ── */}
