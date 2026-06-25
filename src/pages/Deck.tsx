@@ -444,8 +444,70 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
   )
 }
 
+function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
+  const CORAL = '#ff795d'
+  const from  = b.fromLabel ?? 'Royal Horizon'
+  const to    = b.toLabel ?? 'Paphos-Marina'
+  const dist  = b.distance ?? '~5 km'
+  const drive = b.drive ?? 'direkt um die Ecke'
+  const pct   = b.valuePct ?? '+30%'
+  return (
+    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+      <Accent />
+      <Kicker>{b.kicker ?? 'Lage · Neue Paphos-Marina'}</Kicker>
+      {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-center">
+        {/* Schematische Karte: Haus → Route + Entfernung → Marina */}
+        <div className="lg:col-span-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+            <svg viewBox="0 0 560 240" className="w-full h-auto" role="img" aria-label={`Weg von ${from} zur ${to}`}>
+              {/* Route (gestrichelt) */}
+              <path d="M72 168 C 190 96, 360 222, 484 150" fill="none" stroke={GOLD} strokeWidth="5" strokeDasharray="2 13" strokeLinecap="round" />
+              {/* Haus links */}
+              <g>
+                <rect x="42" y="122" width="68" height="56" rx="3" fill={DARK} />
+                <path d="M34 122 L76 86 L118 122 Z" fill={CORAL} />
+                <rect x="60" y="148" width="18" height="30" rx="1.5" fill={CREAM} />
+                <rect x="86" y="134" width="16" height="16" rx="1.5" fill={GOLD} />
+              </g>
+              <text x="76" y="200" textAnchor="middle" fontSize="14" fontWeight="700" fill={INK} fontFamily="Montserrat, sans-serif">{from}</text>
+              <text x="76" y="219" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">Tala</text>
+              {/* Marina rechts: Wasser + Segelboote */}
+              <g>
+                <ellipse cx="482" cy="172" rx="70" ry="20" fill="#bfe0ea" />
+                <path d="M420 172 q 12 -7 24 0 t 24 0 t 24 0 t 24 0 t 24 0" fill="none" stroke="#7fb6c8" strokeWidth="2.5" />
+                <g transform="translate(452,116)"><path d="M14 0 L14 42 L0 42 Z" fill="#ffffff" stroke={GOLD} strokeWidth="1.5" /><path d="M16 8 L31 42 L16 42 Z" fill={CORAL} /><rect x="-3" y="42" width="38" height="7" rx="3.5" fill={DARK} /></g>
+                <g transform="translate(496,132)"><path d="M11 0 L11 30 L0 30 Z" fill={CORAL} /><rect x="-2" y="30" width="28" height="6" rx="3" fill={DARK} /></g>
+              </g>
+              <text x="482" y="206" textAnchor="middle" fontSize="14" fontWeight="700" fill={INK} fontFamily="Montserrat, sans-serif">{to}</text>
+              <text x="482" y="225" textAnchor="middle" fontSize="11" fill="#8a8a8a" fontFamily="Montserrat, sans-serif">Potima Bay · Kissonerga</text>
+              {/* Entfernungs-Pille auf der Route */}
+              <g transform="translate(286,74)">
+                <path d="M0 22 L0 64" stroke={GOLD} strokeWidth="2" strokeDasharray="2 4" />
+                <rect x="-70" y="-22" width="140" height="44" rx="22" fill={DARK} />
+                <text x="0" y="-2" textAnchor="middle" fontSize="17" fontWeight="800" fill="#ffffff" fontFamily="Montserrat, sans-serif">{dist}</text>
+                <text x="0" y="14" textAnchor="middle" fontSize="10" fill={GOLD} fontFamily="Montserrat, sans-serif">{drive}</text>
+              </g>
+            </svg>
+          </div>
+        </div>
+        {/* +30 % Wertsteigerung */}
+        <div className="lg:col-span-2">
+          <div className="rounded-2xl p-7 text-center shadow-md" style={{ background: CORAL }}>
+            <div className="font-heading font-extrabold leading-none text-white" style={{ fontSize: 'clamp(52px, 9vw, 88px)' }}>{pct}</div>
+            <div className="mt-1 text-white font-semibold uppercase tracking-[0.16em] text-sm">Wertsteigerung</div>
+          </div>
+          {b.valueText && <p className="mt-4 text-[15px] leading-relaxed text-gray-700">{b.valueText}</p>}
+        </div>
+      </div>
+      {b.note && <p className="mt-6 text-xs text-gray-400">{b.note}</p>}
+    </section>
+  )
+}
+
 function Block({ block }: { block: DeckBlock }) {
   switch (block.type) {
+    case 'marina':    return <MarinaBlock {...block} />
     case 'cover':     return <CoverBlock {...block} />
     case 'letter':    return <LetterBlock {...block} />
     case 'unit':      return <UnitBlock {...block} />
