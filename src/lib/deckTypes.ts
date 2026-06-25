@@ -11,6 +11,10 @@ export interface DeckPaymentPhase {
   advantage?: string
 }
 
+// Schematischer Grundriss: Räume als Rechtecke (Koordinaten im SVG-Raum 0..600).
+// kind steuert die Optik (terrace = gestrichelt/coral außenliegend, kitchen = Akzent).
+export interface FloorplanRoom { x: number; y: number; w: number; h: number; name: string; area?: string; kind?: 'room' | 'living' | 'bed' | 'bath' | 'hall' | 'kitchen' | 'terrace' }
+
 export type DeckBlock =
   | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
@@ -22,8 +26,8 @@ export type DeckBlock =
   | { type: 'gallery'; kicker?: string; headline?: string; items?: { image?: string; title?: string; caption?: string }[]; note?: string }
   | { type: 'benefits';kicker?: string; headline?: string; cards?: { icon?: string; title: string; text: string }[] }
   | { type: 'inventory';kicker?: string; headline?: string; intro?: string; image?: string; groups?: { title: string; icon?: string; items: string[] }[]; note?: string }
-  | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[] }
-  | { type: 'payment'; kicker?: string; headline?: string; intro?: string; phase1?: DeckPaymentPhase; phase2?: DeckPaymentPhase; note?: string }
+  | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[]; rooms?: FloorplanRoom[]; planNote?: string }
+  | { type: 'payment'; kicker?: string; headline?: string; intro?: string; phase1?: DeckPaymentPhase; phase2?: DeckPaymentPhase; note?: string; priceSummary?: { net: string; vatRate?: string; vat: string; gross: string } }
   | { type: 'cta';     kicker?: string; headline?: string; text?: string; steps?: { n: string; title: string; text: string }[] }
 
 export interface DeckContent {

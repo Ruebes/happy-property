@@ -203,6 +203,9 @@ Deno.serve(async (req) => {
     // priceLines JE Wohnung (Schlüssel = normalisierte Wohnungsnummer) — so kann EIN Deck
     // mehrere Wohnungen eines Projekts mit je eigenem Preis-Block enthalten.
     const priceLinesByUnit: Record<string, Array<{ label: string; value: string; strong?: boolean }>> = {}
+    // Parallel: Netto/MwSt/Brutto je Wohnung für die priceSummary-Box im Zahlungsplan
+    // (MwSt-Berechnung im payment-Block = Standard, nicht der KI überlassen).
+    const priceSummaryByUnit: Record<string, { net: string; vatRate: string; vat: string; gross: string }> = {}
     let extraFacts = ''
     if (body.project_id) {
       try {
@@ -231,7 +234,12 @@ Deno.serve(async (req) => {
           return lines
         }
         const priced = unitList.filter(u => u.price_net > 0)
-        for (const u of priced) priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net)
+        for (const u of priced) {
+          priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net)
+          const totalNet = u.price_net + furnNet
+          const vat = Math.round(totalNet * 0.19)
+          priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: '19 %', vat: eur(vat), gross: eur(totalNet + vat) }
+        }
         if (priced.length === 1) {
           extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLinesByUnit[normU(priced[0].unit_number)].map(l => `${l.label}: ${l.value}`).join('\n')}`
         } else if (priced.length > 1) {
@@ -400,6 +408,18 @@ Deno.serve(async (req) => {
           const pl = priceLinesByUnit[normU(ub.number)] ?? priceLinesByUnit[normU(ub.nickname)]
           if (pl) { ub.priceLines = pl; delete ub.priceMain; delete ub.priceSub }
         }
+      }
+    }
+    // MwSt-Berechnung als STANDARD auch im Zahlungsplan: Netto → MwSt → Brutto als
+    // priceSummary-Box. Einzel-Wohnung → auf alle payment-Blöcke; mehrere → per
+    // Wohnungsnummer aus kicker/headline zuordnen (sonst nicht raten).
+    const psKeys = Object.keys(priceSummaryByUnit)
+    if (psKeys.length) {
+      for (const pb of blocks.filter(b => b.type === 'payment')) {
+        if (psKeys.length === 1) { pb.priceSummary = priceSummaryByUnit[psKeys[0]]; continue }
+        const hay = normU(JSON.stringify({ k: pb.kicker, h: pb.headline }))
+        const k = psKeys.find(key => key && hay.includes(key))
+        if (k) pb.priceSummary = priceSummaryByUnit[k]
       }
     }
 

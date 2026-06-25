@@ -1,7 +1,7 @@
 import { useState, useEffect, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import type { DeckBlock, DeckContent } from '../lib/deckTypes'
+import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 
 // ── Sales-Deck Render-Seite (öffentlich, per Token) ─────────────────────────────
@@ -322,14 +322,52 @@ function InventoryBlock(b: Extract<DeckBlock, { type: 'inventory' }>) {
   )
 }
 
+// Sauberes Grundriss-Modell aus Raum-Rechtecken (SVG-Raum 0..600 × 0..600).
+// Innenräume: helle Füllung + dunkle Wände; Terrasse: coral, gestrichelt, außenliegend;
+// Küche: Gold-Akzent. Labels = Raumname + Fläche. Ersetzt unübersichtliche Plan-Bilder.
+function FloorplanSchematic({ rooms, note }: { rooms: FloorplanRoom[]; note?: string }) {
+  const CORAL = '#ff795d'
+  const inner = rooms.filter(r => r.kind !== 'terrace')
+  const minX = Math.min(...inner.map(r => r.x)), minY = Math.min(...inner.map(r => r.y))
+  const maxX = Math.max(...inner.map(r => r.x + r.w)), maxY = Math.max(...inner.map(r => r.y + r.h))
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white p-4 md:p-6">
+      <svg viewBox="0 0 600 600" className="w-full h-auto" role="img" aria-label="Grundriss-Modell">
+        {/* Außenwand um die Innenräume */}
+        <rect x={minX} y={minY} width={maxX - minX} height={maxY - minY} fill="none" stroke={DARK} strokeWidth="6" rx="3" />
+        {rooms.map((r, i) => {
+          const terrace = r.kind === 'terrace'
+          const kitchen = r.kind === 'kitchen'
+          const fill = terrace ? 'rgba(255,121,93,0.10)' : kitchen ? 'rgba(194,161,94,0.16)' : '#faf6ec'
+          const stroke = terrace ? CORAL : DARK
+          const cx = r.x + r.w / 2
+          return (
+            <g key={i}>
+              <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={fill} stroke={stroke}
+                strokeWidth={terrace ? 2.5 : 3} strokeDasharray={terrace ? '7 6' : undefined} rx="2" />
+              <text x={cx} y={r.y + r.h / 2 - (r.area ? 8 : 0)} textAnchor="middle" dominantBaseline="middle"
+                fontSize="18" fontWeight="700" fill={INK} fontFamily="Montserrat, sans-serif">{r.name}</text>
+              {r.area && <text x={cx} y={r.y + r.h / 2 + 15} textAnchor="middle" dominantBaseline="middle"
+                fontSize="14" fontWeight="600" fill={terrace ? CORAL : GOLD} fontFamily="Montserrat, sans-serif">{r.area}</text>}
+            </g>
+          )
+        })}
+      </svg>
+      {note && <p className="mt-3 text-xs text-gray-500">{note}</p>}
+    </div>
+  )
+}
+
 function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
   return (
     <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
-      {/* Grundriss VOLLBREIT + groß — Detailpläne (Maße/Raumnamen) müssen lesbar sein.
-          object-contain = nicht verzerrt; heller Rahmen für Kontrast auf CREAM. */}
-      <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />
+      {/* rooms = schematischer Einzelwohnungs-Grundriss (sauberes Modell, statt z.B. eines
+          ganzen Lageplans). Sonst: Grundriss-Bild VOLLBREIT, object-contain = nicht verzerrt. */}
+      {b.rooms && b.rooms.length
+        ? <FloorplanSchematic rooms={b.rooms} note={b.planNote} />
+        : <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />}
       {b.stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
           {b.stats.map((s, i) => (
@@ -394,6 +432,15 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
         <PaymentPhaseCard phase={b.phase1} />
         <PaymentPhaseCard phase={b.phase2} dark />
       </div>
+      {/* MwSt.-Berechnung als fester Bestandteil (Standard): Netto → MwSt → Brutto.
+          Zyperns Bauträger weisen netto aus; der Brutto-Gesamtpreis muss klar erkennbar sein. */}
+      {b.priceSummary && (
+        <div className="mt-6 sm:max-w-md sm:ml-auto rounded-xl border-2 bg-white px-5 py-4" style={{ borderColor: GOLD }}>
+          <div className="flex items-center justify-between text-sm text-gray-600"><span>Nettopreis</span><span className="font-semibold text-gray-900">{b.priceSummary.net}</span></div>
+          <div className="flex items-center justify-between text-sm text-gray-600 mt-1.5"><span>zzgl. MwSt. ({b.priceSummary.vatRate ?? '19 %'})</span><span className="font-semibold text-gray-900">{b.priceSummary.vat}</span></div>
+          <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-gray-200"><span className="font-heading font-bold" style={{ color: INK }}>Bruttopreis gesamt</span><span className="font-heading font-bold text-2xl" style={{ color: INK }}>{b.priceSummary.gross}</span></div>
+        </div>
+      )}
       {b.note && <div className="mt-6 rounded-xl px-5 py-3 text-[12px] text-gray-700 border-l-2" style={{ background: '#fff', borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
     </section>
   )
