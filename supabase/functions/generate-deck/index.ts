@@ -69,7 +69,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
 // Deterministischer Wahrheits-Backstop: filtert bekannte erfundene Behauptungen
 // raus, falls das Modell die Prompt-Regeln (4d / 5b) doch mal ignoriert. Greift
 // SATZWEISE (entfernt nur den betroffenen Satz, nicht den ganzen Block).
@@ -144,6 +144,11 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
         b.mapLng = images.mapLng
         if (projName) b.mapLabel = projName
         if (images?.map) b.image = images.map   // optionaler statischer Fallback (PDF/Alt-Clients)
+      } else if (images?.mapQuery) {
+        // Keine exakten Koordinaten → trotzdem INTERAKTIVE Karte per Such-Query
+        // (Projektname + Ort). Deck.tsx baut daraus das scrollbare Embed. Standard.
+        b.mapQuery = images.mapQuery
+        if (projName) b.mapLabel = projName
       } else if (images?.map) {
         b.image = images.map
         if (projName) b.mapLabel = projName
@@ -169,7 +174,7 @@ Deno.serve(async (req) => {
     const body = await req.json() as {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
-      images?: { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; gallery?: Array<{ url: string; category: string; label: string }> }
+      images?: { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       // Mehrere Wohnungen EINES Projekts in EINEM Deck (je eigener unit-Block + Preis).
       units?: Array<{ unit_number?: string; price_net?: number | null }>
@@ -351,6 +356,33 @@ Deno.serve(async (req) => {
     if (blocks.length === 0) throw new Error('Keine Blöcke generiert: ' + JSON.stringify(diag).slice(0, 300))
     // Projektname für den Standort-Kreis auf der Karte (aus dem Fakten-Header „=== PROJEKT X (…)").
     const projName = (body.facts ?? '').match(/===\s*PROJEKT\s+(.+?)\s*[(\n]/)?.[1]?.trim() || ''
+    // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
+    // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
+    // Google-Embed statt eines statischen Bildes.
+    if (generic && body.project_id) {
+      try {
+        const { data: proj } = await sbRules.from('crm_projects')
+          .select('name, location, latitude, longitude').eq('id', body.project_id).maybeSingle()
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null } | null
+        if (pr) {
+          body.images = body.images ?? {}
+          if (body.images.mapLat == null && pr.latitude != null && pr.longitude != null) {
+            body.images.mapLat = pr.latitude
+            body.images.mapLng = pr.longitude
+          }
+          if (body.images.mapLat == null) {
+            const loc = (pr.location ?? '').trim()
+            const nm  = (pr.name ?? projName ?? '').trim()
+            body.images.mapQuery = [nm, loc, 'Cyprus'].filter(Boolean).join(', ')
+          }
+          if (!body.images.mapUrl) {
+            body.images.mapUrl = body.images.mapLat != null
+              ? `https://www.google.com/maps?q=${body.images.mapLat},${body.images.mapLng}`
+              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(body.images.mapQuery ?? projName)}`
+          }
+        }
+      } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
+    }
     assignImages(blocks, body.images, projName)
     scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt

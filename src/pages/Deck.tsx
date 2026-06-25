@@ -118,18 +118,20 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {(b.mapLat != null && b.mapLng != null) ? (() => {
-      // INTERAKTIVE Karte: Pin sitzt exakt auf den Projekt-Koordinaten. Keyless Google-
-      // Embed (output=embed, kein API-Key), im Browser zoom-/verschiebbar. Ersetzt den
-      // manuellen Screenshot UND den fehleranfälligen Vision-Marker-Kreis.
-      const q = `${b.mapLat},${b.mapLng}`
+      {((b.mapLat != null && b.mapLng != null) || b.mapQuery) ? (() => {
+      // INTERAKTIVE Karte (Deck-Standard): scroll-/zoombares keyless Google-Embed
+      // (output=embed, kein API-Key). Koordinaten bevorzugt (Pin exakt); sonst Such-
+      // Query aus Projektname+Ort. Ersetzt den manuellen Screenshot + Vision-Marker.
+      const hasCoords = b.mapLat != null && b.mapLng != null
+      const q = hasCoords ? `${b.mapLat},${b.mapLng}` : encodeURIComponent(b.mapQuery as string)
+      const z = hasCoords ? 15 : 14
       const openHref = b.mapUrl || `https://www.google.com/maps?q=${q}`
       return (
         <div className="mt-8">
           <div className="relative w-full overflow-hidden rounded-xl border border-gray-200" style={{ aspectRatio: '16 / 9' }}>
             <iframe
               title={b.mapLabel ? `Standort ${b.mapLabel}` : 'Standort'}
-              src={`https://maps.google.com/maps?q=${q}&z=15&output=embed`}
+              src={`https://maps.google.com/maps?q=${q}&z=${z}&output=embed`}
               className="absolute inset-0 h-full w-full"
               style={{ border: 0 }}
               loading="lazy"
