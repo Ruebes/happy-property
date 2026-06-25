@@ -109,12 +109,20 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-16">
         {cols.map((col, ci) => (
           <div key={ci}>
-            {col.map((it, i) => (
+            {col.map((it, i) => {
+              // min ist oft eine kurze Zahl ("5 min", "300 m"), kann aber auch ein
+              // langes Wort sein ("Fußläufig", "Infrastruktur"). Feste Breite + text-2xl
+              // ließ lange Werte über das Label laufen ("mehrfach drübergeschrieben").
+              // Fix: flexible Mindestbreite (kein Überlauf) + Schriftgröße nach Länge.
+              const ml = (it.min ?? '').length
+              const sz = ml <= 6 ? 'text-2xl' : ml <= 9 ? 'text-lg' : 'text-base'
+              return (
               <div key={i} className="flex items-baseline gap-4 py-3 border-b border-gray-200">
-                <span className="font-heading font-bold text-2xl shrink-0 w-16" style={{ color: GOLD }}>{it.min}</span>
+                <span className={`font-heading font-bold shrink-0 whitespace-nowrap min-w-[3.5rem] leading-tight ${sz}`} style={{ color: GOLD }}>{it.min}</span>
                 <span className="text-[15px] text-gray-700">{it.label}</span>
               </div>
-            ))}
+              )
+            })}
           </div>
         ))}
       </div>
