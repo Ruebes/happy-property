@@ -29,10 +29,15 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   // Pro Wohnung eigene Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
   // Leer = es gilt der globale Standardwert aus calcParams.
-  // Per-Wohnung-Overrides: Rendite, Wertsteigerung, Einrichtungspaket-Preis (wichtig für
-  // die Möbel-AfA), Möbelpaket kostenfrei, Hotelkonzept. Leer = globaler Standard.
-  const [perUnit, setPerUnit] = useState<Record<string, { yieldPct?: number; appreciationPct?: number; furnCost?: number; furnFree?: boolean; hotelConcept?: boolean }>>({})
-  const setPu = (id: string, patch: Partial<{ yieldPct: number; appreciationPct: number; furnCost: number; furnFree: boolean; hotelConcept: boolean }>) =>
+  // Per-Wohnung-Overrides: ALLE relevanten Parameter je Wohnung einzeln (sinnvoll, wenn
+  // mehrere Immos zugleich angeboten werden — z.B. eine Kurz-, eine Langzeit-Vermietung,
+  // unterschiedliche Finanzierung). Leer = globaler Standard oben.
+  type PerUnit = {
+    yieldPct?: number; appreciationPct?: number; furnCost?: number; furnFree?: boolean; hotelConcept?: boolean
+    letType?: 'short' | 'long'; fin?: 'yes' | 'no'; equity?: number; amortPct?: number; deTaxPct?: number
+  }
+  const [perUnit, setPerUnit] = useState<Record<string, PerUnit>>({})
+  const setPu = (id: string, patch: Partial<PerUnit>) =>
     setPerUnit(p => ({ ...p, [id]: { ...p[id], ...patch } }))
   const [units, setUnits]       = useState<UnitRow[]>([])
   const [filterBed, setFilterBed] = useState<'all' | '1' | '2' | '3' | '4'>('all')
@@ -161,11 +166,17 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           ...calcParams, dealType: 'single',
           priceNet:        it.unit.price_net ?? calcParams.priceNet,
           bedrooms:        it.unit.bedrooms ?? 2,
+          letType:         pu.letType ?? calcParams.letType,
+          fin:             pu.fin ?? calcParams.fin,
+          equity:          pu.equity ?? calcParams.equity,
+          amortPct:        pu.amortPct ?? calcParams.amortPct,
+          deTaxPct:        pu.deTaxPct ?? calcParams.deTaxPct,
           yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
           appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
           furnCost:        pu.furnCost ?? it.furnitureCost ?? calcParams.furnCost,
           furnFree:        pu.furnFree ?? it.furnitureIncluded ?? calcParams.furnFree,
-          hotelConcept:    pu.hotelConcept ?? calcParams.hotelConcept,
+          // Hotelkonzept nur bei Kurzzeit dieser Wohnung
+          hotelConcept:    (pu.letType ?? calcParams.letType) === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false,
         }
         return {
           label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
@@ -450,35 +461,55 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                   {cpToggle('Einrichtung kostenfrei', 'furnFree')}
                   {calcParams.letType === 'short' && cpToggle('🏨 Hotelkonzept', 'hotelConcept')}
                 </div>
-                {/* Pro Wohnung: Rendite, Wertsteigerung, Einrichtungspaket-Preis (Möbel-AfA!),
-                    Möbelpaket kostenfrei, Hotelkonzept — unterscheiden sich je Objekt.
-                    Werte oben gelten als Standard; hier je Wohnung feinjustieren. */}
+                {/* Je Wohnung ALLE Parameter einzeln: Vermietung (Kurz/Lang), Finanzierung,
+                    Eigenkapital, Rendite, Wertsteigerung, Einrichtung, Hotelkonzept. Sinnvoll,
+                    wenn mehrere Immos zugleich angeboten werden. Werte oben = Standard für alle. */}
                 {basket.length > 0 && (
                   <div className="border-t border-gray-200 pt-3 space-y-2">
-                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung: Rendite, Wertsteigerung, Einrichtung')}</div>
+                    <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.wizard.perUnitTitle', 'Je Wohnung einzeln (überschreibt die Standardwerte oben)')}</div>
                     {basket.map(b => {
                       const pu = perUnit[b.unit.id] ?? {}
-                      const ff = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
-                      const hc = pu.hotelConcept ?? calcParams.hotelConcept
+                      const ff  = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
+                      const hc  = pu.hotelConcept ?? calcParams.hotelConcept
+                      const let_ = pu.letType ?? calcParams.letType
+                      const fin_ = pu.fin ?? calcParams.fin
                       const miniInput = (lab: string, val: string, on: (v: number) => void, step = '0.1', suf = '%') => (
                         <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
                           <span>{lab}</span>
-                          <NumberStepper value={parseFloat(val) || 0} onChange={on} step={parseFloat(step)} suffix={suf} className="w-32" />
+                          <NumberStepper value={parseFloat(val) || 0} onChange={on} step={parseFloat(step)} suffix={suf} className="w-28" />
                         </label>
                       )
+                      const puSeg = (lab: string, cur: string, opts: [string, string][], on: (v: string) => void) => (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-xs font-medium text-gray-500">{lab}</span>
+                          <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                            {opts.map(([val, labl]) => (
+                              <button key={val} type="button" onClick={() => on(val)}
+                                className={`px-2.5 py-1.5 text-[11px] font-medium ${cur === val ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>{labl}</button>
+                            ))}
+                          </div>
+                        </div>
+                      )
                       return (
-                        <div key={b.unit.id} className="bg-white rounded-lg border border-gray-100 px-2.5 py-2 space-y-1.5">
-                          <div className="text-xs font-medium text-gray-700 truncate">{b.projectName} · {b.unit.unit_number}</div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                        <div key={b.unit.id} className="bg-white rounded-lg border border-gray-100 px-2.5 py-2 space-y-2">
+                          <div className="text-xs font-semibold text-gray-700 truncate">{b.projectName} · {b.unit.unit_number}</div>
+                          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                            {puSeg(t('crm.wizard.letType', 'Vermietung'), let_, [['short', t('crm.wizard.short', 'Kurz')], ['long', t('crm.wizard.long', 'Lang')]], v => setPu(b.unit.id, { letType: v as 'short' | 'long' }))}
+                            {puSeg(t('crm.wizard.fin', 'Finanzierung'), fin_, [['yes', t('crm.wizard.finYes', 'Ja')], ['no', t('crm.wizard.finNo', 'Cash')]], v => setPu(b.unit.id, { fin: v as 'yes' | 'no' }))}
+                            {fin_ === 'yes' && miniInput(t('crm.wizard.equity', 'Eigenkapital'), String(pu.equity ?? calcParams.equity ?? ''), v => setPu(b.unit.id, { equity: v }), '1000', '€')}
                             {miniInput(t('crm.wizard.rendite', 'Rendite'), String(pu.yieldPct ?? calcParams.yieldPct ?? ''), v => setPu(b.unit.id, { yieldPct: v }))}
                             {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
+                            {fin_ === 'yes' && calcParams.mode === 'tilg' && miniInput(t('crm.wizard.amort', 'Tilgung'), String(pu.amortPct ?? calcParams.amortPct ?? ''), v => setPu(b.unit.id, { amortPct: v }))}
+                            {calcParams.res === 'de' && miniInput(t('crm.wizard.deTax', 'DE-Steuer'), String(pu.deTaxPct ?? calcParams.deTaxPct ?? ''), v => setPu(b.unit.id, { deTaxPct: v }), '1')}
                             {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
                             <button type="button" onClick={() => setPu(b.unit.id, { furnFree: !ff })}
                               className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${ff ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
                               <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${ff ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{ff ? '✓' : ''}</span>
                               {t('crm.wizard.furnFree', 'Möbel gratis')}
                             </button>
-                            {calcParams.letType === 'short' && (
+                            {let_ === 'short' && (
                               <button type="button" onClick={() => setPu(b.unit.id, { hotelConcept: !hc })}
                                 className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${hc ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
                                 <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${hc ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{hc ? '✓' : ''}</span>
