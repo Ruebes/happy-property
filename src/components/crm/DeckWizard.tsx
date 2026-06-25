@@ -256,8 +256,17 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         'Gib mir bitte zeitnah Feedback, da der Markt hier sehr dynamisch ist und ich dir eine Immobilie nicht reservieren kann.']
         .map(p => `<p style="margin:0 0 16px">${esc(p)}</p>`).join('')
       let body = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto"><p style="margin:0 0 16px">Hallo ${esc(lead.first_name)},</p>${fbIntro}${fbCards}${fbCompare}${fbCta}<p style="margin:24px 0 4px">Ich freue mich von dir zu hören.</p><p style="margin:0">Liebe Grüße,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
-      // KI-Mail mit Retry (lange Hintergrund-Läufe lassen den ersten Invoke gelegentlich
-      // ins Leere laufen → einmal nachfassen, bevor wir auf den Fallback zurückfallen).
+      // Postausgang-Eintrag SOFORT mit dem Fallback-Text anlegen (id merken) — so geht der
+      // Eintrag NIE verloren, auch wenn die KI-Mail oder der Browser-Tab danach abbricht
+      // (Decks + Berechnungen sind zu diesem Zeitpunkt schon erstellt). Anschließend wird
+      // er mit der hochwertigen KI-Mail aktualisiert.
+      const { data: oboxRow, error: oErr } = await supabase.from('deck_outbox').insert({
+        lead_id: lead.id, recipient_email: lead.email, subject, body, deck_tokens: links.map(l => l.token), status: 'draft',
+      }).select('id').single()
+      if (oErr) throw new Error(oErr.message)
+      const oboxId = (oboxRow as { id?: string } | null)?.id
+      // KI-Mail mit Retry (lange Hintergrund-Läufe lassen den ersten Invoke gelegentlich ins
+      // Leere laufen → einmal nachfassen). Bei Erfolg den bereits angelegten Eintrag updaten.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           const { data: mail, error: mErr } = await supabase.functions.invoke('compose-deck-mail', { body: {
@@ -267,13 +276,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           } })
           if (mErr) throw mErr
           const mm = mail as { subject?: string; html?: string } | null
-          if (mm?.subject && mm?.html) { subject = mm.subject; body = mm.html; break }
+          if (mm?.subject && mm?.html && oboxId) {
+            await supabase.from('deck_outbox').update({ subject: mm.subject, body: mm.html }).eq('id', oboxId)
+            break
+          }
         } catch { if (attempt === 0) await sleep(2500) }
       }
-      const { error: oErr } = await supabase.from('deck_outbox').insert({
-        lead_id: lead.id, recipient_email: lead.email, subject, body, deck_tokens: links.map(l => l.token), status: 'draft',
-      })
-      if (oErr) throw new Error(oErr.message)
       onDone(`✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Fehler'
