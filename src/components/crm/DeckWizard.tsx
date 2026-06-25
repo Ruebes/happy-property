@@ -476,7 +476,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                       const miniInput = (lab: string, val: string, on: (v: number) => void, step = '0.1', suf = '%') => (
                         <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
                           <span>{lab}</span>
-                          <NumberStepper value={parseFloat(val) || 0} onChange={on} step={parseFloat(step)} suffix={suf} className="w-28" />
+                          <NumberStepper value={parseFloat(val) || 0} onChange={on} step={parseFloat(step)} suffix={suf} className="w-full" />
                         </label>
                       )
                       const puSeg = (lab: string, cur: string, opts: [string, string][], on: (v: string) => void) => (
@@ -491,11 +491,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                         </div>
                       )
                       return (
-                        <div key={b.unit.id} className="bg-white rounded-lg border border-gray-100 px-2.5 py-2 space-y-2">
-                          <div className="text-xs font-semibold text-gray-700 truncate">{b.projectName} · {b.unit.unit_number}</div>
-                          <div className="flex flex-wrap items-end gap-x-3 gap-y-2">
+                        <div key={b.unit.id} className="bg-white rounded-xl border border-gray-200 px-4 py-3.5 space-y-3">
+                          <div className="text-[13px] font-semibold text-gray-800 truncate">{b.projectName} · {b.unit.unit_number}</div>
+                          <div className="flex flex-wrap gap-3">
                             {puSeg(t('crm.wizard.letType', 'Vermietung'), let_, [['short', t('crm.wizard.short', 'Kurz')], ['long', t('crm.wizard.long', 'Lang')]], v => setPu(b.unit.id, { letType: v as 'short' | 'long' }))}
                             {puSeg(t('crm.wizard.fin', 'Finanzierung'), fin_, [['yes', t('crm.wizard.finYes', 'Ja')], ['no', t('crm.wizard.finNo', 'Cash')]], v => setPu(b.unit.id, { fin: v as 'yes' | 'no' }))}
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-3">
                             {fin_ === 'yes' && miniInput(t('crm.wizard.equity', 'Eigenkapital'), String(pu.equity ?? calcParams.equity ?? ''), v => setPu(b.unit.id, { equity: v }), '1000', '€')}
                             {miniInput(t('crm.wizard.rendite', 'Rendite'), String(pu.yieldPct ?? calcParams.yieldPct ?? ''), v => setPu(b.unit.id, { yieldPct: v }))}
                             {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
@@ -503,7 +505,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                             {calcParams.res === 'de' && miniInput(t('crm.wizard.deTax', 'DE-Steuer'), String(pu.deTaxPct ?? calcParams.deTaxPct ?? ''), v => setPu(b.unit.id, { deTaxPct: v }), '1')}
                             {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
                             <button type="button" onClick={() => setPu(b.unit.id, { furnFree: !ff })}
                               className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${ff ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
                               <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${ff ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{ff ? '✓' : ''}</span>
