@@ -7,10 +7,11 @@ import type { Lead } from '../../lib/crmTypes'
 // Schnell-Versand aus der Lead-Kachel (Rechtsklick → Menü):
 //  - 'whatsapp'  → WhatsApp an den Kunden
 //  - 'mail'      → E-Mail an den Kunden
-//  - 'forward'   → Kontakt per WhatsApp an einen Partner/Developer-Ansprechpartner weiterleiten
+//  - 'forward'   → Kontakt an einen Partner/Developer-Ansprechpartner weiterleiten
+//                  (Kanal WhatsApp ODER E-Mail je Kontakt wählbar)
 export type QuickSendMode = 'whatsapp' | 'mail' | 'forward'
 
-type Contact = { id: string; label: string; phone: string }
+type Contact = { id: string; label: string; phone: string; email: string }
 
 export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
   lead:   Lead
@@ -24,6 +25,7 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
   const [text, setText] = useState('')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactId, setContactId] = useState('')
+  const [fwdChannel, setFwdChannel] = useState<'whatsapp' | 'mail'>('whatsapp')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -31,17 +33,19 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
     if (mode !== 'forward') return
     void (async () => {
       const [bc, dc] = await Promise.all([
-        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, role, phone, whatsapp'),
-        supabase.from('crm_developer_contacts').select('id, name, role, phone, whatsapp, developer_id'),
+        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, role, phone, whatsapp, email'),
+        supabase.from('crm_developer_contacts').select('id, name, role, phone, whatsapp, email, developer_id'),
       ])
       const list: Contact[] = []
-      for (const c of (bc.data ?? []) as Array<{ id: string; first_name: string; last_name: string | null; company: string | null; role: string | null; phone: string | null; whatsapp: string | null }>) {
-        const tel = c.whatsapp || c.phone; if (!tel) continue
-        list.push({ id: `bc:${c.id}`, label: `📇 ${`${c.first_name} ${c.last_name ?? ''}`.trim()}${c.company ? ` · ${c.company}` : ''}`, phone: tel })
+      for (const c of (bc.data ?? []) as Array<{ id: string; first_name: string; last_name: string | null; company: string | null; role: string | null; phone: string | null; whatsapp: string | null; email: string | null }>) {
+        const tel = c.whatsapp || c.phone || ''; const email = c.email || ''
+        if (!tel && !email) continue   // braucht mindestens einen Kanal (WhatsApp oder E-Mail)
+        list.push({ id: `bc:${c.id}`, label: `📇 ${`${c.first_name} ${c.last_name ?? ''}`.trim()}${c.company ? ` · ${c.company}` : ''}`, phone: tel, email })
       }
-      for (const c of (dc.data ?? []) as Array<{ id: string; name: string; role: string | null; phone: string | null; whatsapp: string | null }>) {
-        const tel = c.whatsapp || c.phone; if (!tel) continue
-        list.push({ id: `dc:${c.id}`, label: `🏗 ${c.name}${c.role ? ` (${c.role})` : ''}`, phone: tel })
+      for (const c of (dc.data ?? []) as Array<{ id: string; name: string; role: string | null; phone: string | null; whatsapp: string | null; email: string | null }>) {
+        const tel = c.whatsapp || c.phone || ''; const email = c.email || ''
+        if (!tel && !email) continue
+        list.push({ id: `dc:${c.id}`, label: `🏗 ${c.name}${c.role ? ` (${c.role})` : ''}`, phone: tel, email })
       }
       setContacts(list)
       if (list.length) setContactId(list[0].id)
@@ -49,6 +53,14 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
     // Vorbefüllter Weiterleitungstext
     setText(`Bitte bearbeite diesen Kontakt:\n${fullName}\nTel: ${lead.phone || lead.whatsapp || '–'}\nE-Mail: ${lead.email || '–'}\n\n`)
   }, [mode, lead, fullName])
+
+  // Kanal je gewähltem Kontakt vorwählen: WhatsApp wenn Nummer da, sonst E-Mail.
+  // (Eigene Wahl bleibt erhalten, solange derselbe Kontakt gewählt ist.)
+  useEffect(() => {
+    if (mode !== 'forward') return
+    const c = contacts.find(x => x.id === contactId)
+    if (c) setFwdChannel(c.phone ? 'whatsapp' : 'mail')
+  }, [contactId, contacts, mode])
 
   const handleSend = async () => {
     setError('')
@@ -72,10 +84,21 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
       } else {
         const target = contacts.find(c => c.id === contactId)
         if (!target) throw new Error('Empfänger nicht gefunden')
-        const r = await sendWhatsApp({ event_type: 'no_show', override_text: text.trim(), lead_id: lead.id, lead_data: { lead_name: target.label, lead_phone: target.phone } })
-        if (!r.success) throw new Error(r.error || 'WhatsApp Fehler')
-        await supabase.from('activities').insert({ lead_id: lead.id, type: 'whatsapp', direction: 'outbound', subject: `Kontakt weitergeleitet an ${target.label}`, content: text.trim(), completed_at: new Date().toISOString() })
-        onSent(t('crm.quick.forwarded', '✅ Kontakt weitergeleitet'))
+        if (fwdChannel === 'mail') {
+          if (!target.email) throw new Error('Keine E-Mail bei diesem Kontakt')
+          const html = `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${text.trim().replace(/</g, '&lt;')}</div>`
+          const subj = subject.trim() || `Kontakt: ${fullName}`
+          const { data, error: e } = await supabase.functions.invoke('send-email', { body: { to: target.email, subject: subj, html, lead_id: lead.id } })
+          if (e || (data as { error?: string })?.error) throw new Error((data as { error?: string })?.error ?? e?.message)
+          // send-email protokolliert die Aktivität selbst → kein zweites Insert
+          onSent(t('crm.quick.forwardedMail', '✅ Kontakt per E-Mail weitergeleitet'))
+        } else {
+          if (!target.phone) throw new Error('Keine Telefonnummer bei diesem Kontakt')
+          const r = await sendWhatsApp({ event_type: 'no_show', override_text: text.trim(), lead_id: lead.id, lead_data: { lead_name: target.label, lead_phone: target.phone } })
+          if (!r.success) throw new Error(r.error || 'WhatsApp Fehler')
+          await supabase.from('activities').insert({ lead_id: lead.id, type: 'whatsapp', direction: 'outbound', subject: `Kontakt weitergeleitet an ${target.label}`, content: text.trim(), completed_at: new Date().toISOString() })
+          onSent(t('crm.quick.forwarded', '✅ Kontakt per WhatsApp weitergeleitet'))
+        }
       }
       onClose()
     } catch (err) {
@@ -83,7 +106,8 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
     } finally { setBusy(false) }
   }
 
-  const title = mode === 'mail' ? t('crm.quick.titleMail', 'E-Mail an Kunden') : mode === 'whatsapp' ? t('crm.quick.titleWa', 'WhatsApp an Kunden') : t('crm.quick.titleFwd', 'Kontakt versenden (WhatsApp)')
+  const sel = contacts.find(c => c.id === contactId)
+  const title = mode === 'mail' ? t('crm.quick.titleMail', 'E-Mail an Kunden') : mode === 'whatsapp' ? t('crm.quick.titleWa', 'WhatsApp an Kunden') : t('crm.quick.titleFwd', 'Kontakt versenden')
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -95,14 +119,26 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
         <p className="text-xs text-gray-500">{mode === 'forward' ? t('crm.quick.fwdHint', 'An Partner/Developer-Ansprechpartner senden:') : fullName}</p>
 
         {mode === 'forward' && (
-          <select value={contactId} onChange={e => setContactId(e.target.value)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300">
-            {contacts.length === 0 && <option value="">{t('crm.quick.noContacts', '– keine Kontakte mit Nummer –')}</option>}
-            {contacts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
+          <>
+            <select value={contactId} onChange={e => setContactId(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300">
+              {contacts.length === 0 && <option value="">{t('crm.quick.noContacts', '– keine Kontakte angelegt –')}</option>}
+              {contacts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            {/* Kanal pro Kontakt wählen — nur der Kanal, den der Kontakt hat, ist aktiv */}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => sel?.phone && setFwdChannel('whatsapp')} disabled={!sel?.phone}
+                className={`flex-1 text-sm font-medium rounded-lg px-3 py-2 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${fwdChannel === 'whatsapp' ? 'text-white border-transparent' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                style={fwdChannel === 'whatsapp' ? { backgroundColor: '#25D366' } : undefined}>💬 {t('crm.quick.chanWa', 'WhatsApp')}</button>
+              <button type="button" onClick={() => sel?.email && setFwdChannel('mail')} disabled={!sel?.email}
+                className={`flex-1 text-sm font-medium rounded-lg px-3 py-2 border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${fwdChannel === 'mail' ? 'text-white border-transparent' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                style={fwdChannel === 'mail' ? { backgroundColor: '#ff795d' } : undefined}>📧 {t('crm.quick.chanMail', 'E-Mail')}</button>
+            </div>
+            {sel && <p className="text-xs text-gray-500">{t('crm.quick.to', 'An')}: <span className="font-medium text-gray-700">{fwdChannel === 'whatsapp' ? (sel.phone || t('crm.quick.noWaShort', 'keine Nummer hinterlegt')) : (sel.email || t('crm.quick.noMailShort', 'keine E-Mail hinterlegt'))}</span></p>}
+          </>
         )}
 
-        {mode === 'mail' && (
+        {(mode === 'mail' || (mode === 'forward' && fwdChannel === 'mail')) && (
           <input value={subject} onChange={e => setSubject(e.target.value)} placeholder={t('crm.quick.subject', 'Betreff')}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300" />
         )}
