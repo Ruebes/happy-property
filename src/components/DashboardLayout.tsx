@@ -19,6 +19,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
   const navigate           = useNavigate()
   const location           = useLocation()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)   // Hamburger-Menü (Admin, Mobil)
 
   // ── Profil-Cache in localStorage ─────────────────────────────────────────
   // Wenn profile kurz null ist (Tab-Wechsel, Neuladen), bleiben Nav und
@@ -93,7 +94,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
   }, [settingsOpen])
 
   // Jede Navigation schließt das Menü (Auswahl eines Eintrags oder Wechsel woanders hin)
-  useEffect(() => { setSettingsOpen(false) }, [location.pathname])
+  useEffect(() => { setSettingsOpen(false); setMobileNavOpen(false) }, [location.pathname])
 
   const toggleSettings = () => setSettingsOpen(prev => !prev)
 
@@ -358,7 +359,22 @@ export default function DashboardLayout({ children, basePath }: Props) {
           </div>
 
           {/* Rechts: Sprache + Rolle-Badge + Profil + Abmelden */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Hamburger — Admin hat auf Mobil sonst keine Navigation */}
+            {isAdmin && (
+              <button
+                onClick={() => setMobileNavOpen(o => !o)}
+                aria-label={t('nav.menu', 'Menü')}
+                aria-expanded={mobileNavOpen}
+                className="md:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  {mobileNavOpen
+                    ? <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    : <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />}
+                </svg>
+              </button>
+            )}
             <LanguageSwitcher />
 
             {effectiveRole && (
@@ -412,6 +428,46 @@ export default function DashboardLayout({ children, basePath }: Props) {
               })}
             </p>
           </div>
+        )}
+
+        {/* ── Mobiles Admin-Menü (Hamburger-Inhalt) ── */}
+        {isAdmin && mobileNavOpen && (
+          <nav className="md:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
+            {(adminView === 'crm' ? crmTopItems : verwaltungNavItems).map(({ to, key }) => (
+              <Link key={to} to={to}
+                className={`block px-3 py-2.5 rounded-lg text-sm font-medium font-body transition-colors ${
+                  isActive(to) ? 'text-white' : 'text-gray-700 hover:bg-gray-100'}`}
+                style={isActive(to) ? { backgroundColor: '#ff795d' } : undefined}>
+                {t(key)}
+              </Link>
+            ))}
+
+            {adminView === 'crm' && (
+              <>
+                <div className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 select-none">
+                  {t('crm.nav.settings')}
+                </div>
+                {crmSettingsItems.map((item) => (
+                  'heading' in item ? null : (
+                    <Link key={item.to} to={item.to}
+                      className={`block px-3 py-2.5 rounded-lg text-sm font-body transition-colors ${
+                        isActive(item.to) ? 'font-semibold' : 'text-gray-700 hover:bg-gray-100'}`}
+                      style={isActive(item.to) ? { color: '#ff795d' } : undefined}>
+                      {t(item.key)}
+                    </Link>
+                  )
+                ))}
+              </>
+            )}
+
+            <div className="border-t border-gray-100 my-1.5" />
+            <Link to="/profile"
+              className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-body text-gray-700 hover:bg-gray-100 transition-colors">
+              <span className="w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold font-body shrink-0"
+                style={{ backgroundColor: 'var(--color-highlight)' }}>{initials}</span>
+              {displayName ?? t('nav.profile')}
+            </Link>
+          </nav>
         )}
       </header>
 

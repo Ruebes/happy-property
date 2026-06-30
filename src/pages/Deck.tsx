@@ -33,7 +33,7 @@ function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
   return (
     <section>
       <Img src={b.image} className="w-full h-[62vh] object-cover" />
-      <div className="px-8 md:px-20 py-16" style={{ background: DARK }}>
+      <div className="px-5 md:px-20 py-16" style={{ background: DARK }}>
         <img src={DECK_LOGO} alt="Happy Property" className="h-16 w-auto mb-6" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
         <Accent />
         <Kicker>{b.kicker}</Kicker>
@@ -47,7 +47,7 @@ function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
 
 function LetterBlock(b: Extract<DeckBlock, { type: 'letter' }>) {
   return (
-    <section className="px-8 md:px-20 py-20 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-16">
+    <section className="px-5 md:px-20 py-20 grid grid-cols-1 md:grid-cols-2 gap-10 md:gap-16">
       <div>
         <Accent />
         <Kicker>{b.kicker}</Kicker>
@@ -64,7 +64,7 @@ function LetterBlock(b: Extract<DeckBlock, { type: 'letter' }>) {
 
 function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
   return (
-    <section className="px-8 md:px-20 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16 grid grid-cols-1 md:grid-cols-2 gap-10 items-center" style={{ background: CREAM }}>
       <Img src={b.image} className="w-full h-[420px] object-cover rounded-xl" />
       <div>
         <Kicker>{b.kicker}</Kicker>
@@ -102,7 +102,7 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
   const mid = Math.ceil(items.length / 2)
   const cols = [items.slice(0, mid), items.slice(mid)]
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent />
       <Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
@@ -204,14 +204,14 @@ function ColumnsBlock(b: Extract<DeckBlock, { type: 'columns' }>) {
         <div className="relative">
           <Img src={b.image} className="w-full h-[46vh] object-cover" />
           <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,rgba(0,0,0,0.15),rgba(27,27,34,0.85))' }} />
-          <div className="absolute bottom-8 left-8 md:left-20 right-8">
+          <div className="absolute bottom-8 left-5 right-5 md:left-20 md:right-8">
             <Accent />
             <Kicker>{b.kicker}</Kicker>
             {b.headline && <h2 className="font-heading font-bold text-white text-3xl md:text-5xl mt-2 leading-tight">{b.headline}</h2>}
           </div>
         </div>
       )}
-      <div className="px-8 md:px-20 py-14 grid grid-cols-1 md:grid-cols-3 gap-10" style={{ background: DARK }}>
+      <div className="px-5 md:px-20 py-14 grid grid-cols-1 md:grid-cols-3 gap-10" style={{ background: DARK }}>
         {!b.image && (
           <div className="md:col-span-3">
             <Accent /><Kicker>{b.kicker}</Kicker>
@@ -236,12 +236,12 @@ function FeatureBlock(b: Extract<DeckBlock, { type: 'feature' }>) {
       <div className="relative">
         <Img src={b.image} className="w-full h-[52vh] object-cover" />
         <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg,rgba(0,0,0,0.1),rgba(0,0,0,0.45))' }} />
-        <div className="absolute top-8 left-8 md:left-20 right-8">
+        <div className="absolute top-8 left-5 right-5 md:left-20 md:right-8">
           <Accent /><Kicker>{b.kicker}</Kicker>
           {b.headline && <h2 className="font-heading font-bold text-white text-4xl md:text-6xl mt-2 leading-tight drop-shadow">{b.headline}</h2>}
         </div>
       </div>
-      <div className="px-8 md:px-20 py-12 grid grid-cols-1 md:grid-cols-2 gap-10" style={{ background: DARK }}>
+      <div className="px-5 md:px-20 py-12 grid grid-cols-1 md:grid-cols-2 gap-10" style={{ background: DARK }}>
         {b.text && <p className="text-[15px] leading-relaxed text-gray-300">{b.text}</p>}
         {b.quote && <p className="font-heading italic text-lg border-l-2 pl-5" style={{ color: GOLD, borderColor: GOLD }}>{b.quote}</p>}
       </div>
@@ -252,7 +252,7 @@ function FeatureBlock(b: Extract<DeckBlock, { type: 'feature' }>) {
 function GalleryBlock(b: Extract<DeckBlock, { type: 'gallery' }>) {
   const items = b.items ?? []
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -276,7 +276,7 @@ function GalleryBlock(b: Extract<DeckBlock, { type: 'gallery' }>) {
 function BenefitsBlock(b: Extract<DeckBlock, { type: 'benefits' }>) {
   const cards = b.cards ?? []
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -295,7 +295,7 @@ function BenefitsBlock(b: Extract<DeckBlock, { type: 'benefits' }>) {
 function InventoryBlock(b: Extract<DeckBlock, { type: 'inventory' }>) {
   const groups = b.groups ?? []
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
@@ -360,7 +360,7 @@ function FloorplanSchematic({ rooms, note }: { rooms: FloorplanRoom[]; note?: st
 
 function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       {/* rooms = schematischer Einzelwohnungs-Grundriss (sauberes Modell, statt z.B. eines
@@ -372,7 +372,7 @@ function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
           {b.stats.map((s, i) => (
             <div key={i} className="rounded-xl p-4 border-t-2 bg-white" style={{ borderColor: GOLD }}>
-              <p className="font-heading font-bold text-3xl" style={{ color: INK }}>{s.value}<span className="text-sm text-gray-400 ml-1">{s.unit}</span></p>
+              <p className="font-heading font-bold text-2xl md:text-3xl break-words" style={{ color: INK }}>{s.value}<span className="text-sm text-gray-400 ml-1">{s.unit}</span></p>
               <p className="text-[11px] uppercase tracking-wide text-gray-500 mt-1">{s.label}</p>
             </div>
           ))}
@@ -424,7 +424,7 @@ function PaymentPhaseCard({ phase, dark }: { phase?: import('../lib/deckTypes').
 
 function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
@@ -448,7 +448,7 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
 
 function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
   return (
-    <section className="px-8 md:px-20 py-20" style={{ background: DARK }}>
+    <section className="px-5 md:px-20 py-20" style={{ background: DARK }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-white text-5xl md:text-7xl mt-2 leading-none">{b.headline}</h2>}
       {b.text && <p className="text-[15px] leading-relaxed text-gray-300 mt-5 max-w-3xl">{b.text}</p>}
@@ -509,7 +509,7 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
   const fromSub = b.fromSub                              // Ort des Objekts (z.B. „Tala", „Chlorakas") — projektabhängig
   const toSub   = b.toSub ?? 'Potima Bay · Kissonerga'  // Marina-Standort (überall gleich)
   return (
-    <section className="px-8 md:px-20 py-16" style={{ background: CREAM }}>
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent />
       <Kicker>{b.kicker ?? 'Lage · Neue Paphos-Marina'}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}

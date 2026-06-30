@@ -23,12 +23,32 @@ const short = (v: number) => v >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') +
 
 interface Row { item: CalcItem; color: string; res: CalcResult | null }
 
+// ── Responsive-Helfer ────────────────────────────────────────────────────────
+// Die ganze Seite ist inline-gestylt; Tailwind-Breakpoints können Inline-Styles
+// nicht überschreiben. Deshalb schalten wir die Layout-Werte über matchMedia
+// (iPhone ≈ 375px) um. Desktop-Werte bleiben unverändert.
+const MOBILE_QUERY = '(max-width: 640px)'
+function useIsMobile(): boolean {
+  const get = () => typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches
+  const [isMobile, setIsMobile] = useState<boolean>(get)
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const onChange = () => setIsMobile(mq.matches)
+    onChange()
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return isMobile
+}
+
 export default function Rechnung() {
   const { token } = useParams<{ token: string }>()
   const [content, setContent] = useState<CalcContent | null>(null)
   const [meta, setMeta] = useState<{ recipient_name?: string; title?: string; with_calc?: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const isMobile = useIsMobile()
 
   useEffect(() => { void (async () => {
     if (!token) return
@@ -65,12 +85,12 @@ export default function Rechnung() {
 
   return (
     <div style={{ background: '#f4f3f1', minHeight: '100vh', fontFamily: SANS, color: '#1a1a1a' }}>
-      <div style={{ maxWidth: 1080, margin: '0 auto', padding: '28px 22px 64px' }}>
+      <div style={{ maxWidth: 1080, margin: '0 auto', padding: isMobile ? '18px 14px 48px' : '28px 22px 64px' }}>
         {/* Kopf wie im Original-Export */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 6 }}>
-          <img src={DECK_LOGO} alt="Happy Property Cyprus" style={{ height: 46, width: 'auto', borderRadius: 8, flexShrink: 0 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 14, marginBottom: 6 }}>
+          <img src={DECK_LOGO} alt="Happy Property Cyprus" style={{ height: isMobile ? 38 : 46, width: 'auto', borderRadius: 8, flexShrink: 0 }} />
           <div>
-            <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 800, color: DARK, lineHeight: 1.1 }}>
+            <div style={{ fontFamily: SERIF, fontSize: isMobile ? 20 : 26, fontWeight: 800, color: DARK, lineHeight: 1.15 }}>
               {isCompare ? 'Immobilienvergleich' : 'Rendite & Cashflow – Übersicht'}
             </div>
             <div style={{ fontSize: 12.5, color: '#666', marginTop: 2 }}>
@@ -81,18 +101,18 @@ export default function Rechnung() {
         </div>
         <div style={{ height: 3, background: `linear-gradient(90deg,${CORAL},#ffb89d)`, borderRadius: 2, marginBottom: 22 }} />
 
-        {content.intro && <p style={{ fontSize: 14.5, lineHeight: 1.7, color: '#444', whiteSpace: 'pre-wrap', margin: '0 0 24px', maxWidth: 760 }}>{content.intro}</p>}
+        {content.intro && <p style={{ fontSize: isMobile ? 13.5 : 14.5, lineHeight: 1.7, color: '#444', whiteSpace: 'pre-wrap', margin: '0 0 24px', maxWidth: 760 }}>{content.intro}</p>}
 
         {/* ── EINZEL-ANSICHT: detaillierte Auswertung ─────────────── */}
-        {!isCompare && withCalc && rows[0]?.res && <Single row={rows[0]} today={today} />}
+        {!isCompare && withCalc && rows[0]?.res && <Single row={rows[0]} today={today} isMobile={isMobile} />}
 
         {/* ── VERGLEICH ──────────────────────────────────────────── */}
         {isCompare && (
           <>
-            <CompareCards rows={rows} withCalc={withCalc} />
-            {rows.some(r => r.item.strategy_title || r.item.strategy_text) && <StrategyCards rows={rows} />}
+            <CompareCards rows={rows} withCalc={withCalc} isMobile={isMobile} />
+            {rows.some(r => r.item.strategy_title || r.item.strategy_text) && <StrategyCards rows={rows} isMobile={isMobile} />}
             {withCalc && <CompareTable rows={rows} />}
-            {withCalc && <Bars rows={rows} />}
+            {withCalc && <Bars rows={rows} isMobile={isMobile} />}
             {withCalc && <CashflowTable rows={rows} />}
           </>
         )}
@@ -111,9 +131,12 @@ function Centered({ children }: { children: ReactNode }) {
   return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', fontFamily: SANS, background: '#f4f3f1' }}>{children}</div>
 }
 
-const Card = ({ children, style }: { children: ReactNode; style?: CSSProperties }) => (
-  <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.05)', padding: 22, ...style }}>{children}</div>
-)
+const Card = ({ children, style }: { children: ReactNode; style?: CSSProperties }) => {
+  const isMobile = useIsMobile()
+  return (
+    <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.05)', padding: isMobile ? 16 : 22, ...style }}>{children}</div>
+  )
+}
 const H2 = ({ children }: { children: ReactNode }) => (
   <h2 style={{ fontFamily: SERIF, fontSize: 18, fontWeight: 700, color: DARK, margin: '0 0 12px', borderBottom: '2px solid #f0e8d8', paddingBottom: 6 }}>{children}</h2>
 )
@@ -130,7 +153,7 @@ function KV({ k, v, color, strong }: { k: ReactNode; v: ReactNode; color?: strin
 }
 
 // ── Detaillierte Einzel-Auswertung (8 Abschnitte, exakt nach Original) ────────
-function Single({ row }: { row: Row; today: string }) {
+function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean }) {
   const r = row.res!
   const p = row.item.params!
   const yl = (i: number) => i === 0 ? `${r.yN[0]} (${r.mF} Mon.)` : String(r.yN[i])
@@ -146,7 +169,7 @@ function Single({ row }: { row: Row; today: string }) {
   return (
     <>
       {/* 1. Übersicht: Investitionsdaten + Summen & Kennzahlen */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
         <Card>
           <H2>Investitionsdaten</H2>
           {p.discountPct > 0 ? (<>
@@ -183,7 +206,7 @@ function Single({ row }: { row: Row; today: string }) {
       {/* 2. Annahmen & Parameter */}
       <Card style={{ marginTop: 18 }}>
         <H2>Annahmen & Parameter</H2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 26px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 26px' }}>
           <div>
             <KV k="Finanzierung" v={r.fin === 'yes' ? 'finanziert' : 'Barkauf'} />
             <KV k="Steuersitz" v={r.resCY ? 'Zypern' : 'Deutschland'} />
@@ -293,11 +316,14 @@ function Single({ row }: { row: Row; today: string }) {
   )
 }
 
-const H2Section = ({ children }: { children: ReactNode }) => (
-  <h2 style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 700, color: DARK, margin: '32px 0 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-    <span style={{ width: 6, height: 22, background: CORAL, borderRadius: 3, display: 'inline-block' }} />{children}
-  </h2>
-)
+const H2Section = ({ children }: { children: ReactNode }) => {
+  const isMobile = useIsMobile()
+  return (
+    <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 21, fontWeight: 700, color: DARK, margin: isMobile ? '26px 0 12px' : '32px 0 14px', display: 'flex', alignItems: 'center', gap: isMobile ? 9 : 12 }}>
+      <span style={{ width: 6, height: isMobile ? 19 : 22, background: CORAL, borderRadius: 3, display: 'inline-block', flexShrink: 0 }} />{children}
+    </h2>
+  )
+}
 
 function Legend({ items }: { items: [string, string][] }) {
   return (
@@ -346,11 +372,11 @@ function BarChart({ labels, series, pct: isPct }: { labels: (string | number)[];
 }
 
 // ── Vergleich (mehrere Objekte) ───────────────────────────────────────────────
-function CompareCards({ rows, withCalc }: { rows: Row[]; withCalc: boolean }) {
+function CompareCards({ rows, withCalc, isMobile }: { rows: Row[]; withCalc: boolean; isMobile: boolean }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(rows.length, 3)},1fr)`, gap: 16 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.min(rows.length, 3)},1fr)`, gap: 16 }}>
       {rows.map((r, i) => (
-        <div key={i} style={{ background: r.color, color: '#fff', borderRadius: 16, padding: 22, boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>
+        <div key={i} style={{ background: r.color, color: '#fff', borderRadius: 16, padding: isMobile ? 18 : 22, boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 700, marginBottom: 4 }}>{r.item.label || r.item.project}</div>
           <div style={{ fontSize: 12.5, opacity: 0.9, marginBottom: 14 }}>
             {[r.item.bedrooms != null ? `${r.item.bedrooms}-Schlafzimmer` : '', r.item.size_sqm != null ? `${r.item.size_sqm} m²` : ''].filter(Boolean).join(' · ')}
@@ -372,9 +398,9 @@ function CompareCards({ rows, withCalc }: { rows: Row[]; withCalc: boolean }) {
   )
 }
 
-function StrategyCards({ rows }: { rows: Row[] }) {
+function StrategyCards({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(rows.length, 3)},1fr)`, gap: 16, marginTop: 18 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.min(rows.length, 3)},1fr)`, gap: 16, marginTop: 18 }}>
       {rows.map((r, i) => (
         <Card key={i} style={{ borderTop: `4px solid ${r.color}`, padding: 20 }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: r.color, marginBottom: 8 }}>{(r.item.label || r.item.project).toUpperCase()}</div>
@@ -434,19 +460,19 @@ function CompareTable({ rows }: { rows: Row[] }) {
   )
 }
 
-function Bars({ rows }: { rows: Row[] }) {
+function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
   const block = (title: string, fn: (r: Row) => number, fmt: (n: number) => string) => {
     const vals = rows.map(fn); const max = Math.max(...vals.map(Math.abs), 1)
     return (
       <div style={{ marginBottom: 22 }}>
         <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>{title}</div>
         {rows.map((r, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-            <div style={{ width: 180, fontSize: 12.5, color: '#555', flexShrink: 0 }}>{r.item.label || r.item.project}</div>
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12, marginBottom: 8 }}>
+            <div style={{ width: isMobile ? 96 : 180, fontSize: 12.5, color: '#555', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.item.label || r.item.project}</div>
             <div style={{ flex: 1, background: '#f1f0ee', borderRadius: 6, height: 28 }}>
               <div style={{ width: `${Math.max(3, Math.abs(vals[i]) / max * 100)}%`, background: r.color, height: 28, borderRadius: 6 }} />
             </div>
-            <div style={{ width: 120, textAlign: 'right', fontWeight: 700, fontSize: 13.5, flexShrink: 0 }}>{fmt(vals[i])}</div>
+            <div style={{ width: isMobile ? 80 : 120, textAlign: 'right', fontWeight: 700, fontSize: isMobile ? 12 : 13.5, flexShrink: 0 }}>{fmt(vals[i])}</div>
           </div>
         ))}
       </div>
