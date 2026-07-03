@@ -144,9 +144,9 @@ Deno.serve(async (req: Request) => {
       phone:        lead.phone ?? '',
       developers:   regDevelopers,
       developer:    regDevelopers,
-      bemerkung:    event_type === 'finanzierung_de' ? finNotes : regNotes,
-      bemerkungen:  event_type === 'finanzierung_de' ? finNotes : regNotes,
-      finanzierung_bemerkung: finNotes,
+      bemerkung:    regNotes,
+      bemerkungen:  regNotes,
+      finanzierung_bemerkung: finNotes,   // nur für die Partner-Mail (Christof), nie an den Kunden
       commission_amount: eur(dealData?.commission_amount),
       // NEU (A):
       notiz:        lead.notes ?? '',
@@ -224,9 +224,10 @@ Deno.serve(async (req: Request) => {
         const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
         if (tpl) waText = substitute(tpl.message_template as string, ph)
       }
-      // Finanzierung DE: Bemerkung zum Kunden IMMER anhängen — auch wenn die Vorlage
-      // keinen {{bemerkung}}-Platzhalter enthält. So landet sie sicher in Christofs Mail.
-      if (event_type === 'finanzierung_de' && finNotes) {
+      // Finanzierung DE: Bemerkung zum Kunden an die PARTNER-Mail (Christof) anhängen —
+      // auch ohne {{...}}-Platzhalter. NICHT an die Kunden-Mail (recipient 'client'),
+      // sonst gingen interne Notizen an den Kunden.
+      if (event_type === 'finanzierung_de' && finNotes && rule.recipient !== 'client') {
         if (emailBody && !emailBody.includes(finNotes)) {
           emailBody += `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;white-space:pre-wrap"><strong>Bemerkung zum Kunden:</strong><br>${finNotes.replace(/</g, '&lt;')}</div>`
         }
