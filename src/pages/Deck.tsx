@@ -241,9 +241,18 @@ function FeatureBlock(b: Extract<DeckBlock, { type: 'feature' }>) {
           {b.headline && <h2 className="font-heading font-bold text-white text-4xl md:text-6xl mt-2 leading-tight drop-shadow">{b.headline}</h2>}
         </div>
       </div>
-      <div className="px-5 md:px-20 py-12 grid grid-cols-1 md:grid-cols-2 gap-10" style={{ background: DARK }}>
-        {b.text && <p className="text-[15px] leading-relaxed text-gray-300">{b.text}</p>}
-        {b.quote && <p className="font-heading italic text-lg border-l-2 pl-5" style={{ color: GOLD, borderColor: GOLD }}>{b.quote}</p>}
+      <div className="px-5 md:px-20 py-12" style={{ background: DARK }}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+          {b.text && <p className="text-[15px] leading-relaxed text-gray-300">{b.text}</p>}
+          {b.quote && <p className="font-heading italic text-lg border-l-2 pl-5" style={{ color: GOLD, borderColor: GOLD }}>{b.quote}</p>}
+        </div>
+        {b.link && (
+          <a href={b.link} target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-2 mt-9 px-7 py-3.5 rounded-full font-heading font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03]"
+             style={{ background: GOLD, color: DARK }}>
+            {b.linkLabel ?? 'Online ansehen'} <span aria-hidden>→</span>
+          </a>
+        )}
       </div>
     </section>
   )
