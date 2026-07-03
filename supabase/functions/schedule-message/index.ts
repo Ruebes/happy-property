@@ -75,9 +75,9 @@ Deno.serve(async (req: Request) => {
     if (leadErr || !lead) throw new Error(`Lead ${lead_id} nicht gefunden: ${leadErr?.message}`)
 
     // Deal (+ verknüpfte Unit für objekt/unit/kaufpreis)
-    let dealData: { developer: string | null; commission_amount: number | null; unit_id: string | null; registration_notes: string | null } | null = null
+    let dealData: { developer: string | null; commission_amount: number | null; unit_id: string | null; registration_notes: string | null; finanzierung_de_notes: string | null } | null = null
     if (deal_id) {
-      const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes').eq('id', deal_id).maybeSingle()
+      const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes, finanzierung_de_notes').eq('id', deal_id).maybeSingle()
       dealData = data as typeof dealData
     }
     let unitNumber = '', objektName = '', kaufpreis = '', unitDevEmail = '', unitDevPhone = ''
@@ -113,6 +113,8 @@ Deno.serve(async (req: Request) => {
     // falls das Frontend deal.developer noch nicht gesetzt hat (robust gegen alten PWA-Cache).
     let regDevelopers = dealData?.developer ?? ''
     let regNotes = dealData?.registration_notes ?? ''
+    // Finanzierung-DE: deal-spezifische Bemerkung zum Kunden (aus dem Pipeline-Popup) → geht an Christof
+    const finNotes = (dealData?.finanzierung_de_notes ?? '').trim()
     if (event_type === 'registrierung' && (!regDevelopers || !regNotes)) {
       let aq = supabase.from('activities').select('content').eq('type', 'note').ilike('content', '%Registrierung gesendet an:%')
       aq = deal_id ? aq.eq('deal_id', deal_id) : aq.eq('lead_id', lead_id)
@@ -142,8 +144,9 @@ Deno.serve(async (req: Request) => {
       phone:        lead.phone ?? '',
       developers:   regDevelopers,
       developer:    regDevelopers,
-      bemerkung:    regNotes,
-      bemerkungen:  regNotes,
+      bemerkung:    event_type === 'finanzierung_de' ? finNotes : regNotes,
+      bemerkungen:  event_type === 'finanzierung_de' ? finNotes : regNotes,
+      finanzierung_bemerkung: finNotes,
       commission_amount: eur(dealData?.commission_amount),
       // NEU (A):
       notiz:        lead.notes ?? '',
@@ -220,6 +223,14 @@ Deno.serve(async (req: Request) => {
       if ((rule.message_type === 'whatsapp' || rule.message_type === 'both') && rule.whatsapp_event_type) {
         const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
         if (tpl) waText = substitute(tpl.message_template as string, ph)
+      }
+      // Finanzierung DE: Bemerkung zum Kunden IMMER anhängen — auch wenn die Vorlage
+      // keinen {{bemerkung}}-Platzhalter enthält. So landet sie sicher in Christofs Mail.
+      if (event_type === 'finanzierung_de' && finNotes) {
+        if (emailBody && !emailBody.includes(finNotes)) {
+          emailBody += `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;white-space:pre-wrap"><strong>Bemerkung zum Kunden:</strong><br>${finNotes.replace(/</g, '&lt;')}</div>`
+        }
+        if (waText && !waText.includes(finNotes)) waText += `\n\nBemerkung zum Kunden:\n${finNotes}`
       }
       const hasEmail = !!(emailSubject && emailBody), hasWa = !!waText
       if (!hasEmail && !hasWa) { skipped++; continue }

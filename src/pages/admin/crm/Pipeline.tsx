@@ -512,6 +512,8 @@ export default function Pipeline() {
   const [phaseRun, setPhaseRun] = useState<{ deal: Deal; phase: DealPhase; since: string } | null>(null)  // grüne Live-Meldung
   const [holdContact,  setHoldContact]  = useState(true)
   const [handoverText, setHandoverText] = useState('')
+  const [financingDeal, setFinancingDeal] = useState<Deal | null>(null)   // Finanzierung DE → Bemerkung an Christof
+  const [financingText, setFinancingText] = useState('')
   const [modalBusy,    setModalBusy]    = useState(false)
   const [savingReg, setSavingReg] = useState(false)
   const [filterSource, setFilterSource] = useState('')
@@ -644,6 +646,9 @@ export default function Pipeline() {
     // Anzahlung: Rechnungs-Modal (Netto eingeben → Rechnung an Burkhard). Phase wird
     // erst nach Erstellung im Modal gesetzt.
     if (targetPhase === 'anzahlung') { setDepositDeal({ ...deal }); return }
+    // Finanzierung Deutschland: Popup für Bemerkungen zum Kunden → landen zusätzlich in
+    // Christofs Mail (Kundendaten + Google-Drive-Zugang). Phase erst im Modal setzen.
+    if (targetPhase === 'finanzierung_de') { setFinancingDeal({ ...deal }); return }
 
     // Optimistic update
     setDeals(prev =>
@@ -775,6 +780,40 @@ export default function Pipeline() {
       setHandoverDeal(null); setHandoverText('')
       if (fails.length) showToastMsg(`⚠️ Übergeben — WhatsApp-Problem: ${fails.join(' · ')}`)
       else showToastMsg(`✅ ${t('crm.handoverSent', 'Kontakt übergeben')} — WhatsApp an ${sent} gesendet`)
+    } finally { setModalBusy(false) }
+  }
+
+  // Finanzierung Deutschland bestätigen: Bemerkung zum Kunden speichern + Phase setzen.
+  // Die Bemerkung fließt über schedule-message zusätzlich in Christofs Mail
+  // (Kundendaten + Google-Drive-Zugang).
+  const confirmFinancing = async () => {
+    if (!financingDeal) return
+    const deal = financingDeal
+    const oldPhase = deal.phase
+    setModalBusy(true)
+    try {
+      const note = financingText.trim()
+      const { error } = await supabase.from('deals')
+        .update({ phase: 'finanzierung_de', finanzierung_de_notes: note || null }).eq('id', deal.id)
+      if (error) { showToastMsg(`❌ ${error.message}`); return }
+      setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, phase: 'finanzierung_de' } : d)))
+      await supabase.from('activities').insert({
+        lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
+        content: t('crm.activity.phaseChanged', {
+          from: t(`crm.phases.${oldPhase}`, oldPhase),
+          to: t('crm.phases.finanzierung_de', 'Finanzierung DE'),
+          defaultValue: `Phase geändert: ${oldPhase} → finanzierung_de`,
+        }) + (note ? `\n\nBemerkung für Christof: ${note}` : ''),
+        created_by: profile?.id ?? null,
+      })
+      const webhookEvent = PHASE_WEBHOOK_EVENTS['finanzierung_de']
+      if (webhookEvent) await sendWebhook(webhookEvent, { ...deal, phase: 'finanzierung_de' })
+      // Bemerkung ist gespeichert → schedule-message baut Christofs Mail inkl. Bemerkung
+      const since = new Date(Date.now() - 5000).toISOString()
+      triggerScheduleMessage(deal.lead_id, deal.id, 'finanzierung_de')
+      setPhaseRun({ deal: { ...deal, phase: 'finanzierung_de' }, phase: 'finanzierung_de', since })
+      setFinancingDeal(null); setFinancingText('')
+      showToastMsg(`✅ ${t('crm.financing.done', 'Finanzierung DE — Bemerkung geht an Christof')}`)
     } finally { setModalBusy(false) }
   }
 
@@ -1080,6 +1119,23 @@ export default function Pipeline() {
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => { setHandoverDeal(null); setHandoverText('') }} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
               <button onClick={() => void confirmHandover()} disabled={modalBusy} className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{modalBusy ? t('crm.handover.sending', 'Sende…') : t('crm.handover.send', 'Übergeben & senden')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Finanzierung Deutschland: Bemerkung zum Kunden → geht zusätzlich in Christofs Mail */}
+      {financingDeal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">🏦 {t('crm.financing.title', 'Finanzierung Deutschland')}</h2>
+            <p className="text-xs text-gray-500 mb-3">{t('crm.financing.hint', 'Christof bekommt Kundendaten + Google-Drive-Zugang. Deine Bemerkungen werden der Mail zusätzlich angehängt.')}</p>
+            <textarea rows={4} value={financingText} onChange={e => setFinancingText(e.target.value)}
+              placeholder={t('crm.financing.ph', 'Details zum Kunden für Christof (z.B. Einkommen, Eigenkapital, Beschäftigung, Besonderheiten)…')}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-orange-300" />
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => { setFinancingDeal(null); setFinancingText('') }} className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void confirmFinancing()} disabled={modalBusy} className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{modalBusy ? t('crm.financing.sending', 'Sende…') : t('crm.financing.send', 'An Christof senden')}</button>
             </div>
           </div>
         </div>
