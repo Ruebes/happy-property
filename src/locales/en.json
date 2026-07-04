@@ -2120,7 +2120,8 @@
       "noLeadEmail": "Lead has no email address — invitation not sent.",
       "waInviteFailed": "WhatsApp invitation could NOT be sent.",
       "noLeadPhone": "No WhatsApp number available — invitation not sent.",
-      "savedWithWarnings": "Appointment saved, but:"
+      "savedWithWarnings": "Appointment saved, but:",
+      "callWhatsApp": "Call via WhatsApp"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
@@ -2416,6 +2417,18 @@
       "toastDeleteError": "Error while deleting",
       "toastPaymentSaved": "Installment saved ✓",
       "errorPrefix": "Error: {{msg}}"
+    },
+    "prep": {
+      "startingSoon": "Appointment starting soon",
+      "classification": "First call",
+      "noName": "No name",
+      "leadInfo": "Info from the enquiry",
+      "noLeadInfo": "No form details on file.",
+      "callNotes": "Call notes",
+      "callNotesPh": "Notes during the call…",
+      "saveNote": "Save as note",
+      "saved": "✓ Saved as note",
+      "openLead": "Open customer →"
     }
   },
   "docs": {

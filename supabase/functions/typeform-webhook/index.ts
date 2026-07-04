@@ -82,6 +82,30 @@ Deno.serve(async (req) => {
     const phone = phoneByKeyword ?? phoneByType ?? null
     const country   = getAnswer('land') ?? getAnswer('country') ?? null
     const notes     = getAnswer('nachricht') ?? getAnswer('message') ?? getAnswer('bemerkung') ?? null
+
+    // Alle Typeform-Fragen + Antworten als lesbaren Block → landet in lead.notes und
+    // wird im Vorbereitungs-Popup vor dem Termin angezeigt (Sven kann sich vorbereiten).
+    function valueOf(a: {
+      type: string; text?: string; email?: string; phone_number?: string
+      number?: number; choice?: { label: string }; choices?: { labels: string[] }
+    }): string | null {
+      switch (a.type) {
+        case 'text':         return a.text ?? null
+        case 'email':        return a.email ?? null
+        case 'phone_number': return a.phone_number ?? null
+        case 'number':       return a.number != null ? String(a.number) : null
+        case 'choice':       return a.choice?.label ?? null
+        case 'choices':      return a.choices?.labels?.join(', ') ?? null
+        default:             return null
+      }
+    }
+    const qaLines: string[] = []
+    for (const f of fields) {
+      const a = answers.find(x => x.field?.id === f.id)
+      const v = a ? valueOf(a) : null
+      if (v && v.trim()) qaLines.push(`• ${f.title}: ${v.trim()}`)
+    }
+    const typeformSummary = qaLines.length ? `📋 Typeform-Antworten:\n${qaLines.join('\n')}` : null
     // Source: erst Hidden Fields (UTM/Ads), dann Formular-Antwort
     // Typeform Hidden Fields kommen z.B. als ?utm_source=meta in der Formular-URL
     const utmSource  = hidden['utm_source'] ?? hidden['source'] ?? hidden['kanal'] ?? null
@@ -128,6 +152,14 @@ Deno.serve(async (req) => {
     if (existing) {
       leadId = existing.id
       console.log('[typeform-webhook] Bestehender Lead gefunden:', leadId)
+      // Typeform-Antworten in die Notizen übernehmen (ohne Duplikat bei Wiederholung).
+      if (typeformSummary) {
+        const { data: cur } = await supabase.from('leads').select('notes').eq('id', leadId).maybeSingle()
+        const prev = (cur as { notes?: string | null } | null)?.notes ?? ''
+        if (!prev.includes('📋 Typeform-Antworten')) {
+          await supabase.from('leads').update({ notes: prev ? `${prev}\n\n${typeformSummary}` : typeformSummary }).eq('id', leadId)
+        }
+      }
     } else {
       const { data: newLead, error } = await supabase
         .from('leads')
@@ -140,6 +172,7 @@ Deno.serve(async (req) => {
           source:        source ?? 'sonstiges',
           status:        'new',
           language:      'de',
+          notes:         typeformSummary,
           utm_source:    utmSource,
           utm_medium:    utmMedium,
           utm_campaign:  utmCampaign,

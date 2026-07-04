@@ -211,7 +211,7 @@ export default function CrmCalendar() {
     try {
       const { data, error } = await supabase
         .from('crm_appointments')
-        .select('*, lead:leads(id, first_name, last_name)')
+        .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes)')
         .gte('start_time', rangeStart.toISOString())
         .lte('start_time', rangeEnd.toISOString())
         .order('start_time', { ascending: true })
@@ -751,24 +751,21 @@ export default function CrmCalendar() {
               </div>
             )}
 
-            {/* Phone */}
-            {appt.type === 'phone' && appt.phone_number && (
-              <div>📞 {appt.phone_number}</div>
-            )}
-
-            {/* WhatsApp */}
-            {appt.type === 'whatsapp' && appt.phone_number && (
-              <div>
-                💬 {appt.phone_number} ·{' '}
+            {/* WhatsApp / Telefon → immer per WhatsApp (Telefon-Termine laufen über WhatsApp).
+                Nummer: bevorzugt am Termin, sonst vom Lead (WhatsApp, dann Telefon). */}
+            {(appt.type === 'whatsapp' || appt.type === 'phone') &&
+             (appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone) && (
+              <div className="flex items-center gap-2 flex-wrap">
                 <a
-                  href={`https://wa.me/${appt.phone_number.replace(/[^0-9]/g, '')}`}
+                  href={`https://wa.me/${(appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone || '').replace(/[^0-9]/g, '')}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline font-medium"
-                  style={{ color: '#128c7e' }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
+                  style={{ backgroundColor: '#25d366' }}
                 >
-                  {t('crm.calendar.openWhatsApp', 'WhatsApp öffnen')}
+                  💬 {t('crm.appt.callWhatsApp', 'Per WhatsApp anrufen')}
                 </a>
+                <span className="text-gray-500">{appt.phone_number || appt.lead?.whatsapp || appt.lead?.phone}</span>
               </div>
             )}
 
@@ -854,7 +851,36 @@ export default function CrmCalendar() {
 
           <div className="space-y-2 text-sm text-gray-600">
             <div>📅 {dateStr} · {timeStr}</div>
-            {gEvt.location && <div>📍 {gEvt.location}</div>}
+            {(() => {
+              const loc  = gEvt.location ?? ''
+              const desc = gEvt.description ?? ''
+              const zoomMatch  = `${loc} ${desc}`.match(/https?:\/\/[^\s"']*zoom\.us\/[^\s"']+/i)
+              const phoneMatch = /^[+\d][\d\s()/.-]{5,}$/.test(loc.trim())   // Ort ist reine Telefonnummer → WhatsApp
+              return (
+                <>
+                  {zoomMatch && (
+                    <div>
+                      <a href={zoomMatch[0]} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
+                        style={{ backgroundColor: '#2d8cff' }}>
+                        📹 {t('crm.appt.joinZoom', 'Zoom beitreten')}
+                      </a>
+                    </div>
+                  )}
+                  {phoneMatch && !zoomMatch && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <a href={`https://wa.me/${loc.replace(/[^0-9]/g, '')}`} target="_blank" rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-white"
+                        style={{ backgroundColor: '#25d366' }}>
+                        💬 {t('crm.appt.callWhatsApp', 'Per WhatsApp anrufen')}
+                      </a>
+                      <span className="text-gray-500">{loc}</span>
+                    </div>
+                  )}
+                  {loc && !phoneMatch && !zoomMatch && <div>📍 {loc}</div>}
+                </>
+              )
+            })()}
             {gEvt.description && (
               <div className="text-xs text-gray-500 whitespace-pre-wrap max-h-24 overflow-y-auto">
                 {gEvt.description}

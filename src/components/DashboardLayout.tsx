@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import { useAuth, ROLE_META, type UserRole } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import LanguageSwitcher from './LanguageSwitcher'
+import AppointmentPrepPopup from './crm/AppointmentPrepPopup'
 
 interface Props {
   children: ReactNode
@@ -474,6 +475,9 @@ export default function DashboardLayout({ children, basePath }: Props) {
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 md:py-8 pb-24 md:pb-8">
         {children}
       </main>
+
+      {/* Termin-Vorbereitung: poppt ~2 Min vor einem Termin auf (nur Admin) */}
+      {isAdmin && <AppointmentPrepPopup />}
 
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
       {!isAdmin && (

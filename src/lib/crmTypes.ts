@@ -541,6 +541,7 @@ export interface CrmAppointment {
   start_time:      string
   end_time:        string
   lead_id:         string | null
+  deal_id:         string | null
   zoom_link:       string | null
   zoom_meeting_id: string | null
   location:        string | null
@@ -552,7 +553,7 @@ export interface CrmAppointment {
   created_at:      string
   updated_at:      string
   // joined
-  lead?: { id: string; first_name: string; last_name: string } | null
+  lead?: { id: string; first_name: string; last_name: string; phone?: string | null; whatsapp?: string | null; notes?: string | null } | null
 }
 
 // ── Ad-hoc / Sonstige Nachrichten ─────────────────────────────────────────────

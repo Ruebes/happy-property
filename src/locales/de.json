@@ -2120,7 +2120,8 @@
       "noLeadEmail": "Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.",
       "waInviteFailed": "WhatsApp-Einladung konnte NICHT gesendet werden.",
       "noLeadPhone": "Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.",
-      "savedWithWarnings": "Termin gespeichert, aber:"
+      "savedWithWarnings": "Termin gespeichert, aber:",
+      "callWhatsApp": "Per WhatsApp anrufen"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",
@@ -2416,6 +2417,18 @@
       "toastDeleteError": "Fehler beim Löschen",
       "toastPaymentSaved": "Rate gespeichert ✓",
       "errorPrefix": "Fehler: {{msg}}"
+    },
+    "prep": {
+      "startingSoon": "Termin in Kürze",
+      "classification": "Erstgespräch",
+      "noName": "Ohne Namen",
+      "leadInfo": "Infos aus der Anfrage",
+      "noLeadInfo": "Keine Angaben aus dem Formular hinterlegt.",
+      "callNotes": "Gesprächsnotizen",
+      "callNotesPh": "Notizen während des Gesprächs…",
+      "saveNote": "Als Notiz speichern",
+      "saved": "✓ Als Notiz gespeichert",
+      "openLead": "Zum Kunden →"
     }
   },
   "docs": {
