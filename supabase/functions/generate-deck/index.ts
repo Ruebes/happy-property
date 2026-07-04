@@ -46,7 +46,9 @@ Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder 
 - cta:      { type, kicker, headline, text, steps:[{n,title,text}] }  // n = "01"/"02"/"03"
 
 REGELN:
-1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block — bei MEHREREN Wohnungen JE Wohnung ein eigener unit-Block mit number=Wohnungsnummer, direkt hintereinander, danach optional je ein floorplan) → (d) facts (STANDORT/Lage) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt.
+1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block — bei MEHREREN Wohnungen JE Wohnung ein eigener unit-Block mit number=Wohnungsnummer, direkt hintereinander, danach optional je ein floorplan) → (c2) benefits 'Key Facts' (PFLICHT, siehe Regel 4g) → (d) facts (STANDORT/Lage mit Karte) → (d2) columns 'Warum diese Lage' (PFLICHT, siehe Regel 4h) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt. HINWEIS: Eine Marina-Sektion und die Entfernungs-Chips im facts-Block werden automatisch vom System ergänzt — baue selbst KEINEN Paphos-Marina-Block, außer eine GELERNTE VORGABE verlangt es ausdrücklich.
+4g. KEY FACTS (benefits-Block, PFLICHT direkt nach den unit-Blöcken): 6–8 Karten mit den stärksten KAUF-Argumenten des Objekts aus den Fakten — z.B. Fußbodenheizung, VRV-/Zentralklima, Doppel-/Dreifachverglasung, Photovoltaik/Solar, Gym, Pool, Sauna, Bauqualität/Materialien, Garantie, Smart Home, Aufzug, Tiefgarage/Stellplatz, Meerblick, Rooftop. NUR Fakten, die wirklich im Input stehen. Jede Karte: icon (Emoji), title (2–4 Worte), text (1–2 konkrete Sätze mit dem Nutzen für den Käufer). headline z.B. 'Die Key Facts — was dieses Objekt mitbringt'.
+4h. WARUM DIESE LAGE (columns-Block, PFLICHT direkt nach dem facts-Block): 3 Spalten, die aus den Fakten begründen, warum GENAU diese Lage jetzt kaufenswert ist (z.B. Nachbarschaft/Charakter, Infrastruktur/Erreichbarkeit, Entwicklung der Gegend). Nutze NUR belegte Fakten aus dem Input (Regel 5e gilt: keine erfundenen Markt-Aussagen). headline z.B. 'Warum genau hier'.
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
 4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
@@ -122,6 +124,118 @@ function scrubNarrative(blocks: Array<Record<string, unknown>>): void {
     if (isPay && (typeof b.kicker === 'string') && res.some(re => re.test(b.kicker as string))) {
       b.kicker = 'Zahlungsplan'
     }
+  }
+}
+
+// ── Standort-Entfernungen + Marina-Sektion (DETERMINISTISCH, Deck-Standard) ───
+// Sven (2026-07): Jedes Deck bekommt (1) Entfernungs-Chips im facts-Block
+// (Flughafen/Mall/Strand/Hafen/Marina, berechnet aus Projekt-Koordinaten) und
+// (2) eine eigene Marina-Sektion mit quellenbelegter Wertsteigerungs-Story.
+const POIS: Array<{ label: string; lat: number; lng: number }> = [
+  { label: 'Flughafen Paphos',  lat: 34.7180, lng: 32.4857 },
+  { label: 'Kings Avenue Mall', lat: 34.7666, lng: 32.4232 },
+  { label: 'Hafen Kato Paphos', lat: 34.7541, lng: 32.4066 },
+]
+const BEACHES: Array<{ label: string; lat: number; lng: number }> = [
+  { label: 'Coral Bay',         lat: 34.8526, lng: 32.3678 },
+  { label: 'Potima/Kissonerga', lat: 34.8180, lng: 32.3990 },
+  { label: 'Lighthouse Beach',  lat: 34.7620, lng: 32.4020 },
+  { label: 'Geroskipou Beach',  lat: 34.7420, lng: 32.4560 },
+]
+const MARINA_SITE  = { lat: 34.8306, lng: 32.3868 }   // Potima Bay (Kissonerga) — kalibriert an Mamba (3,8 km Straße)
+const MARINA_MODEL = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/paphos-marina-model.jpg'
+const MARINA_ARTICLE = 'https://knews.kathimerini.com.cy/en/news/after-19-years-of-delays-the-paphos-marina-is-back-on-the-table'
+
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371, rad = (x: number) => x * Math.PI / 180
+  const dLat = rad(bLat - aLat), dLng = rad(bLng - aLng)
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(h))
+}
+const roadKm  = (luft: number) => luft * 1.1                       // grobe Straßen-Näherung (an Mamba kalibriert)
+const fmtKm   = (km: number) => km < 2 ? `${km.toFixed(1).replace('.', ',')} km` : `${Math.round(km)} km`
+const driveMin = (km: number) => Math.max(4, Math.round(km * 1.3))
+
+function distanceChips(lat: number, lng: number): Array<{ min: string; label: string }> {
+  const chips: Array<{ min: string; label: string }> = []
+  const beach = BEACHES
+    .map(b => ({ ...b, km: roadKm(haversineKm(lat, lng, b.lat, b.lng)) }))
+    .sort((a, b) => a.km - b.km)[0]
+  chips.push({ min: `ca. ${fmtKm(beach.km)}`, label: `Strand (${beach.label})` })
+  for (const p of POIS) {
+    chips.push({ min: `ca. ${fmtKm(roadKm(haversineKm(lat, lng, p.lat, p.lng)))}`, label: p.label })
+  }
+  chips.push({ min: `ca. ${fmtKm(roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng)))}`, label: 'Neue Paphos-Marina (geplant)' })
+  return chips
+}
+
+// Marina-Story: Zahlen/Quellen aus Web-Recherche (Juli 2026) — nur belegte Werte.
+// MARINA_TEXTS wird zentral gepflegt; Compliance: Wertsteigerung als Erfahrungswert/
+// Prognose mit Quellen, NIE als Garantie.
+const MARINA_TEXTS = {
+  featureKicker:  'Standort · Die neue Paphos-Marina',
+  featureHeadline: 'Nach 19 Jahren wird sie endlich gebaut.',
+  featureText: 'Das hier ist das Modell der neuen Paphos-Marina in Potima Bay (Kissonerga): rund 165.000 m² Areal, bis zu 1.000 Liegeplätze zu Wasser und an Land, dazu Wohn- und Gewerbeflächen direkt am Hafenbecken — ein auf rund 200 Mio. € geschätztes Projekt (Gov.cy, 2025; Vize-Tourismusministerium, 2024). Nach 19 Jahren Verzögerung ist das Verfahren jetzt in der entscheidenden Phase: Vier internationale Bieter haben Angebote eingereicht (StockWatch, 2026), der Zuschlag ist für Ende 2026 geplant, Baubeginn April 2027 (Kathimerini, 2026). Für dich als Käufer zählt das Timing: Preise im Umfeld solcher Großprojekte ziehen erfahrungsgemäß schon mit der Vergabe an — nicht erst mit der Eröffnung. Wer vor dem Zuschlag kauft, kauft noch zu Vor-Marina-Konditionen.',
+  featureQuote: 'Hafen-Lagen: weltweit +59 % Aufschlag (Knight Frank). Limassol: +102,7 % in der Marina-Dekade.',
+  valuePct: '+51 %',
+  valueText: 'Wasserlage ist der am besten dokumentierte Preistreiber im Immobilienmarkt: Knight Frank misst für Waterfront-Objekte im Schnitt +51 % gegenüber vergleichbaren Lagen im Landesinneren (Waterfront Homes, 2025) — Hafen-Lagen führen mit +59 % sogar das Feld an (Knight Frank, 2018). Zypern hat es vorgemacht: In der Limassol-Marina-Dekade 2015–2025 stiegen die Apartment-Preise dort um +102,7 % — Spitzenwert aller Distrikte der Insel (Zentralbank Zypern RPPI, 2026). Genau dieses Drehbuch beginnt jetzt in Paphos — noch zu Vor-Marina-Preisen.',
+  note: 'Zuschlag geplant Ende 2026, Baubeginn April 2027 (Kathimerini, 2026). Quellen: Gov.cy (2025); Knight Frank (2018–2025); Zentralbank Zypern RPPI (2026); Financial Mirror (2021). Wertentwicklung = historische Erfahrungswerte, keine Garantie.',
+}
+
+function buildMarinaBlocks(projName: string, fromSub: string, lat?: number | null, lng?: number | null): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [{
+    type: 'feature',
+    kicker: MARINA_TEXTS.featureKicker,
+    headline: MARINA_TEXTS.featureHeadline,
+    image: MARINA_MODEL,
+    text: MARINA_TEXTS.featureText,
+    quote: MARINA_TEXTS.featureQuote,
+    link: MARINA_ARTICLE,
+    linkLabel: 'Zum Zeitungsartikel',
+  }]
+  if (lat != null && lng != null) {
+    const km  = roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng))
+    out.push({
+      type: 'marina',
+      kicker: 'Lage · Neue Paphos-Marina',
+      headline: `Nur die Küste entlang: ca. ${fmtKm(km)} zur Marina.`,
+      fromLabel: projName || 'Projekt', fromSub,
+      toLabel: 'Paphos-Marina', toSub: 'Potima Bay · Kissonerga',
+      distance: `ca. ${fmtKm(km)}`, drive: `ca. ${driveMin(km)} Min mit dem Auto`,
+      valuePct: MARINA_TEXTS.valuePct,
+      valueText: MARINA_TEXTS.valueText,
+      note: MARINA_TEXTS.note,
+    })
+  }
+  return out
+}
+
+// Chips + Marina in die Block-Liste einsetzen (idempotent):
+// - Entfernungs-Chips ERSETZEN die KI-Items im ersten facts-Block (KI-Items ohne
+//   km/min-Angabe bleiben als Zusatz erhalten, max. 2 — z.B. 'Meerblick').
+// - Marina-Sektion nach facts (+ direkt folgendem 'Warum diese Lage'-columns),
+//   NUR wenn noch kein Marina-Block existiert (Mamba-Regeln erzeugen eigene).
+function injectLocationAndMarina(
+  blocks: Array<Record<string, unknown>>,
+  projName: string,
+  proj?: { location?: string | null; latitude?: number | null; longitude?: number | null } | null,
+): void {
+  const lat = proj?.latitude, lng = proj?.longitude
+  const fi = blocks.findIndex(b => b.type === 'facts')
+  if (fi >= 0 && lat != null && lng != null) {
+    const fb = blocks[fi] as Record<string, unknown>
+    const aiItems = (Array.isArray(fb.items) ? fb.items as Array<{ min?: string; label?: string }> : [])
+      .filter(it => !/km|min/i.test(String(it.min ?? ''))).slice(0, 2)
+    fb.items = [...distanceChips(lat, lng), ...aiItems]
+  }
+  const hasMarina = blocks.some(b =>
+    b.type === 'marina' ||
+    /paphos-marina|marina/i.test(String(b.kicker ?? '') + ' ' + String(b.headline ?? '')))
+  if (!hasMarina) {
+    let at = fi >= 0 ? fi + 1 : Math.min(4, blocks.length - 1)
+    while (at < blocks.length && blocks[at].type === 'columns') at++
+    const fromSub = (proj?.location ?? '').split(',')[0].trim() || 'Region Paphos'
+    blocks.splice(at, 0, ...buildMarinaBlocks(projName, fromSub, lat, lng))
   }
 }
 
@@ -367,11 +481,13 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
+    let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
           .select('name, location, latitude, longitude').eq('id', body.project_id).maybeSingle()
         const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null } | null
+        projRow = pr
         if (pr) {
           body.images = body.images ?? {}
           if (body.images.mapLat == null && pr.latitude != null && pr.longitude != null) {
@@ -393,6 +509,9 @@ Deno.serve(async (req) => {
     }
     assignImages(blocks, body.images, projName)
     scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
+    // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
+    // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
+    injectLocationAndMarina(blocks, projRow?.name || projName, projRow)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
     const plKeys = Object.keys(priceLinesByUnit)
