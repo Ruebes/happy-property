@@ -50,6 +50,10 @@ function berlinParts(date: Date): { y: number; mo: number; d: number; wd: number
 function labelDe(startUtc: Date): string {
   return new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).format(startUtc)
 }
+// Wochentag eines Slots (klein), um bei „geht auch nachmittags?" den Tag zu behalten.
+function weekdayNameDe(iso: string): string {
+  return new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long' }).format(new Date(iso)).toLowerCase()
+}
 
 // Verfügbarkeitsfenster je Wochentag (Berlin-Stunden). Wochenende = 17–20.
 function windowFor(wd: number): [number, number] | null {
@@ -87,8 +91,32 @@ async function getBusy(admin: SupabaseClient, fromUtc: Date, toUtc: Date): Promi
   return busy
 }
 
+// Einen genannten Tag-Wunsch auf einen Wochentag abbilden (sonst kein Filter).
+const WD_NAMES: Record<string, number> = { sonntag: 0, montag: 1, dienstag: 2, mittwoch: 3, donnerstag: 4, freitag: 5, samstag: 6, sonnabend: 6 }
+function matchesDayHint(wd: number, offset: number, hint?: string): boolean {
+  if (!hint) return true
+  const h = hint.toLowerCase()
+  if (h.includes('übermorgen')) return offset === 2
+  if (h.includes('morgen')) return offset === 1
+  if (h.includes('wochenende')) return wd === 0 || wd === 6
+  if (/(nächste|kommende)\s*woche/.test(h)) return offset >= 3
+  for (const [name, num] of Object.entries(WD_NAMES)) if (h.includes(name)) return wd === num
+  return true  // unklarer Hinweis → nicht streng filtern
+}
+// Ein GENAU EIN Tag gemeint (Wochentag/morgen/übermorgen)? Dann 2 Uhrzeiten an
+// DIESEM Tag anbieten statt an verschiedenen Tagen.
+function isSpecificDay(hint?: string): boolean {
+  if (!hint) return false
+  const h = hint.toLowerCase()
+  if (/wochenende|woche/.test(h)) return false
+  if (h.includes('morgen')) return true              // morgen / übermorgen
+  return Object.keys(WD_NAMES).some(n => h.includes(n))
+}
+
 // Kandidaten-Slots ab morgen berechnen, gegen Busy prüfen, bis `want` gefunden.
-async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayHint?: string; daypart?: string }): Promise<Slot[]> {
+// Ein Vorschlag pro Tag → verschiedene Tage (Abwechslung wie „Sa oder Mo").
+// timeHint (HH:MM) = KONKRETE Wunschuhrzeit: nur exakt diese prüfen (je Tag).
+async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayHint?: string; daypart?: string; timeHint?: string }): Promise<Slot[]> {
   const now = new Date()
   const from = new Date(now.getTime() + 12 * 3600e3)          // frühestens ~ab morgen
   const to   = new Date(now.getTime() + 16 * 24 * 3600e3)     // 16 Tage Fenster
@@ -97,28 +125,59 @@ async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayH
     const st = s.getTime(), en = st + SLOT_MIN * 60000
     return !busy.some(b => st < b.end && en > b.start)
   }
+  const mk = (start: Date): Slot => ({ startIso: start.toISOString(), endIso: new Date(start.getTime() + SLOT_MIN * 60000).toISOString(), label: labelDe(start) })
+  // konkrete Wunschuhrzeit parsen
+  let thH = NaN, thM = 0
+  if (filter?.timeHint && /^\d{1,2}:\d{2}$/.test(filter.timeHint)) { const [a, b] = filter.timeHint.split(':').map(Number); thH = a; thM = b }
+
   const out: Slot[] = []
   for (let off = 1; off <= 16 && out.length < want; off++) {
     const anchor = new Date(now.getTime() + off * 24 * 3600e3)
     const bp = berlinParts(anchor)
     const win = windowFor(bp.wd)
     if (!win) continue
+    if (!matchesDayHint(bp.wd, off, filter?.dayHint)) continue
+    const [w0, w1] = win
+
+    // (a) Exakte Wunschuhrzeit: nur diese prüfen (muss im Fenster liegen + frei sein)
+    if (!isNaN(thH)) {
+      if (thH * 60 + thM < w0 * 60 || thH * 60 + thM + SLOT_MIN > w1 * 60) continue
+      const start = berlinToUtc(bp.y, bp.mo, bp.d, thH, thM)
+      if (start.getTime() < from.getTime()) continue
+      if (!isFree(start)) continue
+      out.push(mk(start))
+      continue
+    }
+
+    // Fenster ggf. auf Tageszeit einschränken
     let [h0, h1] = win
-    // Tageszeit-Filter (aus daypref)
     if (filter?.daypart === 'vormittags') h1 = Math.min(h1, 13)
     if (filter?.daypart === 'nachmittags') h0 = Math.max(h0, 13)
     if (filter?.daypart === 'abends') h0 = Math.max(h0, 17)
-    for (let h = h0; h + SLOT_MIN / 60 <= h1 && out.length < want; h++) {
+
+    // Alle freien Zeiten dieses Tages (30-Min-Raster)
+    const dayTimes: Slot[] = []
+    for (let h = h0; h + SLOT_MIN / 60 <= h1; h++) {
       for (const mi of [0, 30]) {
         if (h * 60 + mi + SLOT_MIN > h1 * 60) continue
         const start = berlinToUtc(bp.y, bp.mo, bp.d, h, mi)
         if (start.getTime() < from.getTime()) continue
-        if (!isFree(start)) continue
-        const end = new Date(start.getTime() + SLOT_MIN * 60000)
-        out.push({ startIso: start.toISOString(), endIso: end.toISOString(), label: labelDe(start) })
-        break  // pro Tag/Fenster erstmal ein Vorschlag, dann nächster Tag → Abwechslung
+        if (isFree(start)) dayTimes.push(mk(start))
       }
     }
+    if (!dayTimes.length) continue
+
+    if (isSpecificDay(filter?.dayHint)) {
+      // (b1) Genau EIN gewünschter Tag → 2 gespreizte Uhrzeiten an DIESEM Tag
+      out.push(dayTimes[0])
+      if (dayTimes.length > 1 && out.length < want) {
+        const j = dayTimes.length >= 4 ? Math.floor(dayTimes.length * 0.6) : dayTimes.length - 1
+        out.push(dayTimes[j])
+      }
+      break  // nur dieser eine Tag
+    }
+    // (b2) sonst ein Vorschlag pro Tag → verschiedene Tage (Abwechslung)
+    out.push(dayTimes[0])
   }
   return out
 }
@@ -174,21 +233,21 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 }
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
-interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; meeting_type: string | null }
+interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null }
 async function classify(state: string, slots: Slot[], text: string): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
-  const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, meeting_type: null }
+  const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
   if (!key) return fallback
   const sys = `Du interpretierst die WhatsApp-Antwort eines Kunden im Terminbuchungs-Dialog (deutsch). Zustand: ${state}. Vorgeschlagene Slots: ${slots.map((s, i) => `[${i}] ${s.label}`).join(' | ') || 'keine'}.
 Gib NUR das Tool emit_intent zurück. intent-Werte:
 - pick_slot: Kunde wählt einen vorgeschlagenen Slot (pick_index 0 oder 1).
-- reject_slots: keiner der Slots passt (evtl. mit day_hint/daypart-Wunsch).
-- give_preference: Kunde nennt Tag/Tageszeit-Wunsch (day_hint z.B. "Dienstag","morgen","nächste Woche"; daypart "vormittags"|"nachmittags"|"abends").
+- reject_slots: keiner der Slots passt (evtl. mit day_hint/daypart/time_hint-Wunsch).
+- give_preference: Kunde nennt Tag-/Zeit-Wunsch (day_hint z.B. "Dienstag","morgen","nächste Woche"; daypart "vormittags"|"nachmittags"|"abends"; time_hint = KONKRETE Uhrzeit als 24h "HH:MM", z.B. "15:00" aus "15 Uhr"/"um 3"/"halb 4"→"15:30").
 - choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp).
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - optout: will nicht kontaktiert werden / kein Interesse.
 - unclear: unverständlich/themenfremd.
-Fülle nur passende Felder, sonst null.`
+WICHTIG: Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?", "geht 16 Uhr?"), IMMER time_hint als "HH:MM" füllen (intent give_preference). Fülle nur passende Felder, sonst null.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -201,6 +260,7 @@ Fülle nur passende Felder, sonst null.`
             intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
+            time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
             meeting_type: { type: ['string', 'null'], enum: ['zoom', 'whatsapp', null] },
           }, required: ['intent'],
         } }],
@@ -311,6 +371,14 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   const slots = c.proposed_slots ?? []
   const it = await classify(c.state, c.state === 'awaiting_daypref' ? [] : slots, text)
 
+  // Tag-Kontext behalten: nennt der Kunde nur Tageszeit ODER eine konkrete Uhrzeit
+  // (aber keinen Tag), während schon ein konkreter Slot auf dem Tisch lag → dessen
+  // Wochentag übernehmen, statt versehentlich einen anderen Tag vorzuschlagen.
+  const refSlot = c.chosen_slot ?? (c.proposed_slots && c.proposed_slots.length === 1 ? c.proposed_slots[0] : null)
+  if (!it.day_hint && (it.daypart || it.time_hint) && refSlot?.startIso) {
+    it.day_hint = weekdayNameDe(refSlot.startIso)
+  }
+
   // Opt-Out zuerst
   if (it.intent === 'optout') {
     try { await admin.from('communication_optouts').insert({ lead_id: leadId }) } catch { /* Trigger schließt Gespräch */ }
@@ -331,8 +399,8 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
       await askType(admin, c.id, phone, leadId, l.first_name, slots[it.pick_index]); return json({ ok: true })
     }
     if (it.intent === 'give_preference' || it.intent === 'reject_slots') {
-      // Direkt mit Präferenz einen Slot rechnen, sonst nach Tag/Tageszeit fragen
-      if (it.day_hint || it.daypart) return await proposeFromPref(admin, c.id, phone, leadId, l.first_name, it)
+      // Direkt mit Präferenz Slots rechnen, sonst nach Tag/Tageszeit fragen
+      if (it.day_hint || it.daypart || it.time_hint) return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
       const m = `Kein Problem! An welchem Tag passt es dir besser — und eher vormittags oder nachmittags?`
       await setConv(admin, c.id, { state: 'awaiting_daypref', attempts: 0, last_message: m })
       await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
@@ -352,8 +420,8 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   }
 
   if (c.state === 'awaiting_daypref') {
-    if (it.day_hint || it.daypart || it.intent === 'give_preference') {
-      return await proposeFromPref(admin, c.id, phone, leadId, l.first_name, it)
+    if (it.day_hint || it.daypart || it.time_hint || it.intent === 'give_preference') {
+      return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
     }
     if (await bump()) return json({ ok: true, handled: 'handoff' })
     const m = `An welchem Wochentag passt es dir am besten — und eher vormittags oder nachmittags?`
@@ -365,7 +433,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
       await askType(admin, c.id, phone, leadId, l.first_name, c.chosen_slot); return json({ ok: true })
     }
     if (it.intent === 'confirm_no' || it.intent === 'give_preference' || it.intent === 'reject_slots') {
-      if (it.day_hint || it.daypart) return await proposeFromPref(admin, c.id, phone, leadId, l.first_name, it)
+      if (it.day_hint || it.daypart || it.time_hint) return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
       const m = `Kein Problem — welcher Tag und eher vormittags oder nachmittags?`
       await setConv(admin, c.id, { state: 'awaiting_daypref', attempts: 0, last_message: m })
       await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
@@ -378,22 +446,43 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   return json({ ok: true, skipped: 'unknown_state' })
 }
 
-// Aus Tag/Tageszeit-Wunsch einen freien Slot vorschlagen (→ awaiting_confirm)
-async function proposeFromPref(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, it: Intent): Promise<Response> {
-  const slots = await computeSlots(admin, 3, { dayHint: it.day_hint ?? undefined, daypart: it.daypart ?? undefined })
-  if (slots.length === 0) {
-    const any = await computeSlots(admin, 2)
-    if (any.length >= 2) {
-      const m = `Da hab ich leider nichts frei. Wie wäre stattdessen:\n\n1) ${any[0].label} Uhr\n2) ${any[1].label} Uhr\n\nWas passt?`
-      await setConv(admin, convId, { state: 'awaiting_choice', proposed_slots: any, attempts: 0, last_message: m })
-      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
-    }
-    return json({ ok: true, skipped: 'no_slots' })
-  }
-  const pick = slots[0]
-  const m = `Wie wäre ${pick.label} Uhr (deutsche Zeit)? Wenn's passt, trage ich das direkt ein — ein kurzes „ja" genügt. 🙂`
-  await setConv(admin, convId, { state: 'awaiting_confirm', chosen_slot: pick, attempts: 0, last_message: m })
+// Kleine Sende-Helfer (halten die Zustandsübergänge kurz)
+async function sendChoice(admin: SupabaseClient, convId: string, phone: string, leadId: string, s: Slot[], intro: string): Promise<Response> {
+  const m = `${intro}\n\n1) ${s[0].label} Uhr\n2) ${s[1].label} Uhr\n\n(deutsche Zeit) Was passt dir?`
+  await setConv(admin, convId, { state: 'awaiting_choice', proposed_slots: s, chosen_slot: null, attempts: 0, last_message: m })
   await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+}
+async function sendConfirm(admin: SupabaseClient, convId: string, phone: string, leadId: string, s: Slot, lead: string): Promise<Response> {
+  const m = `${lead}${s.label} Uhr (deutsche Zeit)? Wenn's passt, trage ich das direkt ein — ein kurzes „ja" genügt. 🙂`
+  await setConv(admin, convId, { state: 'awaiting_confirm', chosen_slot: s, attempts: 0, last_message: m })
+  await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+}
+
+// Aus Tag-/Zeit-Wunsch Termine vorschlagen. Regeln (Sven): (1) IMMER 2 Termine
+// anbieten, wenn der Bot auswählt; (2) nennt der Kunde eine konkrete freie Uhrzeit,
+// diese direkt annehmen (nicht gegenanbieten).
+async function proposeSlots(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, it: Intent): Promise<Response> {
+  const dayHint = it.day_hint ?? undefined, daypart = it.daypart ?? undefined
+
+  // (1) Konkrete Wunschuhrzeit → frei? Dann DIREKT annehmen (gleich Terminart fragen)
+  if (it.time_hint) {
+    const exact = await computeSlots(admin, 1, { dayHint, timeHint: it.time_hint })
+    if (exact.length) return await askType(admin, convId, phone, leadId, name, exact[0])
+    // gewünschte Uhrzeit belegt/außerhalb → 2 Alternativen am selben Tag anbieten
+    const alt = await computeSlots(admin, 2, { dayHint, daypart })
+    if (alt.length >= 2) return await sendChoice(admin, convId, phone, leadId, alt, `Um ${it.time_hint} Uhr habe ich da leider nichts frei. Wie wäre stattdessen:`)
+    if (alt.length === 1) return await sendConfirm(admin, convId, phone, leadId, alt[0], `Um ${it.time_hint} Uhr ist leider belegt — wie wäre `)
+  }
+
+  // (2) Tag/Tageszeit → immer 2 Vorschläge
+  const slots = await computeSlots(admin, 2, { dayHint, daypart })
+  if (slots.length >= 2) return await sendChoice(admin, convId, phone, leadId, slots, 'Klar! Wie wäre:')
+  if (slots.length === 1) return await sendConfirm(admin, convId, phone, leadId, slots[0], 'Ich hätte da nur einen Slot frei — wie wäre ')
+
+  // (3) am Wunschtag nichts frei → 2 allgemeine Alternativen
+  const any = await computeSlots(admin, 2)
+  if (any.length >= 2) return await sendChoice(admin, convId, phone, leadId, any, 'Da hab ich leider nichts frei. Wie wäre stattdessen:')
+  return json({ ok: true, skipped: 'no_slots' })
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────

@@ -43,25 +43,46 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    const phone   = payload.chat?.phone
-    const text    = payload.message?.text
-    const fromMe  = payload.message?.fromMe ?? false
+    // ── Dedupe: Timelines schickt DIESELBE Nachricht mehrfach (verschiedene
+    // event_types wie message:new + message:received:new, dazu Retries). Jede
+    // message_uid nur EINMAL verarbeiten — race-sicher über den UNIQUE-Primary-Key
+    // (Insert-Konflikt = bereits gesehen → still bestätigen).
+    const uid = payload.message?.message_uid ?? payload.message?.id
+    if (uid) {
+      const { error: dupErr } = await supabase.from('wa_processed').insert({ message_uid: String(uid) })
+      if (dupErr) return new Response('OK (dupe)', { headers: corsHeaders })
+    }
 
-    if (!phone || !text) {
+    // ── Richtung: Timelines nutzt message.direction ('received'|'sent'), NICHT fromMe.
+    // AUSGEHENDE/eigene Nachrichten (auch das Echo unserer Bot-Nachrichten!) dürfen
+    // NIE verarbeitet werden — sonst antwortet der Bot auf sich selbst (Endlosschleife).
+    const acctPhone = payload.whatsapp_account?.phone
+    const isOutbound = payload.message?.direction === 'sent'
+      || payload.message?.origin === 'Public API'
+      || (payload.message?.sender?.phone && acctPhone && payload.message.sender.phone === acctPhone)
+    if (isOutbound) return new Response('OK (outbound)', { headers: corsHeaders })
+
+    // Ab hier: nur echte EINGEHENDE Kundennachrichten. Kunden-Nummer = Absender.
+    const rawPhone = payload.message?.sender?.phone ?? payload.chat?.phone ?? payload.contact?.phone
+    const text     = payload.message?.text ?? payload.message?.body ?? payload.text
+    const fromMe   = false
+
+    if (!rawPhone || !text) {
       return new Response('OK', { headers: corsHeaders })
     }
 
-    // Lead anhand Telefonnummer suchen.
-    // Schutz gegen PostgREST-Filter-Injection: nur einfache Telefonzeichen zulassen
-    // (Komma/Klammern würden den .or()-Filter zerlegen). Bei mehreren Leads mit der
-    // gleichen Nummer NICHT maybeSingle() (würde werfen) → limit(1), neuesten nehmen.
-    const phoneStr = String(phone)
+    // Lead robust über die Telefonnummer finden: NUR Ziffern vergleichen und per
+    // Endung (letzte 8 Ziffern) matchen — unabhängig davon, ob Timelines mit/ohne
+    // „+", Leerzeichen oder Länderformat schickt. Suffix ist reine Ziffern → keine
+    // Filter-Injection. Bei mehreren Leads mit gleicher Nummer den neuesten nehmen.
+    const digits = String(rawPhone).replace(/\D/g, '')
     let lead: { id: string } | null = null
-    if (/^[+0-9 .\-]{4,25}$/.test(phoneStr)) {
+    if (digits.length >= 7) {
+      const suffix = digits.slice(-8)
       const { data: rows, error: lErr } = await supabase
         .from('leads')
         .select('id')
-        .or(`phone.eq.${phoneStr},whatsapp.eq.${phoneStr}`)
+        .or(`phone.ilike.*${suffix}*,whatsapp.ilike.*${suffix}*`)
         .order('created_at', { ascending: false })
         .limit(1)
       if (lErr) {
@@ -83,7 +104,7 @@ Deno.serve(async (req) => {
           subject:              fromMe ? 'WhatsApp gesendet' : 'WhatsApp erhalten',
           content:              text,
           completed_at:         new Date().toISOString(),
-          whatsapp_message_id:  payload.message?.id,
+          whatsapp_message_id:  uid ? String(uid) : null,
         })
 
       // KI-Zusammenfassung löschen damit sie neu generiert wird
