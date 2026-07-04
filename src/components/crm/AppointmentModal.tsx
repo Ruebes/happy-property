@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
-import { hasGoogleToken, createGoogleEvent } from '../../lib/googleCalendar'
+import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent } from '../../lib/googleCalendar'
+import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -11,11 +12,50 @@ interface Props {
   leadName?:     string | null
   leadPhone?:    string | null
   initialDate?:  Date | null
+  /** Wenn gesetzt: Modal bearbeitet diesen Termin statt einen neuen anzulegen. */
+  appointment?:  CrmAppointment | null
   onClose:       () => void
   onCreated:     () => void
 }
 
-type ApptType = 'zoom' | 'inperson' | 'phone'
+type ApptType = AppointmentType
+
+// ── ICS-Anhang für Einladungs-Mails (Kunde kann Termin in SEINEN Kalender legen) ──
+// METHOD:REQUEST + ATTENDEE + SEQUENCE: so verarbeiten Gmail/Outlook/Apple die Mail
+// als echtes Termin-Update (Terminänderung ERSETZT den alten Eintrag beim Kunden,
+// statt ignoriert zu werden oder ein Duplikat anzulegen).
+function buildIcs(opts: {
+  uid: string; title: string; startIso: string; endIso: string
+  description?: string; location?: string; sequence?: number; attendeeEmail?: string
+}): string {
+  const dt  = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n')
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Happy Property//CRM//DE',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:${opts.uid}@happy-property.com`,
+    `SEQUENCE:${opts.sequence ?? 0}`,
+    `DTSTAMP:${dt(new Date().toISOString())}`,
+    `DTSTART:${dt(opts.startIso)}`,
+    `DTEND:${dt(opts.endIso)}`,
+    `SUMMARY:${esc(opts.title)}`,
+    ...(opts.description ? [`DESCRIPTION:${esc(opts.description)}`] : []),
+    ...(opts.location ? [`LOCATION:${esc(opts.location)}`] : []),
+    'ORGANIZER;CN=Sven Rüprich:mailto:sven@happy-property.com',
+    ...(opts.attendeeEmail ? [`ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:${opts.attendeeEmail}`] : []),
+    'STATUS:CONFIRMED',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
+}
+
+// HTML-Escaping für Mail-Inhalte (Titel/Links/Ort sind freie Eingaben — ein
+// Anführungszeichen im gepasteten Link darf das Mail-Markup nicht zerbrechen).
+const escHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 interface LeadResult {
   id:         string
@@ -71,66 +111,90 @@ export default function AppointmentModal({
   leadName,
   leadPhone,
   initialDate,
+  appointment,
   onClose,
   onCreated,
 }: Props) {
   const { t }        = useTranslation()
   const { profile }  = useAuth()
+  const isEdit       = !!appointment
 
   // Step
   const [step, setStep] = useState(1)
 
-  // ── Step 1: Basis ─────────────────────────────────────────────
-  const [title, setTitle]       = useState('')
+  // ── Step 1: Basis (bei Bearbeitung aus dem Termin vorbefüllt) ──
+  const [title, setTitle]       = useState(appointment?.title ?? '')
   const [date, setDate]         = useState<string>(() => {
-    if (initialDate) {
-      const y = initialDate.getFullYear()
-      const m = String(initialDate.getMonth() + 1).padStart(2, '0')
-      const d = String(initialDate.getDate()).padStart(2, '0')
+    const src = appointment ? new Date(appointment.start_time) : initialDate
+    if (src) {
+      const y = src.getFullYear()
+      const m = String(src.getMonth() + 1).padStart(2, '0')
+      const d = String(src.getDate()).padStart(2, '0')
       return `${y}-${m}-${d}`
     }
     return ''
   })
-  const [von, setVon]           = useState('10:00')
-  const [bis, setBis]           = useState('11:00')
-  const [apptType, setApptType] = useState<ApptType>('zoom')
-  const [description, setDescription] = useState('')
+  const toTime = (iso?: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  const [von, setVon]           = useState(appointment ? toTime(appointment.start_time) : '10:00')
+  const [bis, setBis]           = useState(appointment ? toTime(appointment.end_time) : '11:00')
+  const [apptType, setApptType] = useState<ApptType>(appointment?.type ?? 'zoom')
+  const [description, setDescription] = useState(appointment?.description ?? '')
 
   // ── Step 2: Details ───────────────────────────────────────────
 
   // Zoom
-  const [zoomLink, setZoomLink]         = useState('')
+  const [zoomLink, setZoomLink]         = useState(appointment?.zoom_link ?? '')
   const [zoomPassword, setZoomPassword] = useState('')
-  const [zoomMeetingId, setZoomMeetingId] = useState<string | null>(null)
+  const [zoomMeetingId, setZoomMeetingId] = useState<string | null>(appointment?.zoom_meeting_id ?? null)
   const [zoomGenerating, setZoomGenerating] = useState(false)
-  const [zoomGenerated, setZoomGenerated]   = useState(false)
+  const [zoomGenerated, setZoomGenerated]   = useState(!!appointment?.zoom_link)
   const [zoomError, setZoomError]           = useState('')
 
   // In-person
-  const [location, setLocation]     = useState('')
-  const [locationUrl, setLocationUrl] = useState('')
+  const [location, setLocation]     = useState(appointment?.location ?? '')
+  const [locationUrl, setLocationUrl] = useState(appointment?.location_url ?? '')
 
-  // Phone
-  const [phoneNumber, setPhoneNumber] = useState(leadPhone ?? '')
+  // Phone / WhatsApp
+  const [phoneNumber, setPhoneNumber] = useState(appointment?.phone_number ?? leadPhone ?? '')
 
   // ── Step 3: Lead ──────────────────────────────────────────────
   const [searchQuery, setSearchQuery]         = useState('')
   const [searchResults, setSearchResults]     = useState<LeadResult[]>([])
   const [searchLoading, setSearchLoading]     = useState(false)
-  const [selectedLeadId, setSelectedLeadId]   = useState<string | null>(leadId ?? null)
-  const [selectedLeadName, setSelectedLeadName] = useState<string>(leadName ?? '')
+  const [selectedLeadId, setSelectedLeadId]   = useState<string | null>(appointment?.lead_id ?? leadId ?? null)
+  const [selectedLeadName, setSelectedLeadName] = useState<string>(
+    appointment?.lead ? `${appointment.lead.first_name} ${appointment.lead.last_name}` : (leadName ?? ''),
+  )
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Step 4: Confirm ───────────────────────────────────────────
-  const [saveToGoogle, setSaveToGoogle]         = useState(hasGoogleToken())
+  // Google-Verbindung ist server-seitig (Service-Account) → einmalige Prüfung.
+  const [googleAvailable, setGoogleAvailable]   = useState(false)
+  const [saveToGoogle, setSaveToGoogle]         = useState(false)
   const [sendEmailInvite, setSendEmailInvite]   = useState(false)
+  const [sendWhatsAppInvite, setSendWhatsAppInvite] = useState(false)
   const [saving, setSaving]                     = useState(false)
   const [saveError, setSaveError]               = useState('')
+  // Termin ist gespeichert, aber Nebenwirkungen (Google-Sync/Einladung) schlugen fehl:
+  // Warnung zeigen + Button wird zu „Schließen" (verhindert Doppel-Anlage durch Retry).
+  const [savedWithWarnings, setSavedWithWarnings] = useState(false)
 
-  // Update saveToGoogle if google token changes
   useEffect(() => {
-    setSaveToGoogle(hasGoogleToken())
-  }, [step])
+    let cancelled = false
+    checkCalendarStatus()
+      .then(s => {
+        if (cancelled) return
+        setGoogleAvailable(s.connected)
+        // Standard: neue Termine landen automatisch im Google-Kalender
+        if (s.connected && !isEdit) setSaveToGoogle(true)
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [isEdit])
 
   // ── Search leads (debounced) ──────────────────────────────────
   const searchLeads = useCallback(async (q: string) => {
@@ -196,75 +260,113 @@ export default function AppointmentModal({
     }
   }
 
-  // ── handleCreate ──────────────────────────────────────────────
+  // ── handleCreate (legt an ODER speichert Änderungen, inkl. Google-Sync) ─────
   async function handleCreate() {
     setSaving(true)
     setSaveError('')
+    const warnings: string[] = []
     try {
-      const start_time = new Date(`${date}T${von}`).toISOString()
-      const end_time   = new Date(`${date}T${bis}`).toISOString()
+      const startD = new Date(`${date}T${von}`)
+      const endD   = new Date(`${date}T${bis}`)
+      if (endD < startD) endD.setDate(endD.getDate() + 1)   // Termin über Mitternacht
+      const start_time = startD.toISOString()
+      const end_time   = endD.toISOString()
 
-      console.log('[AppointmentModal] Insert payload:', {
-        title, type: apptType, start_time, end_time,
-        lead_id: selectedLeadId, created_by: profile?.id,
-      })
+      // Nur die zum gewählten Typ gehörenden Detail-Felder speichern — beim
+      // Typwechsel im Edit-Modus dürfen keine alten Zoom-Links/Adressen kleben bleiben.
+      const effZoomLink      = apptType === 'zoom' ? zoomLink : ''
+      const effZoomPassword  = apptType === 'zoom' ? zoomPassword : ''
+      const effZoomMeetingId = apptType === 'zoom' ? zoomMeetingId : null
+      const effLocation      = apptType === 'inperson' ? location : ''
+      const effLocationUrl   = apptType === 'inperson' ? locationUrl : ''
+      const effPhone         = (apptType === 'phone' || apptType === 'whatsapp') ? phoneNumber : ''
 
-      const { data: appt, error } = await supabase
-        .from('crm_appointments')
-        .insert({
-          title,
-          description:     description || null,
-          type:            apptType,
-          start_time,
-          end_time,
-          lead_id:         selectedLeadId || null,
-          zoom_link:       zoomLink || null,
-          zoom_meeting_id: zoomMeetingId || null,
-          location:        location || null,
-          location_url:    locationUrl || null,
-          phone_number:    phoneNumber || null,
-          created_by:      profile?.id || null,
-        })
-        .select()
-        .single()
-
-      if (error) {
-        console.error('[AppointmentModal] Supabase Insert Fehler:', {
-          code:    error.code,
-          message: error.message,
-          details: error.details,
-          hint:    error.hint,
-        })
-        // Klaren Fehlertext anzeigen
-        const msg = error.code === '42P01'
-          ? 'Tabelle crm_appointments existiert nicht – Migration ausführen!'
-          : error.code === '42501' || error.message?.includes('row-level security')
-            ? 'Keine Berechtigung (RLS). Nur Admin/Verwalter dürfen Termine anlegen.'
-            : `DB-Fehler [${error.code}]: ${error.message}`
-        throw new Error(msg)
+      const payload = {
+        title,
+        description:     description || null,
+        type:            apptType,
+        start_time,
+        end_time,
+        lead_id:         selectedLeadId || null,
+        zoom_link:       effZoomLink || null,
+        zoom_meeting_id: effZoomMeetingId,
+        location:        effLocation || null,
+        location_url:    effLocationUrl || null,
+        phone_number:    effPhone || null,
       }
 
-      console.log('[AppointmentModal] Termin angelegt:', appt)
+      let apptId = appointment?.id ?? ''
+      if (isEdit && appointment) {
+        // ── Bearbeiten: DB-Update + Google-Event mitziehen ──
+        const { error } = await supabase
+          .from('crm_appointments')
+          .update(payload)
+          .eq('id', appointment.id)
+        if (error) throw new Error(`DB-Fehler [${error.code}]: ${error.message}`)
 
-      // Save to Google Calendar
-      console.log('[AppointmentModal] saveToGoogle:', saveToGoogle, 'tokenValid:', hasGoogleToken())
-      if (saveToGoogle && hasGoogleToken()) {
-        try {
-          const googleResult = await createGoogleEvent({
-            title,
-            startIso:    start_time,
-            endIso:      end_time,
-            description: description || undefined,
-            location:    location || undefined,
+        if (appointment.google_event_id) {
+          try {
+            await updateGoogleEvent(appointment.google_event_id, {
+              title,
+              description: description || '',
+              location:    effLocation || '',
+              startIso:    start_time,
+              endIso:      end_time,
+            }, appointment.google_calendar_id ?? undefined)
+          } catch (gErr) {
+            console.warn('[AppointmentModal] Google-Update fehlgeschlagen:', gErr)
+            warnings.push(t('crm.appt.googleSyncWarn', 'Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.'))
+          }
+        } else if (saveToGoogle && googleAvailable) {
+          try {
+            const g = await createGoogleEvent({ title, startIso: start_time, endIso: end_time, description: description || undefined, location: effLocation || undefined })
+            await supabase.from('crm_appointments')
+              .update({ google_event_id: g.id, google_calendar_id: g.calendar_id ?? null })
+              .eq('id', appointment.id)
+          } catch (gErr) {
+            console.warn('[AppointmentModal] Google-Sync fehlgeschlagen:', gErr)
+            warnings.push(t('crm.appt.googleSyncWarn', 'Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.'))
+          }
+        }
+      } else {
+        // ── Neu anlegen ──
+        const { data: appt, error } = await supabase
+          .from('crm_appointments')
+          .insert({ ...payload, created_by: profile?.id || null })
+          .select()
+          .single()
+
+        if (error) {
+          console.error('[AppointmentModal] Supabase Insert Fehler:', {
+            code: error.code, message: error.message, details: error.details, hint: error.hint,
           })
-          console.log('[AppointmentModal] Google Event:', googleResult)
-          await supabase
-            .from('crm_appointments')
-            .update({ google_event_id: googleResult.id })
-            .eq('id', (appt as { id: string }).id)
-        } catch (gErr) {
-          console.warn('[AppointmentModal] Google Calendar Fehler (nicht fatal):', gErr)
-          // Google sync failed non-fatally; continue
+          const msg = error.code === '42P01'
+            ? 'Tabelle crm_appointments existiert nicht – Migration ausführen!'
+            : error.code === '42501' || error.message?.includes('row-level security')
+              ? 'Keine Berechtigung (RLS). Nur Admin/Verwalter dürfen Termine anlegen.'
+              : `DB-Fehler [${error.code}]: ${error.message}`
+          throw new Error(msg)
+        }
+        apptId = (appt as { id: string }).id
+
+        // In den Google-Kalender spiegeln (server-seitig, Service-Account)
+        if (saveToGoogle && googleAvailable) {
+          try {
+            const g = await createGoogleEvent({
+              title,
+              startIso:    start_time,
+              endIso:      end_time,
+              description: description || undefined,
+              location:    effLocation || undefined,
+            })
+            await supabase
+              .from('crm_appointments')
+              .update({ google_event_id: g.id, google_calendar_id: g.calendar_id ?? null })
+              .eq('id', apptId)
+          } catch (gErr) {
+            console.warn('[AppointmentModal] Google Calendar Fehler:', gErr)
+            warnings.push(t('crm.appt.googleSyncWarn', 'Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.'))
+          }
         }
       }
 
@@ -275,31 +377,107 @@ export default function AppointmentModal({
           type:      'meeting',
           direction: 'outbound',
           subject:   title,
-          content:   `Termin angelegt: ${apptType} am ${date} ${von}-${bis}`,
+          content:   `${isEdit ? 'Termin aktualisiert' : 'Termin angelegt'}: ${apptType} am ${date} ${von}-${bis}`,
           created_by: profile?.id,
         })
         if (actErr) console.warn('[AppointmentModal] Activity-Log Fehler:', actErr)
       }
 
-      // Optional: Terminbestätigung per E-Mail an den Lead (nur wenn angehakt)
+      // ── Wo-Zeile für Einladungen (Mail + WhatsApp) — alle Werte HTML-escaped ──
+      const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+      const whereHtml = apptType === 'zoom' && effZoomLink
+        ? `<p>Zoom-Link: <a href="${escHtml(effZoomLink)}">${escHtml(effZoomLink)}</a>${effZoomPassword ? `<br>Passwort: <strong>${escHtml(effZoomPassword)}</strong>` : ''}</p>`
+        : apptType === 'inperson' && (effLocation || effLocationUrl)
+          ? `<p>Ort: ${escHtml(effLocation)}${effLocationUrl ? ` · <a href="${escHtml(effLocationUrl)}">In Google Maps öffnen</a>` : ''}</p>`
+          : apptType === 'whatsapp' && effPhone
+            ? `<p>Wir melden uns per WhatsApp unter: ${escHtml(effPhone)}</p>`
+            : apptType === 'phone' && effPhone
+              ? `<p>Wir rufen dich an unter: ${escHtml(effPhone)}</p>` : ''
+
+      // Optional: Terminbestätigung per E-Mail an den Lead (mit Kalender-Anhang)
       if (sendEmailInvite && selectedLeadId) {
         try {
           const { data: ld } = await supabase.from('leads').select('email, first_name').eq('id', selectedLeadId).maybeSingle()
           const le = ld as { email?: string | null; first_name?: string | null } | null
           if (le?.email) {
-            const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
-            const where = zoomLink
-              ? `<p>Zoom-Link: <a href="${zoomLink}">${zoomLink}</a></p>`
-              : locationUrl ? `<p>Ort: <a href="${locationUrl}">${location || locationUrl}</a></p>`
-              : location ? `<p>Ort: ${location}</p>`
-              : phoneNumber ? `<p>Wir rufen dich an unter: ${phoneNumber}</p>` : ''
-            const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${le.first_name || ''},</p><p>hiermit bestätige ich unseren Termin:</p><p><strong>${title}</strong><br>${dateStr}<br>${von}–${bis} Uhr</p>${where}<p>Ich freue mich auf das Gespräch!</p><p>Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
-            const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { to: le.email, subject: `Terminbestätigung: ${title}`, html, lead_id: selectedLeadId } })
-            if (mailErr) console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr.message)
+            const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${escHtml(le.first_name || '')},</p><p>${isEdit ? 'unser Termin wurde aktualisiert:' : 'hiermit bestätige ich unseren Termin:'}</p><p><strong>${escHtml(title)}</strong><br>${dateStr}<br>${von}–${bis} Uhr</p>${whereHtml}<p>Im Anhang findest du den Termin für deinen Kalender.</p><p>Ich freue mich auf das Gespräch!</p><p>Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+            const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
+            const ics = buildIcs({
+              uid:        apptId || crypto.randomUUID(),
+              title, startIso: start_time, endIso: end_time,
+              description: icsDesc || undefined,
+              location:    effLocation || undefined,
+              // SEQUENCE steigt bei jeder Änderungs-Mail → Kalender-Clients ERSETZEN den Eintrag
+              sequence:      isEdit ? Math.floor(Date.now() / 1000) : 0,
+              attendeeEmail: le.email,
+            })
+            const { error: mailErr } = await supabase.functions.invoke('send-email', {
+              body: {
+                to: le.email,
+                subject: `${isEdit ? 'Terminänderung' : 'Terminbestätigung'}: ${title}`,
+                html,
+                lead_id: selectedLeadId,
+                attachment: {
+                  filename:       'termin.ics',
+                  content_base64: btoa(unescape(encodeURIComponent(ics))),
+                  content_type:   'text/calendar',
+                },
+              },
+            })
+            if (mailErr) {
+              console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr.message)
+              warnings.push(t('crm.appt.mailInviteFailed', 'E-Mail-Einladung konnte NICHT gesendet werden.'))
+            }
           } else {
-            console.warn('[AppointmentModal] Einladungs-Mail übersprungen — keine E-Mail am Lead.')
+            warnings.push(t('crm.appt.noLeadEmail', 'Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.'))
           }
-        } catch (mailErr) { console.warn('[AppointmentModal] Einladungs-Mail Fehler:', mailErr) }
+        } catch (mailErr) {
+          console.warn('[AppointmentModal] Einladungs-Mail Fehler:', mailErr)
+          warnings.push(t('crm.appt.mailInviteFailed', 'E-Mail-Einladung konnte NICHT gesendet werden.'))
+        }
+      }
+
+      // Optional: Einladung per WhatsApp an den Lead (manueller Klick von Sven).
+      // Nummer: DB-Nummer des Leads, sonst die im Modal eingetippte Nummer.
+      if (sendWhatsAppInvite && selectedLeadId) {
+        try {
+          const { data: ld } = await supabase.from('leads').select('phone, first_name, last_name').eq('id', selectedLeadId).maybeSingle()
+          const lw = ld as { phone?: string | null; first_name?: string | null; last_name?: string | null } | null
+          const waPhone = (lw?.phone || phoneNumber || '').trim()
+          if (waPhone) {
+            const whereText = apptType === 'zoom' && effZoomLink
+              ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\nPasswort: ${effZoomPassword}` : ''}`
+              : apptType === 'inperson' && (effLocation || effLocationUrl)
+                ? `\nOrt: ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
+                : ''
+            const waText = `Hallo ${lw?.first_name || ''}, ${isEdit ? 'unser Termin wurde aktualisiert' : 'hiermit bestätige ich unseren Termin'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\nIch freue mich auf das Gespräch!\nSven · Happy Property Cyprus`
+            const { error: waErr } = await supabase.functions.invoke('send-whatsapp', {
+              body: {
+                event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
+                override_text: waText,
+                lead_data:    { lead_name: `${lw?.first_name ?? ''} ${lw?.last_name ?? ''}`.trim(), lead_phone: waPhone },
+                lead_id:      selectedLeadId,
+              },
+            })
+            if (waErr) {
+              console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', waErr.message)
+              warnings.push(t('crm.appt.waInviteFailed', 'WhatsApp-Einladung konnte NICHT gesendet werden.'))
+            }
+          } else {
+            warnings.push(t('crm.appt.noLeadPhone', 'Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.'))
+          }
+        } catch (waErr) {
+          console.warn('[AppointmentModal] WhatsApp-Einladung Fehler:', waErr)
+          warnings.push(t('crm.appt.waInviteFailed', 'WhatsApp-Einladung konnte NICHT gesendet werden.'))
+        }
+      }
+
+      // Nebenwirkungs-Warnungen sichtbar machen statt still zu schließen.
+      // Termin selbst ist gespeichert — Button wird zu „Schließen" (kein Doppel-Anlegen).
+      if (warnings.length > 0) {
+        setSavedWithWarnings(true)
+        setSaveError(t('crm.appt.savedWithWarnings', 'Termin gespeichert, aber:') + ' ' + warnings.join(' · '))
+        return
       }
 
       onCreated()
@@ -333,6 +511,7 @@ export default function AppointmentModal({
     zoom:      '📹 Zoom',
     inperson:  '📍 Vor Ort',
     phone:     '📞 Telefon',
+    whatsapp:  '💬 WhatsApp',
   }
 
   // ── Render ────────────────────────────────────────────────────
@@ -343,7 +522,9 @@ export default function AppointmentModal({
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-2">
           <h2 className="text-lg font-semibold text-gray-900 font-body">
-            {t('crm.appt.modalTitle', 'Termin anlegen')}
+            {isEdit
+              ? t('crm.appt.modalTitleEdit', 'Termin bearbeiten')
+              : t('crm.appt.modalTitle', 'Termin anlegen')}
           </h2>
           <button
             onClick={onClose}
@@ -421,13 +602,13 @@ export default function AppointmentModal({
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   {t('crm.appt.type', 'Typ')}
                 </label>
-                <div className="flex gap-2">
-                  {(['zoom', 'inperson', 'phone'] as ApptType[]).map(tp => (
+                <div className="grid grid-cols-2 gap-2">
+                  {(['zoom', 'inperson', 'phone', 'whatsapp'] as ApptType[]).map(tp => (
                     <button
                       key={tp}
                       type="button"
                       onClick={() => setApptType(tp)}
-                      className="flex-1 px-3 py-2 rounded-lg text-sm font-medium border transition-colors"
+                      className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors"
                       style={
                         apptType === tp
                           ? { backgroundColor: '#ff795d', color: '#fff', borderColor: '#ff795d' }
@@ -607,13 +788,31 @@ export default function AppointmentModal({
                       </button>
                     </div>
                   </div>
+
+                  {/* Live-Kartenvorschau: zeigt sofort, ob die Adresse gefunden wird */}
+                  {location.trim() && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        {t('crm.appt.mapPreview', 'Kartenvorschau')}
+                      </label>
+                      <iframe
+                        title="Kartenvorschau"
+                        src={`https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`}
+                        className="w-full h-44 rounded-lg border border-gray-200"
+                        loading="lazy"
+                        referrerPolicy="no-referrer-when-downgrade"
+                      />
+                    </div>
+                  )}
                 </>
               )}
 
-              {apptType === 'phone' && (
+              {(apptType === 'phone' || apptType === 'whatsapp') && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('crm.appt.phone', 'Telefonnummer')}
+                    {apptType === 'whatsapp'
+                      ? t('crm.appt.whatsappNumber', 'WhatsApp-Nummer')
+                      : t('crm.appt.phone', 'Telefonnummer')}
                   </label>
                   <input
                     type="tel"
@@ -622,6 +821,17 @@ export default function AppointmentModal({
                     placeholder="+49 ..."
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
                   />
+                  {apptType === 'whatsapp' && phoneNumber.trim() && (
+                    <a
+                      href={`https://wa.me/${phoneNumber.replace(/[^0-9]/g, '')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block mt-2 text-sm underline font-medium"
+                      style={{ color: '#128c7e' }}
+                    >
+                      💬 {t('crm.appt.openWhatsApp', 'Chat in WhatsApp öffnen')}
+                    </a>
+                  )}
                 </div>
               )}
             </>
@@ -718,8 +928,10 @@ export default function AppointmentModal({
                       apptType === 'zoom'
                         ? { backgroundColor: '#ede9fe', color: '#7c3aed' }
                         : apptType === 'inperson'
-                          ? { backgroundColor: '#dcfce7', color: '#15803d' }
-                          : { backgroundColor: '#f3f4f6', color: '#4b5563' }
+                          ? { backgroundColor: '#fef3c7', color: '#b45309' }
+                          : apptType === 'whatsapp'
+                            ? { backgroundColor: '#d9fdd3', color: '#128c7e' }
+                            : { backgroundColor: '#f3f4f6', color: '#4b5563' }
                     }
                   >
                     {typeLabels[apptType]}
@@ -752,8 +964,10 @@ export default function AppointmentModal({
                   </div>
                 )}
 
-                {apptType === 'phone' && phoneNumber && (
-                  <div className="text-sm text-gray-600">📞 {phoneNumber}</div>
+                {(apptType === 'phone' || apptType === 'whatsapp') && phoneNumber && (
+                  <div className="text-sm text-gray-600">
+                    {apptType === 'whatsapp' ? '💬' : '📞'} {phoneNumber}
+                  </div>
                 )}
 
                 {(selectedLeadId || leadId) && (
@@ -763,8 +977,8 @@ export default function AppointmentModal({
                 )}
               </div>
 
-              {/* Google Calendar checkbox */}
-              {hasGoogleToken() && (
+              {/* Google Calendar checkbox (Verbindung ist server-seitig/dauerhaft) */}
+              {googleAvailable && (!isEdit || !appointment?.google_event_id) && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -777,19 +991,43 @@ export default function AppointmentModal({
                   </span>
                 </label>
               )}
+              {isEdit && appointment?.google_event_id && (
+                <p className="text-xs text-gray-400">
+                  ✓ {t('crm.appt.googleLinked', 'Mit Google Kalender verknüpft — Änderungen werden automatisch übernommen.')}
+                </p>
+              )}
 
-              {/* Email invite checkbox */}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={sendEmailInvite}
-                  onChange={e => setSendEmailInvite(e.target.checked)}
-                  className="rounded border-gray-300"
-                />
-                <span className="text-sm text-gray-700">
-                  {t('crm.appt.sendEmailInvite', 'Einladung per E-Mail an Lead senden')}
-                </span>
-              </label>
+              {/* Email invite checkbox (mit Kalender-Anhang) — nur mit verknüpftem Lead */}
+              {(selectedLeadId || leadId) && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={sendEmailInvite}
+                    onChange={e => setSendEmailInvite(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700">
+                    {isEdit
+                      ? t('crm.appt.sendEmailUpdate', 'Terminänderung per E-Mail an Lead senden (mit Kalender-Anhang)')
+                      : t('crm.appt.sendEmailInviteIcs', 'Einladung per E-Mail an Lead senden (mit Kalender-Anhang)')}
+                  </span>
+                </label>
+              )}
+
+              {/* WhatsApp invite checkbox */}
+              {(selectedLeadId || leadId) && (
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={sendWhatsAppInvite}
+                    onChange={e => setSendWhatsAppInvite(e.target.checked)}
+                    className="rounded border-gray-300"
+                  />
+                  <span className="text-sm text-gray-700">
+                    {t('crm.appt.sendWhatsAppInvite', 'Einladung per WhatsApp an Lead senden')}
+                  </span>
+                </label>
+              )}
 
               {saveError && (
                 <p className="text-sm text-red-500">{saveError}</p>
@@ -818,6 +1056,17 @@ export default function AppointmentModal({
             >
               {t('crm.appt.next', 'Weiter →')}
             </button>
+          ) : savedWithWarnings ? (
+            // Termin ist gespeichert (nur Nebenwirkungen schlugen fehl) → nur noch schließen,
+            // ein erneuter Klick auf „Termin anlegen" würde ein Duplikat erzeugen.
+            <button
+              type="button"
+              onClick={() => onCreated()}
+              className="px-5 py-2 text-sm font-medium text-white rounded-lg"
+              style={{ backgroundColor: '#ff795d' }}
+            >
+              {t('common.close', 'Schließen')}
+            </button>
           ) : (
             <button
               type="button"
@@ -829,7 +1078,9 @@ export default function AppointmentModal({
               {saving && (
                 <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               )}
-              {t('crm.appt.create', 'Termin anlegen')}
+              {isEdit
+                ? t('crm.appt.saveChanges', 'Änderungen speichern')
+                : t('crm.appt.create', 'Termin anlegen')}
             </button>
           )}
         </div>

@@ -1663,7 +1663,17 @@
       "viewMonth": "Monat",
       "viewWeek": "Woche",
       "viewDay": "Tag",
-      "newAppt": "Termin anlegen"
+      "newAppt": "Termin anlegen",
+      "notShared": "Google-Kalender noch nicht freigegeben — Anleitung unter Einstellungen → Integrationen.",
+      "setupGoogle": "Google einrichten →",
+      "editAppt": "Bearbeiten",
+      "confirmDeleteGoogle": "Diesen Google-Termin wirklich löschen?",
+      "googleEditHint": "Änderungen werden direkt in deinem Google-Kalender gespeichert.",
+      "openWhatsApp": "WhatsApp öffnen",
+      "editGoogleEvent": "Google-Termin bearbeiten",
+      "readOnly": "Google-Kalender ist nur LESEND freigegeben — Freigabestufe auf „Änderungen an Terminen vornehmen\" ändern (Einstellungen → Integrationen).",
+      "partialLoadError": "Ein Google-Kalender konnte nicht geladen werden — Termine evtl. unvollständig.",
+      "googleDeleteFailed": "Google-Event konnte nicht gelöscht werden — bitte im Google Kalender manuell entfernen."
     },
     "appointment": {
       "newTitle": "Termin anlegen",
@@ -1702,7 +1712,8 @@
       "stepLead": "Lead",
       "stepConfirm": "Bestätigen",
       "next": "Weiter →",
-      "back": "← Zurück"
+      "back": "← Zurück",
+      "whatsapp": "💬 WhatsApp"
     },
     "tab": {
       "appointments": "Termine",
@@ -1798,7 +1809,20 @@
       "connected": "Verbunden",
       "notConnected": "Nicht verbunden",
       "zoomConfigured": "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET gesetzt.",
-      "zoomSetup": "Zoom App →"
+      "zoomSetup": "Zoom App →",
+      "calChecking": "Prüfe Verbindung…",
+      "calConnectedPermanent": "Dauerhaft verbunden",
+      "calNotShared": "Freigabe fehlt noch",
+      "calRecheck": "Neu prüfen",
+      "calApiDisabled": "Die Google Calendar API ist im Google-Cloud-Projekt noch nicht aktiviert. Einmal aktivieren unter:",
+      "calShareTitle": "Einmalige Freigabe (danach läuft die Verbindung dauerhaft, wie beim Drive):",
+      "calShare1": "calendar.google.com öffnen (als happypropertycyprus@gmail.com)",
+      "calShare2": "Links bei „Meine Kalender\" → drei Punkte neben deinem Kalender → „Einstellungen und Freigabe\"",
+      "calShare3": "„Für bestimmte Personen freigeben\" → „Personen hinzufügen\" → diese Adresse einfügen:",
+      "calShare4": "Berechtigung: „Änderungen an Terminen vornehmen\" → Senden. Danach hier „Neu prüfen\" klicken.",
+      "calCopied": "Adresse kopiert ✓",
+      "calConnectedHint": "Die Verbindung ist server-seitig (Service-Account) und läuft nie ab — unabhängig von Browser, Cache oder Gerät. Termine vom iPhone erscheinen im CRM und sind dort bearbeitbar.",
+      "calReadOnly": "Der Kalender ist nur LESEND freigegeben. Bitte in den Google-Kalender-Einstellungen die Freigabestufe für die Service-Adresse auf „Änderungen an Terminen vornehmen\" ändern — dann hier „Neu prüfen\"."
     },
     "devContacts": {
       "title": "Ansprechpartner",
@@ -1857,7 +1881,23 @@
       "back": "← Zurück",
       "cancel": "Abbrechen",
       "next": "Weiter →",
-      "create": "Termin anlegen"
+      "create": "Termin anlegen",
+      "modalTitleEdit": "Termin bearbeiten",
+      "saveChanges": "Änderungen speichern",
+      "whatsappNumber": "WhatsApp-Nummer",
+      "openWhatsApp": "Chat in WhatsApp öffnen",
+      "mapPreview": "Kartenvorschau",
+      "location": "Ort",
+      "googleLinked": "Mit Google Kalender verknüpft — Änderungen werden automatisch übernommen.",
+      "sendEmailUpdate": "Terminänderung per E-Mail an Lead senden (mit Kalender-Anhang)",
+      "sendEmailInviteIcs": "Einladung per E-Mail an Lead senden (mit Kalender-Anhang)",
+      "sendWhatsAppInvite": "Einladung per WhatsApp an Lead senden",
+      "googleSyncWarn": "Google-Kalender wurde NICHT aktualisiert — Termin bitte erneut öffnen und speichern.",
+      "mailInviteFailed": "E-Mail-Einladung konnte NICHT gesendet werden.",
+      "noLeadEmail": "Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.",
+      "waInviteFailed": "WhatsApp-Einladung konnte NICHT gesendet werden.",
+      "noLeadPhone": "Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.",
+      "savedWithWarnings": "Termin gespeichert, aber:"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

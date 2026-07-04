@@ -9,6 +9,7 @@ import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel }
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
+import { deleteGoogleEvent } from '../../../lib/googleCalendar'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
@@ -3539,13 +3540,15 @@ export default function LeadDetail() {
                       const end    = new Date(appt.end_time)
                       const typeColors: Record<string, string> = {
                         zoom:     '#8b5cf6',
-                        inperson: '#22c55e',
+                        inperson: '#f59e0b',
                         phone:    '#9ca3af',
+                        whatsapp: '#25d366',
                       }
                       const typeLabels: Record<string, string> = {
                         zoom:     '📹 Zoom',
                         inperson: '📍 Vor Ort',
                         phone:    '📞 Telefon',
+                        whatsapp: '💬 WhatsApp',
                       }
                       return (
                         <div
@@ -3590,9 +3593,20 @@ export default function LeadDetail() {
                               {appt.location && (
                                 <p className="text-xs text-gray-500 mt-0.5">📍 {appt.location}</p>
                               )}
+                              {appt.phone_number && (
+                                <p className="text-xs text-gray-500 mt-0.5">
+                                  {appt.type === 'whatsapp' ? '💬' : '📞'} {appt.phone_number}
+                                </p>
+                              )}
                             </div>
                             <button
                               onClick={async () => {
+                                // Google-Event zuerst löschen — sonst taucht der Termin als
+                                // verwaistes Google-Event im Kalender wieder auf.
+                                if (appt.google_event_id) {
+                                  try { await deleteGoogleEvent(appt.google_event_id, appt.google_calendar_id ?? undefined) }
+                                  catch (err) { console.warn('[LeadDetail] Google-Event löschen fehlgeschlagen:', err) }
+                                }
                                 await supabase.from('crm_appointments').delete().eq('id', appt.id)
                                 setAppointments(prev => prev.filter(a => a.id !== appt.id))
                               }}
@@ -4032,6 +4046,7 @@ export default function LeadDetail() {
         <AppointmentModal
           leadId={lead.id}
           leadName={`${lead.first_name} ${lead.last_name}`}
+          leadPhone={lead.phone}
           onClose={() => setShowApptModal(false)}
           onCreated={() => { setShowApptModal(false); fetchAll(true) }}
         />

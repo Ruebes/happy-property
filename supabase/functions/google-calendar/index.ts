@@ -1,322 +1,336 @@
 // Supabase Edge Function: google-calendar
-// Server-seitige, DAUERHAFTE Google-Calendar-Anbindung über denselben
-// Refresh-Token-Mechanismus wie google-drive (Konto happypropertycyprus@gmail.com).
-// Dadurch ist der Kalender permanent verbunden – unabhängig von Browser, Cache
-// oder Gerät. Ersetzt den fragilen Browser-Token-Flow (GIS) im Frontend.
+// DAUERHAFTE Google-Calendar-Anbindung über den Service-Account — exakt dasselbe
+// Muster wie google-drive (das stabil läuft). Kein OAuth-Popup, kein Refresh-Token,
+// kein Browser-Storage: Sven gibt seinen Kalender (happypropertycyprus@gmail.com)
+// einmal für die SA-E-Mail frei ("Änderungen an Terminen vornehmen"), danach kann
+// nichts mehr ablaufen. Ersetzt den fragilen GIS-Browser-Flow UND den nie
+// angeschlossenen OAuth-Refresh-Token-Flow der Vorversion.
 //
-// Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
-// Der wirksame Refresh-Token wird DB-first gelesen (crm_settings →
-// 'google_refresh_token'), Fallback auf das Env-Secret GOOGLE_REFRESH_TOKEN.
-// So kann die einmalige Neu-Verbindung (mit Calendar-Scope) den Token ohne
-// Redeploy/Secret-Setzen persistieren.
+// WICHTIG (Google-Limitierung): Service-Accounts dürfen ohne Workspace-Domain
+// KEINE attendees/Einladungen setzen → Kunden-Einladungen laufen über unsere
+// eigene Infrastruktur (send-email mit ICS-Anhang + send-whatsapp).
 //
-// ── Einmalige Verbindung (GET) ───────────────────────────────────────────────
-//   GET ?action=connect → leitet zu Google weiter (Consent: Drive + Calendar,
-//                         access_type=offline, prompt=consent → Refresh-Token)
-//   GET ?code=…          → Google-Redirect: tauscht Code → Refresh-Token,
-//                         speichert ihn in crm_settings, zeigt Erfolgsseite
+// Actions (POST, JSON):
+//   check         → Verbindung prüfen; liefert sa_email + konkreten Grund bei Fehler
+//                   (not_shared = Kalender nicht freigegeben, api_disabled = Calendar
+//                   API im GCP-Projekt nicht aktiviert)
+//   list_events   → Events aller konfigurierten Kalender (timeMin..timeMax)
+//   create_event  → Termin anlegen  (title, start, end, description?, location?)
+//   update_event  → Termin ändern   (event_id + geänderte Felder)
+//   delete_event  → Termin löschen  (event_id)
 //
-// ── API (POST, JSON) ─────────────────────────────────────────────────────────
-//   check         → prüft, ob wirksamer Token gültig ist UND Calendar-Scope hat
-//   list_events   → Events aus ALLEN Kalendern des Kontos (timeMin..timeMax)
-//   create_event  → Termin anlegen (optional attendee_email → Einladung an Kunden)
-//   delete_event  → Termin löschen (event_id, optional calendar_id)
+// Kalender-IDs: crm_settings key 'google_calendar_ids' (kommagetrennt),
+// Default happypropertycyprus@gmail.com. Der ERSTE Eintrag ist der Schreib-Kalender.
+//
+// Secrets: GOOGLE_SERVICE_ACCOUNT_JSON (wie google-drive)
+//
+// Deployment:
+//   supabase functions deploy google-calendar --no-verify-jwt
+//   (Zugriff ist intern über den Rollen-Check admin/verwalter abgesichert)
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 
-const corsHeaders = {
+const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...CORS, 'Content-Type': 'application/json' },
   })
 
-const html = (markup: string, status = 200) =>
-  new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${markup}`, {
-    status,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
-  })
+const DEFAULT_CALENDAR = 'happypropertycyprus@gmail.com'
+const SETTINGS_KEY     = 'google_calendar_ids'
 
-// Nur Calendar-Scope – dieser Client dient ausschließlich dem Kalender.
-const OAUTH_SCOPES = 'https://www.googleapis.com/auth/calendar'
-
-// Eigener Settings-Key, damit der Kalender-Token NICHT mit dem Drive-Token
-// (anderer Client / anderes Projekt) kollidiert.
-const SETTINGS_KEY = 'google_calendar_refresh_token'
-
-// ── Eigener OAuth-Client NUR für den Kalender ────────────────────────────────
-// Projekt "My First Project", Client "n8n Google Drive OAuth". Bewusst getrennt
-// vom Drive-Client (GOOGLE_CLIENT_ID liegt in einem anderen Projekt, auf das
-// kein Console-Zugriff besteht) – so bleibt Google Drive komplett unberührt.
-// Die Client-ID ist öffentlich (steht in jeder OAuth-URL) → fix im Code ok.
-// Das Secret kommt aus dem Supabase-Secret GOOGLE_CALENDAR_CLIENT_SECRET.
-const CAL_CLIENT_ID =
-  Deno.env.get('GOOGLE_CALENDAR_CLIENT_ID') ??
-  '160017437982-so2l79di9taeh0tk29s6hrjp2ktoeec3.apps.googleusercontent.com'
-
-function calClientSecret(): string | undefined {
-  return Deno.env.get('GOOGLE_CALENDAR_CLIENT_SECRET')
+// ── Service-Account-Token (Muster aus google-drive) ──────────────────────────
+function b64url(bytes: Uint8Array): string {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
-
-function svc(): SupabaseClient {
-  return createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
-  )
+async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  const b = pem.replace(/-----BEGIN PRIVATE KEY-----/, '').replace(/-----END PRIVATE KEY-----/, '').replace(/\\n/g, '').replace(/\s+/g, '')
+  const der = Uint8Array.from(atob(b), c => c.charCodeAt(0))
+  return crypto.subtle.importKey('pkcs8', der.buffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
 }
-
-// Redirect-URI = diese Funktion (muss exakt als Authorized redirect URI in der
-// Google Cloud Console eingetragen sein).
-function redirectUri(): string {
-  return `${Deno.env.get('SUPABASE_URL')}/functions/v1/google-calendar`
+function saEmail(): string {
+  const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+  if (!raw) return ''
+  try { return (JSON.parse(raw) as { client_email?: string }).client_email ?? '' } catch { return '' }
 }
-
-// Wirksamen Refresh-Token holen: erst DB (crm_settings), dann Env-Fallback.
-async function getRefreshToken(supabase: SupabaseClient): Promise<string | null> {
-  try {
-    const { data } = await supabase
-      .from('crm_settings').select('value').eq('key', SETTINGS_KEY).maybeSingle()
-    if (data?.value) return data.value as string
-  } catch { /* ignore – Env-Fallback */ }
-  return Deno.env.get('GOOGLE_CALENDAR_REFRESH_TOKEN') ?? null
-}
-
-// ── OAuth: kurzlebigen Access-Token aus Refresh-Token holen ────────────────────
-async function getAccessToken(refreshToken: string): Promise<string> {
+async function getServiceAccountToken(scope = 'https://www.googleapis.com/auth/calendar'): Promise<string> {
+  const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+  if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON nicht gesetzt')
+  const sa = JSON.parse(raw) as { client_email: string; private_key: string }
+  const now = Math.floor(Date.now() / 1000)
+  const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const key = await importPrivateKey(sa.private_key)
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
+  const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`
   const res = await fetch('https://oauth2.googleapis.com/token', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id:     CAL_CLIENT_ID,
-      client_secret: calClientSecret()!,
-      refresh_token: refreshToken,
-      grant_type:    'refresh_token',
-    }),
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt }),
   })
   const data = await res.json() as { access_token?: string; error?: string; error_description?: string }
-  if (!data.access_token) {
-    throw new Error(`Google OAuth fehlgeschlagen: ${data.error_description ?? data.error ?? JSON.stringify(data)}`)
-  }
+  if (!data.access_token) throw new Error(`Service-Account-Token fehlgeschlagen: ${data.error_description ?? data.error ?? JSON.stringify(data)}`)
   return data.access_token
 }
 
-interface CalendarEvent {
-  id:             string
-  summary?:       string
-  start:          { dateTime?: string; date?: string }
-  end:            { dateTime?: string; date?: string }
-  htmlLink?:      string
-  calendarColor?: string
-  calendarName?:  string
-}
-
-// ── GET: einmalige Verbindung (Consent-Redirect + Callback) ────────────────────
-async function handleGet(req: Request): Promise<Response> {
-  const url    = new URL(req.url)
-  const code   = url.searchParams.get('code')
-  const action = url.searchParams.get('action')
-  const oauthErr = url.searchParams.get('error')
-
-  const clientId     = CAL_CLIENT_ID
-  const clientSecret = calClientSecret()
-  if (!clientId || !clientSecret) {
-    return html('<h2>❌ Kalender nicht konfiguriert</h2><p>Das Supabase-Secret <code>GOOGLE_CALENDAR_CLIENT_SECRET</code> fehlt.</p>', 503)
-  }
-
-  // 1) Start: zu Google weiterleiten
-  if (action === 'connect') {
-    const auth = new URL('https://accounts.google.com/o/oauth2/v2/auth')
-    auth.searchParams.set('client_id',     clientId)
-    auth.searchParams.set('redirect_uri',  redirectUri())
-    auth.searchParams.set('response_type', 'code')
-    auth.searchParams.set('scope',         OAUTH_SCOPES)
-    auth.searchParams.set('access_type',   'offline')
-    // select_account → erzwingt IMMER den Konto-Auswahl-Dialog (verhindert,
-    // dass Google still ein bereits eingeloggtes falsches Konto verwendet).
-    // consent → erzwingt Refresh-Token.
-    auth.searchParams.set('prompt',        'select_account consent')
-    auth.searchParams.set('include_granted_scopes', 'true')
-    // Optionaler Konto-Vorschlag: /?action=connect&hint=mail@example.com
-    const hint = url.searchParams.get('hint')
-    if (hint) auth.searchParams.set('login_hint', hint)
-    return Response.redirect(auth.toString(), 302)
-  }
-
-  // 2) Google-Fehler
-  if (oauthErr) {
-    return html(`<h2>❌ Verbindung abgebrochen</h2><p>Google meldete: <code>${oauthErr}</code></p>`, 400)
-  }
-
-  // 3) Callback: Code → Refresh-Token tauschen und speichern
-  if (code) {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        code,
-        client_id:     clientId,
-        client_secret: clientSecret,
-        redirect_uri:  redirectUri(),
-        grant_type:    'authorization_code',
-      }),
-    })
-    const data = await res.json() as { refresh_token?: string; access_token?: string; error?: string; error_description?: string }
-    if (!data.refresh_token) {
-      return html(
-        `<h2>⚠️ Kein Refresh-Token erhalten</h2><p>${data.error_description ?? data.error ?? 'Unbekannt'}.</p>` +
-        `<p>Bitte den Zugriff in deinem Google-Konto einmal entfernen und erneut verbinden.</p>`, 400)
+// ── Kalender-IDs aus crm_settings (kommagetrennt), Default Gmail-Konto ────────
+async function getCalendarIds(admin: SupabaseClient): Promise<string[]> {
+  try {
+    const { data } = await admin
+      .from('crm_settings').select('value').eq('key', SETTINGS_KEY).maybeSingle()
+    const raw = (data as { value?: string } | null)?.value
+    if (raw) {
+      const ids = raw.split(',').map(s => s.trim()).filter(Boolean)
+      if (ids.length) return ids
     }
-    await svc().from('crm_settings').upsert({ key: SETTINGS_KEY, value: data.refresh_token })
-    return html(
-      '<div style="font-family:system-ui;max-width:520px;margin:64px auto;text-align:center">' +
-      '<div style="font-size:48px">✅</div>' +
-      '<h2>Google-Kalender dauerhaft verbunden</h2>' +
-      '<p style="color:#555">Die Verbindung ist jetzt server-seitig gespeichert und bleibt bestehen – ' +
-      'unabhängig von Browser, Cache oder Gerät. Du kannst dieses Fenster schließen.</p></div>')
-  }
-
-  // 4) Default-Info
-  return html(
-    '<div style="font-family:system-ui;max-width:520px;margin:64px auto;text-align:center">' +
-    '<h2>Google-Kalender verbinden</h2>' +
-    '<p><a href="?action=connect">Hier klicken, um zu verbinden →</a></p></div>')
+  } catch { /* Default */ }
+  return [DEFAULT_CALENDAR]
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────────
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders })
-  if (req.method === 'GET')     return handleGet(req)
-
-  const supabase     = svc()
-  const refreshToken = await getRefreshToken(supabase)
-
-  if (!CAL_CLIENT_ID || !calClientSecret() || !refreshToken) {
-    return json({ error: 'Kalender nicht konfiguriert. Supabase-Secret GOOGLE_CALENDAR_CLIENT_SECRET setzen und /functions/v1/google-calendar?action=connect aufrufen.' }, 503)
+// ── Google-Fehler klassifizieren (für verständliche UI-Hinweise) ──────────────
+interface GoogleErr { error?: { code?: number; message?: string; errors?: { reason?: string }[]; status?: string } }
+function classifyGoogleError(status: number, body: GoogleErr): { reason: string; error: string } {
+  const msg     = body?.error?.message ?? `HTTP ${status}`
+  const reasons = (body?.error?.errors ?? []).map(e => e.reason ?? '')
+  if (status === 403 && (reasons.includes('accessNotConfigured') || /has not been used|is disabled/i.test(msg))) {
+    return { reason: 'api_disabled', error: msg }
   }
+  if (status === 404) return { reason: 'not_shared', error: msg }
+  if (status === 403) return { reason: 'no_permission', error: msg }
+  return { reason: 'error', error: msg }
+}
+
+// ── Event-Felder für das Frontend zuschneiden ─────────────────────────────────
+interface GEvent {
+  id: string
+  summary?: string
+  description?: string
+  location?: string
+  start: { dateTime?: string; date?: string }
+  end:   { dateTime?: string; date?: string }
+  htmlLink?: string
+  status?: string
+}
+function trimEvent(e: GEvent, calendarId: string) {
+  return {
+    id:          e.id,
+    summary:     e.summary ?? '',
+    description: e.description ?? '',
+    location:    e.location ?? '',
+    start:       e.start,
+    end:         e.end,
+    htmlLink:    e.htmlLink,
+    calendarId,
+  }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const admin = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+    // ── Rollen-Check: nur Admin/Verwalter (Muster aus admin-user-ops) ────────
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const jwt = authHeader.replace(/^Bearer\s+/i, '')
+    const caller = jwt
+      ? (await createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
+      : null
+    if (!caller) return json({ error: 'Nicht angemeldet.' }, 401)
+    const { data: callerProfile } = await admin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
+    const callerRole = (callerProfile as { role?: string } | null)?.role ?? ''
+    if (!['admin', 'verwalter'].includes(callerRole)) {
+      return json({ error: 'Keine Berechtigung.' }, 403)
+    }
+
     const body = await req.json() as {
-      action:          'check' | 'list_events' | 'create_event' | 'delete_event'
-      timeMin?:        string
-      timeMax?:        string
-      title?:          string
-      description?:    string
-      location?:       string
-      start?:          string
-      end?:            string
-      timezone?:       string
-      attendee_email?: string
-      event_id?:       string
-      calendar_id?:    string
+      action:       'check' | 'list_events' | 'create_event' | 'update_event' | 'delete_event'
+      timeMin?:     string
+      timeMax?:     string
+      title?:       string
+      description?: string
+      location?:    string
+      start?:       string
+      end?:         string
+      timezone?:    string
+      event_id?:    string
+      calendar_id?: string
     }
 
-    const token = await getAccessToken(refreshToken)
+    if (!Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')) {
+      // Status 200: der Client soll reason 'no_sa' anzeigen können (kein Transportfehler).
+      return json({ success: true, connected: false, reason: 'no_sa', sa_email: '', error_detail: 'GOOGLE_SERVICE_ACCOUNT_JSON nicht gesetzt.' })
+    }
 
-    // ── check ─────────────────────────────────────────────────────────────────
+    const calendarIds = await getCalendarIds(admin)
+    const primaryCal  = calendarIds[0]
+
+    // Härtung: Client darf nur Kalender aus der konfigurierten Liste ansprechen.
+    if (body.calendar_id && !calendarIds.includes(body.calendar_id)) {
+      return json({ error: 'Unbekannter Kalender.' }, 400)
+    }
+    const token       = await getServiceAccountToken()
+    const tz          = body.timezone || 'Asia/Nicosia'
+    const gHeaders    = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    const calUrl      = (calId: string, path = '') =>
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events${path}`
+
+    // ── check ────────────────────────────────────────────────────────────────
+    // WICHTIG: check antwortet IMMER mit 200 und ohne `error`-Feld (Detail heißt
+    // error_detail), damit der Client sa_email + reason für die Setup-UI bekommt.
     if (body.action === 'check') {
-      const r = await fetch(
-        'https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1',
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (r.ok) return json({ configured: true })
-      const err = await r.json().catch(() => ({})) as { error?: { message?: string } }
-      return json({
-        configured: false,
-        reason:     r.status === 403 ? 'scope' : 'error',
-        status:     r.status,
-        error:      err?.error?.message ?? `HTTP ${r.status}`,
-      })
+      const r = await fetch(calUrl(primaryCal) + '?maxResults=1', { headers: gHeaders })
+      if (!r.ok) {
+        const errBody = await r.json().catch(() => ({})) as GoogleErr
+        const cls = classifyGoogleError(r.status, errBody)
+        console.warn('[google-calendar] check fehlgeschlagen:', r.status, cls.reason, cls.error)
+        return json({ success: true, connected: false, sa_email: saEmail(), calendar_id: primaryCal, reason: cls.reason, error_detail: cls.error })
+      }
+
+      // Lesen geht — jetzt SCHREIBRECHT prüfen: Google bietet 4 Freigabestufen an,
+      // die read-only-Stufe ist die Voreinstellung. Ohne 'writer' würde jeder
+      // Termin-Sync später still mit 403 scheitern, obwohl alles "verbunden" aussieht.
+      let accessRole = ''
+      try {
+        const ins = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList', {
+          method: 'POST', headers: gHeaders, body: JSON.stringify({ id: primaryCal }),
+        })
+        if (ins.ok) {
+          accessRole = ((await ins.json()) as { accessRole?: string }).accessRole ?? ''
+        } else {
+          const g = await fetch(`https://www.googleapis.com/calendar/v3/users/me/calendarList/${encodeURIComponent(primaryCal)}`, { headers: gHeaders })
+          if (g.ok) accessRole = ((await g.json()) as { accessRole?: string }).accessRole ?? ''
+        }
+      } catch { /* accessRole unbestimmt → nicht blockieren, Lesen funktionierte */ }
+
+      if (accessRole && !['writer', 'owner'].includes(accessRole)) {
+        console.warn('[google-calendar] check: nur Lese-Freigabe (accessRole=' + accessRole + ')')
+        return json({
+          success: true, connected: false, sa_email: saEmail(), calendar_id: primaryCal,
+          reason: 'read_only',
+          error_detail: `Freigabestufe ist '${accessRole}' — es fehlt „Änderungen an Terminen vornehmen".`,
+        })
+      }
+      return json({ success: true, connected: true, sa_email: saEmail(), calendar_id: primaryCal, calendar_ids: calendarIds })
     }
 
-    // ── list_events ───────────────────────────────────────────────────────────
+    // ── list_events ──────────────────────────────────────────────────────────
     if (body.action === 'list_events') {
       const { timeMin, timeMax } = body
       if (!timeMin || !timeMax) return json({ error: 'timeMin und timeMax sind Pflicht.' }, 400)
 
-      const calListResp = await fetch(
-        'https://www.googleapis.com/calendar/v3/users/me/calendarList',
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      const calList = await calListResp.json() as {
-        items?: { id: string; summary: string; backgroundColor?: string }[]
-      }
-      const calendars = calList.items ?? []
-
+      // Fehler pro Kalender werden NICHT verschluckt, sondern als errors[] mitgegeben —
+      // sonst verschwinden Google-Termine kommentarlos (Doppelbuchungs-Risiko).
+      const listErrors: { calendarId: string; reason: string }[] = []
       const results = await Promise.all(
-        calendars.map(async (cal) => {
+        calendarIds.map(async (calId) => {
           try {
-            const u =
-              `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?` +
-              new URLSearchParams({
-                timeMin, timeMax,
-                singleEvents: 'true', orderBy: 'startTime', maxResults: '100',
-              }).toString()
-            const evResp = await fetch(u, { headers: { Authorization: `Bearer ${token}` } })
-            const evData = await evResp.json() as { items?: CalendarEvent[] }
-            return (evData.items ?? []).map(e => ({
-              ...e,
-              calendarColor: cal.backgroundColor ?? '#4285f4',
-              calendarName:  cal.summary,
-            }))
-          } catch { return [] }
+            const u = calUrl(calId) + '?' + new URLSearchParams({
+              timeMin, timeMax,
+              singleEvents: 'true', orderBy: 'startTime', maxResults: '250',
+            }).toString()
+            const r = await fetch(u, { headers: gHeaders })
+            if (!r.ok) {
+              const errBody = await r.json().catch(() => ({})) as GoogleErr
+              const cls = classifyGoogleError(r.status, errBody)
+              console.warn('[google-calendar] list_events Kalender-Fehler:', calId, r.status, cls.reason)
+              listErrors.push({ calendarId: calId, reason: cls.reason })
+              return []
+            }
+            const data = await r.json() as { items?: GEvent[] }
+            return (data.items ?? [])
+              .filter(e => e.status !== 'cancelled')
+              .map(e => trimEvent(e, calId))
+          } catch (err) {
+            console.warn('[google-calendar] list_events Fehler:', calId, err)
+            listErrors.push({ calendarId: calId, reason: 'network' })
+            return []
+          }
         }),
       )
-      return json({ events: results.flat() })
+      return json({ success: true, events: results.flat(), errors: listErrors })
     }
 
-    // ── create_event ──────────────────────────────────────────────────────────
+    // ── create_event ─────────────────────────────────────────────────────────
     if (body.action === 'create_event') {
-      const { title, description, location, start, end, timezone, attendee_email } = body
+      const { title, description, location, start, end } = body
       if (!title || !start || !end) return json({ error: 'title, start und end sind Pflicht.' }, 400)
-      const tz = timezone || 'Europe/Berlin'
 
-      const event: Record<string, unknown> = {
-        summary:     title,
-        description: description ?? '',
-        location:    location ?? '',
-        start: { dateTime: start, timeZone: tz },
-        end:   { dateTime: end,   timeZone: tz },
-      }
-      if (attendee_email) event.attendees = [{ email: attendee_email }]
-
-      const u =
-        'https://www.googleapis.com/calendar/v3/calendars/primary/events' +
-        (attendee_email ? '?sendUpdates=all' : '')   // Kunde erhält Einladung
-
-      const r = await fetch(u, {
+      const r = await fetch(calUrl(body.calendar_id || primaryCal), {
         method:  'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body:    JSON.stringify(event),
+        headers: gHeaders,
+        body: JSON.stringify({
+          summary:     title,
+          description: description ?? '',
+          location:    location ?? '',
+          start: { dateTime: start, timeZone: tz },
+          end:   { dateTime: end,   timeZone: tz },
+        }),
       })
-      const data = await r.json() as { id?: string; htmlLink?: string; error?: { message?: string } }
+      const data = await r.json() as { id?: string; htmlLink?: string } & GoogleErr
       if (!r.ok || !data.id) {
-        return json({ error: data?.error?.message ?? `HTTP ${r.status}` }, r.ok ? 500 : r.status)
+        const cls = classifyGoogleError(r.status, data)
+        console.error('[google-calendar] create_event Fehler:', r.status, cls.error)
+        return json({ error: cls.error, reason: cls.reason }, r.ok ? 500 : r.status)
       }
-      return json({ ok: true, id: data.id, htmlLink: data.htmlLink })
+      return json({ success: true, id: data.id, htmlLink: data.htmlLink, calendar_id: body.calendar_id || primaryCal })
     }
 
-    // ── delete_event ──────────────────────────────────────────────────────────
-    if (body.action === 'delete_event') {
-      const { event_id, calendar_id } = body
+    // ── update_event ─────────────────────────────────────────────────────────
+    if (body.action === 'update_event') {
+      const { event_id } = body
       if (!event_id) return json({ error: 'event_id fehlt.' }, 400)
-      const cal = calendar_id || 'primary'
-      const r = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal)}/events/${encodeURIComponent(event_id)}`,
-        { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
-      )
-      if (r.ok || r.status === 410) return json({ ok: true })   // 410 = bereits gelöscht
-      const err = await r.json().catch(() => ({})) as { error?: { message?: string } }
-      return json({ error: err?.error?.message ?? `HTTP ${r.status}` }, r.status)
+
+      const patch: Record<string, unknown> = {}
+      if (body.title       !== undefined) patch.summary     = body.title
+      if (body.description !== undefined) patch.description = body.description
+      if (body.location    !== undefined) patch.location    = body.location
+      if (body.start) patch.start = { dateTime: body.start, timeZone: tz }
+      if (body.end)   patch.end   = { dateTime: body.end,   timeZone: tz }
+      if (Object.keys(patch).length === 0) return json({ error: 'Keine Änderungen übergeben.' }, 400)
+
+      const r = await fetch(calUrl(body.calendar_id || primaryCal, `/${encodeURIComponent(event_id)}`), {
+        method:  'PATCH',
+        headers: gHeaders,
+        body:    JSON.stringify(patch),
+      })
+      const data = await r.json().catch(() => ({})) as { id?: string; htmlLink?: string } & GoogleErr
+      if (!r.ok) {
+        const cls = classifyGoogleError(r.status, data)
+        console.error('[google-calendar] update_event Fehler:', r.status, cls.error)
+        return json({ error: cls.error, reason: cls.reason }, r.status)
+      }
+      return json({ success: true, id: data.id, htmlLink: data.htmlLink })
+    }
+
+    // ── delete_event ─────────────────────────────────────────────────────────
+    if (body.action === 'delete_event') {
+      const { event_id } = body
+      if (!event_id) return json({ error: 'event_id fehlt.' }, 400)
+      const r = await fetch(calUrl(body.calendar_id || primaryCal, `/${encodeURIComponent(event_id)}`), {
+        method: 'DELETE', headers: gHeaders,
+      })
+      if (r.ok || r.status === 410) return json({ success: true })   // 410 = bereits gelöscht
+      const errBody = await r.json().catch(() => ({})) as GoogleErr
+      const cls = classifyGoogleError(r.status, errBody)
+      console.error('[google-calendar] delete_event Fehler:', r.status, cls.error)
+      return json({ error: cls.error, reason: cls.reason }, r.status)
     }
 
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
 
   } catch (err) {
-    console.error('[google-calendar] Fehler:', err)
-    return json({ error: String(err) }, 500)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[google-calendar] Fehler:', msg)
+    return json({ error: msg }, 500)
   }
 })

@@ -7,15 +7,12 @@ import { supabase } from '../../../lib/supabase'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import {
-  initGoogleAuth,
-  signInGoogle,
-  signOutGoogle,
-  hasGoogleToken,
-  refreshGoogleToken,
-  cancelGoogleTokenRefresh,
+  checkCalendarStatus,
   listGoogleEvents,
+  deleteGoogleEvent,
 } from '../../../lib/googleCalendar'
 import type { GoogleCalendarEvent } from '../../../lib/googleCalendar'
+import GoogleEventModal from '../../../components/crm/GoogleEventModal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,8 +22,9 @@ type CalView = 'month' | 'week' | 'day'
 
 const APPT_COLORS = {
   zoom:     { bg: '#ede9fe', text: '#7c3aed', pill: '#8b5cf6' },
-  inperson: { bg: '#dcfce7', text: '#15803d', pill: '#22c55e' },
+  inperson: { bg: '#fef3c7', text: '#b45309', pill: '#f59e0b' },
   phone:    { bg: '#f3f4f6', text: '#4b5563', pill: '#9ca3af' },
+  whatsapp: { bg: '#d9fdd3', text: '#128c7e', pill: '#25d366' },
 } as const
 
 /** Google-Event Farben: blau für normale, grün für Ganztagstermine (Feiertage) */
@@ -143,6 +141,7 @@ function TypeBadge({ type, t }: { type: string; t: TFunction }) {
   const colors = APPT_COLORS[type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
   const label  = type === 'zoom' ? t('crm.appointment.zoom', '📹 Zoom')
     : type === 'inperson' ? t('crm.appointment.inperson', '📍 Vor Ort')
+    : type === 'whatsapp' ? t('crm.appointment.whatsapp', '💬 WhatsApp')
     : t('crm.appointment.phone', '📞 Telefon')
   return (
     <span
@@ -169,58 +168,34 @@ export default function CrmCalendar() {
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
   const [appointments, setAppointments] = useState<CrmAppointment[]>([])
   const [googleEvents, setGoogleEvents] = useState<GoogleCalendarEvent[]>([])
-  const [googleConnected, setGoogleConnected] = useState<boolean>(hasGoogleToken())
-  const [googleInitialized, setGoogleInitialized] = useState(false)
+  const [googleConnected, setGoogleConnected] = useState(false)
+  const [googleChecked, setGoogleChecked]     = useState(false)
   const [loading, setLoading]         = useState(false)
   const [googleError, setGoogleError] = useState('')
   const [showModal, setShowModal]     = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [selectedAppt, setSelectedAppt]       = useState<CrmAppointment | null>(null)
   const [selectedGoogleEvt, setSelectedGoogleEvt] = useState<GoogleCalendarEvent | null>(null)
+  const [editAppt, setEditAppt]               = useState<CrmAppointment | null>(null)
+  const [editGoogleEvt, setEditGoogleEvt]     = useState<GoogleCalendarEvent | null>(null)
 
-  // ── Google init ───────────────────────────────────────────────
-  // cancelled-Flag verhindert setState nach Unmount (z.B. wenn User die
-  // Seite wechselt bevor die Google-Scripts geladen haben).
+  // ── Google-Status: einmaliger Server-Check (Service-Account, läuft nie ab) ──
   useEffect(() => {
     let cancelled = false
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    if (!clientId) return
-    initGoogleAuth()
-      .then(() => {
+    checkCalendarStatus()
+      .then(s => {
         if (cancelled) return
-        setGoogleInitialized(true)
-        setGoogleConnected(hasGoogleToken())
+        setGoogleConnected(s.connected)
+        setGoogleChecked(true)
+        if (!s.connected && s.reason === 'not_shared') {
+          setGoogleError(t('crm.calendar.notShared', 'Google-Kalender noch nicht freigegeben — Anleitung unter Einstellungen → Integrationen.'))
+        } else if (!s.connected && s.reason === 'read_only') {
+          setGoogleError(t('crm.calendar.readOnly', 'Google-Kalender ist nur LESEND freigegeben — Freigabestufe auf „Änderungen an Terminen vornehmen" ändern (Einstellungen → Integrationen).'))
+        }
       })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setGoogleChecked(true) })
     return () => { cancelled = true }
-  }, [])
-
-  // ── Proaktiver Token-Refresh (alle 5 Min prüfen, refresh wenn < 10 Min übrig) ──
-  // Kurzes Prüfintervall damit der Token nie unbemerkt abläuft.
-  // Der eigentliche HTTP-Refresh läuft nur wenn nötig (< 10 Min Restlaufzeit).
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (!hasGoogleToken()) {
-        setGoogleConnected(false)
-        return
-      }
-      const expiresAt = (JSON.parse(localStorage.getItem('google_calendar_token') ?? '{}') as { expires_at?: number }).expires_at ?? 0
-      const remaining = expiresAt - Date.now()
-      if (remaining > 10 * 60 * 1000) return   // Noch > 10 Min übrig → nichts tun
-      const ok = await refreshGoogleToken()
-      if (!ok) {
-        setGoogleConnected(false)
-        setGoogleEvents([])
-      }
-    }, 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [])
-
-  // ── Cleanup beim Verlassen der Seite ────────────────────────
-  // Verhindert dass der 45-Min-Timer auf anderen Seiten feuert
-  // (der localStorage-basierte Token bleibt erhalten).
-  useEffect(() => {
-    return () => { cancelGoogleTokenRefresh() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // ── Range for current view ────────────────────────────────────
@@ -250,21 +225,24 @@ export default function CrmCalendar() {
     }
   }, [])
 
-  // ── Fetch Google events ───────────────────────────────────────
-  // listGoogleEvents() versucht bei abgelaufenem Token einen silent refresh.
-  // Gibt [] zurück wenn der User sich neu verbinden muss → googleConnected auf false.
+  // ── Fetch Google events (server-seitig, Fehler sichtbar statt still leer) ──
   const fetchGoogleEvents = useCallback(async (rangeStart: Date, rangeEnd: Date) => {
     if (!googleConnected) return
     try {
-      const events = await listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString())
-      // Leeres Ergebnis UND Token jetzt ungültig → User muss sich neu verbinden
-      if (events.length === 0 && !hasGoogleToken()) {
-        setGoogleConnected(false)
-      }
+      const { events, errors } = await listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString())
       setGoogleEvents(events)
-    } catch {
+      // Teil-Fehler (einzelner Kalender nicht ladbar) sichtbar machen; sonst Fehler zurücksetzen
+      if (errors.length > 0) {
+        setGoogleError(t('crm.calendar.partialLoadError', 'Ein Google-Kalender konnte nicht geladen werden — Termine evtl. unvollständig.'))
+      } else {
+        setGoogleError('')
+      }
+    } catch (err) {
+      console.error('[Calendar] fetchGoogleEvents:', err)
       setGoogleEvents([])
+      setGoogleError(err instanceof Error ? err.message : 'Google-Kalender nicht erreichbar')
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected])
 
   // ── Reload on view / date change ──────────────────────────────
@@ -279,15 +257,13 @@ export default function CrmCalendar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, currentDate, fetchAppointments])
 
-  // Effect 2: Google-Events – auch wenn Google-Status sich ändert
-  // googleInitialized: sobald initGoogleAuth() fertig ist und ein Token
-  // vorliegt, werden Events sofort ohne erneuten Login geladen.
+  // Effect 2: Google-Events – sobald der Server-Check durch ist
   useEffect(() => {
-    if (!googleInitialized) return
+    if (!googleChecked) return
     const { start, end } = getRange()
     void fetchGoogleEvents(start, end)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, currentDate, googleConnected, googleInitialized, fetchGoogleEvents])
+  }, [view, currentDate, googleConnected, googleChecked, fetchGoogleEvents])
 
   // ── Navigation ────────────────────────────────────────────────
   function handlePrev() {
@@ -344,39 +320,48 @@ export default function CrmCalendar() {
     })
   }
 
-  // ── Google auth ───────────────────────────────────────────────
-  async function handleConnectGoogle() {
-    setGoogleError('')
+  // ── Delete appointment (löscht auch das verknüpfte Google-Event) ────────────
+  // Reihenfolge: ERST Google, dann DB — sonst verwaist das Google-Event bei einem
+  // Google-Fehler ohne Retry-Möglichkeit und taucht als blaues Event wieder auf.
+  // DB-Delete läuft trotzdem immer (Alt-Events in fremden Kalendern wären sonst
+  // nie löschbar); ein Google-Fehler wird sichtbar gemeldet.
+  async function handleDelete(appt: CrmAppointment) {
+    if (appt.google_event_id) {
+      try {
+        await deleteGoogleEvent(appt.google_event_id, appt.google_calendar_id ?? undefined)
+      } catch (err) {
+        setGoogleError(t('crm.calendar.googleDeleteFailed', 'Google-Event konnte nicht gelöscht werden — bitte im Google Kalender manuell entfernen.') +
+          ' (' + (err instanceof Error ? err.message : String(err)) + ')')
+      }
+    }
+    const { error } = await supabase.from('crm_appointments').delete().eq('id', appt.id)
+    if (error) { console.error('[Calendar] handleDelete:', error.message); return }
+    setSelectedAppt(null)
+    void reloadAll()
+  }
+
+  // ── Google-Event löschen (Termin, der nur in Google/iPhone existiert) ───────
+  async function handleDeleteGoogleEvent(gEvt: GoogleCalendarEvent) {
     try {
-      await signInGoogle()
-      setGoogleConnected(true)
+      await deleteGoogleEvent(gEvt.id, gEvt.calendarId)
+      setSelectedGoogleEvt(null)
+      void reloadAll()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Google-Verbindung fehlgeschlagen'
-      setGoogleError(msg)
-      console.error('[Calendar] handleConnectGoogle:', err)
+      setGoogleError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen')
     }
   }
 
-  function handleDisconnectGoogle() {
-    signOutGoogle()
-    setGoogleConnected(false)
-    setGoogleEvents([])
-  }
-
-  // ── Delete appointment ────────────────────────────────────────
-  async function handleDelete(id: string) {
-    const { error } = await supabase.from('crm_appointments').delete().eq('id', id)
-    if (error) { console.error('[Calendar] handleDelete:', error.message); return }
-    setSelectedAppt(null)
+  // ── Reload callback ───────────────────────────────────────────
+  function reloadAll() {
     const { start, end } = getRange()
     void fetchAppointments(start, end)
+    void fetchGoogleEvents(start, end)
   }
 
-  // ── Reload callback ───────────────────────────────────────────
   function handleCreated() {
     setShowModal(false)
-    const { start, end } = getRange()
-    void fetchAppointments(start, end)
+    setEditAppt(null)
+    reloadAll()
   }
 
   // ── MONTH VIEW ────────────────────────────────────────────────
@@ -738,28 +723,53 @@ export default function CrmCalendar() {
               </div>
             )}
 
-            {/* In-person */}
+            {/* In-person: Adresse + eingebettete Karte */}
             {appt.type === 'inperson' && appt.location && (
               <div>
-                📍 {appt.location}
-                {appt.location_url && (
-                  <> ·{' '}
-                    <a
-                      href={appt.location_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 underline ml-1"
-                    >
-                      Maps
-                    </a>
-                  </>
-                )}
+                <div>
+                  📍 {appt.location}
+                  {appt.location_url && (
+                    <> ·{' '}
+                      <a
+                        href={appt.location_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 underline ml-1"
+                      >
+                        Maps
+                      </a>
+                    </>
+                  )}
+                </div>
+                <iframe
+                  title="Karte"
+                  src={`https://www.google.com/maps?q=${encodeURIComponent(appt.location)}&output=embed`}
+                  className="w-full h-40 rounded-lg border border-gray-200 mt-2"
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
               </div>
             )}
 
             {/* Phone */}
             {appt.type === 'phone' && appt.phone_number && (
               <div>📞 {appt.phone_number}</div>
+            )}
+
+            {/* WhatsApp */}
+            {appt.type === 'whatsapp' && appt.phone_number && (
+              <div>
+                💬 {appt.phone_number} ·{' '}
+                <a
+                  href={`https://wa.me/${appt.phone_number.replace(/[^0-9]/g, '')}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline font-medium"
+                  style={{ color: '#128c7e' }}
+                >
+                  {t('crm.calendar.openWhatsApp', 'WhatsApp öffnen')}
+                </a>
+              </div>
             )}
 
             {/* Lead */}
@@ -777,18 +787,28 @@ export default function CrmCalendar() {
             )}
           </div>
 
-          {/* Delete */}
-          <button
-            type="button"
-            onClick={() => {
-              if (window.confirm(t('crm.calendar.confirmDelete', 'Termin wirklich löschen?'))) {
-                void handleDelete(appt.id)
-              }
-            }}
-            className="mt-5 w-full py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
-          >
-            {t('crm.calendar.deleteAppt', 'Termin löschen')}
-          </button>
+          {/* Edit + Delete */}
+          <div className="mt-5 flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setEditAppt(appt); setSelectedAppt(null); setShowModal(true) }}
+              className="flex-1 py-2 text-sm font-medium text-white rounded-lg"
+              style={{ backgroundColor: '#ff795d' }}
+            >
+              ✏️ {t('crm.calendar.editAppt', 'Bearbeiten')}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(t('crm.calendar.confirmDelete', 'Termin wirklich löschen?'))) {
+                  void handleDelete(appt)
+                }
+              }}
+              className="flex-1 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+            >
+              {t('crm.calendar.deleteAppt', 'Löschen')}
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -834,6 +854,37 @@ export default function CrmCalendar() {
 
           <div className="space-y-2 text-sm text-gray-600">
             <div>📅 {dateStr} · {timeStr}</div>
+            {gEvt.location && <div>📍 {gEvt.location}</div>}
+            {gEvt.description && (
+              <div className="text-xs text-gray-500 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                {gEvt.description}
+              </div>
+            )}
+          </div>
+
+          {/* Bearbeiten + Löschen — geht direkt in den Google-Kalender (auch iPhone-Termine) */}
+          <div className="mt-5 flex gap-2">
+            {!allDy && (
+              <button
+                type="button"
+                onClick={() => { setEditGoogleEvt(gEvt); setSelectedGoogleEvt(null) }}
+                className="flex-1 py-2 text-sm font-medium text-white rounded-lg"
+                style={{ backgroundColor: gc.pill }}
+              >
+                ✏️ {t('crm.calendar.editAppt', 'Bearbeiten')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(t('crm.calendar.confirmDeleteGoogle', 'Diesen Google-Termin wirklich löschen?'))) {
+                  void handleDeleteGoogleEvent(gEvt)
+                }
+              }}
+              className="flex-1 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+            >
+              {t('crm.calendar.deleteAppt', 'Löschen')}
+            </button>
           </div>
 
           {/* "In Google öffnen" Link */}
@@ -842,16 +893,14 @@ export default function CrmCalendar() {
               href={gEvt.htmlLink}
               target="_blank"
               rel="noreferrer"
-              className="mt-5 w-full py-2 text-sm font-medium text-white rounded-lg flex items-center justify-center gap-2"
-              style={{ backgroundColor: gc.pill, display: 'flex' }}
+              className="mt-2 w-full py-2 text-sm text-gray-500 rounded-lg flex items-center justify-center gap-2 border border-gray-200 hover:bg-gray-50"
             >
               {t('crm.calendar.openInGoogle', 'In Google Kalender öffnen')} ↗
             </a>
           )}
 
-          {/* Hinweis: nur lesen */}
           <p className="text-center text-xs text-gray-400 mt-3">
-            {t('crm.calendar.googleReadOnly', 'Google-Termine können nur in Google bearbeitet werden.')}
+            {t('crm.calendar.googleEditHint', 'Änderungen werden direkt in deinem Google-Kalender gespeichert.')}
           </p>
         </div>
       </div>
@@ -871,30 +920,20 @@ export default function CrmCalendar() {
 
           <div className="flex items-center gap-2">
             {googleError && (
-              <span className="text-xs text-red-500 font-body">{googleError}</span>
+              <span className="text-xs text-amber-600 font-body">{googleError}</span>
             )}
-            {googleInitialized && !googleConnected && (
-              <button
-                type="button"
-                onClick={() => void handleConnectGoogle()}
-                className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+            {googleChecked && googleConnected && (
+              <span className="text-sm text-green-600 font-medium">
+                {t('crm.calendar.googleConnected', 'Google verbunden ✓')}
+              </span>
+            )}
+            {googleChecked && !googleConnected && (
+              <Link
+                to="/admin/crm/settings"
+                className="text-sm px-3 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50"
               >
-                {t('crm.calendar.connectGoogle', 'Mit Google verbinden')}
-              </button>
-            )}
-            {googleInitialized && googleConnected && (
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-green-600 font-medium">
-                  {t('crm.calendar.googleConnected', 'Google verbunden ✓')}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleDisconnectGoogle}
-                  className="text-xs text-gray-500 underline hover:text-gray-700"
-                >
-                  {t('crm.calendar.disconnect', 'Trennen')}
-                </button>
-              </div>
+                {t('crm.calendar.setupGoogle', 'Google einrichten →')}
+              </Link>
             )}
           </div>
         </div>
@@ -975,12 +1014,22 @@ export default function CrmCalendar() {
         </div>
       </div>
 
-      {/* Appointment creation modal */}
+      {/* Appointment creation / edit modal */}
       {showModal && (
         <AppointmentModal
           initialDate={selectedDate}
-          onClose={() => setShowModal(false)}
+          appointment={editAppt}
+          onClose={() => { setShowModal(false); setEditAppt(null) }}
           onCreated={handleCreated}
+        />
+      )}
+
+      {/* Google-Event bearbeiten (Termine aus Google/iPhone) */}
+      {editGoogleEvt && (
+        <GoogleEventModal
+          event={editGoogleEvt}
+          onClose={() => setEditGoogleEvt(null)}
+          onSaved={() => { setEditGoogleEvt(null); reloadAll() }}
         />
       )}
 

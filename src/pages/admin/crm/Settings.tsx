@@ -2,12 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import {
-  initGoogleAuth,
-  signInGoogle,
-  signOutGoogle,
-  hasGoogleToken,
-} from '../../../lib/googleCalendar'
+import { checkCalendarStatus } from '../../../lib/googleCalendar'
+import type { CalendarStatus } from '../../../lib/googleCalendar'
 import type { Developer } from '../../../lib/crmTypes'
 import DeveloperContactsModal from '../../../components/crm/DeveloperContactsModal'
 
@@ -105,24 +101,20 @@ export default function Settings() {
   const [toast, setToast]             = useState('')
   const [contactsDev, setContactsDev] = useState<Developer | null>(null)
 
-  // ── Google Calendar integration state ─────────────────────────────────────
-  const [googleConnected, setGoogleConnected]   = useState(false)
-  const [googleInit, setGoogleInit]             = useState(false)
-  const [googleLoading, setGoogleLoading]       = useState(false)
+  // ── Google Calendar integration state (server-seitig via Service-Account) ──
+  const [calStatus, setCalStatus]         = useState<CalendarStatus | null>(null)
+  const [calChecking, setCalChecking]     = useState(false)
 
   // ── Zoom integration state ────────────────────────────────────────────────
   const [zoomConfigured, setZoomConfigured] = useState<boolean | null>(null)
 
-  useEffect(() => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID
-    if (!clientId) { setGoogleInit(true); return }
-    initGoogleAuth()
-      .then(() => {
-        setGoogleInit(true)
-        setGoogleConnected(hasGoogleToken())
-      })
-      .catch(() => setGoogleInit(true))
+  const refreshCalStatus = useCallback(async () => {
+    setCalChecking(true)
+    try { setCalStatus(await checkCalendarStatus()) }
+    finally { setCalChecking(false) }
   }, [])
+
+  useEffect(() => { void refreshCalStatus() }, [refreshCalStatus])
 
   useEffect(() => {
     supabase.functions.invoke('create-zoom-meeting', { body: { check: true } })
@@ -131,25 +123,6 @@ export default function Settings() {
       })
       .catch(() => setZoomConfigured(false))
   }, [])
-
-  const handleGoogleConnect = async () => {
-    setGoogleLoading(true)
-    try {
-      await signInGoogle()
-      setGoogleConnected(true)
-      showToast(t('crm.settings.googleConnectedToast', '✅ Google Kalender verbunden'))
-    } catch {
-      showToast('❌ ' + t('crm.settings.googleConnectError', 'Verbindung fehlgeschlagen'))
-    } finally {
-      setGoogleLoading(false)
-    }
-  }
-
-  const handleGoogleDisconnect = () => {
-    signOutGoogle()
-    setGoogleConnected(false)
-    showToast(t('crm.settings.googleDisconnectedToast', 'Google Kalender getrennt'))
-  }
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -345,54 +318,83 @@ export default function Settings() {
             </p>
           </div>
 
-          {/* Google Calendar */}
-          <div className="flex items-center justify-between py-4 border-t border-gray-50">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-lg">📅</div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">
-                  {t('crm.settings.googleCalendar', 'Google Kalender')}
-                </p>
-                <p className="text-xs mt-0.5">
-                  {!import.meta.env.VITE_GOOGLE_CLIENT_ID ? (
-                    <span className="text-amber-600">
-                      {t('crm.settings.googleNotConfigured', 'VITE_GOOGLE_CLIENT_ID nicht gesetzt')}
-                    </span>
-                  ) : googleConnected ? (
-                    <span className="text-green-600 font-medium">
-                      ✓ {t('crm.settings.googleConnected', 'Verbunden')}
-                    </span>
-                  ) : (
-                    <span className="text-gray-400">
-                      {t('crm.settings.googleNotConnected', 'Nicht verbunden')}
-                    </span>
-                  )}
-                </p>
+          {/* Google Calendar — server-seitig (Service-Account, wie Drive) */}
+          <div className="py-4 border-t border-gray-50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-lg">📅</div>
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    {t('crm.settings.googleCalendar', 'Google Kalender')}
+                  </p>
+                  <p className="text-xs mt-0.5">
+                    {calChecking || calStatus === null ? (
+                      <span className="text-gray-400">{t('crm.settings.calChecking', 'Prüfe Verbindung…')}</span>
+                    ) : calStatus.connected ? (
+                      <span className="text-green-600 font-medium">
+                        ✓ {t('crm.settings.calConnectedPermanent', 'Dauerhaft verbunden')} · {calStatus.calendar_id}
+                      </span>
+                    ) : (
+                      <span className="text-amber-600 font-medium">
+                        {t('crm.settings.calNotShared', 'Freigabe fehlt noch')}
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
+              <button
+                onClick={() => void refreshCalStatus()}
+                disabled={calChecking}
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500
+                           hover:border-blue-200 hover:text-blue-500 transition-colors disabled:opacity-50"
+              >
+                {t('crm.settings.calRecheck', 'Neu prüfen')}
+              </button>
             </div>
-            <div className="flex gap-2">
-              {googleConnected ? (
-                <button
-                  onClick={handleGoogleDisconnect}
-                  className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500
-                             hover:border-red-200 hover:text-red-500 transition-colors"
-                >
-                  {t('crm.settings.disconnectGoogle', 'Trennen')}
-                </button>
-              ) : (
-                <button
-                  onClick={handleGoogleConnect}
-                  disabled={!googleInit || googleLoading || !import.meta.env.VITE_GOOGLE_CLIENT_ID}
-                  className="px-3 py-1.5 text-xs rounded-lg text-white font-medium
-                             disabled:opacity-50 hover:opacity-90 transition-opacity"
-                  style={{ backgroundColor: '#4285f4' }}
-                >
-                  {googleLoading
-                    ? t('common.loading', 'Wird geladen …')
-                    : t('crm.settings.connectGoogle', 'Verbinden')}
-                </button>
-              )}
-            </div>
+
+            {/* Freigabe-Anleitung, solange nicht verbunden */}
+            {calStatus && !calStatus.connected && (
+              <div className="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800 space-y-2">
+                {calStatus.reason === 'api_disabled' ? (
+                  <p>
+                    {t('crm.settings.calApiDisabled', 'Die Google Calendar API ist im Google-Cloud-Projekt noch nicht aktiviert. Einmal aktivieren unter:')}{' '}
+                    <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noreferrer" className="underline font-medium">console.cloud.google.com</a>
+                  </p>
+                ) : calStatus.reason === 'read_only' ? (
+                  <p>
+                    {t('crm.settings.calReadOnly', 'Der Kalender ist nur LESEND freigegeben. Bitte in den Google-Kalender-Einstellungen die Freigabestufe für die Service-Adresse auf „Änderungen an Terminen vornehmen" ändern — dann hier „Neu prüfen".')}
+                  </p>
+                ) : (
+                  <>
+                    <p className="font-semibold">
+                      {t('crm.settings.calShareTitle', 'Einmalige Freigabe (danach läuft die Verbindung dauerhaft, wie beim Drive):')}
+                    </p>
+                    <ol className="list-decimal ml-4 space-y-1">
+                      <li>{t('crm.settings.calShare1', 'calendar.google.com öffnen (als happypropertycyprus@gmail.com)')}</li>
+                      <li>{t('crm.settings.calShare2', 'Links bei „Meine Kalender" → drei Punkte neben deinem Kalender → „Einstellungen und Freigabe"')}</li>
+                      <li>{t('crm.settings.calShare3', '„Für bestimmte Personen freigeben" → „Personen hinzufügen" → diese Adresse einfügen:')}</li>
+                    </ol>
+                    <div className="flex items-center gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                      <code className="flex-1 break-all text-[11px] text-gray-700">{calStatus.sa_email}</code>
+                      <button
+                        type="button"
+                        onClick={() => { void navigator.clipboard.writeText(calStatus.sa_email); showToast(t('crm.settings.calCopied', 'Adresse kopiert ✓')) }}
+                        className="shrink-0 px-2 py-1 text-[11px] border border-gray-200 rounded hover:bg-gray-50"
+                      >
+                        {t('common.copy', 'Kopieren')}
+                      </button>
+                    </div>
+                    <p>{t('crm.settings.calShare4', 'Berechtigung: „Änderungen an Terminen vornehmen" → Senden. Danach hier „Neu prüfen" klicken.')}</p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {calStatus?.connected && (
+              <p className="mt-2 text-[11px] text-gray-400">
+                {t('crm.settings.calConnectedHint', 'Die Verbindung ist server-seitig (Service-Account) und läuft nie ab — unabhängig von Browser, Cache oder Gerät. Termine vom iPhone erscheinen im CRM und sind dort bearbeitbar.')}
+              </p>
+            )}
           </div>
 
           {/* Zoom */}

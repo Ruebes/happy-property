@@ -529,7 +529,7 @@ export interface ScheduledMessage {
 
 // ── CRM Appointment Types ─────────────────────────────────────────────────────
 
-export type AppointmentType = 'zoom' | 'inperson' | 'phone'
+export type AppointmentType = 'zoom' | 'inperson' | 'phone' | 'whatsapp'
 
 export interface CrmAppointment {
   id:              string
@@ -545,6 +545,7 @@ export interface CrmAppointment {
   location_url:    string | null
   phone_number:    string | null
   google_event_id: string | null
+  google_calendar_id: string | null
   created_by:      string | null
   created_at:      string
   updated_at:      string

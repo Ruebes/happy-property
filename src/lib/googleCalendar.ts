@@ -1,413 +1,122 @@
 // ── Google Calendar integration ───────────────────────────────────────────────
-// Uses the Google Identity Services (GIS) + Google Calendar API v3 via gapi.
-// If VITE_GOOGLE_CLIENT_ID is not set the helpers gracefully do nothing.
+// Läuft KOMPLETT server-seitig über die Edge Function `google-calendar`
+// (Service-Account, gleiche dauerhafte Anbindung wie Google Drive).
+// Kein Browser-Token, kein localStorage, kein Popup — die Verbindung kann
+// nicht mehr ablaufen und gilt auf jedem Gerät (Mac, iPhone, PWA) gleich.
+//
+// Einmaliges Setup (in Einstellungen → Integrationen beschrieben):
+// Google-Kalender für die Service-Account-E-Mail freigeben
+// („Änderungen an Terminen vornehmen").
 
-declare global {
-  interface Window {
-    gapi: {
-      load: (lib: string, cb: () => void) => void
-      client: {
-        init: (opts: { apiKey?: string; discoveryDocs?: string[] }) => Promise<void>
-        calendar: {
-          events: {
-            insert: (params: {
-              calendarId: string
-              resource: unknown
-            }) => Promise<{ result: { id: string; htmlLink: string } }>
-            list: (params: {
-              calendarId: string
-              timeMin: string
-              timeMax: string
-              singleEvents: boolean
-              orderBy: string
-              maxResults?: number
-            }) => Promise<{ result: { items: GoogleCalendarEvent[] } }>
-          }
-        }
-      }
-    }
-    google: {
-      accounts: {
-        oauth2: {
-          initTokenClient: (config: {
-            client_id: string
-            scope: string
-            prompt?: string
-            callback: (response: { access_token?: string; error?: string }) => void
-          }) => { requestAccessToken: () => void }
-          revoke: (token: string, cb: () => void) => void
-        }
-      }
-    }
-  }
-}
+import { supabase } from './supabase'
+import { FunctionsHttpError } from '@supabase/supabase-js'
 
 export interface GoogleCalendarEvent {
-  id:             string
-  summary:        string
-  start:          { dateTime?: string; date?: string }
-  end:            { dateTime?: string; date?: string }
-  htmlLink?:      string
-  calendarColor?: string
-  calendarName?:  string
-}
-
-const SCOPES = [
-  'https://www.googleapis.com/auth/calendar',
-  'https://www.googleapis.com/auth/calendar.events',
-  'https://www.googleapis.com/auth/calendar.readonly',
-].join(' ')
-const DISCOVERY   = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
-const TOKEN_KEY   = 'google_calendar_token'
-
-// ── Token helpers ─────────────────────────────────────────────────────────────
-
-export function hasGoogleToken(): boolean {
-  try {
-    const raw = localStorage.getItem(TOKEN_KEY)
-    if (!raw) return false
-    const parsed = JSON.parse(raw) as { token: string; expires_at: number }
-    return Date.now() < parsed.expires_at
-  } catch {
-    return false
-  }
-}
-
-function saveToken(token: string) {
-  const expires_at = Date.now() + 55 * 60 * 1000 // 55 Minuten (5 Min Puffer vor Google 1h Limit)
-  localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, expires_at }))
-}
-
-// Liest Ablaufzeit aus dem gespeicherten Token
-function getTokenExpiresAt(): number {
-  try {
-    const raw = localStorage.getItem(TOKEN_KEY)
-    if (!raw) return 0
-    return (JSON.parse(raw) as { expires_at: number }).expires_at
-  } catch { return 0 }
-}
-
-let refreshTimer: ReturnType<typeof setTimeout> | null = null
-
-function scheduleTokenRefresh(clientId: string) {
-  if (refreshTimer) clearTimeout(refreshTimer)
-
-  // Refresh 5 Minuten VOR echtem Token-Ablauf planen (nicht pauschal 45 Min)
-  const expiresAt = getTokenExpiresAt()
-  const refreshAt = expiresAt - 5 * 60 * 1000
-  const delayMs   = Math.max(refreshAt - Date.now(), 30_000) // mindestens 30s
-
-  refreshTimer = setTimeout(() => {
-    if (!localStorage.getItem(TOKEN_KEY)) return
-    const client = window.google?.accounts?.oauth2?.initTokenClient({
-      client_id: clientId,
-      scope: SCOPES,
-      prompt: '',
-      callback: (resp: { access_token?: string; error?: string }) => {
-        if (resp.access_token) {
-          saveToken(resp.access_token)
-          scheduleTokenRefresh(clientId)
-          if (gapiReady) {
-            (window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
-              .setToken({ access_token: resp.access_token })
-          }
-        } else {
-          localStorage.removeItem(TOKEN_KEY)
-        }
-      },
-    })
-    client?.requestAccessToken()
-  }, delayMs)
-}
-
-// Exportiert damit Calendar.tsx beim Unmount den Timer löschen kann
-export function cancelGoogleTokenRefresh() {
-  if (refreshTimer) {
-    clearTimeout(refreshTimer)
-    refreshTimer = null
-  }
-}
-
-function getToken(): string | null {
-  try {
-    const raw = localStorage.getItem(TOKEN_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as { token: string; expires_at: number }
-    if (Date.now() >= parsed.expires_at) return null
-    return parsed.token
-  } catch {
-    return null
-  }
-}
-
-// ── GAPI loader ───────────────────────────────────────────────────────────────
-
-let gapiReady = false
-
-export async function initGoogleAuth(): Promise<void> {
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-  if (!clientId) return
-
-  await Promise.all([
-    loadScript('https://apis.google.com/js/api.js'),
-    loadScript('https://accounts.google.com/gsi/client'),
-  ])
-
-  await new Promise<void>((resolve, reject) => {
-    window.gapi.load('client', {
-      callback: () => resolve(),
-      onerror: () => reject(new Error('gapi.load failed')),
-    } as unknown as () => void)
-  })
-
-  // Kein API Key – OAuth Access Token reicht für Calendar API vollständig aus.
-  // Ein falscher/nicht aktivierter API Key würde einen 400-Fehler bei der
-  // Discovery-URL auslösen. Der Token wird nach signInGoogle() gesetzt.
-  await window.gapi.client.init({
-    discoveryDocs: [DISCOVERY],
-  })
-
-  gapiReady = true
-
-  // Nach Reload: gespeicherten Token sofort in gapi.client einspielen,
-  // damit Calendar-Calls ohne erneuten Login sofort funktionieren.
-  const storedToken = getToken()
-  if (storedToken) {
-    ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
-      .setToken({ access_token: storedToken })
-    if (clientId) {
-      const remaining = getTokenExpiresAt() - Date.now()
-      if (remaining < 10 * 60 * 1000) {
-        // Token läuft in < 10 Min ab → sofort silent refresh
-        refreshGoogleToken().catch(() => {})
-      } else {
-        scheduleTokenRefresh(clientId)
-      }
-    }
-  }
-}
-
-function loadScript(src: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (document.querySelector(`script[src="${src}"]`)) {
-      resolve()
-      return
-    }
-    const s = document.createElement('script')
-    s.src   = src
-    s.async = true
-    s.onload  = () => resolve()
-    s.onerror = () => reject(new Error(`Failed to load ${src}`))
-    document.head.appendChild(s)
-  })
-}
-
-// ── Sign in / out ─────────────────────────────────────────────────────────────
-
-export function signInGoogle(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    if (!clientId) { reject(new Error('No VITE_GOOGLE_CLIENT_ID')); return }
-
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope:     SCOPES,
-      callback:  (resp) => {
-        if (resp.error) { reject(new Error(resp.error)); return }
-        if (resp.access_token) {
-          saveToken(resp.access_token)
-          // Set the token on gapi.client so calendar requests are authenticated
-          if (gapiReady) {
-            // gapi.client.setToken is not typed in our minimal declaration; cast via unknown
-            ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
-              .setToken({ access_token: resp.access_token })
-          }
-          const cId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string
-          scheduleTokenRefresh(cId)
-          resolve()
-        } else {
-          reject(new Error('No access_token in response'))
-        }
-      },
-    })
-    client.requestAccessToken()
-  })
-}
-
-export function signOutGoogle(): void {
-  const token = getToken()
-  localStorage.removeItem(TOKEN_KEY)
-  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
-  if (token && window.google?.accounts?.oauth2) {
-    window.google.accounts.oauth2.revoke(token, () => { /* noop */ })
-  }
-}
-
-// ── Silent Token Refresh ──────────────────────────────────────────────────────
-// Versucht einen Access Token OHNE Popup zu erneuern (prompt: '').
-// Funktioniert solange der Browser eine aktive Google-Session hat.
-// Gibt true zurück wenn erfolgreich, false wenn der User sich neu verbinden muss.
-// Timeout nach 10s: verhindert dauerhaftes Hängen wenn GIS-Callback nicht feuert
-// (z.B. bei Browser-Throttling im Hintergrund-Tab).
-export function refreshGoogleToken(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined
-    if (!clientId) { resolve(false); return }
-
-    // Sicherheits-Timeout: nach 10s aufgeben
-    const timeoutId = setTimeout(() => {
-      console.warn('[googleCalendar] refreshGoogleToken Timeout (10s) – reconnect required')
-      resolve(false)
-    }, 10_000)
-
-    try {
-      const client = window.google?.accounts?.oauth2?.initTokenClient({
-        client_id: clientId,
-        scope:     SCOPES,
-        prompt:    '',   // Kein Popup – nur wenn Google-Session aktiv
-        callback:  (resp: { access_token?: string; error?: string }) => {
-          clearTimeout(timeoutId)
-          if (resp.access_token) {
-            saveToken(resp.access_token)
-            if (gapiReady) {
-              ;(window.gapi.client as unknown as { setToken: (t: { access_token: string }) => void })
-                .setToken({ access_token: resp.access_token })
-            }
-            scheduleTokenRefresh(clientId)
-            resolve(true)
-          } else {
-            // Kein Token → User muss sich manuell neu verbinden
-            localStorage.removeItem(TOKEN_KEY)
-            resolve(false)
-          }
-        },
-      })
-      client?.requestAccessToken()
-    } catch {
-      clearTimeout(timeoutId)
-      resolve(false)
-    }
-  })
-}
-
-// ── Calendar operations ───────────────────────────────────────────────────────
-
-export interface NewGoogleEvent {
-  title:       string
-  startIso:    string
-  endIso:      string
+  id:          string
+  summary:     string
   description?: string
   location?:   string
+  start:       { dateTime?: string; date?: string }
+  end:         { dateTime?: string; date?: string }
+  htmlLink?:   string
+  calendarId?: string
 }
 
-export async function createGoogleEvent(event: NewGoogleEvent): Promise<{ id: string; htmlLink: string }> {
-  const token = getToken()
-  if (!token) throw new Error('Not authenticated with Google')
+export interface CalendarStatus {
+  connected: boolean
+  sa_email:  string
+  calendar_id: string
+  reason?:   'not_shared' | 'api_disabled' | 'no_permission' | 'read_only' | 'no_sa' | 'error'
+  error?:    string
+}
 
-  // Lokale Zeitzone für korrekte Darstellung im Google Kalender
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+export interface CalendarListError { calendarId: string; reason: string }
 
-  console.log('[googleCalendar] createGoogleEvent:', {
-    title:    event.title,
-    startIso: event.startIso,
-    endIso:   event.endIso,
-    tz,
-    tokenValid: !!token,
-  })
+export interface NewGoogleEvent {
+  title:        string
+  startIso:     string
+  endIso:       string
+  description?: string
+  location?:    string
+}
 
-  // Direkt via REST API – kein gapi.client.calendar nötig
-  // (gapi.client.calendar ist nicht verfügbar ohne API Key für Discovery Doc)
-  const resp = await fetch(
-    'https://www.googleapis.com/calendar/v3/calendars/primary/events',
-    {
-      method:  'POST',
-      headers: {
-        Authorization:  `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        summary:     event.title,
-        description: event.description ?? '',
-        location:    event.location ?? '',
-        start: { dateTime: event.startIso, timeZone: tz },
-        end:   { dateTime: event.endIso,   timeZone: tz },
-      }),
-    },
-  )
-
-  if (!resp.ok) {
-    const errBody = await resp.json().catch(() => ({})) as { error?: { message?: string } }
-    const msg = errBody?.error?.message ?? `HTTP ${resp.status}`
-    console.error('[googleCalendar] createGoogleEvent Fehler:', resp.status, errBody)
-    throw new Error(`Google Calendar: ${msg}`)
+// Zentraler Invoke-Helper: wirft bei Transport- ODER API-Fehler mit klarer Meldung.
+// Bei non-2xx wird der deutsche Fehlertext aus dem Response-Body durchgereicht
+// (FunctionsHttpError.message wäre nur die englische Generik-Meldung).
+async function callCalendar<T>(body: Record<string, unknown>): Promise<T> {
+  const { data, error } = await supabase.functions.invoke('google-calendar', { body })
+  if (error) {
+    let msg = error.message
+    if (error instanceof FunctionsHttpError) {
+      const errBody = await (error.context as Response).json().catch(() => null) as { error?: string } | null
+      if (errBody?.error) msg = errBody.error
+    }
+    throw new Error(msg)
   }
-
-  const result = await resp.json() as { id: string; htmlLink: string }
-  console.log('[googleCalendar] Event erstellt:', result.id, result.htmlLink)
-  return { id: result.id, htmlLink: result.htmlLink }
+  if (data?.error) throw new Error(data.error as string)
+  return data as T
 }
 
+/** Verbindungsstatus prüfen (echter API-Check, kein lokaler Token-Check).
+ *  WICHTIG: bewusst NICHT über callCalendar — die check-Antwort trägt bei
+ *  connected=false ein error-Detail-Feld, das kein Fehler ist. Nur Transportfehler
+ *  landen im catch; sa_email + reason bleiben so für die Setup-UI erhalten. */
+export async function checkCalendarStatus(): Promise<CalendarStatus> {
+  try {
+    const { data, error } = await supabase.functions.invoke('google-calendar', { body: { action: 'check' } })
+    if (error) throw new Error(error.message)
+    return data as CalendarStatus
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return { connected: false, sa_email: '', calendar_id: '', reason: 'error', error: msg }
+  }
+}
+
+/** Events aller freigegebenen Kalender im Zeitraum laden. Wirft bei Total-Fehler;
+ *  Teil-Fehler einzelner Kalender kommen als errors[] zurück. */
 export async function listGoogleEvents(
   timeMin: string,
   timeMax: string,
-): Promise<GoogleCalendarEvent[]> {
-  let token = getToken()
+): Promise<{ events: GoogleCalendarEvent[]; errors: CalendarListError[] }> {
+  const data = await callCalendar<{ events?: GoogleCalendarEvent[]; errors?: CalendarListError[] }>({
+    action: 'list_events', timeMin, timeMax,
+  })
+  return { events: data.events ?? [], errors: data.errors ?? [] }
+}
 
-  // Token abgelaufen oder läuft in < 5 Min ab → proaktiver silent refresh
-  const remaining = getTokenExpiresAt() - Date.now()
-  if (!token || remaining < 5 * 60 * 1000) {
-    const refreshed = await refreshGoogleToken()
-    if (!refreshed && !token) return []  // Kein alter Token mehr vorhanden
-    token = getToken() ?? token          // Entweder neuer oder noch gültiger alter Token
-    if (!token) return []
-  }
+/** Termin im (freigegebenen) Google-Kalender anlegen. */
+export async function createGoogleEvent(event: NewGoogleEvent): Promise<{ id: string; htmlLink?: string; calendar_id?: string }> {
+  return callCalendar<{ id: string; htmlLink?: string; calendar_id?: string }>({
+    action:      'create_event',
+    title:       event.title,
+    start:       event.startIso,
+    end:         event.endIso,
+    description: event.description ?? '',
+    location:    event.location ?? '',
+    timezone:    Intl.DateTimeFormat().resolvedOptions().timeZone,
+  })
+}
 
-  try {
-    // Schritt 1: Alle Kalender des Users laden
-    const calListResp = await fetch(
-      'https://www.googleapis.com/calendar/v3/users/me/calendarList',
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const calList = await calListResp.json() as { items?: { id: string; summary: string; backgroundColor?: string }[] }
-    const calendars = calList.items ?? []
+/** Google-Event ändern — funktioniert auch für Termine, die am iPhone/in Google angelegt wurden. */
+export async function updateGoogleEvent(
+  eventId: string,
+  changes: Partial<NewGoogleEvent>,
+  calendarId?: string,
+): Promise<void> {
+  await callCalendar({
+    action:      'update_event',
+    event_id:    eventId,
+    calendar_id: calendarId,
+    ...(changes.title       !== undefined ? { title: changes.title } : {}),
+    ...(changes.description !== undefined ? { description: changes.description } : {}),
+    ...(changes.location    !== undefined ? { location: changes.location } : {}),
+    ...(changes.startIso ? { start: changes.startIso } : {}),
+    ...(changes.endIso   ? { end:   changes.endIso   } : {}),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  })
+}
 
-    // Schritt 2: Events aus ALLEN Kalendern parallel laden
-    const results = await Promise.all(
-      calendars.map(async (cal) => {
-        try {
-          const url =
-            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?` +
-            new URLSearchParams({
-              timeMin,
-              timeMax,
-              singleEvents: 'true',
-              orderBy:      'startTime',
-              maxResults:   '100',
-            }).toString()
-
-          const eventsResp = await fetch(url, {
-            headers: { Authorization: `Bearer ${token}` },
-          })
-          const eventsData = await eventsResp.json() as { items?: GoogleCalendarEvent[] }
-          const items = eventsData.items ?? []
-
-          // Kalenderfarbe + Name zu jedem Event hinzufügen
-          return items.map(e => ({
-            ...e,
-            calendarColor: cal.backgroundColor ?? '#4285f4',
-            calendarName:  cal.summary,
-          }))
-        } catch (err) {
-          console.error('[googleCalendar] Kalender Fehler:', cal.id, err)
-          return []
-        }
-      }),
-    )
-
-    return results.flat()
-
-  } catch (err) {
-    console.error('[googleCalendar] CalendarList Fehler:', err)
-    return []
-  }
+/** Google-Event löschen. */
+export async function deleteGoogleEvent(eventId: string, calendarId?: string): Promise<void> {
+  await callCalendar({ action: 'delete_event', event_id: eventId, calendar_id: calendarId })
 }

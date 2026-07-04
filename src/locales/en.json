@@ -1663,7 +1663,17 @@
       "viewMonth": "Month",
       "viewWeek": "Week",
       "viewDay": "Day",
-      "newAppt": "New appointment"
+      "newAppt": "New appointment",
+      "notShared": "Google Calendar not shared yet — see Settings → Integrations for instructions.",
+      "setupGoogle": "Set up Google →",
+      "editAppt": "Edit",
+      "confirmDeleteGoogle": "Really delete this Google event?",
+      "googleEditHint": "Changes are saved directly to your Google Calendar.",
+      "openWhatsApp": "Open WhatsApp",
+      "editGoogleEvent": "Edit Google event",
+      "readOnly": "Google Calendar is shared READ-ONLY — change the permission to \"Make changes to events\" (Settings → Integrations).",
+      "partialLoadError": "One Google calendar could not be loaded — events may be incomplete.",
+      "googleDeleteFailed": "Google event could not be deleted — please remove it manually in Google Calendar."
     },
     "appointment": {
       "newTitle": "New Appointment",
@@ -1702,7 +1712,8 @@
       "stepLead": "Lead",
       "stepConfirm": "Confirm",
       "next": "Next →",
-      "back": "← Back"
+      "back": "← Back",
+      "whatsapp": "💬 WhatsApp"
     },
     "tab": {
       "appointments": "Appointments",
@@ -1798,7 +1809,20 @@
       "connected": "Connected",
       "notConnected": "Not connected",
       "zoomConfigured": "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, ZOOM_CLIENT_SECRET set.",
-      "zoomSetup": "Zoom App →"
+      "zoomSetup": "Zoom App →",
+      "calChecking": "Checking connection…",
+      "calConnectedPermanent": "Permanently connected",
+      "calNotShared": "Sharing still missing",
+      "calRecheck": "Re-check",
+      "calApiDisabled": "The Google Calendar API is not yet enabled in the Google Cloud project. Enable it once at:",
+      "calShareTitle": "One-time sharing (afterwards the connection runs permanently, like Drive):",
+      "calShare1": "Open calendar.google.com (as happypropertycyprus@gmail.com)",
+      "calShare2": "On the left under \"My calendars\" → three dots next to your calendar → \"Settings and sharing\"",
+      "calShare3": "\"Share with specific people\" → \"Add people\" → paste this address:",
+      "calShare4": "Permission: \"Make changes to events\" → Send. Then click \"Re-check\" here.",
+      "calCopied": "Address copied ✓",
+      "calConnectedHint": "The connection is server-side (service account) and never expires — independent of browser, cache or device. iPhone events appear in the CRM and can be edited there.",
+      "calReadOnly": "The calendar is shared READ-ONLY. Please change the sharing permission for the service address to \"Make changes to events\" in Google Calendar settings — then click \"Re-check\" here."
     },
     "devContacts": {
       "title": "Contacts",
@@ -1857,7 +1881,23 @@
       "back": "← Back",
       "cancel": "Cancel",
       "next": "Next →",
-      "create": "New appointment"
+      "create": "New appointment",
+      "modalTitleEdit": "Edit appointment",
+      "saveChanges": "Save changes",
+      "whatsappNumber": "WhatsApp number",
+      "openWhatsApp": "Open chat in WhatsApp",
+      "mapPreview": "Map preview",
+      "location": "Location",
+      "googleLinked": "Linked to Google Calendar — changes sync automatically.",
+      "sendEmailUpdate": "Send appointment update via email to lead (with calendar attachment)",
+      "sendEmailInviteIcs": "Send invitation via email to lead (with calendar attachment)",
+      "sendWhatsAppInvite": "Send invitation via WhatsApp to lead",
+      "googleSyncWarn": "Google Calendar was NOT updated — please open the appointment again and save.",
+      "mailInviteFailed": "Email invitation could NOT be sent.",
+      "noLeadEmail": "Lead has no email address — invitation not sent.",
+      "waInviteFailed": "WhatsApp invitation could NOT be sent.",
+      "noLeadPhone": "No WhatsApp number available — invitation not sent.",
+      "savedWithWarnings": "Appointment saved, but:"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",

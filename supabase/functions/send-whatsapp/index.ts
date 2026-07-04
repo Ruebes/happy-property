@@ -29,16 +29,22 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
-    // ── Template aus DB laden ──────────────────────────────────────
-    const { data: template, error: tplErr } = await supabase
-      .from('whatsapp_templates')
-      .select('*')
-      .eq('event_type', event_type)
-      .eq('active', true)
-      .single()
-
-    if (tplErr || !template) {
-      throw new Error(`Kein aktives Template für event_type="${event_type}" gefunden`)
+    // ── Template aus DB laden — NUR wenn kein override_text ───────
+    // Direktsend-Aufrufer (Composer, Termin-Einladung, Postausgang) liefern den
+    // fertigen Text mit; event_type ist dann nur ein Label fürs Activity-Log.
+    // So hängt der Direktversand nicht an einem aktiven Template.
+    let template: { message_template?: unknown; recipients?: unknown } | null = null
+    if (!override_text) {
+      const { data, error: tplErr } = await supabase
+        .from('whatsapp_templates')
+        .select('*')
+        .eq('event_type', event_type)
+        .eq('active', true)
+        .single()
+      if (tplErr || !data) {
+        throw new Error(`Kein aktives Template für event_type="${event_type}" gefunden`)
+      }
+      template = data
     }
 
     // ── Nachricht zusammenbauen ───────────────────────────────────
@@ -46,7 +52,7 @@ Deno.serve(async (req) => {
     if (override_text) {
       message = override_text
     } else {
-      message = template.message_template as string
+      message = template!.message_template as string
       const allData: Record<string, string> = {
         ...(lead_data  ?? {}),
         ...(extra_data ?? {}),
@@ -59,7 +65,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Empfänger bestimmen ───────────────────────────────────────
-    let recipients: Recipient[] = (template.recipients as Recipient[]) ?? []
+    let recipients: Recipient[] = (template?.recipients as Recipient[]) ?? []
 
     const explicitPhone =
       (lead_data?.lead_whatsapp as string | undefined) ??

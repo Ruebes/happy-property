@@ -152,14 +152,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
       ])
     } catch { /* ignorieren */ }
     finally {
-      // Google-Calendar-Token über den Logout hinweg erhalten: localStorage.clear()
-      // löschte bisher bei JEDEM Abmelden die Google-Verbindung → Nutzer musste
-      // den Kalender ständig neu verbinden ("wieder getrennt"). Token bleibt
-      // erhalten; läuft er ab, greift der normale Silent-Refresh / Reconnect.
-      const gcalToken = localStorage.getItem('google_calendar_token')
+      // Kalender-Verbindung liegt inzwischen server-seitig (Service-Account) —
+      // localStorage darf beim Logout bedenkenlos komplett geleert werden.
       localStorage.clear()
       sessionStorage.clear()
-      if (gcalToken) localStorage.setItem('google_calendar_token', gcalToken)
       window.location.href = '/login'
     }
   }
