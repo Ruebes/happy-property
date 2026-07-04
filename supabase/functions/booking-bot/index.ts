@@ -54,6 +54,11 @@ function labelDe(startUtc: Date): string {
 function weekdayNameDe(iso: string): string {
   return new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long' }).format(new Date(iso)).toLowerCase()
 }
+// Berlin-Kalenderdatum eines Slots als 'YYYY-MM-DD' (pinnt den Kontext-Tag exakt).
+function berlinDateStr(iso: string): string {
+  const p = berlinParts(new Date(iso))
+  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`
+}
 
 // Verfügbarkeitsfenster je Wochentag (Berlin-Stunden). Wochenende = 17–20.
 function windowFor(wd: number): [number, number] | null {
@@ -116,7 +121,7 @@ function isSpecificDay(hint?: string): boolean {
 // Kandidaten-Slots ab morgen berechnen, gegen Busy prüfen, bis `want` gefunden.
 // Ein Vorschlag pro Tag → verschiedene Tage (Abwechslung wie „Sa oder Mo").
 // timeHint (HH:MM) = KONKRETE Wunschuhrzeit: nur exakt diese prüfen (je Tag).
-async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayHint?: string; daypart?: string; timeHint?: string }): Promise<Slot[]> {
+async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayHint?: string; daypart?: string; timeHint?: string; onDate?: string }): Promise<Slot[]> {
   const now = new Date()
   const from = new Date(now.getTime() + 12 * 3600e3)          // frühestens ~ab morgen
   const to   = new Date(now.getTime() + 16 * 24 * 3600e3)     // 16 Tage Fenster
@@ -136,7 +141,10 @@ async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayH
     const bp = berlinParts(anchor)
     const win = windowFor(bp.wd)
     if (!win) continue
-    if (!matchesDayHint(bp.wd, off, filter?.dayHint)) continue
+    // onDate pinnt exakt EIN Datum (hat Vorrang vor dem Wochentag-Hinweis)
+    const dateStr = `${bp.y}-${String(bp.mo).padStart(2, '0')}-${String(bp.d).padStart(2, '0')}`
+    if (filter?.onDate) { if (dateStr !== filter.onDate) continue }
+    else if (!matchesDayHint(bp.wd, off, filter?.dayHint)) continue
     const [w0, w1] = win
 
     // (a) Exakte Wunschuhrzeit: nur diese prüfen (muss im Fenster liegen + frei sein)
@@ -167,7 +175,7 @@ async function computeSlots(admin: SupabaseClient, want: number, filter?: { dayH
     }
     if (!dayTimes.length) continue
 
-    if (isSpecificDay(filter?.dayHint)) {
+    if (isSpecificDay(filter?.dayHint) || filter?.onDate) {
       // (b1) Genau EIN gewünschter Tag → 2 gespreizte Uhrzeiten an DIESEM Tag
       out.push(dayTimes[0])
       if (dayTimes.length > 1 && out.length < want) {
@@ -233,21 +241,26 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 }
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
-interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null }
+interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; onDate?: string; answer?: string | null }
 async function classify(state: string, slots: Slot[], text: string): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
   if (!key) return fallback
   const sys = `Du interpretierst die WhatsApp-Antwort eines Kunden im Terminbuchungs-Dialog (deutsch). Zustand: ${state}. Vorgeschlagene Slots: ${slots.map((s, i) => `[${i}] ${s.label}`).join(' | ') || 'keine'}.
+Kontext: Es ist ein kurzes, unverbindliches Beratungsgespräch (ca. 15 Min) DIREKT mit Sven persönlich (Immobilien-Investment-Berater bei Happy Property Cyprus, Zypern).
 Gib NUR das Tool emit_intent zurück. intent-Werte:
 - pick_slot: Kunde wählt einen vorgeschlagenen Slot (pick_index 0 oder 1).
 - reject_slots: keiner der Slots passt (evtl. mit day_hint/daypart/time_hint-Wunsch).
 - give_preference: Kunde nennt Tag-/Zeit-Wunsch (day_hint z.B. "Dienstag","morgen","nächste Woche"; daypart "vormittags"|"nachmittags"|"abends"; time_hint = KONKRETE Uhrzeit als 24h "HH:MM", z.B. "15:00" aus "15 Uhr"/"um 3"/"halb 4"→"15:30").
 - choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp).
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
+- question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
 - optout: will nicht kontaktiert werden / kein Interesse.
 - unclear: unverständlich/themenfremd.
-WICHTIG: Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?", "geht 16 Uhr?"), IMMER time_hint als "HH:MM" füllen (intent give_preference). Fülle nur passende Felder, sonst null.`
+WICHTIG:
+- Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?"), IMMER time_hint als "HH:MM" füllen (intent give_preference).
+- Bei JEDER Zwischenfrage (auch zusammen mit einem Terminwunsch) fülle answer mit einer KURZEN, ehrlichen Antwort in Svens lockerem Du-Ton (max 1-2 Sätze). Erlaubte Fakten: Gespräch direkt mit Sven persönlich, ca. 15 Min, unverbindlich & kostenlos, es geht um deine offenen Fragen rund um Immobilien-Investment auf Zypern. Erfinde NICHTS (keine Preise, keine Objektzusagen). Kombiniert der Kunde Frage + Terminwunsch → answer UND die Termin-Felder füllen.
+Fülle nur passende Felder, sonst null.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -257,11 +270,12 @@ WICHTIG: Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?", "geht 
         tool_choice: { type: 'tool', name: 'emit_intent' },
         tools: [{ name: 'emit_intent', description: 'Intent der Kundenantwort', input_schema: {
           type: 'object', properties: {
-            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'optout', 'unclear'] },
+            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
             time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
             meeting_type: { type: ['string', 'null'], enum: ['zoom', 'whatsapp', null] },
+            answer: { type: ['string', 'null'], description: 'kurze Antwort auf eine Zwischenfrage (Svens Du-Ton)' },
           }, required: ['intent'],
         } }],
       }),
@@ -287,10 +301,25 @@ async function askType(admin: SupabaseClient, convId: string, phone: string, lea
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
 }
 
-// Buchung durchführen
-async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; deal_id: string | null }, lead: { first_name: string | null; whatsapp: string | null; phone: string | null }, slot: Slot, type: 'zoom' | 'whatsapp') {
+// ICS-Kalenderanhang (Kunde bekommt den Termin in seinen Kalender)
+function toB64(str: string): string { const bytes = new TextEncoder().encode(str); let bin = ''; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin) }
+function buildIcs(o: { uid: string; title: string; startIso: string; endIso: string; description?: string }): string {
+  const dt = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n')
+  return [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Happy Property//CRM//DE', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
+    `UID:${o.uid}@happy-property.com`, `DTSTAMP:${dt(new Date().toISOString())}`, `DTSTART:${dt(o.startIso)}`, `DTEND:${dt(o.endIso)}`,
+    `SUMMARY:${esc(o.title)}`, ...(o.description ? [`DESCRIPTION:${esc(o.description)}`] : []),
+    'ORGANIZER;CN=Sven Rüprich:mailto:sven@happy-property.com', 'STATUS:CONFIRMED', 'END:VEVENT', 'END:VCALENDAR',
+  ].join('\r\n')
+}
+
+// Buchung durchführen: Zoom (optional) → Google-Event → CRM-Termin → Pipeline
+// „Termin gebucht" → Bestätigungs-Mail (mit Kalender-Anhang) → WhatsApp-Bestätigung.
+async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; deal_id: string | null }, lead: { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }, slot: Slot, type: 'zoom' | 'whatsapp') {
   const phone = lead.whatsapp || lead.phone || ''
   const name = first(lead.first_name)
+  const typeLabel = type === 'zoom' ? 'Zoom-Call' : 'Telefonat über WhatsApp'
   let zoomLink = ''
   if (type === 'zoom') {
     try {
@@ -298,19 +327,59 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
       zoomLink = (data as { join_url?: string } | null)?.join_url ?? ''
     } catch (e) { console.warn('[booking-bot] Zoom-Erstellung fehlgeschlagen:', e) }
   }
-  const desc = `Automatisch gebucht via WhatsApp-Terminbot.\nKunde: ${name}\nArt: ${type === 'zoom' ? 'Zoom' : 'WhatsApp-Anruf'}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
+  const desc = `Automatisch gebucht via WhatsApp-Terminbot.\nKunde: ${name}\nArt: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
   const cal = await createCalendarEvent(admin, { title: `Beratung – ${name || 'Lead'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp'})`, startIso: slot.startIso, endIso: slot.endIso, description: desc })
-  // CRM-Termin (der AFTER-INSERT-Trigger schließt das Gespräch + stoppt Nudges)
-  await admin.from('crm_appointments').insert({
+
+  // Deal ermitteln: der am Gespräch (no_show/erstkontakt) — sonst der aktive Deal
+  // des Leads (z.B. bei Deck-Buchung), damit die Pipeline korrekt wandert.
+  let dealId = conv.deal_id
+  if (!dealId) {
+    const { data: d } = await admin.from('deals').select('id').eq('lead_id', conv.lead_id).neq('phase', 'archiviert').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    dealId = (d as { id?: string } | null)?.id ?? null
+  }
+
+  // CRM-Termin (AFTER-INSERT-Trigger schließt Gespräch + stoppt Nudges). Fehler
+  // NICHT verschlucken — sonst bestätigt der Bot fälschlich einen ungebuchten Termin.
+  const { data: apptRow, error: apptErr } = await admin.from('crm_appointments').insert({
     title: `Beratungsgespräch – ${name || 'Lead'}`, type, start_time: slot.startIso, end_time: slot.endIso,
-    lead_id: conv.lead_id, deal_id: conv.deal_id, zoom_link: zoomLink || null,
+    lead_id: conv.lead_id, deal_id: dealId, zoom_link: zoomLink || null,
     phone_number: type === 'whatsapp' ? phone : null,
     google_event_id: cal?.id ?? null, google_calendar_id: cal?.calId ?? null,
     description: 'Vom WhatsApp-Terminbot gebucht',
-  })
+  }).select('id').single()
+
+  if (apptErr || !apptRow) {
+    console.error('[booking-bot] Termin-Insert fehlgeschlagen:', apptErr?.message)
+    const m = `Ups — beim Eintragen ist mir gerade ein technischer Fehler passiert 😕 Ich gebe das direkt an Sven, er bestätigt dir ${slot.label} Uhr gleich persönlich.`
+    await setConv(admin, conv.id, { state: 'handoff', chosen_slot: slot, meeting_type: type, last_message: m })
+    await sendWa(phone, m); await logWa(admin, conv.lead_id, m, 'outbound')
+    try { await admin.from('activities').insert({ lead_id: conv.lead_id, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Buchung fehlgeschlagen', content: `Termin ${slot.label} (${typeLabel}) konnte nicht gespeichert werden: ${apptErr?.message}. Bitte manuell eintragen.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    return
+  }
+
+  // Pipeline → „Termin gebucht" (wenn ein Deal existiert)
+  if (dealId) {
+    try { await admin.from('deals').update({ phase: 'termin_gebucht', phase_changed_at: new Date().toISOString() }).eq('id', dealId) }
+    catch (e) { console.warn('[booking-bot] Pipeline-Update fehlgeschlagen:', e) }
+  }
+
+  // Bestätigungs-Mail mit Kalender-Anhang (ersetzt die frühere Calendly-Mail)
+  if (lead.email) {
+    try {
+      const dateStr = new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(slot.startIso))
+      const timeStr = new Intl.DateTimeFormat('de-DE', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }).format(new Date(slot.startIso))
+      const whereHtml = type === 'zoom'
+        ? (zoomLink ? `<p>Zoom-Link: <a href="${zoomLink}">${zoomLink}</a></p>` : '<p>Den Zoom-Link bekommst du rechtzeitig vorher.</p>')
+        : '<p>Wir sprechen per WhatsApp — ich rufe dich zur vereinbarten Zeit an.</p>'
+      const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${name || ''},</p><p>vielen Dank — dein Termin ist bestätigt:</p><p><strong>Beratungsgespräch mit Sven</strong><br>${dateStr}<br>${timeStr} Uhr (deutsche Zeit) · ${typeLabel}</p>${whereHtml}<p>Im Anhang findest du den Termin für deinen Kalender. Ich freue mich auf das Gespräch!</p><p>Bis dann,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+      const ics = buildIcs({ uid: apptRow.id, title: 'Beratungsgespräch mit Sven – Happy Property', startIso: slot.startIso, endIso: slot.endIso, description: (type === 'zoom' && zoomLink) ? `Zoom: ${zoomLink}` : 'Beratungsgespräch mit Sven · Happy Property' })
+      await admin.functions.invoke('send-email', { body: { to: lead.email, subject: `Terminbestätigung: Beratungsgespräch am ${dateStr}`, html, lead_id: conv.lead_id, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } })
+    } catch (e) { console.warn('[booking-bot] Bestätigungs-Mail fehlgeschlagen:', e) }
+  }
+
   const confirm = type === 'zoom'
-    ? `Perfekt, ${name || 'ich freu mich'}! ✅ Unser Zoom-Termin steht: ${slot.label} Uhr (deutsche Zeit).${zoomLink ? `\n\nZoom-Link: ${zoomLink}` : '\n\nDen Zoom-Link schicke ich dir rechtzeitig vorher.'}\n\nBis dann! Liebe Grüße, Sven`
-    : `Perfekt, ${name || 'ich freu mich'}! ✅ Termin steht: ${slot.label} Uhr (deutsche Zeit). Ich rufe dich dann über WhatsApp an.\n\nBis dann! Liebe Grüße, Sven`
+    ? `Perfekt, ${name || 'ich freu mich'}! ✅ Unser Zoom-Termin steht: ${slot.label} Uhr (deutsche Zeit).${zoomLink ? `\n\nZoom-Link: ${zoomLink}` : '\n\nDen Zoom-Link schicke ich dir rechtzeitig vorher.'}${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Sven`
+    : `Perfekt, ${name || 'ich freu mich'}! ✅ Termin steht: ${slot.label} Uhr (deutsche Zeit). Ich rufe dich dann über WhatsApp an.${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Sven`
   await setConv(admin, conv.id, { state: 'booked', meeting_type: type, last_message: confirm })
   await sendWa(phone, confirm); await logWa(admin, conv.lead_id, confirm, 'outbound')
 }
@@ -363,20 +432,24 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   const c = conv as null | { id: string; lead_id: string; deal_id: string | null; state: string; proposed_slots: Slot[] | null; chosen_slot: Slot | null; attempts: number }
   if (!c) return json({ ok: true, skipped: 'no_active_conversation' })
 
-  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
-  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null }
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }
   const phone = l.whatsapp || l.phone || ''
   await logWa(admin, leadId, text, 'inbound')
 
   const slots = c.proposed_slots ?? []
   const it = await classify(c.state, c.state === 'awaiting_daypref' ? [] : slots, text)
 
-  // Tag-Kontext behalten: nennt der Kunde nur Tageszeit ODER eine konkrete Uhrzeit
-  // (aber keinen Tag), während schon ein konkreter Slot auf dem Tisch lag → dessen
-  // Wochentag übernehmen, statt versehentlich einen anderen Tag vorzuschlagen.
-  const refSlot = c.chosen_slot ?? (c.proposed_slots && c.proposed_slots.length === 1 ? c.proposed_slots[0] : null)
-  if (!it.day_hint && (it.daypart || it.time_hint) && refSlot?.startIso) {
-    it.day_hint = weekdayNameDe(refSlot.startIso)
+  // Tag-Kontext EXAKT behalten: nennt der Kunde nur Tageszeit/Uhrzeit (keinen Tag),
+  // während schon konkrete Slots auf dem Tisch lagen → deren Datum pinnen, damit die
+  // gewünschte Uhrzeit am RICHTIGEN Tag landet (nicht am nächsten passenden).
+  let ctxDate: string | null = c.chosen_slot?.startIso ? berlinDateStr(c.chosen_slot.startIso) : null
+  if (!ctxDate && c.proposed_slots?.length) {
+    const ds = c.proposed_slots.map(s => berlinDateStr(s.startIso))
+    if (ds.every(d => d === ds[0])) ctxDate = ds[0]   // alle Vorschläge am selben Tag
+  }
+  if (!it.day_hint && (it.daypart || it.time_hint) && ctxDate) {
+    it.onDate = ctxDate
   }
 
   // Opt-Out zuerst
@@ -385,6 +458,18 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     const m = 'Alles klar, ich lasse dich in Ruhe. Melde dich jederzeit, wenn es doch passt. 🙂'
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
     return json({ ok: true, handled: 'optout' })
+  }
+
+  // Zwischenfrage beantworten (z.B. „Mit wem spreche ich?") — ohne den Faden zu
+  // verlieren. Eine Rückfrage ist Interesse, kein Missverstehen → Zähler zurück.
+  if (it.answer) {
+    await sendWa(phone, it.answer); await logWa(admin, leadId, it.answer, 'outbound')
+    await setConv(admin, c.id, { attempts: 0 }); c.attempts = 0
+  }
+  if (it.intent === 'question') {
+    // reine Rückfrage → die aktuellen Optionen nochmal anbieten
+    if (c.last_message) { await sendWa(phone, c.last_message); await logWa(admin, leadId, c.last_message, 'outbound') }
+    return json({ ok: true, handled: 'question' })
   }
 
   const bump = async () => {
@@ -462,20 +547,20 @@ async function sendConfirm(admin: SupabaseClient, convId: string, phone: string,
 // anbieten, wenn der Bot auswählt; (2) nennt der Kunde eine konkrete freie Uhrzeit,
 // diese direkt annehmen (nicht gegenanbieten).
 async function proposeSlots(admin: SupabaseClient, convId: string, phone: string, leadId: string, name: string | null, it: Intent): Promise<Response> {
-  const dayHint = it.day_hint ?? undefined, daypart = it.daypart ?? undefined
+  const dayHint = it.day_hint ?? undefined, daypart = it.daypart ?? undefined, onDate = it.onDate ?? undefined
 
   // (1) Konkrete Wunschuhrzeit → frei? Dann DIREKT annehmen (gleich Terminart fragen)
   if (it.time_hint) {
-    const exact = await computeSlots(admin, 1, { dayHint, timeHint: it.time_hint })
+    const exact = await computeSlots(admin, 1, { dayHint, onDate, timeHint: it.time_hint })
     if (exact.length) return await askType(admin, convId, phone, leadId, name, exact[0])
     // gewünschte Uhrzeit belegt/außerhalb → 2 Alternativen am selben Tag anbieten
-    const alt = await computeSlots(admin, 2, { dayHint, daypart })
+    const alt = await computeSlots(admin, 2, { dayHint, onDate, daypart })
     if (alt.length >= 2) return await sendChoice(admin, convId, phone, leadId, alt, `Um ${it.time_hint} Uhr habe ich da leider nichts frei. Wie wäre stattdessen:`)
     if (alt.length === 1) return await sendConfirm(admin, convId, phone, leadId, alt[0], `Um ${it.time_hint} Uhr ist leider belegt — wie wäre `)
   }
 
   // (2) Tag/Tageszeit → immer 2 Vorschläge
-  const slots = await computeSlots(admin, 2, { dayHint, daypart })
+  const slots = await computeSlots(admin, 2, { dayHint, onDate, daypart })
   if (slots.length >= 2) return await sendChoice(admin, convId, phone, leadId, slots, 'Klar! Wie wäre:')
   if (slots.length === 1) return await sendConfirm(admin, convId, phone, leadId, slots[0], 'Ich hätte da nur einen Slot frei — wie wäre ')
 
