@@ -53,11 +53,11 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
         void supabase.functions.invoke('send-email', {
           body: {
             to:      p.email,
-            subject: 'Neue Datei in Ihrem Happy Property Portal',
-            html:    `<p>Hallo ${p.full_name.split(' ')[0]},</p>
-<p>es wurde ein neues <strong>Baustellenfoto</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
+            subject: t('constructionPhotos.notifyEmailSubject', 'Neue Datei in Ihrem Happy Property Portal'),
+            html:    t('constructionPhotos.notifyEmailBody', `<p>Hallo {{firstName}},</p>
+<p>es wurde ein neues <strong>Baustellenfoto</strong> für Ihre Immobilie hochgeladen: <em>{{fileName}}</em></p>
 <p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
-<p>Viele Grüße<br>Ihr Happy Property Team</p>`,
+<p>Viele Grüße<br>Ihr Happy Property Team</p>`, { firstName: p.full_name.split(' ')[0], fileName }),
           },
         })
       }
@@ -94,7 +94,7 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
       if (inputRef.current) inputRef.current.value = ''
       await fetchPhotos()
     } catch (err) {
-      showMsg(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showMsg(`❌ ${err instanceof Error ? err.message : t('constructionPhotos.genericError', 'Fehler')}`)
     } finally {
       setUploading(false)
     }

@@ -464,6 +464,7 @@ export interface DeveloperContact {
   role:         string | null
   is_primary:   boolean
   notes:        string | null
+  language:     'de' | 'en'    // Kontaktsprache: Mails/WhatsApp kommen hierin an
   created_at:   string
   updated_at:   string
 }
@@ -480,6 +481,7 @@ export interface BusinessContact {
   phone:      string | null
   whatsapp:   string | null
   notes:      string | null
+  language:   'de' | 'en'      // Kontaktsprache: Mails/WhatsApp kommen hierin an
   created_at: string
   updated_at: string
 }

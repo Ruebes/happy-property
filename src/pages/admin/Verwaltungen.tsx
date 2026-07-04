@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 
@@ -54,6 +55,7 @@ interface VerwaltungProperty {
 // ── Component ──────────────────────────────────────────────────
 export default function AdminVerwaltungen() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
 
   const [list,    setList]    = useState<VerwaltungRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -127,7 +129,7 @@ export default function AdminVerwaltungen() {
   }
 
   async function handleSave() {
-    if (!form.name.trim()) { setFormError('Firmenname ist Pflichtfeld.'); return }
+    if (!form.name.trim()) { setFormError(t('verwaltungen.companyNameRequired', 'Firmenname ist Pflichtfeld.')); return }
     setSaving(true); setFormError('')
     const payload = {
       name:                  form.name.trim(),
@@ -151,16 +153,16 @@ export default function AdminVerwaltungen() {
       ;({ error } = await supabase.from('verwaltungen').insert(payload))
     }
     setSaving(false)
-    if (error) { setFormError('Speichern fehlgeschlagen.'); return }
+    if (error) { setFormError(t('verwaltungen.saveFailed', 'Speichern fehlgeschlagen.')); return }
     setModalOpen(false)
-    setToast(editing ? '✅ Verwaltung aktualisiert' : '✅ Verwaltung angelegt')
+    setToast(editing ? t('verwaltungen.toastUpdated', '✅ Verwaltung aktualisiert') : t('verwaltungen.toastCreated', '✅ Verwaltung angelegt'))
     load()
   }
 
   async function handleDelete(id: string) {
     const { error } = await supabase.from('verwaltungen').delete().eq('id', id)
-    if (error) { setToast('❌ Löschen fehlgeschlagen'); return }
-    setDeleteId(null); setToast('Verwaltung gelöscht'); load()
+    if (error) { setToast(t('verwaltungen.toastDeleteFailed', '❌ Löschen fehlgeschlagen')); return }
+    setDeleteId(null); setToast(t('verwaltungen.toastDeleted', 'Verwaltung gelöscht')); load()
   }
 
   function mapsUrl(v: VerwaltungRecord) {
@@ -180,32 +182,32 @@ export default function AdminVerwaltungen() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-            Verwaltungen
+            {t('verwaltungen.title', 'Verwaltungen')}
           </h1>
           <p className="text-sm text-gray-400 font-body mt-0.5">
-            Verwaltungsunternehmen & Ansprechpartner pflegen
+            {t('verwaltungen.subtitle', 'Verwaltungsunternehmen & Ansprechpartner pflegen')}
           </p>
         </div>
         <button onClick={openCreate}
                 className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold font-body text-white hover:opacity-90 transition-opacity"
                 style={{ backgroundColor: 'var(--color-highlight)' }}>
-          + Neue Verwaltung
+          {t('verwaltungen.newButton', '+ Neue Verwaltung')}
         </button>
       </div>
 
       {loading ? (
         <div className="flex items-center gap-2 justify-center py-20 text-gray-400 font-body text-sm">
           <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
-          Lädt…
+          {t('verwaltungen.loading', 'Lädt…')}
         </div>
       ) : list.length === 0 ? (
         <div className="text-center py-20">
           <div className="text-5xl mb-4">🏢</div>
-          <p className="text-sm text-gray-500 font-body">Noch keine Verwaltungen angelegt.</p>
+          <p className="text-sm text-gray-500 font-body">{t('verwaltungen.emptyState', 'Noch keine Verwaltungen angelegt.')}</p>
           <button onClick={openCreate}
                   className="mt-4 px-4 py-2 rounded-xl text-sm font-semibold font-body text-white hover:opacity-90 transition-opacity"
                   style={{ backgroundColor: 'var(--color-highlight)' }}>
-            Erste Verwaltung anlegen
+            {t('verwaltungen.emptyStateButton', 'Erste Verwaltung anlegen')}
           </button>
         </div>
       ) : (
@@ -250,7 +252,7 @@ export default function AdminVerwaltungen() {
               {v.ansprechpartner && (
                 <div className="pt-2 border-t border-gray-100">
                   <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold font-body mb-1.5">
-                    Ansprechpartner
+                    {t('verwaltungen.contactPersonLabel', 'Ansprechpartner')}
                   </p>
                   <p className="text-sm font-semibold text-hp-black font-body">{v.ansprechpartner}</p>
                   <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
@@ -274,7 +276,7 @@ export default function AdminVerwaltungen() {
               <div className="flex gap-2 pt-2 border-t border-gray-100">
                 <button onClick={() => openEdit(v)}
                         className="flex-1 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 font-body hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                  ✏️ Bearbeiten
+                  {t('verwaltungen.editButton', '✏️ Bearbeiten')}
                 </button>
                 <button onClick={() => setDeleteId(v.id)}
                         className="px-3 py-1.5 rounded-lg border border-red-100 text-xs font-semibold text-red-400 font-body hover:border-red-300 hover:text-red-600 transition-colors">
@@ -293,7 +295,7 @@ export default function AdminVerwaltungen() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-                {editing ? 'Verwaltung bearbeiten' : 'Neue Verwaltung anlegen'}
+                {editing ? t('verwaltungen.modalTitleEdit', 'Verwaltung bearbeiten') : t('verwaltungen.modalTitleCreate', 'Neue Verwaltung anlegen')}
               </h2>
               <button onClick={() => setModalOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
@@ -302,38 +304,38 @@ export default function AdminVerwaltungen() {
 
               {/* Firma */}
               <div>
-                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">Firma</p>
+                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">{t('verwaltungen.sectionCompany', 'Firma')}</p>
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-xs text-gray-500 font-body mb-1">Firmenname *</label>
+                    <label className="block text-xs text-gray-500 font-body mb-1">{t('verwaltungen.companyNameLabel', 'Firmenname *')}</label>
                     <input autoFocus className={inputCls} style={focusRing()}
-                           placeholder="z.B. Immobilien Management GmbH"
+                           placeholder={t('verwaltungen.companyNamePlaceholder', 'z.B. Immobilien Management GmbH')}
                            value={form.name}
                            onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
                   </div>
-                  <input className={inputCls} style={focusRing()} placeholder="Straße + Hausnummer"
+                  <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.streetPlaceholder', 'Straße + Hausnummer')}
                          value={form.address_street}
                          onChange={e => setForm(f => ({ ...f, address_street: e.target.value }))} />
                   <div className="grid grid-cols-3 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="PLZ"
+                    <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.zipPlaceholder', 'PLZ')}
                            value={form.address_zip}
                            onChange={e => setForm(f => ({ ...f, address_zip: e.target.value }))} />
-                    <input className={`${inputCls} col-span-2`} style={focusRing()} placeholder="Stadt"
+                    <input className={`${inputCls} col-span-2`} style={focusRing()} placeholder={t('verwaltungen.cityPlaceholder', 'Stadt')}
                            value={form.address_city}
                            onChange={e => setForm(f => ({ ...f, address_city: e.target.value }))} />
                   </div>
-                  <input className={inputCls} style={focusRing()} placeholder="Land"
+                  <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.countryPlaceholder', 'Land')}
                          value={form.address_country}
                          onChange={e => setForm(f => ({ ...f, address_country: e.target.value }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="Firmen-Telefon" type="tel"
+                    <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.companyPhonePlaceholder', 'Firmen-Telefon')} type="tel"
                            value={form.phone}
                            onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
-                    <input className={inputCls} style={focusRing()} placeholder="Firmen-E-Mail" type="email"
+                    <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.companyEmailPlaceholder', 'Firmen-E-Mail')} type="email"
                            value={form.email}
                            onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
                   </div>
-                  <input className={inputCls} style={focusRing()} placeholder="Website (optional)"
+                  <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.websitePlaceholder', 'Website (optional)')}
                          value={form.website}
                          onChange={e => setForm(f => ({ ...f, website: e.target.value }))} />
                 </div>
@@ -341,16 +343,16 @@ export default function AdminVerwaltungen() {
 
               {/* Ansprechpartner */}
               <div>
-                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">Ansprechpartner</p>
+                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">{t('verwaltungen.sectionContactPerson', 'Ansprechpartner')}</p>
                 <div className="space-y-2">
-                  <input className={inputCls} style={focusRing()} placeholder="Name des Ansprechpartners"
+                  <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.contactNamePlaceholder', 'Name des Ansprechpartners')}
                          value={form.ansprechpartner}
                          onChange={e => setForm(f => ({ ...f, ansprechpartner: e.target.value }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="Direkt-Telefon" type="tel"
+                    <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.directPhonePlaceholder', 'Direkt-Telefon')} type="tel"
                            value={form.ansprechpartner_phone}
                            onChange={e => setForm(f => ({ ...f, ansprechpartner_phone: e.target.value }))} />
-                    <input className={inputCls} style={focusRing()} placeholder="Direkt-E-Mail" type="email"
+                    <input className={inputCls} style={focusRing()} placeholder={t('verwaltungen.directEmailPlaceholder', 'Direkt-E-Mail')} type="email"
                            value={form.ansprechpartner_email}
                            onChange={e => setForm(f => ({ ...f, ansprechpartner_email: e.target.value }))} />
                   </div>
@@ -359,9 +361,9 @@ export default function AdminVerwaltungen() {
 
               {/* Interne Notizen */}
               <div>
-                <label className="block text-xs text-gray-500 font-body mb-1 font-semibold">Interne Notizen</label>
+                <label className="block text-xs text-gray-500 font-body mb-1 font-semibold">{t('verwaltungen.internalNotesLabel', 'Interne Notizen')}</label>
                 <textarea className={`${inputCls} resize-none`} style={focusRing()} rows={2}
-                          placeholder="Interne Notizen…"
+                          placeholder={t('verwaltungen.internalNotesPlaceholder', 'Interne Notizen…')}
                           value={form.notes}
                           onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
               </div>
@@ -370,15 +372,15 @@ export default function AdminVerwaltungen() {
               {editing && (
                 <div className="border-t border-gray-100 pt-4">
                   <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">
-                    Immobilien ({verwaltungProps.length})
+                    {t('verwaltungen.propertiesHeading', 'Immobilien ({{count}})', { count: verwaltungProps.length })}
                   </p>
                   {propsLoading ? (
                     <div className="flex items-center gap-2 text-xs text-gray-400 font-body py-1">
                       <span className="w-3 h-3 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
-                      Lädt…
+                      {t('verwaltungen.loading', 'Lädt…')}
                     </div>
                   ) : verwaltungProps.length === 0 ? (
-                    <p className="text-xs text-gray-400 font-body">Keine Immobilien zugeordnet.</p>
+                    <p className="text-xs text-gray-400 font-body">{t('verwaltungen.noPropertiesAssigned', 'Keine Immobilien zugeordnet.')}</p>
                   ) : (
                     <ul className="space-y-1.5">
                       {verwaltungProps.map(p => (
@@ -413,12 +415,12 @@ export default function AdminVerwaltungen() {
             <div className="px-6 pb-5 flex gap-3 justify-end border-t border-gray-100 pt-4">
               <button onClick={() => setModalOpen(false)}
                       className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
-                Abbrechen
+                {t('verwaltungen.cancelButton', 'Abbrechen')}
               </button>
               <button onClick={handleSave} disabled={saving}
                       className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body hover:opacity-90 transition-opacity disabled:opacity-50"
                       style={{ backgroundColor: 'var(--color-highlight)' }}>
-                {saving ? 'Speichern…' : editing ? '✓ Aktualisieren' : '✓ Anlegen'}
+                {saving ? t('verwaltungen.saving', 'Speichern…') : editing ? t('verwaltungen.updateButton', '✓ Aktualisieren') : t('verwaltungen.createButton', '✓ Anlegen')}
               </button>
             </div>
           </div>
@@ -431,19 +433,19 @@ export default function AdminVerwaltungen() {
              onClick={e => { if (e.target === e.currentTarget) setDeleteId(null) }}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-              Verwaltung löschen?
+              {t('verwaltungen.deleteConfirmTitle', 'Verwaltung löschen?')}
             </h2>
             <p className="text-sm text-gray-500 font-body">
-              Zugewiesene Immobilien werden nicht gelöscht – nur die Zuweisung wird aufgehoben.
+              {t('verwaltungen.deleteConfirmBody', 'Zugewiesene Immobilien werden nicht gelöscht – nur die Zuweisung wird aufgehoben.')}
             </p>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setDeleteId(null)}
                       className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
-                Abbrechen
+                {t('verwaltungen.cancelButton', 'Abbrechen')}
               </button>
               <button onClick={() => handleDelete(deleteId)}
                       className="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-red-500 hover:bg-red-600 font-body transition-colors">
-                Löschen
+                {t('verwaltungen.deleteButton', 'Löschen')}
               </button>
             </div>
           </div>

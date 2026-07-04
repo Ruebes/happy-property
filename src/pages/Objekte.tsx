@@ -595,10 +595,10 @@ export default function Objekte() {
       console.error('[handleSave] Fehler:', err)
       try {
         const e = err as Record<string, unknown>
-        const msg = e?.message ?? e?.code ?? e?.details ?? JSON.stringify(err) ?? 'Unbekannter Fehler'
+        const msg = e?.message ?? e?.code ?? e?.details ?? JSON.stringify(err) ?? t('objekte.unknownError', 'Unbekannter Fehler')
         setSaveError(String(msg))
       } catch {
-        setSaveError('Unbekannter Fehler (nicht serialisierbar)')
+        setSaveError(t('objekte.unknownErrorNotSerializable', 'Unbekannter Fehler (nicht serialisierbar)'))
       }
     } finally {
       // Always reset spinners — even if an error occurred
@@ -646,7 +646,7 @@ export default function Objekte() {
       })
 
       if (fnError || data?.error) {
-        const msg = data?.error ?? fnError?.message ?? 'Unbekannter Fehler'
+        const msg = data?.error ?? fnError?.message ?? t('objekte.unknownError', 'Unbekannter Fehler')
         setOwnerModalError(
           msg.includes('already') || msg.includes('exists')
             ? t('properties.ownerModal.errorExists')
@@ -667,7 +667,7 @@ export default function Objekte() {
       await fetchOwners()
       if (data?.userId) setField('owner_id', data.userId)
     } catch (err) {
-      setOwnerModalError(err instanceof Error ? err.message : 'Fehler beim Anlegen')
+      setOwnerModalError(err instanceof Error ? err.message : t('objekte.errorCreating', 'Fehler beim Anlegen'))
     } finally {
       setOwnerModalSaving(false)
     }
@@ -692,12 +692,12 @@ export default function Objekte() {
         {!editId && (
           <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide font-body">
-              🔗 CRM-Projekt verknüpfen <span className="font-normal normal-case">(optional)</span>
+              🔗 {t('objekte.linkCrmProject', 'CRM-Projekt verknüpfen')} <span className="font-normal normal-case">({t('objekte.optional', 'optional')})</span>
             </p>
 
             {/* Projekt-Dropdown */}
             <div>
-              <Label>Projekt aus CRM</Label>
+              <Label>{t('objekte.projectFromCrm', 'Projekt aus CRM')}</Label>
               <CustomSelect
                 className={inputCls} style={focusRing()}
                 value={crmProjId}
@@ -716,21 +716,21 @@ export default function Objekte() {
                   }
                 }}
                 options={[
-                  { value: '', label: '— Kein CRM-Projekt —' },
+                  { value: '', label: t('objekte.noCrmProject', '— Kein CRM-Projekt —') },
                   ...crmProjects.map(p => ({ value: p.id, label: p.name })),
                 ]}
-                placeholder="— Kein CRM-Projekt —"
+                placeholder={t('objekte.noCrmProject', '— Kein CRM-Projekt —')}
               />
             </div>
 
             {/* Einheiten-Dropdown (erscheint nach Projektauswahl) */}
             {crmProjId && (
               <div>
-                <Label>Wohnungseinheit</Label>
+                <Label>{t('objekte.unitLabel', 'Wohnungseinheit')}</Label>
                 {loadingCrmUnits ? (
                   <div className="flex items-center gap-2 py-2 text-sm text-gray-400 font-body">
                     <span className="w-4 h-4 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin shrink-0" />
-                    Lade Einheiten…
+                    {t('objekte.loadingUnits', 'Lade Einheiten…')}
                   </div>
                 ) : (
                   <CustomSelect
@@ -754,19 +754,19 @@ export default function Objekte() {
                       }
                     }}
                     options={[
-                      { value: '', label: '— Einheit auswählen —' },
+                      { value: '', label: t('objekte.selectUnit', '— Einheit auswählen —') },
                       ...crmUnits.filter(u => !u.property_id).map(u => ({
                         value: u.id,
-                        label: `${u.block ? `Block ${u.block} · ` : ''}${u.unit_number}${u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}${u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
+                        label: `${u.block ? `${t('objekte.blockPrefix', 'Block {{block}}', { block: u.block })} · ` : ''}${u.unit_number}${u.type === 'villa' ? ` · ${t('objekte.villaSuffix', 'Villa')}` : u.type === 'studio' ? ` · ${t('objekte.studioSuffix', 'Studio')}` : ''}${u.bedrooms ? ` · ${t('objekte.bedroomsAbbrShort', '{{count}} SZ', { count: u.bedrooms })}` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
                       })),
-                      { value: 'new', label: '+ Neue Einheit anlegen' },
+                      { value: 'new', label: t('objekte.addNewUnit', '+ Neue Einheit anlegen') },
                     ]}
-                    placeholder="— Einheit auswählen —"
+                    placeholder={t('objekte.selectUnit', '— Einheit auswählen —')}
                   />
                 )}
                 {crmUnitId === 'new' && (
                   <p className="text-xs text-blue-600 font-body mt-1">
-                    ℹ️ Neue Einheit wird beim Speichern automatisch im CRM angelegt – fülle unten die Details aus.
+                    ℹ️ {t('objekte.newUnitHint', 'Neue Einheit wird beim Speichern automatisch im CRM angelegt – fülle unten die Details aus.')}
                   </p>
                 )}
               </div>
@@ -780,14 +780,14 @@ export default function Objekte() {
             <input className={inputCls} style={focusRing()}
               value={form.project_name}
               onChange={e => setField('project_name', e.target.value)}
-              placeholder="z. B. Palmera Villas" />
+              placeholder={t('objekte.projectNamePlaceholder', 'z. B. Palmera Villas')} />
           </div>
           <div>
             <Label>{t('properties.unitNumber')}</Label>
             <input className={inputCls} style={focusRing()}
               value={form.unit_number}
               onChange={e => setField('unit_number', e.target.value)}
-              placeholder="z. B. A-204" />
+              placeholder={t('objekte.unitNumberPlaceholder', 'z. B. A-204')} />
           </div>
         </div>
 
@@ -817,7 +817,7 @@ export default function Objekte() {
             </div>
           </div>
           <div>
-            <Label>Terrasse (m²)</Label>
+            <Label>{t('objekte.terraceSize', 'Terrasse (m²)')}</Label>
             <div className="relative">
               <input type="text" inputMode="decimal"
                 className={`${inputCls} pr-10`} style={focusRing()}
@@ -832,19 +832,19 @@ export default function Objekte() {
         {/* Zimmer & Lage */}
         <div className="grid grid-cols-4 gap-3">
           <div>
-            <Label>Schlafzimmer</Label>
+            <Label>{t('objekte.bedrooms', 'Schlafzimmer')}</Label>
             <CustomSelect
               className={inputCls} style={focusRing()}
               value={form.bedrooms}
               onChange={val => setField('bedrooms', val)}
               options={[
-                { value: '0', label: 'Studio' },
+                { value: '0', label: t('objekte.studio', 'Studio') },
                 ...[1,2,3,4,5,6].map(n => ({ value: String(n), label: String(n) })),
               ]}
             />
           </div>
           <div>
-            <Label>Badezimmer</Label>
+            <Label>{t('objekte.bathrooms', 'Badezimmer')}</Label>
             <CustomSelect
               className={inputCls} style={focusRing()}
               value={form.bathrooms}
@@ -853,7 +853,7 @@ export default function Objekte() {
             />
           </div>
           <div>
-            <Label>Etage</Label>
+            <Label>{t('objekte.floor', 'Etage')}</Label>
             <input type="text" inputMode="numeric"
               className={inputCls} style={focusRing()}
               value={form.floor}
@@ -861,7 +861,7 @@ export default function Objekte() {
               placeholder="1" />
           </div>
           <div>
-            <Label>Block</Label>
+            <Label>{t('objekte.block', 'Block')}</Label>
             <input type="text"
               className={inputCls} style={focusRing()}
               value={form.block}
@@ -893,15 +893,15 @@ export default function Objekte() {
             className={inputCls} style={focusRing()}
             value={form.rental_type}
             onChange={val => setField('rental_type', val as FormData['rental_type'])}
-            placeholder="— Noch nicht festgelegt —"
+            placeholder={t('objekte.rentalTypeNotSet', '— Noch nicht festgelegt —')}
             options={[
-              { value: '', label: '— Noch nicht festgelegt —' },
+              { value: '', label: t('objekte.rentalTypeNotSet', '— Noch nicht festgelegt —') },
               { value: 'longterm',  label: t('properties.rental.longterm')  },
               { value: 'shortterm', label: t('properties.rental.shortterm') },
             ]}
           />
           <p className="text-xs text-gray-400 font-body mt-1">
-            Wird spätestens bei Freigabe für die Verwaltung festgelegt.
+            {t('objekte.rentalTypeHint', 'Wird spätestens bei Freigabe für die Verwaltung festgelegt.')}
           </p>
         </div>
 
@@ -950,9 +950,9 @@ export default function Objekte() {
           </div>
           {priceNet != null && form.purchase_price_gross && (
             <p className="text-xs text-gray-400 font-body">
-              {fmtCurrency(parseFloat(form.purchase_price_gross.replace(',', '.')))} brutto
-              {' · MwSt '}{form.vat_rate}{'% · '}
-              <strong className="text-gray-600">{fmtCurrency(priceNet)} netto</strong>
+              {t('objekte.priceGrossSummary', '{{amount}} brutto', { amount: fmtCurrency(parseFloat(form.purchase_price_gross.replace(',', '.'))) })}
+              {' · '}{t('objekte.priceVatSummary', 'MwSt {{rate}}%', { rate: form.vat_rate })}{' · '}
+              <strong className="text-gray-600">{t('objekte.priceNetSummary', '{{amount}} netto', { amount: fmtCurrency(priceNet) })}</strong>
             </p>
           )}
         </div>
@@ -1033,7 +1033,7 @@ export default function Objekte() {
                 {/* "new" badge */}
                 <span className="absolute bottom-1.5 left-1.5 text-[10px] font-bold px-1.5 py-0.5
                                  rounded-full bg-white text-gray-600 shadow opacity-90">
-                  neu
+                  {t('objekte.newBadge', 'neu')}
                 </span>
                 <button
                   type="button"
@@ -1120,7 +1120,7 @@ export default function Objekte() {
                              border border-green-200 text-green-700 hover:bg-green-100
                              transition-colors whitespace-nowrap"
                 >
-                  → Profil
+                  {t('objekte.goToProfile', '→ Profil')}
                 </a>
               </div>
             ) : null
@@ -1150,9 +1150,9 @@ export default function Objekte() {
               <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
                 <span className="text-2xl shrink-0">✉️</span>
                 <div>
-                  <p className="text-sm font-semibold text-green-800 font-body">Nutzer angelegt</p>
+                  <p className="text-sm font-semibold text-green-800 font-body">{t('objekte.userCreated', 'Nutzer angelegt')}</p>
                   <p className="text-xs text-green-700 font-body mt-0.5">
-                    Zugangsdaten wurden automatisch an <strong>{ownerModal.email}</strong> gesendet.
+                    {t('objekte.credentialsSentTo', 'Zugangsdaten wurden automatisch an {{email}} gesendet.', { email: ownerModal.email })}
                   </p>
                 </div>
               </div>
@@ -1162,7 +1162,7 @@ export default function Objekte() {
                 className="w-full py-2.5 rounded-xl text-white text-sm font-semibold font-body hover:opacity-90 transition-opacity"
                 style={{ backgroundColor: 'var(--color-highlight)' }}
               >
-                Schließen &amp; weiter
+                {t('objekte.closeAndContinue', 'Schließen & weiter')}
               </button>
             </div>
           ) : (
@@ -1173,14 +1173,14 @@ export default function Objekte() {
                   <input className={inputCls} style={focusRing()}
                     value={ownerModal.first_name}
                     onChange={e => setOwnerModal(m => ({ ...m, first_name: e.target.value }))}
-                    placeholder="Max" />
+                    placeholder={t('objekte.firstNamePlaceholder', 'Max')} />
                 </div>
                 <div>
                   <Label required>{t('properties.ownerModal.lastName')}</Label>
                   <input className={inputCls} style={focusRing()}
                     value={ownerModal.last_name}
                     onChange={e => setOwnerModal(m => ({ ...m, last_name: e.target.value }))}
-                    placeholder="Mustermann" />
+                    placeholder={t('objekte.lastNamePlaceholder', 'Mustermann')} />
                 </div>
               </div>
 
@@ -1189,7 +1189,7 @@ export default function Objekte() {
                 <input type="email" className={inputCls} style={focusRing()}
                   value={ownerModal.email}
                   onChange={e => setOwnerModal(m => ({ ...m, email: e.target.value }))}
-                  placeholder="max@beispiel.de" />
+                  placeholder={t('objekte.emailPlaceholder', 'max@beispiel.de')} />
               </div>
 
               <div>
@@ -1205,7 +1205,7 @@ export default function Objekte() {
                 <select className={inputCls} style={focusRing()}
                   value={ownerModal.language}
                   onChange={e => setOwnerModal(m => ({ ...m, language: e.target.value as 'de' | 'en' }))}>
-                  <option value="de">Deutsch</option>
+                  <option value="de">{t('objekte.languageGerman', 'Deutsch')}</option>
                   <option value="en">English</option>
                 </select>
               </div>
@@ -1215,7 +1215,7 @@ export default function Objekte() {
                 <input className={inputCls} style={focusRing()}
                   value={ownerModal.address_street}
                   onChange={e => setOwnerModal(m => ({ ...m, address_street: e.target.value }))}
-                  placeholder="Hauptstraße 12a" />
+                  placeholder={t('objekte.addressStreetPlaceholder', 'Hauptstraße 12a')} />
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -1230,7 +1230,7 @@ export default function Objekte() {
                   <input className={inputCls} style={focusRing()}
                     value={ownerModal.address_city}
                     onChange={e => setOwnerModal(m => ({ ...m, address_city: e.target.value }))}
-                    placeholder="München" />
+                    placeholder={t('objekte.addressCityPlaceholder', 'München')} />
                 </div>
               </div>
               <div>
@@ -1238,7 +1238,7 @@ export default function Objekte() {
                 <input className={inputCls} style={focusRing()}
                   value={ownerModal.address_country}
                   onChange={e => setOwnerModal(m => ({ ...m, address_country: e.target.value }))}
-                  placeholder="Deutschland" />
+                  placeholder={t('objekte.addressCountryPlaceholder', 'Deutschland')} />
               </div>
 
               {ownerModalError && (
@@ -1432,7 +1432,7 @@ export default function Objekte() {
             {/* Save error display */}
             {saveError && (
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700 font-body break-words">
-                <strong>Fehler beim Speichern:</strong><br />{saveError}
+                <strong>{t('objekte.saveErrorPrefix', 'Fehler beim Speichern:')}</strong><br />{saveError}
               </div>
             )}
 

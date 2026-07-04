@@ -487,7 +487,7 @@ export default function AdminUsers() {
         },
       }).catch(() => { /* Fehler im Hintergrund ignorieren */ })
       closeModal()
-      setToast(`✉️ Nutzer angelegt – Zugangsdaten wurden an ${form.email.trim()} gesendet.`)
+      setToast(`✉️ ${t('users.toast.createdCredentialsSent', 'Nutzer angelegt – Zugangsdaten wurden an {{email}} gesendet.', { email: form.email.trim() })}`)
       fetchUsers()
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
@@ -591,7 +591,7 @@ export default function AdminUsers() {
 
   // ── Quick portal password reset (direkt aus Tabelle) ────────
   async function handleQuickResetPassword(u: UserProfile) {
-    if (!window.confirm(`Neues Passwort für ${u.full_name} generieren und dem Nutzer per E-Mail senden?`)) return
+    if (!window.confirm(t('users.confirm.quickResetPassword', 'Neues Passwort für {{name}} generieren und dem Nutzer per E-Mail senden?', { name: u.full_name }))) return
     setResetingPwId(u.id)
     try {
       const { password, emailed } = await adminUserOp<{ success: true; password: string; emailed: boolean }>({
@@ -602,7 +602,7 @@ export default function AdminUsers() {
       setPwEmailed(!!emailed)
       setCreatedPassword(password)
     } catch (e) {
-      setToast(e instanceof Error ? e.message : 'Fehler beim Zurücksetzen')
+      setToast(e instanceof Error ? e.message : t('users.errors.resetFailed', 'Fehler beim Zurücksetzen'))
     } finally {
       setResetingPwId(null)
     }
@@ -660,15 +660,15 @@ export default function AdminUsers() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
             <div className="text-center mb-5">
               <div className="text-4xl mb-3">✅</div>
-              <h2 className="text-lg font-bold text-hp-black font-body">Passwort zurückgesetzt</h2>
+              <h2 className="text-lg font-bold text-hp-black font-body">{t('users.passwordModal.title', 'Passwort zurückgesetzt')}</h2>
               <p className="text-sm text-gray-500 font-body mt-1">
                 {pwEmailed
-                  ? '✉️ Die Zugangsdaten wurden dem Nutzer per E-Mail gesendet. Passwort unten als Kopie.'
-                  : 'Bitte Passwort manuell mitteilen (per WhatsApp, Telefon o.ä.)'}
+                  ? `✉️ ${t('users.passwordModal.emailedNote', 'Die Zugangsdaten wurden dem Nutzer per E-Mail gesendet. Passwort unten als Kopie.')}`
+                  : t('users.passwordModal.manualNote', 'Bitte Passwort manuell mitteilen (per WhatsApp, Telefon o.ä.)')}
               </p>
             </div>
             <div className="bg-gray-50 rounded-xl border border-gray-200 p-4 mb-4">
-              <p className="text-xs text-gray-400 font-body mb-1">Generiertes Passwort</p>
+              <p className="text-xs text-gray-400 font-body mb-1">{t('users.passwordModal.generatedLabel', 'Generiertes Passwort')}</p>
               <p className="font-mono text-lg font-bold text-hp-black tracking-wider text-center">
                 {createdPassword}
               </p>
@@ -679,14 +679,14 @@ export default function AdminUsers() {
                 className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm
                            font-semibold font-body text-gray-700 hover:border-gray-300
                            transition-colors">
-                {pwCopied ? '✓ Kopiert!' : '📋 Kopieren'}
+                {pwCopied ? `✓ ${t('users.passwordModal.copied', 'Kopiert!')}` : `📋 ${t('users.passwordModal.copy', 'Kopieren')}`}
               </button>
               <button
                 onClick={() => { setCreatedPassword(null); setPwCopied(false); setPwEmailed(false) }}
                 className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold
                            font-body transition-opacity hover:opacity-90"
                 style={{ backgroundColor: 'var(--color-highlight)' }}>
-                Fertig
+                {t('users.passwordModal.done', 'Fertig')}
               </button>
             </div>
           </div>
@@ -950,11 +950,11 @@ export default function AdminUsers() {
               {modal === 'new' && form.role === 'eigentuemer' && (
                 <section>
                   <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-3">
-                    🏠 Wohnung zuweisen (optional)
+                    🏠 {t('users.unitAssign.heading', 'Wohnung zuweisen (optional)')}
                   </h3>
 
                   {/* Projekt */}
-                  <Field label="Projekt">
+                  <Field label={t('users.unitAssign.project', 'Projekt')}>
                     <CustomSelect
                       className={inputCls}
                       value={assignProjectId}
@@ -965,21 +965,21 @@ export default function AdminUsers() {
                         else setProjectUnits([])
                       }}
                       options={[
-                        { value: '', label: '— Kein Projekt —' },
+                        { value: '', label: t('users.unitAssign.noProject', '— Kein Projekt —') },
                         ...crmProjects.map(p => ({ value: p.id, label: p.name })),
                       ]}
-                      placeholder="— Kein Projekt —"
+                      placeholder={t('users.unitAssign.noProject', '— Kein Projekt —')}
                     />
                   </Field>
 
                   {/* Einheit */}
                   {assignProjectId && (
                     <div className="mt-3">
-                      <Field label="Wohnungseinheit">
+                      <Field label={t('users.unitAssign.unit', 'Wohnungseinheit')}>
                         {loadingUnits ? (
                           <div className="flex items-center gap-2 py-2">
                             <span className="w-4 h-4 border-2 border-[#ff795d] border-t-transparent rounded-full animate-spin inline-block" />
-                            <span className="text-xs text-gray-400 font-body">Lade Wohnungen…</span>
+                            <span className="text-xs text-gray-400 font-body">{t('users.unitAssign.loadingUnits', 'Lade Wohnungen…')}</span>
                           </div>
                         ) : (
                           <CustomSelect
@@ -987,16 +987,16 @@ export default function AdminUsers() {
                             value={assignUnitId}
                             onChange={val => setAssignUnitId(val)}
                             options={[
-                              { value: '', label: '— Keine Einheit —' },
+                              { value: '', label: t('users.unitAssign.noUnit', '— Keine Einheit —') },
                               ...projectUnits
                                 .filter(u => !u.property_id)
                                 .map(u => ({
                                   value: u.id,
-                                  label: `${u.block ? `Block ${u.block} · ` : ''}${u.unit_number}${u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}${u.bedrooms ? ` · ${u.bedrooms} SZ` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
+                                  label: `${u.block ? `${t('users.unitAssign.block', 'Block')} ${u.block} · ` : ''}${u.unit_number}${u.type === 'villa' ? ' · Villa' : u.type === 'studio' ? ' · Studio' : ''}${u.bedrooms ? ` · ${u.bedrooms} ${t('users.unitAssign.bedroomsAbbr', 'SZ')}` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
                                 })),
-                              { value: 'new', label: '+ Neue Wohnung anlegen' },
+                              { value: 'new', label: t('users.unitAssign.createNew', '+ Neue Wohnung anlegen') },
                             ]}
-                            placeholder="— Keine Einheit —"
+                            placeholder={t('users.unitAssign.noUnit', '— Keine Einheit —')}
                           />
                         )}
                       </Field>
@@ -1006,23 +1006,23 @@ export default function AdminUsers() {
                   {/* Neue Wohnung anlegen — Mini-Formular */}
                   {assignUnitId === 'new' && (
                     <div className="mt-3 p-4 bg-gray-50 rounded-xl space-y-3 border border-gray-100">
-                      <p className="text-xs font-semibold text-gray-500 font-body">Neue Wohnung</p>
+                      <p className="text-xs font-semibold text-gray-500 font-body">{t('users.unitAssign.newUnitLabel', 'Neue Wohnung')}</p>
                       <div className="grid grid-cols-2 gap-3">
-                        <Field label="Wohnungsnummer *">
+                        <Field label={t('users.unitAssign.unitNumber', 'Wohnungsnummer *')}>
                           <input
                             className={inputCls}
-                            placeholder="z.B. 12 oder A-12"
+                            placeholder={t('users.unitAssign.unitNumberPlaceholder', 'z.B. 12 oder A-12')}
                             value={newUnitForm.unit_number}
                             onChange={e => setNewUnitForm(f => ({ ...f, unit_number: e.target.value }))}
                           />
                         </Field>
-                        <Field label="Typ">
+                        <Field label={t('users.unitAssign.type', 'Typ')}>
                           <CustomSelect
                             className={inputCls}
                             value={newUnitForm.type}
                             onChange={val => setNewUnitForm(f => ({ ...f, type: val as 'apartment' | 'villa' | 'studio' }))}
                             options={[
-                              { value: 'apartment', label: 'Wohnung' },
+                              { value: 'apartment', label: t('users.unitAssign.typeApartment', 'Wohnung') },
                               { value: 'villa',     label: 'Villa' },
                               { value: 'studio',    label: 'Studio' },
                             ]}
@@ -1030,7 +1030,7 @@ export default function AdminUsers() {
                         </Field>
                       </div>
                       <div className="grid grid-cols-3 gap-3">
-                        <Field label="Schlafzimmer">
+                        <Field label={t('users.unitAssign.bedrooms', 'Schlafzimmer')}>
                           <input
                             className={inputCls}
                             type="number" min="0"
@@ -1038,7 +1038,7 @@ export default function AdminUsers() {
                             onChange={e => setNewUnitForm(f => ({ ...f, bedrooms: parseInt(e.target.value) || 0 }))}
                           />
                         </Field>
-                        <Field label="Fläche (m²)">
+                        <Field label={t('users.unitAssign.size', 'Fläche (m²)')}>
                           <input
                             className={inputCls}
                             type="number" min="0" step="0.01"
@@ -1047,7 +1047,7 @@ export default function AdminUsers() {
                             onChange={e => setNewUnitForm(f => ({ ...f, size_sqm: e.target.value }))}
                           />
                         </Field>
-                        <Field label="Preis netto (€)">
+                        <Field label={t('users.unitAssign.priceNet', 'Preis netto (€)')}>
                           <input
                             className={inputCls}
                             type="number" min="0" step="100"
@@ -1066,22 +1066,22 @@ export default function AdminUsers() {
               {form.role === 'verwalter' && (
                 <section>
                   <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body mb-2">
-                    Verwaltungsunternehmen
+                    {t('users.management.heading', 'Verwaltungsunternehmen')}
                   </h3>
                   <CustomSelect
                     className={inputCls}
                     value={form.verwaltung_id}
                     onChange={val => setF('verwaltung_id', val)}
                     options={[
-                      { value: '', label: '– Keiner Verwaltung zugeordnet –' },
+                      { value: '', label: t('users.management.none', '– Keiner Verwaltung zugeordnet –') },
                       ...verwaltungOptions.map(v => ({ value: v.id, label: v.name })),
                     ]}
-                    placeholder="– Keiner Verwaltung zugeordnet –"
+                    placeholder={t('users.management.none', '– Keiner Verwaltung zugeordnet –')}
                   />
                   {verwaltungOptions.length === 0 && (
                     <p className="text-xs text-amber-600 font-body mt-1">
-                      Noch keine Verwaltungen angelegt.{' '}
-                      <a href="/admin/verwaltungen" target="_blank" className="underline">Jetzt anlegen →</a>
+                      {t('users.management.noneCreatedYet', 'Noch keine Verwaltungen angelegt.')}{' '}
+                      <a href="/admin/verwaltungen" target="_blank" className="underline">{t('users.management.createNow', 'Jetzt anlegen →')}</a>
                     </p>
                   )}
                 </section>
@@ -1095,7 +1095,7 @@ export default function AdminUsers() {
                   <Field label={t('users.form.street')}>
                     <input className={inputCls} value={form.address_street}
                            onChange={e => setF('address_street', e.target.value)}
-                           placeholder="Musterstraße 12" />
+                           placeholder={t('users.form.streetPlaceholder', 'Musterstraße 12')} />
                   </Field>
                   <div className="grid grid-cols-3 gap-3">
                     <Field label={t('users.form.zip')}>
@@ -1114,7 +1114,7 @@ export default function AdminUsers() {
                   <Field label={t('users.form.country')}>
                     <input className={inputCls} value={form.address_country}
                            onChange={e => setF('address_country', e.target.value)}
-                           placeholder="Deutschland" />
+                           placeholder={t('users.form.countryPlaceholder', 'Deutschland')} />
                   </Field>
                 </div>
               </section>
@@ -1164,10 +1164,10 @@ export default function AdminUsers() {
                   <span className="text-lg shrink-0">✉️</span>
                   <div>
                     <p className="text-sm font-semibold text-blue-800 font-body">
-                      Zugangsdaten werden automatisch per E-Mail versendet
+                      {t('users.inviteInfo.title', 'Zugangsdaten werden automatisch per E-Mail versendet')}
                     </p>
                     <p className="text-xs text-blue-700 font-body mt-0.5">
-                      Nach dem Anlegen erhält der Nutzer automatisch eine E-Mail mit Login-Daten.
+                      {t('users.inviteInfo.detail', 'Nach dem Anlegen erhält der Nutzer automatisch eine E-Mail mit Login-Daten.')}
                     </p>
                   </div>
                 </div>
@@ -1185,10 +1185,10 @@ export default function AdminUsers() {
                     className="w-full py-2.5 rounded-xl border border-gray-200 text-sm
                                font-medium font-body text-gray-700 hover:border-gray-300
                                hover:bg-gray-50 transition-colors disabled:opacity-50">
-                    🔑 Neues Passwort generieren & per E-Mail senden
+                    🔑 {t('users.passwordSection.generateButton', 'Neues Passwort generieren & per E-Mail senden')}
                   </button>
                   <p className="text-xs text-gray-400 font-body mt-1">
-                    Setzt ein neues Passwort und sendet es dem Nutzer automatisch per E-Mail.
+                    {t('users.passwordSection.note', 'Setzt ein neues Passwort und sendet es dem Nutzer automatisch per E-Mail.')}
                   </p>
                 </section>
               )}
@@ -1238,7 +1238,7 @@ export default function AdminUsers() {
                             <div className="flex flex-wrap gap-1.5 mt-1.5">
                               {p.type && (
                                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-body font-medium">
-                                  {p.type === 'apartment' ? 'Apartment' : p.type === 'villa' ? 'Villa' : 'Studio'}
+                                  {p.type === 'apartment' ? t('users.propertyType.apartment', 'Apartment') : p.type === 'villa' ? 'Villa' : 'Studio'}
                                 </span>
                               )}
                               {p.bedrooms != null && p.bedrooms > 0 && (
@@ -1260,7 +1260,7 @@ export default function AdminUsers() {
                                 ${p.property_status === 'under_construction'
                                   ? 'bg-blue-50 text-blue-600'
                                   : 'bg-green-50 text-green-700'}`}>
-                                {p.property_status === 'under_construction' ? '🏗 Im Bau' : '✅ Aktiv'}
+                                {p.property_status === 'under_construction' ? `🏗 ${t('users.propertyStatus.underConstruction', 'Im Bau')}` : `✅ ${t('users.propertyStatus.active', 'Aktiv')}`}
                               </span>
                             </div>
                             {/* Link-Hinweis */}
@@ -1269,7 +1269,7 @@ export default function AdminUsers() {
                               onClick={() => navigate(`/admin/properties/${p.id}`)}
                               className="mt-1.5 text-[10px] text-orange-400 hover:text-orange-600
                                          font-body transition-colors flex items-center gap-0.5">
-                              Öffnen →
+                              {t('users.properties.open', 'Öffnen →')}
                             </button>
                           </div>
                         </div>
@@ -1417,7 +1417,7 @@ export default function AdminUsers() {
                             to={`/admin/properties/${p.id}`}
                             onClick={() => setDeleteTarget(null)}
                             className="text-xs font-semibold text-amber-700 underline hover:text-amber-900 whitespace-nowrap">
-                            Eigentümer ändern →
+                            {t('users.delete.changeOwner', 'Eigentümer ändern →')}
                           </Link>
                         </li>
                       ))}

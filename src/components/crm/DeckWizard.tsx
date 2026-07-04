@@ -284,7 +284,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       }
       onDone(`✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')}`)
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Fehler'
+      const msg = e instanceof Error ? e.message : t('deckWizard.genericError', 'Fehler')
       // Im Hintergrund-Modus ist das Fenster schon zu → Fehler als Popup melden statt inline.
       if (background) onDone(`❌ ${t('crm.wizard.bgError', 'Erstellung fehlgeschlagen')}: ${msg}`)
       else setErr(msg)
@@ -446,28 +446,28 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             {withCalc && (
               <div className="mt-3 space-y-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {seg('Steuersitz', 'res', [['de', 'DE'], ['cy', 'CY']])}
-                  {seg('Finanzierung', 'fin', [['yes', 'Ja'], ['no', 'Cash']])}
-                  {seg('Vermietung', 'letType', [['short', 'Kurz'], ['long', 'Lang']])}
-                  {seg('Tilgung', 'mode', [['ann', 'Annuität'], ['tilg', 'Fix']])}
+                  {seg(t('deckWizard.taxResidence', 'Steuersitz'), 'res', [['de', 'DE'], ['cy', 'CY']])}
+                  {seg(t('deckWizard.financing', 'Finanzierung'), 'fin', [['yes', t('deckWizard.yes', 'Ja')], ['no', t('deckWizard.cash', 'Cash')]])}
+                  {seg(t('deckWizard.rentalType', 'Vermietung'), 'letType', [['short', t('deckWizard.shortTerm', 'Kurz')], ['long', t('deckWizard.longTerm', 'Lang')]])}
+                  {seg(t('deckWizard.amortization', 'Tilgung'), 'mode', [['ann', t('deckWizard.annuity', 'Annuität')], ['tilg', t('deckWizard.fixed', 'Fix')]])}
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {numF('Eigenkapital', 'equity', '1000', '€')}
-                  {numF('Zins', 'interestPct', '0.1', '%')}
-                  {numF('Laufzeit', 'termYears', '1', 'J')}
-                  {numF('Rendite', 'yieldPct', '0.1', '%')}
-                  {numF('Mietsteig.', 'rentGrowth', '0.1', '%')}
-                  {numF('Verwaltung', 'mgmtPct', '0.5', '%')}
-                  {numF('Wertsteig.', 'appreciationPct', '0.1', '%')}
-                  {calcParams.res === 'de' && numF('DE-Steuer', 'deTaxPct', '1', '%')}
-                  {calcParams.res === 'cy' && numF('CY Bestand', 'cyBI', '500', '€')}
-                  {calcParams.mode === 'tilg' && numF('Tilgung', 'amortPct', '0.1', '%')}
-                  {numF('Rabatt', 'discountPct', '0.5', '%')}
-                  {numF('Einrichtung', 'furnCost', '500', '€')}
+                  {numF(t('deckWizard.equity', 'Eigenkapital'), 'equity', '1000', '€')}
+                  {numF(t('deckWizard.interestRate', 'Zins'), 'interestPct', '0.1', '%')}
+                  {numF(t('deckWizard.termYears', 'Laufzeit'), 'termYears', '1', 'J')}
+                  {numF(t('deckWizard.yieldLabel', 'Rendite'), 'yieldPct', '0.1', '%')}
+                  {numF(t('deckWizard.rentGrowth', 'Mietsteig.'), 'rentGrowth', '0.1', '%')}
+                  {numF(t('deckWizard.management', 'Verwaltung'), 'mgmtPct', '0.5', '%')}
+                  {numF(t('deckWizard.appreciation', 'Wertsteig.'), 'appreciationPct', '0.1', '%')}
+                  {calcParams.res === 'de' && numF(t('deckWizard.deTax', 'DE-Steuer'), 'deTaxPct', '1', '%')}
+                  {calcParams.res === 'cy' && numF(t('deckWizard.cyStock', 'CY Bestand'), 'cyBI', '500', '€')}
+                  {calcParams.mode === 'tilg' && numF(t('deckWizard.amortization', 'Tilgung'), 'amortPct', '0.1', '%')}
+                  {numF(t('deckWizard.discount', 'Rabatt'), 'discountPct', '0.5', '%')}
+                  {numF(t('deckWizard.furnishing', 'Einrichtung'), 'furnCost', '500', '€')}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {cpToggle('Einrichtung kostenfrei', 'furnFree')}
-                  {calcParams.letType === 'short' && cpToggle('🏨 Hotelkonzept', 'hotelConcept')}
+                  {cpToggle(t('deckWizard.furnishingFree', 'Einrichtung kostenfrei'), 'furnFree')}
+                  {calcParams.letType === 'short' && cpToggle('🏨 ' + t('deckWizard.hotelConceptToggle', 'Hotelkonzept'), 'hotelConcept')}
                 </div>
                 {/* Je Wohnung ALLE Parameter einzeln: Vermietung (Kurz/Lang), Finanzierung,
                     Eigenkapital, Rendite, Wertsteigerung, Einrichtung, Hotelkonzept. Sinnvoll,

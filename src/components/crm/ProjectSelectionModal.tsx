@@ -148,7 +148,7 @@ export default function ProjectSelectionModal({
             <h2 className="text-lg font-semibold text-gray-900">
               {t('crm.dealProject.modal.title', 'Welche Projekte interessieren {{name}}?', { name: leadName })}
             </h2>
-            <p className="text-xs text-gray-500 mt-0.5">{selected.length} ausgewählt</p>
+            <p className="text-xs text-gray-500 mt-0.5">{t('projectSelectionModal.selectedCount', '{{count}} ausgewählt', { count: selected.length })}</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
         </div>
@@ -157,7 +157,7 @@ export default function ProjectSelectionModal({
         <div className="px-6 py-3 border-b border-gray-50 flex-shrink-0">
           <input
             value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Projekt suchen…"
+            placeholder={t('projectSelectionModal.searchPlaceholder', 'Projekt suchen…')}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
           />
         </div>
@@ -168,7 +168,7 @@ export default function ProjectSelectionModal({
               <div className="w-6 h-6 border-2 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
             </div>
           ) : filtered.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-8">Keine Projekte gefunden.</p>
+            <p className="text-gray-400 text-sm text-center py-8">{t('projectSelectionModal.noProjectsFound', 'Keine Projekte gefunden.')}</p>
           ) : (
             filtered.map(project => {
               const isSelected = selected.some(e => e.project.id === project.id)
@@ -200,7 +200,7 @@ export default function ProjectSelectionModal({
                       </div>
                       <div className="flex gap-3 text-xs text-gray-500 mt-0.5">
                         {project.location && <span>📍 {project.location}</span>}
-                        <span>{availableUnits.length} Units verfügbar</span>
+                        <span>{t('projectSelectionModal.unitsAvailableCount', '{{count}} Units verfügbar', { count: availableUnits.length })}</span>
                       </div>
                     </div>
                   </div>
@@ -213,7 +213,7 @@ export default function ProjectSelectionModal({
                       {availableUnits.length > 0 && (
                         <div>
                           <p className="text-xs font-medium text-gray-500 mb-1.5">
-                            Verfügbare Einheiten auswählen:
+                            {t('projectSelectionModal.selectAvailableUnits', 'Verfügbare Einheiten auswählen:')}
                           </p>
                           <div className="flex flex-wrap gap-2">
                             {availableUnits.map(unit => {
@@ -229,17 +229,17 @@ export default function ProjectSelectionModal({
                                       : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 hover:bg-orange-50'
                                   }`}
                                 >
-                                  <span className="font-bold">Nr. {unit.unit_number}</span>
+                                  <span className="font-bold">{t('projectSelectionModal.unitNumberLabel', 'Nr. {{number}}', { number: unit.unit_number })}</span>
                                   {(unit.size_sqm != null || unit.bedrooms > 0) && (
                                     <span className={`ml-1.5 ${isChosen ? 'text-white/80' : 'text-gray-400'}`}>
                                       {unit.size_sqm != null && `${unit.size_sqm} m²`}
                                       {unit.size_sqm != null && unit.bedrooms > 0 && ' · '}
-                                      {unit.bedrooms > 0 && `${unit.bedrooms} SZ`}
+                                      {unit.bedrooms > 0 && t('projectSelectionModal.bedroomsAbbrev', '{{count}} SZ', { count: unit.bedrooms })}
                                     </span>
                                   )}
                                   {unit.price_net != null && (
                                     <span className={`block text-[10px] mt-0.5 ${isChosen ? 'text-white/70' : 'text-gray-400'}`}>
-                                      € {unit.price_net.toLocaleString('de-DE')} netto
+                                      {t('projectSelectionModal.priceNetValue', '€ {{price}} netto', { price: unit.price_net.toLocaleString('de-DE') })}
                                     </span>
                                   )}
                                 </button>
@@ -250,7 +250,7 @@ export default function ProjectSelectionModal({
                       )}
 
                       {availableUnits.length === 0 && (
-                        <p className="text-xs text-gray-400 italic">Keine verfügbaren Einheiten im Projekt.</p>
+                        <p className="text-xs text-gray-400 italic">{t('projectSelectionModal.noAvailableUnits', 'Keine verfügbaren Einheiten im Projekt.')}</p>
                       )}
 
                       <div className="grid grid-cols-2 gap-2">
@@ -261,7 +261,7 @@ export default function ProjectSelectionModal({
                           <input
                             value={entry.unit_numbers}
                             onChange={e => updateEntry(project.id, 'unit_numbers', e.target.value)}
-                            placeholder="z.B. 302, 303"
+                            placeholder={t('projectSelectionModal.unitNumbersPlaceholder', 'z.B. 302, 303')}
                             className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-orange-400"
                           />
                         </div>
@@ -286,7 +286,7 @@ export default function ProjectSelectionModal({
                           value={entry.notes}
                           onChange={e => updateEntry(project.id, 'notes', e.target.value)}
                           rows={2}
-                          placeholder="z.B. Payment Plan 40/60, Einrichtungspaket inklusive"
+                          placeholder={t('projectSelectionModal.notesPlaceholder', 'z.B. Payment Plan 40/60, Einrichtungspaket inklusive')}
                           className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-orange-400"
                         />
                       </div>
@@ -307,7 +307,7 @@ export default function ProjectSelectionModal({
           <button onClick={handleSave} disabled={saving}
             className="px-5 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50"
             style={{ backgroundColor: '#ff795d' }}>
-            {saving ? 'Speichert…' : t('crm.dealProject.modal.save', 'Speichern')}
+            {saving ? t('projectSelectionModal.saving', 'Speichert…') : t('crm.dealProject.modal.save', 'Speichern')}
           </button>
         </div>
       </div>

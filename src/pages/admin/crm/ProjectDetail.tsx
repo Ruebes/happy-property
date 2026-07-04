@@ -125,7 +125,7 @@ function UnitCard({
           <div>
             {unit.block && (
               <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
-                Block {unit.block} ·{' '}
+                {t('projectDetail.blockLabel', 'Block {{block}}', { block: unit.block })} ·{' '}
               </span>
             )}
             <span className="text-base font-bold text-gray-900 font-body">{unit.unit_number}</span>
@@ -344,7 +344,7 @@ export default function ProjectDetail() {
     if (linked) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
     if (!window.confirm(t('crm.pd.unitDeleteConfirm', 'Einheit {{n}} wirklich löschen?', { n: u.unit_number }))) return
     const { error } = await supabase.from('crm_project_units').delete().eq('id', u.id)
-    if (error) { alert('Fehler: ' + error.message); return }
+    if (error) { alert(t('projectDetail.deleteUnitError', 'Fehler: {{msg}}', { msg: error.message })); return }
     await fetchData()
   }
 
@@ -1070,7 +1070,7 @@ export default function ProjectDetail() {
             <div key={block}>
               {multiBlock && (
                 <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3 font-body">
-                  {block === '—' ? t('crm.pd.noBlock') : `Block ${block}`}
+                  {block === '—' ? t('crm.pd.noBlock') : t('projectDetail.blockLabel', 'Block {{block}}', { block })}
                 </h2>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -1160,7 +1160,7 @@ export default function ProjectDetail() {
             <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-gray-100">
               <h2 className="text-lg font-bold text-gray-900 font-body">
                 {editUnit
-                  ? `${editUnit.block ? `Block ${editUnit.block} · ` : ''}${editUnit.unit_number}`
+                  ? `${editUnit.block ? t('projectDetail.blockPrefix', 'Block {{block}} · ', { block: editUnit.block }) : ''}${editUnit.unit_number}`
                   : t('crm.pd.newUnitTitle')}
               </h2>
               <button onClick={closeModal} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
@@ -2027,7 +2027,7 @@ export default function ProjectDetail() {
               <div>
                 <h2 className="text-lg font-bold text-gray-900">{t('crm.pd.assignCustomerTitle')}</h2>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  {t('crm.pd.unitWord')} {assigningUnit.block ? `Block ${assigningUnit.block} · ` : ''}{t('crm.unitSelect.no')} {assigningUnit.unit_number}
+                  {t('crm.pd.unitWord')} {assigningUnit.block ? t('projectDetail.blockPrefix', 'Block {{block}} · ', { block: assigningUnit.block }) : ''}{t('crm.unitSelect.no')} {assigningUnit.unit_number}
                 </p>
               </div>
               <button

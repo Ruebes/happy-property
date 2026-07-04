@@ -30,6 +30,7 @@ function ContactModal({ contact, onClose, onSaved }: ContactModalProps) {
   const [phone,     setPhone]     = useState(contact?.phone ?? '')
   const [whatsapp,  setWhatsapp]  = useState(contact?.whatsapp ?? '')
   const [notes,     setNotes]     = useState(contact?.notes ?? '')
+  const [language,  setLanguage]  = useState<'de' | 'en'>((contact?.language as 'de' | 'en') ?? 'de')
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
 
@@ -48,6 +49,7 @@ function ContactModal({ contact, onClose, onSaved }: ContactModalProps) {
         phone:      phone.trim() || null,
         whatsapp:   whatsapp.trim() || null,
         notes:      notes.trim() || null,
+        language,
         updated_at: new Date().toISOString(),
       }
       if (contact) {
@@ -125,6 +127,17 @@ function ContactModal({ contact, onClose, onSaved }: ContactModalProps) {
           <div>
             <label className={labelCls}>{t('crm.contacts.notes', 'Notizen')}</label>
             <textarea rows={3} className={`${inputCls} resize-y`} value={notes} onChange={e => setNotes(e.target.value)} />
+          </div>
+
+          <div>
+            <label className={labelCls}>{t('crm.contacts.language', 'Kontaktsprache')}</label>
+            <select className={inputCls} value={language} onChange={e => setLanguage(e.target.value as 'de' | 'en')}>
+              <option value="de">{t('crm.contacts.langDe', 'Deutsch')}</option>
+              <option value="en">{t('crm.contacts.langEn', 'Englisch')}</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              {t('crm.contacts.langHint', 'Automatische Mails & WhatsApp an diesen Kontakt kommen in dieser Sprache an.')}
+            </p>
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -243,6 +256,9 @@ export default function Contacts() {
                       )}
                       {c.company && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{c.company}</span>
+                      )}
+                      {c.language === 'en' && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">EN</span>
                       )}
                     </div>
                     <p className="text-xs text-gray-400 mt-1 truncate">

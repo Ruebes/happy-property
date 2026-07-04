@@ -104,7 +104,7 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
         deal_id: newDealId,
         type: 'note',
         direction: 'outbound',
-        content: 'Lead angelegt und Deal erstellt.',
+        content: t('pipeline.leadCreatedActivity', 'Lead angelegt und Deal erstellt.'),
         created_by: profile?.id ?? null,
       })
 
@@ -225,8 +225,8 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
                 onChange={val => set('language', val as 'de' | 'en')}
                 className="w-full border rounded-lg text-sm bg-white"
                 options={[
-                  { value: 'de', label: 'Deutsch' },
-                  { value: 'en', label: 'English' },
+                  { value: 'de', label: t('pipeline.languageGerman', 'Deutsch') },
+                  { value: 'en', label: t('pipeline.languageEnglish', 'English') },
                 ]}
               />
             </div>
@@ -419,7 +419,7 @@ function DealModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
       if (error) throw error
       await supabase.from('activities').insert({
         lead_id: selected.id, deal_id: dealData?.id ?? null, type: 'note', direction: 'outbound',
-        content: `Deal manuell angelegt (Phase: ${phase}).`, created_by: profile?.id ?? null,
+        content: t('pipeline.dealCreatedManuallyActivity', 'Deal manuell angelegt (Phase: {{phase}}).', { phase }), created_by: profile?.id ?? null,
       })
       onSaved(); onClose()
     } catch (err) {
@@ -720,7 +720,7 @@ export default function Pipeline() {
       if (upErr) { showToastMsg(`❌ ${upErr.message}`); return }
       setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'hold' } : d))
       await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        content: `Auf Hold gesetzt. Kontaktaufnahme alle 6 Wochen: ${holdContact ? 'JA' : 'nein'}.`, created_by: profile?.id ?? null })
+        content: t('pipeline.holdSetActivity', 'Auf Hold gesetzt. Kontaktaufnahme alle 6 Wochen: {{yesNo}}.', { yesNo: holdContact ? t('pipeline.yes', 'JA') : t('pipeline.no', 'nein') }), created_by: profile?.id ?? null })
       setHoldDeal(null); setHoldContact(true)
       showToastMsg(t('crm.phaseSaved', 'Phase gespeichert'))
     } finally { setModalBusy(false) }
@@ -758,28 +758,33 @@ export default function Pipeline() {
         msg = msg.replace(/\{\{[^}]+\}\}/g, '–')
         if (note && !/\{\{(notiz|bemerkung|bemerkungen)\}\}/.test(baseTpl)) msg += `\n\n${note}`
       } else {
-        msg = `Bitte bearbeite diesen Kontakt:\n${ln}\nTel: ${l?.phone || l?.whatsapp || '–'}\nE-Mail: ${l?.email || '–'}${note ? `\n\n${note}` : ''}`
+        msg = t('pipeline.handoverFallbackMessage', 'Bitte bearbeite diesen Kontakt:\n{{name}}\nTel: {{phone}}\nE-Mail: {{email}}{{noteBlock}}', {
+          name: ln,
+          phone: l?.phone || l?.whatsapp || '–',
+          email: l?.email || '–',
+          noteBlock: note ? `\n\n${note}` : '',
+        })
       }
       const { data: contacts } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone')
         .in('id', ['6c9da3ce-9826-4660-9a50-6ff9fc8e70b4', '809bbc0b-fb61-47a5-8f04-e8f7d9ab3c34'])
       const list = (contacts ?? []) as Array<{ first_name: string; whatsapp: string | null; phone: string | null }>
       const fails: string[] = []
       let sent = 0
-      if (!list.length) fails.push('Burkhard/Ioulia nicht in den Geschäftskontakten gefunden')
+      if (!list.length) fails.push(t('pipeline.handoverContactsNotFound', 'Burkhard/Ioulia nicht in den Geschäftskontakten gefunden'))
       for (const c of list) {
         const tel = c.whatsapp || c.phone
-        if (!tel) { fails.push(`${c.first_name}: keine Nummer hinterlegt`); continue }
+        if (!tel) { fails.push(t('pipeline.noPhoneOnFile', '{{name}}: keine Nummer hinterlegt', { name: c.first_name })); continue }
         try {
           const res = await sendWhatsApp({ event_type: 'no_show', override_text: msg, lead_id: deal.lead_id, lead_data: { lead_name: c.first_name, lead_phone: tel } })
           if (res.success) sent++
-          else fails.push(`${c.first_name}: ${res.error || 'unbekannter Fehler'}`)
-        } catch (e) { fails.push(`${c.first_name}: ${e instanceof Error ? e.message : 'Fehler'}`) }
+          else fails.push(`${c.first_name}: ${res.error || t('pipeline.unknownError', 'unbekannter Fehler')}`)
+        } catch (e) { fails.push(`${c.first_name}: ${e instanceof Error ? e.message : t('pipeline.genericError', 'Fehler')}`) }
       }
       await supabase.from('activities').insert({ lead_id: deal.lead_id, deal_id: deal.id, type: 'whatsapp', direction: 'outbound',
-        subject: 'Kontakt übergeben an Burkhard + Ioulia', content: msg, created_by: profile?.id ?? null })
+        subject: t('pipeline.handoverActivitySubject', 'Kontakt übergeben an Burkhard + Ioulia'), content: msg, created_by: profile?.id ?? null })
       setHandoverDeal(null); setHandoverText('')
-      if (fails.length) showToastMsg(`⚠️ Übergeben — WhatsApp-Problem: ${fails.join(' · ')}`)
-      else showToastMsg(`✅ ${t('crm.handoverSent', 'Kontakt übergeben')} — WhatsApp an ${sent} gesendet`)
+      if (fails.length) showToastMsg(`⚠️ ${t('pipeline.handoverWhatsappProblem', 'Übergeben — WhatsApp-Problem: {{details}}', { details: fails.join(' · ') })}`)
+      else showToastMsg(`✅ ${t('pipeline.handoverSentWithCount', '{{status}} — WhatsApp an {{count}} gesendet', { status: t('crm.handoverSent', 'Kontakt übergeben'), count: sent })}`)
     } finally { setModalBusy(false) }
   }
 
@@ -803,7 +808,7 @@ export default function Pipeline() {
           from: t(`crm.phases.${oldPhase}`, oldPhase),
           to: t('crm.phases.finanzierung_de', 'Finanzierung DE'),
           defaultValue: `Phase geändert: ${oldPhase} → finanzierung_de`,
-        }) + (note ? `\n\nBemerkung für Christof: ${note}` : ''),
+        }) + (note ? `\n\n${t('pipeline.noteForChristof', 'Bemerkung für Christof: {{note}}', { note })}` : ''),
         created_by: profile?.id ?? null,
       })
       const webhookEvent = PHASE_WEBHOOK_EVENTS['finanzierung_de']
@@ -842,7 +847,11 @@ export default function Pipeline() {
         deal_id:    deal.id,
         type:       'note',
         direction:  'outbound',
-        content:    `Phase geändert: ${oldPhase} → registrierung. Registrierung gesendet an: ${selectedDevelopers.join(', ')}${notes ? `. Bemerkung: ${notes}` : ''}`,
+        content:    t('pipeline.registrationActivity', 'Phase geändert: {{from}} → registrierung. Registrierung gesendet an: {{developers}}{{noteBlock}}', {
+          from: oldPhase,
+          developers: selectedDevelopers.join(', '),
+          noteBlock: notes ? t('pipeline.registrationNoteSuffix', '. Bemerkung: {{notes}}', { notes }) : '',
+        }),
         created_by: profile?.id ?? null,
       })
 
@@ -863,7 +872,7 @@ export default function Pipeline() {
       setPhaseRun({ deal: { ...deal, phase: 'registrierung' }, phase: 'registrierung', since })
     } catch (err) {
       console.error('[Pipeline] registrationConfirm:', err)
-      showToastMsg('❌ Fehler beim Senden')
+      showToastMsg(`❌ ${t('pipeline.sendError', 'Fehler beim Senden')}`)
     } finally {
       setSavingReg(false)
     }
@@ -1047,7 +1056,7 @@ export default function Pipeline() {
           dealId={projectModalDeal.id}
           leadName={projectModalDeal.lead
             ? `${projectModalDeal.lead.first_name} ${projectModalDeal.lead.last_name}`
-            : 'Kunde'}
+            : t('pipeline.fallbackCustomerName', 'Kunde')}
           onClose={() => setProjectModalDeal(null)}
           onSaved={() => { setProjectModalDeal(null); fetchDeals() }}
         />
@@ -1085,7 +1094,7 @@ export default function Pipeline() {
         <RegistrationModal
           leadName={registrationDeal.lead
             ? `${registrationDeal.lead.first_name} ${registrationDeal.lead.last_name}`
-            : 'Kunde'}
+            : t('pipeline.fallbackCustomerName', 'Kunde')}
           saving={savingReg}
           onConfirm={handleRegistrationConfirm}
           onCancel={() => setRegistrationDeal(null)}

@@ -163,11 +163,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (error) throw new Error(error.message)
         const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean; extracted?: number; uploaded?: number }
         if (d?.error) throw new Error(d.error)
-        if (action === 'images')     summary.push(`${d.renders ?? 0} Bilder, ${d.floorplans ?? 0} Grundrisse (${d.unitsMatched ?? 0} Units zugeordnet)`)
-        if (action === 'categorize') summary.push(`${d.gallery ?? 0} Bilder einsortiert`)
-        if (action === 'docs')       summary.push(`Dokumente: ${Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || 'keine'}`)
-        if (action === 'brochure')   summary.push(`${d.extracted ?? 0} Broschüren-Bilder (${d.gallery ?? 0} in Gallery)`)
-        if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : `Fakten ${d.facts_chars ?? 0} Zeichen`)
+        if (action === 'images')     summary.push(t('crm.project.deck.summaryImages', '{{renders}} Bilder, {{floorplans}} Grundrisse ({{unitsMatched}} Units zugeordnet)', { renders: d.renders ?? 0, floorplans: d.floorplans ?? 0, unitsMatched: d.unitsMatched ?? 0 }))
+        if (action === 'categorize') summary.push(t('crm.project.deck.summaryCategorized', '{{gallery}} Bilder einsortiert', { gallery: d.gallery ?? 0 }))
+        if (action === 'docs')       summary.push(t('crm.project.deck.summaryDocs', 'Dokumente: {{docs}}', { docs: Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || t('crm.project.deck.none', 'keine') }))
+        if (action === 'brochure')   summary.push(t('crm.project.deck.summaryBrochure', '{{extracted}} Broschüren-Bilder ({{gallery}} in Gallery)', { extracted: d.extracted ?? 0, gallery: d.gallery ?? 0 }))
+        if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : t('crm.project.deck.summaryFacts', 'Fakten {{chars}} Zeichen', { chars: d.facts_chars ?? 0 }))
       }
       // Vollausstattung (xlsx-Spec) → Text, in eigener schlanker Funktion (memory-sicher)
       void supabase.functions.invoke('parse-spec-xlsx', { body: { project_id: project.id } }).catch(() => {})
@@ -176,12 +176,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       try {
         const { data: ud, error: uerr } = await supabase.functions.invoke('parse-pricelist', { body: { project_id: project.id, create: true, background: true } })
         const u = (ud ?? {}) as { background?: boolean; created?: number; error?: string }
-        if (uerr || u.error) summary.push(`${t('crm.project.deck.stepUnits', 'Wohnungen')}: ${u.error ?? uerr?.message ?? 'Fehler'}`)
+        if (uerr || u.error) summary.push(`${t('crm.project.deck.stepUnits', 'Wohnungen')}: ${u.error ?? uerr?.message ?? t('crm.project.deck.genericError', 'Fehler')}`)
         else summary.push(u.background ? t('crm.project.deck.unitsBackground', 'Wohnungen werden im Hintergrund angelegt') : `${u.created ?? 0} ${t('crm.project.deck.unitsCreated', 'Wohnungen angelegt')}`)
       } catch { summary.push(`${t('crm.project.deck.stepUnits', 'Wohnungen')}: —`) }
       setIngestMsg({ ok: true, text: `✓ ${summary.join(' · ')}` })
     } catch (e) {
-      setIngestMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler beim Import' })
+      setIngestMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.importError', 'Fehler beim Import') })
     } finally {
       setIngesting(false)
     }
@@ -226,7 +226,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       if (!token) { setDeckMsg({ ok: false, text: t('crm.project.deck.deckTimeout', 'Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen" prüfen.') }); return }
       setDeckMsg({ ok: true, text: t('crm.project.deck.deckReady', 'Allgemeines Deck erstellt.'), token })
     } catch (e) {
-      setDeckMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
+      setDeckMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.genericError', 'Fehler') })
     } finally {
       setDeckBusy(false)
     }
@@ -266,7 +266,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         }
       }
     } catch (e) {
-      setRefineMsg({ ok: false, text: e instanceof Error ? e.message : 'Fehler' })
+      setRefineMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.genericError', 'Fehler') })
     } finally {
       setRefineBusy(false)
     }
@@ -290,7 +290,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       setForm(prev => ({ ...prev, latitude: r.lat ?? null, longitude: r.lng ?? null }))
       setPinMsg(`✓ ${r.lat.toFixed(5)}, ${r.lng.toFixed(5)}`)
     } catch (err) {
-      setPinMsg(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      setPinMsg(`❌ ${err instanceof Error ? err.message : t('crm.project.deck.genericError', 'Fehler')}`)
     } finally {
       setResolvingPin(false)
     }
@@ -333,7 +333,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       Promise.race([
         Promise.resolve(p),
         new Promise<T>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout – Verbindung zu langsam. Bitte erneut versuchen.')), timeoutMs)
+          setTimeout(() => reject(new Error(t('crm.project.saveTimeout', 'Timeout – Verbindung zu langsam. Bitte erneut versuchen.'))), timeoutMs)
         ),
       ])
 
@@ -400,7 +400,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       onSaved()
       onClose()
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unbekannter Fehler'
+      const msg = err instanceof Error ? err.message : t('crm.project.unknownError', 'Unbekannter Fehler')
       setSaveError(msg)
       console.error('[ProjectModal] handleSave:', err)
     } finally {
@@ -463,7 +463,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 </label>
                 <input value={form.name} onChange={e => up('name', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                  placeholder="z.B. Infinity" />
+                  placeholder={t('crm.project.namePlaceholder', 'z.B. Infinity')} />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -476,12 +476,12 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                     onChange={val => up('developer', val)}
                     disabled={devLoading}
                     className="w-full border border-gray-200 rounded-lg text-sm bg-white"
-                    placeholder={devLoading ? 'Wird geladen…' : developers.length === 0 ? 'Keine Developer angelegt' : '— Developer wählen —'}
+                    placeholder={devLoading ? t('crm.project.developersLoading', 'Wird geladen…') : developers.length === 0 ? t('crm.project.noDevelopers', 'Keine Developer angelegt') : t('crm.project.selectDeveloper', '— Developer wählen —')}
                     options={developers.map(d => ({ value: d.name, label: d.name }))}
                   />
                   {!devLoading && developers.length === 0 && (
                     <p className="text-[11px] text-amber-600 mt-1">
-                      Noch keine Developer angelegt → CRM → Einstellungen → Developer hinzufügen
+                      {t('crm.project.noDevelopersHint', 'Noch keine Developer angelegt → CRM → Einstellungen → Developer hinzufügen')}
                     </p>
                   )}
                 </div>
@@ -528,7 +528,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 </label>
                 <textarea rows={4} value={form.equipment_list} onChange={e => up('equipment_list', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 resize-none"
-                  placeholder="z.B. Klimaanlage, Pool, Smart Home, Tiefgarage…" />
+                  placeholder={t('crm.project.equipmentPlaceholder', 'z.B. Klimaanlage, Pool, Smart Home, Tiefgarage…')} />
               </div>
 
               {/* Einrichtungspaket: Default für die Möbel-AfA in jeder Rendite-Berechnung
@@ -548,8 +548,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                     <input type="number" step="500" value={form.furniture_cost}
                       onChange={e => up('furniture_cost', e.target.value)}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                      placeholder="z.B. 19000" />
-                    <span className="absolute right-3 top-2.5 text-sm text-gray-400">€ netto</span>
+                      placeholder={t('crm.project.furnitureCostPlaceholder', 'z.B. 19000')} />
+                    <span className="absolute right-3 top-2.5 text-sm text-gray-400">{t('crm.project.netEuro', '€ netto')}</span>
                   </div>
                 )}
                 <p className="mt-1 text-xs text-gray-400">
@@ -578,7 +578,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   onChange={e => { up('maps_url', e.target.value); setPinMsg('') }}
                   onBlur={resolvePin}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                  placeholder="https://maps.app.goo.gl/…" />
+                  placeholder={t('crm.project.mapsUrlPlaceholder', 'https://maps.app.goo.gl/…')} />
                 <p className={`text-xs mt-1 ${pinMsg.startsWith('❌') ? 'text-red-500' : pinMsg.startsWith('✓') ? 'text-green-600' : 'text-gray-400'}`}>
                   {resolvingPin
                     ? t('crm.project.mapsPinResolving', 'Pin wird aufgelöst…')
@@ -593,7 +593,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 </label>
                 <input value={form.location} onChange={e => up('location', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                  placeholder="z.B. Paphos, Zypern" />
+                  placeholder={t('crm.project.locationPlaceholder', 'z.B. Paphos, Zypern')} />
                 <p className="text-xs text-gray-400 mt-1">
                   {t('crm.project.locationOptional', 'Optional — für die Text-Anzeige. Der Pin oben bestimmt die Karte.')}
                 </p>
@@ -603,7 +603,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 <>
                   <div className="rounded-xl overflow-hidden border border-gray-200">
                     <iframe
-                      title="map"
+                      title={t('crm.project.mapIframeTitle', 'Karte')}
                       width="100%"
                       height="280"
                       loading="lazy"
@@ -702,7 +702,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 </label>
                 <input value={form.video_url} onChange={e => up('video_url', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                  placeholder="https://youtube.com/watch?v=…" />
+                  placeholder={t('crm.project.videoUrlPlaceholder', 'https://youtube.com/watch?v=…')} />
               </div>
 
               {form.video_url && (() => {
@@ -715,7 +715,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 return (
                   <div className="rounded-xl overflow-hidden border border-gray-200">
                     <iframe
-                      title="video"
+                      title={t('crm.project.videoIframeTitle', 'Video')}
                       width="100%"
                       height="240"
                       src={embedUrl}
@@ -738,7 +738,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                 <div className="flex gap-2">
                   <input value={form.drive_folder_id} onChange={e => up('drive_folder_id', e.target.value)}
                     className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-400"
-                    placeholder="z.B. 19wlu6PSKy14un9EJeTFZWtPAbpkk-4nU" />
+                    placeholder={t('crm.project.driveFolderPlaceholder', 'z.B. 19wlu6PSKy14un9EJeTFZWtPAbpkk-4nU')} />
                   <button
                     type="button"
                     onClick={runIngest}
@@ -944,7 +944,7 @@ export default function Projects() {
   const handleDelete = async (id: string) => {
     if (!confirm(t('crm.project.confirmDelete', 'Projekt wirklich löschen?'))) return
     const { error } = await supabase.from('crm_projects').delete().eq('id', id)
-    if (error) { alert(`Fehler beim Löschen: ${error.message}`); return }
+    if (error) { alert(t('crm.project.deleteError', 'Fehler beim Löschen: {{message}}', { message: error.message })); return }
     await fetchAll()
   }
 
@@ -959,7 +959,7 @@ export default function Projects() {
       setScanMsg(t('crm.project.scanResult', '✅ {{created}} neue(s) Projekt(e) angelegt ({{scanned}} im Drive gefunden). Bilder + Deck werden im Hintergrund erzeugt (ein paar Minuten).', { created: d.created ?? 0, scanned: d.scanned ?? 0 }))
       await fetchAll()
     } catch (e) {
-      setScanMsg(`❌ ${e instanceof Error ? e.message : 'Fehler beim Scannen'}`)
+      setScanMsg(`❌ ${e instanceof Error ? e.message : t('crm.project.scanError', 'Fehler beim Scannen')}`)
     } finally {
       setScanBusy(false)
     }
@@ -1098,9 +1098,9 @@ export default function Projects() {
 
                     {/* Stats */}
                     <div className="flex items-center gap-3 text-xs text-gray-500">
-                      <span>{totalUnits} Units</span>
+                      <span>{t('crm.project.unitsCount', '{{count}} Units', { count: totalUnits })}</span>
                       {activeUnits > 0 && (
-                        <span className="text-green-600 font-medium">{activeUnits} aktiv</span>
+                        <span className="text-green-600 font-medium">{t('crm.project.activeCount', '{{count}} aktiv', { count: activeUnits })}</span>
                       )}
                       {p.completion_date && (
                         <span>
@@ -1119,7 +1119,7 @@ export default function Projects() {
                         className="flex-1 text-center text-xs py-1.5 rounded-lg font-medium text-white transition-colors"
                         style={{ backgroundColor: '#ff795d' }}
                       >
-                        🏠 Wohnungen
+                        🏠 {t('crm.project.unitsButton', 'Wohnungen')}
                       </button>
                       <button
                         onClick={(e) => { e.stopPropagation(); setEditProject(p) }}

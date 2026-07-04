@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 // ── Bild-Lightbox ────────────────────────────────────────────────────────────
 // Vollbild-Bildbetrachter mit Blättern: Pfeile, Tastatur (←/→/Esc), Touch-Swipe,
@@ -6,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react'
 // einer Einheit + den Startindex, sodass man nach dem Öffnen durch ALLE blättert.
 
 export default function ImageLightbox({ images, startIndex = 0, onClose }: { images: string[]; startIndex?: number; onClose: () => void }) {
+  const { t } = useTranslation()
   const n = images.length
   const [i, setI] = useState(startIndex)
   const [touchX, setTouchX] = useState<number | null>(null)
@@ -36,7 +38,7 @@ export default function ImageLightbox({ images, startIndex = 0, onClose }: { ima
         }
       }}
     >
-      <button onClick={e => { e.stopPropagation(); onClose() }} aria-label="Schließen"
+      <button onClick={e => { e.stopPropagation(); onClose() }} aria-label={t('imageLightbox.close', 'Schließen')}
         className="absolute top-4 right-4 z-10 text-white/80 hover:text-white text-3xl leading-none">✕</button>
 
       {n > 1 && (
@@ -44,7 +46,7 @@ export default function ImageLightbox({ images, startIndex = 0, onClose }: { ima
       )}
 
       {n > 1 && (
-        <button onClick={e => { e.stopPropagation(); go(-1) }} aria-label="Vorheriges Bild"
+        <button onClick={e => { e.stopPropagation(); go(-1) }} aria-label={t('imageLightbox.previousImage', 'Vorheriges Bild')}
           className="absolute left-3 md:left-6 top-1/2 -translate-y-1/2 w-12 h-12 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-4xl leading-none">‹</button>
       )}
 
@@ -52,7 +54,7 @@ export default function ImageLightbox({ images, startIndex = 0, onClose }: { ima
         className="max-w-[92vw] max-h-[88vh] object-contain rounded-lg shadow-2xl" />
 
       {n > 1 && (
-        <button onClick={e => { e.stopPropagation(); go(1) }} aria-label="Nächstes Bild"
+        <button onClick={e => { e.stopPropagation(); go(1) }} aria-label={t('imageLightbox.nextImage', 'Nächstes Bild')}
           className="absolute right-3 md:right-6 top-1/2 -translate-y-1/2 w-12 h-12 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white text-4xl leading-none">›</button>
       )}
     </div>

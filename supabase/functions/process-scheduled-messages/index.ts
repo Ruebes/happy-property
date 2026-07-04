@@ -99,36 +99,78 @@ async function sendWhatsApp(params: {
 async function resolveRecipient(
   supabase: ReturnType<typeof createClient>,
   recipient: string | null,
-  lead: { email: string | null; phone: string | null; whatsapp: string | null },
+  lead: { email: string | null; phone: string | null; whatsapp: string | null; language: string | null },
   dealId: string | null,
-): Promise<{ email: string | null; phone: string | null }> {
+): Promise<{ email: string | null; phone: string | null; language: string }> {
   // Dynamisch: Developer-Kontakt der vom Lead gewählten Unit (Reservierung etc.)
   if (recipient === 'unit_developer') {
-    if (!dealId) return { email: null, phone: null }
+    if (!dealId) return { email: null, phone: null, language: 'de' }
     const { data: deal } = await supabase.from('deals').select('unit_id').eq('id', dealId).maybeSingle()
     const unitId = (deal as { unit_id?: string } | null)?.unit_id
-    if (!unitId) return { email: null, phone: null }
+    if (!unitId) return { email: null, phone: null, language: 'de' }
     const { data: unit } = await supabase.from('crm_project_units').select('crm_projects(developer)').eq('id', unitId).maybeSingle()
     const devName = (unit as { crm_projects?: { developer?: string } } | null)?.crm_projects?.developer
-    if (!devName) return { email: null, phone: null }
+    if (!devName) return { email: null, phone: null, language: 'de' }
     const { data: dev } = await supabase.from('crm_developers').select('id').ilike('name', devName).maybeSingle()
     const devId = (dev as { id?: string } | null)?.id
-    if (!devId) return { email: null, phone: null }
+    if (!devId) return { email: null, phone: null, language: 'de' }
     const { data } = await supabase.from('crm_developer_contacts')
-      .select('email, phone, whatsapp').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
-    const d = data as { email: string | null; phone: string | null; whatsapp: string | null } | null
-    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null }
+      .select('email, phone, whatsapp, language').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
+    const d = data as { email: string | null; phone: string | null; whatsapp: string | null; language: string | null } | null
+    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null, language: d?.language ?? 'de' }
   }
   if (recipient && (recipient.startsWith('bc:') || recipient.startsWith('dc:'))) {
     const table = recipient.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
     const { data } = await supabase.from(table)
-      .select('email, phone, whatsapp')
+      .select('email, phone, whatsapp, language')
       .eq('id', recipient.slice(3))
       .maybeSingle()
-    const d = data as { email: string | null; phone: string | null; whatsapp: string | null } | null
-    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null }
+    const d = data as { email: string | null; phone: string | null; whatsapp: string | null; language: string | null } | null
+    return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null, language: d?.language ?? 'de' }
   }
-  return { email: lead.email, phone: lead.whatsapp || lead.phone }
+  return { email: lead.email, phone: lead.whatsapp || lead.phone, language: lead.language ?? 'de' }
+}
+
+// ── Ausgehende Nachricht in Empfängersprache übersetzen ───────────────────────
+// Deutsch ist Autoren-/Standardsprache → bei 'de' KEIN API-Call (schnell + gratis).
+// Bei 'en' (Geschäftspartner mit EN als Kontaktsprache ODER englischsprachige Leads)
+// wird Betreff/HTML-Body/WhatsApp in EINEM Claude-Call übersetzt — HTML, Links,
+// Namen, Zahlen, Preise bleiben unangetastet. So kommt jede Vorlage in der
+// gewählten Sprache an, ohne sie doppelt pflegen zu müssen. Fehler → Original (DE).
+async function translateOutbound(
+  fields: { subject: string | null; body: string | null; whatsapp: string | null },
+  targetLang: string,
+): Promise<{ subject: string | null; body: string | null; whatsapp: string | null }> {
+  if (!targetLang || targetLang === 'de') return fields
+  if (!fields.subject && !fields.body && !fields.whatsapp) return fields
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
+  if (!apiKey) { console.warn('[translate] ANTHROPIC_API_KEY fehlt – sende Original (DE)'); return fields }
+  const langName = targetLang === 'en' ? 'English' : targetLang
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4096,
+        system: `You translate outbound real-estate CRM messages from German into ${langName}. Translate ONLY human-readable text. Preserve EXACTLY (do not translate or alter): all HTML tags/attributes/inline styles/structure, URLs and href links, email addresses, phone numbers, dates, times, amounts/prices/currencies, and proper/brand names (Happy Property, Sveru Ltd, Zoom). Do not add, drop, or reorder content. Keep the professional, concise tone. Return ONLY a raw JSON object {"subject":...,"body":...,"whatsapp":...} — each the translated value, or null where the input was null. No markdown, no code fences.`,
+        messages: [{ role: 'user', content: JSON.stringify({ subject: fields.subject, body: fields.body, whatsapp: fields.whatsapp }) }],
+      }),
+    })
+    if (!res.ok) { console.warn('[translate] API', res.status, (await res.text()).slice(0, 300)); return fields }
+    const data = await res.json()
+    let text = String(data?.content?.[0]?.text ?? '').trim()
+    text = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+    const out = JSON.parse(text)
+    return {
+      subject:  typeof out.subject  === 'string' ? out.subject  : fields.subject,
+      body:     typeof out.body     === 'string' ? out.body     : fields.body,
+      whatsapp: typeof out.whatsapp === 'string' ? out.whatsapp : fields.whatsapp,
+    }
+  } catch (e) {
+    console.warn('[translate] fehlgeschlagen – sende Original (DE):', e instanceof Error ? e.message : String(e))
+    return fields
+  }
 }
 
 // ── Aktivität im CRM loggen ───────────────────────────────────────────────────
@@ -211,7 +253,7 @@ Deno.serve(async (req: Request) => {
       // Lead-E-Mail + Telefon für Versand laden
       const { data: lead } = await supabase
         .from('leads')
-        .select('email, phone, whatsapp')
+        .select('email, phone, whatsapp, language')
         .eq('id', msg.lead_id)
         .single()
 
@@ -249,6 +291,15 @@ Deno.serve(async (req: Request) => {
       // Empfänger auflösen: 'client' = Lead, sonst fixer Kontakt (bc:/dc:)
       const rcpt = await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
 
+      // In Empfängersprache übersetzen (nur wenn ≠ de → sonst 1:1 Original).
+      const loc = await translateOutbound(
+        { subject: msg.email_subject, body: msg.email_body, whatsapp: msg.whatsapp_text },
+        rcpt.language,
+      )
+      const emailSubject = loc.subject
+      const emailBody    = loc.body
+      const whatsappText = loc.whatsapp
+
       // ── E-Mail senden ─────────────────────────────────────────────────────
       if ((msg.type === 'email' || msg.type === 'both') && msg.email_subject && msg.email_body) {
         if (!rcpt.email) {
@@ -284,8 +335,8 @@ Deno.serve(async (req: Request) => {
             }
             await sendEmail({
               to:       rcpt.email,
-              subject:  msg.email_subject,
-              html:     msg.email_body,
+              subject:  emailSubject ?? msg.email_subject,
+              html:     emailBody ?? msg.email_body,
               smtpUser, smtpPass,
               attachments,
             })
@@ -293,8 +344,8 @@ Deno.serve(async (req: Request) => {
               lead_id: msg.lead_id,
               deal_id: msg.deal_id,
               type:    'email',
-              subject: msg.email_subject,
-              content: stripHtml(msg.email_body),
+              subject: emailSubject ?? msg.email_subject,
+              content: stripHtml(emailBody ?? msg.email_body),
             })
           } catch (emailErr) {
             const errMsg = emailErr instanceof Error ? emailErr.message : String(emailErr)
@@ -309,8 +360,8 @@ Deno.serve(async (req: Request) => {
             lead_id: msg.lead_id,
             deal_id: msg.deal_id,
             type:    'email',
-            subject: msg.email_subject,
-            content: `[Simulation] ${stripHtml(msg.email_body)}`,
+            subject: emailSubject ?? msg.email_subject,
+            content: `[Simulation] ${stripHtml(emailBody ?? msg.email_body)}`,
           })
         }
       }
@@ -323,7 +374,7 @@ Deno.serve(async (req: Request) => {
             try {
               await sendWhatsApp({
                 phone,
-                message:     msg.whatsapp_text,
+                message:     whatsappText ?? msg.whatsapp_text,
                 apiKey:      waApiKey,
                 senderPhone: waSender,
               })
@@ -332,7 +383,7 @@ Deno.serve(async (req: Request) => {
                 deal_id: msg.deal_id,
                 type:    'whatsapp',
                 subject: `WhatsApp: ${msg.event_type}`,
-                content: msg.whatsapp_text,
+                content: whatsappText ?? msg.whatsapp_text,
               })
             } catch (waErr) {
               const errMsg = waErr instanceof Error ? waErr.message : String(waErr)
@@ -347,7 +398,7 @@ Deno.serve(async (req: Request) => {
               deal_id: msg.deal_id,
               type:    'whatsapp',
               subject: `[Simulation] WhatsApp: ${msg.event_type}`,
-              content: msg.whatsapp_text,
+              content: whatsappText ?? msg.whatsapp_text,
             })
           }
         } else {

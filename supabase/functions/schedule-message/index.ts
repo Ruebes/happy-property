@@ -129,9 +129,23 @@ Deno.serve(async (req: Request) => {
     const { data: nextAppt } = await supabase.from('crm_appointments')
       .select('start_time, zoom_link').eq('lead_id', lead_id).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
-      .select('zoom_link').eq('lead_id', lead_id).order('start_time', { ascending: false }).limit(1).maybeSingle()
+      .select('zoom_link, start_time').eq('lead_id', lead_id).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
     const zoomLink  = ((nextAppt as { zoom_link?: string } | null)?.zoom_link) || ((lastAppt as { zoom_link?: string } | null)?.zoom_link) || ''
+
+    // Termin für die Anzeige in DEUTSCHER Zeit (der Kunde sitzt in DE, nicht auf Zypern).
+    // Tag + volles Datum + Uhrzeit + Zeitzonen-Kürzel (MEZ/MESZ). Fällt auf den letzten
+    // Termin zurück (apptStart ist nur der ZUKÜNFTIGE — für before_appointment-Timing).
+    const apptDisplayStart = apptStart ?? (lastAppt as { start_time?: string } | null)?.start_time ?? null
+    const terminDatum = apptDisplayStart ? (() => {
+      const d = new Date(apptDisplayStart), TZ = 'Europe/Berlin'
+      const day  = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: TZ }).format(d)
+      const date = new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: TZ }).format(d)
+      const time = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: TZ }).format(d)
+      const tz   = new Intl.DateTimeFormat('de-DE', { timeZoneName: 'short', hour: '2-digit', timeZone: TZ })
+        .formatToParts(d).find(p => p.type === 'timeZoneName')?.value || 'MEZ'
+      return `${day}, ${date} um ${time} Uhr (${tz})`
+    })() : ''
 
     const basePlaceholders: Record<string, string> = {
       lead_name:    `${lead.first_name} ${lead.last_name}`.trim(),
@@ -151,6 +165,8 @@ Deno.serve(async (req: Request) => {
       // NEU (A):
       notiz:        lead.notes ?? '',
       zoom_link:    zoomLink,
+      termin_datum: terminDatum,   // Tag + Datum + Uhrzeit in deutscher Zeit (MEZ/MESZ)
+      termin:       terminDatum,   // Alias
       objekt:       objektName,
       projekt:      objektName,
       unit:         unitNumber,

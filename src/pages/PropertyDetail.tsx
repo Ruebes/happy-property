@@ -446,7 +446,7 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
                     className="text-red-400 hover:text-red-600 text-lg shrink-0">✕</button>
                 </div>
               ) : (
-                <p className="text-sm text-gray-400 font-body text-center">PDF · max. 50 MB</p>
+                <p className="text-sm text-gray-400 font-body text-center">{t('propertyDetail.invoices.pdfMaxSize', 'PDF · max. 50 MB')}</p>
               )}
             </div>
 
@@ -470,7 +470,7 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
               </label>
               <input className={inputClsAI('creditor')} style={focusRing()}
                      value={form.creditor} onChange={e => setField('creditor', e.target.value)}
-                     placeholder="Stadtwerke München" />
+                     placeholder={t('propertyDetail.invoices.creditorPlaceholder', 'Stadtwerke München')} />
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-500 font-body mb-1">
@@ -734,7 +734,7 @@ export default function PropertyDetail() {
       management_rental_type: aktivierRentalType,
       rental_type:            aktivierRentalType,  // sync rental_type on property too
     }).eq('id', id)
-    if (error) { setAktivierSaving(false); setToast({ msg: 'Fehler beim Aktivieren.', type: 'error' }); return }
+    if (error) { setAktivierSaving(false); setToast({ msg: t('propertyDetail.verwaltung.activateError', 'Fehler beim Aktivieren.'), type: 'error' }); return }
 
     // Sync rental_type + status to linked crm_project_unit
     if (linkedUnitId) {
@@ -754,7 +754,7 @@ export default function PropertyDetail() {
 
     setAktivierSaving(false)
     setShowVerwaltungModal(false)
-    setToast({ msg: '✅ Immobilie für Verwaltung aktiviert' })
+    setToast({ msg: t('propertyDetail.verwaltung.activated', '✅ Immobilie für Verwaltung aktiviert') })
     fetchProperty()
   }
 
@@ -766,7 +766,7 @@ export default function PropertyDetail() {
       verwaltung_id:         null,
       management_rental_type: null,
     }).eq('id', id)
-    if (error) { setToast({ msg: 'Fehler beim Deaktivieren.', type: 'error' }); return }
+    if (error) { setToast({ msg: t('propertyDetail.verwaltung.deactivateError', 'Fehler beim Deaktivieren.'), type: 'error' }); return }
 
     // Linked unit zurück auf 'under_construction' setzen (wenn nicht bereits verkauft)
     if (linkedUnitId) {
@@ -777,7 +777,7 @@ export default function PropertyDetail() {
         .eq('status', 'active')   // nur aktive Units zurücksetzen, nicht zugewiesene
     }
 
-    setToast({ msg: 'Immobilie deaktiviert' })
+    setToast({ msg: t('propertyDetail.verwaltung.deactivated', 'Immobilie deaktiviert') })
     fetchProperty()
   }
 
@@ -1176,7 +1176,7 @@ export default function PropertyDetail() {
       await fetchUnitPayments()
     } catch (err) {
       console.error('[PropertyDetail] upload payment file:', err)
-      setToast({ msg: 'Upload fehlgeschlagen.', type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.uploadFailed', 'Upload fehlgeschlagen.'), type: 'error' })
     } finally {
       setUploadingPayId(null)
       setUploadingPayType(null)
@@ -1198,7 +1198,7 @@ export default function PropertyDetail() {
   async function handleDownloadPaymentFile(path: string, filename: string) {
     const { data } = await supabase.storage
       .from('unit-documents').createSignedUrl(path, 60)
-    if (!data?.signedUrl) { setToast({ msg: 'Download fehlgeschlagen.', type: 'error' }); return }
+    if (!data?.signedUrl) { setToast({ msg: t('propertyDetail.purchases.downloadFailed', 'Download fehlgeschlagen.'), type: 'error' }); return }
     const a = document.createElement('a')
     a.href = data.signedUrl
     a.download = filename
@@ -1206,7 +1206,7 @@ export default function PropertyDetail() {
   }
 
   async function handleDeletePaymentEntry(payId: string) {
-    if (!window.confirm('Rate löschen? Hochgeladene Dateien werden ebenfalls entfernt.')) return
+    if (!window.confirm(t('propertyDetail.purchases.deleteEntryConfirm', 'Rate löschen? Hochgeladene Dateien werden ebenfalls entfernt.'))) return
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
     const paths = [pay.invoice_path, pay.receipt_path].filter(Boolean) as string[]
@@ -1235,7 +1235,7 @@ export default function PropertyDetail() {
 
   async function handleAddPayment() {
     if (!linkedUnitId || !linkedProjectId || !profile?.id) {
-      setToast({ msg: 'Kein verknüpftes CRM-Objekt gefunden. Bitte erst im CRM verknüpfen.', type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.noLinkedUnit', 'Kein verknüpftes CRM-Objekt gefunden. Bitte erst im CRM verknüpfen.'), type: 'error' })
       return
     }
     setAddPaySaving(true)
@@ -1277,10 +1277,10 @@ export default function PropertyDetail() {
       setAddPayFile(null)
       if (addPayFileRef.current) addPayFileRef.current.value = ''
       await fetchUnitPayments()
-      setToast({ msg: 'Rate hinzugefügt ✓' })
+      setToast({ msg: t('propertyDetail.purchases.paymentAdded', 'Rate hinzugefügt ✓') })
     } catch (err) {
       console.error('[handleAddPayment]', err)
-      setToast({ msg: `Fehler beim Speichern: ${err instanceof Error ? err.message : String(err)}`, type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.saveFailed', 'Fehler beim Speichern: {{error}}', { error: err instanceof Error ? err.message : String(err) }), type: 'error' })
     } finally {
       setAddPaySaving(false)
     }
@@ -1305,13 +1305,13 @@ export default function PropertyDetail() {
       .update({ is_paid: true, paid_date: date || new Date().toISOString().split('T')[0] })
       .eq('id', payId)
     if (error) {
-      setToast({ msg: 'Speichern fehlgeschlagen. Bitte erneut versuchen.', type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.markPaidFailed', 'Speichern fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
       return
     }
     setMarkingPaidId(null)
     setMarkingPaidDate('')
     await fetchUnitPayments()
-    setToast({ msg: 'Als bezahlt markiert ✓' })
+    setToast({ msg: t('propertyDetail.purchases.markedAsPaid', 'Als bezahlt markiert ✓') })
   }
 
   async function handleUnmarkAsPaid(payId: string) {
@@ -1319,7 +1319,7 @@ export default function PropertyDetail() {
       .update({ is_paid: false, paid_date: null })
       .eq('id', payId)
     if (error) {
-      setToast({ msg: 'Speichern fehlgeschlagen.', type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
       return
     }
     setUnmarkConfirmId(null)
@@ -1357,17 +1357,17 @@ export default function PropertyDetail() {
       setContractDocType('kaufvertrag')
       if (contractDocRef.current) contractDocRef.current.value = ''
       await fetchUnitPayments()
-      setToast({ msg: 'Dokument hochgeladen ✓' })
+      setToast({ msg: t('propertyDetail.contracts.documentUploaded', 'Dokument hochgeladen ✓') })
     } catch (err) {
       console.error('[handleUploadContractDoc]', err)
-      setToast({ msg: 'Upload fehlgeschlagen.', type: 'error' })
+      setToast({ msg: t('propertyDetail.purchases.uploadFailed', 'Upload fehlgeschlagen.'), type: 'error' })
     } finally {
       setContractDocSaving(false)
     }
   }
 
   async function handleDeleteEigDoc(doc: CrmUnitDocument) {
-    if (!window.confirm(`„${doc.name}" löschen?`)) return
+    if (!window.confirm(t('propertyDetail.contracts.deleteDocConfirm', '„{{name}}" löschen?', { name: doc.name }))) return
     await supabase.storage.from('unit-documents').remove([doc.file_path])
     await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
     await fetchUnitPayments()
@@ -1413,15 +1413,15 @@ export default function PropertyDetail() {
             <Stat label={t('properties.size')}
                   value={displaySizeSqm != null ? `${fmtNumber(displaySizeSqm, 0)} m²` : null} />
             {displayTerraceSqm != null && (
-              <Stat label="Terrasse"
+              <Stat label={t('propertyDetail.overview.terrace', 'Terrasse')}
                     value={`${fmtNumber(displayTerraceSqm, 0)} m²`} />
             )}
             {displayFloor != null && (
-              <Stat label="Etage"
+              <Stat label={t('propertyDetail.overview.floor', 'Etage')}
                     value={String(displayFloor)} />
             )}
             {displayBathrooms != null && (
-              <Stat label="Badezimmer"
+              <Stat label={t('propertyDetail.overview.bathrooms', 'Badezimmer')}
                     value={String(displayBathrooms)} />
             )}
             <Stat label={t('properties.rentalType')}
@@ -1805,7 +1805,7 @@ export default function PropertyDetail() {
                     <p className="font-semibold text-hp-black font-body">{prop.verwaltung.name}</p>
                     {prop.management_rental_type && (
                       <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">
-                        {prop.management_rental_type === 'shortterm' ? '🌴 Kurzzeitvermietung' : '🏠 Langzeitvermietung'}
+                        {prop.management_rental_type === 'shortterm' ? t('propertyDetail.verwaltung.shortTermRental', '🌴 Kurzzeitvermietung') : t('propertyDetail.verwaltung.longTermRental', '🏠 Langzeitvermietung')}
                       </span>
                     )}
                   </div>
@@ -1813,7 +1813,7 @@ export default function PropertyDetail() {
                 {canEdit && (
                   <button onClick={handleDeaktivieren}
                           className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
-                    Deaktivieren
+                    {t('propertyDetail.verwaltung.deactivate', 'Deaktivieren')}
                   </button>
                 )}
               </div>
@@ -1859,7 +1859,7 @@ export default function PropertyDetail() {
               {prop.verwaltung.ansprechpartner && (
                 <div className="pt-3 border-t border-gray-100">
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-2 font-body">
-                    Ansprechpartner
+                    {t('propertyDetail.verwaltung.contactPerson', 'Ansprechpartner')}
                   </p>
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center
@@ -1891,18 +1891,18 @@ export default function PropertyDetail() {
             {/* Aktions-Buttons */}
             <div className="space-y-2">
               {isEigentuemer && (prop.verwaltung.ansprechpartner_email ?? prop.verwaltung.email) && (
-                <a href={`mailto:${prop.verwaltung.ansprechpartner_email ?? prop.verwaltung.email}?subject=Anfrage zu ${subjectLine}`}
+                <a href={`mailto:${prop.verwaltung.ansprechpartner_email ?? prop.verwaltung.email}?subject=${encodeURIComponent(t('propertyDetail.verwaltung.inquirySubject', 'Anfrage zu'))} ${subjectLine}`}
                    className="flex items-center justify-center gap-2 w-full py-3 rounded-2xl text-sm font-semibold
                               text-white font-body hover:opacity-90 transition-opacity shadow-sm"
                    style={{ backgroundColor: 'var(--color-highlight)' }}>
-                  ✉️ Nachricht an Verwaltung senden
+                  ✉️ {t('propertyDetail.verwaltung.sendMessageToManagement', 'Nachricht an Verwaltung senden')}
                 </a>
               )}
               {canEdit && prop.owner?.email && (
-                <a href={`mailto:${prop.owner.email}?subject=Info zu ${subjectLine}`}
+                <a href={`mailto:${prop.owner.email}?subject=${encodeURIComponent(t('propertyDetail.verwaltung.infoSubject', 'Info zu'))} ${subjectLine}`}
                    className="flex items-center justify-center gap-2 w-full py-3 rounded-2xl text-sm font-semibold
                               font-body border border-gray-200 text-gray-700 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-                  ✉️ E-Mail an Eigentümer senden
+                  ✉️ {t('propertyDetail.verwaltung.sendEmailToOwner', 'E-Mail an Eigentümer senden')}
                 </a>
               )}
             </div>
@@ -1912,14 +1912,14 @@ export default function PropertyDetail() {
           <div className="text-center py-16 space-y-4">
             <div className="text-5xl">🔑</div>
             <p className="text-sm text-gray-500 font-body">
-              Diese Immobilie ist noch keiner Verwaltung zugewiesen.
+              {t('propertyDetail.verwaltung.notAssigned', 'Diese Immobilie ist noch keiner Verwaltung zugewiesen.')}
             </p>
             <button
               onClick={() => { loadVerwaltungList(); setAktivierVerwaltungId(''); setAktivierRentalType(''); setShowVerwaltungModal(true) }}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold
                          text-white font-body hover:opacity-90 transition-opacity"
               style={{ backgroundColor: 'var(--color-highlight)' }}>
-              🔑 Für Verwaltung aktivieren
+              🔑 {t('propertyDetail.verwaltung.activateForManagement', 'Für Verwaltung aktivieren')}
             </button>
           </div>
         ) : (
@@ -1927,7 +1927,7 @@ export default function PropertyDetail() {
           <div className="text-center py-16">
             <div className="text-5xl mb-4">🏢</div>
             <p className="text-sm text-gray-500 font-body">
-              Für diese Immobilie ist noch keine Verwaltung eingetragen.
+              {t('propertyDetail.verwaltung.noneRegistered', 'Für diese Immobilie ist noch keine Verwaltung eingetragen.')}
             </p>
           </div>
         )}
@@ -1940,30 +1940,30 @@ export default function PropertyDetail() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
                 <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-                  🔑 Für Verwaltung aktivieren
+                  🔑 {t('propertyDetail.verwaltung.activateForManagement', 'Für Verwaltung aktivieren')}
                 </h2>
                 <button onClick={() => setShowVerwaltungModal(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
               </div>
               <div className="px-6 py-5 space-y-4">
                 <div>
                   <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
-                    Verwaltungsunternehmen *
+                    {t('propertyDetail.verwaltung.managementCompany', 'Verwaltungsunternehmen')} *
                   </label>
                   <select value={aktivierVerwaltungId} onChange={e => setAktivierVerwaltungId(e.target.value)}
                           className={`${inputCls} w-full`} style={focusRing()}>
-                    <option value="">– Bitte auswählen –</option>
+                    <option value="">{t('propertyDetail.verwaltung.pleaseSelect', '– Bitte auswählen –')}</option>
                     {verwaltungList.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                   </select>
                   {verwaltungList.length === 0 && (
                     <p className="text-xs text-amber-600 font-body mt-1">
-                      Noch keine Verwaltungen angelegt.{' '}
-                      <a href="/admin/verwaltungen" target="_blank" className="underline hover:text-amber-800">Jetzt anlegen →</a>
+                      {t('propertyDetail.verwaltung.noneCreatedYet', 'Noch keine Verwaltungen angelegt.')}{' '}
+                      <a href="/admin/verwaltungen" target="_blank" className="underline hover:text-amber-800">{t('propertyDetail.verwaltung.createNow', 'Jetzt anlegen →')}</a>
                     </p>
                   )}
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
-                    Vermietungsart <span className="text-red-400">*</span>
+                    {t('propertyDetail.verwaltung.rentalTypeLabel', 'Vermietungsart')} <span className="text-red-400">*</span>
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     {(['longterm', 'shortterm'] as const).map(rt => (
@@ -1972,13 +1972,13 @@ export default function PropertyDetail() {
                                 ${aktivierRentalType === rt
                                   ? 'border-hp-highlight text-hp-highlight bg-orange-50'
                                   : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}>
-                        {rt === 'longterm' ? '🏠 Langzeit' : '🌴 Kurzzeit'}
+                        {rt === 'longterm' ? t('propertyDetail.verwaltung.longTerm', '🏠 Langzeit') : t('propertyDetail.verwaltung.shortTerm', '🌴 Kurzzeit')}
                       </button>
                     ))}
                   </div>
                   {!aktivierRentalType && (
                     <p className="text-xs text-amber-600 font-body mt-1.5">
-                      Bitte Vermietungsart auswählen.
+                      {t('propertyDetail.verwaltung.selectRentalType', 'Bitte Vermietungsart auswählen.')}
                     </p>
                   )}
                 </div>
@@ -1986,12 +1986,12 @@ export default function PropertyDetail() {
               <div className="px-6 pb-5 flex gap-3 justify-end">
                 <button onClick={() => setShowVerwaltungModal(false)}
                         className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
-                  Abbrechen
+                  {t('common.cancel')}
                 </button>
                 <button onClick={handleAktivieren} disabled={!aktivierVerwaltungId || !aktivierRentalType || aktivierSaving}
                         className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body hover:opacity-90 transition-opacity disabled:opacity-50"
                         style={{ backgroundColor: 'var(--color-highlight)' }}>
-                  {aktivierSaving ? 'Speichern…' : '✓ Aktivieren'}
+                  {aktivierSaving ? t('propertyDetail.verwaltung.saving', 'Speichern…') : t('propertyDetail.verwaltung.activate', '✓ Aktivieren')}
                 </button>
               </div>
             </div>
@@ -2031,11 +2031,11 @@ export default function PropertyDetail() {
             <button onClick={() => openCrmDoc(doc.file_path)}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
                                text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-              Öffnen
+              {t('propertyDetail.contracts.open', 'Öffnen')}
             </button>
             <button onClick={() => downloadCrmDoc(doc.file_path, doc.file_name ?? doc.name)}
                     className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200
-                               text-gray-500 hover:border-gray-400 transition-colors" title="Download">
+                               text-gray-500 hover:border-gray-400 transition-colors" title={t('propertyDetail.contracts.download', 'Download')}>
               ↓
             </button>
             {(canEdit || isEigentuemer) && (
@@ -2061,11 +2061,11 @@ export default function PropertyDetail() {
             <button onClick={() => openDoc(doc.file_url)}
                     className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200
                                text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
-              Öffnen
+              {t('propertyDetail.contracts.open', 'Öffnen')}
             </button>
             <button onClick={() => downloadDoc(doc.file_url, doc.title)}
                     className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200
-                               text-gray-500 hover:border-gray-400 transition-colors" title="Download">
+                               text-gray-500 hover:border-gray-400 transition-colors" title={t('propertyDetail.contracts.download', 'Download')}>
               ↓
             </button>
             {canEdit && (
@@ -2089,11 +2089,11 @@ export default function PropertyDetail() {
         {/* ── Angepinnte Verträge ──────────────────────────── */}
         <div>
           <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-            📌 Kaufvertrag & Mietvertrag
+            📌 {t('propertyDetail.contracts.purchaseAndRentalContract', 'Kaufvertrag & Mietvertrag')}
           </h3>
           {!hasPinned ? (
             <div className="text-center py-6 text-gray-400 font-body">
-              <p className="text-sm">Noch keine Verträge hochgeladen.</p>
+              <p className="text-sm">{t('propertyDetail.contracts.noContractsUploaded', 'Noch keine Verträge hochgeladen.')}</p>
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
@@ -2107,11 +2107,11 @@ export default function PropertyDetail() {
         {(hasOther || canEdit) && (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              📄 Weitere Unterlagen
+              📄 {t('propertyDetail.contracts.otherDocuments', 'Weitere Unterlagen')}
             </h3>
             {!hasOther ? (
               <div className="text-center py-6 text-gray-400 font-body">
-                <p className="text-sm">Noch keine weiteren Dokumente.</p>
+                <p className="text-sm">{t('propertyDetail.contracts.noOtherDocuments', 'Noch keine weiteren Dokumente.')}</p>
               </div>
             ) : (
               <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden divide-y divide-gray-50">
@@ -2130,23 +2130,23 @@ export default function PropertyDetail() {
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2
                            border-dashed border-gray-200 text-sm font-medium text-gray-400
                            hover:border-orange-300 hover:text-orange-500 transition-colors font-body">
-                <span className="text-lg">+</span> Dokument hochladen
+                <span className="text-lg">+</span> {t('propertyDetail.contracts.uploadDocument', 'Dokument hochladen')}
               </button>
             ) : (
               <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-4">
-                <p className="text-sm font-semibold text-hp-black font-body">Dokument hinzufügen</p>
+                <p className="text-sm font-semibold text-hp-black font-body">{t('propertyDetail.contracts.addDocument', 'Dokument hinzufügen')}</p>
 
                 {/* Typ-Auswahl */}
                 <div className="flex gap-2 flex-wrap">
-                  {(['kaufvertrag', 'mietvertrag', 'sonstige'] as const).map(t => (
+                  {(['kaufvertrag', 'mietvertrag', 'sonstige'] as const).map(docType => (
                     <button
-                      key={t}
-                      onClick={() => { setContractDocType(t); if (t !== 'sonstige') setContractDocName('') }}
+                      key={docType}
+                      onClick={() => { setContractDocType(docType); if (docType !== 'sonstige') setContractDocName('') }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors
-                        ${contractDocType === t
+                        ${contractDocType === docType
                           ? 'text-white' : 'border border-gray-200 text-gray-600 hover:border-orange-300'}`}
-                      style={contractDocType === t ? { backgroundColor: 'var(--color-highlight)' } : {}}>
-                      {t === 'kaufvertrag' ? '📋 Kaufvertrag' : t === 'mietvertrag' ? '🏠 Mietvertrag' : '📄 Sonstige'}
+                      style={contractDocType === docType ? { backgroundColor: 'var(--color-highlight)' } : {}}>
+                      {docType === 'kaufvertrag' ? t('propertyDetail.contracts.typePurchase', '📋 Kaufvertrag') : docType === 'mietvertrag' ? t('propertyDetail.contracts.typeRental', '🏠 Mietvertrag') : t('propertyDetail.contracts.typeOther', '📄 Sonstige')}
                     </button>
                   ))}
                 </div>
@@ -2154,11 +2154,11 @@ export default function PropertyDetail() {
                 {/* Name (nur bei Sonstige) */}
                 {contractDocType === 'sonstige' && (
                   <div>
-                    <label className="text-xs text-gray-500 font-body block mb-1">Bezeichnung <span className="text-red-400">*</span></label>
+                    <label className="text-xs text-gray-500 font-body block mb-1">{t('propertyDetail.contracts.nameLabel', 'Bezeichnung')} <span className="text-red-400">*</span></label>
                     <input
                       value={contractDocName}
                       onChange={e => setContractDocName(e.target.value)}
-                      placeholder="z.B. Reservierungsbestätigung, Grundbuchauszug …"
+                      placeholder={t('propertyDetail.contracts.namePlaceholder', 'z.B. Reservierungsbestätigung, Grundbuchauszug …')}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
                                  focus:outline-none focus:border-orange-400"
                     />
@@ -2185,7 +2185,7 @@ export default function PropertyDetail() {
                           className="text-red-400 hover:text-red-600 text-sm">✕</button>
                       </div>
                     ) : (
-                      <p className="text-xs text-gray-400 font-body">PDF / Bild wählen</p>
+                      <p className="text-xs text-gray-400 font-body">{t('propertyDetail.contracts.selectPdfOrImage', 'PDF / Bild wählen')}</p>
                     )}
                   </div>
                 </div>
@@ -2193,7 +2193,7 @@ export default function PropertyDetail() {
                 <div className="flex justify-end gap-3">
                   <button onClick={() => { setShowContractDoc(false); setContractDocFile(null) }}
                           className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-body text-gray-600 hover:bg-gray-50">
-                    Abbrechen
+                    {t('common.cancel')}
                   </button>
                   <button
                     onClick={handleUploadContractDoc}
@@ -2202,7 +2202,7 @@ export default function PropertyDetail() {
                                hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
                     style={{ backgroundColor: 'var(--color-highlight)' }}>
                     {contractDocSaving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                    {contractDocSaving ? 'Hochladen…' : 'Speichern'}
+                    {contractDocSaving ? t('propertyDetail.contracts.uploading', 'Hochladen…') : t('common.save')}
                   </button>
                 </div>
               </div>
@@ -2729,25 +2729,25 @@ export default function PropertyDetail() {
     const sectionUnitImages = (
       <div>
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-          🏠 Wohnungsbilder
+          🏠 {t('propertyDetail.images.unitImages', 'Wohnungsbilder')}
         </h3>
-        <ImageGrid images={crmUnitImages} emptyText="Noch keine Wohnungsbilder vorhanden." />
+        <ImageGrid images={crmUnitImages} emptyText={t('propertyDetail.images.noUnitImages', 'Noch keine Wohnungsbilder vorhanden.')} />
       </div>
     )
 
     const sectionProjectImages = (
       <div>
         <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-          🏗 Projektbilder
+          🏗 {t('propertyDetail.images.projectImages', 'Projektbilder')}
         </h3>
-        <ImageGrid images={crmProjectImages} emptyText="Noch keine Projektbilder vorhanden." />
+        <ImageGrid images={crmProjectImages} emptyText={t('propertyDetail.images.noProjectImages', 'Noch keine Projektbilder vorhanden.')} />
       </div>
     )
 
     const sectionConstructionPhotos = constructionPhotos.length > 0 ? (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              🏗️ Baustellenbilder
+              🏗️ {t('propertyDetail.images.constructionImages', 'Baustellenbilder')}
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {constructionPhotos.map(photo => {
@@ -2811,13 +2811,13 @@ export default function PropertyDetail() {
         {canEdit && linkedProjectId && (
           <div className="border-t border-gray-100 pt-6">
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              📷 Baustellenfoto hochladen
+              📷 {t('propertyDetail.images.uploadConstructionPhoto', 'Baustellenfoto hochladen')}
             </h3>
             <div className="bg-gray-50 rounded-2xl p-4 space-y-3">
               {/* Datum + Beschreibung */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 font-body mb-1">Datum</label>
+                  <label className="block text-xs text-gray-500 font-body mb-1">{t('propertyDetail.images.date', 'Datum')}</label>
                   <input
                     type="date"
                     value={photoDate}
@@ -2829,12 +2829,12 @@ export default function PropertyDetail() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 font-body mb-1">Beschreibung (optional)</label>
+                  <label className="block text-xs text-gray-500 font-body mb-1">{t('propertyDetail.images.descriptionOptional', 'Beschreibung (optional)')}</label>
                   <input
                     type="text"
                     value={photoDesc}
                     onChange={e => setPhotoDesc(e.target.value)}
-                    placeholder="z.B. Rohbau EG"
+                    placeholder={t('propertyDetail.images.descriptionExample', 'z.B. Rohbau EG')}
                     className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2
                                text-sm text-hp-black font-body placeholder-gray-400
                                focus:outline-none focus:ring-2 focus:border-transparent transition"
@@ -2852,8 +2852,8 @@ export default function PropertyDetail() {
                            disabled:opacity-50"
                 style={{ backgroundColor: 'var(--color-highlight)', color: '#fff' }}>
                 {uploadingPhoto
-                  ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Wird hochgeladen…</>
-                  : '📷 Fotos / Videos auswählen'}
+                  ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{t('propertyDetail.images.uploading', 'Wird hochgeladen…')}</>
+                  : t('propertyDetail.images.selectPhotosVideos', '📷 Fotos / Videos auswählen')}
               </button>
               <input
                 ref={constPhotoInputRef}
@@ -2871,7 +2871,7 @@ export default function PropertyDetail() {
         {canEdit && ownImages.length > 0 && (
           <div>
             <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
-              📁 Sonstige Fotos
+              📁 {t('propertyDetail.images.otherPhotos', 'Sonstige Fotos')}
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {ownImages.map((url, i) => (
@@ -2933,24 +2933,24 @@ export default function PropertyDetail() {
     if (!linkedUnitId) return (
       <div className="text-center py-20 text-gray-400">
         <p className="text-4xl mb-3">📋</p>
-        <p className="text-sm font-medium text-gray-500">Keine CRM-Einheit verknüpft.</p>
+        <p className="text-sm font-medium text-gray-500">{t('propertyDetail.purchases.noLinkedCrmUnit', 'Keine CRM-Einheit verknüpft.')}</p>
         {canEdit ? (
           <>
             <p className="text-xs mt-1 text-gray-400">
-              Diese Immobilie ist mit keiner Einheit im CRM verbunden.<br />
-              Öffne das Projekt im CRM und verknüpfe die Einheit mit dieser Immobilie.
+              {t('propertyDetail.purchases.noCrmUnitHint1', 'Diese Immobilie ist mit keiner Einheit im CRM verbunden.')}<br />
+              {t('propertyDetail.purchases.noCrmUnitHint2', 'Öffne das Projekt im CRM und verknüpfe die Einheit mit dieser Immobilie.')}
             </p>
             <a
               href="/admin/crm/projects"
               className="inline-block mt-4 px-4 py-2 rounded-xl text-sm font-medium text-white transition-opacity hover:opacity-80"
               style={{ backgroundColor: 'var(--color-highlight)' }}
             >
-              Zu den CRM-Projekten →
+              {t('propertyDetail.purchases.goToCrmProjects', 'Zu den CRM-Projekten →')}
             </a>
           </>
         ) : (
           <p className="text-xs mt-1 text-gray-300">
-            Kaufdaten werden nach Vertragsunterzeichnung hier angezeigt.
+            {t('propertyDetail.purchases.purchaseDataAfterSigning', 'Kaufdaten werden nach Vertragsunterzeichnung hier angezeigt.')}
           </p>
         )}
       </div>
@@ -2987,11 +2987,11 @@ export default function PropertyDetail() {
           </button>
           <button
             onClick={() => handleDownloadPaymentFile(path, filename)}
-            className="text-gray-400 hover:text-gray-600 text-xs" title="Download">↓</button>
+            className="text-gray-400 hover:text-gray-600 text-xs" title={t('propertyDetail.contracts.download', 'Download')}>↓</button>
           {canRemove && (
             <button
               onClick={onRemove}
-              className="text-gray-300 hover:text-red-500 text-xs" title="Entfernen">✕</button>
+              className="text-gray-300 hover:text-red-500 text-xs" title={t('propertyDetail.purchases.remove', 'Entfernen')}>✕</button>
           )}
         </div>
       )
@@ -3019,7 +3019,7 @@ export default function PropertyDetail() {
             disabled={isUploading}
             className="text-xs font-medium transition-colors disabled:opacity-50 font-body"
             style={{ color: 'var(--color-highlight)' }}>
-            {isUploading ? '↑ Hochladen…' : label}
+            {isUploading ? t('propertyDetail.purchases.uploading', '↑ Hochladen…') : label}
           </button>
         </>
       )
@@ -3033,16 +3033,16 @@ export default function PropertyDetail() {
           <>
             <div className="grid grid-cols-3 gap-4">
               <div className="bg-blue-50 rounded-2xl p-4 text-center">
-                <p className="text-xs text-blue-500 font-medium font-body mb-1">Gesamtbetrag</p>
+                <p className="text-xs text-blue-500 font-medium font-body mb-1">{t('propertyDetail.purchases.totalAmount', 'Gesamtbetrag')}</p>
                 <p className="text-lg font-bold text-blue-800">{fmtCurrency(grossTotal)}</p>
               </div>
               <div className="bg-green-50 rounded-2xl p-4 text-center">
-                <p className="text-xs text-green-500 font-medium font-body mb-1">Bezahlt</p>
+                <p className="text-xs text-green-500 font-medium font-body mb-1">{t('propertyDetail.purchases.paid', 'Bezahlt')}</p>
                 <p className="text-lg font-bold text-green-800">{fmtCurrency(totalPaid)}</p>
               </div>
               <div className={`rounded-2xl p-4 text-center ${outstanding > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
                 <p className={`text-xs font-medium font-body mb-1 ${outstanding > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                  Ausstehend
+                  {t('propertyDetail.purchases.outstanding', 'Ausstehend')}
                 </p>
                 <p className={`text-lg font-bold ${outstanding > 0 ? 'text-red-800' : 'text-gray-600'}`}>
                   {fmtCurrency(outstanding)}
@@ -3052,7 +3052,7 @@ export default function PropertyDetail() {
 
             <div>
               <div className="flex justify-between text-xs text-gray-400 mb-1.5 font-body">
-                <span>{Math.round(pct)}% bezahlt</span>
+                <span>{t('propertyDetail.purchases.percentPaid', '{{pct}}% bezahlt', { pct: Math.round(pct) })}</span>
                 <span>{fmtCurrency(totalPaid)} / {fmtCurrency(grossTotal)}</span>
               </div>
               <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -3068,9 +3068,9 @@ export default function PropertyDetail() {
           {visiblePayments.length === 0 && (
             <div className="text-center py-10 text-gray-400 font-body">
               <p className="text-3xl mb-2">📋</p>
-              <p className="text-sm">Noch keine Einträge vorhanden.</p>
+              <p className="text-sm">{t('propertyDetail.purchases.noEntriesYet', 'Noch keine Einträge vorhanden.')}</p>
               <p className="text-xs mt-1 text-gray-300">
-                Admin legt Raten an; lade dann jeweils die Rechnung hoch.
+                {t('propertyDetail.purchases.adminCreatesRatesHint', 'Admin legt Raten an; lade dann jeweils die Rechnung hoch.')}
               </p>
             </div>
           )}
@@ -3095,7 +3095,7 @@ export default function PropertyDetail() {
                             type="number" min="0" step="0.01"
                             autoFocus={editingPayId === pay.id || pay.amount === 0}
                             value={editingPayId === pay.id ? editingAmount : ''}
-                            placeholder="Betrag eingeben"
+                            placeholder={t('propertyDetail.purchases.enterAmount', 'Betrag eingeben')}
                             onFocus={() => { if (editingPayId !== pay.id) { setEditingPayId(pay.id); setEditingAmount('') } }}
                             onChange={e => setEditingAmount(e.target.value)}
                             onKeyDown={e => {
@@ -3121,14 +3121,14 @@ export default function PropertyDetail() {
                         </span>
                         <button
                           onClick={() => { setEditingPayId(pay.id); setEditingAmount(String(pay.amount)) }}
-                          className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity" title="Betrag bearbeiten">✎</button>
+                          className="opacity-0 group-hover:opacity-100 text-gray-400 text-xs transition-opacity" title={t('propertyDetail.purchases.editAmount', 'Betrag bearbeiten')}>✎</button>
                       </div>
                     )
                   )}
                   {(canEdit || isEigentuemer) && (
                     <button
                       onClick={() => handleDeletePaymentEntry(pay.id)}
-                      className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs transition-opacity ml-1" title="Eintrag löschen">🗑</button>
+                      className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs transition-opacity ml-1" title={t('propertyDetail.purchases.deleteEntry', 'Eintrag löschen')}>🗑</button>
                   )}
                 </div>
               </div>
@@ -3137,34 +3137,34 @@ export default function PropertyDetail() {
               <div className="grid grid-cols-2 gap-0 border-t border-gray-100">
                 <div className="px-4 py-3 border-r border-gray-100">
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
-                    Rechnung
+                    {t('propertyDetail.purchases.invoice', 'Rechnung')}
                   </p>
                   {pay.invoice_path ? (
                     <FileActions
                       path={pay.invoice_path}
-                      filename={pay.invoice_filename ?? 'Rechnung'}
+                      filename={pay.invoice_filename ?? t('propertyDetail.purchases.invoice', 'Rechnung')}
                       canRemove={canEdit || isEigentuemer}
                       onRemove={() => handleRemovePaymentFile(pay.id, 'invoice')}
                     />
                   ) : (canEdit || isEigentuemer) ? (
-                    <UploadBtn payId={pay.id} type="invoice" label="+ Rechnung hochladen" />
+                    <UploadBtn payId={pay.id} type="invoice" label={t('propertyDetail.purchases.uploadInvoice', '+ Rechnung hochladen')} />
                   ) : (
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
                 </div>
                 <div className="px-4 py-3">
                   <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1.5 font-body">
-                    Zahlungsbeleg
+                    {t('propertyDetail.purchases.receipt', 'Zahlungsbeleg')}
                   </p>
                   {pay.receipt_path ? (
                     <FileActions
                       path={pay.receipt_path}
-                      filename={pay.receipt_filename ?? 'Zahlungsbeleg'}
+                      filename={pay.receipt_filename ?? t('propertyDetail.purchases.receipt', 'Zahlungsbeleg')}
                       canRemove={canEdit || isEigentuemer}
                       onRemove={() => handleRemovePaymentFile(pay.id, 'receipt')}
                     />
                   ) : (canEdit || isEigentuemer) ? (
-                    <UploadBtn payId={pay.id} type="receipt" label="↑ Beleg hochladen" />
+                    <UploadBtn payId={pay.id} type="receipt" label={t('propertyDetail.purchases.uploadReceipt', '↑ Beleg hochladen')} />
                   ) : (
                     <span className="text-xs text-gray-300 font-body">—</span>
                   )}
@@ -3180,38 +3180,38 @@ export default function PropertyDetail() {
                       <div className="flex items-center gap-2">
                         <span className="text-base">✅</span>
                         <div>
-                          <p className="text-sm font-semibold text-green-700 font-body">Bezahlt</p>
+                          <p className="text-sm font-semibold text-green-700 font-body">{t('propertyDetail.purchases.paidLabel', 'Bezahlt')}</p>
                           {pay.paid_date && (
-                            <p className="text-xs text-green-600 font-body">am {fmtDate(pay.paid_date)}</p>
+                            <p className="text-xs text-green-600 font-body">{t('propertyDetail.purchases.paidOn', 'am {{date}}', { date: fmtDate(pay.paid_date) })}</p>
                           )}
                         </div>
                       </div>
                       {unmarkConfirmId === pay.id ? (
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500 font-body">Wirklich zurücknehmen?</span>
+                          <span className="text-xs text-gray-500 font-body">{t('propertyDetail.purchases.confirmUnmark', 'Wirklich zurücknehmen?')}</span>
                           <button
                             onClick={() => handleUnmarkAsPaid(pay.id)}
                             className="text-xs font-semibold text-red-600 hover:text-red-800 font-body transition-colors">
-                            Ja
+                            {t('propertyDetail.purchases.yes', 'Ja')}
                           </button>
                           <button
                             onClick={() => setUnmarkConfirmId(null)}
                             className="text-xs text-gray-400 hover:text-gray-600 font-body transition-colors">
-                            Nein
+                            {t('propertyDetail.purchases.no', 'Nein')}
                           </button>
                         </div>
                       ) : (
                         <button
                           onClick={() => setUnmarkConfirmId(pay.id)}
                           className="text-xs text-gray-400 hover:text-red-500 font-body transition-colors underline">
-                          Rückgängig
+                          {t('propertyDetail.purchases.undo', 'Rückgängig')}
                         </button>
                       )}
                     </div>
                   ) : markingPaidId === pay.id ? (
                     /* DATUM EINGEBEN */
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold text-gray-600 font-body">Wann wurde die Zahlung überwiesen?</p>
+                      <p className="text-xs font-semibold text-gray-600 font-body">{t('propertyDetail.purchases.whenWasPaymentTransferred', 'Wann wurde die Zahlung überwiesen?')}</p>
                       <div className="flex items-center gap-2">
                         <input
                           type="date" autoFocus
@@ -3224,12 +3224,12 @@ export default function PropertyDetail() {
                           className="px-4 py-2 rounded-xl text-sm font-semibold text-white font-body
                                      hover:opacity-90 transition-opacity flex items-center gap-1.5"
                           style={{ backgroundColor: '#22c55e' }}>
-                          ✓ Speichern
+                          ✓ {t('common.save')}
                         </button>
                         <button
                           onClick={() => setMarkingPaidId(null)}
                           className="px-3 py-2 rounded-xl text-sm text-gray-500 border border-gray-200 hover:bg-gray-100 font-body">
-                          Abbrechen
+                          {t('common.cancel')}
                         </button>
                       </div>
                     </div>
@@ -3240,7 +3240,7 @@ export default function PropertyDetail() {
                       className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border-2
                                  border-dashed border-green-200 text-sm font-semibold text-green-600
                                  hover:bg-green-50 hover:border-green-400 transition-colors font-body">
-                      ✓ Als bezahlt markieren
+                      ✓ {t('propertyDetail.purchases.markAsPaidBtn', 'Als bezahlt markieren')}
                     </button>
                   )}
                 </div>
@@ -3261,28 +3261,28 @@ export default function PropertyDetail() {
                 className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-2xl border-2
                            border-dashed border-gray-200 text-sm font-medium text-gray-400
                            hover:border-orange-300 hover:text-orange-500 transition-colors font-body">
-                <span className="text-lg">+</span> Rechnung hinzufügen
+                <span className="text-lg">+</span> {t('propertyDetail.purchases.addInvoice', 'Rechnung hinzufügen')}
               </button>
             ) : (
               <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-sm space-y-4">
-                <p className="text-sm font-semibold text-hp-black font-body">Neue Rate hinzufügen</p>
+                <p className="text-sm font-semibold text-hp-black font-body">{t('propertyDetail.purchases.addNewRate', 'Neue Rate hinzufügen')}</p>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs text-gray-500 font-body block mb-1">Bezeichnung</label>
+                    <label className="text-xs text-gray-500 font-body block mb-1">{t('propertyDetail.purchases.designation', 'Bezeichnung')}</label>
                     <input
                       value={addPayDesc}
                       onChange={e => setAddPayDesc(e.target.value)}
-                      placeholder="z.B. Reservierung, 1. Rate …"
+                      placeholder={t('propertyDetail.purchases.designationPlaceholder', 'z.B. Reservierung, 1. Rate …')}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-body
                                  focus:outline-none focus:border-orange-400"
                     />
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 font-body block mb-1">
-                      Betrag (€)
+                      {t('propertyDetail.purchases.amountEur', 'Betrag (€)')}
                       {addPayAnalyzing && (
-                        <span className="ml-2 text-orange-400 font-normal">KI liest…</span>
+                        <span className="ml-2 text-orange-400 font-normal">{t('propertyDetail.purchases.aiReading', 'KI liest…')}</span>
                       )}
                     </label>
                     <div className="relative">
@@ -3302,7 +3302,7 @@ export default function PropertyDetail() {
                 {/* PDF Upload mit KI-Erkennung */}
                 <div>
                   <label className="text-xs text-gray-500 font-body block mb-1">
-                    Rechnung hochladen (optional — KI liest Betrag automatisch aus)
+                    {t('propertyDetail.purchases.uploadInvoiceAiHint', 'Rechnung hochladen (optional — KI liest Betrag automatisch aus)')}
                   </label>
                   <input
                     ref={addPayFileRef}
@@ -3325,7 +3325,7 @@ export default function PropertyDetail() {
                           className="text-red-400 hover:text-red-600 text-sm">✕</button>
                       </div>
                     ) : (
-                      <p className="text-xs text-gray-400 font-body">PDF / Bild · max. 50 MB</p>
+                      <p className="text-xs text-gray-400 font-body">{t('propertyDetail.invoices.pdfMaxSize', 'PDF · max. 50 MB')}</p>
                     )}
                   </div>
                 </div>
@@ -3333,7 +3333,7 @@ export default function PropertyDetail() {
                 <div className="flex justify-end gap-3">
                   <button onClick={() => { setShowAddPayForm(false); setAddPayFile(null) }}
                           className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-body text-gray-600 hover:bg-gray-50">
-                    Abbrechen
+                    {t('common.cancel')}
                   </button>
                   <button
                     onClick={handleAddPayment}
@@ -3342,7 +3342,7 @@ export default function PropertyDetail() {
                                hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
                     style={{ backgroundColor: 'var(--color-highlight)' }}>
                     {addPaySaving && <span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />}
-                    {addPaySaving ? 'Speichern…' : 'Hinzufügen'}
+                    {addPaySaving ? t('propertyDetail.purchases.savingEllipsis', 'Speichern…') : t('propertyDetail.purchases.addBtn', 'Hinzufügen')}
                   </button>
                 </div>
               </div>
@@ -3362,7 +3362,7 @@ export default function PropertyDetail() {
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'overview',    label: t('propertyDetail.tabs.overview') },
-    { key: 'verwaltung',  label: 'Verwaltung' },
+    { key: 'verwaltung',  label: t('propertyDetail.tabs.verwaltung', 'Verwaltung') },
     { key: 'contracts',   label: t('propertyDetail.tabs.contracts'),
       count: (contracts.length + mietvertragCount + unitKaufvertraege.length) || undefined },
     { key: 'invoices',   label: t('propertyDetail.tabs.invoices'),
@@ -3370,7 +3370,7 @@ export default function PropertyDetail() {
     { key: 'income',     label: t('propertyDetail.tabs.income') },
     { key: 'images',     label: t('propertyDetail.tabs.images'),
       count: ((p.images?.length || 0) + crmProjectImages.length + crmUnitImages.length) || undefined },
-    { key: 'purchases',  label: 'Payment Plan',
+    { key: 'purchases',  label: t('propertyDetail.tabs.paymentPlan', 'Payment Plan'),
       count: unitPayments.length || undefined },
   ]
 

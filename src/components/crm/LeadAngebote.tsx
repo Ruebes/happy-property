@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import DeckChat from './DeckChat'
 
@@ -23,6 +24,7 @@ const deckColor = (rev: number, approved: boolean) =>
   approved ? '#16a34a' : rev <= 0 ? DECK_BASE : DECK_CYCLE[(rev - 1) % DECK_CYCLE.length]
 
 export default function LeadAngebote({ leadId }: { leadId: string }) {
+  const { t } = useTranslation()
   const [outbox, setOutbox] = useState<OutboxRow[]>([])
   const [calcs, setCalcs]   = useState<CalcRow[]>([])
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
@@ -92,7 +94,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
 
   // Angebot löschen: Begleit-Bündel inkl. der zugehörigen Decks (Links sterben mit).
   const delOutbox = async (o: OutboxRow) => {
-    if (!window.confirm('Dieses Angebot inkl. der enthaltenen Deck-Links löschen? Die Links sind danach nicht mehr erreichbar.')) return
+    if (!window.confirm(t('leadAngebote.confirmDeleteOutbox', 'Dieses Angebot inkl. der enthaltenen Deck-Links löschen? Die Links sind danach nicht mehr erreichbar.'))) return
     setBusy(o.id)
     const tokens = o.deck_tokens ?? []
     if (tokens.length) await supabase.from('sales_decks').delete().in('token', tokens)
@@ -101,7 +103,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
     setBusy(null)
   }
   const delCalc = async (c: CalcRow) => {
-    if (!window.confirm('Diese Berechnung löschen? Der Link ist danach nicht mehr erreichbar.')) return
+    if (!window.confirm(t('leadAngebote.confirmDeleteCalc', 'Diese Berechnung löschen? Der Link ist danach nicht mehr erreichbar.'))) return
     setBusy(c.id)
     await supabase.from('property_calculations').delete().eq('id', c.id)
     setCalcs(prev => prev.filter(x => x.id !== c.id))
@@ -116,12 +118,12 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
 
   return (
     <div className="bg-white rounded-2xl shadow p-5">
-      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">📦 Gesendete Angebote</h3>
+      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">📦 {t('leadAngebote.sentOffers', 'Gesendete Angebote')}</h3>
       <div className="space-y-2">
         {outbox.map(o => (
           <div key={o.id} className="flex items-start gap-2 text-sm border border-gray-100 rounded-lg px-3 py-2">
             <span className="text-xs text-gray-400 w-24 shrink-0 mt-1">{fmt(o.created_at)}</span>
-            <span className="flex-1 min-w-0 truncate mt-1">📑 {o.subject ?? 'Angebot'}</span>
+            <span className="flex-1 min-w-0 truncate mt-1">📑 {o.subject ?? t('leadAngebote.offerFallback', 'Angebot')}</span>
             <span className="flex flex-wrap gap-1 justify-end shrink-0 max-w-[55%]">
               {(o.deck_tokens ?? []).map((tok, i) => {
                 const m = deckMeta[tok]
@@ -132,31 +134,31 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
                 return (
                   <span key={tok} className="inline-flex items-center rounded overflow-hidden ring-1 ring-black/5">
                     <a href={`${origin}/deck/${tok}?preview=1`} target="_blank" rel="noreferrer"
-                      title={approved ? 'Als fertig bestätigt' : rev > 0 ? `Version ${rev}` : 'Deck öffnen'}
+                      title={approved ? t('leadAngebote.deckApprovedTitle', 'Als fertig bestätigt') : rev > 0 ? t('leadAngebote.deckVersionTitle', 'Version {{rev}}', { rev }) : t('leadAngebote.deckOpenTitle', 'Deck öffnen')}
                       className="text-[11px] px-2 py-0.5 text-white font-medium" style={{ backgroundColor: deckColor(rev, approved) }}>
-                      {approved ? '✓ ' : ''}Deck {i + 1}{rev > 0 && !approved ? ` ·v${rev}` : ''}
+                      {approved ? '✓ ' : ''}{t('leadAngebote.deckLabel', 'Deck {{num}}', { num: i + 1 })}{rev > 0 && !approved ? ` ·v${rev}` : ''}
                     </a>
                     {refining ? (
-                      <span className="px-1.5 py-0.5 bg-gray-200 flex items-center" title="Wird im Hintergrund bearbeitet…">
+                      <span className="px-1.5 py-0.5 bg-gray-200 flex items-center" title={t('leadAngebote.refiningTitle', 'Wird im Hintergrund bearbeitet…')}>
                         <span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
                       </span>
                     ) : (
-                      <button onClick={() => setChat({ token: tok, label: `Deck ${i + 1}` })} title="Deck per Chat anpassen (läuft im Hintergrund)"
+                      <button onClick={() => setChat({ token: tok, label: `Deck ${i + 1}` })} title={t('leadAngebote.editViaChatTitle', 'Deck per Chat anpassen (läuft im Hintergrund)')}
                         className="text-[11px] px-1.5 py-0.5 bg-gray-700 text-white hover:bg-orange-500">✏️</button>
                     )}
                     {err && !refining && (
-                      <span className="px-1 py-0.5 bg-red-100 text-red-600 text-[11px]" title={`Bearbeitung fehlgeschlagen: ${err}`}>⚠</span>
+                      <span className="px-1 py-0.5 bg-red-100 text-red-600 text-[11px]" title={t('leadAngebote.refineFailedTitle', 'Bearbeitung fehlgeschlagen: {{err}}', { err })}>⚠</span>
                     )}
-                    <button onClick={() => void toggleDeckApprove(tok)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
+                    <button onClick={() => void toggleDeckApprove(tok)} title={approved ? t('leadAngebote.unapproveTitle', 'Bestätigung aufheben') : t('leadAngebote.approveTitle', 'Als fertig bestätigen')}
                       className={`text-[11px] px-1.5 py-0.5 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
                   </span>
                 )
               })}
             </span>
             <span className="text-[11px] text-green-600 shrink-0 w-16 text-right mt-1">
-              {o.email_sent_at ? '✅ Mail' : o.whatsapp_sent_at ? '✅ WA' : '⏳ Entwurf'}
+              {o.email_sent_at ? t('leadAngebote.statusMail', '✅ Mail') : o.whatsapp_sent_at ? t('leadAngebote.statusWa', '✅ WA') : t('leadAngebote.statusDraft', '⏳ Entwurf')}
             </span>
-            <button onClick={() => void delOutbox(o)} disabled={busy === o.id} title="Angebot löschen"
+            <button onClick={() => void delOutbox(o)} disabled={busy === o.id} title={t('leadAngebote.deleteOfferTitle', 'Angebot löschen')}
               className="text-gray-300 hover:text-red-500 disabled:opacity-40 shrink-0 px-1 mt-1">🗑</button>
           </div>
         ))}
@@ -165,17 +167,17 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
           return (
             <div key={c.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-2">
               <span className="text-xs text-gray-400 w-24 shrink-0">{fmt(c.created_at)}</span>
-              <span className="flex-1 truncate">📊 {c.title ?? 'Rendite-Berechnung'}{approved && <span className="ml-1 text-[11px] text-green-600 font-medium">· ✓ fertig</span>}</span>
-              <a href={`${origin}/rechnung/${c.token}?preview=1`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>Ansehen</a>
-              <button onClick={() => void toggleCalcApprove(c)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
+              <span className="flex-1 truncate">📊 {c.title ?? t('leadAngebote.calcFallback', 'Rendite-Berechnung')}{approved && <span className="ml-1 text-[11px] text-green-600 font-medium">· {t('leadAngebote.calcDoneBadge', '✓ fertig')}</span>}</span>
+              <a href={`${origin}/rechnung/${c.token}?preview=1`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>{t('leadAngebote.viewLink', 'Ansehen')}</a>
+              <button onClick={() => void toggleCalcApprove(c)} title={approved ? t('leadAngebote.unapproveTitle', 'Bestätigung aufheben') : t('leadAngebote.approveTitle', 'Als fertig bestätigen')}
                 className={`text-[11px] px-1.5 py-0.5 rounded shrink-0 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
-              <button onClick={() => void delCalc(c)} disabled={busy === c.id} title="Berechnung löschen"
+              <button onClick={() => void delCalc(c)} disabled={busy === c.id} title={t('leadAngebote.deleteCalcTitle', 'Berechnung löschen')}
                 className="text-gray-300 hover:text-red-500 disabled:opacity-40 shrink-0 px-1">🗑</button>
             </div>
           )
         })}
       </div>
-      <p className="text-[11px] text-gray-400 mt-2">Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ✓ = als fertig bestätigen.</p>
+      <p className="text-[11px] text-gray-400 mt-2">{t('leadAngebote.footerHint', 'Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ✓ = als fertig bestätigen.')}</p>
       {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
     </div>
   )

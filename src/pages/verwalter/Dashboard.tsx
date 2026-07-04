@@ -122,9 +122,9 @@ export default function VerwalterDashboard() {
       updated_at: new Date().toISOString(),
     }).eq('id', verwaltung.id)
     setVerwSaving(false)
-    if (error) { setVerwToast('❌ Speichern fehlgeschlagen'); return }
+    if (error) { setVerwToast(t('dashboard.saveFailed', '❌ Speichern fehlgeschlagen')); return }
     setShowVerwEdit(false)
-    setVerwToast('✅ Stammdaten aktualisiert')
+    setVerwToast(t('dashboard.masterDataUpdated', '✅ Stammdaten aktualisiert'))
     fetchVerwaltung()
   }
 
@@ -262,7 +262,7 @@ export default function VerwalterDashboard() {
           )}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body">
-              Meine Verwaltung
+              {t('dashboard.myManagement', 'Meine Verwaltung')}
             </h2>
             <button
               onClick={() => {
@@ -283,7 +283,7 @@ export default function VerwalterDashboard() {
               }}
               className="text-xs font-medium font-body hover:underline transition-colors"
               style={{ color: 'var(--color-highlight)' }}>
-              ✏️ Stammdaten bearbeiten
+              {t('dashboard.editMasterDataBtn', '✏️ Stammdaten bearbeiten')}
             </button>
           </div>
 
@@ -316,7 +316,7 @@ export default function VerwalterDashboard() {
             </div>
             {verwaltung.ansprechpartner && (
               <div className="pt-2 border-t border-gray-100">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold font-body mb-1">Ansprechpartner</p>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold font-body mb-1">{t('dashboard.contactPerson', 'Ansprechpartner')}</p>
                 <p className="text-sm font-semibold text-hp-black font-body">{verwaltung.ansprechpartner}</p>
                 <div className="flex flex-wrap gap-x-3 mt-0.5">
                   {verwaltung.ansprechpartner_phone && (
@@ -339,56 +339,56 @@ export default function VerwalterDashboard() {
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg my-auto">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
-                Stammdaten bearbeiten
+                {t('dashboard.editMasterDataTitle', 'Stammdaten bearbeiten')}
               </h2>
               <button onClick={() => setShowVerwEdit(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
             </div>
             <div className="px-6 py-5 space-y-5 max-h-[70vh] overflow-y-auto">
 
               <div>
-                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">Firma</p>
+                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">{t('dashboard.companySection', 'Firma')}</p>
                 <div className="space-y-2">
                   <div>
-                    <label className="block text-xs text-gray-500 font-body mb-1">Firmenname</label>
+                    <label className="block text-xs text-gray-500 font-body mb-1">{t('dashboard.companyNameLabel', 'Firmenname')}</label>
                     <input className={inputCls} style={focusRing()} value={verwForm.name ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, name: e.target.value }))} />
                   </div>
-                  <input className={inputCls} style={focusRing()} placeholder="Straße + Hausnummer"
+                  <input className={inputCls} style={focusRing()} placeholder={t('dashboard.streetPlaceholder', 'Straße + Hausnummer')}
                          value={verwForm.address_street ?? ''}
                          onChange={e => setVerwForm(f => f && ({ ...f, address_street: e.target.value || null }))} />
                   <div className="grid grid-cols-3 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="PLZ"
+                    <input className={inputCls} style={focusRing()} placeholder={t('dashboard.zipPlaceholder', 'PLZ')}
                            value={verwForm.address_zip ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, address_zip: e.target.value || null }))} />
-                    <input className={`${inputCls} col-span-2`} style={focusRing()} placeholder="Stadt"
+                    <input className={`${inputCls} col-span-2`} style={focusRing()} placeholder={t('dashboard.cityPlaceholder', 'Stadt')}
                            value={verwForm.address_city ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, address_city: e.target.value || null }))} />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="Telefon" type="tel"
+                    <input className={inputCls} style={focusRing()} placeholder={t('dashboard.phonePlaceholder', 'Telefon')} type="tel"
                            value={verwForm.phone ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, phone: e.target.value || null }))} />
-                    <input className={inputCls} style={focusRing()} placeholder="E-Mail" type="email"
+                    <input className={inputCls} style={focusRing()} placeholder={t('dashboard.emailPlaceholder', 'E-Mail')} type="email"
                            value={verwForm.email ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, email: e.target.value || null }))} />
                   </div>
-                  <input className={inputCls} style={focusRing()} placeholder="Website"
+                  <input className={inputCls} style={focusRing()} placeholder={t('dashboard.websitePlaceholder', 'Website')}
                          value={verwForm.website ?? ''}
                          onChange={e => setVerwForm(f => f && ({ ...f, website: e.target.value || null }))} />
                 </div>
               </div>
 
               <div>
-                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">Ansprechpartner</p>
+                <p className="text-xs font-semibold text-gray-500 font-body mb-2 uppercase tracking-wide">{t('dashboard.contactPerson', 'Ansprechpartner')}</p>
                 <div className="space-y-2">
-                  <input className={inputCls} style={focusRing()} placeholder="Name"
+                  <input className={inputCls} style={focusRing()} placeholder={t('dashboard.namePlaceholder', 'Name')}
                          value={verwForm.ansprechpartner ?? ''}
                          onChange={e => setVerwForm(f => f && ({ ...f, ansprechpartner: e.target.value || null }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <input className={inputCls} style={focusRing()} placeholder="Direkt-Telefon" type="tel"
+                    <input className={inputCls} style={focusRing()} placeholder={t('dashboard.directPhonePlaceholder', 'Direkt-Telefon')} type="tel"
                            value={verwForm.ansprechpartner_phone ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, ansprechpartner_phone: e.target.value || null }))} />
-                    <input className={inputCls} style={focusRing()} placeholder="Direkt-E-Mail" type="email"
+                    <input className={inputCls} style={focusRing()} placeholder={t('dashboard.directEmailPlaceholder', 'Direkt-E-Mail')} type="email"
                            value={verwForm.ansprechpartner_email ?? ''}
                            onChange={e => setVerwForm(f => f && ({ ...f, ansprechpartner_email: e.target.value || null }))} />
                   </div>
@@ -399,12 +399,12 @@ export default function VerwalterDashboard() {
             <div className="px-6 pb-5 flex gap-3 justify-end border-t border-gray-100 pt-4">
               <button onClick={() => setShowVerwEdit(false)}
                       className="px-4 py-2 rounded-xl border border-gray-200 text-sm text-gray-600 font-body hover:bg-gray-50">
-                Abbrechen
+                {t('dashboard.cancel', 'Abbrechen')}
               </button>
               <button onClick={saveVerwaltung} disabled={verwSaving}
                       className="px-5 py-2 rounded-xl text-sm font-semibold text-white font-body hover:opacity-90 transition-opacity disabled:opacity-50"
                       style={{ backgroundColor: 'var(--color-highlight)' }}>
-                {verwSaving ? 'Speichern…' : '✓ Speichern'}
+                {verwSaving ? t('dashboard.saving', 'Speichern…') : t('dashboard.saveBtn', '✓ Speichern')}
               </button>
             </div>
           </div>

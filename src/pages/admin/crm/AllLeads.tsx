@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
@@ -40,22 +41,32 @@ const DEFAULT_FORM: NewLeadForm = {
   createDeal: false,
 }
 
-const statusLabel: Record<string, string> = {
-  new: 'Neu',
-  contacted: 'Kontaktiert',
-  qualified: 'Qualifiziert',
-  registered: 'Registriert',
-  property_selection: 'Immobilienauswahl',
-  financing: 'Finanzierung',
-  sold: 'Verkauft',
-  archived: 'Archiviert',
+const STATUS_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
+  new: { key: 'allLeads.statusNew', fallback: 'Neu' },
+  contacted: { key: 'allLeads.statusContacted', fallback: 'Kontaktiert' },
+  qualified: { key: 'allLeads.statusQualified', fallback: 'Qualifiziert' },
+  registered: { key: 'allLeads.statusRegistered', fallback: 'Registriert' },
+  property_selection: { key: 'allLeads.statusPropertySelection', fallback: 'Immobilienauswahl' },
+  financing: { key: 'allLeads.statusFinancing', fallback: 'Finanzierung' },
+  sold: { key: 'allLeads.statusSold', fallback: 'Verkauft' },
+  archived: { key: 'allLeads.statusArchived', fallback: 'Archiviert' },
 }
 
-const sourceLabel: Record<string, string> = {
-  meta:       'META Werbung',
-  google:     'Google',
-  empfehlung: 'Empfehlung',
-  sonstiges:  'Sonstiges',
+const SOURCE_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
+  meta:       { key: 'allLeads.sourceMeta', fallback: 'META Werbung' },
+  google:     { key: 'allLeads.sourceGoogle', fallback: 'Google' },
+  empfehlung: { key: 'allLeads.sourceEmpfehlung', fallback: 'Empfehlung' },
+  sonstiges:  { key: 'allLeads.sourceSonstiges', fallback: 'Sonstiges' },
+}
+
+const getStatusLabel = (t: TFunction, status: string): string => {
+  const entry = STATUS_LABEL_KEYS[status]
+  return entry ? t(entry.key, entry.fallback) : status
+}
+
+const getSourceLabel = (t: TFunction, source: string): string => {
+  const entry = SOURCE_LABEL_KEYS[source]
+  return entry ? t(entry.key, entry.fallback) : source
 }
 
 export default function AllLeads() {
@@ -132,11 +143,11 @@ export default function AllLeads() {
   })
 
   const handleDelete = async (id: string) => {
-    if (!window.confirm('Lead wirklich löschen?')) return
+    if (!window.confirm(t('allLeads.confirmDeleteLead', 'Lead wirklich löschen?'))) return
     const { error } = await supabase.from('leads').delete().eq('id', id)
-    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
+    if (error) { showToast(t('allLeads.errorGeneric', '❌ Fehler: {{message}}', { message: error.message })); return }
     await fetchLeads()
-    showToast('Lead gelöscht')
+    showToast(t('allLeads.leadDeleted', 'Lead gelöscht'))
   }
 
   const handleCreate = async () => {
@@ -178,8 +189,8 @@ export default function AllLeads() {
             deal_id: createdDeal.id,
             type: 'note',
             direction: 'outbound',
-            subject: 'Deal erstellt',
-            content: 'Deal automatisch beim Erstellen des Leads angelegt',
+            subject: t('allLeads.activityDealCreatedSubject', 'Deal erstellt'),
+            content: t('allLeads.activityDealCreatedContent', 'Deal automatisch beim Erstellen des Leads angelegt'),
           })
         }
       }
@@ -187,9 +198,9 @@ export default function AllLeads() {
       await fetchLeads()
       setShowModal(false)
       setNewLeadForm(DEFAULT_FORM)
-      showToast('Lead erstellt')
+      showToast(t('allLeads.leadCreated', 'Lead erstellt'))
     } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Fehler beim Erstellen')
+      showToast(err instanceof Error ? err.message : t('allLeads.errorCreating', 'Fehler beim Erstellen'))
     } finally {
       setCreating(false)
     }
@@ -235,7 +246,7 @@ export default function AllLeads() {
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
             options={[
               { value: '', label: t('crm.allLeads.allSources') },
-              ...SOURCES.filter(s => s !== '').map(s => ({ value: s, label: sourceLabel[s] })),
+              ...SOURCES.filter(s => s !== '').map(s => ({ value: s, label: getSourceLabel(t, s) })),
             ]}
             placeholder={t('crm.allLeads.allSources')}
           />
@@ -245,7 +256,7 @@ export default function AllLeads() {
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
             options={[
               { value: '', label: t('crm.allLeads.allStatuses') },
-              ...STATUSES.filter(s => s !== '').map(s => ({ value: s, label: statusLabel[s] ?? s })),
+              ...STATUSES.filter(s => s !== '').map(s => ({ value: s, label: getStatusLabel(t, s) })),
             ]}
             placeholder={t('crm.allLeads.allStatuses')}
           />
@@ -269,12 +280,12 @@ export default function AllLeads() {
                 className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer p-4">
                 <div className="flex items-start justify-between gap-2">
                   <span className="font-semibold text-gray-900 text-sm">{lead.first_name} {lead.last_name}</span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0" style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}>{sourceLabel[lead.source] ?? lead.source}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0" style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}>{getSourceLabel(t, lead.source)}</span>
                 </div>
                 <p className="text-xs text-gray-500 mt-1.5 truncate">✉ {lead.email || '–'}</p>
                 <p className="text-xs text-gray-500 truncate">📞 {lead.phone || lead.whatsapp || '–'}</p>
                 <div className="mt-2 flex items-center justify-between">
-                  <span className="text-[11px] text-gray-400">{statusLabel[lead.status] ?? lead.status}</span>
+                  <span className="text-[11px] text-gray-400">{getStatusLabel(t, lead.status)}</span>
                   <span className="text-[11px] text-gray-300">{formatDate(lead.created_at)}</span>
                 </div>
                 <p className="text-[10px] text-gray-300 mt-1.5">{t('crm.allLeads.rightClickHint', '↳ Rechtsklick zum Senden')}</p>
@@ -307,13 +318,13 @@ export default function AllLeads() {
                           className="text-xs px-2 py-0.5 rounded-full font-medium"
                           style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}
                         >
-                          {sourceLabel[lead.source] ?? lead.source}
+                          {getSourceLabel(t, lead.source)}
                         </span>
                         {adChannelLabel(lead.utm_source) && (
                           <span className="block text-[11px] text-gray-400 mt-0.5">{adChannelLabel(lead.utm_source)}</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{statusLabel[lead.status] ?? lead.status}</td>
+                      <td className="px-4 py-3 text-gray-600">{getStatusLabel(t, lead.status)}</td>
                       <td className="px-4 py-3 text-gray-600">{lead.assignee?.full_name ?? '–'}</td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(lead.created_at)}</td>
                       <td className="px-4 py-3 whitespace-nowrap">
@@ -438,8 +449,8 @@ export default function AllLeads() {
                     onChange={val => setNewLeadForm(f => ({ ...f, language: val as 'de' | 'en' }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
                     options={[
-                      { value: 'de', label: 'Deutsch' },
-                      { value: 'en', label: 'English' },
+                      { value: 'de', label: t('allLeads.languageGerman', 'Deutsch') },
+                      { value: 'en', label: t('allLeads.languageEnglish', 'English') },
                     ]}
                   />
                 </div>
@@ -452,7 +463,7 @@ export default function AllLeads() {
                     value={newLeadForm.source}
                     onChange={val => setNewLeadForm(f => ({ ...f, source: val as NewLeadForm['source'] }))}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-                    options={SOURCES.filter(s => s !== '').map(s => ({ value: s, label: sourceLabel[s] }))}
+                    options={SOURCES.filter(s => s !== '').map(s => ({ value: s, label: getSourceLabel(t, s) }))}
                   />
                 </div>
                 <div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import { eurFmt, dateFmt } from '../lib/invoiceVat'
@@ -29,6 +30,7 @@ interface InvoicePayload {
 }
 
 export default function Invoice() {
+  const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [inv, setInv] = useState<InvoicePayload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -38,12 +40,12 @@ export default function Invoice() {
     if (!token) return
     const { data, error } = await supabase.rpc('get_invoice_by_token', { p_token: token })
     const row = (Array.isArray(data) ? data[0] : data) as InvoicePayload | null
-    if (error || !row) { setErr('Diese Rechnung wurde nicht gefunden.'); setLoading(false); return }
+    if (error || !row) { setErr(t('invoice.notFoundError', 'Diese Rechnung wurde nicht gefunden.')); setLoading(false); return }
     setInv(row); setLoading(false)
-  })() }, [token])
+  })() }, [token, t])
 
-  if (loading) return <Centered>Lädt…</Centered>
-  if (err || !inv) return <Centered>{err || 'Nicht gefunden.'}</Centered>
+  if (loading) return <Centered>{t('invoice.loading', 'Lädt…')}</Centered>
+  if (err || !inv) return <Centered>{err || t('invoice.notFound', 'Nicht gefunden.')}</Centered>
 
   const I = inv.issuer_snapshot ?? {}
   const C = inv.customer_snapshot ?? {}
@@ -56,7 +58,7 @@ export default function Invoice() {
         <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 16 }}>
           <a href={pdfUrl} target="_blank" rel="noreferrer"
              style={{ background: CORAL, color: '#fff', padding: '10px 18px', borderRadius: 10, fontWeight: 600, fontSize: 13.5, textDecoration: 'none' }}>
-            ⬇ PDF herunterladen
+            ⬇ {t('invoice.downloadPdf', 'PDF herunterladen')}
           </a>
         </div>
 
@@ -65,7 +67,7 @@ export default function Invoice() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <img src={I.logo_url ?? DECK_LOGO} alt={String(I.brand_name ?? 'Happy Property')} style={{ height: 56, width: 'auto', borderRadius: 10 }} />
             <div style={{ textAlign: 'right' }}>
-              <div style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 800, color: DARK, lineHeight: 1 }}>RECHNUNG</div>
+              <div style={{ fontFamily: SERIF, fontSize: 30, fontWeight: 800, color: DARK, lineHeight: 1 }}>{t('invoice.headingInvoice', 'RECHNUNG')}</div>
               <div style={{ fontSize: 10, letterSpacing: 2, color: '#999', marginTop: 3 }}>INVOICE</div>
             </div>
           </div>
@@ -80,20 +82,20 @@ export default function Invoice() {
                 {I.address_line1 && <div>{I.address_line1}</div>}
                 <div>{[I.postal_code, I.city].filter(Boolean).join(' ')}{I.country ? `, ${I.country}` : ''}</div>
                 {I.vat_number && <div>VAT: {I.vat_number}</div>}
-                {I.reg_number && <div>Reg.-Nr.: {I.reg_number}</div>}
+                {I.reg_number && <div>{t('invoice.regNumberLabel', 'Reg.-Nr.')}: {I.reg_number}</div>}
               </div>
             </div>
             <div style={{ minWidth: 210 }}>
-              <MetaRow k="Rechnungsnummer" v={inv.invoice_number} />
-              <MetaRow k="Ausstellungsdatum" v={dateFmt(inv.issue_date)} />
-              <MetaRow k="Leistungsdatum" v={dateFmt(inv.supply_date)} />
-              <MetaRow k="Fällig bis" v={dateFmt(inv.due_date)} />
+              <MetaRow k={t('invoice.invoiceNumber', 'Rechnungsnummer')} v={inv.invoice_number} />
+              <MetaRow k={t('invoice.issueDate', 'Ausstellungsdatum')} v={dateFmt(inv.issue_date)} />
+              <MetaRow k={t('invoice.supplyDate', 'Leistungsdatum')} v={dateFmt(inv.supply_date)} />
+              <MetaRow k={t('invoice.dueDate', 'Fällig bis')} v={dateFmt(inv.due_date)} />
             </div>
           </div>
 
           {/* Rechnung an */}
           <div style={{ marginTop: 26 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.5, color: GOLD, marginBottom: 6 }}>RECHNUNG AN</div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.5, color: GOLD, marginBottom: 6 }}>{t('invoice.billTo', 'RECHNUNG AN')}</div>
             <div style={{ fontWeight: 700, fontSize: 14.5, color: DARK }}>{C.company_name}</div>
             <div style={{ fontSize: 12, color: '#777', lineHeight: 1.5, marginTop: 2 }}>
               {C.address_line1 && <div>{C.address_line1}</div>}
@@ -107,10 +109,10 @@ export default function Invoice() {
           <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 26 }}>
             <thead>
               <tr style={{ background: DARK, color: '#fff' }}>
-                <th style={{ ...th, textAlign: 'left' }}>BESCHREIBUNG</th>
-                <th style={th}>MENGE</th>
-                <th style={th}>EINZELPREIS</th>
-                <th style={th}>BETRAG</th>
+                <th style={{ ...th, textAlign: 'left' }}>{t('invoice.colDescription', 'BESCHREIBUNG')}</th>
+                <th style={th}>{t('invoice.colQuantity', 'MENGE')}</th>
+                <th style={th}>{t('invoice.colUnitPrice', 'EINZELPREIS')}</th>
+                <th style={th}>{t('invoice.colAmount', 'BETRAG')}</th>
               </tr>
             </thead>
             <tbody>
@@ -128,10 +130,10 @@ export default function Invoice() {
           {/* Summen */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
             <div style={{ minWidth: 280 }}>
-              <SumRow k="Zwischensumme (netto)" v={eurFmt(inv.subtotal_net)} />
-              <SumRow k={inv.vat_rate > 0 ? `MwSt ${inv.vat_rate}%` : 'MwSt'} v={eurFmt(inv.vat_amount)} />
+              <SumRow k={t('invoice.subtotalNet', 'Zwischensumme (netto)')} v={eurFmt(inv.subtotal_net)} />
+              <SumRow k={inv.vat_rate > 0 ? t('invoice.vatWithRate', 'MwSt {{rate}}%', { rate: inv.vat_rate }) : t('invoice.vat', 'MwSt')} v={eurFmt(inv.vat_amount)} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff5f2', borderRadius: 8, padding: '11px 12px', marginTop: 6 }}>
-                <span style={{ fontWeight: 700, fontSize: 14 }}>Gesamtbetrag</span>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{t('invoice.totalAmount', 'Gesamtbetrag')}</span>
                 <span style={{ fontWeight: 800, fontSize: 17, color: CORAL }}>{eurFmt(inv.total_gross)}</span>
               </div>
             </div>
@@ -141,17 +143,17 @@ export default function Invoice() {
 
           {/* Zahlung */}
           <div style={{ background: '#fbfbfc', border: '1px solid #eee', borderRadius: 12, padding: '16px 18px', marginTop: 24 }}>
-            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.2, color: GOLD, marginBottom: 10 }}>ZAHLUNG PER ÜBERWEISUNG</div>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 1.2, color: GOLD, marginBottom: 10 }}>{t('invoice.paymentByTransfer', 'ZAHLUNG PER ÜBERWEISUNG')}</div>
             <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', rowGap: 6, fontSize: 12.5 }}>
               <PayRow k="Bank" v={I.bank_name} /><PayRow k="IBAN" v={I.iban} />
               <PayRow k="BIC" v={I.bic} /><PayRow k="Intermediary BIC" v={I.intermediary_bic} />
-              <PayRow k="Verwendungszweck" v={inv.invoice_number} /><PayRow k="Fällig bis" v={dateFmt(inv.due_date)} />
+              <PayRow k={t('invoice.paymentReference', 'Verwendungszweck')} v={inv.invoice_number} /><PayRow k={t('invoice.dueDate', 'Fällig bis')} v={dateFmt(inv.due_date)} />
             </div>
           </div>
 
           {/* Fuß */}
           <div style={{ textAlign: 'center', fontSize: 10, color: '#aaa', marginTop: 26, paddingTop: 14, borderTop: '1px solid #eee' }}>
-            {[I.legal_name, I.address_line1, [I.postal_code, I.city].filter(Boolean).join(' '), I.vat_number ? `VAT ${I.vat_number}` : '', I.reg_number ? `Reg. ${I.reg_number}` : '']
+            {[I.legal_name, I.address_line1, [I.postal_code, I.city].filter(Boolean).join(' '), I.vat_number ? `VAT ${I.vat_number}` : '', I.reg_number ? t('invoice.regNumberFooter', 'Reg. {{number}}', { number: I.reg_number }) : '']
               .filter(Boolean).join('  ·  ')}
           </div>
         </div>

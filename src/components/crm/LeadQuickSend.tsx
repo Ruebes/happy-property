@@ -21,7 +21,7 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
 }) {
   const { t } = useTranslation()
   const fullName = `${lead.first_name} ${lead.last_name}`.trim()
-  const [subject, setSubject] = useState(mode === 'mail' ? 'Happy Property' : '')
+  const [subject, setSubject] = useState(mode === 'mail' ? t('leadQuickSend.defaultSubject', 'Happy Property') : '')
   const [text, setText] = useState('')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactId, setContactId] = useState('')
@@ -51,7 +51,11 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
       if (list.length) setContactId(list[0].id)
     })()
     // Vorbefüllter Weiterleitungstext
-    setText(`Bitte bearbeite diesen Kontakt:\n${fullName}\nTel: ${lead.phone || lead.whatsapp || '–'}\nE-Mail: ${lead.email || '–'}\n\n`)
+    setText(t('leadQuickSend.forwardTemplate', 'Bitte bearbeite diesen Kontakt:\n{{name}}\nTel: {{phone}}\nE-Mail: {{email}}\n\n', {
+      name: fullName,
+      phone: lead.phone || lead.whatsapp || '–',
+      email: lead.email || '–',
+    }))
   }, [mode, lead, fullName])
 
   // Kanal je gewähltem Kontakt vorwählen: WhatsApp wenn Nummer da, sonst E-Mail.
@@ -70,32 +74,32 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
     setBusy(true)
     try {
       if (mode === 'mail') {
-        if (!lead.email) throw new Error('Kein E-Mail am Lead')
+        if (!lead.email) throw new Error(t('leadQuickSend.errNoEmailOnLead', 'Kein E-Mail am Lead'))
         const html = `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`
         const { data, error: e } = await supabase.functions.invoke('send-email', { body: { to: lead.email, subject: subject.trim(), html, lead_id: lead.id } })
         if (e || (data as { error?: string })?.error) throw new Error((data as { error?: string })?.error ?? e?.message)
         onSent(t('crm.quick.mailSent', '✅ E-Mail an den Kunden gesendet'))
       } else if (mode === 'whatsapp') {
         const phone = lead.whatsapp || lead.phone
-        if (!phone) throw new Error('Keine Telefonnummer am Lead')
+        if (!phone) throw new Error(t('leadQuickSend.errNoPhoneOnLead', 'Keine Telefonnummer am Lead'))
         const r = await sendWhatsApp({ event_type: 'no_show', override_text: text.trim(), lead_id: lead.id, lead_data: { lead_name: fullName, lead_phone: phone } })
-        if (!r.success) throw new Error(r.error || 'WhatsApp Fehler')
+        if (!r.success) throw new Error(r.error || t('leadQuickSend.errWhatsapp', 'WhatsApp Fehler'))
         onSent(t('crm.quick.waSent', '✅ WhatsApp an den Kunden gesendet'))
       } else {
         const target = contacts.find(c => c.id === contactId)
-        if (!target) throw new Error('Empfänger nicht gefunden')
+        if (!target) throw new Error(t('leadQuickSend.errRecipientNotFound', 'Empfänger nicht gefunden'))
         if (fwdChannel === 'mail') {
-          if (!target.email) throw new Error('Keine E-Mail bei diesem Kontakt')
+          if (!target.email) throw new Error(t('leadQuickSend.errNoEmailOnContact', 'Keine E-Mail bei diesem Kontakt'))
           const html = `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${text.trim().replace(/</g, '&lt;')}</div>`
-          const subj = subject.trim() || `Kontakt: ${fullName}`
+          const subj = subject.trim() || t('leadQuickSend.defaultForwardSubject', 'Kontakt: {{name}}', { name: fullName })
           const { data, error: e } = await supabase.functions.invoke('send-email', { body: { to: target.email, subject: subj, html, lead_id: lead.id } })
           if (e || (data as { error?: string })?.error) throw new Error((data as { error?: string })?.error ?? e?.message)
           // send-email protokolliert die Aktivität selbst → kein zweites Insert
           onSent(t('crm.quick.forwardedMail', '✅ Kontakt per E-Mail weitergeleitet'))
         } else {
-          if (!target.phone) throw new Error('Keine Telefonnummer bei diesem Kontakt')
+          if (!target.phone) throw new Error(t('leadQuickSend.errNoPhoneOnContact', 'Keine Telefonnummer bei diesem Kontakt'))
           const r = await sendWhatsApp({ event_type: 'no_show', override_text: text.trim(), lead_id: lead.id, lead_data: { lead_name: target.label, lead_phone: target.phone } })
-          if (!r.success) throw new Error(r.error || 'WhatsApp Fehler')
+          if (!r.success) throw new Error(r.error || t('leadQuickSend.errWhatsapp', 'WhatsApp Fehler'))
           await supabase.from('activities').insert({ lead_id: lead.id, type: 'whatsapp', direction: 'outbound', subject: `Kontakt weitergeleitet an ${target.label}`, content: text.trim(), completed_at: new Date().toISOString() })
           onSent(t('crm.quick.forwarded', '✅ Kontakt per WhatsApp weitergeleitet'))
         }

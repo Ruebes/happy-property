@@ -1,5 +1,6 @@
 import { useState, useEffect, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import type { DeckBlock, DeckContent, FloorplanRoom } from '../lib/deckTypes'
 import { DECK_CONTACT, DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
@@ -98,6 +99,7 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
 }
 
 function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
+  const { t } = useTranslation()
   const items = b.items ?? []
   const mid = Math.ceil(items.length / 2)
   const cols = [items.slice(0, mid), items.slice(mid)]
@@ -139,7 +141,7 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
         <div className="mt-8">
           <div className="relative w-full overflow-hidden rounded-xl border border-gray-200" style={{ aspectRatio: '16 / 9' }}>
             <iframe
-              title={b.mapLabel ? `Standort ${b.mapLabel}` : 'Standort'}
+              title={b.mapLabel ? t('deck.mapIframeTitleWithLabel', 'Standort {{label}}', { label: b.mapLabel }) : t('deck.mapIframeTitle', 'Standort')}
               src={src}
               className="absolute inset-0 h-full w-full"
               style={{ border: 0 }}
@@ -150,7 +152,7 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             {b.mapLabel && <span className="text-sm font-semibold px-3 py-1 rounded-full text-white" style={{ background: '#ff795d' }}>📍 {b.mapLabel}</span>}
-            <a href={openHref} target="_blank" rel="noopener noreferrer" className="text-xs font-medium px-3 py-1.5 rounded-full text-white shadow ml-auto" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</a>
+            <a href={openHref} target="_blank" rel="noopener noreferrer" className="text-xs font-medium px-3 py-1.5 rounded-full text-white shadow ml-auto" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 {t('deck.openInGoogleMaps', 'In Google Maps öffnen')} →</a>
           </div>
         </div>
       )
@@ -164,7 +166,7 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           {b.mapUrl ? (
             <a href={b.mapUrl} target="_blank" rel="noopener noreferrer" className="block group">
               <Img src={b.image} className={imgCls} />
-              <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 In Google Maps öffnen →</span>
+              <span className="absolute bottom-3 right-3 text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 {t('deck.openInGoogleMaps', 'In Google Maps öffnen')} →</span>
             </a>
           ) : (
             <Img src={b.image} className={imgCls} />
@@ -231,6 +233,7 @@ function ColumnsBlock(b: Extract<DeckBlock, { type: 'columns' }>) {
 }
 
 function FeatureBlock(b: Extract<DeckBlock, { type: 'feature' }>) {
+  const { t } = useTranslation()
   return (
     <section>
       <div className="relative">
@@ -250,7 +253,7 @@ function FeatureBlock(b: Extract<DeckBlock, { type: 'feature' }>) {
           <a href={b.link} target="_blank" rel="noopener noreferrer"
              className="inline-flex items-center gap-2 mt-9 px-7 py-3.5 rounded-full font-heading font-semibold text-[15px] shadow-lg transition-transform hover:scale-[1.03]"
              style={{ background: GOLD, color: DARK }}>
-            {b.linkLabel ?? 'Online ansehen'} <span aria-hidden>→</span>
+            {b.linkLabel ?? t('deck.viewOnline', 'Online ansehen')} <span aria-hidden>→</span>
           </a>
         )}
       </div>
@@ -335,13 +338,14 @@ function InventoryBlock(b: Extract<DeckBlock, { type: 'inventory' }>) {
 // Innenräume: helle Füllung + dunkle Wände; Terrasse: coral, gestrichelt, außenliegend;
 // Küche: Gold-Akzent. Labels = Raumname + Fläche. Ersetzt unübersichtliche Plan-Bilder.
 function FloorplanSchematic({ rooms, note }: { rooms: FloorplanRoom[]; note?: string }) {
+  const { t } = useTranslation()
   const CORAL = '#ff795d'
   const inner = rooms.filter(r => r.kind !== 'terrace')
   const minX = Math.min(...inner.map(r => r.x)), minY = Math.min(...inner.map(r => r.y))
   const maxX = Math.max(...inner.map(r => r.x + r.w)), maxY = Math.max(...inner.map(r => r.y + r.h))
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4 md:p-6">
-      <svg viewBox="0 0 600 600" className="w-full h-auto" role="img" aria-label="Grundriss-Modell">
+      <svg viewBox="0 0 600 600" className="w-full h-auto" role="img" aria-label={t('deck.floorplanModelAriaLabel', 'Grundriss-Modell')}>
         {/* Außenwand um die Innenräume */}
         <rect x={minX} y={minY} width={maxX - minX} height={maxY - minY} fill="none" stroke={DARK} strokeWidth="6" rx="3" />
         {rooms.map((r, i) => {
@@ -432,6 +436,7 @@ function PaymentPhaseCard({ phase, dark }: { phase?: import('../lib/deckTypes').
 }
 
 function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
+  const { t } = useTranslation()
   return (
     <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
@@ -445,9 +450,9 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
           Zyperns Bauträger weisen netto aus; der Brutto-Gesamtpreis muss klar erkennbar sein. */}
       {b.priceSummary && (
         <div className="mt-6 sm:max-w-md sm:ml-auto rounded-xl border-2 bg-white px-5 py-4" style={{ borderColor: GOLD }}>
-          <div className="flex items-center justify-between text-sm text-gray-600"><span>Nettopreis</span><span className="font-semibold text-gray-900">{b.priceSummary.net}</span></div>
-          <div className="flex items-center justify-between text-sm text-gray-600 mt-1.5"><span>zzgl. MwSt. ({b.priceSummary.vatRate ?? '19 %'})</span><span className="font-semibold text-gray-900">{b.priceSummary.vat}</span></div>
-          <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-gray-200"><span className="font-heading font-bold" style={{ color: INK }}>Bruttopreis gesamt</span><span className="font-heading font-bold text-2xl" style={{ color: INK }}>{b.priceSummary.gross}</span></div>
+          <div className="flex items-center justify-between text-sm text-gray-600"><span>{t('deck.netPrice', 'Nettopreis')}</span><span className="font-semibold text-gray-900">{b.priceSummary.net}</span></div>
+          <div className="flex items-center justify-between text-sm text-gray-600 mt-1.5"><span>{t('deck.plusVat', 'zzgl. MwSt. ({{rate}})', { rate: b.priceSummary.vatRate ?? '19 %' })}</span><span className="font-semibold text-gray-900">{b.priceSummary.vat}</span></div>
+          <div className="flex items-center justify-between mt-2.5 pt-2.5 border-t border-gray-200"><span className="font-heading font-bold" style={{ color: INK }}>{t('deck.grossPriceTotal', 'Bruttopreis gesamt')}</span><span className="font-heading font-bold text-2xl" style={{ color: INK }}>{b.priceSummary.gross}</span></div>
         </div>
       )}
       {b.note && <div className="mt-6 rounded-xl px-5 py-3 text-[12px] text-gray-700 border-l-2" style={{ background: '#fff', borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
@@ -456,6 +461,7 @@ function PaymentBlock(b: Extract<DeckBlock, { type: 'payment' }>) {
 }
 
 function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
+  const { t } = useTranslation()
   return (
     <section className="px-5 md:px-20 py-20" style={{ background: DARK }}>
       <Accent /><Kicker>{b.kicker}</Kicker>
@@ -485,8 +491,8 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
 
       {/* Folge mir — offensiv */}
       <div className="mt-8">
-        <p className="font-heading font-bold text-white text-2xl md:text-3xl">Folge mir — ich nehme dich mit nach Zypern.</p>
-        <p className="text-sm text-gray-400 mt-1">Projekte, Baufortschritt, Markt-Insights — schau rein und folge:</p>
+        <p className="font-heading font-bold text-white text-2xl md:text-3xl">{t('deck.followMeHeadline', 'Folge mir — ich nehme dich mit nach Zypern.')}</p>
+        <p className="text-sm text-gray-400 mt-1">{t('deck.followMeSubline', 'Projekte, Baufortschritt, Markt-Insights — schau rein und folge:')}</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
           {DECK_CONTACT.socials.map((s, i) => {
             const inner = (
@@ -509,24 +515,25 @@ function CtaBlock(b: Extract<DeckBlock, { type: 'cta' }>) {
 }
 
 function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
+  const { t } = useTranslation()
   const CORAL = '#ff795d'
   const from  = b.fromLabel ?? 'Royal Horizon'
-  const to    = b.toLabel ?? 'Paphos-Marina'
+  const to    = b.toLabel ?? t('deck.marinaDefaultTo', 'Paphos-Marina')
   const dist  = b.distance ?? '~5 km'
-  const drive = b.drive ?? 'direkt um die Ecke'
+  const drive = b.drive ?? t('deck.marinaDefaultDrive', 'direkt um die Ecke')
   const pct   = b.valuePct ?? '+30%'
   const fromSub = b.fromSub                              // Ort des Objekts (z.B. „Tala", „Chlorakas") — projektabhängig
-  const toSub   = b.toSub ?? 'Potima Bay · Kissonerga'  // Marina-Standort (überall gleich)
+  const toSub   = b.toSub ?? t('deck.marinaDefaultToSub', 'Potima Bay · Kissonerga')  // Marina-Standort (überall gleich)
   return (
     <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
       <Accent />
-      <Kicker>{b.kicker ?? 'Lage · Neue Paphos-Marina'}</Kicker>
+      <Kicker>{b.kicker ?? t('deck.marinaDefaultKicker', 'Lage · Neue Paphos-Marina')}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 mb-8 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-8 items-center">
         {/* Schematische Karte: Haus → Route + Entfernung → Marina */}
         <div className="lg:col-span-3">
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <svg viewBox="0 0 560 240" className="w-full h-auto" role="img" aria-label={`Weg von ${from} zur ${to}`}>
+            <svg viewBox="0 0 560 240" className="w-full h-auto" role="img" aria-label={t('deck.marinaRouteAriaLabel', 'Weg von {{from}} zur {{to}}', { from, to })}>
               {/* Route (gestrichelt) */}
               <path d="M72 168 C 190 96, 360 222, 484 150" fill="none" stroke={GOLD} strokeWidth="5" strokeDasharray="2 13" strokeLinecap="round" />
               {/* Haus links */}
@@ -561,7 +568,7 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
         <div className="lg:col-span-2">
           <div className="rounded-2xl p-7 text-center shadow-md" style={{ background: CORAL }}>
             <div className="font-heading font-extrabold leading-none text-white" style={{ fontSize: 'clamp(52px, 9vw, 88px)' }}>{pct}</div>
-            <div className="mt-1 text-white font-semibold uppercase tracking-[0.16em] text-sm">Wertsteigerung</div>
+            <div className="mt-1 text-white font-semibold uppercase tracking-[0.16em] text-sm">{t('deck.valueIncrease', 'Wertsteigerung')}</div>
           </div>
           {b.valueText && <p className="mt-4 text-[15px] leading-relaxed text-gray-700">{b.valueText}</p>}
         </div>
@@ -591,6 +598,7 @@ function Block({ block }: { block: DeckBlock }) {
 }
 
 export default function Deck() {
+  const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
@@ -634,8 +642,8 @@ export default function Deck() {
   if (err || !content) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center font-body" style={{ background: CREAM, color: INK }}>
-        <p className="font-heading text-2xl">Dieses Deck ist nicht verfügbar.</p>
-        <p className="text-sm text-gray-500 mt-2">Bitte den Link prüfen oder Happy Property kontaktieren.</p>
+        <p className="font-heading text-2xl">{t('deck.notAvailable', 'Dieses Deck ist nicht verfügbar.')}</p>
+        <p className="text-sm text-gray-500 mt-2">{t('deck.notAvailableHint', 'Bitte den Link prüfen oder Happy Property kontaktieren.')}</p>
       </div>
     )
   }
@@ -652,7 +660,7 @@ export default function Deck() {
         </div>
       ))}
       <div className="text-center text-[11px] text-gray-400 py-6" style={{ background: CREAM }}>
-        © Happy Property · Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken
+        © Happy Property · {t('deck.footerNote', 'Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken')}
       </div>
     </div>
   )

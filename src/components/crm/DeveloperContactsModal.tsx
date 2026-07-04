@@ -15,10 +15,11 @@ interface FormState {
   whatsapp:   string
   is_primary: boolean
   notes:      string
+  language:   'de' | 'en'
 }
 
 const EMPTY_FORM: FormState = {
-  name: '', role: '', email: '', phone: '', whatsapp: '', is_primary: false, notes: '',
+  name: '', role: '', email: '', phone: '', whatsapp: '', is_primary: false, notes: '', language: 'de',
 }
 
 // wa.me erwartet die Nummer ohne +, Leerzeichen oder Sonderzeichen.
@@ -68,6 +69,7 @@ export default function DeveloperContactsModal({
       name: c.name, role: c.role ?? '', email: c.email ?? '',
       phone: c.phone ?? '', whatsapp: c.whatsapp ?? '',
       is_primary: c.is_primary, notes: c.notes ?? '',
+      language: (c.language as 'de' | 'en') ?? 'de',
     })
     setEditingId(c.id); setError(''); setShowForm(true)
   }
@@ -86,6 +88,7 @@ export default function DeveloperContactsModal({
         whatsapp:   form.whatsapp.trim() || null,
         is_primary: form.is_primary,
         notes:      form.notes.trim()    || null,
+        language:   form.language,
       }
       const { error: err } = editingId
         ? await supabase.from('crm_developer_contacts').update(payload).eq('id', editingId)
@@ -154,6 +157,9 @@ export default function DeveloperContactsModal({
                         <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-orange-100 text-orange-700">
                           {t('crm.devContacts.primary', 'Hauptkontakt')}
                         </span>
+                      )}
+                      {c.language === 'en' && (
+                        <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-blue-100 text-blue-700">EN</span>
                       )}
                       {c.role && <span className="text-xs text-gray-500">· {c.role}</span>}
                     </div>
@@ -271,6 +277,20 @@ export default function DeveloperContactsModal({
                   <textarea value={form.notes} rows={2}
                     onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                     className={`${inputCls} resize-none`} />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-600 mb-1">
+                    {t('crm.devContacts.language', 'Kontaktsprache')}
+                  </label>
+                  <select value={form.language}
+                    onChange={e => setForm(f => ({ ...f, language: e.target.value as 'de' | 'en' }))}
+                    className={inputCls}>
+                    <option value="de">{t('crm.devContacts.langDe', 'Deutsch')}</option>
+                    <option value="en">{t('crm.devContacts.langEn', 'Englisch')}</option>
+                  </select>
+                  <p className="mt-1 text-[11px] text-gray-400">
+                    {t('crm.devContacts.langHint', 'Automatische Mails & WhatsApp an diesen Kontakt in dieser Sprache.')}
+                  </p>
                 </div>
               </div>
               {error && <p className="text-xs text-red-500">{error}</p>}

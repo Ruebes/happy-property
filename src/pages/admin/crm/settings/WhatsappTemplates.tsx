@@ -38,6 +38,17 @@ const EVENT_LABEL: Record<string, string> = {
   booking:      'Buchung',
 }
 
+// t muss von der aufrufenden Komponente übergeben werden (Hook nur im Component-Scope)
+function getEventLabel(t: (key: string, fallback: string) => string, eventType: string): string {
+  switch (eventType) {
+    case 'registration': return t('whatsappTemplates.eventRegistration', 'Registrierung')
+    case 'no_show':      return t('whatsappTemplates.eventNoShow', 'No Show')
+    case 'commission':   return t('whatsappTemplates.eventCommission', 'Provision')
+    case 'booking':      return t('whatsappTemplates.eventBooking', 'Buchung')
+    default:             return EVENT_LABEL[eventType] ?? eventType
+  }
+}
+
 // ── Edit Modal ────────────────────────────────────────────────────────────────
 
 interface EditModalProps {
@@ -126,7 +137,7 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
       onClose()
     } catch (err) {
       console.error('[WaTemplates] save:', err)
-      showToast('❌ Fehler beim Speichern')
+      showToast(t('whatsappTemplates.saveError', '❌ Fehler beim Speichern'))
     } finally {
       setSaving(false)
     }
@@ -164,14 +175,14 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
       const result = data as { success?: boolean; error?: string; results?: { ok: boolean; data: unknown }[] }
 
       if (!result?.success) {
-        const detail = result?.error ?? result?.results?.map(r => JSON.stringify(r.data)).join(', ') ?? 'Unbekannter Fehler'
+        const detail = result?.error ?? result?.results?.map(r => JSON.stringify(r.data)).join(', ') ?? t('whatsappTemplates.unknownError', 'Unbekannter Fehler')
         setTestResult(`❌ ${detail}`)
         showToast(`❌ ${detail}`)
         return
       }
 
-      setTestResult('✅ Test gesendet')
-      showToast('📱 Test WhatsApp gesendet')
+      setTestResult(t('whatsappTemplates.testSent', '✅ Test gesendet'))
+      showToast(t('whatsappTemplates.testSentToast', '📱 Test WhatsApp gesendet'))
     } catch (err) {
       console.error('[WaTemplates] testSend Fehler:', err)
       const msg = err instanceof Error ? err.message : String(err)
@@ -190,7 +201,7 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
           <div>
             <h2 className="text-lg font-semibold text-gray-900">{name || template.name}</h2>
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${EVENT_BADGE[template.event_type] ?? 'bg-gray-100 text-gray-600'}`}>
-              {EVENT_LABEL[template.event_type] ?? template.event_type}
+              {getEventLabel(t, template.event_type)}
             </span>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
@@ -516,7 +527,7 @@ export default function WhatsappTemplates() {
                     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                       EVENT_BADGE[tpl.event_type] ?? 'bg-gray-100 text-gray-600'
                     }`}>
-                      {EVENT_LABEL[tpl.event_type] ?? tpl.event_type}
+                      {getEventLabel(t, tpl.event_type)}
                     </span>
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">

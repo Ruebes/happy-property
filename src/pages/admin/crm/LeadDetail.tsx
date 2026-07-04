@@ -581,15 +581,13 @@ export default function LeadDetail() {
   const notifyCustomerUpload = (fileName: string, kind: 'Dokument' | 'Bild') => {
     if (!lead?.email) return
     const firstName = lead.first_name
+    const kindLabel = kind === 'Bild' ? t('leadDetail.uploadMailKindImage', 'Bild') : t('leadDetail.uploadMailKindDocument', 'Dokument')
     supabase.functions.invoke('send-email', {
       body: {
         to:      lead.email,
         lead_id: id,
-        subject: 'Neue Datei in Ihrem Happy Property Portal',
-        html:    `<p>Hallo ${firstName},</p>
-<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
-<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
-<p>Viele Grüße<br>Ihr Happy Property Team</p>`,
+        subject: t('leadDetail.uploadMailSubject', 'Neue Datei in Ihrem Happy Property Portal'),
+        html:    t('leadDetail.uploadMailBody', '<p>Hallo {{firstName}},</p>\n<p>es wurde ein neues <strong>{{kind}}</strong> für Ihre Immobilie hochgeladen: <em>{{fileName}}</em></p>\n<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>\n<p>Viele Grüße<br>Ihr Happy Property Team</p>', { firstName, kind: kindLabel, fileName }),
       },
     }).catch(err => console.warn('[LeadDetail] notifyCustomerUpload failed:', err))
   }
@@ -621,10 +619,10 @@ export default function LeadDetail() {
       setUnitDocForm({ name: '', doc_type: 'sonstiges', notes: '' })
       if (unitDocFileRef.current) unitDocFileRef.current.value = ''
       notifyCustomerUpload(unitDocForm.name.trim(), 'Dokument')
-      showToast('✅ Dokument hochgeladen')
+      showToast(t('leadDetail.toastDocUploaded', '✅ Dokument hochgeladen'))
       await fetchAll(true)
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Upload'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errUploadFailed', 'Fehler beim Upload')}`)
     } finally {
       setUploadingUnitDoc(false)
     }
@@ -639,7 +637,7 @@ export default function LeadDetail() {
 
   // ── Unit-Dokument löschen ─────────────────────────────────────────────────────
   const handleDeleteUnitDoc = async (doc: CrmUnitDocument) => {
-    if (!window.confirm('Dokument wirklich löschen?')) return
+    if (!window.confirm(t('leadDetail.confirmDeleteDoc', 'Dokument wirklich löschen?'))) return
     await supabase.storage.from('unit-documents').remove([doc.file_path])
     await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
     await fetchAll(true)
@@ -661,14 +659,19 @@ export default function LeadDetail() {
         const { data } = supabase.storage.from('unit-images').getPublicUrl(path)
         if (data?.publicUrl) newUrls.push(data.publicUrl)
       }
-      if (newUrls.length === 0) { showToast('❌ Upload fehlgeschlagen'); return }
+      if (newUrls.length === 0) { showToast(`❌ ${t('leadDetail.uploadFailed', 'Upload fehlgeschlagen')}`); return }
       const updated = [...unitImages, ...newUrls]
       await supabase.from('crm_project_units').update({ images: updated }).eq('id', deal.unit_id)
       setUnitImages(updated)
-      notifyCustomerUpload(`${newUrls.length} neues Bild${newUrls.length > 1 ? 'er' : ''}`, 'Bild')
-      showToast(`✅ ${newUrls.length} Bild${newUrls.length > 1 ? 'er' : ''} hochgeladen`)
+      const imageCountLabel = newUrls.length > 1
+        ? t('leadDetail.newImagesCountPlural', '{{count}} neue Bilder', { count: newUrls.length })
+        : t('leadDetail.newImagesCountSingular', '{{count}} neues Bild', { count: newUrls.length })
+      notifyCustomerUpload(imageCountLabel, 'Bild')
+      showToast(newUrls.length > 1
+        ? t('leadDetail.toastImagesUploadedPlural', '✅ {{count}} Bilder hochgeladen', { count: newUrls.length })
+        : t('leadDetail.toastImagesUploadedSingular', '✅ {{count}} Bild hochgeladen', { count: newUrls.length }))
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setUploadingUnitImg(false)
       if (unitImgFileRef.current) unitImgFileRef.current.value = ''
@@ -737,7 +740,7 @@ export default function LeadDetail() {
         type: 'note',
         direction: 'outbound',
         subject: null,
-        content: `Phase geändert: ${oldPhase} → ${phase}`,
+        content: t('leadDetail.logPhaseChanged', 'Phase geändert: {{oldPhase}} → {{newPhase}}', { oldPhase, newPhase: phase }),
         created_by: profile?.id ?? null,
       }).throwOnError()
       if (PHASE_WEBHOOK_EVENTS[phase]) {
@@ -747,7 +750,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] updateDealPhase:', err)
-      showToast(`❌ Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`)
+      showToast(`❌ ${t('leadDetail.errPrefix', 'Fehler')}: ${err instanceof Error ? err.message : t('leadDetail.errUnknown', 'Unbekannter Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -766,7 +769,9 @@ export default function LeadDetail() {
         type:       'note',
         direction:  'outbound',
         subject:    null,
-        content:    `Phase geändert: ${oldPhase} → registrierung. Registrierung gesendet an: ${selectedDevelopers.join(', ')}${notes ? `. Bemerkung: ${notes}` : ''}`,
+        content:    notes
+          ? t('leadDetail.logRegistrationSentWithNote', 'Phase geändert: {{oldPhase}} → registrierung. Registrierung gesendet an: {{developers}}. Bemerkung: {{note}}', { oldPhase, developers: selectedDevelopers.join(', '), note: notes })
+          : t('leadDetail.logRegistrationSent', 'Phase geändert: {{oldPhase}} → registrierung. Registrierung gesendet an: {{developers}}', { oldPhase, developers: selectedDevelopers.join(', ') }),
         created_by: profile?.id ?? null,
       }).throwOnError()
       await sendWebhook('deal.registration', {
@@ -785,7 +790,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] registrationConfirm:', err)
-      showToast('❌ Fehler beim Senden')
+      showToast(`❌ ${t('leadDetail.errSendFailed', 'Fehler beim Senden')}`)
     } finally {
       setSavingReg(false)
     }
@@ -810,7 +815,7 @@ export default function LeadDetail() {
       showToast(t('crm.activitySaved', 'Aktivität gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveActivity:', err)
-      showToast('❌ Fehler beim Speichern')
+      showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
     } finally {
       setSavingAct(false)
     }
@@ -836,7 +841,7 @@ export default function LeadDetail() {
       showToast(t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveTask:', err)
-      showToast('❌ Fehler beim Speichern')
+      showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
     } finally {
       setSavingTask(false)
     }
@@ -849,7 +854,7 @@ export default function LeadDetail() {
       showToast(t('crm.taskCompleted', 'Aufgabe erledigt'))
     } catch (err) {
       console.error('[LeadDetail] completeTask:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     }
   }
 
@@ -968,7 +973,7 @@ export default function LeadDetail() {
     } catch (err) {
       console.error('[send-email] Kompletter Fehler:', err)
       console.error('[send-email] Details:', JSON.stringify(err, Object.getOwnPropertyNames(err), 2))
-      showToast(`❌ E-Mail Fehler: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`)
+      showToast(`❌ ${t('leadDetail.errEmailPrefix', 'E-Mail Fehler')}: ${err instanceof Error ? err.message : t('leadDetail.errUnknown', 'Unbekannter Fehler')}`)
     } finally {
       setSendingEmail(false)
     }
@@ -996,7 +1001,7 @@ export default function LeadDetail() {
         lead_id:       null,            // Edge nicht loggen lassen — wir loggen selbst mit korrektem Empfänger
         override_text: body,
       })
-      if (!res.success) throw new Error(res.error || 'WhatsApp Fehler')
+      if (!res.success) throw new Error(res.error || t('leadDetail.errWhatsapp', 'WhatsApp Fehler'))
       await supabase.from('activities').insert({
         lead_id:    id,
         deal_id:    deal?.id ?? null,
@@ -1013,7 +1018,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] composerWhatsapp:', err)
-      showToast(`❌ ${err instanceof Error ? err.message : 'WhatsApp Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errWhatsapp', 'WhatsApp Fehler')}`)
     } finally {
       setSendingEmail(false)
     }
@@ -1041,9 +1046,9 @@ export default function LeadDetail() {
       for (const [k, v] of Object.entries(data)) {
         msg = msg.split(`{{${k}}}`).join(v)
       }
-      setWaMsg(msg || `Hallo ${lead.first_name} 👋\n\nDu hattest heute einen Termin mit uns.`)
+      setWaMsg(msg || t('leadDetail.noShowFallbackMsg', 'Hallo {{name}} 👋\n\nDu hattest heute einen Termin mit uns.', { name: lead.first_name }))
     } catch {
-      setWaMsg(`Hallo ${lead.first_name} 👋\n\nDu hattest heute einen Termin mit uns.`)
+      setWaMsg(t('leadDetail.noShowFallbackMsg', 'Hallo {{name}} 👋\n\nDu hattest heute einen Termin mit uns.', { name: lead.first_name }))
     }
     setShowWaPreview(true)
   }
@@ -1069,7 +1074,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] sendWhatsappNoShow:', err)
-      showToast('❌ WhatsApp Fehler')
+      showToast(`❌ ${t('leadDetail.errWhatsapp', 'WhatsApp Fehler')}`)
     } finally {
       setSendingWa(false)
     }
@@ -1087,22 +1092,22 @@ export default function LeadDetail() {
         .select('first_name, whatsapp, phone').eq('id', '6c9da3ce-9826-4660-9a50-6ff9fc8e70b4').maybeSingle()
       const b = bk as { first_name?: string; whatsapp?: string | null; phone?: string | null } | null
       const tel = b?.whatsapp || b?.phone
-      if (!tel) { showToast('❌ Burkhard hat keine WhatsApp-/Telefonnummer hinterlegt'); return }
-      const msg = `🎉 Deal abgeschlossen!\nKunde: ${lead.first_name} ${lead.last_name}\nProjekt: ${projectName}\nProvision: ${amount}\n\nBitte Provision veranlassen.`
+      if (!tel) { showToast(`❌ ${t('leadDetail.errBurkhardNoPhone', 'Burkhard hat keine WhatsApp-/Telefonnummer hinterlegt')}`); return }
+      const msg = t('leadDetail.commissionMsgToBurkhard', '🎉 Deal abgeschlossen!\nKunde: {{customer}}\nProjekt: {{project}}\nProvision: {{amount}}\n\nBitte Provision veranlassen.', { customer: `${lead.first_name} ${lead.last_name}`, project: projectName, amount })
       const res = await sendWhatsApp({
         event_type: 'no_show', override_text: msg, lead_id: id,
         lead_data: { lead_name: b?.first_name ?? 'Burkhard', lead_phone: tel },
       })
-      if (!res.success) throw new Error(res.error || 'WhatsApp Fehler')
+      if (!res.success) throw new Error(res.error || t('leadDetail.errWhatsapp', 'WhatsApp Fehler'))
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'whatsapp', direction: 'outbound',
-        subject: 'Provisions-Anfrage an Burkhard', content: msg, created_by: profile?.id ?? null,
+        subject: t('leadDetail.logCommissionRequestSubject', 'Provisions-Anfrage an Burkhard'), content: msg, created_by: profile?.id ?? null,
       })
       showToast(t('crm.commissionSentBurkhard', '📱 Provisions-Anfrage an Burkhard gesendet'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] commissionWhatsapp:', err)
-      showToast(`❌ ${err instanceof Error ? err.message : 'WhatsApp Fehler'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errWhatsapp', 'WhatsApp Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -1131,14 +1136,14 @@ export default function LeadDetail() {
       }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        subject: null, content: 'Finanzierungspartner informiert', created_by: profile?.id ?? null,
+        subject: null, content: t('leadDetail.logFinancingPartnerNotified', 'Finanzierungspartner informiert'), created_by: profile?.id ?? null,
       }).throwOnError()
       await sendWebhook('deal.financing')
       showToast(t('crm.financingNotified', 'Partner informiert'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] financingNotify:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -1155,14 +1160,14 @@ export default function LeadDetail() {
       }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        subject: null, content: `Anwalt informiert. Drive: ${driveUrl}`, created_by: profile?.id ?? null,
+        subject: null, content: t('leadDetail.logLawyerNotified', 'Anwalt informiert. Drive: {{driveUrl}}', { driveUrl }), created_by: profile?.id ?? null,
       }).throwOnError()
       await sendWebhook('deal.contract', { google_drive_url: driveUrl })
       showToast(t('crm.lawyerNotified', 'Anwalt informiert'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] lawyerNotify:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -1175,14 +1180,14 @@ export default function LeadDetail() {
       await supabase.from('deals').update({ deposit_paid_at: depositDate || new Date().toISOString() }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        subject: null, content: 'Provision angefordert – Anzahlung bezahlt', created_by: profile?.id ?? null,
+        subject: null, content: t('leadDetail.logCommissionRequestedDepositPaid', 'Provision angefordert – Anzahlung bezahlt'), created_by: profile?.id ?? null,
       }).throwOnError()
       await sendWebhook('deal.deposit_paid')
       showToast(t('crm.commissionRequested', 'Provision angefordert'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] depositCommission:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -1199,14 +1204,14 @@ export default function LeadDetail() {
       }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        subject: null, content: `Deal abgeschlossen. Provision: ${commissionAmount}`, created_by: profile?.id ?? null,
+        subject: null, content: t('leadDetail.logDealClosedCommission', 'Deal abgeschlossen. Provision: {{amount}}', { amount: commissionAmount }), created_by: profile?.id ?? null,
       }).throwOnError()
       await sendWebhook('deal.commission_paid', { commission_amount: commissionAmount })
       showToast(t('crm.dealClosed', 'Deal abgeschlossen'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] dealClose:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setSaving(false)
     }
@@ -1224,10 +1229,10 @@ export default function LeadDetail() {
       setScheduledMessages(prev =>
         prev.map(m => m.id === msgId ? { ...m, status: 'cancelled' } : m)
       )
-      showToast('✋ Nachricht abgebrochen')
+      showToast(`✋ ${t('leadDetail.toastMessageCancelled', 'Nachricht abgebrochen')}`)
     } catch (err) {
       console.error('[LeadDetail] cancelScheduledMsg:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     } finally {
       setCancellingMsg(null)
     }
@@ -1240,13 +1245,13 @@ export default function LeadDetail() {
       await supabase.from('deals').update({ phase: 'archiviert' }).eq('id', deal.id).throwOnError()
       await supabase.from('activities').insert({
         lead_id: id, deal_id: deal.id, type: 'note', direction: 'outbound',
-        subject: null, content: 'Deal archiviert', created_by: profile?.id ?? null,
+        subject: null, content: t('leadDetail.logDealArchived', 'Deal archiviert'), created_by: profile?.id ?? null,
       }).throwOnError()
       showToast(t('crm.archivedSuccess', 'Archiviert'))
       navigate('/admin/crm')
     } catch (err) {
       console.error('[LeadDetail] archive:', err)
-      showToast('❌ Fehler beim Archivieren')
+      showToast(`❌ ${t('leadDetail.errArchiveFailed', 'Fehler beim Archivieren')}`)
     } finally {
       setSaving(false)
     }
@@ -1278,7 +1283,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveDriveUrl:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     }
   }
 
@@ -1290,7 +1295,7 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveImmoNotes:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     }
   }
 
@@ -1330,11 +1335,11 @@ export default function LeadDetail() {
       }).eq('id', lead.id)
       if (error) throw error
       setEditingLead(false)
-      showToast('✅ Stammdaten gespeichert')
+      showToast(t('leadDetail.toastMasterDataSaved', '✅ Stammdaten gespeichert'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveLead:', err)
-      showToast('❌ Fehler beim Speichern')
+      showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
     } finally {
       setSavingLead(false)
     }
@@ -1348,14 +1353,14 @@ export default function LeadDetail() {
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] saveRegNotes:', err)
-      showToast('❌ Fehler')
+      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
     }
   }
 
   // ── Deal-Project löschen ────────────────────────────────────────
   async function handleDeleteDealProject(dpId: string) {
     await supabase.from('deal_projects').delete().eq('id', dpId)
-    showToast('Projekt entfernt')
+    showToast(t('leadDetail.toastProjectRemoved', 'Projekt entfernt'))
     await fetchAll(true)
   }
 
@@ -1365,9 +1370,7 @@ export default function LeadDetail() {
   async function handleRemoveWohnung() {
     if (!deal?.unit_id) return
     if (!window.confirm(
-      'Wohnung wirklich aus diesem Kunden entfernen?\n\n' +
-      'Das verknüpfte Objekt im Eigentümer-Portal wird gelöscht. ' +
-      'Die Wohnung im Projekt selbst bleibt erhalten.'
+      t('leadDetail.confirmRemoveUnit', 'Wohnung wirklich aus diesem Kunden entfernen?\n\nDas verknüpfte Objekt im Eigentümer-Portal wird gelöscht. Die Wohnung im Projekt selbst bleibt erhalten.')
     )) return
     try {
       // 1. Portal-Objekt löschen (das taucht beim Kunden in der Verwaltung auf)
@@ -1384,17 +1387,17 @@ export default function LeadDetail() {
         deal_id:      deal.id,
         type:         'note',
         direction:    'outbound',
-        subject:      'Wohnung entfernt',
-        content:      'Die zugewiesene Wohnung wurde vom Kunden entfernt und das Portal-Objekt gelöscht.',
+        subject:      t('leadDetail.logUnitRemovedSubject', 'Wohnung entfernt'),
+        content:      t('leadDetail.logUnitRemovedContent', 'Die zugewiesene Wohnung wurde vom Kunden entfernt und das Portal-Objekt gelöscht.'),
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
       setPickedUnit(null)
       setActiveTab('overview')
-      showToast('✅ Wohnung entfernt')
+      showToast(t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
       await fetchAll(true)
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Entfernen'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errRemoveFailed', 'Fehler beim Entfernen')}`)
     }
   }
 
@@ -1461,8 +1464,8 @@ export default function LeadDetail() {
           deal_id:      deal?.id ?? null,
           type:         'note',
           direction:    'outbound',
-          subject:      'Einheit angelegt & aktiviert',
-          content:      `Neue Einheit Nr. ${unitEditForm.unit_number.trim()} wurde angelegt und dem Lead zugewiesen.`,
+          subject:      t('leadDetail.logUnitCreatedSubject', 'Einheit angelegt & aktiviert'),
+          content:      t('leadDetail.logUnitCreatedContent', 'Neue Einheit Nr. {{number}} wurde angelegt und dem Lead zugewiesen.', { number: unitEditForm.unit_number.trim() }),
           created_by:   profile?.id ?? null,
           completed_at: new Date().toISOString(),
         })
@@ -1522,7 +1525,7 @@ export default function LeadDetail() {
       }
       // ──────────────────────────────────────────────────────────────
 
-      showToast('✅ Einheit gespeichert')
+      showToast(t('leadDetail.toastUnitSaved', '✅ Einheit gespeichert'))
       setShowUnitEdit(false)
 
       // Kein Portalzugang → Eigentümer-Account automatisch anlegen
@@ -1601,18 +1604,18 @@ export default function LeadDetail() {
             setShowNewOwnerPwModal(true)
             setCustomerHasAccess(true)
           } else {
-            const errMsg = data?.error ?? fnError?.message ?? 'Fehler'
+            const errMsg = data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler')
             console.error('[LeadDetail] Auto-create eigentuemer:', errMsg)
-            showToast(`⚠️ Eigentümer-Account konnte nicht angelegt werden: ${errMsg}`)
+            showToast(`⚠️ ${t('leadDetail.ownerCreateFailed', 'Eigentümer-Account konnte nicht angelegt werden')}: ${errMsg}`)
           }
         } catch (err) {
           console.error('[LeadDetail] Auto-create eigentuemer:', err)
-          showToast('⚠️ Eigentümer-Account konnte nicht automatisch angelegt werden')
+          showToast(`⚠️ ${t('leadDetail.ownerAutoCreateFailed', 'Eigentümer-Account konnte nicht automatisch angelegt werden')}`)
         }
       }
     } catch (err) {
       console.error('[LeadDetail] saveUnit:', err)
-      showToast('❌ Fehler beim Speichern')
+      showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
     } finally {
       setSavingUnit(false)
     }
@@ -1763,14 +1766,14 @@ export default function LeadDetail() {
       }
 
       // 3. Aktivität loggen
-      const unitLabel = `${project.name}${unit.block ? ` · Block ${unit.block}` : ''} · Nr. ${unit.unit_number}`
+      const unitLabel = `${project.name}${unit.block ? ` · ${t('crm.unitEdit.block', 'Block')} ${unit.block}` : ''} · ${t('crm.unitSelect.no', 'Nr.')} ${unit.unit_number}`
       await supabase.from('activities').insert({
         lead_id:      id,
         deal_id:      deal?.id ?? null,
         type:         'note',
         direction:    'outbound',
-        subject:      'Wohnung zugewiesen',
-        content:      `${unitLabel} wurde dem Lead zugewiesen.`,
+        subject:      t('leadDetail.logUnitAssignedSubject', 'Wohnung zugewiesen'),
+        content:      t('leadDetail.logUnitAssignedContent', '{{unitLabel}} wurde dem Lead zugewiesen.', { unitLabel }),
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
@@ -1826,29 +1829,29 @@ export default function LeadDetail() {
   // gestaltete HTML-Vorlage „Portalzugang" per E-Mail an den Kunden. Ohne
   // custom_message nutzt create-eigentuemer-access die DB-Vorlage (mit Sicherheitsnetz).
   async function openPortal() {
-    if (!lead?.email) { showToast('❌ Keine E-Mail am Lead hinterlegt'); return }
+    if (!lead?.email) { showToast(`❌ ${t('leadDetail.noEmailOnLead', 'Keine E-Mail am Lead hinterlegt')}`); return }
     setResendingPortal(true)
     try {
       const fullName = `${lead.first_name} ${lead.last_name}`.trim()
       const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
         body: { email: lead.email, full_name: fullName },
       })
-      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? 'Fehler')
+      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler'))
       await supabase.from('activities').insert({
         lead_id:      id,
         deal_id:      deal?.id ?? null,
         type:         'email',
         direction:    'outbound',
-        subject:      'Portalzugang gesendet',
-        content:      `Eigentümer-Portalzugang an ${lead.email} erstellt und per E-Mail gesendet.`,
+        subject:      t('leadDetail.logPortalAccessSentSubject', 'Portalzugang gesendet'),
+        content:      t('leadDetail.logPortalAccessSentContent', 'Eigentümer-Portalzugang an {{email}} erstellt und per E-Mail gesendet.', { email: lead.email }),
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
       if (id) await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
-      showToast('✅ Portalzugang an den Kunden gesendet')
+      showToast(t('leadDetail.toastPortalAccessSent', '✅ Portalzugang an den Kunden gesendet'))
       await fetchAll(true)
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim Senden'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errSendFailed', 'Fehler beim Senden')}`)
     } finally {
       setResendingPortal(false)
     }
@@ -1859,8 +1862,7 @@ export default function LeadDetail() {
     if (!lead) return
     if (!lead.profile_id) { openPortal(); return }
     if (!window.confirm(
-      `Neues Passwort erstellen und per E-Mail an ${lead.email} senden?\n\n` +
-      'Das bisherige Passwort des Kunden wird dabei ungültig.'
+      t('leadDetail.confirmResendPortalAccess', 'Neues Passwort erstellen und per E-Mail an {{email}} senden?\n\nDas bisherige Passwort des Kunden wird dabei ungültig.', { email: lead.email })
     )) return
     setResendingPortal(true)
     try {
@@ -1870,15 +1872,15 @@ export default function LeadDetail() {
       const { data, error: fnError } = await supabase.functions.invoke('create-eigentuemer-access', {
         body: { email: lead.email, full_name: fullName },
       })
-      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? 'Fehler')
+      if (fnError || data?.error) throw new Error(data?.error ?? fnError?.message ?? t('leadDetail.genericError', 'Fehler'))
 
       await supabase.from('activities').insert({
         lead_id:      id,
         deal_id:      deal?.id ?? null,
         type:         'email',
         direction:    'outbound',
-        subject:      'Portal-Zugangsdaten erneut gesendet',
-        content:      `Neues Passwort erstellt und per E-Mail an ${lead.email} gesendet.`,
+        subject:      t('leadDetail.logPortalAccessResentSubject', 'Portal-Zugangsdaten erneut gesendet'),
+        content:      t('leadDetail.logPortalAccessResentContent', 'Neues Passwort erstellt und per E-Mail an {{email}} gesendet.', { email: lead.email }),
         created_by:   profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })
@@ -1886,10 +1888,10 @@ export default function LeadDetail() {
       if (id) {
         await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
       }
-      showToast('✅ Neuer Zugang per E-Mail an den Kunden gesendet')
+      showToast(t('leadDetail.toastNewAccessSent', '✅ Neuer Zugang per E-Mail an den Kunden gesendet'))
       await fetchAll(true)
     } catch (err) {
-      showToast(`❌ ${err instanceof Error ? err.message : 'Fehler beim erneuten Senden'}`)
+      showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errResendFailed', 'Fehler beim erneuten Senden')}`)
     } finally {
       setResendingPortal(false)
     }
@@ -1989,7 +1991,7 @@ export default function LeadDetail() {
                   </h1>
                   {lead.profile_id && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 shrink-0">
-                      🏠 Eigentümer
+                      🏠 {t('leadDetail.ownerBadge', 'Eigentümer')}
                     </span>
                   )}
                 </div>
@@ -2897,14 +2899,14 @@ export default function LeadDetail() {
                                     onClick={() => handleActivateProject(dp.project_id)}
                                     className="text-[11px] px-2.5 py-1 rounded-lg font-medium text-white"
                                     style={{ backgroundColor: '#ff795d' }}
-                                    title="Wohnung auswählen und Käufer aktivieren"
+                                    title={t('leadDetail.activateProjectTitle', 'Wohnung auswählen und Käufer aktivieren')}
                                   >
-                                    🔑 Aktivieren
+                                    🔑 {t('leadDetail.activate', 'Aktivieren')}
                                   </button>
                                   <button
                                     onClick={() => handleDeleteDealProject(dp.id)}
                                     className="text-[11px] px-2 py-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 border border-gray-200"
-                                    title="Projekt aus Auswahl entfernen"
+                                    title={t('leadDetail.removeProjectTitle', 'Projekt aus Auswahl entfernen')}
                                   >
                                     ✕
                                   </button>
@@ -2916,19 +2918,19 @@ export default function LeadDetail() {
                               <dl className="space-y-0.5 text-xs text-gray-600">
                                 {dp.unit_numbers && (
                                   <div className="flex gap-2">
-                                    <dt className="text-gray-400 w-16">Units</dt>
+                                    <dt className="text-gray-400 w-16">{t('leadDetail.unitsLabel', 'Units')}</dt>
                                     <dd>{dp.unit_numbers}</dd>
                                   </div>
                                 )}
                                 {dp.price_net != null && (
                                   <div className="flex gap-2">
-                                    <dt className="text-gray-400 w-16">Preis</dt>
+                                    <dt className="text-gray-400 w-16">{t('leadDetail.priceLabel', 'Preis')}</dt>
                                     <dd className="font-medium">€ {dp.price_net.toLocaleString('de-AT')}</dd>
                                   </div>
                                 )}
                                 {dp.notes && (
                                   <div className="flex gap-2">
-                                    <dt className="text-gray-400 w-16">Notiz</dt>
+                                    <dt className="text-gray-400 w-16">{t('leadDetail.noteLabel', 'Notiz')}</dt>
                                     <dd className="text-gray-600">{dp.notes}</dd>
                                   </div>
                                 )}
@@ -2988,7 +2990,7 @@ export default function LeadDetail() {
                             {task.scheduled_at && (
                               <div className={`text-xs mt-0.5 ${isOverdue(task) ? 'text-red-500' : 'text-gray-400'}`}>
                                 {formatDate(task.scheduled_at)}
-                                {isOverdue(task) && ' — Überfällig'}
+                                {isOverdue(task) && ` — ${t('leadDetail.overdueSuffix', 'Überfällig')}`}
                               </div>
                             )}
                           </li>
@@ -3546,8 +3548,8 @@ export default function LeadDetail() {
                       }
                       const typeLabels: Record<string, string> = {
                         zoom:     '📹 Zoom',
-                        inperson: '📍 Vor Ort',
-                        phone:    '📞 Telefon',
+                        inperson: `📍 ${t('leadDetail.apptTypeInPerson', 'Vor Ort')}`,
+                        phone:    `📞 ${t('leadDetail.apptTypePhone', 'Telefon')}`,
                         whatsapp: '💬 WhatsApp',
                       }
                       return (
@@ -3678,9 +3680,9 @@ export default function LeadDetail() {
                   <button
                     onClick={() => triggerScheduleMessage('lead_created')}
                     className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
-                    title="Automationsregeln für diesen Lead manuell auslösen"
+                    title={t('leadDetail.triggerAutomationTitle', 'Automationsregeln für diesen Lead manuell auslösen')}
                   >
-                    ▶ Manuell auslösen
+                    ▶ {t('leadDetail.triggerManually', 'Manuell auslösen')}
                   </button>
                 </div>
 
@@ -3699,16 +3701,16 @@ export default function LeadDetail() {
                         failed:     'bg-red-100   text-red-700',
                       }
                       const statusLabel: Record<string, string> = {
-                        pending:    'Ausstehend',
-                        processing: 'Wird gesendet',
-                        sent:       'Gesendet',
-                        cancelled:  'Abgebrochen',
-                        failed:     'Fehlgeschlagen',
+                        pending:    t('leadDetail.schedStatusPending', 'Ausstehend'),
+                        processing: t('leadDetail.schedStatusProcessing', 'Wird gesendet'),
+                        sent:       t('leadDetail.schedStatusSent', 'Gesendet'),
+                        cancelled:  t('leadDetail.schedStatusCancelled', 'Abgebrochen'),
+                        failed:     t('leadDetail.schedStatusFailed', 'Fehlgeschlagen'),
                       }
                       const typeLabel: Record<string, string> = {
-                        email:    '📧 E-Mail',
-                        whatsapp: '📱 WhatsApp',
-                        both:     '📧 + 📱',
+                        email:    `📧 ${t('leadDetail.schedTypeEmail', 'E-Mail')}`,
+                        whatsapp: `📱 ${t('leadDetail.schedTypeWhatsapp', 'WhatsApp')}`,
+                        both:     `📧 + 📱`,
                       }
                       return (
                         <div
@@ -3759,7 +3761,7 @@ export default function LeadDetail() {
                                          text-gray-500 hover:border-red-300 hover:text-red-500
                                          transition-colors disabled:opacity-50"
                             >
-                              {cancellingMsg === msg.id ? '…' : 'Abbrechen'}
+                              {cancellingMsg === msg.id ? '…' : t('leadDetail.cancelScheduled', 'Abbrechen')}
                             </button>
                           )}
                         </div>
@@ -3778,30 +3780,30 @@ export default function LeadDetail() {
                 <div className="flex items-center justify-between gap-3 pb-2 border-b border-gray-100">
                   <div className="min-w-0">
                     <h3 className="text-sm font-semibold text-gray-700 truncate">
-                      🏠 {pickedUnit ? `Wohnung ${pickedUnit.unit.unit_number}` : 'Wohnung'}
+                      🏠 {pickedUnit ? t('leadDetail.unitHeaderWithNumber', 'Wohnung {{number}}', { number: pickedUnit.unit.unit_number }) : t('leadDetail.unitHeaderFallback', 'Wohnung')}
                       {pickedUnit?.projectName ? ` · ${pickedUnit.projectName}` : ''}
                     </h3>
-                    <p className="text-xs text-gray-400">Dokumente und Bilder dieser Wohnung.</p>
+                    <p className="text-xs text-gray-400">{t('leadDetail.unitTabSubtitle', 'Dokumente und Bilder dieser Wohnung.')}</p>
                   </div>
                   <button
                     onClick={handleRemoveWohnung}
                     className="text-xs px-3 py-1.5 rounded-lg text-red-600 border border-red-200 hover:bg-red-50 flex-shrink-0"
-                    title="Wohnung vom Kunden entfernen und Portal-Objekt löschen"
+                    title={t('leadDetail.removeUnitTitle', 'Wohnung vom Kunden entfernen und Portal-Objekt löschen')}
                   >
-                    🗑 Wohnung entfernen
+                    🗑 {t('leadDetail.removeUnit', 'Wohnung entfernen')}
                   </button>
                 </div>
 
                 {/* ── Dokumente ── */}
                 <div>
-                  <h3 className="text-sm font-semibold text-gray-700 mb-4">📄 Dokumente</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">📄 {t('leadDetail.documentsHeading', 'Dokumente')}</h3>
 
                   {/* Upload-Formular */}
                   <div className="bg-gray-50 rounded-xl border border-gray-100 p-4 mb-4 space-y-3">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <input
                         type="text"
-                        placeholder="Dokumentname *"
+                        placeholder={t('leadDetail.docNamePlaceholder', 'Dokumentname *')}
                         value={unitDocForm.name}
                         onChange={e => setUnitDocForm(f => ({ ...f, name: e.target.value }))}
                         className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
@@ -3811,24 +3813,24 @@ export default function LeadDetail() {
                         onChange={val => setUnitDocForm(f => ({ ...f, doc_type: val as UnitDocType }))}
                         className="border border-gray-200 rounded-lg text-sm"
                         options={[
-                          { value: 'kaufvertrag', label: 'Kaufvertrag' },
-                          { value: 'mietvertrag', label: 'Mietvertrag' },
-                          { value: 'zahlungsbeleg', label: 'Zahlungsbeleg' },
-                          { value: 'grundriss', label: 'Grundriss' },
-                          { value: 'sonstiges', label: 'Sonstiges' },
+                          { value: 'kaufvertrag', label: t('leadDetail.docTypeKaufvertrag', 'Kaufvertrag') },
+                          { value: 'mietvertrag', label: t('leadDetail.docTypeMietvertrag', 'Mietvertrag') },
+                          { value: 'zahlungsbeleg', label: t('leadDetail.docTypeZahlungsbeleg', 'Zahlungsbeleg') },
+                          { value: 'grundriss', label: t('leadDetail.docTypeGrundriss', 'Grundriss') },
+                          { value: 'sonstiges', label: t('leadDetail.docTypeSonstiges', 'Sonstiges') },
                         ]}
                       />
                     </div>
                     <input
                       type="text"
-                      placeholder="Notiz (optional)"
+                      placeholder={t('leadDetail.docNotePlaceholder', 'Notiz (optional)')}
                       value={unitDocForm.notes}
                       onChange={e => setUnitDocForm(f => ({ ...f, notes: e.target.value }))}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
                     />
                     <div className="flex items-center gap-3">
                       <label className="flex-1 flex items-center gap-2 border border-dashed border-gray-300 rounded-lg px-3 py-2 cursor-pointer hover:border-[#ff795d] transition-colors">
-                        <span className="text-sm text-gray-500">{unitDocFile ? unitDocFile.name : '📎 Datei auswählen (PDF, Word, Bild)'}</span>
+                        <span className="text-sm text-gray-500">{unitDocFile ? unitDocFile.name : t('leadDetail.chooseFile', '📎 Datei auswählen (PDF, Word, Bild)')}</span>
                         <input
                           ref={unitDocFileRef}
                           type="file"
@@ -3843,17 +3845,17 @@ export default function LeadDetail() {
                         className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-40 transition-opacity"
                         style={{ backgroundColor: '#ff795d' }}
                       >
-                        {uploadingUnitDoc ? '⏳ …' : 'Hochladen'}
+                        {uploadingUnitDoc ? '⏳ …' : t('leadDetail.upload', 'Hochladen')}
                       </button>
                     </div>
                     <p className="text-xs text-gray-400">
-                      💡 Der Kunde erhält automatisch eine E-Mail wenn ein Dokument hochgeladen wird.
+                      💡 {t('leadDetail.docUploadNotice', 'Der Kunde erhält automatisch eine E-Mail wenn ein Dokument hochgeladen wird.')}
                     </p>
                   </div>
 
                   {/* Dok-Liste */}
                   {unitDocs.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-6">Noch keine Dokumente hochgeladen.</p>
+                    <p className="text-sm text-gray-400 text-center py-6">{t('leadDetail.noDocsYet', 'Noch keine Dokumente hochgeladen.')}</p>
                   ) : (
                     <div className="space-y-2">
                       {unitDocs.map(doc => {
@@ -3865,8 +3867,11 @@ export default function LeadDetail() {
                           sonstiges: 'bg-gray-100 text-gray-600',
                         }
                         const DOC_LABEL: Record<string, string> = {
-                          kaufvertrag: 'Kaufvertrag', mietvertrag: 'Mietvertrag',
-                          zahlungsbeleg: 'Zahlungsbeleg', grundriss: 'Grundriss', sonstiges: 'Sonstiges',
+                          kaufvertrag: t('leadDetail.docTypeKaufvertrag', 'Kaufvertrag'),
+                          mietvertrag: t('leadDetail.docTypeMietvertrag', 'Mietvertrag'),
+                          zahlungsbeleg: t('leadDetail.docTypeZahlungsbeleg', 'Zahlungsbeleg'),
+                          grundriss: t('leadDetail.docTypeGrundriss', 'Grundriss'),
+                          sonstiges: t('leadDetail.docTypeSonstiges', 'Sonstiges'),
                         }
                         return (
                           <div key={doc.id} className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-gray-50 border border-gray-100">
@@ -3884,13 +3889,13 @@ export default function LeadDetail() {
                               onClick={() => handleOpenUnitDoc(doc)}
                               className="text-xs text-[#ff795d] hover:underline flex-shrink-0"
                             >
-                              Öffnen
+                              {t('leadDetail.open', 'Öffnen')}
                             </button>
                             <button
                               onClick={() => handleDeleteUnitDoc(doc)}
                               className="text-xs text-gray-400 hover:text-red-500 flex-shrink-0"
                             >
-                              Löschen
+                              {t('leadDetail.delete', 'Löschen')}
                             </button>
                           </div>
                         )
@@ -3902,10 +3907,10 @@ export default function LeadDetail() {
                 {/* ── Bilder ── */}
                 <div>
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-semibold text-gray-700">🖼️ Bilder der Wohnung</h3>
+                    <h3 className="text-sm font-semibold text-gray-700">🖼️ {t('leadDetail.unitImagesHeading', 'Bilder der Wohnung')}</h3>
                     <label className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors
                       ${uploadingUnitImg ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-orange-50 text-[#ff795d] border border-[#ff795d] hover:bg-orange-100'}`}>
-                      {uploadingUnitImg ? '⏳ Wird hochgeladen…' : '📷 Bilder hochladen'}
+                      {uploadingUnitImg ? t('leadDetail.uploadingImages', '⏳ Wird hochgeladen…') : t('leadDetail.uploadImages', '📷 Bilder hochladen')}
                       <input
                         ref={unitImgFileRef}
                         type="file"
@@ -3918,15 +3923,15 @@ export default function LeadDetail() {
                     </label>
                   </div>
                   <p className="text-xs text-gray-400 mb-3">
-                    💡 Der Kunde erhält automatisch eine E-Mail wenn Bilder hochgeladen werden.
+                    💡 {t('leadDetail.imgUploadNotice', 'Der Kunde erhält automatisch eine E-Mail wenn Bilder hochgeladen werden.')}
                   </p>
                   {unitImages.length === 0 ? (
-                    <p className="text-sm text-gray-400 text-center py-6">Noch keine Bilder hochgeladen.</p>
+                    <p className="text-sm text-gray-400 text-center py-6">{t('leadDetail.noImagesYet', 'Noch keine Bilder hochgeladen.')}</p>
                   ) : (
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                       {unitImages.map((url, idx) => (
                         <div key={url} className="relative group rounded-xl overflow-hidden border border-gray-100">
-                          <img src={url} alt={`Bild ${idx + 1}`} className="w-full h-28 object-cover" />
+                          <img src={url} alt={t('leadDetail.unitImageAlt', 'Bild {{n}}', { n: idx + 1 })} className="w-full h-28 object-cover" />
                           <button
                             onClick={() => handleDeleteUnitImage(url)}
                             className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-red-500 text-white text-xs
@@ -3947,22 +3952,22 @@ export default function LeadDetail() {
               <div className="p-6 space-y-6">
                 {/* Status-Karte */}
                 <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3">🔑 Portal-Zugang</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">🔑 {t('leadDetail.portalAccessHeading', 'Portal-Zugang')}</h3>
                   <div className="space-y-2 text-sm">
                     <div className="flex items-center gap-2">
                       {lead?.profile_id ? (
                         <span className="inline-flex items-center gap-1.5 bg-green-50 text-green-700 border border-green-200 px-2.5 py-1 rounded-full text-xs font-medium">
-                          ✓ Zugang aktiv
+                          ✓ {t('leadDetail.accessActive', 'Zugang aktiv')}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 bg-gray-100 text-gray-500 border border-gray-200 px-2.5 py-1 rounded-full text-xs font-medium">
-                          Kein Zugang
+                          {t('leadDetail.noAccess', 'Kein Zugang')}
                         </span>
                       )}
                     </div>
                     {lead?.portal_access_sent_at ? (
                       <p className="text-gray-600 text-xs">
-                        Zugang verschickt am{' '}
+                        {t('leadDetail.accessSentOn', 'Zugang verschickt am')}{' '}
                         <span className="font-medium">
                           {new Date(lead.portal_access_sent_at).toLocaleString('de-DE', {
                             day: '2-digit', month: '2-digit', year: 'numeric',
@@ -3971,10 +3976,10 @@ export default function LeadDetail() {
                         </span>
                       </p>
                     ) : (
-                      <p className="text-gray-400 text-xs">Noch kein Portalzugang versendet.</p>
+                      <p className="text-gray-400 text-xs">{t('leadDetail.noAccessSentYet', 'Noch kein Portalzugang versendet.')}</p>
                     )}
                     {lead?.email && lead?.profile_id && (
-                      <p className="text-gray-500 text-xs">Portal-E-Mail: <span className="font-mono">{lead.email}</span></p>
+                      <p className="text-gray-500 text-xs">{t('leadDetail.portalEmailLabel', 'Portal-E-Mail')}: <span className="font-mono">{lead.email}</span></p>
                     )}
                   </div>
                 </div>
@@ -3982,20 +3987,20 @@ export default function LeadDetail() {
                 {/* Login-Historie */}
                 <div>
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">
-                    📋 Login-Verlauf
+                    📋 {t('leadDetail.loginHistoryHeading', 'Login-Verlauf')}
                     {portalLoginLog.length > 0 && (
                       <span className="ml-2 text-xs font-normal text-gray-400">
-                        ({portalLoginLog.length} {portalLoginLog.length === 1 ? 'Login' : 'Logins'})
+                        ({portalLoginLog.length} {portalLoginLog.length === 1 ? t('leadDetail.loginSingular', 'Login') : t('leadDetail.loginPlural', 'Logins')})
                       </span>
                     )}
                   </h3>
                   {!lead?.profile_id ? (
                     <p className="text-gray-400 text-sm text-center py-8">
-                      Kein Portal-Zugang — noch keine Login-Daten vorhanden.
+                      {t('leadDetail.noPortalAccessYet', 'Kein Portal-Zugang — noch keine Login-Daten vorhanden.')}
                     </p>
                   ) : portalLoginLog.length === 0 ? (
                     <p className="text-gray-400 text-sm text-center py-8">
-                      Noch kein Login im Portal.
+                      {t('leadDetail.noLoginYet', 'Noch kein Login im Portal.')}
                     </p>
                   ) : (
                     <div className="space-y-1.5">

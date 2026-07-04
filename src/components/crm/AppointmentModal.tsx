@@ -67,9 +67,14 @@ interface LeadResult {
 
 // ── Step progress bar ─────────────────────────────────────────────────────────
 
-const STEP_LABELS = ['Basis', 'Details', 'Lead', 'Bestätigen']
-
 function StepBar({ step }: { step: number }) {
+  const { t } = useTranslation()
+  const STEP_LABELS = [
+    t('appointmentModal.stepBasis', 'Basis'),
+    t('appointmentModal.stepDetails', 'Details'),
+    t('appointmentModal.stepLead', 'Lead'),
+    t('appointmentModal.stepConfirm', 'Bestätigen'),
+  ]
   return (
     <div className="flex items-center justify-center gap-0 px-6 py-4 border-b border-gray-100">
       {STEP_LABELS.map((label, idx) => {
@@ -302,7 +307,7 @@ export default function AppointmentModal({
           .from('crm_appointments')
           .update(payload)
           .eq('id', appointment.id)
-        if (error) throw new Error(`DB-Fehler [${error.code}]: ${error.message}`)
+        if (error) throw new Error(t('appointmentModal.dbErrorGeneric', 'DB-Fehler [{{code}}]: {{message}}', { code: error.code, message: error.message }))
 
         if (appointment.google_event_id) {
           try {
@@ -341,10 +346,10 @@ export default function AppointmentModal({
             code: error.code, message: error.message, details: error.details, hint: error.hint,
           })
           const msg = error.code === '42P01'
-            ? 'Tabelle crm_appointments existiert nicht – Migration ausführen!'
+            ? t('appointmentModal.tableMissingError', 'Tabelle crm_appointments existiert nicht – Migration ausführen!')
             : error.code === '42501' || error.message?.includes('row-level security')
-              ? 'Keine Berechtigung (RLS). Nur Admin/Verwalter dürfen Termine anlegen.'
-              : `DB-Fehler [${error.code}]: ${error.message}`
+              ? t('appointmentModal.rlsPermissionError', 'Keine Berechtigung (RLS). Nur Admin/Verwalter dürfen Termine anlegen.')
+              : t('appointmentModal.dbErrorGeneric', 'DB-Fehler [{{code}}]: {{message}}', { code: error.code, message: error.message })
           throw new Error(msg)
         }
         apptId = (appt as { id: string }).id
@@ -509,8 +514,8 @@ export default function AppointmentModal({
   // ── Type label ────────────────────────────────────────────────
   const typeLabels: Record<ApptType, string> = {
     zoom:      '📹 Zoom',
-    inperson:  '📍 Vor Ort',
-    phone:     '📞 Telefon',
+    inperson:  `📍 ${t('appointmentModal.typeInPerson', 'Vor Ort')}`,
+    phone:     `📞 ${t('appointmentModal.typePhone', 'Telefon')}`,
     whatsapp:  '💬 WhatsApp',
   }
 
@@ -529,7 +534,7 @@ export default function AppointmentModal({
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 text-xl leading-none"
-            aria-label="Schließen"
+            aria-label={t('appointmentModal.closeAriaLabel', 'Schließen')}
           >
             ×
           </button>
@@ -796,7 +801,7 @@ export default function AppointmentModal({
                         {t('crm.appt.mapPreview', 'Kartenvorschau')}
                       </label>
                       <iframe
-                        title="Kartenvorschau"
+                        title={t('appointmentModal.mapPreviewIframeTitle', 'Kartenvorschau')}
                         src={`https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`}
                         className="w-full h-44 rounded-lg border border-gray-200"
                         loading="lazy"

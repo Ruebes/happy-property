@@ -1,4 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
@@ -19,6 +20,7 @@ const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
 export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
+  const { t } = useTranslation()
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [developer, setDeveloper] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -72,13 +74,13 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     const refUnit = basket[0]?.unit
     const preview = compute({ ...p, dealType: p.dealType, priceNet: refUnit?.price_net ?? p.priceNet, bedrooms: refUnit?.bedrooms ?? p.bedrooms })
     const vatIdx = preview.vatA.findIndex(v => v > 0)
-    if (vatIdx < 0) { setErr('Keine USt.-Erstattung berechnet — dafür Kurzzeit-Vermietung wählen.'); return }
+    if (vatIdx < 0) { setErr(t('rechnerWizard.noVatRefundCalculated', 'Keine USt.-Erstattung berechnet — dafür Kurzzeit-Vermietung wählen.')); return }
     const pp = [...p.ppVals]; pp[vatIdx] = Math.round(preview.vatAmt)
     setP(prev => ({ ...prev, ppVals: pp })); setShowAdvanced(true); setErr('')
   }
 
   const generate = async () => {
-    if (!editCalc && p.dealType === 'single' && !basket.length) { setErr('Bitte mindestens eine Wohnung wählen.'); return }
+    if (!editCalc && p.dealType === 'single' && !basket.length) { setErr(t('rechnerWizard.selectAtLeastOneUnit', 'Bitte mindestens eine Wohnung wählen.')); return }
     setBusy(true); setErr('')
     try {
       // ── Bearbeiten: gleiche Objekte behalten, nur (geteilte) Parameter neu anwenden,
@@ -92,7 +94,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
         const { error } = await supabase.from('property_calculations').update({ content }).eq('token', editCalc.token)
         if (error) throw new Error(error.message)
         window.open(`${window.location.origin}/rechnung/${editCalc.token}`, '_blank')
-        onDone('Berechnung aktualisiert.')
+        onDone(t('rechnerWizard.calculationUpdated', 'Berechnung aktualisiert.'))
         setBusy(false)
         return
       }
@@ -125,9 +127,11 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
       if (error) throw new Error(error.message)
       const url = `${window.location.origin}/rechnung/${(data as { token: string }).token}`
       window.open(url, '_blank')
-      onDone(`${items.length > 1 ? 'Vergleich' : 'Rechnung'} erstellt — Link geöffnet.`)
+      onDone(items.length > 1
+        ? t('rechnerWizard.comparisonCreated', 'Vergleich erstellt — Link geöffnet.')
+        : t('rechnerWizard.invoiceCreated', 'Rechnung erstellt — Link geöffnet.'))
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Fehler')
+      setErr(e instanceof Error ? e.message : t('rechnerWizard.genericError', 'Fehler'))
     } finally { setBusy(false) }
   }
 
@@ -166,7 +170,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center overflow-y-auto p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
-          <h2 className="text-lg font-bold text-gray-900">📊 {editCalc ? 'Berechnung bearbeiten' : 'Rendite-Rechnung'} — {lead.first_name} {lead.last_name}</h2>
+          <h2 className="text-lg font-bold text-gray-900">📊 {editCalc ? t('rechnerWizard.editCalculation', 'Berechnung bearbeiten') : t('rechnerWizard.yieldCalculation', 'Rendite-Rechnung')} — {lead.first_name} {lead.last_name}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
         </div>
 
@@ -174,33 +178,33 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           {/* ── Objekte ── */}
           {editCalc ? (
             <div>
-              <SectionLabel>Objekt(e)</SectionLabel>
+              <SectionLabel>{t('rechnerWizard.objectsLabel', 'Objekt(e)')}</SectionLabel>
               <div className="flex flex-wrap gap-2">
                 {editCalc.content.items.map((it, i) => (
                   <span key={i} className="inline-flex items-center text-xs bg-gray-100 rounded-xl px-2.5 py-1.5">{it.label}</span>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 mt-2">Objekte bleiben gleich — du änderst nur die Werte unten und speicherst.</p>
+              <p className="text-[11px] text-gray-400 mt-2">{t('rechnerWizard.objectsUnchangedHint', 'Objekte bleiben gleich — du änderst nur die Werte unten und speicherst.')}</p>
             </div>
           ) : (
           <div>
-            <SectionLabel>Objekt{p.dealType === 'single' ? '(e)' : ' / Portfolio'}</SectionLabel>
+            <SectionLabel>{t('rechnerWizard.objectLabel', 'Objekt')}{p.dealType === 'single' ? t('rechnerWizard.objectSuffixSingle', '(e)') : t('rechnerWizard.objectSuffixPortfolio', ' / Portfolio')}</SectionLabel>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
-                <span className="block text-xs font-medium text-gray-500 mb-1.5">Developer</span>
+                <span className="block text-xs font-medium text-gray-500 mb-1.5">{t('rechnerWizard.developerLabel', 'Developer')}</span>
                 <CustomSelect
                   value={developer}
                   onChange={v => { setDeveloper(v); setProjectId('') }}
-                  options={[{ value: '', label: 'Alle' },
+                  options={[{ value: '', label: t('rechnerWizard.allOption', 'Alle') },
                     ...[...new Set(projects.map(pr => pr.developer).filter(Boolean))].sort().map(d => ({ value: d as string, label: d as string }))]}
                 />
               </div>
               <div>
-                <span className="block text-xs font-medium text-gray-500 mb-1.5">Projekt</span>
+                <span className="block text-xs font-medium text-gray-500 mb-1.5">{t('rechnerWizard.projectLabel', 'Projekt')}</span>
                 <CustomSelect
                   value={projectId}
                   onChange={setProjectId}
-                  placeholder="— wählen —"
+                  placeholder={t('rechnerWizard.selectPlaceholder', '— wählen —')}
                   options={projects.filter(pr => !developer || pr.developer === developer).map(pr => ({ value: pr.id, label: pr.name }))}
                 />
               </div>
@@ -210,14 +214,14 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
                 {units.map(u => (
                   <button key={u.id} onClick={() => toggleU(u.id)}
                     className={`text-xs px-2.5 py-1.5 rounded-xl border transition-colors ${sel.has(u.id) ? 'border-orange-400 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600 hover:border-orange-300'}`}>
-                    {u.unit_number}{u.bedrooms != null ? ` · ${u.bedrooms} SZ` : ''}{u.price_net ? ` · ${eur0(u.price_net / 1000)}k` : ''}
+                    {u.unit_number}{u.bedrooms != null ? ` · ${t('rechnerWizard.bedroomsAbbrev', '{{count}} SZ', { count: u.bedrooms })}` : ''}{u.price_net ? ` · ${eur0(u.price_net / 1000)}k` : ''}
                   </button>
                 ))}
               </div>
             )}
             {units.length > 0 && (
               <button onClick={addToBasket} disabled={!sel.size} className="mt-2.5 px-3.5 py-1.5 rounded-xl text-white text-sm font-medium disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-                + {sel.size} zur Auswahl
+                {t('rechnerWizard.addToSelection', '+ {{count}} zur Auswahl', { count: sel.size })}
               </button>
             )}
             {basket.length > 0 && (
@@ -235,82 +239,82 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
 
           {/* ── Kauf ── */}
           <div>
-            <SectionLabel>Kauf</SectionLabel>
+            <SectionLabel>{t('rechnerWizard.purchaseSection', 'Kauf')}</SectionLabel>
             <div className="grid sm:grid-cols-3 gap-3">
-              {seg('Kaufart', 'dealType', [['single', 'Einzelkauf'], ['share', 'Share-Deal']])}
-              {numF('Rabatt', 'discountPct', '%', '0.5')}
-              {numF('Einrichtungspaket', 'furnCost', '€', '500')}
+              {seg(t('rechnerWizard.dealTypeLabel', 'Kaufart'), 'dealType', [['single', t('rechnerWizard.dealTypeSingle', 'Einzelkauf')], ['share', t('rechnerWizard.dealTypeShare', 'Share-Deal')]])}
+              {numF(t('rechnerWizard.discountLabel', 'Rabatt'), 'discountPct', '%', '0.5')}
+              {numF(t('rechnerWizard.furnitureCostLabel', 'Einrichtungspaket'), 'furnCost', '€', '500')}
             </div>
             {p.dealType === 'share' && (
               <div className="grid sm:grid-cols-4 gap-3 mt-3 p-3 rounded-xl bg-violet-50 border border-violet-100">
-                {numF('Portfolio netto', 'sdPrice', '€', '1000')}
-                {numF('Fläche gesamt', 'sdSqm', 'm²')}
-                {numF('Anzahl WE', 'sdNum')}
-                {numF('Flat-Tax', 'sdTaxRate', '%', '0.5')}
+                {numF(t('rechnerWizard.portfolioNetLabel', 'Portfolio netto'), 'sdPrice', '€', '1000')}
+                {numF(t('rechnerWizard.totalAreaLabel', 'Fläche gesamt'), 'sdSqm', 'm²')}
+                {numF(t('rechnerWizard.unitCountLabel', 'Anzahl WE'), 'sdNum')}
+                {numF(t('rechnerWizard.flatTaxLabel', 'Flat-Tax'), 'sdTaxRate', '%', '0.5')}
               </div>
             )}
             <div className="grid sm:grid-cols-3 gap-3 mt-3 items-stretch">
-              {toggle('Einrichtung kostenfrei', 'furnFree', 'vom Developer geschenkt')}
-              {numF('Kaufmonat', 'month', '1-12')}
-              {numF('Kaufjahr', 'year')}
+              {toggle(t('rechnerWizard.freeFurnitureLabel', 'Einrichtung kostenfrei'), 'furnFree', t('rechnerWizard.freeFurnitureHint', 'vom Developer geschenkt'))}
+              {numF(t('rechnerWizard.purchaseMonthLabel', 'Kaufmonat'), 'month', '1-12')}
+              {numF(t('rechnerWizard.purchaseYearLabel', 'Kaufjahr'), 'year')}
             </div>
           </div>
 
           {/* ── Finanzierung ── */}
           <div>
-            <SectionLabel>Finanzierung</SectionLabel>
+            <SectionLabel>{t('rechnerWizard.financingSection', 'Finanzierung')}</SectionLabel>
             <div className="grid sm:grid-cols-3 gap-3">
-              {seg('Finanzierung', 'fin', [['yes', 'Kredit'], ['no', 'Barkauf']])}
-              {numF('Eigenkapital', 'equity', '€', '1000')}
-              {numF('Zinssatz', 'interestPct', '%', '0.1')}
+              {seg(t('rechnerWizard.financingLabel', 'Finanzierung'), 'fin', [['yes', t('rechnerWizard.financingCredit', 'Kredit')], ['no', t('rechnerWizard.financingCash', 'Barkauf')]])}
+              {numF(t('rechnerWizard.equityLabel', 'Eigenkapital'), 'equity', '€', '1000')}
+              {numF(t('rechnerWizard.interestRateLabel', 'Zinssatz'), 'interestPct', '%', '0.1')}
             </div>
             {p.fin === 'yes' && (
               <div className="grid sm:grid-cols-3 gap-3 mt-3">
-                {numF('Laufzeit', 'termYears', 'Jahre')}
-                {seg('Tilgung', 'mode', [['ann', 'Annuität'], ['tilg', 'Fix %']])}
-                {p.mode === 'tilg' && numF('Tilgungssatz', 'amortPct', '%', '0.1')}
+                {numF(t('rechnerWizard.termLabel', 'Laufzeit'), 'termYears', t('rechnerWizard.yearsSuffix', 'Jahre'))}
+                {seg(t('rechnerWizard.amortizationLabel', 'Tilgung'), 'mode', [['ann', t('rechnerWizard.amortizationAnnuity', 'Annuität')], ['tilg', t('rechnerWizard.amortizationFixedPct', 'Fix %')]])}
+                {p.mode === 'tilg' && numF(t('rechnerWizard.amortizationRateLabel', 'Tilgungssatz'), 'amortPct', '%', '0.1')}
               </div>
             )}
           </div>
 
           {/* ── Vermietung & Steuer ── */}
           <div>
-            <SectionLabel>Vermietung & Steuer</SectionLabel>
+            <SectionLabel>{t('rechnerWizard.rentalTaxSection', 'Vermietung & Steuer')}</SectionLabel>
             <div className="grid sm:grid-cols-3 gap-3">
-              {seg('Vermietung', 'letType', [['short', 'Kurzzeit'], ['long', 'Langzeit']])}
-              {seg('Steuersitz', 'res', [['de', 'Deutschland'], ['cy', 'Zypern']])}
-              {p.res === 'de' ? numF('DE-Grenzsteuer', 'deTaxPct', '%') : numF('CY Bestandseinkommen', 'cyBI', '€', '500')}
+              {seg(t('rechnerWizard.rentalLabel', 'Vermietung'), 'letType', [['short', t('rechnerWizard.rentalShortTerm', 'Kurzzeit')], ['long', t('rechnerWizard.rentalLongTerm', 'Langzeit')]])}
+              {seg(t('rechnerWizard.taxResidenceLabel', 'Steuersitz'), 'res', [['de', t('rechnerWizard.taxResidenceDe', 'Deutschland')], ['cy', t('rechnerWizard.taxResidenceCy', 'Zypern')]])}
+              {p.res === 'de' ? numF(t('rechnerWizard.deMarginalTaxLabel', 'DE-Grenzsteuer'), 'deTaxPct', '%') : numF(t('rechnerWizard.cyExistingIncomeLabel', 'CY Bestandseinkommen'), 'cyBI', '€', '500')}
             </div>
             <div className="grid sm:grid-cols-4 gap-3 mt-3">
-              {numF('Bruttorendite', 'yieldPct', '%', '0.1')}
-              {numF('Mietsteigerung', 'rentGrowth', '%', '0.1')}
-              {numF(p.letType === 'short' ? 'Ferienverwaltung' : 'Verwaltung', 'mgmtPct', '%', '0.5')}
-              {numF('Wertsteigerung', 'appreciationPct', '%', '0.1')}
+              {numF(t('rechnerWizard.grossYieldLabel', 'Bruttorendite'), 'yieldPct', '%', '0.1')}
+              {numF(t('rechnerWizard.rentGrowthLabel', 'Mietsteigerung'), 'rentGrowth', '%', '0.1')}
+              {numF(p.letType === 'short' ? t('rechnerWizard.holidayManagementLabel', 'Ferienverwaltung') : t('rechnerWizard.managementLabel', 'Verwaltung'), 'mgmtPct', '%', '0.5')}
+              {numF(t('rechnerWizard.appreciationLabel', 'Wertsteigerung'), 'appreciationPct', '%', '0.1')}
             </div>
-            {p.letType === 'short' && <div className="mt-3">{toggle('🏨 Hotelkonzept', 'hotelConcept', 'Verwaltung übernimmt kompletten Hotelservice')}</div>}
+            {p.letType === 'short' && <div className="mt-3">{toggle(`🏨 ${t('rechnerWizard.hotelConceptLabel', 'Hotelkonzept')}`, 'hotelConcept', t('rechnerWizard.hotelConceptHint', 'Verwaltung übernimmt kompletten Hotelservice'))}</div>}
           </div>
 
           {/* ── Sondertilgung (erweitert) ── */}
           <div>
             <button onClick={() => setShowAdvanced(s => !s)} className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400 hover:text-gray-600">
-              {showAdvanced ? '▾' : '▸'} Sondertilgung & MwSt-Erstattung
+              {showAdvanced ? '▾' : '▸'} {t('rechnerWizard.specialAmortizationSection', 'Sondertilgung & MwSt-Erstattung')}
             </button>
             {showAdvanced && (
               <div className="mt-3 space-y-3">
                 <button onClick={applyVatPrepay} className="text-xs font-medium px-3 py-1.5 rounded-xl border border-green-300 text-green-700 hover:bg-green-50">
-                  💰 USt.-Erstattung als Sondertilgung einsetzen
+                  💰 {t('rechnerWizard.applyVatPrepayButton', 'USt.-Erstattung als Sondertilgung einsetzen')}
                 </button>
                 <div className="grid grid-cols-5 sm:grid-cols-10 gap-1.5">
                   {p.ppVals.map((v, i) => (
                     <div key={i}>
-                      <span className="block text-[10px] text-gray-400 text-center">J{i + 1}</span>
+                      <span className="block text-[10px] text-gray-400 text-center">{t('rechnerWizard.yearAbbrev', 'J{{num}}', { num: i + 1 })}</span>
                       <input type="text" inputMode="decimal" value={v || ''} placeholder="0"
                         onChange={e => { const pp = [...p.ppVals]; pp[i] = num(e.target.value); set('ppVals', pp) }}
                         className="w-full border border-gray-200 rounded-lg px-1 py-1.5 text-xs text-center focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100" />
                     </div>
                   ))}
                 </div>
-                <p className="text-[11px] text-gray-400">Sondertilgungen je Jahr (€) senken die Restschuld und erhöhen das Eigenkapital. Bei Kurzzeit-Vermietung kann die einmalige USt.-Erstattung automatisch als Sondertilgung eingesetzt werden.</p>
+                <p className="text-[11px] text-gray-400">{t('rechnerWizard.specialAmortizationHint', 'Sondertilgungen je Jahr (€) senken die Restschuld und erhöhen das Eigenkapital. Bei Kurzzeit-Vermietung kann die einmalige USt.-Erstattung automatisch als Sondertilgung eingesetzt werden.')}</p>
               </div>
             )}
           </div>
@@ -319,12 +323,12 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
         </div>
 
         <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100 sticky bottom-0 bg-white rounded-b-2xl">
-          <p className="text-xs text-gray-400">{editCalc ? 'Werte ändern → Speichern aktualisiert dieselbe Berechnung.' : basket.length > 1 ? 'Mehrere Wohnungen → Vergleich.' : 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.'}</p>
+          <p className="text-xs text-gray-400">{editCalc ? t('rechnerWizard.editHint', 'Werte ändern → Speichern aktualisiert dieselbe Berechnung.') : basket.length > 1 ? t('rechnerWizard.multipleUnitsHint', 'Mehrere Wohnungen → Vergleich.') : t('rechnerWizard.autoPriceHint', 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.')}</p>
           <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">Abbrechen</button>
+            <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('rechnerWizard.cancelButton', 'Abbrechen')}</button>
             <button onClick={() => void generate()} disabled={busy || (!editCalc && p.dealType === 'single' && !basket.length)}
               className="px-5 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-              {busy ? (editCalc ? 'Speichert…' : 'Erstellt…') : editCalc ? 'Speichern' : basket.length > 1 ? 'Vergleich erstellen' : 'Rechnung erstellen'}
+              {busy ? (editCalc ? t('rechnerWizard.savingButton', 'Speichert…') : t('rechnerWizard.creatingButton', 'Erstellt…')) : editCalc ? t('rechnerWizard.saveButton', 'Speichern') : basket.length > 1 ? t('rechnerWizard.createComparisonButton', 'Vergleich erstellen') : t('rechnerWizard.createInvoiceButton', 'Rechnung erstellen')}
             </button>
           </div>
         </div>

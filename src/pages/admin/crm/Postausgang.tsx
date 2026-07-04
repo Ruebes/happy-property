@@ -120,7 +120,7 @@ export default function Postausgang() {
   const openCalcEdit = async (token: string, row: OutboxRow) => {
     const { data } = await supabase.from('property_calculations').select('content').eq('token', token).single()
     const content = (data as { content?: { items: CalcItem[]; recipient_name?: string } } | null)?.content
-    if (!content?.items?.length) { flash('❌ Berechnung konnte nicht geladen werden'); return }
+    if (!content?.items?.length) { flash('❌ ' + t('postausgang.calcLoadFail', 'Berechnung konnte nicht geladen werden')); return }
     setEditCalc({ token, content, lead: { id: row.lead_id ?? '', first_name: row.lead?.first_name ?? '', last_name: row.lead?.last_name ?? '' } })
   }
 
@@ -281,7 +281,7 @@ export default function Postausgang() {
                 <button onClick={() => setOpenId(openId === r.id ? null : r.id)} className="flex-1 text-left min-w-0">
                   <p className="text-sm font-semibold text-gray-900 truncate">{r.subject ?? '—'}</p>
                   <p className="text-xs text-gray-500 truncate">
-                    {r.lead ? `${r.lead.first_name} ${r.lead.last_name}` : '—'} · {(r.lead?.email ?? r.recipient_email) ?? t('crm.outbox.noEmailShort', 'keine E-Mail')}{r.lead?.email && r.recipient_email && r.lead.email !== r.recipient_email && <span className="text-orange-500"> (aktualisiert)</span>} · {r.deck_tokens?.length ?? 0} {t('crm.outbox.decks', 'Decks')}
+                    {r.lead ? `${r.lead.first_name} ${r.lead.last_name}` : '—'} · {(r.lead?.email ?? r.recipient_email) ?? t('crm.outbox.noEmailShort', 'keine E-Mail')}{r.lead?.email && r.recipient_email && r.lead.email !== r.recipient_email && <span className="text-orange-500"> ({t('postausgang.updated', 'aktualisiert')})</span>} · {r.deck_tokens?.length ?? 0} {t('crm.outbox.decks', 'Decks')}
                   </p>
                 </button>
                 {r.status !== 'cancelled' && (
@@ -332,7 +332,7 @@ export default function Postausgang() {
                   <span className="text-xs text-gray-500 shrink-0">📧 {t('crm.outbox.emailLabel', 'Empfänger-E-Mail')}:</span>
                   <input value={emailDraft} onChange={e => setEmailDraft(e.target.value)} type="email" autoFocus
                     onKeyDown={e => { if (e.key === 'Enter') void saveEmail(r); if (e.key === 'Escape') setEditEmailId(null) }}
-                    placeholder="name@beispiel.de"
+                    placeholder={t('postausgang.emailPlaceholder', 'name@beispiel.de')}
                     className="flex-1 min-w-[200px] text-sm border border-gray-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-300" />
                   <button onClick={() => void saveEmail(r)} disabled={busyId === r.id}
                     className="text-xs font-medium text-white rounded-lg px-3 py-1.5 disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
@@ -356,22 +356,22 @@ export default function Postausgang() {
                         return (
                           <span key={tok} className="inline-flex items-center rounded-lg overflow-hidden ring-1 ring-black/5">
                             <a href={`${origin}/deck/${tok}?preview=1`} target="_blank" rel="noreferrer"
-                              title={approved ? 'Als fertig bestätigt' : rev > 0 ? `Version ${rev}` : 'Deck öffnen'}
+                              title={approved ? t('postausgang.deckApprovedTitle', 'Als fertig bestätigt') : rev > 0 ? t('postausgang.deckVersionTitle', 'Version {{rev}}', { rev }) : t('postausgang.deckOpenTitle', 'Deck öffnen')}
                               className="text-xs font-medium px-2.5 py-1 text-white" style={{ backgroundColor: deckColor(rev, approved) }}>
-                              {approved ? '✓ ' : '🔗 '}Deck {i + 1}{rev > 0 && !approved ? ` ·v${rev}` : ''}
+                              {approved ? '✓ ' : '🔗 '}{t('postausgang.deckLabel', 'Deck {{n}}', { n: i + 1 })}{rev > 0 && !approved ? ` ·v${rev}` : ''}
                             </a>
                             {refining ? (
-                              <span className="px-1.5 py-1 bg-gray-200 flex items-center" title="Wird im Hintergrund bearbeitet…">
+                              <span className="px-1.5 py-1 bg-gray-200 flex items-center" title={t('postausgang.refiningTitle', 'Wird im Hintergrund bearbeitet…')}>
                                 <span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
                               </span>
                             ) : (
-                              <button onClick={() => setChat({ token: tok, label: `Deck ${i + 1}` })} title="Deck per Chat anpassen (läuft im Hintergrund)"
+                              <button onClick={() => setChat({ token: tok, label: t('postausgang.deckLabel', 'Deck {{n}}', { n: i + 1 }) })} title={t('postausgang.deckChatTitle', 'Deck per Chat anpassen (läuft im Hintergrund)')}
                                 className="text-xs px-1.5 py-1 bg-gray-700 text-white hover:bg-orange-500">✏️</button>
                             )}
                             {err && !refining && (
-                              <span className="px-1 py-1 bg-red-100 text-red-600 text-xs" title={`Bearbeitung fehlgeschlagen: ${err}`}>⚠</span>
+                              <span className="px-1 py-1 bg-red-100 text-red-600 text-xs" title={t('postausgang.refineFailedTitle', 'Bearbeitung fehlgeschlagen: {{err}}', { err })}>⚠</span>
                             )}
-                            <button onClick={() => void toggleDeckApprove(tok)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
+                            <button onClick={() => void toggleDeckApprove(tok)} title={approved ? t('postausgang.unapprove', 'Bestätigung aufheben') : t('postausgang.approve', 'Als fertig bestätigen')}
                               className={`text-xs px-1.5 py-1 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
                           </span>
                         )
@@ -389,11 +389,11 @@ export default function Postausgang() {
                           const approved = !!c.approved_at
                           return (
                             <div key={c.id} className="flex items-center gap-2">
-                              <span className="flex-1 truncate text-xs text-gray-700">📊 {c.title ?? 'Berechnung'}{approved && <span className="ml-1 text-green-600 font-medium">· ✓ fertig</span>}</span>
+                              <span className="flex-1 truncate text-xs text-gray-700">📊 {c.title ?? t('postausgang.calcFallbackTitle', 'Berechnung')}{approved && <span className="ml-1 text-green-600 font-medium">· ✓ {t('postausgang.done', 'fertig')}</span>}</span>
                               <a href={`${origin}/rechnung/${c.token}?preview=1`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>{t('crm.outbox.view', 'Ansehen')}</a>
                               <button onClick={() => void openCalcEdit(c.token, r)} title={t('crm.outbox.editCalc', 'Werte bearbeiten')}
                                 className="text-[11px] px-1.5 py-0.5 rounded shrink-0 bg-gray-100 text-gray-500 hover:bg-orange-100 hover:text-orange-700">✏️</button>
-                              <button onClick={() => void toggleCalcApprove(c)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
+                              <button onClick={() => void toggleCalcApprove(c)} title={approved ? t('postausgang.unapprove', 'Bestätigung aufheben') : t('postausgang.approve', 'Als fertig bestätigen')}
                                 className={`text-[11px] px-1.5 py-0.5 rounded shrink-0 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
                             </div>
                           )

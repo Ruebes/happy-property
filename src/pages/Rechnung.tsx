@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { compute, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
 import { DECK_LOGO } from '../lib/deckTypes'
@@ -43,6 +44,7 @@ function useIsMobile(): boolean {
 }
 
 export default function Rechnung() {
+  const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [content, setContent] = useState<CalcContent | null>(null)
   const [meta, setMeta] = useState<{ recipient_name?: string; title?: string; with_calc?: boolean } | null>(null)
@@ -54,7 +56,7 @@ export default function Rechnung() {
     if (!token) return
     const { data, error } = await supabase.rpc('get_calculation_by_token', { p_token: token })
     const row = Array.isArray(data) ? data[0] : data
-    if (error || !row) { setErr('Diese Rechnung wurde nicht gefunden.'); setLoading(false); return }
+    if (error || !row) { setErr(t('rechnung.notFound', 'Diese Rechnung wurde nicht gefunden.')); setLoading(false); return }
     setContent(row.content as CalcContent)
     setMeta({ recipient_name: row.recipient_name, title: row.title, with_calc: row.with_calc })
     setLoading(false)
@@ -80,8 +82,8 @@ export default function Rechnung() {
     }))
   }, [content])
 
-  if (loading) return <Centered>Lädt…</Centered>
-  if (err || !content) return <Centered>{err || 'Nicht gefunden.'}</Centered>
+  if (loading) return <Centered>{t('rechnung.loading', 'Lädt…')}</Centered>
+  if (err || !content) return <Centered>{err || t('rechnung.genericNotFound', 'Nicht gefunden.')}</Centered>
 
   const name = meta?.recipient_name || content.recipient_name || ''
   const withCalc = (meta?.with_calc ?? content.with_calc) && rows.some(r => r.res)
@@ -97,12 +99,12 @@ export default function Rechnung() {
           <img src={DECK_LOGO} alt="Happy Property Cyprus" style={{ height: isMobile ? 38 : 46, width: 'auto', borderRadius: 8, flexShrink: 0 }} />
           <div>
             <div style={{ fontFamily: SERIF, fontSize: isMobile ? 20 : 26, fontWeight: 800, color: DARK, lineHeight: 1.15 }}>
-              {isCompare ? 'Immobilienvergleich' : 'Rendite & Cashflow – Übersicht'}
+              {isCompare ? t('rechnung.titleCompare', 'Immobilienvergleich') : t('rechnung.titleSingle', 'Rendite & Cashflow – Übersicht')}
             </div>
             <div style={{ fontSize: 12.5, color: '#666', marginTop: 2 }}>
-              {name && <>Kunde: <b>{name}</b></>}{name && projLabel ? ' · ' : ''}{projLabel && <>Projekt: <b>{projLabel}</b></>}
+              {name && <>{t('rechnung.customerLabel', 'Kunde')}: <b>{name}</b></>}{name && projLabel ? ' · ' : ''}{projLabel && <>{t('rechnung.projectLabel', 'Projekt')}: <b>{projLabel}</b></>}
             </div>
-            <div style={{ fontSize: 11, color: '#aaa' }}>Generiert am {today}</div>
+            <div style={{ fontSize: 11, color: '#aaa' }}>{t('rechnung.generatedOn', 'Generiert am {{date}}', { date: today })}</div>
           </div>
         </div>
         <div style={{ height: 3, background: `linear-gradient(90deg,${CORAL},#ffb89d)`, borderRadius: 2, marginBottom: 22 }} />
@@ -126,7 +128,7 @@ export default function Rechnung() {
         {!withCalc && <SpecsCard rows={rows} />}
 
         <p style={{ fontSize: 10.5, color: '#aaa', marginTop: 36, lineHeight: 1.6 }}>
-          <b>Haftungsausschluss:</b> Unverbindliche Information, keine steuerliche/rechtliche/finanzielle Beratung. Alle Angaben ohne Gewähr. IRR = interne Kapitalrendite auf das eingesetzte Eigenkapital (jährlich). Stand: {today}.
+          <b>{t('rechnung.disclaimerLabel', 'Haftungsausschluss')}:</b> {t('rechnung.disclaimerText', 'Unverbindliche Information, keine steuerliche/rechtliche/finanzielle Beratung. Alle Angaben ohne Gewähr. IRR = interne Kapitalrendite auf das eingesetzte Eigenkapital (jährlich). Stand: {{date}}.', { date: today })}
         </p>
       </div>
     </div>
@@ -160,6 +162,7 @@ function KV({ k, v, color, strong }: { k: ReactNode; v: ReactNode; color?: strin
 
 // ── Detaillierte Einzel-Auswertung (8 Abschnitte, exakt nach Original) ────────
 function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean }) {
+  const { t } = useTranslation()
   const r = row.res!
   const p = row.item.params!
   const yl = (i: number) => i === 0 ? `${r.yN[0]} (${r.mF} Mon.)` : String(r.yN[i])
@@ -177,77 +180,77 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
       {/* 1. Übersicht: Investitionsdaten + Summen & Kennzahlen */}
       <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16 }}>
         <Card>
-          <H2>Investitionsdaten</H2>
+          <H2>{t('rechnung.investmentDataTitle', 'Investitionsdaten')}</H2>
           {p.discountPct > 0 ? (<>
-            <KV k="Listenpreis netto" v={eur(r.pNetList)} />
-            <KV k={`Rabatt ${pct(r.discountPct)}`} v={`−${eur(r.discountAmt)}`} color={GREEN} />
-            <KV k="Kaufpreis netto (nach Rabatt)" v={eur(r.pNet)} />
-          </>) : <KV k="Kaufpreis netto" v={eur(r.pNet)} />}
-          <KV k="Umsatzsteuer (19%)" v={eur(r.vatAmt)} />
-          <KV k="Kaufpreis brutto" v={eur(r.pGross)} />
+            <KV k={t('rechnung.listPriceNet', 'Listenpreis netto')} v={eur(r.pNetList)} />
+            <KV k={t('rechnung.discountPct', 'Rabatt {{pct}}', { pct: pct(r.discountPct) })} v={`−${eur(r.discountAmt)}`} color={GREEN} />
+            <KV k={t('rechnung.purchasePriceNetAfterDiscount', 'Kaufpreis netto (nach Rabatt)')} v={eur(r.pNet)} />
+          </>) : <KV k={t('rechnung.purchasePriceNet', 'Kaufpreis netto')} v={eur(r.pNet)} />}
+          <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+          <KV k={t('rechnung.purchasePriceGross', 'Kaufpreis brutto')} v={eur(r.pGross)} />
           {/* Transparente Gesamtkosten: Kaufpreis + Einrichtung extra = Gesamtpreis.
               Bei inkludierter Einrichtung (z.B. Infinity) „inklusive", sonst Aufschlag
               (z.B. Emerald Park +19.000 netto). furnForIRR = furnFree ? 0 : furnCost. */}
-          {(r.furnFree || r.furnCost > 0) && <KV k={r.furnFree ? 'Einrichtung' : 'Einrichtung (netto)'} v={r.furnFree ? 'inklusive' : `+ ${eur(r.furnCost)}`} color={r.furnFree ? GREEN : CORAL} />}
-          {(r.furnFree || r.furnCost > 0) && <KV k="Gesamtpreis" v={eur(r.pGross + r.furnForIRR)} strong />}
-          <KV k="Anwaltskosten (1%)" v={eur(r.costs)} />
-          <KV k="Eigenkapital (Start)" v={eur(r.ekStart)} />
-          <KV k="Fremdfinanzierung" v={eur(r.loan)} />
-          <KV k="Schlafzimmer" v={String(r.bedrooms)} />
+          {(r.furnFree || r.furnCost > 0) && <KV k={r.furnFree ? t('rechnung.furnishing', 'Einrichtung') : t('rechnung.furnishingNet', 'Einrichtung (netto)')} v={r.furnFree ? t('rechnung.included', 'inklusive') : `+ ${eur(r.furnCost)}`} color={r.furnFree ? GREEN : CORAL} />}
+          {(r.furnFree || r.furnCost > 0) && <KV k={t('rechnung.totalPrice', 'Gesamtpreis')} v={eur(r.pGross + r.furnForIRR)} strong />}
+          <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
+          <KV k={t('rechnung.equityStart', 'Eigenkapital (Start)')} v={eur(r.ekStart)} />
+          <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
+          <KV k={t('rechnung.bedrooms', 'Schlafzimmer')} v={String(r.bedrooms)} />
         </Card>
         <Card>
-          <H2>Summen & Kennzahlen (10 Jahre)</H2>
-          <KV k="Bruttomiete gesamt" v={eur(r.sumR)} color={CORAL} />
-          <KV k="Kosten gesamt" v={eur(r.sumC)} />
-          <KV k="Steuern gesamt" v={eur(r.sumT)} />
-          <KV k="Ertrag nach Steuern" v={eur(r.sumCF)} />
-          <KV k="Immobilienwert J10" v={eur(r.propV[9])} color={CORAL} />
-          <KV k="EK Ende J10" v={eur(r.ek10)} color={GREEN} />
-          <KV k="Gesamtertrag" v={eur(r.totRet)} color={GREEN} />
-          <KV k="EK-Rendite kum. (10J)" v={pct(r.roe10)} color={CORAL} />
-          <KV k="EK-IRR (jährlich)" v={pct(r.irrV * 100, 2)} color={CORAL} />
+          <H2>{t('rechnung.totalsMetricsTitle', 'Summen & Kennzahlen (10 Jahre)')}</H2>
+          <KV k={t('rechnung.totalGrossRent', 'Bruttomiete gesamt')} v={eur(r.sumR)} color={CORAL} />
+          <KV k={t('rechnung.totalCosts', 'Kosten gesamt')} v={eur(r.sumC)} />
+          <KV k={t('rechnung.totalTaxes', 'Steuern gesamt')} v={eur(r.sumT)} />
+          <KV k={t('rechnung.afterTaxIncome', 'Ertrag nach Steuern')} v={eur(r.sumCF)} />
+          <KV k={t('rechnung.propertyValueY10', 'Immobilienwert J10')} v={eur(r.propV[9])} color={CORAL} />
+          <KV k={t('rechnung.equityEndY10', 'EK Ende J10')} v={eur(r.ek10)} color={GREEN} />
+          <KV k={t('rechnung.totalReturn', 'Gesamtertrag')} v={eur(r.totRet)} color={GREEN} />
+          <KV k={t('rechnung.equityReturnCum10y', 'EK-Rendite kum. (10J)')} v={pct(r.roe10)} color={CORAL} />
+          <KV k={t('rechnung.equityIrrAnnual', 'EK-IRR (jährlich)')} v={pct(r.irrV * 100, 2)} color={CORAL} />
         </Card>
       </div>
 
       {/* 2. Annahmen & Parameter */}
       <Card style={{ marginTop: 18 }}>
-        <H2>Annahmen & Parameter</H2>
+        <H2>{t('rechnung.assumptionsParamsTitle', 'Annahmen & Parameter')}</H2>
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: '0 26px' }}>
           <div>
-            <KV k="Finanzierung" v={r.fin === 'yes' ? 'finanziert' : 'Barkauf'} />
-            <KV k="Steuersitz" v={r.resCY ? 'Zypern' : 'Deutschland'} />
-            <KV k="Kaufpreis brutto" v={eur(r.pGross)} />
-            <KV k="Eigenkapital (Start)" v={eur(r.ekStart)} />
-            <KV k="Schlafzimmer" v={String(r.bedrooms)} />
-            <KV k="Bruttorendite J1" v={pct(r.yPct) + (r.discountPct > 0 ? ` → ${pct(r.effYield)}` : '')} />
-            <KV k={r.letT === 'short' ? 'Ferienverwaltung & Buchungsprovision' : 'Laufende Kosten'}
-              v={`${pct(r.mgP)} (+2% p.a.)${r.letT === 'short' && r.hotelConcept ? ' · 🏨 Hotelkonzept' : ''}`} />
-            <KV k="Laufzeit Kredit" v={`${r.termY} Jahre`} />
-            <KV k="AfA (DE)" v="5% degr. auf 80% brutto" />
+            <KV k={t('rechnung.financingLabel', 'Finanzierung')} v={r.fin === 'yes' ? t('rechnung.financed', 'finanziert') : t('rechnung.cashPurchase', 'Barkauf')} />
+            <KV k={t('rechnung.taxResidence', 'Steuersitz')} v={r.resCY ? t('rechnung.cyprus', 'Zypern') : t('rechnung.germany', 'Deutschland')} />
+            <KV k={t('rechnung.purchasePriceGross', 'Kaufpreis brutto')} v={eur(r.pGross)} />
+            <KV k={t('rechnung.equityStart', 'Eigenkapital (Start)')} v={eur(r.ekStart)} />
+            <KV k={t('rechnung.bedrooms', 'Schlafzimmer')} v={String(r.bedrooms)} />
+            <KV k={t('rechnung.grossYieldY1', 'Bruttorendite J1')} v={pct(r.yPct) + (r.discountPct > 0 ? ` → ${pct(r.effYield)}` : '')} />
+            <KV k={r.letT === 'short' ? t('rechnung.holidayMgmtCommission', 'Ferienverwaltung & Buchungsprovision') : t('rechnung.ongoingCosts', 'Laufende Kosten')}
+              v={t('rechnung.pctPlusAnnual', '{{pct}} (+2% p.a.){{hotel}}', { pct: pct(r.mgP), hotel: r.letT === 'short' && r.hotelConcept ? ` · 🏨 ${t('rechnung.hotelConceptShort', 'Hotelkonzept')}` : '' })} />
+            <KV k={t('rechnung.loanTerm', 'Laufzeit Kredit')} v={t('rechnung.years', '{{n}} Jahre', { n: r.termY })} />
+            <KV k={t('rechnung.depreciationDE', 'AfA (DE)')} v={t('rechnung.depreciationDEValue', '5% degr. auf 80% brutto')} />
           </div>
           <div>
-            <KV k="Vermietungsart" v={r.letT === 'short' ? 'Kurzzeit (USt.-Erstattung ~24 Mon.)' : 'Langzeit'} />
-            <KV k="Schlüsselübergabe" v={`${String(r.km).padStart(2, '0')}/${r.ky} – J1: ${r.mF} Mon.`} />
-            <KV k="Umsatzsteuer (19%)" v={eur(r.vatAmt)} />
-            <KV k="Anwaltskosten (1%)" v={eur(r.costs)} />
-            <KV k="Fremdfinanzierung" v={eur(r.loan)} />
-            <KV k="Mietsteigerung p.a." v={pct(r.rG)} />
-            <KV k="Zinssatz" v={pct(r.iP)} />
-            <KV k="Wertsteigerung p.a." v={pct(r.appP)} />
-            <KV k="AfA (CY)" v="3% lin. auf 80% brutto" />
+            <KV k={t('rechnung.letType', 'Vermietungsart')} v={r.letT === 'short' ? t('rechnung.shortTermVatRefund', 'Kurzzeit (USt.-Erstattung ~24 Mon.)') : t('rechnung.longTerm', 'Langzeit')} />
+            <KV k={t('rechnung.handover', 'Schlüsselübergabe')} v={`${String(r.km).padStart(2, '0')}/${r.ky} – ${t('rechnung.y1MonthsShort', 'J1: {{n}} Mon.', { n: r.mF })}`} />
+            <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+            <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
+            <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
+            <KV k={t('rechnung.rentGrowthAnnual', 'Mietsteigerung p.a.')} v={pct(r.rG)} />
+            <KV k={t('rechnung.interestRate', 'Zinssatz')} v={pct(r.iP)} />
+            <KV k={t('rechnung.appreciationAnnual', 'Wertsteigerung p.a.')} v={pct(r.appP)} />
+            <KV k={t('rechnung.depreciationCY', 'AfA (CY)')} v={t('rechnung.depreciationCYValue', '3% lin. auf 80% brutto')} />
           </div>
         </div>
       </Card>
 
       {/* 3. Tabelle A – Cashflow */}
-      <H2Section>Tabelle A – Cashflow (10 Jahre)</H2Section>
+      <H2Section>{t('rechnung.tableACashflow', 'Tabelle A – Cashflow (10 Jahre)')}</H2Section>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
             <thead><tr>
-              <th style={{ ...th, textAlign: 'left' }}>Jahr</th><th style={th}>Bruttomiete</th>
-              <th style={th}>{r.letT === 'short' ? 'Ferienverw.' : 'Laufend'}</th><th style={th}>Zinsen</th>
-              <th style={th}>Tilgung</th><th style={th}>Kreditrate</th><th style={th}>USt.-Erst.</th><th style={th}>Steuer</th><th style={th}>CF netto</th>
+              <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th><th style={th}>{t('rechnung.grossRentCol', 'Bruttomiete')}</th>
+              <th style={th}>{r.letT === 'short' ? t('rechnung.holidayMgmtCol', 'Ferienverw.') : t('rechnung.ongoingCol', 'Laufend')}</th><th style={th}>{t('rechnung.interestCol', 'Zinsen')}</th>
+              <th style={th}>{t('rechnung.repaymentCol', 'Tilgung')}</th><th style={th}>{t('rechnung.loanRateCol', 'Kreditrate')}</th><th style={th}>{t('rechnung.vatRefundCol', 'USt.-Erst.')}</th><th style={th}>{t('rechnung.taxCol', 'Steuer')}</th><th style={th}>{t('rechnung.netCfCol', 'CF netto')}</th>
             </tr></thead>
             <tbody>
               {r.yN.map((_, i) => {
@@ -268,23 +271,23 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           </table>
         </div>
       </Card>
-      {r.letT === 'short' && r.hotelConcept && <Note>🏨 <b>Hotelkonzept:</b> Verwaltung übernimmt komplettes Hotelservice inkl. Reinigung, Check-in, Marketing & 24/7 Gästebetreuung.</Note>}
-      <Note>Der Cashflow zeigt die tatsächlichen Einnahmen nach allen Kosten, Kreditraten und Steuern. Positive Werte bedeuten Überschuss aus der Immobilie. Die einmalige USt.-Erstattung ist separat ausgewiesen.</Note>
+      {r.letT === 'short' && r.hotelConcept && <Note>🏨 <b>{t('rechnung.hotelConceptLabel', 'Hotelkonzept')}:</b> {t('rechnung.hotelConceptNote', 'Verwaltung übernimmt komplettes Hotelservice inkl. Reinigung, Check-in, Marketing & 24/7 Gästebetreuung.')}</Note>}
+      <Note>{t('rechnung.cashflowNote', 'Der Cashflow zeigt die tatsächlichen Einnahmen nach allen Kosten, Kreditraten und Steuern. Positive Werte bedeuten Überschuss aus der Immobilie. Die einmalige USt.-Erstattung ist separat ausgewiesen.')}</Note>
 
       {/* 4. Tabelle B – Darlehen / EK / Werte */}
-      <H2Section>Tabelle B – Darlehen / EK / Werte (10 Jahre)</H2Section>
+      <H2Section>{t('rechnung.tableBLoanEquity', 'Tabelle B – Darlehen / EK / Werte (10 Jahre)')}</H2Section>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
             <thead><tr>
-              <th style={{ ...th, textAlign: 'left' }}>Jahr</th><th style={th}>Tilgung</th><th style={th}>Sondertilg.</th>
-              <th style={th}>Restschuld</th><th style={th}>Immobilienwert</th><th style={th}>Eigenkapital</th>
+              <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th><th style={th}>{t('rechnung.repaymentCol', 'Tilgung')}</th><th style={th}>{t('rechnung.specialRepaymentCol', 'Sondertilg.')}</th>
+              <th style={th}>{t('rechnung.remainingDebtCol', 'Restschuld')}</th><th style={th}>{t('rechnung.propertyValueCol', 'Immobilienwert')}</th><th style={th}>{t('rechnung.equityCol', 'Eigenkapital')}</th>
             </tr></thead>
             <tbody>
               {r.yN.map((_, j) => (
                 <tr key={j} style={{ background: j % 2 ? '#fafaf8' : '#fff' }}>
                   <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{yl(j)}</td>
-                  <td style={td}>{eur(r.princC[j])}</td><td style={td}>{r.prepayC[j] > 0 ? eur(r.prepayC[j]) : '0 €'}</td>
+                  <td style={td}>{eur(r.princC[j])}</td><td style={td}>{r.prepayC[j] > 0 ? eur(r.prepayC[j]) : t('rechnung.zeroEuro', '0 €')}</td>
                   <td style={td}>{eur(r.restL[j])}</td>
                   <td style={{ ...td, color: CORAL, fontWeight: 700 }}>{eur(r.propV[j])}</td>
                   <td style={{ ...td, color: GREEN, fontWeight: 700 }}>{eur(ekYear[j])}</td>
@@ -294,30 +297,30 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           </table>
         </div>
       </Card>
-      <Note>Das Eigenkapital ergibt sich aus Immobilienwert minus Restschuld. Durch Wertsteigerung und Tilgung wächst das EK erheblich über die Zeit.</Note>
+      <Note>{t('rechnung.equityNote', 'Das Eigenkapital ergibt sich aus Immobilienwert minus Restschuld. Durch Wertsteigerung und Tilgung wächst das EK erheblich über die Zeit.')}</Note>
 
       {/* 5. Chart EK-Entwicklung */}
-      <H2Section>Entwicklung des Eigenkapitals (Wert − Restschuld)</H2Section>
+      <H2Section>{t('rechnung.equityDevelopmentTitle', 'Entwicklung des Eigenkapitals (Wert − Restschuld)')}</H2Section>
       <Card><BarChart labels={r.yN} series={[{ data: ekYear, color: BLUE }]} /></Card>
-      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>Nach 10 Jahren beträgt das Eigenkapital: <b>{eur(r.ek10)}</b> (Wert {eur(r.propV[9])} − Restschuld {eur(r.restL[9])})</div>
+      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>{t('rechnung.equityAfter10y', 'Nach 10 Jahren beträgt das Eigenkapital')}: <b>{eur(r.ek10)}</b> ({t('rechnung.valueMinusDebt', 'Wert {{value}} − Restschuld {{debt}}', { value: eur(r.propV[9]), debt: eur(r.restL[9]) })})</div>
 
       {/* 6. Chart Mieteinnahmen & Gesamtkapital */}
-      <H2Section>Mieteinnahmen & Gesamtkapital (10 Jahre)</H2Section>
+      <H2Section>{t('rechnung.rentIncomeCapitalTitle', 'Mieteinnahmen & Gesamtkapital (10 Jahre)')}</H2Section>
       <Card>
-        <Legend items={[['Jahresmiete', RENTG], ['Kumulierte Miete', BLUE], ['Gesamtkapital', PURPLE]]} />
+        <Legend items={[[t('rechnung.annualRent', 'Jahresmiete'), RENTG], [t('rechnung.cumulativeRent', 'Kumulierte Miete'), BLUE], [t('rechnung.totalCapital', 'Gesamtkapital'), PURPLE]]} />
         <BarChart labels={r.yN} series={[{ data: r.rents, color: RENTG }, { data: cumRent, color: BLUE }, { data: gesamtkap, color: PURPLE }]} />
       </Card>
-      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>Kumulierte Miete über 10 Jahre: <b>{eur(cumRent[9])}</b> · Gesamtkapital Ende J10: <b>{eur(r.ek10 + cumRent[9])}</b></div>
+      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>{t('rechnung.cumulativeRent10y', 'Kumulierte Miete über 10 Jahre')}: <b>{eur(cumRent[9])}</b> · {t('rechnung.totalCapitalEndY10', 'Gesamtkapital Ende J10')}: <b>{eur(r.ek10 + cumRent[9])}</b></div>
 
       {/* 7. Chart Mietrendite % */}
-      <H2Section>Mietrendite (%) – Basis: Nettokaufpreis</H2Section>
+      <H2Section>{t('rechnung.rentYieldTitle', 'Mietrendite (%) – Basis: Nettokaufpreis')}</H2Section>
       <Card><BarChart labels={r.yN} series={[{ data: mietrend, color: BLUE }]} pct /></Card>
-      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>Mietrendite J1: <b>{pct(mietrend[0])}</b> · Mietrendite J10: <b>{pct(mietrend[9])}</b></div>
+      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>{t('rechnung.rentYieldY1', 'Mietrendite J1')}: <b>{pct(mietrend[0])}</b> · {t('rechnung.rentYieldY10', 'Mietrendite J10')}: <b>{pct(mietrend[9])}</b></div>
 
       {/* 8. Chart Gesamtrendite % */}
-      <H2Section>Rendite (%) – Miete + nicht realisierte Wertsteigerung</H2Section>
+      <H2Section>{t('rechnung.totalYieldTitle', 'Rendite (%) – Miete + nicht realisierte Wertsteigerung')}</H2Section>
       <Card><BarChart labels={r.yN} series={[{ data: gesamtrend, color: PURPLE }]} pct /></Card>
-      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>Gesamtrendite J1: <b>{pct(gesamtrend[0])}</b> · Gesamtrendite J10: <b>{pct(gesamtrend[9])}</b></div>
+      <div style={{ fontSize: 13, color: '#555', marginTop: 8 }}>{t('rechnung.totalYieldY1', 'Gesamtrendite J1')}: <b>{pct(gesamtrend[0])}</b> · {t('rechnung.totalYieldY10', 'Gesamtrendite J10')}: <b>{pct(gesamtrend[9])}</b></div>
     </>
   )
 }
@@ -379,21 +382,22 @@ function BarChart({ labels, series, pct: isPct }: { labels: (string | number)[];
 
 // ── Vergleich (mehrere Objekte) ───────────────────────────────────────────────
 function CompareCards({ rows, withCalc, isMobile }: { rows: Row[]; withCalc: boolean; isMobile: boolean }) {
+  const { t } = useTranslation()
   return (
     <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${Math.min(rows.length, 3)},1fr)`, gap: 16 }}>
       {rows.map((r, i) => (
         <div key={i} style={{ background: r.color, color: '#fff', borderRadius: 16, padding: isMobile ? 18 : 22, boxShadow: '0 8px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ fontFamily: SERIF, fontSize: 21, fontWeight: 700, marginBottom: 4 }}>{r.item.label || r.item.project}</div>
           <div style={{ fontSize: 12.5, opacity: 0.9, marginBottom: 14 }}>
-            {[r.item.bedrooms != null ? `${r.item.bedrooms}-Schlafzimmer` : '', r.item.size_sqm != null ? `${r.item.size_sqm} m²` : ''].filter(Boolean).join(' · ')}
+            {[r.item.bedrooms != null ? t('rechnung.nBedrooms', '{{n}}-Schlafzimmer', { n: r.item.bedrooms }) : '', r.item.size_sqm != null ? `${r.item.size_sqm} m²` : ''].filter(Boolean).join(' · ')}
           </div>
           {r.item.tagline && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.25)' }}>{r.item.tagline}</div>}
           {r.res && withCalc ? (<>
-            <div style={{ fontSize: 12.5, opacity: 0.9 }}>EK {eur(r.res.ekStart)} · Kredit {eur(r.res.loan)}</div>
+            <div style={{ fontSize: 12.5, opacity: 0.9 }}>{t('rechnung.equityAndLoan', 'EK {{ek}} · Kredit {{loan}}', { ek: eur(r.res.ekStart), loan: eur(r.res.loan) })}</div>
             <div style={{ fontFamily: SERIF, fontSize: 32, fontWeight: 800, margin: '10px 0 2px' }}>{pct(r.res.irrV * 100, 2)}</div>
-            <div style={{ fontSize: 12.5, opacity: 0.9, marginBottom: 12 }}>Rendite p.a. (IRR)</div>
+            <div style={{ fontSize: 12.5, opacity: 0.9, marginBottom: 12 }}>{t('rechnung.yieldPaIrr', 'Rendite p.a. (IRR)')}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, borderTop: '1px solid rgba(255,255,255,0.25)', paddingTop: 10 }}>
-              <span style={{ opacity: 0.9 }}>EK in 10 J.</span><strong>{eur(r.res.ek10)}</strong>
+              <span style={{ opacity: 0.9 }}>{t('rechnung.equityIn10y', 'EK in 10 J.')}</span><strong>{eur(r.res.ek10)}</strong>
             </div>
           </>) : (
             <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 800, marginTop: 8 }}>{eur(r.item.price_gross ?? r.item.price_net)}</div>
@@ -419,6 +423,7 @@ function StrategyCards({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
 }
 
 function CompareTable({ rows }: { rows: Row[] }) {
+  const { t } = useTranslation()
   const td: CSSProperties = { padding: '11px 14px', fontSize: 13.5, borderBottom: '1px solid #f0f0f0', textAlign: 'right' }
   const lbl: CSSProperties = { ...td, textAlign: 'left', color: '#777' }
   const best = (vals: number[]) => { const v = Math.max(...vals); return vals.map(x => x === v) }
@@ -430,7 +435,7 @@ function CompareTable({ rows }: { rows: Row[] }) {
   const sect = (txt: string) => <tr><td colSpan={rows.length + 1} style={{ padding: 0 }}><div style={{ background: '#fbe9e3', color: '#c2410c', fontWeight: 700, fontSize: 11.5, letterSpacing: 0.5, padding: '8px 14px' }}>{txt}</div></td></tr>
   return (
     <>
-      <H2Section>Der Vergleich</H2Section>
+      <H2Section>{t('rechnung.comparisonTitle', 'Der Vergleich')}</H2Section>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 600 }}>
@@ -439,25 +444,25 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {rows.map((r, i) => <th key={i} style={{ background: r.color, color: '#fff', padding: '12px 14px', fontSize: 13.5, textAlign: 'center' }}>{r.item.label || r.item.project}</th>)}
             </tr></thead>
             <tbody>
-              {sect('OBJEKT')}
-              {rows.some(r => r.item.location) && row('Lage', r => r.item.location || '–')}
-              {rows.some(r => r.item.developer) && row('Bauträger', r => r.item.developer || '–')}
-              {row('Wertsteigerung p.a.', r => pct(r.res?.appP ?? null))}
-              {row('Bruttorendite', r => pct(r.res?.yPct ?? null))}
-              {sect('FINANZIERUNG')}
-              {row('Kaufpreis brutto', r => eur(r.res?.pGross))}
-              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row('Einrichtung', r => r.res ? (r.res.furnFree ? 'inklusive' : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnCost)}` : '–')) : '–')}
-              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row('Gesamtpreis', r => eur(r.res ? r.res.pGross + r.res.furnForIRR : null), rows.map(() => true))}
-              {row('Eigenkapital + NK', r => eur(r.res?.ekStart))}
-              {row('Finanzierung', r => r.res && r.res.loan > 0 ? eur(r.res.loan) : 'Cash')}
-              {row('Cashflow Jahr 1', r => eur(r.res ? r.res.cfA[0] - (r.res.vatA[0] || 0) : null))}
-              {sect('NACH 10 JAHREN')}
-              {row('Gesamtertrag', r => eur(r.res?.totRet))}
-              {row('Immobilienwert', r => eur(r.res?.propV[9]))}
-              {row('Restschuld', r => eur(r.res?.restL[9]))}
-              {row('Eigenkapital', r => eur(r.res?.ek10), ekBest)}
-              {row('Rendite p.a. (IRR)', r => pct((r.res?.irrV ?? 0) * 100, 2), irrBest)}
-              {row('EK-Rendite kum.', r => pct(r.res?.roe10))}
+              {sect(t('rechnung.sectionObject', 'OBJEKT'))}
+              {rows.some(r => r.item.location) && row(t('rechnung.location', 'Lage'), r => r.item.location || '–')}
+              {rows.some(r => r.item.developer) && row(t('rechnung.developer', 'Bauträger'), r => r.item.developer || '–')}
+              {row(t('rechnung.appreciationAnnual', 'Wertsteigerung p.a.'), r => pct(r.res?.appP ?? null))}
+              {row(t('rechnung.grossYield', 'Bruttorendite'), r => pct(r.res?.yPct ?? null))}
+              {sect(t('rechnung.sectionFinancing', 'FINANZIERUNG'))}
+              {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.furnishing', 'Einrichtung'), r => r.res ? (r.res.furnFree ? t('rechnung.included', 'inklusive') : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnCost)}` : '–')) : '–')}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => eur(r.res ? r.res.pGross + r.res.furnForIRR : null), rows.map(() => true))}
+              {row(t('rechnung.equityPlusExtras', 'Eigenkapital + NK'), r => eur(r.res?.ekStart))}
+              {row(t('rechnung.financingLabel', 'Finanzierung'), r => r.res && r.res.loan > 0 ? eur(r.res.loan) : t('rechnung.cash', 'Cash'))}
+              {row(t('rechnung.cashflowYear1', 'Cashflow Jahr 1'), r => eur(r.res ? r.res.cfA[0] - (r.res.vatA[0] || 0) : null))}
+              {sect(t('rechnung.sectionAfter10y', 'NACH 10 JAHREN'))}
+              {row(t('rechnung.totalReturn', 'Gesamtertrag'), r => eur(r.res?.totRet))}
+              {row(t('rechnung.propertyValue', 'Immobilienwert'), r => eur(r.res?.propV[9]))}
+              {row(t('rechnung.remainingDebt', 'Restschuld'), r => eur(r.res?.restL[9]))}
+              {row(t('rechnung.equity', 'Eigenkapital'), r => eur(r.res?.ek10), ekBest)}
+              {row(t('rechnung.yieldPaIrr', 'Rendite p.a. (IRR)'), r => pct((r.res?.irrV ?? 0) * 100, 2), irrBest)}
+              {row(t('rechnung.equityReturnCum', 'EK-Rendite kum.'), r => pct(r.res?.roe10))}
             </tbody>
           </table>
         </div>
@@ -467,6 +472,7 @@ function CompareTable({ rows }: { rows: Row[] }) {
 }
 
 function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
+  const { t } = useTranslation()
   const block = (title: string, fn: (r: Row) => number, fmt: (n: number) => string) => {
     const vals = rows.map(fn); const max = Math.max(...vals.map(Math.abs), 1)
     return (
@@ -486,26 +492,27 @@ function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
   }
   return (
     <>
-      <H2Section>Rendite & Wertentwicklung</H2Section>
+      <H2Section>{t('rechnung.yieldDevelopmentTitle', 'Rendite & Wertentwicklung')}</H2Section>
       <Card>
-        {block('Eigenkapital nach 10 Jahren', r => r.res?.ek10 ?? 0, eur)}
-        {block('Immobilienwert nach 10 Jahren', r => r.res?.propV[9] ?? 0, eur)}
-        {block('Jährliche Rendite (IRR)', r => (r.res?.irrV ?? 0) * 100, n => pct(n, 2))}
+        {block(t('rechnung.equityAfter10yBlock', 'Eigenkapital nach 10 Jahren'), r => r.res?.ek10 ?? 0, eur)}
+        {block(t('rechnung.propertyValueAfter10yBlock', 'Immobilienwert nach 10 Jahren'), r => r.res?.propV[9] ?? 0, eur)}
+        {block(t('rechnung.annualYieldIrrBlock', 'Jährliche Rendite (IRR)'), r => (r.res?.irrV ?? 0) * 100, n => pct(n, 2))}
       </Card>
     </>
   )
 }
 
 function CashflowTable({ rows }: { rows: Row[] }) {
+  const { t } = useTranslation()
   const years = rows[0]?.res?.yN ?? []
   return (
     <>
-      <H2Section>Cashflow nach Steuern & Kreditrate</H2Section>
+      <H2Section>{t('rechnung.cashflowAfterTaxTitle', 'Cashflow nach Steuern & Kreditrate')}</H2Section>
       <Card style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
             <thead><tr>
-              <th style={{ background: DARK, color: '#fff', padding: '11px 16px', fontSize: 13.5, textAlign: 'left' }}>Jahr</th>
+              <th style={{ background: DARK, color: '#fff', padding: '11px 16px', fontSize: 13.5, textAlign: 'left' }}>{t('rechnung.yearCol', 'Jahr')}</th>
               {rows.map((r, i) => <th key={i} style={{ background: r.color, color: '#fff', padding: '11px 16px', fontSize: 13.5 }}>{r.item.label || r.item.project}</th>)}
             </tr></thead>
             <tbody>
@@ -527,6 +534,7 @@ function CashflowTable({ rows }: { rows: Row[] }) {
 }
 
 function SpecsCard({ rows }: { rows: Row[] }) {
+  const { t } = useTranslation()
   const td: CSSProperties = { padding: '11px 14px', fontSize: 13.5, borderBottom: '1px solid #f0f0f0', textAlign: 'right' }
   const lbl: CSSProperties = { ...td, textAlign: 'left', color: '#777' }
   const row = (label: string, fn: (r: Row) => string) => (
@@ -541,15 +549,15 @@ function SpecsCard({ rows }: { rows: Row[] }) {
             {rows.map((r, i) => <th key={i} style={{ background: r.color, color: '#fff', padding: '12px 14px', fontSize: 13.5 }}>{r.item.label || r.item.project}</th>)}
           </tr></thead>
           <tbody>
-            {rows.some(r => r.item.location) && row('Lage', r => r.item.location || '–')}
-            {rows.some(r => r.item.developer) && row('Bauträger', r => r.item.developer || '–')}
-            {row('Schlafzimmer', r => r.item.bedrooms != null ? String(r.item.bedrooms) : '–')}
-            {row('Wohnfläche', r => r.item.size_sqm != null ? `${r.item.size_sqm} m²` : '–')}
-            {row('Terrasse', r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
-            {row('Etage', r => r.item.floor != null ? `${r.item.floor}` : '–')}
-            {row('Kaufpreis', r => eur(r.item.price_gross ?? r.item.price_net))}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row('Einrichtung', r => { const pa = r.item.params; return pa ? (pa.furnFree ? 'inklusive' : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost)}` : '–')) : '–' })}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row('Gesamtpreis', r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? (pa.furnCost ?? 0) : 0; return eur(base + f) })}
+            {rows.some(r => r.item.location) && row(t('rechnung.location', 'Lage'), r => r.item.location || '–')}
+            {rows.some(r => r.item.developer) && row(t('rechnung.developer', 'Bauträger'), r => r.item.developer || '–')}
+            {row(t('rechnung.bedrooms', 'Schlafzimmer'), r => r.item.bedrooms != null ? String(r.item.bedrooms) : '–')}
+            {row(t('rechnung.livingArea', 'Wohnfläche'), r => r.item.size_sqm != null ? `${r.item.size_sqm} m²` : '–')}
+            {row(t('rechnung.terrace', 'Terrasse'), r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
+            {row(t('rechnung.floor', 'Etage'), r => r.item.floor != null ? `${r.item.floor}` : '–')}
+            {row(t('rechnung.purchasePrice', 'Kaufpreis'), r => eur(r.item.price_gross ?? r.item.price_net))}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishing', 'Einrichtung'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost)}` : '–')) : '–' })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? (pa.furnCost ?? 0) : 0; return eur(base + f) })}
           </tbody>
         </table>
       </div>

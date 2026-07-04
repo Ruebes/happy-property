@@ -30,21 +30,35 @@ const DEFAULT_FORM: FormState = {
 }
 
 // Alle verfügbaren Platzhalter
-const PLACEHOLDERS = [
-  { key: '{{vorname}}',       label: 'Vorname' },
-  { key: '{{nachname}}',      label: 'Nachname' },
-  { key: '{{name}}',          label: 'Vollständiger Name' },
-  { key: '{{email}}',         label: 'E-Mail' },
-  { key: '{{telefon}}',       label: 'Telefon' },
-  { key: '{{betreff}}',       label: 'Betreff' },
-  { key: '{{projekt}}',       label: 'Projektname' },
-  { key: '{{termin_datum}}',  label: 'Termindatum' },
-  { key: '{{termin_link}}',   label: 'Zoom-Link' },
-  { key: '{{berater}}',       label: 'Berater' },
-  { key: '{{firma}}',         label: 'Firma (Happy Property)' },
-  { key: '{{password}}',      label: 'Temporäres Passwort' },
-  { key: '{{login_url}}',     label: 'Portal-Login-URL' },
+const buildPlaceholders = (t: (key: string, fallback: string) => string) => [
+  { key: '{{vorname}}',       label: t('templates.placeholderFirstName', 'Vorname') },
+  { key: '{{nachname}}',      label: t('templates.placeholderLastName', 'Nachname') },
+  { key: '{{name}}',          label: t('templates.placeholderFullName', 'Vollständiger Name') },
+  { key: '{{email}}',         label: t('templates.placeholderEmail', 'E-Mail') },
+  { key: '{{telefon}}',       label: t('templates.placeholderPhone', 'Telefon') },
+  { key: '{{betreff}}',       label: t('templates.placeholderSubject', 'Betreff') },
+  { key: '{{projekt}}',       label: t('templates.placeholderProjectName', 'Projektname') },
+  { key: '{{termin_datum}}',  label: t('templates.placeholderAppointmentDate', 'Termindatum') },
+  { key: '{{termin_link}}',   label: t('templates.placeholderZoomLink', 'Zoom-Link') },
+  { key: '{{berater}}',       label: t('templates.placeholderAdvisor', 'Berater') },
+  { key: '{{firma}}',         label: t('templates.placeholderCompany', 'Firma (Happy Property)') },
+  { key: '{{password}}',      label: t('templates.placeholderPassword', 'Temporäres Passwort') },
+  { key: '{{login_url}}',     label: t('templates.placeholderLoginUrl', 'Portal-Login-URL') },
 ]
+
+// Baut den Claude-Prompt-Text zusammen. Die {{platzhalter}}-Liste bleibt bewusst
+// außerhalb der t()-Interpolation, damit i18next sie nicht selbst zu ersetzen versucht.
+const buildClaudePrompt = (t: (key: string, fallback: string, opts?: Record<string, string>) => string, category: string, subject: string) => {
+  const intro = t(
+    'templates.claudePromptIntro',
+    'Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: {{category}}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "{{subject}}".',
+    { category, subject: subject || t('templates.previewSubjectBracketFallback', '[Betreff]') }
+  )
+  const outro = t('templates.claudePromptOutro', 'Nutze diese Platzhalter wo sinnvoll: {{placeholders}}. Liefere nur den HTML-Code ohne Erklärungen.', {
+    placeholders: '{{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}',
+  })
+  return `${intro} ${outro}`
+}
 
 export default function Templates() {
   const { t } = useTranslation()
@@ -60,6 +74,8 @@ export default function Templates() {
   const [bodyTab, setBodyTab]       = useState<'text' | 'html'>('text')
   const [showPreview, setShowPreview] = useState(false)
   const [copiedKey, setCopiedKey]   = useState<string | null>(null)
+
+  const PLACEHOLDERS = buildPlaceholders(t)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -131,7 +147,7 @@ export default function Templates() {
       setShowForm(false)
       showToast('✅ ' + t(editingId ? 'crm.template.savedToast' : 'crm.template.createdToast'))
     } catch (err) {
-      showToast(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`)
+      showToast('❌ ' + t('templates.saveErrorToast', 'Fehler: {{message}}', { message: err instanceof Error ? err.message : String(err) }))
     } finally {
       setSaving(false)
     }
@@ -140,7 +156,7 @@ export default function Templates() {
   const handleDelete = async (id: string) => {
     if (!window.confirm(t('crm.template.confirmDelete'))) return
     const { error } = await supabase.from('email_templates').delete().eq('id', id)
-    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
+    if (error) { showToast('❌ ' + t('templates.deleteErrorToast', 'Fehler: {{message}}', { message: error.message })); return }
     await fetchTemplates()
     showToast(t('crm.template.deletedToast'))
   }
@@ -158,9 +174,9 @@ export default function Templates() {
     .replace(/\{\{name\}\}/g,         'Max Mustermann')
     .replace(/\{\{email\}\}/g,        'max@beispiel.de')
     .replace(/\{\{telefon\}\}/g,      '+49 151 12345678')
-    .replace(/\{\{betreff\}\}/g,      form.subject || 'Betreff')
+    .replace(/\{\{betreff\}\}/g,      form.subject || t('templates.previewSubjectFallback', 'Betreff'))
     .replace(/\{\{projekt\}\}/g,      'Sunrise Residences')
-    .replace(/\{\{termin_datum\}\}/g, '15. Juni 2026, 14:00 Uhr')
+    .replace(/\{\{termin_datum\}\}/g, t('templates.previewSampleDate', '15. Juni 2026, 14:00 Uhr'))
     .replace(/\{\{termin_link\}\}/g,  'https://zoom.us/j/123456')
     .replace(/\{\{berater\}\}/g,      'Sven Müller')
     .replace(/\{\{firma\}\}/g,        'Happy Property')
@@ -168,13 +184,13 @@ export default function Templates() {
     .replace(/\{\{login_url\}\}/g,    'https://portal.happy-property.com/login')
 
   const categoryLabel: Record<Category, string> = {
-    general:   'Allgemein',
-    project:   'Projekt',
-    followup:  'Follow-up',
-    noshow:    'No-Show',
-    lawyer:    'Anwalt',
-    financing: 'Finanzierung',
-    portal:    '🔑 Portal-Zugang',
+    general:   t('templates.categoryGeneral', 'Allgemein'),
+    project:   t('templates.categoryProject', 'Projekt'),
+    followup:  t('templates.categoryFollowup', 'Follow-up'),
+    noshow:    t('templates.categoryNoshow', 'No-Show'),
+    lawyer:    t('templates.categoryLawyer', 'Anwalt'),
+    financing: t('templates.categoryFinancing', 'Finanzierung'),
+    portal:    '🔑 ' + t('templates.categoryPortal', 'Portal-Zugang'),
   }
 
   const categoryColor: Record<Category, string> = {
@@ -299,8 +315,8 @@ export default function Templates() {
                       onChange={e => setForm(f => ({ ...f, language: e.target.value as Language }))}
                       className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
                     >
-                      <option value="de">Deutsch</option>
-                      <option value="en">English</option>
+                      <option value="de">{t('templates.languageGerman', 'Deutsch')}</option>
+                      <option value="en">{t('templates.languageEnglish', 'English')}</option>
                     </select>
                   </div>
                 </div>
@@ -404,7 +420,7 @@ export default function Templates() {
                         value={form.html_body}
                         onChange={e => setForm(f => ({ ...f, html_body: e.target.value }))}
                         className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y font-mono"
-                        placeholder={'<!DOCTYPE html>\n<html>\n<body>\n  <p>Hallo {{vorname}},</p>\n  …\n</body>\n</html>'}
+                        placeholder={t('templates.htmlBodyPlaceholder', '<!DOCTYPE html>\n<html>\n<body>\n  <p>Hallo {{vorname}},</p>\n  …\n</body>\n</html>')}
                       />
 
                       {showPreview && form.html_body && (
@@ -417,7 +433,7 @@ export default function Templates() {
                             className="w-full"
                             style={{ height: '400px', border: 'none' }}
                             sandbox="allow-same-origin"
-                            title="E-Mail Vorschau"
+                            title={t('templates.previewIframeTitle', 'E-Mail Vorschau')}
                           />
                         </div>
                       )}
@@ -427,12 +443,12 @@ export default function Templates() {
                           <p className="font-semibold">{t('crm.template.claudeTitle')}</p>
                           <p className="text-xs">{t('crm.template.claudeIntro')}</p>
                           <div className="bg-white border border-indigo-100 rounded-lg p-3 text-xs font-mono text-gray-700 select-all">
-                            {`Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`}
+                            {buildClaudePrompt(t, categoryLabel[form.category], form.subject)}
                           </div>
                           <button
                             type="button"
                             onClick={() => {
-                              const prompt = `Erstelle ein professionelles HTML-E-Mail-Template für eine deutsche Immobilien-Investment-Firma (Happy Property, Zypern). Kategorie: ${categoryLabel[form.category]}. Farbe: #ff795d (Orange). Design: modern, seriös, responsiv. Betreff: "${form.subject || '[Betreff]'}". Nutze diese Platzhalter wo sinnvoll: {{vorname}}, {{name}}, {{termin_datum}}, {{berater}}, {{firma}}. Liefere nur den HTML-Code ohne Erklärungen.`
+                              const prompt = buildClaudePrompt(t, categoryLabel[form.category], form.subject)
                               navigator.clipboard.writeText(prompt).catch(() => {})
                               showToast('✅ ' + t('crm.template.promptCopied'))
                             }}

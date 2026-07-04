@@ -3,6 +3,7 @@
 // Wird in LeadDetail im Kaufvertrag-Schritt genutzt
 
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 
@@ -16,10 +17,6 @@ interface Props {
 const STATUS_PILL: Record<string, string> = {
   under_construction: 'bg-blue-100 text-blue-700',
   active:             'bg-green-100 text-green-700',
-}
-const STATUS_LABEL: Record<string, string> = {
-  under_construction: 'Im Bau',
-  active:             'Aktiv',
 }
 
 function fmtPrice(v: number | null | undefined): string {
@@ -35,6 +32,11 @@ function fmtDate(d: string | null): string {
 }
 
 export default function UnitPickerModal({ leadName, preselectedProjectId, onClose, onSelect }: Props) {
+  const { t } = useTranslation()
+  const STATUS_LABEL: Record<string, string> = {
+    under_construction: t('unitPickerModal.statusUnderConstruction', 'Im Bau'),
+    active:             t('unitPickerModal.statusActive', 'Aktiv'),
+  }
   const [projects,       setProjects]       = useState<CrmProject[]>([])
   const [loading,        setLoading]        = useState(true)
   const [search,         setSearch]         = useState('')
@@ -103,8 +105,8 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
         <div className="px-6 py-4 border-b border-gray-100 flex-shrink-0">
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-lg font-bold text-gray-900">🏠 Wohnung auswählen</h2>
-              <p className="text-xs text-gray-400 mt-0.5">für {leadName}</p>
+              <h2 className="text-lg font-bold text-gray-900">🏠 {t('unitPickerModal.title', 'Wohnung auswählen')}</h2>
+              <p className="text-xs text-gray-400 mt-0.5">{t('unitPickerModal.forLead', 'für {{leadName}}', { leadName })}</p>
             </div>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
           </div>
@@ -115,15 +117,15 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Projekt, Block oder Wohnungsnummer suchen…"
+            placeholder={t('unitPickerModal.searchPlaceholder', 'Projekt, Block oder Wohnungsnummer suchen…')}
             className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
                        focus:outline-none focus:border-[#ff795d]"
           />
           <div className="flex gap-2">
             {([
-              { v: 'all',                label: 'Alle Einheiten' },
-              { v: 'active',             label: '🟢 Aktiv'        },
-              { v: 'under_construction', label: '🏗 Im Bau'       },
+              { v: 'all',                label: t('unitPickerModal.filterAll', 'Alle Einheiten') },
+              { v: 'active',             label: `🟢 ${t('unitPickerModal.filterActive', 'Aktiv')}` },
+              { v: 'under_construction', label: `🏗 ${t('unitPickerModal.filterUnderConstruction', 'Im Bau')}` },
             ] as const).map(f => (
               <button
                 key={f.v}
@@ -149,7 +151,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
             </div>
           ) : filteredProjects.length === 0 ? (
             <p className="text-center text-gray-400 py-16 text-sm">
-              {search ? 'Keine passenden Einheiten gefunden.' : 'Keine Projekte vorhanden.'}
+              {search ? t('unitPickerModal.noMatchingUnits', 'Keine passenden Einheiten gefunden.') : t('unitPickerModal.noProjects', 'Keine Projekte vorhanden.')}
             </p>
           ) : (
             filteredProjects.map(project => (
@@ -172,7 +174,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                     {preselectedProjectId === project.id && (
                       <span className="text-[10px] font-medium text-[#ff795d] bg-orange-50 border border-orange-200
                                        px-2 py-0.5 rounded-full shrink-0">
-                        Ihr Projekt
+                        {t('unitPickerModal.yourProject', 'Ihr Projekt')}
                       </span>
                     )}
                     {project.location && (
@@ -180,7 +182,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                     )}
                     <span className="text-[10px] text-gray-400 bg-white border border-gray-200
                                      px-2 py-0.5 rounded-full shrink-0">
-                      {project.units.length} Einh.
+                      {t('unitPickerModal.unitsCount', '{{count}} Einh.', { count: project.units.length })}
                     </span>
                   </div>
                   <span className="text-gray-400 text-xs ml-2 shrink-0">
@@ -209,11 +211,11 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                             <div className="min-w-0">
                               {unit.block && (
                                 <span className="text-[10px] text-gray-400 font-medium">
-                                  Block {unit.block} ·{' '}
+                                  {t('unitPickerModal.blockLabel', 'Block {{block}}', { block: unit.block })} ·{' '}
                                 </span>
                               )}
                               <span className="text-sm font-bold text-gray-900">
-                                Nr. {unit.unit_number}
+                                {t('unitPickerModal.unitNumberLabel', 'Nr. {{number}}', { number: unit.unit_number })}
                               </span>
                             </div>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_PILL[unit.status]}`}>
@@ -224,36 +226,36 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                           {/* Parameters grid */}
                           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-gray-600">
                             <span>
-                              🏢 {unit.type === 'apartment' ? 'Wohnung'
-                                 : unit.type === 'villa'    ? 'Villa'
-                                 :                            'Studio'}
+                              🏢 {unit.type === 'apartment' ? t('unitPickerModal.typeApartment', 'Wohnung')
+                                 : unit.type === 'villa'    ? t('unitPickerModal.typeVilla', 'Villa')
+                                 :                            t('unitPickerModal.typeStudio', 'Studio')}
                             </span>
                             {unit.floor != null && (
-                              <span>📶 {unit.floor}. OG</span>
+                              <span>📶 {t('unitPickerModal.floorLabel', '{{floor}}. OG', { floor: unit.floor })}</span>
                             )}
                             {unit.size_sqm != null && (
                               <span>📐 {unit.size_sqm} m²</span>
                             )}
                             {unit.terrace_sqm != null && (
-                              <span>🌿 {unit.terrace_sqm} m² Terr.</span>
+                              <span>🌿 {t('unitPickerModal.terraceLabel', '{{size}} m² Terr.', { size: unit.terrace_sqm })}</span>
                             )}
                             {unit.bedrooms > 0 && (
-                              <span>🛏 {unit.bedrooms} SZ</span>
+                              <span>🛏 {t('unitPickerModal.bedroomsLabel', '{{count}} SZ', { count: unit.bedrooms })}</span>
                             )}
                             {unit.bathrooms > 0 && (
-                              <span>🚿 {unit.bathrooms} Bad</span>
+                              <span>🚿 {t('unitPickerModal.bathroomsLabel', '{{count}} Bad', { count: unit.bathrooms })}</span>
                             )}
                             {unit.is_furnished && (
-                              <span>🛋 Möbliert</span>
+                              <span>🛋 {t('unitPickerModal.furnished', 'Möbliert')}</span>
                             )}
                             {unit.rental_type && (
                               <span>
-                                {unit.rental_type === 'short' ? '🏖 Kurzzeit' : '🏠 Langzeit'}
+                                {unit.rental_type === 'short' ? `🏖 ${t('unitPickerModal.rentalShort', 'Kurzzeit')}` : `🏠 ${t('unitPickerModal.rentalLong', 'Langzeit')}`}
                               </span>
                             )}
                             {unit.handover_date && (
                               <span className="col-span-2">
-                                📅 Übergabe: {fmtDate(unit.handover_date)}
+                                📅 {t('unitPickerModal.handoverLabel', 'Übergabe: {{date}}', { date: fmtDate(unit.handover_date) })}
                               </span>
                             )}
                           </div>
@@ -264,22 +266,22 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                                             flex flex-wrap gap-x-3 text-[11px]">
                               {unit.price_net != null && (
                                 <span className="text-gray-500">
-                                  Netto <strong className="text-gray-700">{fmtPrice(unit.price_net)}</strong>
+                                  {t('unitPickerModal.priceNetLabel', 'Netto')} <strong className="text-gray-700">{fmtPrice(unit.price_net)}</strong>
                                 </span>
                               )}
                               {unit.price_gross != null && (
                                 <span className="text-gray-700 font-medium">
-                                  Brutto <strong>{fmtPrice(unit.price_gross)}</strong>
+                                  {t('unitPickerModal.priceGrossLabel', 'Brutto')} <strong>{fmtPrice(unit.price_gross)}</strong>
                                 </span>
                               )}
                               {unit.vat_rate > 0 && (
-                                <span className="text-gray-400">{unit.vat_rate}% MwSt.</span>
+                                <span className="text-gray-400">{t('unitPickerModal.vatLabel', '{{rate}}% MwSt.', { rate: unit.vat_rate })}</span>
                               )}
                             </div>
                           )}
 
                           {isSelected && (
-                            <p className="mt-2 text-xs text-[#ff795d] font-semibold">✓ Ausgewählt</p>
+                            <p className="mt-2 text-xs text-[#ff795d] font-semibold">✓ {t('unitPickerModal.selected', 'Ausgewählt')}</p>
                           )}
                         </div>
                       )
@@ -298,12 +300,12 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
               <div className="text-sm text-gray-700 min-w-0 truncate">
                 <span className="font-semibold text-[#ff795d]">✓</span>{' '}
                 {selectedUnit.project.name}
-                {selectedUnit.unit.block ? ` · Block ${selectedUnit.unit.block}` : ''}
-                {` · Nr. ${selectedUnit.unit.unit_number}`}
+                {selectedUnit.unit.block ? ` · ${t('unitPickerModal.blockLabel', 'Block {{block}}', { block: selectedUnit.unit.block })}` : ''}
+                {` · ${t('unitPickerModal.unitNumberLabel', 'Nr. {{number}}', { number: selectedUnit.unit.unit_number })}`}
                 {selectedUnit.unit.price_gross != null
                   ? ` · ${fmtPrice(selectedUnit.unit.price_gross)}`
                   : selectedUnit.unit.price_net != null
-                    ? ` · ${fmtPrice(selectedUnit.unit.price_net)} netto`
+                    ? ` · ${t('unitPickerModal.priceNetSuffix', '{{price}} netto', { price: fmtPrice(selectedUnit.unit.price_net) })}`
                     : ''}
               </div>
               <div className="flex gap-3 shrink-0">
@@ -312,26 +314,26 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                   className="px-4 py-2 text-sm text-gray-600 border border-gray-200
                              rounded-xl hover:bg-gray-50"
                 >
-                  Abbrechen
+                  {t('unitPickerModal.cancel', 'Abbrechen')}
                 </button>
                 <button
                   onClick={() => onSelect(selectedUnit.unit, selectedUnit.project)}
                   className="px-5 py-2 text-sm font-medium text-white rounded-xl"
                   style={{ backgroundColor: '#ff795d' }}
                 >
-                  Zuweisen & Aktivieren
+                  {t('unitPickerModal.assignAndActivate', 'Zuweisen & Aktivieren')}
                 </button>
               </div>
             </div>
           ) : (
             <div className="flex items-center justify-between">
-              <p className="text-xs text-gray-400">Bitte eine Wohnung auswählen.</p>
+              <p className="text-xs text-gray-400">{t('unitPickerModal.selectUnitPrompt', 'Bitte eine Wohnung auswählen.')}</p>
               <button
                 onClick={onClose}
                 className="px-4 py-2 text-sm text-gray-600 border border-gray-200
                            rounded-xl hover:bg-gray-50"
               >
-                Abbrechen
+                {t('unitPickerModal.cancel', 'Abbrechen')}
               </button>
             </div>
           )}
