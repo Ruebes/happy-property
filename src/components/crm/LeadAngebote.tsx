@@ -131,7 +131,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
                 const err = m?.refine_error
                 return (
                   <span key={tok} className="inline-flex items-center rounded overflow-hidden ring-1 ring-black/5">
-                    <a href={`${origin}/deck/${tok}`} target="_blank" rel="noreferrer"
+                    <a href={`${origin}/deck/${tok}?preview=1`} target="_blank" rel="noreferrer"
                       title={approved ? 'Als fertig bestätigt' : rev > 0 ? `Version ${rev}` : 'Deck öffnen'}
                       className="text-[11px] px-2 py-0.5 text-white font-medium" style={{ backgroundColor: deckColor(rev, approved) }}>
                       {approved ? '✓ ' : ''}Deck {i + 1}{rev > 0 && !approved ? ` ·v${rev}` : ''}
@@ -166,7 +166,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
             <div key={c.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-2">
               <span className="text-xs text-gray-400 w-24 shrink-0">{fmt(c.created_at)}</span>
               <span className="flex-1 truncate">📊 {c.title ?? 'Rendite-Berechnung'}{approved && <span className="ml-1 text-[11px] text-green-600 font-medium">· ✓ fertig</span>}</span>
-              <a href={`${origin}/rechnung/${c.token}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>Ansehen</a>
+              <a href={`${origin}/rechnung/${c.token}?preview=1`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>Ansehen</a>
               <button onClick={() => void toggleCalcApprove(c)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}
                 className={`text-[11px] px-1.5 py-0.5 rounded shrink-0 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>
               <button onClick={() => void delCalc(c)} disabled={busy === c.id} title="Berechnung löschen"

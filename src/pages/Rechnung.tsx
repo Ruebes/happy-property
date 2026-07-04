@@ -61,9 +61,15 @@ export default function Rechnung() {
   })() }, [token])
 
   // Engagement-Tracking (fire-and-forget): loggt den Berechnungs-Aufruf fürs CRM-Dashboard.
+  // Interne Kontroll-Aufrufe zählen nicht: eingeloggter Nutzer (Team) oder ?preview=1.
   useEffect(() => {
     if (!token) return
-    void supabase.functions.invoke('track-engagement', { body: { type: 'calc_view', token } }).catch(() => { /* egal */ })
+    if (new URLSearchParams(window.location.search).get('preview') === '1') return
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) return
+      supabase.functions.invoke('track-engagement', { body: { type: 'calc_view', token } }).catch(() => { /* egal */ })
+    })()
   }, [token])
 
   const rows: Row[] = useMemo(() => {

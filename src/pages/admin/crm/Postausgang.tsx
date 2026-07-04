@@ -355,7 +355,7 @@ export default function Postausgang() {
                         const err = m?.refine_error
                         return (
                           <span key={tok} className="inline-flex items-center rounded-lg overflow-hidden ring-1 ring-black/5">
-                            <a href={`${origin}/deck/${tok}`} target="_blank" rel="noreferrer"
+                            <a href={`${origin}/deck/${tok}?preview=1`} target="_blank" rel="noreferrer"
                               title={approved ? 'Als fertig bestätigt' : rev > 0 ? `Version ${rev}` : 'Deck öffnen'}
                               className="text-xs font-medium px-2.5 py-1 text-white" style={{ backgroundColor: deckColor(rev, approved) }}>
                               {approved ? '✓ ' : '🔗 '}Deck {i + 1}{rev > 0 && !approved ? ` ·v${rev}` : ''}
@@ -390,7 +390,7 @@ export default function Postausgang() {
                           return (
                             <div key={c.id} className="flex items-center gap-2">
                               <span className="flex-1 truncate text-xs text-gray-700">📊 {c.title ?? 'Berechnung'}{approved && <span className="ml-1 text-green-600 font-medium">· ✓ fertig</span>}</span>
-                              <a href={`${origin}/rechnung/${c.token}`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>{t('crm.outbox.view', 'Ansehen')}</a>
+                              <a href={`${origin}/rechnung/${c.token}?preview=1`} target="_blank" rel="noreferrer" className="text-[11px] px-2 py-0.5 rounded text-white shrink-0" style={{ backgroundColor: approved ? '#16a34a' : '#2f6b4f' }}>{t('crm.outbox.view', 'Ansehen')}</a>
                               <button onClick={() => void openCalcEdit(c.token, r)} title={t('crm.outbox.editCalc', 'Werte bearbeiten')}
                                 className="text-[11px] px-1.5 py-0.5 rounded shrink-0 bg-gray-100 text-gray-500 hover:bg-orange-100 hover:text-orange-700">✏️</button>
                               <button onClick={() => void toggleCalcApprove(c)} title={approved ? 'Bestätigung aufheben' : 'Als fertig bestätigen'}

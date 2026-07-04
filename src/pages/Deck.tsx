@@ -611,9 +611,17 @@ export default function Deck() {
 
   // Engagement-Tracking (fire-and-forget, blockiert das Rendern nicht): loggt den
   // Deck-Aufruf → erscheint im CRM-Dashboard („X hat sich Deck Y angesehen").
+  // NUR echte Kundenbesuche zählen: interne Kontroll-Aufrufe werden übersprungen —
+  // (a) wenn jemand im CRM eingeloggt ist (Kunden sind das nie), oder
+  // (b) wenn der Link als Vorschau markiert ist (?preview=1, so öffnet der Admin es).
   useEffect(() => {
     if (!token) return
-    void supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token } }).catch(() => { /* egal */ })
+    if (new URLSearchParams(window.location.search).get('preview') === '1') return
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) return
+      supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token } }).catch(() => { /* egal */ })
+    })()
   }, [token])
 
   if (loading) {
