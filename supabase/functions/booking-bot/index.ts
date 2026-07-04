@@ -301,6 +301,42 @@ async function askType(admin: SupabaseClient, convId: string, phone: string, lea
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
 }
 
+// ── Happy-Property-Mail-CI (= compose-deck-mail: Logo, Playfair/Montserrat, Coral/Navy) ──
+const MAIL = {
+  cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#8a8578', dark: '#1b1b22', gold: '#C2A15E',
+  logo: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg',
+  photoSq: 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80',
+  sans: `'Montserrat',Arial,Helvetica,sans-serif`, serif: `'Playfair Display',Georgia,serif`,
+}
+function escH(s: string): string { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') }
+// Gebrandete Terminbestätigung (E-Mail-sicher: Tabellen-Layout, feste Bildmaße, nowrap)
+function buildConfirmHtml(o: { firstName: string; dateStr: string; timeStr: string; typeLabel: string; icon: string; zoomLink: string; isZoom: boolean }): string {
+  const M = MAIL
+  const where = o.zoomLink
+    ? `<tr><td style="padding:16px 0 0 0;"><a href="${escH(o.zoomLink)}" target="_blank" style="display:inline-block;background:${M.coral};color:#ffffff;font-family:${M.sans};font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;text-decoration:none;padding:13px 26px;border-radius:6px;white-space:nowrap;">Zoom beitreten →</a></td></tr>`
+    : `<tr><td style="font-family:${M.sans};font-size:13px;color:${M.mute};padding:14px 0 0 0;line-height:1.6;">${o.isZoom ? 'Den Zoom-Link bekommst du rechtzeitig vorher.' : 'Ich rufe dich zur vereinbarten Zeit über WhatsApp an.'}</td></tr>`
+  return `<!doctype html><html><body style="margin:0;padding:0;background:${M.cream};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${M.cream};padding:28px 12px;"><tr><td align="center">
+  <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid ${M.line};border-radius:14px;overflow:hidden;">
+    <tr><td style="padding:24px 36px 20px 36px;border-bottom:1px solid ${M.line};"><img src="${M.logo}" width="128" height="39" alt="Happy Property Cyprus" style="display:block;width:128px;height:39px;"></td></tr>
+    <tr><td style="padding:32px 40px 8px 40px;">
+      <div style="font-family:${M.sans};font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:${M.coral};font-weight:700;">✅ Termin bestätigt</div>
+      <h1 style="margin:8px 0 0 0;font-family:${M.serif};font-size:28px;line-height:1.15;font-weight:700;color:${M.navy};">Wir sprechen uns${o.firstName ? `, ${escH(o.firstName)}` : ''}!</h1>
+      <p style="margin:16px 0 0 0;font-family:${M.sans};font-size:15px;line-height:1.6;color:${M.ink};">vielen Dank — dein persönliches Beratungsgespräch mit Sven ist fest eingetragen:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 0 0;background:${M.cream};border:1px solid ${M.line};border-radius:10px;"><tr><td style="padding:20px 24px;">
+        <div style="font-family:${M.sans};font-size:16px;color:${M.navy};line-height:1.9;">📅 <strong>${escH(o.dateStr)}</strong><br>🕐 <strong>${escH(o.timeStr)} Uhr</strong> <span style="color:${M.mute};font-size:13px;">(deutsche Zeit)</span><br>${o.icon} ${escH(o.typeLabel)}</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">${where}</table>
+      </td></tr></table>
+      <p style="margin:20px 0 0 0;font-family:${M.sans};font-size:13px;line-height:1.6;color:${M.mute};">Im Anhang findest du den Termin als Kalender-Datei (.ics) — einfach hinzufügen, dann geht nichts unter. Falls dir etwas dazwischenkommt, antworte einfach auf diese Mail.</p>
+    </td></tr>
+    <tr><td style="padding:22px 40px 28px 40px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td width="60" valign="middle"><img src="${M.photoSq}" width="52" height="52" alt="Sven" style="width:52px;height:52px;border-radius:50%;display:block;"></td>
+      <td valign="middle" style="padding-left:14px;font-family:${M.sans};"><div style="font-size:15px;font-weight:700;color:${M.navy};">Sven Rüprich</div><div style="font-size:12px;color:${M.mute};">Happy Property Cyprus</div></td>
+    </tr></table></td></tr>
+    <tr><td style="background:${M.dark};padding:20px 40px;"><div style="font-family:${M.sans};font-size:11px;color:#9a9aa3;line-height:1.6;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern &nbsp;·&nbsp; <a href="https://happy-property.com" style="color:${M.gold};text-decoration:none;">happy-property.com</a></div></td></tr>
+  </table></td></tr></table></body></html>`
+}
+
 // ICS-Kalenderanhang (Kunde bekommt den Termin in seinen Kalender)
 function toB64(str: string): string { const bytes = new TextEncoder().encode(str); let bin = ''; for (const b of bytes) bin += String.fromCharCode(b); return btoa(bin) }
 function buildIcs(o: { uid: string; title: string; startIso: string; endIso: string; description?: string }): string {
@@ -368,10 +404,7 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     try {
       const dateStr = new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(slot.startIso))
       const timeStr = new Intl.DateTimeFormat('de-DE', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }).format(new Date(slot.startIso))
-      const whereHtml = type === 'zoom'
-        ? (zoomLink ? `<p>Zoom-Link: <a href="${zoomLink}">${zoomLink}</a></p>` : '<p>Den Zoom-Link bekommst du rechtzeitig vorher.</p>')
-        : '<p>Wir sprechen per WhatsApp — ich rufe dich zur vereinbarten Zeit an.</p>'
-      const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${name || ''},</p><p>vielen Dank — dein Termin ist bestätigt:</p><p><strong>Beratungsgespräch mit Sven</strong><br>${dateStr}<br>${timeStr} Uhr (deutsche Zeit) · ${typeLabel}</p>${whereHtml}<p>Im Anhang findest du den Termin für deinen Kalender. Ich freue mich auf das Gespräch!</p><p>Bis dann,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+      const html = buildConfirmHtml({ firstName: name, dateStr, timeStr, typeLabel, icon: type === 'zoom' ? '📹' : '💬', zoomLink, isZoom: type === 'zoom' })
       const ics = buildIcs({ uid: apptRow.id, title: 'Beratungsgespräch mit Sven – Happy Property', startIso: slot.startIso, endIso: slot.endIso, description: (type === 'zoom' && zoomLink) ? `Zoom: ${zoomLink}` : 'Beratungsgespräch mit Sven · Happy Property' })
       await admin.functions.invoke('send-email', { body: { to: lead.email, subject: `Terminbestätigung: Beratungsgespräch am ${dateStr}`, html, lead_id: conv.lead_id, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } })
     } catch (e) { console.warn('[booking-bot] Bestätigungs-Mail fehlgeschlagen:', e) }
