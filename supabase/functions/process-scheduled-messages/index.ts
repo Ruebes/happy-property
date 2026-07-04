@@ -21,6 +21,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
+import { buildIcs, toB64 } from '../_shared/ics.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -34,6 +35,7 @@ async function sendEmail(params: {
   html:    string
   smtpUser: string
   smtpPass: string
+  attachments?: { filename: string; content: string; contentType: string }[]
 }): Promise<void> {
   const client = new SMTPClient({
     connection: {
@@ -44,13 +46,20 @@ async function sendEmail(params: {
     },
   })
   try {
-    await client.send({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const payload: Record<string, any> = {
       from:    `Sven von Happy Property Cyprus <${params.smtpUser}>`,
       to:      params.to,
       subject: encodeMimeSubject(params.subject),
       html:    params.html,
       content: stripHtml(params.html),
-    })
+    }
+    if (params.attachments?.length) {
+      payload.attachments = params.attachments.map(a => ({
+        filename: a.filename, content: a.content, contentType: a.contentType, encoding: 'base64',
+      }))
+    }
+    await client.send(payload)
     console.log(`[process-scheduled] ✓ E-Mail an ${params.to}`)
   } finally {
     await client.close()
@@ -248,11 +257,37 @@ Deno.serve(async (req: Request) => {
           success = false
         } else if (smtpUser && smtpPass) {
           try {
+            // Terminbestätigung (termin_gebucht): .ics-Kalenderdatei anhängen, damit
+            // der Kunde den Termin 1-Klick in seinen Kalender übernimmt — inkl. Zoom-Link.
+            let attachments: { filename: string; content: string; contentType: string }[] | undefined
+            if (msg.event_type === 'termin_gebucht') {
+              try {
+                const { data: ap } = await supabase.from('crm_appointments')
+                  .select('id, title, start_time, end_time, zoom_link')
+                  .eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+                  .order('start_time', { ascending: true }).limit(1).maybeSingle()
+                const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null } | null
+                if (a) {
+                  const isZoom = !!a.zoom_link
+                  const ics = buildIcs({
+                    uid:         a.id,
+                    title:       a.title || 'Beratungsgespräch mit Sven – Happy Property',
+                    startIso:    new Date(a.start_time).toISOString(),
+                    endIso:      new Date(a.end_time).toISOString(),
+                    description: `Beratungsgespräch mit Sven · Happy Property${isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,
+                    location:    isZoom ? (a.zoom_link as string) : 'WhatsApp / Telefon',
+                    url:         isZoom ? (a.zoom_link as string) : undefined,
+                  })
+                  attachments = [{ filename: 'termin.ics', content: toB64(ics), contentType: 'text/calendar; method=PUBLISH; charset=UTF-8' }]
+                }
+              } catch (icsErr) { console.warn('[process-scheduled] ICS-Anhang fehlgeschlagen:', icsErr) }
+            }
             await sendEmail({
               to:       rcpt.email,
               subject:  msg.email_subject,
               html:     msg.email_body,
               smtpUser, smtpPass,
+              attachments,
             })
             await logActivity(supabase, {
               lead_id: msg.lead_id,

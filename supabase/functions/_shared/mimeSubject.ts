@@ -1,15 +1,21 @@
 // RFC-2047-konforme Betreff-Kodierung für E-Mail-Header.
 //
-// Warum: denomailer@1.6.0 kodiert Betreffs mit Umlauten/Sonderzeichen fehlerhaft
-// (Q-Encoding mit LITERALEN Leerzeichen im Encoded-Word → ungültig, viele Clients
-// zeigen dann den Rohtext „=?utf-8?Q?Dein Termin ist best=c3=a4tigt …"). Wir
-// kodieren den Betreff daher SELBST als Base64-Encoded-Words und übergeben denomailer
-// eine reine ASCII-Zeichenkette, die es unverändert durchreicht.
+// Warum: denomailer@1.6.0 (= aktuellste Version, unmaintained) kodiert Betreffs mit
+// Umlauten/Sonderzeichen KAPUTT: sein Q-Encoder lässt Leerzeichen literal (code 32
+// wird unverändert zurückgegeben) und faltet lange Werte mit „=\r\n" MITTEN im
+// Encoded-Word — beides ungültig, Clients zeigen dann den Rohtext
+// „=?utf-8?Q?Dein Termin ist best=c3=a4tigt …". Zusätzlich re-wrappt denomailer JEDEN
+// Betreff, der Sonderzeichen hat ODER mit „=?" beginnt.
 //
-// - Reiner ASCII-Betreff → unverändert (keine Kodierung nötig).
-// - Sonst → ein oder mehrere „=?UTF-8?B?…?=" (Base64 enthält NIE Leerzeichen).
-//   An Zeichen-Grenzen gesplittet (nie mitten in einem UTF-8-Zeichen), jedes
-//   Encoded-Word ≤ 75 Zeichen (RFC-2047-Limit).
+// Lösung: Wir kodieren SELBST korrekt als Base64-Encoded-Words (Base64-Alphabet
+// enthält NIE Leerzeichen; an Codepoint-Grenzen gesplittet, jedes Word ≤ 75 Zeichen).
+// Damit denomailer unseren fertigen String NICHT ein zweites Mal anfasst, stellen wir
+// EIN LEERZEICHEN voran: dann ist der String reines ASCII UND beginnt nicht mit „=?"
+// → denomailers Bedingung (hasNonAscii || startsWith("=?")) ist false → unverändert
+// durchgereicht. Der Mailclient ignoriert das führende Header-Leerzeichen (RFC 2047)
+// und dekodiert die Encoded-Words zu echten Umlauten.
+//
+// - Reiner ASCII-Betreff → unverändert (denomailer fasst ihn ohnehin nicht an).
 
 export function encodeMimeSubject(subject: string): string {
   if (!subject) return ''
@@ -35,5 +41,6 @@ export function encodeMimeSubject(subject: string): string {
   }
   if (cur) words.push(cur)
 
-  return words.map(w => `=?UTF-8?B?${b64(w)}?=`).join(' ')
+  // Führendes Leerzeichen: verhindert denomailers Doppel-Kodierung (s.o.).
+  return ' ' + words.map(w => `=?UTF-8?B?${b64(w)}?=`).join(' ')
 }
