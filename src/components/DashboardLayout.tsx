@@ -178,7 +178,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
       {/* ── Topbar ── */}
       <header className="bg-white border-b border-gray-100 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
 
           {/* Links: Logo + Toggle + Nav */}
           <div className="flex items-center gap-5">
@@ -220,9 +220,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
               </div>
             )}
 
-            {/* Navigation — erst ab lg (≥1024px) horizontal; darunter Hamburger,
-                sonst überläuft die Leiste bei mittlerer Breite (Einstellungen ↔ Sprache). */}
-            <nav className="hidden lg:flex gap-1 items-center">
+            {/* Navigation — erst ab xl (≥1280px) horizontal; darunter Hamburger.
+                Die volle CRM-Admin-Leiste (Pipeline · Kunden · Projekte · Einstellungen
+                + Sprache/Rolle/Profil) überläuft bei lg sonst → „Einstellungen" ragt in „EN". */}
+            <nav className="hidden xl:flex gap-1 items-center">
 
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
@@ -363,7 +364,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
                 onClick={() => setMobileNavOpen(o => !o)}
                 aria-label={t('nav.menu', 'Menü')}
                 aria-expanded={mobileNavOpen}
-                className="lg:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                className="xl:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   {mobileNavOpen
@@ -383,7 +384,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
             <Link
               to="/profile"
-              className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg
+              className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-lg
                          text-sm font-body text-gray-600 hover:bg-gray-100
                          hover:text-hp-black transition-colors group"
               title={t('nav.profile')}
@@ -429,7 +430,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
         {/* ── Mobiles Admin-Menü (Hamburger-Inhalt) ── */}
         {isAdmin && mobileNavOpen && (
-          <nav className="lg:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
+          <nav className="xl:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
             {(adminView === 'crm' ? crmTopItems : verwaltungNavItems).map(({ to, key }) => (
               <Link key={to} to={to}
                 className={`block px-3 py-2.5 rounded-lg text-sm font-medium font-body transition-colors ${
@@ -477,7 +478,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
       {!isAdmin && (
         <nav
-          className="fixed bottom-0 left-0 right-0 lg:hidden z-50 bg-white border-t border-gray-100"
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <div className="flex items-stretch justify-around">
