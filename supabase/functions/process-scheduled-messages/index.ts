@@ -20,6 +20,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
+import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -46,7 +47,7 @@ async function sendEmail(params: {
     await client.send({
       from:    `Sven von Happy Property Cyprus <${params.smtpUser}>`,
       to:      params.to,
-      subject: params.subject,
+      subject: encodeMimeSubject(params.subject),
       html:    params.html,
       content: stripHtml(params.html),
     })

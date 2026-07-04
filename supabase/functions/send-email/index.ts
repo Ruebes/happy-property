@@ -11,6 +11,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 
 const CORS = {
@@ -218,7 +219,7 @@ Deno.serve(async (req: Request) => {
           // Antworten laufen ins info@-Postfach (von dort liest sie künftig der CRM-Posteingang).
           replyTo: `info@happy-property.com`,
           to:      to,
-          subject: subject,
+          subject: encodeMimeSubject(subject),
           html:    html,
           content: stripHtml(html),
         }
