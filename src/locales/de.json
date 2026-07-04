@@ -1775,7 +1775,18 @@
       "confirmOn": "Vollautomatik als Wunsch speichern? Hinweis: Es wird dadurch NICHTS automatisch versendet. Der automatische Versand wird erst nach ausdrücklicher Freischaltung im Backend aktiv – bis dahin bleibt alles im Entwurf-Modus.",
       "savedOn": "Vollautomatik-Wunsch gespeichert (noch nicht scharf)",
       "savedOff": "Autopilot aus – nur Entwürfe",
-      "safety": "Sicherheit: Dieser Schalter speichert nur deine Präferenz. Selbst eingeschaltet versendet das System derzeit NICHTS automatisch – der Auto-Versand wird erst nach ausdrücklicher Freischaltung im Backend aktiv. So kann nichts versehentlich an echte Kunden rausgehen."
+      "safety": "Sicherheit: Dieser Schalter speichert nur deine Präferenz. Selbst eingeschaltet versendet das System derzeit NICHTS automatisch – der Auto-Versand wird erst nach ausdrücklicher Freischaltung im Backend aktiv. So kann nichts versehentlich an echte Kunden rausgehen.",
+      "dfTitle": "Deck-Follow-up (WhatsApp)",
+      "dfNoRule": "Regel nicht gefunden",
+      "dfConfirm": "Ab jetzt geht ~45 Minuten nach dem ERSTEN Deck-Aufruf automatisch eine WhatsApp an den Kunden (Favorit? + Termin-Link). Das sind ECHTE Nachrichten an echte Kunden. Jetzt scharfschalten?",
+      "dfOn": "✅ Deck-Follow-up ist scharf — WhatsApp geht automatisch raus",
+      "dfOff": "Deck-Follow-up aus",
+      "dfOnDesc": "SCHARF: ~45 Min nach dem ersten Deck-Aufruf geht automatisch eine WhatsApp an den Kunden — nur zu Bürozeiten (8–21 Uhr), einmal pro Lead. Storniert sich, sobald der Kunde einen Termin bucht oder „kein Interesse\" schreibt.",
+      "dfOffDesc": "Aus: Es wird nichts gesendet. Eingeschaltet fragt eine automatische WhatsApp ~45 Min nach dem ersten Deck-Aufruf nach dem Favoriten und bietet einen Termin-Link — dein Hebel vom 1. in den 2. Call.",
+      "dfPreview": "Das bekommt der Kunde",
+      "dfMessage": "Hey [Vorname], ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\nWenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: calendly.com/sven-happy-property/30min\n\nLiebe Grüße, Sven",
+      "dfLiveWarn": "Aktiv: Es gehen ECHTE WhatsApp-Nachrichten an echte Kunden raus. Zum Stoppen den Schalter wieder auf Aus stellen.",
+      "dfSafety": "Sicherheit: Solange dieser Schalter aus ist, wird nichts geplant und nichts gesendet. Erst beim Einschalten (mit Rückfrage) wird der automatische Versand scharf."
     },
     "settings": {
       "integrations": "Integrationen",

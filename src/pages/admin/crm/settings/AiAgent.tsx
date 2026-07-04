@@ -22,6 +22,13 @@ export default function AiAgent() {
   const [saving,  setSaving]  = useState(false)
   const [toast,   setToast]   = useState('')
 
+  // Deck-Follow-up-Automatik (automation_rules, event_type 'deck_viewed_followup').
+  // ACHTUNG: dieser Schalter ist NICHT inert — EIN = es geht 45 Min nach dem ersten
+  // Deck-Aufruf WIRKLICH automatisch eine WhatsApp an den echten Kunden raus.
+  const [dfActive, setDfActive] = useState(false)
+  const [dfRuleId, setDfRuleId] = useState<string | null>(null)
+  const [dfSaving, setDfSaving] = useState(false)
+
   // Gelernte KI-Vorgaben (deck_ai_rules): Stil-/Inhaltsregeln, die in Decks (kind 'deck')
   // bzw. Begleit-Mails (kind 'mail') einfließen. Das System lernt sie automatisch aus
   // Svens Korrekturen; hier sichtbar, abschaltbar, löschbar, manuell ergänzbar.
@@ -60,6 +67,12 @@ export default function AiAgent() {
         .eq('key', AUTOPILOT_KEY)
         .maybeSingle()
       setEnabled((data as { value?: string } | null)?.value === 'true')
+      // Deck-Follow-up-Regel laden
+      const { data: rule } = await supabase.from('automation_rules')
+        .select('id, is_active').eq('event_type', 'deck_viewed_followup').maybeSingle()
+      const rr = rule as { id?: string; is_active?: boolean } | null
+      setDfRuleId(rr?.id ?? null)
+      setDfActive(rr?.is_active === true)
     } catch (err) {
       console.error('[AiAgent] fetch:', err)
     } finally {
@@ -68,6 +81,28 @@ export default function AiAgent() {
   }, [])
 
   useEffect(() => { fetchSetting() }, [fetchSetting])
+
+  // Deck-Follow-up scharfschalten / abschalten. EINSCHALTEN = echte Nachrichten.
+  const toggleDeckFollowup = async () => {
+    if (!dfRuleId) { showToast('❌ ' + t('crm.aiAgent.dfNoRule', 'Regel nicht gefunden')); return }
+    const next = !dfActive
+    if (next && !window.confirm(t('crm.aiAgent.dfConfirm',
+      'Ab jetzt geht ~45 Minuten nach dem ERSTEN Deck-Aufruf automatisch eine WhatsApp an den Kunden (Favorit? + Termin-Link). Das sind ECHTE Nachrichten an echte Kunden. Jetzt scharfschalten?'))) {
+      return
+    }
+    setDfSaving(true)
+    try {
+      const { error } = await supabase.from('automation_rules')
+        .update({ is_active: next, updated_at: new Date().toISOString() }).eq('id', dfRuleId)
+      if (error) { showToast(`❌ ${error.message}`); return }
+      setDfActive(next)
+      showToast(next
+        ? t('crm.aiAgent.dfOn',  '✅ Deck-Follow-up ist scharf — WhatsApp geht automatisch raus')
+        : t('crm.aiAgent.dfOff', 'Deck-Follow-up aus'))
+    } finally {
+      setDfSaving(false)
+    }
+  }
 
   const toggle = async () => {
     const next = !enabled
@@ -175,6 +210,54 @@ export default function AiAgent() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* ── Deck-Follow-up (WhatsApp) — echter Auto-Versand ────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">💬 {t('crm.aiAgent.dfTitle', 'Deck-Follow-up (WhatsApp)')}</h2>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                {dfActive
+                  ? t('crm.aiAgent.dfOnDesc', 'SCHARF: ~45 Min nach dem ersten Deck-Aufruf geht automatisch eine WhatsApp an den Kunden — nur zu Bürozeiten (8–21 Uhr), einmal pro Lead. Storniert sich, sobald der Kunde einen Termin bucht oder „kein Interesse" schreibt.')
+                  : t('crm.aiAgent.dfOffDesc', 'Aus: Es wird nichts gesendet. Eingeschaltet fragt eine automatische WhatsApp ~45 Min nach dem ersten Deck-Aufruf nach dem Favoriten und bietet einen Termin-Link — dein Hebel vom 1. in den 2. Call.')}
+              </p>
+            </div>
+            <button
+              onClick={() => void toggleDeckFollowup()}
+              disabled={dfSaving || !dfRuleId}
+              role="switch"
+              aria-checked={dfActive}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                dfActive ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                dfActive ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+
+          {/* Nachrichten-Vorschau */}
+          <div>
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+              {t('crm.aiAgent.dfPreview', 'Das bekommt der Kunde')}
+            </div>
+            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs text-gray-600 whitespace-pre-line leading-relaxed">
+              {t('crm.aiAgent.dfMessage', 'Hey [Vorname], ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\nWenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: calendly.com/sven-happy-property/30min\n\nLiebe Grüße, Sven')}
+            </div>
+          </div>
+
+          {dfActive
+            ? (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 leading-relaxed">
+                ⚠ {t('crm.aiAgent.dfLiveWarn', 'Aktiv: Es gehen ECHTE WhatsApp-Nachrichten an echte Kunden raus. Zum Stoppen den Schalter wieder auf Aus stellen.')}
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800 leading-relaxed">
+                {t('crm.aiAgent.dfSafety', 'Sicherheit: Solange dieser Schalter aus ist, wird nichts geplant und nichts gesendet. Erst beim Einschalten (mit Rückfrage) wird der automatische Versand scharf.')}
+              </div>
+            )}
         </div>
 
         {/* ── Gelernte KI-Vorgaben (Decks + Mails) ───────────────────────────── */}

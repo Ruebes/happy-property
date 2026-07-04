@@ -1775,7 +1775,18 @@
       "confirmOn": "Save full automation as a preference? Note: This does NOT send anything automatically. Automatic sending only becomes active after explicit activation in the backend – until then everything stays in draft mode.",
       "savedOn": "Full-automation preference saved (not live yet)",
       "savedOff": "Autopilot off – drafts only",
-      "safety": "Safety: This switch only stores your preference. Even when on, the system currently sends NOTHING automatically – automatic sending only becomes active after explicit activation in the backend. This way nothing can go out to real customers by accident."
+      "safety": "Safety: This switch only stores your preference. Even when on, the system currently sends NOTHING automatically – automatic sending only becomes active after explicit activation in the backend. This way nothing can go out to real customers by accident.",
+      "dfTitle": "Deck follow-up (WhatsApp)",
+      "dfNoRule": "Rule not found",
+      "dfConfirm": "From now on, ~45 minutes after the FIRST deck view an automatic WhatsApp goes to the customer (favourite? + booking link). These are REAL messages to real customers. Arm it now?",
+      "dfOn": "✅ Deck follow-up is armed — WhatsApp sends automatically",
+      "dfOff": "Deck follow-up off",
+      "dfOnDesc": "ARMED: ~45 min after the first deck view an automatic WhatsApp goes to the customer — business hours only (8–21), once per lead. Cancels itself once the customer books an appointment or replies \"not interested\".",
+      "dfOffDesc": "Off: nothing is sent. When on, an automatic WhatsApp ~45 min after the first deck view asks for the favourite and offers a booking link — your lever from the 1st to the 2nd call.",
+      "dfPreview": "What the customer receives",
+      "dfMessage": "Hey [First name], just checking in 🙂 Did you get a chance to look through the properties? Which one appeals to you most?\n\nIf you like, let’s take 15 minutes and I’ll answer all your open questions — you can pick a slot directly here: calendly.com/sven-happy-property/30min\n\nBest, Sven",
+      "dfLiveWarn": "Active: REAL WhatsApp messages go to real customers. To stop, switch it back off.",
+      "dfSafety": "Safety: while this switch is off, nothing is scheduled and nothing is sent. Only turning it on (with a confirmation) arms the automatic sending."
     },
     "settings": {
       "integrations": "Integrations",

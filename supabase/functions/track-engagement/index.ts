@@ -16,6 +16,79 @@ const CORS = {
 const PIXEL = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
 const pixelResponse = () => new Response(PIXEL, { headers: { ...CORS, 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache, must-revalidate, private' } })
 
+const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
+
+// Sendezeit in Bürozeiten (8–21 Uhr Asia/Nicosia) schieben — nie nachts.
+function toBusinessHours(d: Date): Date {
+  const hourIn = (dt: Date) =>
+    Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Nicosia', hour: '2-digit', hour12: false }).format(dt)) % 24
+  let out = new Date(d)
+  for (let i = 0; i < 48; i++) {
+    const h = hourIn(out)
+    if (h >= 8 && h < 21) break
+    out = new Date(out.getTime() + 60 * 60 * 1000)  // +1 h bis im Fenster
+  }
+  return out
+}
+
+// Deck-Follow-up planen: EINE WhatsApp X Min nach dem ERSTEN Deck-Aufruf.
+// Gated auf die aktive Regel (deck_viewed_followup, Standard AUS). Einmal pro Lead,
+// nicht bei Opt-Out, nur mit Telefonnummer. Gesendet wird später vom 5-Min-Cron.
+async function scheduleDeckFollowup(
+  supabase: ReturnType<typeof createClient>,
+  leadId: string,
+): Promise<void> {
+  try {
+    // 1) Regel aktiv? (Standard AUS → nichts planen)
+    const { data: rule } = await supabase.from('automation_rules')
+      .select('id, is_active, delay_minutes, appointment_condition')
+      .eq('event_type', 'deck_viewed_followup').maybeSingle()
+    const r = rule as { id: string; is_active: boolean; delay_minutes: number; appointment_condition: string | null } | null
+    if (!r || !r.is_active) return
+
+    // 2) Einmal pro Lead — schon geplant/gesendet?
+    const { data: existing } = await supabase.from('scheduled_messages')
+      .select('id').eq('lead_id', leadId).eq('event_type', 'deck_viewed_followup').limit(1)
+    if (existing && existing.length) return
+
+    // 3) Opt-Out? → nicht planen
+    const { data: opt } = await supabase.from('communication_optouts')
+      .select('id').eq('lead_id', leadId).limit(1)
+    if (opt && opt.length) return
+
+    // 4) Lead + Nummer laden (WhatsApp braucht eine Nummer)
+    const { data: lead } = await supabase.from('leads')
+      .select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
+    const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
+    if (!l || !(l.whatsapp || l.phone)) return
+
+    const first = (l.first_name ?? '').trim()
+    const greet = first ? `Hey ${first}` : 'Hallo'
+    const msg =
+      `${greet}, ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\n` +
+      `Wenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${CALENDLY}\n\n` +
+      `Liebe Grüße, Sven`
+
+    const delay  = (r.delay_minutes ?? 45) * 60 * 1000
+    const sendAt = toBusinessHours(new Date(Date.now() + delay))
+
+    await supabase.from('scheduled_messages').insert({
+      lead_id:               leadId,
+      type:                  'whatsapp',
+      event_type:            'deck_viewed_followup',
+      status:                'pending',
+      scheduled_at:          sendAt.toISOString(),
+      whatsapp_text:         msg,
+      recipient:             'client',
+      rule_id:               r.id,
+      appointment_condition: r.appointment_condition ?? 'no_appointment',
+    })
+    console.log(`[track-engagement] Deck-Follow-up geplant für Lead ${leadId} um ${sendAt.toISOString()}`)
+  } catch (err) {
+    console.warn('[track-engagement] scheduleDeckFollowup fehlgeschlagen:', err)
+  }
+}
+
 async function logEvent(type: string, token: string | null) {
   if (!type || !token) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -59,6 +132,13 @@ async function logEvent(type: string, token: string | null) {
   } catch { /* im Zweifel loggen */ }
 
   await supabase.from('engagement_events').insert({ type, token, lead_id: leadId, label: label || null })
+
+  // Nach dem ERSTEN Deck-Aufruf: automatisches WhatsApp-Follow-up planen (nur wenn
+  // die Regel aktiv ist). Läuft nur bis hierher, wenn das Event NICHT dedupliziert
+  // wurde → also beim ersten Aufruf im 2-h-Fenster.
+  if (type === 'deck_view' && leadId) {
+    await scheduleDeckFollowup(supabase, leadId)
+  }
 }
 
 Deno.serve(async (req) => {
