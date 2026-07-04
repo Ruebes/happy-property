@@ -127,7 +127,7 @@ export default function PhaseRunToast({ deal, phase, since, onClose }: Props) {
           <div className={`text-sm font-semibold truncate ${header.text}`}>{phaseLabel}</div>
           <div className={`text-xs ${header.text} opacity-80`}>{header.label}</div>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none px-1" aria-label="schließen">×</button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-lg leading-none px-1" aria-label={t('phaseRunToast.close', 'schließen')}>×</button>
       </div>
 
       <div className="px-4 py-3 space-y-2 max-h-[280px] overflow-y-auto">

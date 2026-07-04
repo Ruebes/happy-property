@@ -50,9 +50,9 @@ export default function Archived() {
       .from('deals')
       .update({ phase: restorePhase, archived_from_phase: null })
       .eq('id', deal.id)
-    if (error) { showToast(`❌ Fehler: ${error.message}`); return }
+    if (error) { showToast(t('archived.restoreError', '❌ Fehler: {{message}}', { message: error.message })); return }
     await fetchDeals()
-    showToast('Deal wiederhergestellt')
+    showToast(t('archived.restoreSuccess', 'Deal wiederhergestellt'))
   }
 
   const formatCurrency = (amount: number | null) =>
@@ -80,7 +80,7 @@ export default function Archived() {
             to="/admin/crm"
             className="text-sm font-medium hover:underline text-gray-600"
           >
-            ← Zurück zum CRM
+            ← {t('archived.backToCrm', 'Zurück zum CRM')}
           </Link>
         </div>
 
@@ -95,7 +95,14 @@ export default function Archived() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {['Name', 'E-Mail', 'Immobilie', 'Provision', 'Archiviert am', 'Aktionen'].map(col => (
+                    {[
+                      t('archived.colName', 'Name'),
+                      t('archived.colEmail', 'E-Mail'),
+                      t('archived.colProperty', 'Immobilie'),
+                      t('archived.colCommission', 'Provision'),
+                      t('archived.colArchivedAt', 'Archiviert am'),
+                      t('archived.colActions', 'Aktionen'),
+                    ].map(col => (
                       <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         {col}
                       </th>
@@ -143,14 +150,14 @@ export default function Archived() {
                               className="text-sm font-medium hover:underline"
                               style={{ color: '#ff795d' }}
                             >
-                              Details
+                              {t('archived.details', 'Details')}
                             </Link>
                             <button
                               onClick={() => handleRestore(deal)}
                               className="text-sm font-medium hover:underline"
                               style={{ color: '#ff795d' }}
                             >
-                              Wiederherstellen
+                              {t('archived.restore', 'Wiederherstellen')}
                             </button>
                           </div>
                         </td>

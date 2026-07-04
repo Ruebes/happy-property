@@ -163,7 +163,7 @@ function BookingDetail({
                 {new Date(booking.check_in).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
               </p>
               {booking.checkin_time && (
-                <p className="text-xs text-gray-400">ab {booking.checkin_time}</p>
+                <p className="text-xs text-gray-400">{t('kalender.checkinFrom', 'ab {{time}}', { time: booking.checkin_time })}</p>
               )}
             </div>
             <div className="bg-gray-50 rounded-xl p-3 text-center">
@@ -176,7 +176,7 @@ function BookingDetail({
                 {new Date(booking.check_out).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })}
               </p>
               {booking.checkout_time && (
-                <p className="text-xs text-gray-400">bis {booking.checkout_time}</p>
+                <p className="text-xs text-gray-400">{t('kalender.checkoutUntil', 'bis {{time}}', { time: booking.checkout_time })}</p>
               )}
             </div>
           </div>
@@ -605,7 +605,7 @@ export default function Kalender() {
                 const propId   = booking.property?.id ?? ''
                 const ownerNights = ownerNightsMap.get(propId) ?? 0
                 const tooltipTitle = booking.is_owner_stay
-                  ? `Eigennutzung ${gridStart.getFullYear()} – ${ownerNights} / 14 Nächte`
+                  ? t('kalender.ownerStayTooltip', 'Eigennutzung {{year}} – {{nights}} / 14 Nächte', { year: gridStart.getFullYear(), nights: ownerNights })
                   : booking.guest?.full_name ?? undefined
                 return (
                   <div

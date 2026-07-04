@@ -422,7 +422,7 @@ export default function AllLeads() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">WhatsApp</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('allLeads.whatsapp', 'WhatsApp')}</label>
                   <input
                     type="tel"
                     value={newLeadForm.whatsapp}

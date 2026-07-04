@@ -177,7 +177,14 @@
     "directEmailPlaceholder": "Direkt-E-Mail",
     "cancel": "Abbrechen",
     "saving": "Speichern…",
-    "saveBtn": "✓ Speichern"
+    "saveBtn": "✓ Speichern",
+    "investorPortalSubtitle": "Dein Investor-Portal · Nur deine Daten",
+    "statMyProperties": "Meine Immobilien",
+    "statAvgReturn": "Rendite (Ø)",
+    "statDocuments": "Dokumente",
+    "statNextAppointment": "Nächster Termin",
+    "accessLevelInvestor": "Zugriffslevel: Investor",
+    "investorAccessDescription": "Du siehst ausschließlich deine eigenen Investitionen und Dokumente."
   },
   "eigentuemer": {
     "propertiesTitle": "Meine Immobilien",
@@ -564,7 +571,10 @@
       "ownerTaxAdvice": "Bitte stimme dies mit deinem Steuerberater ab.",
       "ownerTaxProceed": "Trotzdem buchen",
       "ownerTaxAbort": "Abbrechen"
-    }
+    },
+    "googleUnreachable": "Google-Kalender nicht erreichbar",
+    "deleteFailed": "Löschen fehlgeschlagen",
+    "mapTitle": "Karte"
   },
   "dates": {
     "locale": "de-DE",
@@ -655,7 +665,12 @@
     "changePasswordBtn": "Passwort speichern",
     "passwordChanged": "Passwort erfolgreich geändert.",
     "passwordTooShort": "Das Passwort muss mindestens 8 Zeichen lang sein.",
-    "passwordMismatch": "Die Passwörter stimmen nicht überein."
+    "passwordMismatch": "Die Passwörter stimmen nicht überein.",
+    "streetPlaceholder": "Musterstraße 12",
+    "countryPlaceholder": "Deutschland",
+    "holderPlaceholder": "Max Mustermann",
+    "phonePlaceholder": "+49 170 …",
+    "zipPlaceholder": "12345"
   },
   "setPassword": {
     "title": "Passwort festlegen",
@@ -3386,5 +3401,78 @@
     "notifyEmailSubject": "Neue Datei in Ihrem Happy Property Portal",
     "notifyEmailBody": "<p>Hallo {{firstName}},</p>\n<p>es wurde ein neues <strong>Baustellenfoto</strong> für Ihre Immobilie hochgeladen: <em>{{fileName}}</em></p>\n<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>\n<p>Viele Grüße<br>Ihr Happy Property Team</p>",
     "genericError": "Fehler"
+  },
+  "googleEventModal": {
+    "close": "Schließen",
+    "mapTitle": "Karte"
+  },
+  "kalender": {
+    "checkinFrom": "ab {{time}}",
+    "checkoutUntil": "bis {{time}}",
+    "ownerStayTooltip": "Eigennutzung {{year}} – {{nights}} / 14 Nächte"
+  },
+  "allLeads": {
+    "whatsapp": "WhatsApp"
+  },
+  "archived": {
+    "restoreError": "❌ Fehler: {{message}}",
+    "restoreSuccess": "Deal wiederhergestellt",
+    "backToCrm": "Zurück zum CRM",
+    "colName": "Name",
+    "colEmail": "E-Mail",
+    "colProperty": "Immobilie",
+    "colCommission": "Provision",
+    "colArchivedAt": "Archiviert am",
+    "colActions": "Aktionen",
+    "details": "Details",
+    "restore": "Wiederherstellen"
+  },
+  "settings": {
+    "developerNamePlaceholder": "z.B. Mito, Pafilia…",
+    "toggleActiveError": "❌ Fehler"
+  },
+  "stageMessages": {
+    "tabEmail": "📧 E-Mail",
+    "tabWhatsapp": "📱 WhatsApp",
+    "previewTitle": "Vorschau",
+    "badgeMail": "📧 Mail",
+    "badgeWhatsapp": "📱 WhatsApp",
+    "eventLabel_portal_access": "Portalzugang",
+    "eventDesc_portal_access": "Zugangsdaten-Mail an neue Nutzer/Eigentümer (Login + Passwort). Geht automatisch raus bei Konto-Anlage und „Portal-Zugang senden“.",
+    "eventNote_portal_access": "{{password}} und {{login_url}} bitte drin lassen — sonst sendet das System automatisch die fest eingebaute Sicherheits-Mail."
+  },
+  "customSelect": {
+    "selectPlaceholder": "– Auswählen –",
+    "noOptions": "Keine Optionen"
+  },
+  "phaseRunToast": {
+    "close": "schließen"
+  },
+  "unitImagesUploader": {
+    "blockPrefix": "Block {{block}} ·",
+    "uploadFailed": "Upload fehlgeschlagen",
+    "genericError": "Fehler"
+  },
+  "dokumente": {
+    "dropzoneHint": "klicken oder hierhin ziehen",
+    "maxFileSize": "max. 50 MB",
+    "creditorPlaceholder": "z. B. Stadtwerke München GmbH",
+    "addAmountFields": "{{gross}} / {{net}} hinzufügen"
+  },
+  "crmDashboard": {
+    "channelEmail": "E-Mail",
+    "channelEmailWhatsapp": "E-Mail + WhatsApp",
+    "channelWhatsapp": "WhatsApp"
+  },
+  "adhocMessages": {
+    "htmlPreviewTitle": "HTML Preview",
+    "previewIframeTitle": "Vorschau",
+    "sysEvent": {
+      "portal_access": {
+        "label": "Portal-Aktivierung (Zugangsdaten)",
+        "desc": "Geht automatisch an neue Nutzer/Eigentümer (Login + Passwort) — bei Konto-Anlage und „Portal-Zugang senden“.",
+        "note": "{{password}} und {{login_url}} bitte drin lassen — sonst sendet das System automatisch die fest eingebaute Sicherheits-Mail."
+      }
+    }
   }
 }

@@ -223,7 +223,7 @@ export default function CrmDashboard() {
     reservierung: t('crm.dashboard.evReserv', 'Reservierungs-Info'),
   }
   const channelIcon = (type: string) => type === 'email' ? '📧' : type === 'both' ? '📨' : '💬'
-  const channelName = (type: string) => type === 'email' ? 'E-Mail' : type === 'both' ? 'E-Mail + WhatsApp' : 'WhatsApp'
+  const channelName = (type: string) => type === 'email' ? t('crmDashboard.channelEmail', 'E-Mail') : type === 'both' ? t('crmDashboard.channelEmailWhatsapp', 'E-Mail + WhatsApp') : t('crmDashboard.channelWhatsapp', 'WhatsApp')
   // Engagement-Ereignis als Satz: „… hat sich das Deck Mamba angesehen"
   const engageAction = (e: EngageEvent) => {
     if (e.type === 'deck_view')  return t('crm.dashboard.engDeck', 'hat sich das Deck {{x}} angesehen', { x: e.label || 'Projekt' })

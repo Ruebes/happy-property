@@ -62,7 +62,7 @@ export default function UnitImagesUploader({ projectId }: { projectId: string })
   const selected = units.find(u => u.id === selectedId)
   const images   = selected?.images ?? []
 
-  const unitLabel = (u: UnitRow) => `${u.block ? `Block ${u.block} · ` : ''}${t('crm.unitSelect.no', 'Nr.')} ${u.unit_number}`
+  const unitLabel = (u: UnitRow) => `${u.block ? `${t('unitImagesUploader.blockPrefix', 'Block {{block}} ·', { block: u.block })} ` : ''}${t('crm.unitSelect.no', 'Nr.')} ${u.unit_number}`
 
   async function handleUpload(files: FileList) {
     if (!selectedId || files.length === 0) return
@@ -73,7 +73,7 @@ export default function UnitImagesUploader({ projectId }: { projectId: string })
         const url = await uploadUnitImage(files[i], selectedId)
         if (url) newUrls.push(url)
       }
-      if (newUrls.length === 0) { showMsg('❌ Upload fehlgeschlagen'); return }
+      if (newUrls.length === 0) { showMsg(`❌ ${t('unitImagesUploader.uploadFailed', 'Upload fehlgeschlagen')}`); return }
       const updated = [...images, ...newUrls]
       const { error } = await supabase.from('crm_project_units').update({ images: updated }).eq('id', selectedId)
       if (error) throw error
@@ -81,7 +81,7 @@ export default function UnitImagesUploader({ projectId }: { projectId: string })
       if (inputRef.current) inputRef.current.value = ''
       await fetchUnits()
     } catch (err) {
-      showMsg(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
+      showMsg(`❌ ${err instanceof Error ? err.message : t('unitImagesUploader.genericError', 'Fehler')}`)
     } finally {
       setUploading(false)
     }

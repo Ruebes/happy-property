@@ -177,7 +177,14 @@
     "directEmailPlaceholder": "Direct email",
     "cancel": "Cancel",
     "saving": "Saving…",
-    "saveBtn": "✓ Save"
+    "saveBtn": "✓ Save",
+    "investorPortalSubtitle": "Your investor portal · Your data only",
+    "statMyProperties": "My Properties",
+    "statAvgReturn": "Return (avg.)",
+    "statDocuments": "Documents",
+    "statNextAppointment": "Next Appointment",
+    "accessLevelInvestor": "Access Level: Investor",
+    "investorAccessDescription": "You only see your own investments and documents."
   },
   "eigentuemer": {
     "propertiesTitle": "My Properties",
@@ -564,7 +571,10 @@
       "ownerTaxAdvice": "Please discuss this with your tax advisor.",
       "ownerTaxProceed": "Book anyway",
       "ownerTaxAbort": "Cancel"
-    }
+    },
+    "googleUnreachable": "Google Calendar unreachable",
+    "deleteFailed": "Delete failed",
+    "mapTitle": "Map"
   },
   "dates": {
     "locale": "en-US",
@@ -655,7 +665,12 @@
     "changePasswordBtn": "Save password",
     "passwordChanged": "Password changed successfully.",
     "passwordTooShort": "Password must be at least 8 characters.",
-    "passwordMismatch": "Passwords do not match."
+    "passwordMismatch": "Passwords do not match.",
+    "streetPlaceholder": "123 Main Street",
+    "countryPlaceholder": "Germany",
+    "holderPlaceholder": "John Doe",
+    "phonePlaceholder": "+1 555 …",
+    "zipPlaceholder": "12345"
   },
   "setPassword": {
     "title": "Set your password",
@@ -3386,5 +3401,78 @@
     "notifyEmailSubject": "New file in your Happy Property portal",
     "notifyEmailBody": "<p>Hello {{firstName}},</p>\n<p>A new <strong>construction photo</strong> has been uploaded for your property: <em>{{fileName}}</em></p>\n<p>You can view it anytime in your personal portal.</p>\n<p>Best regards,<br>Your Happy Property Team</p>",
     "genericError": "Error"
+  },
+  "googleEventModal": {
+    "close": "Close",
+    "mapTitle": "Map"
+  },
+  "kalender": {
+    "checkinFrom": "from {{time}}",
+    "checkoutUntil": "until {{time}}",
+    "ownerStayTooltip": "Owner stay {{year}} – {{nights}} / 14 nights"
+  },
+  "allLeads": {
+    "whatsapp": "WhatsApp"
+  },
+  "archived": {
+    "restoreError": "❌ Error: {{message}}",
+    "restoreSuccess": "Deal restored",
+    "backToCrm": "Back to CRM",
+    "colName": "Name",
+    "colEmail": "Email",
+    "colProperty": "Property",
+    "colCommission": "Commission",
+    "colArchivedAt": "Archived on",
+    "colActions": "Actions",
+    "details": "Details",
+    "restore": "Restore"
+  },
+  "settings": {
+    "developerNamePlaceholder": "e.g. Mito, Pafilia…",
+    "toggleActiveError": "❌ Error"
+  },
+  "stageMessages": {
+    "tabEmail": "📧 Email",
+    "tabWhatsapp": "📱 WhatsApp",
+    "previewTitle": "Preview",
+    "badgeMail": "📧 Email",
+    "badgeWhatsapp": "📱 WhatsApp",
+    "eventLabel_portal_access": "Portal Access",
+    "eventDesc_portal_access": "Access credentials email to new users/owners (login + password). Sent automatically on account creation and \"Send portal access\".",
+    "eventNote_portal_access": "Please keep {{password}} and {{login_url}} in the text — otherwise the system automatically falls back to the built-in security email."
+  },
+  "customSelect": {
+    "selectPlaceholder": "– Select –",
+    "noOptions": "No options available"
+  },
+  "phaseRunToast": {
+    "close": "Close"
+  },
+  "unitImagesUploader": {
+    "blockPrefix": "Block {{block}} ·",
+    "uploadFailed": "Upload failed",
+    "genericError": "Error"
+  },
+  "dokumente": {
+    "dropzoneHint": "click or drag file here",
+    "maxFileSize": "max. 50 MB",
+    "creditorPlaceholder": "e.g. Stadtwerke München GmbH",
+    "addAmountFields": "Add {{gross}} / {{net}}"
+  },
+  "crmDashboard": {
+    "channelEmail": "Email",
+    "channelEmailWhatsapp": "Email + WhatsApp",
+    "channelWhatsapp": "WhatsApp"
+  },
+  "adhocMessages": {
+    "htmlPreviewTitle": "HTML Preview",
+    "previewIframeTitle": "Preview",
+    "sysEvent": {
+      "portal_access": {
+        "label": "Portal activation (login credentials)",
+        "desc": "Sent automatically to new users/owners (login + password) — on account creation and \"Send portal access\".",
+        "note": "Please keep {{password}} and {{login_url}} in the template — otherwise the system will automatically fall back to sending the built-in security email."
+      }
+    }
   }
 }

@@ -240,7 +240,7 @@ export default function CrmCalendar() {
     } catch (err) {
       console.error('[Calendar] fetchGoogleEvents:', err)
       setGoogleEvents([])
-      setGoogleError(err instanceof Error ? err.message : 'Google-Kalender nicht erreichbar')
+      setGoogleError(err instanceof Error ? err.message : t('calendar.googleUnreachable', 'Google-Kalender nicht erreichbar'))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [googleConnected])
@@ -347,7 +347,7 @@ export default function CrmCalendar() {
       setSelectedGoogleEvt(null)
       void reloadAll()
     } catch (err) {
-      setGoogleError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen')
+      setGoogleError(err instanceof Error ? err.message : t('calendar.deleteFailed', 'Löschen fehlgeschlagen'))
     }
   }
 
@@ -742,7 +742,7 @@ export default function CrmCalendar() {
                   )}
                 </div>
                 <iframe
-                  title="Karte"
+                  title={t('calendar.mapTitle', 'Karte')}
                   src={`https://www.google.com/maps?q=${encodeURIComponent(appt.location)}&output=embed`}
                   className="w-full h-40 rounded-lg border border-gray-200 mt-2"
                   loading="lazy"

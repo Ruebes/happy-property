@@ -11,6 +11,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
 export interface SelectOption {
   value: string
@@ -33,14 +34,17 @@ export function CustomSelect({
   value,
   onChange,
   options,
-  placeholder = '– Auswählen –',
+  placeholder,
   className = '',
   disabled = false,
   style,
 }: Props) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const listRef      = useRef<HTMLDivElement>(null)
+
+  const resolvedPlaceholder = placeholder ?? t('customSelect.selectPlaceholder', '– Auswählen –')
 
   const selected = options.find(o => o.value === value)
 
@@ -92,7 +96,7 @@ export function CustomSelect({
         `}
       >
         <span className={`truncate ${!selected ? 'text-gray-400' : ''}`}>
-          {selected ? selected.label : placeholder}
+          {selected ? selected.label : resolvedPlaceholder}
         </span>
         {/* Chevron */}
         <svg
@@ -124,7 +128,7 @@ export function CustomSelect({
           style={{ animationFillMode: 'forwards' }}
         >
           {options.length === 0 && (
-            <p className="px-4 py-3 text-sm text-gray-400 font-body">Keine Optionen</p>
+            <p className="px-4 py-3 text-sm text-gray-400 font-body">{t('customSelect.noOptions', 'Keine Optionen')}</p>
           )}
           {options.map(opt => {
             const isSelected = opt.value === value

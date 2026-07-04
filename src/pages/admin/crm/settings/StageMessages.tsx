@@ -536,7 +536,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-6 flex flex-col max-h-[92vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <h2 className="text-lg font-semibold text-gray-900">{event.icon} {event.label}</h2>
+          <h2 className="text-lg font-semibold text-gray-900">{event.icon} {t(`stageMessages.eventLabel_${event.key}`, event.label)}</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
         </div>
 
@@ -544,17 +544,17 @@ function SystemMessageModal({ event, onClose, onSaved }: {
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-            <p className="text-xs text-gray-500">{event.desc}</p>
+            <p className="text-xs text-gray-500">{t(`stageMessages.eventDesc_${event.key}`, event.desc)}</p>
             {event.note && (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800">⚠️ {event.note}</div>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-xs text-amber-800">⚠️ {t(`stageMessages.eventNote_${event.key}`, event.note)}</div>
             )}
 
             {hasEmail && hasWa && (
               <div className="flex gap-1 border-b border-gray-200">
                 <button type="button" onClick={() => setTab('email')}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'email' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>📧 E-Mail</button>
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'email' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>{t('stageMessages.tabEmail', '📧 E-Mail')}</button>
                 <button type="button" onClick={() => setTab('whatsapp')}
-                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'whatsapp' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>📱 WhatsApp</button>
+                  className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'whatsapp' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500'}`}>{t('stageMessages.tabWhatsapp', '📱 WhatsApp')}</button>
               </div>
             )}
 
@@ -592,7 +592,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
                   <textarea rows={9} className={`${inputCls} text-xs font-mono resize-y`} value={html} onChange={e => setHtml(e.target.value)} />
                   {preview && html && (
                     <div className="border border-gray-200 rounded-xl overflow-hidden mt-2">
-                      <iframe srcDoc={fillSysPreview(html)} title="Vorschau" className="w-full" style={{ height: 360, border: 'none' }} sandbox="allow-same-origin" />
+                      <iframe srcDoc={fillSysPreview(html)} title={t('stageMessages.previewTitle', 'Vorschau')} className="w-full" style={{ height: 360, border: 'none' }} sandbox="allow-same-origin" />
                     </div>
                   )}
                 </div>
@@ -854,12 +854,12 @@ export default function StageMessages() {
                 <span className="shrink-0 text-lg mt-0.5">{ev.icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-gray-900 text-sm">{ev.label}</span>
+                    <span className="font-semibold text-gray-900 text-sm">{t(`stageMessages.eventLabel_${ev.key}`, ev.label)}</span>
                     <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">{t('crm.stageEditor.active2', 'Aktiv')}</span>
-                    {ev.emailTemplateId && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">📧 Mail</span>}
-                    {ev.whatsappEventType && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">📱 WhatsApp</span>}
+                    {ev.emailTemplateId && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{t('stageMessages.badgeMail', '📧 Mail')}</span>}
+                    {ev.whatsappEventType && <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">{t('stageMessages.badgeWhatsapp', '📱 WhatsApp')}</span>}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">{ev.desc}</p>
+                  <p className="text-xs text-gray-500 mt-1">{t(`stageMessages.eventDesc_${ev.key}`, ev.desc)}</p>
                 </div>
                 <button onClick={() => setEditingSystem(ev)}
                   className="text-sm text-gray-500 hover:text-gray-800 font-medium shrink-0">

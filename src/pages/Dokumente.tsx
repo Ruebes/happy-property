@@ -581,10 +581,10 @@ export default function Dokumente() {
                 ) : (
                   <div>
                     <p className="text-sm font-body text-gray-500">
-                      PDF {t('common.upload').toLowerCase()} · klicken oder hierhin ziehen
+                      PDF {t('common.upload').toLowerCase()} · {t('dokumente.dropzoneHint', 'klicken oder hierhin ziehen')}
                     </p>
                     <p className="text-xs text-gray-400 font-body mt-0.5">
-                      max. 50 MB
+                      {t('dokumente.maxFileSize', 'max. 50 MB')}
                     </p>
                   </div>
                 )}
@@ -625,7 +625,7 @@ export default function Dokumente() {
               <input className={inputCls} style={focusRing()}
                 value={uploadForm.creditor}
                 onChange={e => setField('creditor', e.target.value)}
-                placeholder="z. B. Stadtwerke München GmbH" />
+                placeholder={t('dokumente.creditorPlaceholder', 'z. B. Stadtwerke München GmbH')} />
             </div>
 
             {/* Show amount fields toggle for non-rechnung */}
@@ -633,7 +633,7 @@ export default function Dokumente() {
               <button type="button"
                 onClick={() => setField('amount_gross', '0')}
                 className="text-xs font-body text-gray-400 hover:text-gray-600 underline transition-colors">
-                + {t('documents.amountGross')} / {t('documents.amountNet')} hinzufügen
+                + {t('dokumente.addAmountFields', '{{gross}} / {{net}} hinzufügen', { gross: t('documents.amountGross'), net: t('documents.amountNet') })}
               </button>
             )}
 

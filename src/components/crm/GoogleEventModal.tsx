@@ -76,7 +76,7 @@ export default function GoogleEventModal({ event, onClose, onSaved }: Props) {
           <h2 className="text-lg font-semibold text-gray-900 font-body">
             📅 {t('crm.calendar.editGoogleEvent', 'Google-Termin bearbeiten')}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none" aria-label="Schließen">
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none" aria-label={t('googleEventModal.close', 'Schließen')}>
             ×
           </button>
         </div>
@@ -145,7 +145,7 @@ export default function GoogleEventModal({ event, onClose, onSaved }: Props) {
           />
           {location.trim() && (
             <iframe
-              title="Karte"
+              title={t('googleEventModal.mapTitle', 'Karte')}
               src={`https://www.google.com/maps?q=${encodeURIComponent(location)}&output=embed`}
               className="w-full h-36 rounded-lg border border-gray-200 mt-2"
               loading="lazy"

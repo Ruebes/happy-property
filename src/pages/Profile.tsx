@@ -294,7 +294,7 @@ export default function Profile() {
             <Field label={t('users.form.street')}>
               <input className={inputCls} value={street}
                      onChange={e => setStreet(e.target.value)}
-                     placeholder="Musterstraße 12" />
+                     placeholder={t('profile.streetPlaceholder', 'Musterstraße 12')} />
             </Field>
             <div className="grid grid-cols-3 gap-3">
               <Field label={t('users.form.zip')}>
@@ -313,7 +313,7 @@ export default function Profile() {
             <Field label={t('users.form.country')}>
               <input className={inputCls} value={country}
                      onChange={e => setCountry(e.target.value)}
-                     placeholder="Deutschland" />
+                     placeholder={t('profile.countryPlaceholder', 'Deutschland')} />
             </Field>
           </div>
         </div>
@@ -354,7 +354,7 @@ export default function Profile() {
                 <Field label={t('owner.bank.holder')}>
                   <input className={inputCls} value={bankHolder}
                          onChange={e => setBankHolder(e.target.value)}
-                         placeholder="Max Mustermann" />
+                         placeholder={t('profile.holderPlaceholder', 'Max Mustermann')} />
                 </Field>
               </div>
             </div>

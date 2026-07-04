@@ -222,7 +222,7 @@ export default function EigentuemerProfile() {
               <Field label={t('users.form.phone')}>
                 <input className={inputCls} value={phone}
                        onChange={e => setPhone(e.target.value)}
-                       placeholder="+49 170 …" />
+                       placeholder={t('profile.phonePlaceholder', '+49 170 …')} />
               </Field>
               <Field label={t('users.form.language')}>
                 <CustomSelect
@@ -248,13 +248,13 @@ export default function EigentuemerProfile() {
             <Field label={t('users.form.street')}>
               <input className={inputCls} value={street}
                      onChange={e => setStreet(e.target.value)}
-                     placeholder="Musterstraße 12" />
+                     placeholder={t('profile.streetPlaceholder', 'Musterstraße 12')} />
             </Field>
             <div className="grid grid-cols-3 gap-3">
               <Field label={t('users.form.zip')}>
                 <input className={inputCls} value={zip}
                        onChange={e => setZip(e.target.value)}
-                       placeholder="12345" />
+                       placeholder={t('profile.zipPlaceholder', '12345')} />
               </Field>
               <div className="col-span-2">
                 <Field label={t('users.form.city')}>
@@ -267,7 +267,7 @@ export default function EigentuemerProfile() {
             <Field label={t('users.form.country')}>
               <input className={inputCls} value={country}
                      onChange={e => setCountry(e.target.value)}
-                     placeholder="Deutschland" />
+                     placeholder={t('profile.countryPlaceholder', 'Deutschland')} />
             </Field>
           </div>
         </div>
@@ -305,7 +305,7 @@ export default function EigentuemerProfile() {
               <Field label={t('owner.bank.holder')}>
                 <input className={inputCls} value={bankHolder}
                        onChange={e => setBankHolder(e.target.value)}
-                       placeholder="Max Mustermann" />
+                       placeholder={t('profile.holderPlaceholder', 'Max Mustermann')} />
               </Field>
             </div>
           </div>

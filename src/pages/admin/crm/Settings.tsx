@@ -60,7 +60,7 @@ function AddDeveloperModal({
             value={name}
             onChange={e => setName(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSave()}
-            placeholder="z.B. Mito, Pafilia…"
+            placeholder={t('settings.developerNamePlaceholder', 'z.B. Mito, Pafilia…')}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm
                        focus:outline-none focus:border-orange-400"
           />
@@ -165,7 +165,7 @@ export default function Settings() {
       )
     } catch (err) {
       console.error('[Settings] toggleActive:', err)
-      showToast('❌ Fehler')
+      showToast(t('settings.toggleActiveError', '❌ Fehler'))
     } finally {
       setToggling(null)
     }
