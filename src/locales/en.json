@@ -1786,7 +1786,20 @@
       "dfPreview": "What the customer receives",
       "dfMessage": "Hey [First name], just checking in 🙂 Did you get a chance to look through the properties? Which one appeals to you most?\n\nIf you like, let’s take 15 minutes and I’ll answer all your open questions — you can pick a slot directly here: calendly.com/sven-happy-property/30min\n\nBest, Sven",
       "dfLiveWarn": "Active: REAL WhatsApp messages go to real customers. To stop, switch it back off.",
-      "dfSafety": "Safety: while this switch is off, nothing is scheduled and nothing is sent. Only turning it on (with a confirmation) arms the automatic sending."
+      "dfSafety": "Safety: while this switch is off, nothing is scheduled and nothing is sent. Only turning it on (with a confirmation) arms the automatic sending.",
+      "botTitle": "Appointment bot (WhatsApp)",
+      "botConfirm": "From now on the appointment bot AUTOMATICALLY chats with real customers via WhatsApp, proposes times and books them in your calendar — on no-show, first contact and deck view. IMPORTANT: your Google Calendar must be shared with the service address, otherwise the bot cannot see your free times. Arm it now?",
+      "botOn": "✅ Appointment bot is armed",
+      "botOff": "Appointment bot off",
+      "botOnDesc": "ARMED: on no-show, first contact and deck view the bot messages the customer on WhatsApp, proposes 2 free slots (German time), understands the reply, checks your calendar and books — incl. confirmation. Asks Zoom or WhatsApp call.",
+      "botOffDesc": "Off: the bot does not write. When on, it takes the scheduling off the customer’s plate — proposes times, books them in your calendar and confirms. Your lever to turn interest into a second call.",
+      "botFlow": "How it works",
+      "botStep1": "Bot: “I could do Saturday 17:00 or Monday 12:00 (German time) — what suits you?”",
+      "botStep2": "Customer picks → bot asks: Zoom or a quick WhatsApp call?",
+      "botStep3": "Customer can’t → bot asks day + morning/afternoon, checks the calendar, proposes a new slot",
+      "botStep4": "Appointment gets booked (calendar + Zoom link) + confirmation is sent. If confused: hands over to you.",
+      "botCalendarNote": "Prerequisite: your Google Calendar must be shared with the service address (Settings → Integrations), otherwise the bot cannot see your free times.",
+      "botLiveWarn": "Active: the bot has REAL WhatsApp conversations with real customers and books real appointments. To stop, switch it back off."
     },
     "settings": {
       "integrations": "Integrations",

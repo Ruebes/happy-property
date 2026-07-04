@@ -258,6 +258,21 @@ Deno.serve(async (req: Request) => {
       const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
       if (er?.waitUntil) er.waitUntil(trigger); else await trigger
     }
+    // ── Termin-Bot: bei No-Show / Erstkontakt den Buchungs-Dialog starten ──
+    // (nur wenn der Bot aktiv ist; handleStart prüft Opt-Out/Termin/aktives Gespräch selbst).
+    if (event_type === 'no_show' || event_type === 'erstkontakt') {
+      const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
+      if ((bot as { value?: string } | null)?.value === 'true') {
+        const p = fetch(`${SUPABASE_URL}/functions/v1/booking-bot`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'start', lead_id, deal_id: deal_id ?? null, source: event_type }),
+        }).catch(e => console.warn('[schedule-message] booking-bot start fehlgeschlagen:', e))
+        const er2 = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+        if (er2?.waitUntil) er2.waitUntil(p); else await p
+      }
+    }
+
     return new Response(JSON.stringify({ ok: true, scheduled, skipped }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

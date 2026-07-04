@@ -133,11 +133,23 @@ async function logEvent(type: string, token: string | null) {
 
   await supabase.from('engagement_events').insert({ type, token, lead_id: leadId, label: label || null })
 
-  // Nach dem ERSTEN Deck-Aufruf: automatisches WhatsApp-Follow-up planen (nur wenn
-  // die Regel aktiv ist). Läuft nur bis hierher, wenn das Event NICHT dedupliziert
-  // wurde → also beim ersten Aufruf im 2-h-Fenster.
+  // Nach dem ERSTEN Deck-Aufruf: Follow-up auslösen. Wenn der Termin-Bot aktiv ist,
+  // startet er den Buchungs-Dialog (schlägt Termine vor + bucht) — das ist die
+  // stärkere Variante und hat Vorrang. Sonst greift das statische WhatsApp-Follow-up.
+  // Läuft nur hier, wenn das Event NICHT dedupliziert wurde (= erster Aufruf im 2-h-Fenster).
   if (type === 'deck_view' && leadId) {
-    await scheduleDeckFollowup(supabase, leadId)
+    const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
+    if ((bot as { value?: string } | null)?.value === 'true') {
+      try {
+        await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: 'start', lead_id: leadId, source: 'deck_viewed' }),
+        })
+      } catch (e) { console.warn('[track-engagement] booking-bot start fehlgeschlagen:', e) }
+    } else {
+      await scheduleDeckFollowup(supabase, leadId)
+    }
   }
 }
 

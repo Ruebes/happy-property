@@ -29,6 +29,11 @@ export default function AiAgent() {
   const [dfRuleId, setDfRuleId] = useState<string | null>(null)
   const [dfSaving, setDfSaving] = useState(false)
 
+  // Termin-Bot (crm_settings 'booking_bot_enabled'). ECHT scharf: EIN = der Bot
+  // schreibt automatisch mit Kunden, schlägt Termine vor und bucht sie.
+  const [botActive, setBotActive] = useState(false)
+  const [botSaving, setBotSaving] = useState(false)
+
   // Gelernte KI-Vorgaben (deck_ai_rules): Stil-/Inhaltsregeln, die in Decks (kind 'deck')
   // bzw. Begleit-Mails (kind 'mail') einfließen. Das System lernt sie automatisch aus
   // Svens Korrekturen; hier sichtbar, abschaltbar, löschbar, manuell ergänzbar.
@@ -73,6 +78,9 @@ export default function AiAgent() {
       const rr = rule as { id?: string; is_active?: boolean } | null
       setDfRuleId(rr?.id ?? null)
       setDfActive(rr?.is_active === true)
+      // Termin-Bot-Schalter laden
+      const { data: b } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
+      setBotActive((b as { value?: string } | null)?.value === 'true')
     } catch (err) {
       console.error('[AiAgent] fetch:', err)
     } finally {
@@ -101,6 +109,27 @@ export default function AiAgent() {
         : t('crm.aiAgent.dfOff', 'Deck-Follow-up aus'))
     } finally {
       setDfSaving(false)
+    }
+  }
+
+  // Termin-Bot scharfschalten / abschalten. EINSCHALTEN = echter Auto-Dialog.
+  const toggleBookingBot = async () => {
+    const next = !botActive
+    if (next && !window.confirm(t('crm.aiAgent.botConfirm',
+      'Der Termin-Bot schreibt ab jetzt AUTOMATISCH mit echten Kunden per WhatsApp, schlägt Termine vor und bucht sie in deinen Kalender — bei No-Show, Erstkontakt und Deck-Ansicht. WICHTIG: Dein Google-Kalender muss für die Service-Adresse freigegeben sein, sonst kennt der Bot deine freien Zeiten nicht. Jetzt scharfschalten?'))) {
+      return
+    }
+    setBotSaving(true)
+    try {
+      const { error } = await supabase.from('crm_settings')
+        .upsert({ key: 'booking_bot_enabled', value: next ? 'true' : 'false', updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      if (error) { showToast(`❌ ${error.message}`); return }
+      setBotActive(next)
+      showToast(next
+        ? t('crm.aiAgent.botOn',  '✅ Termin-Bot ist scharf')
+        : t('crm.aiAgent.botOff', 'Termin-Bot aus'))
+    } finally {
+      setBotSaving(false)
     }
   }
 
@@ -258,6 +287,57 @@ export default function AiAgent() {
                 {t('crm.aiAgent.dfSafety', 'Sicherheit: Solange dieser Schalter aus ist, wird nichts geplant und nichts gesendet. Erst beim Einschalten (mit Rückfrage) wird der automatische Versand scharf.')}
               </div>
             )}
+        </div>
+
+        {/* ── Termin-Bot (WhatsApp) — schlägt Termine vor + bucht ────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">🤝 {t('crm.aiAgent.botTitle', 'Termin-Bot (WhatsApp)')}</h2>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                {botActive
+                  ? t('crm.aiAgent.botOnDesc', 'SCHARF: Bei No-Show, Erstkontakt und Deck-Ansicht schreibt der Bot dem Kunden per WhatsApp, schlägt 2 freie Termine (deutsche Zeit) vor, versteht die Antwort, gleicht deinen Kalender ab und bucht — inkl. Terminbestätigung. Fragt Zoom oder WhatsApp-Telefonat.')
+                  : t('crm.aiAgent.botOffDesc', 'Aus: Der Bot schreibt nicht. Eingeschaltet nimmt er dem Kunden das Terminfinden ab — schlägt Termine vor, bucht sie in deinen Kalender und bestätigt. Dein Hebel, damit aus Interesse ein zweiter Call wird.')}
+              </p>
+            </div>
+            <button
+              onClick={() => void toggleBookingBot()}
+              disabled={botSaving}
+              role="switch"
+              aria-checked={botActive}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                botActive ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                botActive ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+
+          {/* Ablauf-Vorschau */}
+          <div>
+            <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">
+              {t('crm.aiAgent.botFlow', 'So läuft es ab')}
+            </div>
+            <ol className="space-y-1.5 text-xs text-gray-600">
+              <li className="flex gap-2"><span className="text-green-600 font-semibold">1.</span> {t('crm.aiAgent.botStep1', 'Bot: „Ich hätte Samstag 17:00 oder Montag 12:00 (deutsche Zeit) — was passt dir?"')}</li>
+              <li className="flex gap-2"><span className="text-green-600 font-semibold">2.</span> {t('crm.aiAgent.botStep2', 'Kunde wählt → Bot fragt: Zoom oder kurz telefonieren über WhatsApp?')}</li>
+              <li className="flex gap-2"><span className="text-green-600 font-semibold">3.</span> {t('crm.aiAgent.botStep3', 'Kunde kann nicht → Bot fragt Tag + vor-/nachmittags, gleicht Kalender ab, schlägt neuen Slot vor')}</li>
+              <li className="flex gap-2"><span className="text-green-600 font-semibold">4.</span> {t('crm.aiAgent.botStep4', 'Termin wird gebucht (Kalender + Zoom-Link) + Bestätigung geht raus. Bei Verwirrung: Übergabe an dich.')}</li>
+            </ol>
+          </div>
+
+          {/* Kalender-Abhängigkeit */}
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800 leading-relaxed">
+            {t('crm.aiAgent.botCalendarNote', 'Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.')}
+          </div>
+
+          {botActive && (
+            <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700 leading-relaxed">
+              ⚠ {t('crm.aiAgent.botLiveWarn', 'Aktiv: Der Bot führt ECHTE WhatsApp-Gespräche mit echten Kunden und bucht echte Termine. Zum Stoppen den Schalter wieder auf Aus stellen.')}
+            </div>
+          )}
         </div>
 
         {/* ── Gelernte KI-Vorgaben (Decks + Mails) ───────────────────────────── */}

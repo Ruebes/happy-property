@@ -111,6 +111,29 @@ Deno.serve(async (req) => {
             })
         }
       }
+
+      // ── Termin-Bot: eingehende Antwort in ein laufendes Bot-Gespräch geben ──
+      // Nur wenn KEINE Abmeldung (die schließt das Gespräch bereits) und ein aktives
+      // Gespräch existiert. Läuft im Hintergrund (KI + WhatsApp dauert Sekunden), damit
+      // der Webhook sofort 200 antwortet.
+      if (!fromMe && !detectsStopIntent(text)) {
+        const { data: conv } = await supabase
+          .from('booking_conversations')
+          .select('id')
+          .eq('lead_id', lead.id)
+          .not('state', 'in', '(booked,handoff,expired)')
+          .gt('expires_at', new Date().toISOString())
+          .limit(1)
+        if (conv && conv.length) {
+          const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+            method:  'POST',
+            headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ action: 'reply', lead_id: lead.id, text }),
+          }).then(r => r.text()).catch(e => console.error('[timelines-webhook] booking-bot reply Fehler:', e))
+          const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+          if (er) er.waitUntil(p); else await p
+        }
+      }
     }
 
     return new Response(

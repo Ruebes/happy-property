@@ -1786,7 +1786,20 @@
       "dfPreview": "Das bekommt der Kunde",
       "dfMessage": "Hey [Vorname], ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\nWenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: calendly.com/sven-happy-property/30min\n\nLiebe Grüße, Sven",
       "dfLiveWarn": "Aktiv: Es gehen ECHTE WhatsApp-Nachrichten an echte Kunden raus. Zum Stoppen den Schalter wieder auf Aus stellen.",
-      "dfSafety": "Sicherheit: Solange dieser Schalter aus ist, wird nichts geplant und nichts gesendet. Erst beim Einschalten (mit Rückfrage) wird der automatische Versand scharf."
+      "dfSafety": "Sicherheit: Solange dieser Schalter aus ist, wird nichts geplant und nichts gesendet. Erst beim Einschalten (mit Rückfrage) wird der automatische Versand scharf.",
+      "botTitle": "Termin-Bot (WhatsApp)",
+      "botConfirm": "Der Termin-Bot schreibt ab jetzt AUTOMATISCH mit echten Kunden per WhatsApp, schlägt Termine vor und bucht sie in deinen Kalender — bei No-Show, Erstkontakt und Deck-Ansicht. WICHTIG: Dein Google-Kalender muss für die Service-Adresse freigegeben sein, sonst kennt der Bot deine freien Zeiten nicht. Jetzt scharfschalten?",
+      "botOn": "✅ Termin-Bot ist scharf",
+      "botOff": "Termin-Bot aus",
+      "botOnDesc": "SCHARF: Bei No-Show, Erstkontakt und Deck-Ansicht schreibt der Bot dem Kunden per WhatsApp, schlägt 2 freie Termine (deutsche Zeit) vor, versteht die Antwort, gleicht deinen Kalender ab und bucht — inkl. Terminbestätigung. Fragt Zoom oder WhatsApp-Telefonat.",
+      "botOffDesc": "Aus: Der Bot schreibt nicht. Eingeschaltet nimmt er dem Kunden das Terminfinden ab — schlägt Termine vor, bucht sie in deinen Kalender und bestätigt. Dein Hebel, damit aus Interesse ein zweiter Call wird.",
+      "botFlow": "So läuft es ab",
+      "botStep1": "Bot: „Ich hätte Samstag 17:00 oder Montag 12:00 (deutsche Zeit) — was passt dir?\"",
+      "botStep2": "Kunde wählt → Bot fragt: Zoom oder kurz telefonieren über WhatsApp?",
+      "botStep3": "Kunde kann nicht → Bot fragt Tag + vor-/nachmittags, gleicht Kalender ab, schlägt neuen Slot vor",
+      "botStep4": "Termin wird gebucht (Kalender + Zoom-Link) + Bestätigung geht raus. Bei Verwirrung: Übergabe an dich.",
+      "botCalendarNote": "Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.",
+      "botLiveWarn": "Aktiv: Der Bot führt ECHTE WhatsApp-Gespräche mit echten Kunden und bucht echte Termine. Zum Stoppen den Schalter wieder auf Aus stellen."
     },
     "settings": {
       "integrations": "Integrationen",

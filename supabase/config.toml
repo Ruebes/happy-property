@@ -19,3 +19,8 @@ verify_jwt = false
 # Login/JWT von öffentlichen Seiten und aus E-Mails heraus aufgerufen.
 [functions.track-engagement]
 verify_jwt = false
+
+# Termin-Bot: wird server-zu-server aus track-engagement / schedule-message /
+# timelines-webhook aufgerufen (Service-Role, kein User-JWT).
+[functions.booking-bot]
+verify_jwt = false
