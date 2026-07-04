@@ -220,8 +220,9 @@ export default function DashboardLayout({ children, basePath }: Props) {
               </div>
             )}
 
-            {/* Navigation */}
-            <nav className="hidden md:flex gap-1 items-center">
+            {/* Navigation — erst ab lg (≥1024px) horizontal; darunter Hamburger,
+                sonst überläuft die Leiste bei mittlerer Breite (Einstellungen ↔ Sprache). */}
+            <nav className="hidden lg:flex gap-1 items-center">
 
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
@@ -355,14 +356,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
           </div>
 
           {/* Rechts: Sprache + Rolle-Badge + Profil + Abmelden */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             {/* Hamburger — Admin hat auf Mobil sonst keine Navigation */}
             {isAdmin && (
               <button
                 onClick={() => setMobileNavOpen(o => !o)}
                 aria-label={t('nav.menu', 'Menü')}
                 aria-expanded={mobileNavOpen}
-                className="md:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+                className="lg:hidden p-2 -ml-1 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   {mobileNavOpen
@@ -382,7 +383,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
             <Link
               to="/profile"
-              className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg
+              className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg
                          text-sm font-body text-gray-600 hover:bg-gray-100
                          hover:text-hp-black transition-colors group"
               title={t('nav.profile')}
@@ -428,7 +429,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
         {/* ── Mobiles Admin-Menü (Hamburger-Inhalt) ── */}
         {isAdmin && mobileNavOpen && (
-          <nav className="md:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
+          <nav className="lg:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
             {(adminView === 'crm' ? crmTopItems : verwaltungNavItems).map(({ to, key }) => (
               <Link key={to} to={to}
                 className={`block px-3 py-2.5 rounded-lg text-sm font-medium font-body transition-colors ${
@@ -476,7 +477,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
       {!isAdmin && (
         <nav
-          className="fixed bottom-0 left-0 right-0 md:hidden z-50 bg-white border-t border-gray-100"
+          className="fixed bottom-0 left-0 right-0 lg:hidden z-50 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <div className="flex items-stretch justify-around">
