@@ -817,13 +817,14 @@ export default function Pipeline() {
     } finally { setModalBusy(false) }
   }
 
-  // Rechtsklick-Kontextmenü auf einer Karte: alle Phasen zum schnellen Wechsel
+  // Rechtsklick-Kontextmenü auf einer Karte: alle Phasen zum schnellen Wechsel.
+  // Menü ~240px breit; Höhe ist dynamisch (viele Einträge) → nur X am rechten Rand
+  // einklemmen. Der vertikale Startpunkt + die scrollbare Maximalhöhe werden beim
+  // Rendern aus der Klickposition berechnet, damit ALLE Einträge erreichbar bleiben.
   const openCtxMenu = (e: React.MouseEvent, deal: Deal) => {
     e.preventDefault()
-    // Menü ~ 240px breit, ~ 470px hoch → am Viewport-Rand einklemmen
     const x = Math.min(e.clientX, window.innerWidth - 248)
-    const y = Math.min(e.clientY, window.innerHeight - 470)
-    setCtxMenu({ x: Math.max(8, x), y: Math.max(8, y), deal })
+    setCtxMenu({ x: Math.max(8, x), y: e.clientY, deal })
   }
 
   const handleRegistrationConfirm = async (selectedDevelopers: string[], notes: string) => {
@@ -1150,8 +1151,14 @@ export default function Pipeline() {
             onContextMenu={e => { e.preventDefault(); setCtxMenu(null) }}
           />
           <div
-            className="fixed z-50 w-60 max-h-[80vh] overflow-y-auto bg-white rounded-xl shadow-xl border border-gray-200 py-1 animate-fade-in"
-            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            className="fixed z-50 w-60 overflow-y-auto bg-white rounded-xl shadow-xl border border-gray-200 py-1 animate-fade-in"
+            style={{
+              left: ctxMenu.x,
+              // Startpunkt nie tiefer als 40% der Höhe → darunter bleibt immer genug
+              // Platz; die restliche Höhe wird scrollbar (alle Einträge erreichbar).
+              top: Math.min(ctxMenu.y, Math.round(window.innerHeight * 0.4)),
+              maxHeight: `calc(100vh - ${Math.min(ctxMenu.y, Math.round(window.innerHeight * 0.4))}px - 12px)`,
+            }}
           >
             <button
               onClick={() => { const d = ctxMenu.deal; setCtxMenu(null); setDeckDeal(d) }}
