@@ -399,7 +399,23 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     catch (e) { console.warn('[booking-bot] Pipeline-Update fehlgeschlagen:', e) }
   }
 
-  // Bestätigungs-Mail mit Kalender-Anhang (ersetzt die frühere Calendly-Mail)
+  // Bestätigung bevorzugt über die editierbaren „Termin gebucht"-Pipeline-Nachrichten
+  // (Mail + WhatsApp; Zoom-/Telefon-Variante via has_zoom/no_zoom). schedule-message
+  // plant sie, process-scheduled-messages sendet die passende Variante sofort (delay 0).
+  let viaTemplates = false
+  try {
+    const { data: sm } = await admin.functions.invoke('schedule-message', { body: { lead_id: conv.lead_id, deal_id: dealId, event_type: 'termin_gebucht' } })
+    viaTemplates = (((sm as { scheduled?: number } | null)?.scheduled) ?? 0) > 0
+  } catch (e) { console.warn('[booking-bot] termin_gebucht-Trigger fehlgeschlagen:', e) }
+
+  if (viaTemplates) {
+    // Die Pipeline-Vorlagen übernehmen die Bestätigung (Mail + WhatsApp) → Gespräch nur schließen.
+    await setConv(admin, conv.id, { state: 'booked', meeting_type: type, last_message: `Termin gebucht (${slot.label} Uhr) — Bestätigung via „Termin gebucht"-Vorlagen.` })
+    return
+  }
+
+  // ── Fallback (keine aktive „Termin gebucht"-Regel): eigene gebrandete Bestätigung ──
+  // Bestätigungs-Mail mit Kalender-Anhang
   if (lead.email) {
     try {
       const dateStr = new Intl.DateTimeFormat('de-DE', { timeZone: TZ, weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' }).format(new Date(slot.startIso))
