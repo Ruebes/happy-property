@@ -323,18 +323,33 @@ Deno.serve(async (req) => {
     let extraFacts = ''
     if (body.project_id) {
       try {
-        let unitList: Array<{ unit_number: string; price_net: number }> = []
-        if (body.units?.length) {
-          unitList = body.units.filter(u => u.unit_number).map(u => ({ unit_number: String(u.unit_number), price_net: Number(u.price_net) || 0 }))
-        } else if (body.unit_id) {
-          const { data: u } = await sbRules.from('crm_project_units').select('unit_number, price_net').eq('id', body.unit_id).maybeSingle()
-          const uu = u as { unit_number?: string; price_net?: number } | null
-          if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0 }]
+        let unitList: Array<{ unit_number: string; price_net: number; bedrooms: number | null }> = []
+        // Alle Wohnungen des Projekts (Zimmerzahl je Wohnung) für die zimmer-
+        // abhängige Möbel-Kalkulation als Map bereitstellen.
+        const { data: allU } = await sbRules.from('crm_project_units').select('unit_number, bedrooms').eq('project_id', body.project_id)
+        const bedByUnit = new Map<string, number | null>()
+        for (const u of (allU ?? []) as Array<{ unit_number?: string; bedrooms?: number | null }>) {
+          if (u.unit_number) bedByUnit.set(normU(u.unit_number), u.bedrooms ?? null)
         }
-        const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date').eq('id', body.project_id).maybeSingle()
+        if (body.units?.length) {
+          unitList = body.units.filter(u => u.unit_number).map(u => ({ unit_number: String(u.unit_number), price_net: Number(u.price_net) || 0, bedrooms: bedByUnit.get(normU(u.unit_number)) ?? null }))
+        } else if (body.unit_id) {
+          const { data: u } = await sbRules.from('crm_project_units').select('unit_number, price_net, bedrooms').eq('id', body.unit_id).maybeSingle()
+          const uu = u as { unit_number?: string; price_net?: number; bedrooms?: number | null } | null
+          if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0, bedrooms: uu.bedrooms ?? null }]
+        }
+        const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date, calc_defaults').eq('id', body.project_id).maybeSingle()
         const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
-        const furnNet = furnIncluded ? 0 : (Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0)
-        const buildLines = (baseNet: number) => {
+        const furnDefault = Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0
+        const furnByBed = (p as { calc_defaults?: { furniture_by_bedrooms?: Record<string, number> } } | null)?.calc_defaults?.furniture_by_bedrooms ?? null
+        // Möbel-Nettopreis je Wohnung: ZIMMERABHÄNGIG (furniture_by_bedrooms, z.B.
+        // 1-SZ 17.000 / 2-SZ 19.000) mit Fallback auf den projektweiten furniture_cost.
+        const furnFor = (bedrooms: number | null): number => {
+          if (furnIncluded) return 0
+          if (furnByBed && bedrooms != null && furnByBed[String(bedrooms)] != null) return Number(furnByBed[String(bedrooms)]) || 0
+          return furnDefault
+        }
+        const buildLines = (baseNet: number, furnNet: number) => {
           const totalNet = baseNet + furnNet
           const vat = Math.round(totalNet * 0.19)
           const brutto = totalNet + vat
@@ -349,7 +364,8 @@ Deno.serve(async (req) => {
         }
         const priced = unitList.filter(u => u.price_net > 0)
         for (const u of priced) {
-          priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net)
+          const furnNet = furnFor(u.bedrooms)
+          priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net, furnNet)
           const totalNet = u.price_net + furnNet
           const vat = Math.round(totalNet * 0.19)
           priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: '19 %', vat: eur(vat), gross: eur(totalNet + vat) }
