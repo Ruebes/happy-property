@@ -84,14 +84,29 @@ Deno.serve(async (req) => {
         .select('id')
         .or(`phone.ilike.*${suffix}*,whatsapp.ilike.*${suffix}*`)
         .order('created_at', { ascending: false })
-        .limit(1)
       if (lErr) {
         // DB-Fehler NICHT verschlucken — sonst ginge eine eingehende „STOPP"-Abmeldung
         // verloren (Function meldete 200, Provider würde nicht erneut zustellen).
         console.error('[timelines-webhook] Lead-Lookup Fehler:', lErr.message)
         return new Response(JSON.stringify({ error: lErr.message }), { status: 500, headers: corsHeaders })
       }
-      lead = rows?.[0] ?? null
+      const matches = (rows ?? []) as { id: string }[]
+      // Mehrere Leads mit DERSELBEN Nummer (Dubletten): den mit einem AKTIVEN
+      // Bot-Gespräch bevorzugen — sonst würde die Antwort am falschen Lead landen
+      // (ohne Gespräch → Bot reagiert nicht). Sonst der neueste.
+      if (matches.length > 1) {
+        const { data: convs } = await supabase
+          .from('booking_conversations')
+          .select('lead_id')
+          .in('lead_id', matches.map(m => m.id))
+          .not('state', 'in', '(booked,handoff,expired)')
+          .gt('expires_at', new Date().toISOString())
+          .limit(1)
+        const convLead = (convs as { lead_id: string }[] | null)?.[0]?.lead_id
+        lead = convLead ? { id: convLead } : matches[0]
+      } else {
+        lead = matches[0] ?? null
+      }
     }
 
     if (lead) {
