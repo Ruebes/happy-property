@@ -246,9 +246,30 @@ Deno.serve(async (req: Request) => {
       whatsapp_text: string | null
       recipient:     string | null
       appointment_condition: string | null
+      bot_nudge_stage:  number | null
+      bot_nudge_source: string | null
     }[]) {
       let success = true
       const errors: string[] = []
+
+      // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
+      // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
+      // No-Show-Nudge. Der Bot prüft selbst Opt-Out/Termin/Engagement + sendet.
+      if (msg.bot_nudge_stage != null) {
+        const botBody = msg.bot_nudge_stage === 0
+          ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source ?? 'no_show' }
+          : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage }
+        try {
+          await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(botBody),
+          })
+        } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e) }
+        await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+        processed.push({ id: msg.id, result: `bot_${msg.bot_nudge_stage === 0 ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
+        continue
+      }
 
       // Lead-E-Mail + Telefon für Versand laden
       const { data: lead } = await supabase
