@@ -136,7 +136,18 @@ export default function Postausgang() {
       if (fresh) to = fresh
     }
     if (!to) { flash(t('crm.outbox.noEmail', 'Kein Empfänger — E-Mail am Lead fehlt.')); return }
-    if (!window.confirm((resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
+    // Sicherheitsnetz: Angebots-Mail nicht versehentlich „nackt" rausschicken. Hat der
+    // Eintrag ein Deck hinterlegt (bzw. existiert für den Lead eine Berechnung), der
+    // Body verlinkt sie aber NICHT (z.B. handgeschriebene Kurz-Mail), deutlich warnen —
+    // mit Möglichkeit, trotzdem zu senden.
+    const body = row.body ?? ''
+    const missing: string[] = []
+    if ((row.deck_tokens?.length ?? 0) > 0 && !body.includes('/deck/')) missing.push(t('crm.outbox.missDeck', 'Deck-Link'))
+    if (calcs.some(c => c.lead_id === row.lead_id) && !body.includes('/rechnung/')) missing.push(t('crm.outbox.missCalc', 'Berechnung'))
+    const confirmMsg = missing.length
+      ? `⚠️ ${t('crm.outbox.missWarn', 'In dieser Mail fehlt')}: ${missing.join(' + ')}.\n${t('crm.outbox.missHint', 'Sie enthält also kein Deck bzw. keine Berechnung.')}\n\n${t('crm.outbox.missConfirm', 'Trotzdem an den Kunden senden?')}\n\n${to}`
+      : (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`
+    if (!window.confirm(confirmMsg)) return
     setBusyId(row.id)
     try {
       // Korrigierte Adresse auf dem Eintrag festhalten (Anzeige + nächster Versand)
