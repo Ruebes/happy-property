@@ -2444,6 +2444,11 @@
       "saveNote": "Save as note",
       "saved": "✓ Saved as note",
       "openLead": "Open customer →"
+    },
+    "botMsg": {
+      "saved": "✅ Bot text saved",
+      "title": "Booking bot (WhatsApp)",
+      "desc": "Automatically proposes 2 free times (2 days · morning + afternoon). Toggle under Settings → AI Agent. Here you only edit the intro texts; {{vorname}} and the 2 times are appended by the bot."
     }
   },
   "docs": {

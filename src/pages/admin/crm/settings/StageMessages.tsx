@@ -622,6 +622,82 @@ function SystemMessageModal({ event, onClose, onSaved }: {
   )
 }
 
+// ── Termin-Bot: editierbare Eröffnungs-/Nudge-Texte (booking_bot_messages) ──────
+// Der Bot schlägt automatisch 2 freie Termine vor (2 Tage, vormittags + nachmittags);
+// hier bearbeitet Sven nur die Einleitungstexte je Stufe. Ein/Aus unter KI-Agent.
+interface BotMsg { key: string; label: string; delay_label: string | null; intro: string; sort: number }
+function BotMessagesCard({ onToast }: { onToast: (m: string) => void }) {
+  const { t } = useTranslation()
+  const [rows, setRows]       = useState<BotMsg[]>([])
+  const [editKey, setEditKey] = useState<string | null>(null)
+  const [draft, setDraft]     = useState('')
+  const [saving, setSaving]   = useState(false)
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('booking_bot_messages').select('key, label, delay_label, intro, sort').order('sort')
+    setRows((data ?? []) as BotMsg[])
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const save = async (key: string) => {
+    setSaving(true)
+    const { error } = await supabase.from('booking_bot_messages').update({ intro: draft.trim(), updated_at: new Date().toISOString() }).eq('key', key)
+    setSaving(false)
+    if (error) { onToast('❌ ' + error.message); return }
+    setEditKey(null); await load(); onToast(t('crm.botMsg.saved', '✅ Bot-Text gespeichert'))
+  }
+
+  if (!rows.length) return null
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mt-2">
+      <div className="flex items-start gap-3">
+        <span className="shrink-0 text-lg mt-0.5">🤝</span>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold text-gray-900 text-sm">{t('crm.botMsg.title', 'Termin-Bot (WhatsApp)')}</span>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">{t('stageMessages.badgeWhatsapp', '📱 WhatsApp')}</span>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            {t('crm.botMsg.desc', 'Schlägt automatisch 2 freie Termine vor (2 Tage · vormittags + nachmittags). Ein/Aus unter Einstellungen → KI-Agent. Hier bearbeitest du nur die Einleitungstexte; {{vorname}} und die 2 Termine hängt der Bot selbst an.')}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {rows.map(r => (
+          <div key={r.key} className="border border-gray-100 rounded-xl p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-medium text-gray-800">{r.label}</span>
+                {r.delay_label && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{r.delay_label}</span>}
+              </div>
+              {editKey !== r.key && (
+                <button onClick={() => { setEditKey(r.key); setDraft(r.intro) }}
+                  className="text-xs text-gray-500 hover:text-gray-800 font-medium shrink-0">{t('common.edit', 'Bearbeiten')}</button>
+              )}
+            </div>
+            {editKey === r.key ? (
+              <div className="mt-2">
+                <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                <div className="flex justify-end gap-2 mt-2">
+                  <button onClick={() => setEditKey(null)} className="px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+                  <button onClick={() => void save(r.key)} disabled={saving || !draft.trim()}
+                    className="px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                    {t('common.save', 'Speichern')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1.5 whitespace-pre-wrap line-clamp-3">{r.intro}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function StageMessages() {
   const { t } = useTranslation()
 
@@ -868,6 +944,7 @@ export default function StageMessages() {
               </div>
             </div>
           ))}
+          <BotMessagesCard onToast={showToast} />
         </div>
       </div>
 
