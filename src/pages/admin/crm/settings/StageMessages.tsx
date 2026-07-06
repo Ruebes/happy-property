@@ -10,6 +10,8 @@ import RecipientPicker from '../../../../components/crm/RecipientPicker'
 // Die event_types entsprechen exakt dem, was die schedule-message Engine als
 // Auslöser bekommt (Pipeline.handleDrop → triggerScheduleMessage(phase)).
 const STAGES: string[] = ['lead_created', ...DEAL_PHASES]
+// Phasen, die (auch) über den WhatsApp-Termin-Bot laufen → in der Liste farblich markiert.
+const BOT_STAGES = new Set(['no_show', 'erstkontakt'])
 
 type Channel  = 'email' | 'whatsapp' | 'both'
 type DelayUnit = 'minutes' | 'hours' | 'days'
@@ -837,6 +839,12 @@ export default function StageMessages() {
                     style={isSel ? { backgroundColor: '#ff795d' } : undefined}>
                     <span>{stageIcon(stage)}</span>
                     <span className="flex-1 min-w-0 truncate font-medium">{stageLabel(stage)}</span>
+                    {BOT_STAGES.has(stage) && (
+                      <span title={t('crm.botMsg.stageBadge', 'Termin-Bot aktiv in dieser Phase')}
+                        className={`text-xs px-1.5 py-0.5 rounded-full ${isSel ? 'bg-white/25 text-white' : 'bg-[#ff795d]/10 text-[#ff795d]'}`}>
+                        🤝
+                      </span>
+                    )}
                     {c.total > 0 && (
                       <span className={`text-xs px-1.5 py-0.5 rounded-full ${
                         isSel ? 'bg-white/25 text-white'

@@ -2448,7 +2448,8 @@
     "botMsg": {
       "saved": "✅ Bot text saved",
       "title": "Booking bot (WhatsApp)",
-      "desc": "Automatically proposes 2 free times (2 days · morning + afternoon). Toggle under Settings → AI Agent. Here you only edit the intro texts; {{vorname}} and the 2 times are appended by the bot."
+      "desc": "Automatically proposes 2 free times (2 days · morning + afternoon). Toggle under Settings → AI Agent. Here you only edit the intro texts; {{vorname}} and the 2 times are appended by the bot.",
+      "stageBadge": "Booking bot active in this phase"
     }
   },
   "docs": {

@@ -2448,7 +2448,8 @@
     "botMsg": {
       "saved": "✅ Bot-Text gespeichert",
       "title": "Termin-Bot (WhatsApp)",
-      "desc": "Schlägt automatisch 2 freie Termine vor (2 Tage · vormittags + nachmittags). Ein/Aus unter Einstellungen → KI-Agent. Hier bearbeitest du nur die Einleitungstexte; {{vorname}} und die 2 Termine hängt der Bot selbst an."
+      "desc": "Schlägt automatisch 2 freie Termine vor (2 Tage · vormittags + nachmittags). Ein/Aus unter Einstellungen → KI-Agent. Hier bearbeitest du nur die Einleitungstexte; {{vorname}} und die 2 Termine hängt der Bot selbst an.",
+      "stageBadge": "Termin-Bot aktiv in dieser Phase"
     }
   },
   "docs": {
