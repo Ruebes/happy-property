@@ -309,16 +309,21 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
 
 interface DealCardProps {
   deal: Deal
+  apptDate?: string | null   // frühester kommender Termin (Folgetermin) → Kachel hervorheben
   onDragStart: (e: React.DragEvent, id: string) => void
   onClick: (leadId: string) => void
   onContextMenu: (e: React.MouseEvent, deal: Deal) => void
 }
 
-function DealCard({ deal, onDragStart, onClick, onContextMenu }: DealCardProps) {
+function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealCardProps) {
   const { t } = useTranslation()
   const lead = deal.lead
   const source = (lead?.source ?? 'sonstiges') as keyof typeof SOURCE_BADGE_STYLE
   const badgeStyle = SOURCE_BADGE_STYLE[source] ?? SOURCE_BADGE_STYLE.sonstiges
+  // Kommender Termin → Kachel grün markieren, damit Sven Folgetermine sofort sieht.
+  const apptLabel = apptDate
+    ? new Date(apptDate).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : null
 
   const updatedDate = new Date(deal.updated_at).toLocaleDateString('de-DE', {
     day: '2-digit',
@@ -343,7 +348,7 @@ function DealCard({ deal, onDragStart, onClick, onContextMenu }: DealCardProps) 
       onDragStart={e => onDragStart(e, deal.id)}
       onClick={() => lead?.id && onClick(lead.id)}
       onContextMenu={e => onContextMenu(e, deal)}
-      className="bg-white border border-gray-200 rounded-xl p-3 cursor-pointer hover:shadow-md transition-shadow select-none"
+      className={`border rounded-xl p-3 cursor-pointer hover:shadow-md transition-shadow select-none ${apptDate ? 'bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200' : 'bg-white border-gray-200'}`}
     >
       <div className="flex items-start justify-between gap-1 mb-2">
         <p className="text-sm font-medium text-gray-800 leading-tight">
@@ -356,6 +361,12 @@ function DealCard({ deal, onDragStart, onClick, onContextMenu }: DealCardProps) 
           {t(`crm.sources.${source}`, source)}
         </span>
       </div>
+
+      {apptLabel && (
+        <p className="text-xs font-semibold text-emerald-700 mb-1 flex items-center gap-1">
+          📅 {t('crm.pipeline.apptOn', 'Termin')}: {apptLabel}
+        </p>
+      )}
 
       {lead?.assignee?.full_name && (
         <p className="text-xs text-gray-500 mb-1">
@@ -497,6 +508,7 @@ export default function Pipeline() {
   const { profile } = useAuth()
 
   const [deals, setDeals] = useState<Deal[]>([])
+  const [apptByLead, setApptByLead] = useState<Record<string, string>>({})   // lead_id → frühester kommender Termin
   const [loading, setLoading] = useState(true)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<DealPhase | null>(null)
@@ -566,6 +578,25 @@ export default function Pipeline() {
     }
   }, [])
 
+  // Kommende Termine je Lead laden → Kachel in der Pipeline grün markieren (Folgetermine
+  // aus dem Termin-Bot sofort sichtbar). Frühester zukünftiger Termin pro Lead gewinnt.
+  const fetchAppointments = useCallback(async () => {
+    try {
+      const { data } = await supabase
+        .from('crm_appointments')
+        .select('lead_id, start_time')
+        .gte('start_time', new Date().toISOString())
+        .order('start_time', { ascending: true })
+      const map: Record<string, string> = {}
+      for (const a of (data as { lead_id: string | null; start_time: string }[]) ?? []) {
+        if (a.lead_id && !map[a.lead_id]) map[a.lead_id] = a.start_time
+      }
+      setApptByLead(map)
+    } catch (err) {
+      console.error('[Pipeline] fetchAppointments:', err)
+    }
+  }, [])
+
   const fetchStaff = useCallback(async () => {
     try {
       const { data } = await supabase
@@ -582,17 +613,18 @@ export default function Pipeline() {
   useEffect(() => {
     fetchDeals()
     fetchStaff()
-  }, [fetchDeals, fetchStaff])
+    fetchAppointments()
+  }, [fetchDeals, fetchStaff, fetchAppointments])
 
   // Re-Fetch bei Tab-Fokus (behebt veraltete Daten nach Token-Refresh im
   // Hintergrund) — STILL, ohne Vollbild-Spinner.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') fetchDeals(true)
+      if (document.visibilityState === 'visible') { fetchDeals(true); fetchAppointments() }
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [fetchDeals])
+  }, [fetchDeals, fetchAppointments])
 
   // ── Automation: schedule-message auslösen (fire-and-forget) ────────────────
   const triggerScheduleMessage = (lead_id: string, deal_id: string | null, event_type: string) => {
@@ -1016,6 +1048,7 @@ export default function Pipeline() {
                           <DealCard
                             key={deal.id}
                             deal={deal}
+                            apptDate={deal.lead_id ? apptByLead[deal.lead_id] : undefined}
                             onDragStart={(e, id) => {
                               e.dataTransfer.effectAllowed = 'move'
                               setDragId(id)
