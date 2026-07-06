@@ -136,24 +136,35 @@ export default function Postausgang() {
       if (fresh) to = fresh
     }
     if (!to) { flash(t('crm.outbox.noEmail', 'Kein Empfänger — E-Mail am Lead fehlt.')); return }
-    // Sicherheitsnetz: Angebots-Mail nicht versehentlich „nackt" rausschicken. Hat der
-    // Eintrag ein Deck hinterlegt (bzw. existiert für den Lead eine Berechnung), der
-    // Body verlinkt sie aber NICHT (z.B. handgeschriebene Kurz-Mail), deutlich warnen —
-    // mit Möglichkeit, trotzdem zu senden.
-    const body = row.body ?? ''
-    const missing: string[] = []
-    if ((row.deck_tokens?.length ?? 0) > 0 && !body.includes('/deck/')) missing.push(t('crm.outbox.missDeck', 'Deck-Link'))
-    if (calcs.some(c => c.lead_id === row.lead_id) && !body.includes('/rechnung/')) missing.push(t('crm.outbox.missCalc', 'Berechnung'))
-    const confirmMsg = missing.length
-      ? `⚠️ ${t('crm.outbox.missWarn', 'In dieser Mail fehlt')}: ${missing.join(' + ')}.\n${t('crm.outbox.missHint', 'Sie enthält also kein Deck bzw. keine Berechnung.')}\n\n${t('crm.outbox.missConfirm', 'Trotzdem an den Kunden senden?')}\n\n${to}`
-      : (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`
-    if (!window.confirm(confirmMsg)) return
+    // Sicherheitsnetz gegen link-lose Angebots-Mails (Fall Christoph): Hat der Eintrag ein
+    // Deck (bzw. gibt es eine Berechnung für den Lead), der Body verlinkt sie aber NICHT
+    // (z.B. handgeschriebene Kurz-Mail), fügen wir die Links AUTOMATISCH ans Body-Ende ein.
+    // So landen sie in HTML UND (via htmlToText) in der Textversion → funktioniert auf jedem
+    // Mailprogramm, auch wenn der Client nur den Text-Teil zeigt.
+    const base = window.location.origin
+    const deckToks = row.deck_tokens ?? []
+    const leadCalcs = calcs.filter(c => c.lead_id === row.lead_id)
+    const origBody = row.body ?? ''
+    const needDeck = deckToks.length > 0 && !origBody.includes('/deck/')
+    const needCalc = leadCalcs.length > 0 && !origBody.includes('/rechnung/')
+    let sendBody = origBody
+    if (needDeck || needCalc) {
+      const linkRows: string[] = []
+      if (needDeck) deckToks.forEach((tk, i) => linkRows.push(
+        `<p style="margin:0 0 10px 0"><a href="${base}/deck/${tk}" style="color:#ff795d;font-weight:700;font-size:15px;text-decoration:none">🏠 ${t('crm.outbox.deckLinkLabel', 'Dein Sales Deck ansehen')}${deckToks.length > 1 ? ` ${i + 1}` : ''} →</a></p>`))
+      if (needCalc) leadCalcs.forEach(c => linkRows.push(
+        `<p style="margin:0 0 10px 0"><a href="${base}/rechnung/${c.token}" style="color:#2f6b4f;font-weight:700;font-size:15px;text-decoration:none">📊 ${c.title?.trim() || t('crm.outbox.calcLinkLabel', 'Deine Rendite-Berechnung')} →</a></p>`))
+      const block = `<div style="margin:24px 0 8px 0;padding-top:16px;border-top:1px solid #e5e5e5;font-family:Arial,sans-serif">${linkRows.join('')}</div>`
+      sendBody = origBody.includes('</body>') ? origBody.replace('</body>', `${block}</body>`) : origBody + block
+    }
+    const autoNote = (needDeck || needCalc) ? `ℹ️ ${t('crm.outbox.autoLinks', 'Deck-/Berechnungs-Links fehlten im Text — sie werden automatisch ergänzt.')}\n\n` : ''
+    if (!window.confirm(autoNote + (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
     setBusyId(row.id)
     try {
       // Korrigierte Adresse auf dem Eintrag festhalten (Anzeige + nächster Versand)
       if (to !== row.recipient_email) await supabase.from('deck_outbox').update({ recipient_email: to }).eq('id', row.id)
       const { data, error } = await supabase.functions.invoke('send-email', {
-        body: { to, subject: row.subject, html: row.body, lead_id: row.lead_id, open_token: (row.deck_tokens ?? [])[0] ?? null },
+        body: { to, subject: row.subject, html: sendBody, lead_id: row.lead_id, open_token: (row.deck_tokens ?? [])[0] ?? null },
       })
       if (error) throw new Error(error.message)
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
