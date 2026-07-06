@@ -227,17 +227,24 @@ async function createCalendarEvent(admin: SupabaseClient, ev: { title: string; s
 }
 
 // ── WhatsApp senden (Timelines) ──────────────────────────────────────────────
+// Verabschiedung an jede AUSGEHENDE Bot-WhatsApp anhängen (Sven-Wunsch), aber nur,
+// wenn nicht schon eine Grußformel drinsteht (kein Doppel-„LG").
+function withSignoff(text: string): string {
+  return /(liebe grüße|viele grüße|beste grüße|\blg\b|bis dann)/i.test(text) ? text : `${text}\n\nLiebe Grüße\nSven`
+}
 async function sendWa(phone: string, text: string): Promise<void> {
   const apiKey = Deno.env.get('TIMELINES_API_KEY') ?? '', sender = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
-  if (!apiKey || !sender) { console.warn('[booking-bot] Timelines nicht konfiguriert – simuliert:', text.slice(0, 60)); return }
+  const full = withSignoff(text)
+  if (!apiKey || !sender) { console.warn('[booking-bot] Timelines nicht konfiguriert – simuliert:', full.slice(0, 60)); return }
   const r = await fetch('https://app.timelines.ai/integrations/api/messages', {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ phone, whatsapp_account_phone: sender, text }),
+    body: JSON.stringify({ phone, whatsapp_account_phone: sender, text: full }),
   })
   if (!r.ok) throw new Error(`Timelines ${r.status}: ${await r.text()}`)
 }
 async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: 'inbound' | 'outbound'): Promise<void> {
-  try { await admin.from('activities').insert({ lead_id: leadId, type: 'whatsapp', direction: dir, subject: dir === 'outbound' ? 'WhatsApp: Termin-Bot' : 'WhatsApp erhalten', content: text.slice(0, 2000), completed_at: new Date().toISOString() }) } catch { /* egal */ }
+  const content = (dir === 'outbound' ? withSignoff(text) : text).slice(0, 2000)
+  try { await admin.from('activities').insert({ lead_id: leadId, type: 'whatsapp', direction: dir, subject: dir === 'outbound' ? 'WhatsApp: Termin-Bot' : 'WhatsApp erhalten', content, completed_at: new Date().toISOString() }) } catch { /* egal */ }
 }
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
