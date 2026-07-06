@@ -3023,29 +3023,29 @@ export default function LeadDetail() {
                 {/* Freies Notizfeld (lead.notes) */}
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-gray-700">{t('crm.notes.title', 'Notizen zum Kunden')}</h3>
+                    <h3 className="text-sm font-semibold text-gray-700">{t('crm.notesTab.title', 'Notizen zum Kunden')}</h3>
                     <button onClick={() => void saveNotes()} disabled={savingNotes || notesDraft === (lead?.notes ?? '')}
                       className="px-4 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
                       {savingNotes ? t('common.saving', 'Speichern…') : t('common.save', 'Speichern')}
                     </button>
                   </div>
                   <textarea value={notesDraft} onChange={e => setNotesDraft(e.target.value)} rows={8}
-                    placeholder={t('crm.notes.placeholder', 'Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…')}
+                    placeholder={t('crm.notesTab.placeholder', 'Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…')}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
-                  <p className="text-xs text-gray-400 mt-1">{t('crm.notes.hint', 'Hier landen auch die Antworten aus dem Formular (Typeform).')}</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('crm.notesTab.hint', 'Hier landen auch die Antworten aus dem Formular (Typeform).')}</p>
                 </div>
 
                 {/* Gesprächsnotizen-Historie (aus dem Termin-Vorbereitungs-Popup) */}
                 <div className="border-t pt-4">
-                  <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notes.callNotes', 'Gesprächsnotizen')}</h3>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notesTab.callNotes', 'Gesprächsnotizen')}</h3>
                   {activities.filter(a => a.type === 'note').length === 0 ? (
-                    <p className="text-sm text-gray-400 py-4">{t('crm.notes.noCallNotes', 'Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.')}</p>
+                    <p className="text-sm text-gray-400 py-4">{t('crm.notesTab.noCallNotes', 'Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.')}</p>
                   ) : (
                     <ol className="space-y-3">
                       {activities.filter(a => a.type === 'note').map(act => (
                         <li key={act.id} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
                           <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className="font-medium text-sm text-gray-800">{act.subject ?? t('crm.notes.note', 'Notiz')}</span>
+                            <span className="font-medium text-sm text-gray-800">{act.subject ?? t('crm.notesTab.note', 'Notiz')}</span>
                             <span className="text-xs text-gray-400">{formatDate(act.created_at)}</span>
                           </div>
                           {act.content && <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{act.content}</p>}

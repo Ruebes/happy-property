@@ -1935,7 +1935,8 @@
       "documents": "Dokumente",
       "scheduled": "Geplant",
       "portal": "Portal",
-      "wohnung": "Wohnung"
+      "wohnung": "Wohnung",
+      "notes": "Notizen"
     },
     "ai": {
       "safety": "Die KI erstellt nur Entwürfe. Es wird nichts automatisch gesendet. Du prüfst, korrigierst und gibst frei – kopierst den Text und schickst ihn wie gewohnt. Aus deinen Freigaben und Korrekturen lernt das System.",
@@ -2450,6 +2451,21 @@
       "title": "Termin-Bot (WhatsApp)",
       "desc": "Schlägt automatisch 2 freie Termine vor (2 Tage · vormittags + nachmittags). Ein/Aus unter Einstellungen → KI-Agent. Hier bearbeitest du nur die Einleitungstexte; {{vorname}} und die 2 Termine hängt der Bot selbst an.",
       "stageBadge": "Termin-Bot aktiv in dieser Phase"
+    },
+    "notesTab": {
+      "title": "Notizen zum Kunden",
+      "placeholder": "Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…",
+      "hint": "Hier landen auch die Antworten aus dem Formular (Typeform).",
+      "callNotes": "Gesprächsnotizen",
+      "noCallNotes": "Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.",
+      "note": "Notiz"
+    },
+    "botToggle": {
+      "title": "Termin-Bot (WhatsApp)",
+      "desc": "Schlägt bei No-Show, Erstkontakt, Deck-Ansicht & Immobilienauswahl automatisch Termine vor und bucht sie. Betrifft die 🤝-Phasen unten.",
+      "confirm": "Der Termin-Bot schreibt ab jetzt AUTOMATISCH mit echten Kunden per WhatsApp (No-Show, Erstkontakt, Deck-Ansicht, Immobilienauswahl) und bucht Termine in deinen Kalender. Jetzt scharfschalten?",
+      "on": "✅ Termin-Bot ist scharf",
+      "off": "Termin-Bot aus"
     }
   },
   "docs": {

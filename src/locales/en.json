@@ -1935,7 +1935,8 @@
       "documents": "Documents",
       "scheduled": "Scheduled",
       "portal": "Portal",
-      "wohnung": "Apartment"
+      "wohnung": "Apartment",
+      "notes": "Notes"
     },
     "ai": {
       "safety": "The AI only creates drafts. Nothing is sent automatically. You review, correct and approve – then copy the text and send it as usual. The system learns from your approvals and corrections.",
@@ -2450,6 +2451,21 @@
       "title": "Booking bot (WhatsApp)",
       "desc": "Automatically proposes 2 free times (2 days · morning + afternoon). Toggle under Settings → AI Agent. Here you only edit the intro texts; {{vorname}} and the 2 times are appended by the bot.",
       "stageBadge": "Booking bot active in this phase"
+    },
+    "notesTab": {
+      "title": "Customer notes",
+      "placeholder": "Customer notes — wishes, budget, call outcomes…",
+      "hint": "Answers from the form (Typeform) also land here.",
+      "callNotes": "Call notes",
+      "noCallNotes": "No call notes yet. Notes from the appointment popup appear here.",
+      "note": "Note"
+    },
+    "botToggle": {
+      "title": "Booking bot (WhatsApp)",
+      "desc": "Automatically proposes and books appointments on no-show, first contact, deck view & property selection. Affects the 🤝 phases below.",
+      "confirm": "The booking bot will now AUTOMATICALLY message real customers via WhatsApp and book appointments. Activate now?",
+      "on": "✅ Booking bot is live",
+      "off": "Booking bot off"
     }
   },
   "docs": {
