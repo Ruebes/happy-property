@@ -1,4 +1,4 @@
-import { useState, useEffect, type CSSProperties } from 'react'
+import { useState, useEffect, useRef, type CSSProperties } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
@@ -597,9 +597,86 @@ function Block({ block }: { block: DeckBlock }) {
   }
 }
 
+// ── Blätter-/Präsentations-Modus ────────────────────────────────────────────
+// Zeigt die Deck-Blöcke einzeln wie Buchseiten: eine Seite pro Bildschirm, blättern
+// per Pfeiltasten (←/→), Klick auf die Ränder, Swipe oder die Pfeil-Buttons. Optional
+// Vollbild fürs Präsentieren. Gleicher Inhalt wie der Scroll-Modus — nur visuell als Buch.
+function BookMode({ blocks, onClose }: { blocks: DeckBlock[]; onClose: () => void }) {
+  const { t } = useTranslation()
+  const [i, setI] = useState(0)
+  const [dir, setDir] = useState(1)
+  const total = blocks.length
+  const pageRef = useRef<HTMLDivElement>(null)
+  const go = (d: number) => setI(prev => {
+    const n = Math.min(total - 1, Math.max(0, prev + d))
+    if (n !== prev) setDir(d)
+    return n
+  })
+  // Bei Seitenwechsel nach oben scrollen (falls die Vorseite gescrollt war).
+  useEffect(() => { pageRef.current?.scrollTo({ top: 0 }) }, [i])
+  // Tastatur-Navigation.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); go(1) }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(-1) }
+      else if (e.key === 'Escape' && !document.fullscreenElement) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [total])
+  // Swipe (Touch).
+  const touchX = useRef<number | null>(null)
+  const onTouchStart = (e: React.TouchEvent) => { touchX.current = e.touches[0].clientX }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchX.current == null) return
+    const dx = e.changedTouches[0].clientX - touchX.current
+    if (Math.abs(dx) > 55) go(dx < 0 ? 1 : -1)
+    touchX.current = null
+  }
+  const toggleFs = () => {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    else void document.documentElement.requestFullscreen?.().catch(() => {})
+  }
+  return (
+    <div className="fixed inset-0 z-[70] flex flex-col select-none" style={{ background: '#0c0c11' }}
+      onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-white/90" style={{ background: '#15151c' }}>
+        <span className="text-sm font-medium tabular-nums text-white/70">{i + 1} / {total}</span>
+        <div className="flex items-center gap-2">
+          <button onClick={toggleFs} className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition text-xs font-semibold">⛶ {t('deck.fullscreen', 'Vollbild')}</button>
+          <button onClick={onClose} className="px-3 py-1.5 rounded-md bg-white/10 hover:bg-white/20 transition text-xs font-semibold">✕ {t('deck.exitBook', 'Schließen')}</button>
+        </div>
+      </div>
+      <div className="relative flex-1 overflow-hidden flex items-stretch justify-center p-3 md:p-6" style={{ perspective: '2200px' }}>
+        <div ref={pageRef} key={i} className="w-full max-w-5xl h-full overflow-y-auto rounded-lg shadow-2xl relative"
+          style={{ background: CREAM, animation: `${dir >= 0 ? 'deckFlipNext' : 'deckFlipPrev'} .5s cubic-bezier(.2,.7,.2,1)`, transformOrigin: dir >= 0 ? 'left center' : 'right center' }}>
+          <Block block={blocks[i]} />
+          <img src={DECK_LOGO} alt="" aria-hidden="true"
+            className="absolute top-3 right-3 md:top-4 md:right-6 h-7 md:h-9 w-auto rounded-md opacity-80 pointer-events-none select-none ring-1 ring-white/10"
+            onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+        </div>
+        {i > 0 && (
+          <button aria-label={t('deck.prev', 'Zurück')} onClick={() => go(-1)}
+            className="absolute left-0 top-0 h-full w-[12%] flex items-center justify-start pl-2 md:pl-5 text-white/40 hover:text-white hover:bg-white/5 transition text-5xl font-light">‹</button>
+        )}
+        {i < total - 1 && (
+          <button aria-label={t('deck.next', 'Weiter')} onClick={() => go(1)}
+            className="absolute right-0 top-0 h-full w-[12%] flex items-center justify-end pr-2 md:pr-5 text-white/40 hover:text-white hover:bg-white/5 transition text-5xl font-light">›</button>
+        )}
+      </div>
+      <div className="h-1.5 bg-white/10">
+        <div className="h-full transition-all duration-300" style={{ width: `${((i + 1) / total) * 100}%`, background: GOLD }} />
+      </div>
+      <style>{`@keyframes deckFlipNext{from{opacity:.25;transform:translateX(5%) rotateY(9deg)}to{opacity:1;transform:none}}@keyframes deckFlipPrev{from{opacity:.25;transform:translateX(-5%) rotateY(-9deg)}to{opacity:1;transform:none}}`}</style>
+    </div>
+  )
+}
+
 export default function Deck() {
   const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
+  const [book, setBook] = useState(false)
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
@@ -662,6 +739,14 @@ export default function Deck() {
       <div className="text-center text-[11px] text-gray-400 py-6" style={{ background: CREAM }}>
         © Happy Property · {t('deck.footerNote', 'Persönlich erstellt · Preise vorbehaltlich Final-Plans · Bilder zu Marketingzwecken')}
       </div>
+
+      {/* Blättern/Präsentieren — festes Buch-Icon unten rechts, öffnet den Seiten-Modus */}
+      <button onClick={() => setBook(true)}
+        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-2.5 rounded-full text-white text-sm font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
+        style={{ background: DARK }}>
+        📖 <span className="hidden sm:inline">{t('deck.present', 'Blättern')}</span>
+      </button>
+      {book && <BookMode blocks={content.blocks} onClose={() => setBook(false)} />}
     </div>
   )
 }
