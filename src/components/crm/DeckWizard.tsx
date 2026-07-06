@@ -46,7 +46,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
   const [briefing, setBriefing] = useState('')
-  const [angle, setAngle]       = useState<'lifestyle' | 'investment'>('lifestyle')
+  const [angle, setAngle]       = useState<'eigennutz' | 'investment'>('eigennutz')
   const [busy, setBusy]         = useState(false)
   const [progress, setProgress] = useState('')
   const [err, setErr]           = useState('')
@@ -430,9 +430,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.angle', 'Winkel')}</label>
               <CustomSelect
                 value={angle}
-                onChange={v => setAngle(v as 'lifestyle' | 'investment')}
-                options={[{ value: 'lifestyle', label: t('crm.wizard.lifestyle', 'Lifestyle') },
-                  { value: 'investment', label: t('crm.wizard.investment', 'Investment') }]}
+                onChange={v => setAngle(v as 'eigennutz' | 'investment')}
+                options={[{ value: 'eigennutz', label: t('crm.wizard.eigennutz', 'Eigennutz (5 % MwSt)') },
+                  { value: 'investment', label: t('crm.wizard.investment', 'Investment (19 %)') }]}
               />
             </div>
           </div>

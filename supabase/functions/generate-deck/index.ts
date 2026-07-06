@@ -297,7 +297,14 @@ Deno.serve(async (req) => {
     }
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
-    const angle     = body.angle || 'lifestyle'
+    const angle     = body.angle || 'investment'
+    // Eigennutz (Erstwohnsitz) → reduzierte MwSt 5 % + Wohn-/Lifestyle-Ton; Investment → 19 % + ROI-Ton.
+    // (Zyprische 5%-Regelung für Eigennutzer, Übergangsfrist bis 31.12.2026; qualifiziert der Kunde,
+    //  wählt Sven im Wizard "Eigennutz".) angleTone gibt der KI weiter den bekannten lifestyle/investment-Ton.
+    const isEigennutz = angle === 'eigennutz'
+    const vatRate   = isEigennutz ? 0.05 : 0.19
+    const vatPct    = isEigennutz ? '5 %' : '19 %'
+    const angleTone = isEigennutz ? 'lifestyle' : angle
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
 
     // Gelernte Vorgaben (deck_ai_rules, kind='deck') → fließen in JEDES Deck ein (Auto-Grab +
@@ -351,14 +358,14 @@ Deno.serve(async (req) => {
         }
         const buildLines = (baseNet: number, furnNet: number) => {
           const totalNet = baseNet + furnNet
-          const vat = Math.round(totalNet * 0.19)
+          const vat = Math.round(totalNet * vatRate)
           const brutto = totalNet + vat
           const lines: Array<{ label: string; value: string; strong?: boolean }> = [
             { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
-            { label: 'zzgl. MwSt (19 %)', value: eur(vat) },
+            { label: `zzgl. MwSt (${vatPct})`, value: eur(vat) },
             { label: 'Bruttopreis', value: eur(brutto), strong: true },
           ]
-          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * 1.19))} brutto` })
+          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * (1 + vatRate)))} brutto` })
           else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
           return lines
         }
@@ -367,8 +374,13 @@ Deno.serve(async (req) => {
           const furnNet = furnFor(u.bedrooms)
           priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net, furnNet)
           const totalNet = u.price_net + furnNet
-          const vat = Math.round(totalNet * 0.19)
-          priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: '19 %', vat: eur(vat), gross: eur(totalNet + vat) }
+          const vat = Math.round(totalNet * vatRate)
+          priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: vatPct, vat: eur(vat), gross: eur(totalNet + vat) }
+        }
+        // Bei Eigennutz die 5%-Basis explizit als Fakt mitgeben, damit die KI den GESAMTEN
+        // Zahlungsplan (Reservierung/Anzahlung/Raten) + Intro auf 5 % rechnet, nicht 19 %.
+        if (isEigennutz && priced.length > 0) {
+          extraFacts += `\n\n=== MWST-BASIS: 5 % (EIGENNUTZ / ERSTWOHNSITZ) — HART ===\nAlle Brutto-Beträge, der Bruttopreis UND der gesamte Zahlungsplan (Reservierung, Anzahlung, alle Raten, Summen) sind auf Basis 5 % MwSt zu rechnen — NICHT 19 %. Im 'payment'-Block als note der Hinweis: Der reduzierte MwSt-Satz von 5 % setzt einen nachgewiesenen Eigennutz/Erstwohnsitz in Zypern voraus (Übergangsregelung, Steuerberater-Vorbehalt).`
         }
         if (priced.length === 1) {
           extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLinesByUnit[normU(priced[0].unit_number)].map(l => `${l.label}: ${l.value}`).join('\n')}`
@@ -394,7 +406,7 @@ Deno.serve(async (req) => {
     ].join('\n') : [
       `KUNDE: ${recipient}`,
       `MONAT: ${body.month_label || ''}`,
-      `WINKEL (angle): ${angle}`,
+      `WINKEL (angle): ${angleTone}`,
       ``,
       `KUNDEN-BRIEFING (für Anschreiben + passende Stellen einweben):`,
       body.briefing?.trim() || '(kein Briefing — halte das Anschreiben allgemein, aber persönlich)',
