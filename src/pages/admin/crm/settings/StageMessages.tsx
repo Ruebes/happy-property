@@ -11,7 +11,7 @@ import RecipientPicker from '../../../../components/crm/RecipientPicker'
 // Auslöser bekommt (Pipeline.handleDrop → triggerScheduleMessage(phase)).
 const STAGES: string[] = ['lead_created', ...DEAL_PHASES]
 // Phasen, die (auch) über den WhatsApp-Termin-Bot laufen → in der Liste farblich markiert.
-const BOT_STAGES = new Set(['no_show', 'erstkontakt'])
+const BOT_STAGES = new Set(['no_show', 'erstkontakt', 'immobilienauswahl'])
 
 type Channel  = 'email' | 'whatsapp' | 'both'
 type DelayUnit = 'minutes' | 'hours' | 'days'
@@ -651,8 +651,9 @@ function BotMessagesCard({ stage, onToast }: { stage: string; onToast: (m: strin
 
   // Nur die Bot-Texte der aktuellen Phase (No-Show: 6 Stufen · Erstkontakt: 1).
   const shown = rows.filter(r =>
-    stage === 'no_show'     ? r.key.startsWith('no_show_') :
-    stage === 'erstkontakt' ? r.key.startsWith('erstkontakt') : false)
+    stage === 'no_show'          ? r.key.startsWith('no_show_') :
+    stage === 'erstkontakt'      ? r.key.startsWith('erstkontakt') :
+    stage === 'immobilienauswahl' ? r.key.startsWith('immobilienauswahl_') : false)
   if (!shown.length) return null
   return (
     <div className="bg-white rounded-2xl border border-[#ff795d]/30 shadow-sm p-4">

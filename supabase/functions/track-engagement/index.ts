@@ -140,13 +140,20 @@ async function logEvent(type: string, token: string | null) {
   if (type === 'deck_view' && leadId) {
     const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
     if ((bot as { value?: string } | null)?.value === 'true') {
-      try {
-        await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
-          method:  'POST',
-          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ action: 'start', lead_id: leadId, source: 'deck_viewed' }),
+      // Bot-Start +40 Min planen (nicht sofort — Kunde soll erst selbst buchen können).
+      // DEDUP gegen Doppel-Trigger (zwei Deck-Views kurz nacheinander): nur wenn weder ein
+      // offener Deck-Start ansteht noch ein aktives Gespräch läuft.
+      const { data: pend } = await supabase.from('scheduled_messages').select('id')
+        .eq('lead_id', leadId).eq('event_type', 'bot_nudge').eq('bot_nudge_source', 'deck_viewed').eq('status', 'pending').limit(1)
+      const { data: activeConv } = await supabase.from('booking_conversations').select('id')
+        .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
+      if (!(pend && pend.length) && !(activeConv && activeConv.length)) {
+        await supabase.from('scheduled_messages').insert({
+          lead_id: leadId, type: 'whatsapp', event_type: 'bot_nudge',
+          bot_nudge_stage: 0, bot_nudge_source: 'deck_viewed', status: 'pending',
+          scheduled_at: new Date(Date.now() + 40 * 60000).toISOString(),
         })
-      } catch (e) { console.warn('[track-engagement] booking-bot start fehlgeschlagen:', e) }
+      }
     } else {
       await scheduleDeckFollowup(supabase, leadId)
     }

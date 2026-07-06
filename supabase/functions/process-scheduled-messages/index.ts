@@ -256,9 +256,12 @@ Deno.serve(async (req: Request) => {
       // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
       // No-Show-Nudge. Der Bot prüft selbst Opt-Out/Termin/Engagement + sendet.
       if (msg.bot_nudge_stage != null) {
-        const botBody = msg.bot_nudge_stage === 0
-          ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source ?? 'no_show' }
-          : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage }
+        // Stage 0 ERÖFFNET ein Gespräch (No-Show/Erstkontakt/Deck-Ansicht); bei
+        // Immobilienauswahl ist auch Stage 0 ein Nudge (kein separater Start).
+        const isStart = msg.bot_nudge_stage === 0 && ['no_show', 'erstkontakt', 'deck_viewed'].includes(msg.bot_nudge_source ?? '')
+        const botBody = isStart
+          ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source }
+          : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage, source: msg.bot_nudge_source ?? 'no_show' }
         try {
           await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
             method: 'POST',
@@ -267,7 +270,7 @@ Deno.serve(async (req: Request) => {
           })
         } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e) }
         await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
-        processed.push({ id: msg.id, result: `bot_${msg.bot_nudge_stage === 0 ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
+        processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
         continue
       }
 

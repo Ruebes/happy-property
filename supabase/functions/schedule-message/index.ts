@@ -65,7 +65,10 @@ Deno.serve(async (req: Request) => {
     // 2. Aktive Regeln
     const { data: rules, error: rulesErr } = await supabase.from('automation_rules').select('*').eq('event_type', event_type).eq('is_active', true)
     if (rulesErr) throw rulesErr
-    if (!rules || rules.length === 0) {
+    // Bot-Auslöser (no_show/erstkontakt/immobilienauswahl) planen ihre WhatsApps
+    // unten selbst — auch OHNE aktive Regeln nicht früh aussteigen.
+    const isBotTrigger = event_type === 'no_show' || event_type === 'erstkontakt' || event_type === 'immobilienauswahl'
+    if ((!rules || rules.length === 0) && !isBotTrigger) {
       return new Response(JSON.stringify({ ok: true, scheduled: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     }
 
@@ -274,19 +277,44 @@ Deno.serve(async (req: Request) => {
       const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
       if (er?.waitUntil) er.waitUntil(trigger); else await trigger
     }
-    // ── Termin-Bot: bei No-Show / Erstkontakt den Buchungs-Dialog starten ──
-    // NICHT sofort, sondern +20 Min (Kunde soll erst selbst buchen können) — als
-    // Stage-0-Startnachricht in scheduled_messages; process-scheduled-messages ruft
-    // dann booking-bot start. handleStart prüft Opt-Out/Termin/aktives Gespräch selbst
-    // und plant bei No-Show die 5 Nudge-Stufen (Tag 1/2/3/5/14).
-    if (event_type === 'no_show' || event_type === 'erstkontakt') {
+    // ── Termin-Bot-Auslöser ──
+    // No-Show/Erstkontakt: Stage-0-Start +20 Min (Kunde soll erst selbst buchen), handleStart
+    // plant bei No-Show die 5 Nudges. Immobilienauswahl: 6 Nudges (24h/3/5/10/14/30 Tage),
+    // jede Sendezeit ins 9–20-Uhr-Fenster (Berlin) geklemmt. process-scheduled-messages ruft
+    // dann booking-bot; der Bot prüft Opt-Out/Termin/aktives Gespräch selbst.
+    if (event_type === 'no_show' || event_type === 'erstkontakt' || event_type === 'immobilienauswahl') {
       const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
       if ((bot as { value?: string } | null)?.value === 'true') {
-        await supabase.from('scheduled_messages').insert({
-          lead_id, deal_id: deal_id ?? null, type: 'whatsapp', event_type: 'bot_nudge',
-          bot_nudge_stage: 0, bot_nudge_source: event_type, status: 'pending',
-          scheduled_at: new Date(Date.now() + 20 * 60000).toISOString(),
-        })
+        const TZ = 'Europe/Berlin'
+        const berlinOffMin = (d: Date): number => {
+          const m: Record<string, string> = {}
+          for (const p of new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(d)) m[p.type] = p.value
+          return (Date.UTC(+m.year, +m.month - 1, +m.day, +m.hour === 24 ? 0 : +m.hour, +m.minute, +m.second) - d.getTime()) / 60000
+        }
+        // Sendezeit ins Fenster 9–20 Uhr (Berlin): ≥20 → 20:00 (vorgezogen), <9 → 9:00.
+        const clampBiz = (d: Date): Date => {
+          const m: Record<string, string> = {}
+          for (const p of new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit' }).formatToParts(d)) m[p.type] = p.value
+          const h = +m.hour === 24 ? 0 : +m.hour
+          if (h >= 9 && h < 20) return d
+          const guess = new Date(Date.UTC(+m.year, +m.month - 1, +m.day, h >= 20 ? 20 : 9, 0))
+          return new Date(guess.getTime() - berlinOffMin(guess) * 60000)
+        }
+        if (event_type === 'immobilienauswahl') {
+          const delaysMin = [1440, 4320, 7200, 14400, 20160, 43200]   // 1/3/5/10/14/30 Tage
+          const rows = delaysMin.map((dm, i) => ({
+            lead_id, deal_id: deal_id ?? null, type: 'whatsapp', event_type: 'bot_nudge',
+            bot_nudge_stage: i, bot_nudge_source: 'immobilienauswahl', status: 'pending',
+            scheduled_at: clampBiz(new Date(Date.now() + dm * 60000)).toISOString(),
+          }))
+          await supabase.from('scheduled_messages').insert(rows)
+        } else {
+          await supabase.from('scheduled_messages').insert({
+            lead_id, deal_id: deal_id ?? null, type: 'whatsapp', event_type: 'bot_nudge',
+            bot_nudge_stage: 0, bot_nudge_source: event_type, status: 'pending',
+            scheduled_at: new Date(Date.now() + 20 * 60000).toISOString(),
+          })
+        }
       }
     }
 

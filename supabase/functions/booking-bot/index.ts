@@ -476,22 +476,25 @@ function buildProposal(intro: string, slots: Slot[], isFinal: boolean): string {
   return `${intro}\n\n${opts}\n\n${close}`
 }
 
-// ── NUDGE ── No-Show-Nachfass-Stufen (1/2/3/5/14 Tage): frische Vorschläge, nur
-// solange der Kunde NIE geantwortet hat (state awaiting_choice + kein Inbound).
-async function handleNudge(admin: SupabaseClient, leadId: string, stage: number): Promise<Response> {
+// ── NUDGE ── Nachfass-Stufen (No-Show 1-5 · Immobilienauswahl 0-5): frische
+// Vorschläge, nur solange der Kunde NIE geantwortet hat. Für Immobilienauswahl wird ein
+// Gespräch bei Bedarf NEU angelegt (der Kunde hat evtl. gar nicht geöffnet → noch keins).
+async function handleNudge(admin: SupabaseClient, leadId: string, stage: number, source: string): Promise<Response> {
   const { data: st } = await admin.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
   const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  // Irgendein aktives Gespräch des Leads (egal welche Quelle) → kein Doppel-Messaging.
   const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at')
-    .eq('lead_id', leadId).eq('source', 'no_show').order('created_at', { ascending: false }).limit(1).maybeSingle()
+    .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
   const c = conv as null | { id: string; state: string; created_at: string }
-  if (!c || c.state !== 'awaiting_choice') return json({ ok: true, skipped: 'engaged_or_closed' })
-  // Kunde hat inzwischen geantwortet? → nicht nudgen (Gespräch/Handoff übernimmt).
-  const { data: inb } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound').gt('created_at', c.created_at).limit(1)
-  if (inb && inb.length) return json({ ok: true, skipped: 'engaged' })
+  if (c) {
+    if (c.state !== 'awaiting_choice') return json({ ok: true, skipped: 'engaged_or_closed' })
+    const { data: inb } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound').gt('created_at', c.created_at).limit(1)
+    if (inb && inb.length) return json({ ok: true, skipped: 'engaged' })
+  }
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
   const phone = l?.whatsapp || l?.phone
@@ -499,12 +502,13 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number)
   const slots = await computeSlotsAmPm(admin)
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
   const isFinal = stage >= 5
-  const intro = fillName(await botText(admin, `no_show_${stage}`, 'Hi {{vorname}}, sollen wir einen Termin finden?'), l.first_name)
+  const intro = fillName(await botText(admin, `${source}_${stage}`, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
   const msg = buildProposal(intro, slots, isFinal)
-  // expires_at rollend verlängern, damit eine Antwort auf einen späten Nudge noch greift.
-  await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() })
+  const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
+  if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })
+  else await admin.from('booking_conversations').insert({ lead_id: leadId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: expires })
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
-  return json({ ok: true, nudged: stage })
+  return json({ ok: true, nudged: stage, source })
 }
 
 // ── START ─────────────────────────────────────────────────────────────────────
@@ -532,9 +536,11 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
 
   // Eröffnungstext je Auslöser (editierbar in booking_bot_messages).
-  const key = source === 'erstkontakt' ? 'erstkontakt_0' : source === 'no_show' ? 'no_show_0' : 'no_show_0'
+  const key = source === 'erstkontakt' ? 'erstkontakt_0' : source === 'deck_viewed' ? 'deck_viewed_0' : 'no_show_0'
   const fallback = source === 'erstkontakt'
     ? 'Hey {{vorname}}, danke für deine Anfrage! Leider ist keine Terminbuchung angekommen — lass es uns direkt lösen, ich hätte zwei Zeiten frei:'
+    : source === 'deck_viewed'
+    ? 'Hey {{vorname}}, schön, dass du dir die Objekte angeschaut hast! Was ist dein Favorit — wollen wir gemeinsam draufschauen? Ich hätte zwei Zeiten frei:'
     : 'Hey {{vorname}}, schade — wir haben uns gerade verpasst. Lass es uns direkt nachholen, ich hätte zwei Zeiten frei:'
   const intro = fillName(await botText(admin, key, fallback), l.first_name)
   const msg = buildProposal(intro, slots, false)
@@ -715,7 +721,7 @@ Deno.serve(async (req) => {
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
-    if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0)
+    if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show')
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
   } catch (err) {
     console.error('[booking-bot] Fehler:', err)
