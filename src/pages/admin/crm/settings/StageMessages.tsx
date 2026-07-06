@@ -626,7 +626,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
 // Der Bot schlägt automatisch 2 freie Termine vor (2 Tage, vormittags + nachmittags);
 // hier bearbeitet Sven nur die Einleitungstexte je Stufe. Ein/Aus unter KI-Agent.
 interface BotMsg { key: string; label: string; delay_label: string | null; intro: string; sort: number }
-function BotMessagesCard({ onToast }: { onToast: (m: string) => void }) {
+function BotMessagesCard({ stage, onToast }: { stage: string; onToast: (m: string) => void }) {
   const { t } = useTranslation()
   const [rows, setRows]       = useState<BotMsg[]>([])
   const [editKey, setEditKey] = useState<string | null>(null)
@@ -647,9 +647,13 @@ function BotMessagesCard({ onToast }: { onToast: (m: string) => void }) {
     setEditKey(null); await load(); onToast(t('crm.botMsg.saved', '✅ Bot-Text gespeichert'))
   }
 
-  if (!rows.length) return null
+  // Nur die Bot-Texte der aktuellen Phase (No-Show: 6 Stufen · Erstkontakt: 1).
+  const shown = rows.filter(r =>
+    stage === 'no_show'     ? r.key.startsWith('no_show_') :
+    stage === 'erstkontakt' ? r.key.startsWith('erstkontakt') : false)
+  if (!shown.length) return null
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mt-2">
+    <div className="bg-white rounded-2xl border border-[#ff795d]/30 shadow-sm p-4">
       <div className="flex items-start gap-3">
         <span className="shrink-0 text-lg mt-0.5">🤝</span>
         <div className="flex-1 min-w-0">
@@ -664,7 +668,7 @@ function BotMessagesCard({ onToast }: { onToast: (m: string) => void }) {
       </div>
 
       <div className="mt-3 space-y-2">
-        {rows.map(r => (
+        {shown.map(r => (
           <div key={r.key} className="border border-gray-100 rounded-xl p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-wrap">
@@ -911,6 +915,9 @@ export default function StageMessages() {
                   })}
                 </div>
               )}
+
+              {/* Termin-Bot (WhatsApp) — für die Phasen No-Show / Erstkontakt Teil der Pipeline */}
+              <BotMessagesCard stage={selected} onToast={showToast} />
             </div>
           </div>
         )}
@@ -944,7 +951,6 @@ export default function StageMessages() {
               </div>
             </div>
           ))}
-          <BotMessagesCard onToast={showToast} />
         </div>
       </div>
 
