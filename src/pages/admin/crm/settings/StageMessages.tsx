@@ -655,43 +655,45 @@ function BotMessagesCard({ stage, onToast }: { stage: string; onToast: (m: strin
     stage === 'erstkontakt'      ? r.key.startsWith('erstkontakt') :
     stage === 'immobilienauswahl' ? (r.key.startsWith('immobilienauswahl_') || r.key === 'deck_viewed_0') : false)
   if (!shown.length) return null
-  // Kein „extra Feld": jede Bot-Nachricht erscheint als Schritt-Zeile (wie die anderen
-  // Nachrichten der Phase), nur mit 🤝-Symbol.
+  // Die WhatsApps (Bot) in EINEM Kästchen unter den Mails — mit 🤝-Überschrift.
   return (
-    <div className="space-y-2">
-      {shown.map(r => (
-        <div key={r.key} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
-          <div className="flex items-start gap-3">
-            <span className="shrink-0 text-lg mt-0.5">🤝</span>
-            <div className="flex-1 min-w-0">
+    <div className="bg-[#fff9f7] rounded-2xl border border-[#ff795d]/30 shadow-sm p-4">
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <span className="text-lg">🤝</span>
+        <span className="font-semibold text-gray-900 text-sm">{t('crm.botMsg.title', 'Termin-Bot · WhatsApp')}</span>
+        <span className="text-[11px] text-gray-500">{t('crm.botMsg.hint', 'schlägt automatisch 2 Termine vor (2 Tage · vormittags + nachmittags)')}</span>
+      </div>
+      <div className="space-y-2">
+        {shown.map(r => (
+          <div key={r.key} className="bg-white rounded-xl border border-gray-100 p-3">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-semibold text-gray-900 text-sm">{r.label}</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700">{t('stageMessages.badgeWhatsapp', '📱 WhatsApp')}</span>
+                <span className="text-sm font-medium text-gray-800">{r.label}</span>
                 {r.delay_label && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-mono">{r.delay_label}</span>}
               </div>
-              {editKey === r.key ? (
-                <div className="mt-2">
-                  <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
-                  <div className="flex justify-end gap-2 mt-2">
-                    <button onClick={() => setEditKey(null)} className="px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
-                    <button onClick={() => void save(r.key)} disabled={saving || !draft.trim()}
-                      className="px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-                      {t('common.save', 'Speichern')}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-xs text-gray-400 mt-1 whitespace-pre-wrap line-clamp-2">{r.intro}</p>
+              {editKey !== r.key && (
+                <button onClick={() => { setEditKey(r.key); setDraft(r.intro) }}
+                  className="text-xs text-gray-500 hover:text-gray-800 font-medium shrink-0">{t('common.edit', 'Bearbeiten')}</button>
               )}
             </div>
-            {editKey !== r.key && (
-              <button onClick={() => { setEditKey(r.key); setDraft(r.intro) }}
-                className="text-sm text-gray-500 hover:text-gray-800 font-medium shrink-0">{t('common.edit', 'Bearbeiten')}</button>
+            {editKey === r.key ? (
+              <div className="mt-2">
+                <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={4}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                <div className="flex justify-end gap-2 mt-2">
+                  <button onClick={() => setEditKey(null)} className="px-3 py-1.5 text-xs text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+                  <button onClick={() => void save(r.key)} disabled={saving || !draft.trim()}
+                    className="px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                    {t('common.save', 'Speichern')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1.5 whitespace-pre-wrap line-clamp-2">{r.intro}</p>
             )}
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
