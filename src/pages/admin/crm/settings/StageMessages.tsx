@@ -705,6 +705,38 @@ function BotMessagesCard({ stage, onToast }: { stage: string; onToast: (m: strin
   )
 }
 
+// ── Termin-Bot Ein/Aus — Schalter direkt bei den Nachrichten (auch in KI-Agent) ──
+function BotToggle({ onToast }: { onToast: (m: string) => void }) {
+  const { t } = useTranslation()
+  const [on, setOn]         = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => { void (async () => {
+    const { data } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
+    setOn((data as { value?: string } | null)?.value === 'true'); setLoaded(true)
+  })() }, [])
+  const toggle = async () => {
+    const next = !on
+    if (next && !window.confirm(t('crm.botToggle.confirm', 'Der Termin-Bot schreibt ab jetzt AUTOMATISCH mit echten Kunden per WhatsApp (No-Show, Erstkontakt, Deck-Ansicht, Immobilienauswahl) und bucht Termine in deinen Kalender. Jetzt scharfschalten?'))) return
+    setOn(next)
+    const { error } = await supabase.from('crm_settings').upsert({ key: 'booking_bot_enabled', value: next ? 'true' : 'false', updated_at: new Date().toISOString() }, { onConflict: 'key' })
+    if (error) { setOn(!next); onToast('❌ ' + error.message); return }
+    onToast(next ? t('crm.botToggle.on', '✅ Termin-Bot ist scharf') : t('crm.botToggle.off', 'Termin-Bot aus'))
+  }
+  if (!loaded) return null
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm px-5 py-4 flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <span className="block font-semibold text-gray-900 text-sm">🤝 {t('crm.botToggle.title', 'Termin-Bot (WhatsApp)')}</span>
+        <span className="block text-xs text-gray-500">{t('crm.botToggle.desc', 'Schlägt bei No-Show, Erstkontakt, Deck-Ansicht & Immobilienauswahl automatisch Termine vor und bucht sie. Betrifft die 🤝-Phasen unten.')}</span>
+      </div>
+      <button onClick={() => void toggle()} aria-label="Bot ein/aus"
+        className={`relative w-12 h-6 rounded-full transition-colors shrink-0 ${on ? 'bg-green-500' : 'bg-gray-300'}`}>
+        <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-6' : 'translate-x-0.5'}`} />
+      </button>
+    </div>
+  )
+}
+
 export default function StageMessages() {
   const { t } = useTranslation()
 
@@ -804,6 +836,9 @@ export default function StageMessages() {
             {t('crm.stageEditor.subtitle2', 'Pipeline-Nachrichten je Lead-Phase und weitere System-Nachrichten — Texte und Vorlagen hier bearbeiten.')}
           </p>
         </div>
+
+        {/* Termin-Bot Ein/Aus */}
+        <BotToggle onToast={showToast} />
 
         {/* ── Pipeline (aufklappbar) ── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">

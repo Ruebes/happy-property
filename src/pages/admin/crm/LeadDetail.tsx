@@ -18,7 +18,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 
-type TabId = 'overview' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
+type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
@@ -231,6 +231,20 @@ export default function LeadDetail() {
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(''), 3000)
+  }
+
+  // ── Notizen-Reiter: freies Notizfeld (lead.notes) + Gesprächsnotizen-Historie ──
+  const [notesDraft, setNotesDraft] = useState('')
+  const [savingNotes, setSavingNotes] = useState(false)
+  useEffect(() => { setNotesDraft(lead?.notes ?? '') }, [lead?.id])   // beim Laden übernehmen
+  const saveNotes = async () => {
+    if (!lead) return
+    setSavingNotes(true)
+    const { error } = await supabase.from('leads').update({ notes: notesDraft.trim() || null, updated_at: new Date().toISOString() }).eq('id', lead.id)
+    setSavingNotes(false)
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setLead({ ...lead, notes: notesDraft.trim() || null })
+    showToast(t('crm.notesSaved', '✅ Notizen gespeichert'))
   }
 
   // ── KI-Antwort-Agent: Daten + Aktionen (sendet NICHTS) ──────────
@@ -2557,6 +2571,7 @@ export default function LeadDetail() {
             <div className="flex border-b border-gray-100 overflow-x-auto">
               {([
                 { id: 'overview',     label: t('crm.tab.overview',      'Übersicht') },
+                { id: 'notes',        label: `📝 ${t('crm.tab.notes', 'Notizen')}` },
                 { id: 'appointments', label: t('crm.tab.appointments',  `📅 Termine${appointments.length ? ` (${appointments.length})` : ''}`) },
                 { id: 'activities',   label: t('crm.tab.activities',    'Aktivitäten') },
                 { id: 'ai',           label: `🤖 ${t('crm.tab.ai',      'KI-Antwort')}` },
@@ -3003,6 +3018,46 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Aktivitäten ──────────────────────────────── */}
+            {activeTab === 'notes' && (
+              <div className="p-6 space-y-6">
+                {/* Freies Notizfeld (lead.notes) */}
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-sm font-semibold text-gray-700">{t('crm.notes.title', 'Notizen zum Kunden')}</h3>
+                    <button onClick={() => void saveNotes()} disabled={savingNotes || notesDraft === (lead?.notes ?? '')}
+                      className="px-4 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                      {savingNotes ? t('common.saving', 'Speichern…') : t('common.save', 'Speichern')}
+                    </button>
+                  </div>
+                  <textarea value={notesDraft} onChange={e => setNotesDraft(e.target.value)} rows={8}
+                    placeholder={t('crm.notes.placeholder', 'Notizen zum Kunden — Wünsche, Budget, Gesprächsergebnisse…')}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                  <p className="text-xs text-gray-400 mt-1">{t('crm.notes.hint', 'Hier landen auch die Antworten aus dem Formular (Typeform).')}</p>
+                </div>
+
+                {/* Gesprächsnotizen-Historie (aus dem Termin-Vorbereitungs-Popup) */}
+                <div className="border-t pt-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.notes.callNotes', 'Gesprächsnotizen')}</h3>
+                  {activities.filter(a => a.type === 'note').length === 0 ? (
+                    <p className="text-sm text-gray-400 py-4">{t('crm.notes.noCallNotes', 'Noch keine Gesprächsnotizen. Notizen aus dem Termin-Popup erscheinen hier.')}</p>
+                  ) : (
+                    <ol className="space-y-3">
+                      {activities.filter(a => a.type === 'note').map(act => (
+                        <li key={act.id} className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="font-medium text-sm text-gray-800">{act.subject ?? t('crm.notes.note', 'Notiz')}</span>
+                            <span className="text-xs text-gray-400">{formatDate(act.created_at)}</span>
+                          </div>
+                          {act.content && <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{act.content}</p>}
+                          {act.creator && <p className="text-xs text-gray-400 mt-1">— {act.creator.full_name}</p>}
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              </div>
+            )}
+
             {activeTab === 'activities' && (
               <div className="p-6">
                 {/* Timeline */}
