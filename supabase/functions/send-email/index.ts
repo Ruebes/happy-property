@@ -13,6 +13,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
+import { buildMimeContent } from '../_shared/mimeBody.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -23,27 +24,6 @@ const CORS = {
 // ── Platzhalter ersetzen ─────────────────────────────────────────────────────
 function replacePlaceholders(text: string, vars: Record<string, string>): string {
   return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`)
-}
-
-// ── HTML → Plaintext ──────────────────────────────────────────────────────────
-// HTML → saubere Text-Alternative (multipart/alternative für Empfänger ohne HTML).
-// WICHTIG: Link-URLs aus <a href> bewahren, sonst hätte die Textversion keine Links.
-function stripHtml(html: string): string {
-  return html
-    // <a href="URL">Label</a> → "Label: URL" (mailto/tel ohne Doppelung)
-    .replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, url, label) => {
-      const text = String(label).replace(/<[^>]+>/g, '').trim()
-      if (/^(mailto:|tel:)/i.test(url)) return text || url.replace(/^(mailto:|tel:)/i, '')
-      return text ? `${text}: ${url}` : url
-    })
-    .replace(/<img\b[^>]*>/gi, '')                    // Bilder raus (inkl. Tracking-Pixel)
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|tr|h1|h2|h3|div|li)>/gi, '\n')
-    .replace(/<\/td>/gi, ' ')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&nbsp;/g, ' ').replace(/&middot;|·/g, '·')
-    .replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
 // ── PDF von URL als Uint8Array herunterladen ──────────────────────────────────
@@ -220,8 +200,9 @@ Deno.serve(async (req: Request) => {
           replyTo: `info@happy-property.com`,
           to:      to,
           subject: encodeMimeSubject(subject),
-          html:    html,
-          content: stripHtml(html),
+          // Body als Base64-mimeContent statt html/content — umgeht denomailers kaputten
+          // QP-Zeilenumbruch, der UTF-8-Umlaute an der Zeilengrenze zerstört (mimeBody.ts).
+          mimeContent: buildMimeContent(html, stripHtml(html)),
         }
 
         if (pdfAttachment) {

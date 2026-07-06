@@ -14,6 +14,8 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
+import { buildMimeContent } from '../_shared/mimeBody.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -380,9 +382,12 @@ Deno.serve(async (req: Request) => {
         await client.send({
           from:    `Sven von Happy Property Cyprus <${smtpUser}>`,
           to:      email,
-          subject,
-          html,
-          content: `Hallo ${full_name.split(' ')[0]},\n\ndeine Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändere dein Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
+          subject: encodeMimeSubject(subject),
+          // Base64-mimeContent statt html/content — umgeht denomailers kaputten QP-Encoder (mimeBody.ts).
+          mimeContent: buildMimeContent(
+            html,
+            `Hallo ${full_name.split(' ')[0]},\n\ndeine Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändere dein Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
+          ),
         })
         console.log(`[create-eigentuemer-access] ✓ E-Mail gesendet an: ${email}`)
       } finally {

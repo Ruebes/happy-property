@@ -479,14 +479,16 @@ async function botText(admin: SupabaseClient, key: string, fallback: string): Pr
 const fillName = (t: string, first: string | null) => t.replace(/\{\{\s*vorname\s*\}\}/gi, first || 'du')
 function buildProposal(intro: string, slots: Slot[], isFinal: boolean): string {
   const opts  = slots.map((s, i) => `${i + 1}) ${s.label} Uhr`).join('\n')
-  const close = isFinal ? '(deutsche Zeit) — sag mir einfach kurz Bescheid. 🙂' : '(deutsche Zeit) Was passt dir besser?'
+  const close = isFinal
+    ? '(deutsche Zeit) — sag mir einfach kurz Bescheid, oder schlag mir gern einen anderen Termin vor, der dir besser passt. 🙂'
+    : '(deutsche Zeit) Was passt dir besser? Oder schlag mir gern einen anderen Termin vor, der dir besser passt.'
   return `${intro}\n\n${opts}\n\n${close}`
 }
 
 // ── NUDGE ── Nachfass-Stufen (No-Show 1-5 · Immobilienauswahl 0-5): frische
 // Vorschläge, nur solange der Kunde NIE geantwortet hat. Für Immobilienauswahl wird ein
 // Gespräch bei Bedarf NEU angelegt (der Kunde hat evtl. gar nicht geöffnet → noch keins).
-async function handleNudge(admin: SupabaseClient, leadId: string, stage: number, source: string): Promise<Response> {
+async function handleNudge(admin: SupabaseClient, leadId: string, stage: number, source: string, introOverride?: string): Promise<Response> {
   const { data: st } = await admin.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
@@ -509,7 +511,7 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   const slots = await computeSlotsAmPm(admin)
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
   const isFinal = stage >= 5
-  const intro = fillName(await botText(admin, `${source}_${stage}`, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
+  const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, `${source}_${stage}`, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
   const msg = buildProposal(intro, slots, isFinal)
   const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
   if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })
@@ -724,11 +726,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
-    if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show')
+    if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
   } catch (err) {
     console.error('[booking-bot] Fehler:', err)
