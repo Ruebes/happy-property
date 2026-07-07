@@ -327,6 +327,10 @@ Deno.serve(async (req) => {
     // Parallel: Netto/MwSt/Brutto je Wohnung für die priceSummary-Box im Zahlungsplan
     // (MwSt-Berechnung im payment-Block = Standard, nicht der KI überlassen).
     const priceSummaryByUnit: Record<string, { net: string; vatRate: string; vat: string; gross: string }> = {}
+    // GRUNDRISS-STANDARD (Sven): hinterlegte HP-Grundrisse je Wohnung — wenn einer
+    // existiert, kommt er ins Deck. Quelle: crm_projects.deck_assets.floorplans
+    // (Map Wohnungsnummer → Bild-URL, Fallback-Key "<n>br" je Zimmertyp).
+    const floorplanByUnit: Record<string, string> = {}
     let extraFacts = ''
     if (body.project_id) {
       try {
@@ -345,7 +349,13 @@ Deno.serve(async (req) => {
           const uu = u as { unit_number?: string; price_net?: number; bedrooms?: number | null } | null
           if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0, bedrooms: uu.bedrooms ?? null }]
         }
-        const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date, calc_defaults').eq('id', body.project_id).maybeSingle()
+        const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date, calc_defaults, deck_assets').eq('id', body.project_id).maybeSingle()
+        // Hinterlegte Grundrisse je Wohnung einsammeln (Nummer exakt, sonst Zimmertyp "<n>br").
+        const fpMap = ((p as { deck_assets?: { floorplans?: Record<string, string> } } | null)?.deck_assets?.floorplans) ?? {}
+        for (const u of unitList) {
+          const fpUrl = fpMap[normU(u.unit_number)] ?? (u.bedrooms != null ? fpMap[`${u.bedrooms}br`] : undefined)
+          if (fpUrl) floorplanByUnit[normU(u.unit_number)] = fpUrl
+        }
         const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
         const furnDefault = Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0
         const furnByBed = (p as { calc_defaults?: { furniture_by_bedrooms?: Record<string, number> } } | null)?.calc_defaults?.furniture_by_bedrooms ?? null
@@ -568,6 +578,18 @@ Deno.serve(async (req) => {
         const k = psKeys.find(key => key && hay.includes(key))
         if (k) pb.priceSummary = priceSummaryByUnit[k]
       }
+    }
+    // GRUNDRISS-STANDARD: hinterlegten HP-Grundriss deterministisch in den floorplan-Block
+    // setzen (ersetzt KI-rooms/Roh-Pläne). Einzel-Wohnung → alle floorplan-Blöcke; mehrere
+    // Wohnungen → der Reihe nach (Regel: je Wohnung eigener unit+floorplan-Block in
+    // Wohnungs-Reihenfolge). Der Hinweis „Maße ca." steckt im Grundriss-Bild selbst.
+    const fpKeys = Object.keys(floorplanByUnit)
+    if (fpKeys.length) {
+      const fpBlocks = blocks.filter(b => b.type === 'floorplan')
+      fpBlocks.forEach((fb, i) => {
+        const url = fpKeys.length === 1 ? floorplanByUnit[fpKeys[0]] : floorplanByUnit[fpKeys[Math.min(i, fpKeys.length - 1)]]
+        if (url) { fb.image = url; delete fb.rooms }
+      })
     }
 
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
