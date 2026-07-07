@@ -126,6 +126,26 @@ export default function Postausgang() {
 
   const flash = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) }
 
+  // Registrierungs-Check (Provisionsschutz): Deck-Projekte → Developer → ist der Kunde
+  // dort registriert (lead_registrations)? Fehlende Developer → Warnung vor dem Senden.
+  const registrationWarning = async (row: OutboxRow): Promise<string> => {
+    try {
+      const toks = row.deck_tokens ?? []
+      if (!toks.length || !row.lead_id) return ''
+      const { data: decks } = await supabase.from('sales_decks').select('project_id').in('token', toks)
+      const pids = Array.from(new Set((decks ?? []).map(d => (d as { project_id: string | null }).project_id).filter(Boolean))) as string[]
+      if (!pids.length) return ''
+      const { data: projs } = await supabase.from('crm_projects').select('developer').in('id', pids)
+      const devs = Array.from(new Set((projs ?? []).map(p => (p as { developer: string | null }).developer).filter(Boolean))) as string[]
+      if (!devs.length) return ''
+      const { data: regs } = await supabase.from('lead_registrations').select('developer').eq('lead_id', row.lead_id)
+      const regSet = new Set(((regs ?? []) as { developer: string }[]).map(r => r.developer.toLowerCase().trim()))
+      const missing = devs.filter(d => !regSet.has(d.toLowerCase().trim()))
+      if (!missing.length) return ''
+      return `🚨 ${t('crm.outbox.regWarn', 'ACHTUNG: Kunde ist bei folgenden Developern NICHT registriert')}: ${missing.join(' + ')}.\n${t('crm.outbox.regHint', 'Ohne Registrierung ist der Provisionsanspruch nicht gesichert — erst registrieren, dann senden!')}\n\n`
+    } catch { return '' }
+  }
+
   const send = async (row: OutboxRow, resend = false) => {
     // Immer die AKTUELLE Mailadresse aus dem Lead ziehen — Sven korrigiert sie im
     // Kunden; recipient_email auf dem Postausgang-Eintrag kann veraltet sein.
@@ -158,7 +178,8 @@ export default function Postausgang() {
       sendBody = origBody.includes('</body>') ? origBody.replace('</body>', `${block}</body>`) : origBody + block
     }
     const autoNote = (needDeck || needCalc) ? `ℹ️ ${t('crm.outbox.autoLinks', 'Deck-/Berechnungs-Links fehlten im Text — sie werden automatisch ergänzt.')}\n\n` : ''
-    if (!window.confirm(autoNote + (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
+    const regWarn = await registrationWarning(row)
+    if (!window.confirm(regWarn + autoNote + (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
     setBusyId(row.id)
     try {
       // Korrigierte Adresse auf dem Eintrag festhalten (Anzeige + nächster Versand)
@@ -198,7 +219,8 @@ export default function Postausgang() {
     const links = [...deckLines, ...calcLines].join('\n')
     if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck- oder Berechnungs-Links an diesem Eintrag.')); return }
     const text = `Hallo ${fn},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n${links}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property`
-    if (!window.confirm(t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
+    const regWarnWa = await registrationWarning(row)
+    if (!window.confirm(regWarnWa + t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
     setBusyId(row.id)
     try {
       const { data, error } = await supabase.functions.invoke('send-whatsapp', {
