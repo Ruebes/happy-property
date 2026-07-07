@@ -874,6 +874,15 @@ export default function Pipeline() {
       if (upErr) throw upErr
       setDeals(prev => prev.map(d => d.id === deal.id ? { ...d, phase: 'registrierung' } : d))
 
+      // Angekreuzte Developer in die Registrierungs-Karte des Kunden übernehmen
+      // (lead_registrations, Provisionsschutz — Basis für die Warnung beim Deck-Versand).
+      if (deal.lead_id && selectedDevelopers.length) {
+        await supabase.from('lead_registrations').upsert(
+          selectedDevelopers.map(dev => ({ lead_id: deal.lead_id, developer: dev })),
+          { onConflict: 'lead_id,developer' },
+        )
+      }
+
       await supabase.from('activities').insert({
         lead_id:    deal.lead_id,
         deal_id:    deal.id,
