@@ -351,7 +351,10 @@ Deno.serve(async (req) => {
         }
         const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date, calc_defaults, deck_assets').eq('id', body.project_id).maybeSingle()
         // Hinterlegte Grundrisse je Wohnung einsammeln (Nummer exakt, sonst Zimmertyp "<n>br").
-        const fpMap = ((p as { deck_assets?: { floorplans?: Record<string, string> } } | null)?.deck_assets?.floorplans) ?? {}
+        // Quelle: deck_assets.unit_floorplans (Record) — NICHT deck_assets.floorplans, das ist
+        // bei manchen Projekten ein Etagen-Array aus dem Drive-Import.
+        const daFp = (p as { deck_assets?: { unit_floorplans?: Record<string, string>; floorplans?: unknown } } | null)?.deck_assets
+        const fpMap = daFp?.unit_floorplans ?? ((daFp && !Array.isArray(daFp.floorplans)) ? (daFp.floorplans as Record<string, string> | undefined) : undefined) ?? {}
         for (const u of unitList) {
           const fpUrl = fpMap[normU(u.unit_number)] ?? (u.bedrooms != null ? fpMap[`${u.bedrooms}br`] : undefined)
           if (fpUrl) floorplanByUnit[normU(u.unit_number)] = fpUrl
