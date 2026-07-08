@@ -113,8 +113,9 @@ Deno.serve(async (req) => {
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as {
-      action: 'track' | 'slots' | 'book'
+      action: 'track' | 'slots' | 'contact' | 'book'
       session_id?: string
+      lead_id?: string
       step?: number; question_key?: string; answer?: string
       utm?: Record<string, string>; referrer?: string
       slot_start_iso?: string
@@ -148,23 +149,19 @@ Deno.serve(async (req) => {
       return json({ ok: true, slots, duration_min: SLOT_MIN })
     }
 
-    // ── book ─────────────────────────────────────────────────────────────────
-    if (body.action === 'book') {
+    // ── contact ──────────────────────────────────────────────────────────────
+    // Kontaktdaten kommen VOR der Terminwahl (Sven: „Sinn des Fragebogens ist,
+    // die Kontaktdaten zu bekommen"). Lead sofort sichern + erstkontakt-Automation
+    // planen (Mail +20 Min & Termin-Bot +20 Min) — bucht der Kunde danach doch
+    // einen Termin, storniert `book` die geplanten Nachrichten und der Bot-Start
+    // wird zusätzlich durch seinen Termin-Guard übersprungen.
+    if (body.action === 'contact') {
       const c = body.contact ?? {}
-      if (c.website) return json({ ok: true })   // Honeypot: still schlucken
-      if (!body.slot_start_iso || !c.first_name || !c.email || !c.phone) return json({ error: 'Pflichtfelder fehlen' }, 400)
-      const start = new Date(body.slot_start_iso)
-      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' }, 409)
-      const end = new Date(start.getTime() + SLOT_MIN * 60000)
-      // Konflikt-Check direkt vor der Buchung
-      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
-      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' }, 409)
-
-      const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
+      if (c.website) return json({ ok: true, lead_id: null })   // Honeypot: still schlucken
+      if (!c.first_name || !c.email || !c.phone) return json({ error: 'Pflichtfelder fehlen' }, 400)
       const phone = (c.phone ?? '').replace(/[^\d+]/g, '')
       const email = (c.email ?? '').trim().toLowerCase()
 
-      // Lead upsert (Match per E-Mail, sonst Telefon, sonst neu)
       let leadId: string | null = null
       const { data: byMail } = await admin.from('leads').select('id').ilike('email', email).limit(1)
       if (byMail?.length) leadId = (byMail[0] as { id: string }).id
@@ -187,6 +184,40 @@ Deno.serve(async (req) => {
         await admin.from('leads').update({ notes: `${prev ? prev + '\n\n' : ''}Fragebogen (eigener Funnel, ${new Date().toLocaleDateString('de-DE')}):\n${answersText}${utmNote}` }).eq('id', leadId)
       }
       if (!leadId) return json({ error: 'lead_failed' }, 500)
+      try {
+        await admin.from('activities').insert({
+          lead_id: leadId, type: 'note', direction: 'inbound',
+          subject: '📋 Fragebogen (Website-Funnel)', content: `${answersText}${utmNote}`,
+          completed_at: new Date().toISOString(),
+        })
+      } catch { /* egal */ }
+      if (body.session_id) await admin.from('funnel_sessions').update({ lead_id: leadId }).eq('id', body.session_id)
+      // Fallback-Automation: greift nur, wenn KEIN Termin gebucht wird (book storniert)
+      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, event_type: 'erstkontakt' } }) }
+      catch (e) { console.warn('[funnel-api] erstkontakt-Trigger fehlgeschlagen:', e) }
+      return json({ ok: true, lead_id: leadId })
+    }
+
+    // ── book ─────────────────────────────────────────────────────────────────
+    if (body.action === 'book') {
+      if (!body.slot_start_iso || !body.lead_id) return json({ error: 'Pflichtfelder fehlen' }, 400)
+      const start = new Date(body.slot_start_iso)
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' }, 409)
+      const end = new Date(start.getTime() + SLOT_MIN * 60000)
+      // Konflikt-Check direkt vor der Buchung
+      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
+      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' }, 409)
+
+      const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
+      const leadId = body.lead_id
+      const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
+      if (!leadRow) return json({ error: 'lead_not_found' }, 404)
+      const c = { first_name: (leadRow as { first_name?: string }).first_name ?? '', last_name: (leadRow as { last_name?: string }).last_name ?? '' }
+      const phone = ((leadRow as { whatsapp?: string; phone?: string }).whatsapp || (leadRow as { phone?: string }).phone || '').replace(/[^\d+]/g, '')
+      const email = ((leadRow as { email?: string }).email ?? '').trim().toLowerCase()
+
+      // Erstkontakt-Fallback stornieren — der Kunde HAT ja jetzt einen Termin
+      try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending') } catch { /* egal */ }
 
       // Zoom-Meeting (nur bei Zoom-Terminart)
       let zoomLink: string | null = null
@@ -222,16 +253,6 @@ Deno.serve(async (req) => {
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
         google_event_id: gcal?.id ?? null, google_calendar_id: gcal?.calId ?? null,
       }).select('id').single()
-
-      // Fragebogen als Aktivität
-      try {
-        await admin.from('activities').insert({
-          lead_id: leadId, type: 'note', direction: 'inbound',
-          subject: '📋 Fragebogen (Website-Funnel)',
-          content: `${answersText}${utmNote}\nTermin: ${start.toISOString()} (${type})`,
-          completed_at: new Date().toISOString(),
-        })
-      } catch { /* egal */ }
 
       // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp)
       try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, event_type: 'termin_gebucht' } }) }
