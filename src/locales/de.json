@@ -73,7 +73,8 @@
     "admin_desc": "Vollzugriff · alle Objekte, Nutzer & Einstellungen",
     "verwalter_desc": "Lese- & Schreibzugriff auf alle Immobilien-Daten",
     "eigentuemer_desc": "Sieht ausschließlich eigene Objekte & Dokumente",
-    "feriengast_desc": "Ferienaufenthalt · Check-in, Hausregeln & Nachrichten"
+    "feriengast_desc": "Ferienaufenthalt · Check-in, Hausregeln & Nachrichten",
+    "funnel": "Funnel-Redaktion"
   },
   "dashboard": {
     "greeting": "Hallo",
@@ -1178,7 +1179,7 @@
     "nav": {
       "dashboard": "Dashboard",
       "pipeline": "Pipeline",
-      "leads": "Alle Leads",
+      "leads": "Kontakte",
       "templates": "E-Mail Vorlagen",
       "archived": "Archiviert",
       "projects": "Projekte",
@@ -1199,7 +1200,9 @@
       "groupSystem": "System",
       "calendar": "Kalender",
       "statistics": "Statistiken",
-      "funnel": "Termin-Funnel"
+      "funnel": "Termin-Funnel",
+      "more": "Mehr",
+      "funnelEditor": "Funnel-Editor"
     },
     "funnel": {
       "title": "Termin-Funnel",
@@ -1208,7 +1211,13 @@
       "funnelTitle": "Trichter — wer kommt wie weit?",
       "funnelHint": "Rote Zahl = Absprünge gegenüber dem vorherigen Schritt. Prozent = Anteil der Seitenaufrufe.",
       "sourcesTitle": "Quellen (utm_source)",
-      "period": { "week": "Letzte 7 Tage", "month": "Letzte 30 Tage", "year": "Dieses Jahr", "all": "Alle Zeit", "custom": "Benutzerdefiniert" },
+      "period": {
+        "week": "Letzte 7 Tage",
+        "month": "Letzte 30 Tage",
+        "year": "Dieses Jahr",
+        "all": "Alle Zeit",
+        "custom": "Benutzerdefiniert"
+      },
       "kpi": {
         "views": "Aufrufe",
         "leads": "Leads (Kontaktdaten)",
@@ -1231,7 +1240,8 @@
         "type": "Terminart gewählt",
         "slots": "Terminauswahl gesehen",
         "picked": "Termin angeklickt",
-        "booked": "Termin gebucht"
+        "booked": "Termin gebucht",
+        "question": "Frage"
       },
       "q": {
         "erfahrung": "Erfahrung",
@@ -1242,7 +1252,13 @@
         "alter": "Alter",
         "meetingType": "Terminart"
       },
-      "src": { "source": "Quelle", "sessions": "Besuche", "leads": "Leads", "bookings": "Buchungen", "conv": "Conversion" }
+      "src": {
+        "source": "Quelle",
+        "sessions": "Besuche",
+        "leads": "Leads",
+        "bookings": "Buchungen",
+        "conv": "Conversion"
+      }
     },
     "newLead": "+ Neuer Lead",
     "lead": {
@@ -2510,6 +2526,47 @@
       "confirm": "Der Termin-Bot schreibt ab jetzt AUTOMATISCH mit echten Kunden per WhatsApp (No-Show, Erstkontakt, Deck-Ansicht, Immobilienauswahl) und bucht Termine in deinen Kalender. Jetzt scharfschalten?",
       "on": "✅ Termin-Bot ist scharf",
       "off": "Termin-Bot aus"
+    },
+    "funnelEditor": {
+      "title": "Funnel-Editor",
+      "subtitle": "Inhalte des Termin-Funnels (/termin) bearbeiten — Änderungen sind nach dem Speichern sofort live.",
+      "preview": "👁 Vorschau öffnen",
+      "save": "Speichern",
+      "saving": "Speichert…",
+      "saved": "✓ Gespeichert — der Funnel ist sofort aktuell.",
+      "saveError": "Speichern fehlgeschlagen — bitte noch einmal versuchen.",
+      "invalid": "Jede Frage braucht einen Titel und mindestens 2 ausgefüllte Antworten.",
+      "unsaved": "Ungespeicherte Änderungen",
+      "welcome": "1 · Startseite",
+      "questions": "2 · Fragen",
+      "contact": "3 · Kontaktdaten-Schritt",
+      "done": "4 · Danke-Seite (nach Buchung)",
+      "headline": "Überschrift",
+      "subline": "Untertitel",
+      "buttonText": "Button-Text",
+      "footnote": "Fußnote",
+      "privacy": "Datenschutz-Hinweis",
+      "heroImage": "Bild (Startseite)",
+      "changeImage": "📷 Bild ändern",
+      "resetImage": "Standard (Sven-Foto)",
+      "uploading": "Lädt hoch…",
+      "uploadError": "Upload fehlgeschlagen.",
+      "addQuestion": "+ Frage hinzufügen",
+      "questionTitle": "Frage-Text",
+      "questionSub": "Untertitel (optional)",
+      "tiles": "Kacheln mit Bild",
+      "confirmDelete": "Frage wirklich löschen?",
+      "optionLabel": "Antwort-Text",
+      "addOption": "+ Antwort hinzufügen",
+      "removeOption": "Antwort entfernen",
+      "visualNone": "Ohne Bild",
+      "icon": "Piktogramm",
+      "emoji": "Emoji",
+      "ownImage": "Eigenes Bild…",
+      "iconHint": "Piktogramme: ",
+      "iconHint2": "— laden ohne Wartezeit. Eigene Bilder bitte klein halten (unter 300 KB).",
+      "thanksUrl": "Link „Tipps & Blog“ (Website)",
+      "youtubeUrl": "YouTube-Link"
     }
   },
   "docs": {

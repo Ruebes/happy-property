@@ -77,25 +77,30 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // außerhalb, bei Escape und bei jeder Navigation (z.B. Auswahl eines Eintrags).
   const settingsRef = useRef<HTMLDivElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const moreRef = useRef<HTMLDivElement>(null)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   useEffect(() => {
-    if (!settingsOpen) return
+    if (!settingsOpen && !moreOpen) return
     const onPointerDown = (e: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
         setSettingsOpen(false)
       }
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false)
+      }
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSettingsOpen(false) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setSettingsOpen(false); setMoreOpen(false) } }
     document.addEventListener('mousedown', onPointerDown)
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('mousedown', onPointerDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [settingsOpen])
+  }, [settingsOpen, moreOpen])
 
   // Jede Navigation schließt das Menü (Auswahl eines Eintrags oder Wechsel woanders hin)
-  useEffect(() => { setSettingsOpen(false); setMobileNavOpen(false) }, [location.pathname])
+  useEffect(() => { setSettingsOpen(false); setMoreOpen(false); setMobileNavOpen(false) }, [location.pathname])
 
   const toggleSettings = () => setSettingsOpen(prev => !prev)
 
@@ -115,17 +120,29 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/kalender', key: 'nav.calendar'   },
   ]
 
-  // CRM-Einzel-Links (ohne Settings-Gruppe)
+  // CRM-Einzel-Links oben: nur die täglichen Arbeits-Seiten (Sven) —
+  // alles andere wandert ins „Mehr"-Dropdown.
   const crmTopItems = [
-    { to: '/admin/crm',               key: 'crm.nav.dashboard'  },
     { to: '/admin/crm/pipeline',      key: 'crm.nav.pipeline'   },
     { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
-    { to: '/admin/crm/projects',      key: 'crm.nav.projects'   },
     { to: '/admin/crm/postausgang',   key: 'crm.nav.outbox'     },
-    { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'   },
     { to: '/admin/crm/calendar',      key: 'crm.nav.calendar'   },
-    { to: '/admin/crm/statistics',    key: 'crm.nav.statistics' },
-    { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'     },
+  ]
+  const crmMoreItems = [
+    { to: '/admin/crm',               key: 'crm.nav.dashboard'    },
+    { to: '/admin/crm/projects',      key: 'crm.nav.projects'     },
+    { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'     },
+    { to: '/admin/crm/statistics',    key: 'crm.nav.statistics'   },
+    { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
+    { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
+  ]
+
+  // Rolle 'funnel' (Mitarbeiter, z.B. Giona): sieht NUR den Termin-Funnel —
+  // Statistik + Inhalts-Editor, sonst nichts.
+  const isFunnelUser = profile?.role === 'funnel'
+  const funnelNavItems = [
+    { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
+    { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
   ]
 
   // CRM Settings-Untermenü-Einträge
@@ -230,7 +247,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
                 <>
-                  {/* Hauptlinks: Pipeline · Alle Kunden · Projekte */}
+                  {/* Hauptlinks: Pipeline · Kontakte · Postausgang · Kalender */}
                   {crmTopItems.map(({ to, key }) => (
                     <Link key={to} to={to}
                       className={navLinkClass(to)}
@@ -239,6 +256,50 @@ export default function DashboardLayout({ children, basePath }: Props) {
                       {t(key)}
                     </Link>
                   ))}
+
+                  {/* Mehr (aufklappbar): Dashboard, Projekte, Rechnungen, Statistiken, Funnel */}
+                  <div className="relative" ref={moreRef}>
+                    <button
+                      onClick={() => setMoreOpen(prev => !prev)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium font-body
+                                  transition-colors flex items-center gap-1 ${
+                        crmMoreItems.some(i => isActive(i.to))
+                          ? 'text-white'
+                          : 'text-gray-600 hover:bg-gray-100 hover:text-hp-black'
+                      }`}
+                      style={crmMoreItems.some(i => isActive(i.to)) ? { backgroundColor: '#ff795d' } : undefined}
+                    >
+                      {t('crm.nav.more', 'Mehr')}
+                      <svg
+                        className={`w-3 h-3 mt-0.5 transition-transform duration-200 ${moreOpen ? 'rotate-180' : ''}`}
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {moreOpen && (
+                      <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200
+                                      rounded-xl shadow-lg z-50 min-w-[200px] py-1.5 overflow-hidden">
+                        {crmMoreItems.map(({ to, key }) => (
+                          <Link key={to} to={to}
+                            className={`flex items-center gap-2.5 px-4 py-2 text-sm font-body
+                                        transition-colors ${
+                              isActive(to)
+                                ? 'font-semibold'
+                                : 'text-gray-700 hover:bg-gray-50 hover:text-hp-black'
+                            }`}
+                            style={isActive(to) ? { color: '#ff795d' } : undefined}
+                          >
+                            <span
+                              className="w-1 h-4 rounded-full shrink-0"
+                              style={{ backgroundColor: isActive(to) ? '#ff795d' : 'transparent' }}
+                            />
+                            {t(key)}
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Einstellungen (aufklappbar) */}
                   <div className="relative" ref={settingsRef}>
@@ -313,7 +374,21 @@ export default function DashboardLayout({ children, basePath }: Props) {
               )}
 
               {/* ── Nicht-Admin Rollen (Verwalter etc.) ── */}
-              {!isAdmin && (
+              {/* ── Funnel-Mitarbeiter: nur Statistik + Editor ── */}
+              {isFunnelUser && (
+                <>
+                  {funnelNavItems.map(({ to, key }) => (
+                    <Link key={to} to={to}
+                      className={navLinkClass(to)}
+                      style={isActive(to) ? { backgroundColor: '#ff795d' } : undefined}
+                    >
+                      {t(key)}
+                    </Link>
+                  ))}
+                </>
+              )}
+
+              {!isAdmin && !isFunnelUser && (
                 <>
                   {defaultNavItems.map(({ to, key }) => (
                     <Link key={to} to={to}
@@ -433,7 +508,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
         {/* ── Mobiles Admin-Menü (Hamburger-Inhalt) ── */}
         {isAdmin && mobileNavOpen && (
           <nav className="xl:hidden border-t border-gray-100 bg-white px-3 py-2 space-y-0.5">
-            {(adminView === 'crm' ? crmTopItems : verwaltungNavItems).map(({ to, key }) => (
+            {(adminView === 'crm' ? [...crmTopItems, ...crmMoreItems] : verwaltungNavItems).map(({ to, key }) => (
               <Link key={to} to={to}
                 className={`block px-3 py-2.5 rounded-lg text-sm font-medium font-body transition-colors ${
                   isActive(to) ? 'text-white' : 'text-gray-700 hover:bg-gray-100'}`}
@@ -480,8 +555,44 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* Termin-Vorbereitung: poppt ~2 Min vor einem Termin auf (nur Admin) */}
       {isAdmin && <AppointmentPrepPopup />}
 
+      {/* ── Mobile Bottom Navigation: Funnel-Mitarbeiter (2 Seiten + Profil) ── */}
+      {isFunnelUser && (
+        <nav
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          <div className="flex items-stretch justify-around">
+            <Link to="/admin/crm/funnel"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/admin/crm/funnel') ? 'text-hp-highlight' : 'text-gray-400'}`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('crm.nav.funnel', 'Termin-Funnel')}</span>
+            </Link>
+            <Link to="/admin/crm/funnel-editor"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/admin/crm/funnel-editor') ? 'text-hp-highlight' : 'text-gray-400'}`}>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              <span className="text-[10px] font-medium font-body">{t('crm.nav.funnelEditor', 'Funnel-Editor')}</span>
+            </Link>
+            <Link to="/profile"
+              className={`flex flex-col items-center gap-0.5 px-3 py-2.5 flex-1 transition-colors
+                          ${isActive('/profile') ? 'text-hp-highlight' : 'text-gray-400'}`}>
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold font-body shrink-0"
+                style={{ backgroundColor: isActive('/profile') ? 'var(--color-highlight)' : '#9ca3af' }}>
+                {initials}
+              </span>
+              <span className="text-[10px] font-medium font-body">{t('nav.profile')}</span>
+            </Link>
+          </div>
+        </nav>
+      )}
+
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
-      {!isAdmin && (
+      {!isAdmin && !isFunnelUser && (
         <nav
           className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}

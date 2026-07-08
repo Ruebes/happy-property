@@ -17,7 +17,7 @@ async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<
 }
 
 // ── Types ──────────────────────────────────────────────────────
-type Role = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast'
+type Role = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'funnel'
 type Lang = 'de' | 'en'
 
 interface UserProfile {
@@ -117,6 +117,7 @@ function RoleBadge({ role }: { role: Role }) {
     verwalter:   'bg-blue-100   text-blue-700',
     eigentuemer: 'bg-green-100  text-green-700',
     feriengast:  'bg-amber-100  text-amber-700',
+    funnel:      'bg-rose-100   text-rose-700',
   }
   const { t } = useTranslation()
   return (
@@ -924,6 +925,7 @@ export default function AdminUsers() {
                         { value: 'verwalter',   label: t('roles.verwalter') },
                         { value: 'eigentuemer', label: t('roles.eigentuemer') },
                         { value: 'feriengast',  label: t('roles.feriengast') },
+                        { value: 'funnel',      label: t('roles.funnel', 'Funnel-Redaktion') },
                       ]}
                     />
                   </Field>

@@ -1,7 +1,12 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
+import { DECK_LOGO } from '../lib/deckTypes'
+import { OptionVisual } from '../components/FunnelIcon'
+import {
+  loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT,
+  type FunnelQuestion, type FunnelOption,
+} from '../lib/funnelConfig'
 
 // ── Termin-Funnel (/termin) — ersetzt Typeform + Calendly ────────────────────
 // Reihenfolge (Sven): Fragebogen → KONTAKTDATEN (Lead sofort sichern!) → Terminart
@@ -15,106 +20,7 @@ const CREAM = '#FAF6EC'
 const CORAL = '#ff795d'
 const NAVY = '#1a2332'
 const INK = '#1a1a1a'
-const THANKS_URL = 'https://steuervorteil-zypern-immobilien.com/termin-wurde-bestaetigt/'
-const YOUTUBE_URL = 'https://www.youtube.com/@HappyPropertyCyprus'
-const HERO = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=1100&height=620&resize=cover&quality=78'
 
-// ── Piktogramme im HP-Stil (inline SVG = sofort geladen) ─────────────────────
-function Icon({ kind }: { kind: string }) {
-  const s = { fill: 'none', stroke: NAVY, strokeWidth: 2.4, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
-  const c = { ...s, stroke: CORAL }
-  return (
-    <svg viewBox="0 0 64 64" className="w-12 h-12 md:w-14 md:h-14" aria-hidden="true">
-      {kind === 'steuern' && (<>
-        <path {...s} d="M32 6 L52 14 V30 C52 44 43 53 32 58 C21 53 12 44 12 30 V14 Z" />
-        <circle {...c} cx="25" cy="26" r="4" /><circle {...c} cx="39" cy="40" r="4" /><line {...c} x1="40" y1="22" x2="24" y2="44" />
-      </>)}
-      {kind === 'kapital' && (<>
-        <rect {...s} x="10" y="38" width="9" height="16" rx="1.5" /><rect {...s} x="26" y="28" width="9" height="26" rx="1.5" /><rect {...s} x="42" y="18" width="9" height="36" rx="1.5" />
-        <path {...c} d="M10 24 C22 20 30 16 44 8" /><path {...c} d="M36 8 H45 V17" />
-      </>)}
-      {kind === 'auswandern' && (<>
-        <circle {...c} cx="32" cy="26" r="9" />
-        <line {...c} x1="32" y1="8" x2="32" y2="12" /><line {...c} x1="14" y1="26" x2="18" y2="26" /><line {...c} x1="46" y1="26" x2="50" y2="26" /><line {...c} x1="19" y1="13" x2="22" y2="16" /><line {...c} x1="45" y1="13" x2="42" y2="16" />
-        <path {...s} d="M8 46 C14 42 20 42 26 46 C32 50 38 50 44 46 C50 42 56 42 58 44" />
-        <path {...s} d="M8 55 C14 51 20 51 26 55 C32 59 38 59 44 55 C50 51 56 51 58 53" />
-      </>)}
-      {kind === 'langfristig' && (<>
-        <path {...s} d="M10 30 L30 14 L50 30" /><path {...s} d="M16 28 V52 H36 V28" />
-        <circle {...c} cx="46" cy="46" r="10" /><path {...c} d="M46 40 V46 L51 49" />
-      </>)}
-      {kind === 'unsicher' && (<>
-        <circle {...s} cx="32" cy="32" r="22" />
-        <path {...c} d="M40 24 L36 36 L24 40 L28 28 Z" /><circle cx="32" cy="10" r="2" fill={CORAL} stroke="none" />
-      </>)}
-    </svg>
-  )
-}
-
-interface Option { key: string; label: string; icon?: string }
-interface Question { key: string; title: string; sub?: string; options: Option[]; tiles?: boolean }
-
-const QUESTIONS: Question[] = [
-  {
-    key: 'erfahrung',
-    title: 'Hast du bereits Erfahrung mit Immobilieninvestitionen?',
-    sub: 'Fülle den kurzen Fragebogen aus & buche dir anschließend dein kostenloses Beratungsgespräch mit Sven. Dauer: 1 Minute.',
-    options: [
-      { key: 'keine', label: 'Keine Erfahrung' },
-      { key: 'wenig', label: 'Wenig Erfahrung (1–2 Investitionen)' },
-      { key: 'erfahren', label: 'Erfahren (3+ Projekte oder Immobilien)' },
-    ],
-  },
-  {
-    key: 'motiv',
-    title: 'Warum interessierst du dich für eine Immobilie in Zypern?',
-    tiles: true,
-    options: [
-      { key: 'steuern', label: 'Steuerliche Vorteile', icon: 'steuern' },
-      { key: 'kapital', label: 'Kapitalanlage', icon: 'kapital' },
-      { key: 'auswandern', label: 'Auswandern & Lebensqualität', icon: 'auswandern' },
-      { key: 'langfristig', label: 'Langfristige Immobilien-Investition', icon: 'langfristig' },
-      { key: 'unsicher', label: 'Noch nicht sicher', icon: 'unsicher' },
-    ],
-  },
-  {
-    key: 'timing',
-    title: 'Wann planst du den Kauf?',
-    options: [
-      { key: 'asap', label: 'So schnell wie möglich' },
-      { key: '3-6m', label: 'In 3–6 Monaten' },
-      { key: 'spaeter', label: 'Später' },
-    ],
-  },
-  {
-    key: 'kapitalbasis',
-    title: 'Besitzt du eine abbezahlte Immobilie in Deutschland, 100.000 € Eigenkapital oder Portfolios/Sachwerte in vergleichbarer Höhe?',
-    options: [
-      { key: 'ja', label: 'Ja' },
-      { key: 'nein', label: 'Nein' },
-    ],
-  },
-  {
-    key: 'beschaeftigung',
-    title: 'Was ist dein Beschäftigungsverhältnis?',
-    options: [
-      { key: 'angestellt', label: 'Angestellter' },
-      { key: 'privatier', label: 'Privatier' },
-      { key: 'selbststaendig', label: 'Selbstständig' },
-      { key: 'andere', label: 'Andere' },
-    ],
-  },
-  {
-    key: 'alter',
-    title: 'Wie alt bist du?',
-    options: [
-      { key: 'u30', label: 'Unter 30' },
-      { key: '30-45', label: '30–45 Jahre' },
-      { key: 'ue45', label: 'Über 45 Jahre' },
-    ],
-  },
-]
-const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
 
 type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done'
 
@@ -132,6 +38,11 @@ function useUtm(): Record<string, string> {
 export default function Funnel() {
   const { t } = useTranslation()
   const utm = useUtm()
+  const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
+  useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
+  const QUESTIONS = cfg.questions
+  const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
+  const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
   const [phase, setPhase] = useState<Phase>('welcome')
   const [qIdx, setQIdx] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
@@ -161,7 +72,7 @@ export default function Funnel() {
 
   useEffect(() => { void track(0, 'view') }, [track])
 
-  const answerQuestion = (q: Question, opt: Option) => {
+  const answerQuestion = (q: FunnelQuestion, opt: FunnelOption) => {
     setAnswers(prev => ({ ...prev, [q.key]: opt.label }))
     void track(qIdx + 1, q.key, opt.label)
     if (qIdx + 1 < QUESTIONS.length) setQIdx(qIdx + 1)
@@ -299,17 +210,17 @@ export default function Funnel() {
             <div className="text-center">
               <img src={HERO} alt="Sven – Happy Property" className="w-full h-56 md:h-72 object-cover rounded-2xl shadow-lg mb-8" />
               <h1 className="font-heading font-bold text-3xl md:text-5xl leading-tight" style={{ color: NAVY }}>
-                Dein kostenloses Beratungsgespräch mit Sven
+                {cfg.welcome.title}
               </h1>
               <p className="mt-4 text-gray-600 text-[15px] md:text-base max-w-xl mx-auto">
-                Beantworte 6 kurze Fragen und such dir direkt deinen Wunschtermin aus — per Zoom oder WhatsApp-Call. Dauer: 1 Minute.
+                {cfg.welcome.subtitle}
               </p>
               <button onClick={() => { setPhase('questions'); void track(0, 'start') }}
                 className="mt-8 px-10 py-4 rounded-full text-white font-semibold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
                 style={{ background: CORAL }}>
-                Los geht's →
+                {cfg.welcome.cta}
               </button>
-              <p className="mt-3 text-xs text-gray-400">Kostenlos & unverbindlich · ca. 15–30 Minuten Gespräch</p>
+              <p className="mt-3 text-xs text-gray-400">{cfg.welcome.footnote}</p>
             </div>
           )}
 
@@ -324,7 +235,7 @@ export default function Funnel() {
                     <button key={o.key} onClick={() => answerQuestion(q, o)}
                       className="rounded-xl border-2 bg-white shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition text-center px-3 py-5 flex flex-col items-center gap-3"
                       style={{ borderColor: answers[q.key] === o.label ? CORAL : '#e6dfd0' }}>
-                      <span className="rounded-full p-3" style={{ background: 'rgba(255,121,93,0.08)' }}><Icon kind={o.icon ?? ''} /></span>
+                      <OptionVisual icon={o.icon} emoji={o.emoji} image_url={o.image_url} />
                       <span className="text-[13px] font-semibold leading-snug" style={{ color: NAVY }}>{o.label}</span>
                     </button>
                   ))}
@@ -347,8 +258,8 @@ export default function Funnel() {
           {phase === 'contact' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Fast geschafft</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>Verrate uns kurz, wie du heißt und wie wir dich erreichen.</h2>
-              <p className="mt-1 text-sm text-gray-600">Im Anschluss kannst du dir deinen <strong>Wunschtermin</strong> buchen!</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{cfg.contact.title}</h2>
+              <p className="mt-1 text-sm text-gray-600">{cfg.contact.subtitle}</p>
               <div className="mt-6 space-y-4 bg-white rounded-2xl border border-[#e6dfd0] p-6 shadow-sm">
                 <input type="text" tabIndex={-1} autoComplete="off" value={contact.website} onChange={e => setContact({ ...contact, website: e.target.value })} className="hidden" aria-hidden="true" />
                 <div className="grid md:grid-cols-2 gap-4">
@@ -377,11 +288,9 @@ export default function Funnel() {
                 <button onClick={() => void submitContact()} disabled={busy}
                   className="w-full py-3.5 rounded-full text-white font-semibold text-lg shadow-md hover:shadow-lg transition disabled:opacity-50"
                   style={{ background: CORAL }}>
-                  {busy ? 'Einen Moment…' : 'Weiter zum Wunschtermin →'}
+                  {busy ? 'Einen Moment…' : cfg.contact.cta}
                 </button>
-                <p className="text-[11px] text-gray-400 text-center">
-                  Mit dem Absenden stimmst du zu, dass wir dich zur Terminabstimmung per E-Mail und WhatsApp kontaktieren. Kostenlos & unverbindlich.
-                </p>
+                <p className="text-[11px] text-gray-400 text-center">{cfg.contact.privacy}</p>
               </div>
             </div>
           )}
@@ -442,7 +351,7 @@ export default function Funnel() {
           {phase === 'done' && (
             <div className="text-center">
               <div className="text-6xl">🎉</div>
-              <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>Dein Termin steht!</h2>
+              <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
                 <strong>{fmtSlotFull(slot)} Uhr</strong> · {meetingType === 'zoom' ? '📹 Zoom' : '💬 WhatsApp-Call'}
               </p>
@@ -459,12 +368,12 @@ export default function Funnel() {
                   📥 Kalender-Datei (Apple/Outlook)
                 </button>
               </div>
-              <a href={THANKS_URL}
+              <a href={cfg.done.thanks_url}
                 className="mt-8 inline-block px-8 py-3.5 rounded-full text-white font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition" style={{ background: CORAL }}>
                 Bis dahin: Tipps, Blog & Videos →
               </a>
               <p className="mt-3 text-xs text-gray-400">
-                Oder direkt auf YouTube: <a className="underline" href={YOUTUBE_URL} target="_blank" rel="noreferrer">Sven nimmt dich mit nach Zypern</a>
+                Oder direkt auf YouTube: <a className="underline" href={cfg.done.youtube_url} target="_blank" rel="noreferrer">Sven nimmt dich mit nach Zypern</a>
               </p>
             </div>
           )}

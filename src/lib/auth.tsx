@@ -34,7 +34,7 @@ function setCachedProfile(profile: Profile | null) {
 }
 
 // ── Rollen ─────────────────────────────────────────────────────
-export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast'
+export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'funnel'
 
 export interface Profile {
   id: string
@@ -72,6 +72,7 @@ export function roleToPath(role: UserRole | undefined): string {
     }
     case 'verwalter':  return '/verwalter/dashboard'
     case 'feriengast': return '/feriengast/dashboard'
+    case 'funnel':     return '/admin/crm/funnel'
     default:           return '/eigentuemer/dashboard'
   }
 }
@@ -82,6 +83,7 @@ export const ROLE_META: Record<UserRole, { color: string }> = {
   verwalter:   { color: 'bg-blue-100   text-blue-800'   },
   eigentuemer: { color: 'bg-green-100  text-green-800'  },
   feriengast:  { color: 'bg-amber-100  text-amber-800'  },
+  funnel:      { color: 'bg-rose-100   text-rose-800'   },
 }
 
 // ── Context ───────────────────────────────────────────────────

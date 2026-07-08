@@ -73,7 +73,8 @@
     "admin_desc": "Full access · all properties, users & settings",
     "verwalter_desc": "Read & write access to all property data",
     "eigentuemer_desc": "Sees only own properties & documents",
-    "feriengast_desc": "Holiday stay · check-in, house rules & messages"
+    "feriengast_desc": "Holiday stay · check-in, house rules & messages",
+    "funnel": "Funnel editor"
   },
   "dashboard": {
     "greeting": "Hello",
@@ -1178,7 +1179,7 @@
     "nav": {
       "dashboard": "Dashboard",
       "pipeline": "Pipeline",
-      "leads": "All Leads",
+      "leads": "Contacts",
       "templates": "Email Templates",
       "archived": "Archived",
       "projects": "Projects",
@@ -1199,7 +1200,9 @@
       "groupSystem": "System",
       "calendar": "Calendar",
       "statistics": "Statistics",
-      "funnel": "Booking Funnel"
+      "funnel": "Booking Funnel",
+      "more": "More",
+      "funnelEditor": "Funnel Editor"
     },
     "funnel": {
       "title": "Booking Funnel",
@@ -1208,7 +1211,13 @@
       "funnelTitle": "Funnel — how far do visitors get?",
       "funnelHint": "Red number = drop-offs vs. the previous step. Percent = share of page views.",
       "sourcesTitle": "Sources (utm_source)",
-      "period": { "week": "Last 7 days", "month": "Last 30 days", "year": "This year", "all": "All time", "custom": "Custom" },
+      "period": {
+        "week": "Last 7 days",
+        "month": "Last 30 days",
+        "year": "This year",
+        "all": "All time",
+        "custom": "Custom"
+      },
       "kpi": {
         "views": "Page views",
         "leads": "Leads (contact details)",
@@ -1231,7 +1240,8 @@
         "type": "Meeting type chosen",
         "slots": "Slot picker seen",
         "picked": "Slot clicked",
-        "booked": "Appointment booked"
+        "booked": "Appointment booked",
+        "question": "Question"
       },
       "q": {
         "erfahrung": "Experience",
@@ -1242,7 +1252,13 @@
         "alter": "Age",
         "meetingType": "Meeting type"
       },
-      "src": { "source": "Source", "sessions": "Visits", "leads": "Leads", "bookings": "Bookings", "conv": "Conversion" }
+      "src": {
+        "source": "Source",
+        "sessions": "Visits",
+        "leads": "Leads",
+        "bookings": "Bookings",
+        "conv": "Conversion"
+      }
     },
     "newLead": "+ New Lead",
     "lead": {
@@ -2510,6 +2526,47 @@
       "confirm": "The booking bot will now AUTOMATICALLY message real customers via WhatsApp and book appointments. Activate now?",
       "on": "✅ Booking bot is live",
       "off": "Booking bot off"
+    },
+    "funnelEditor": {
+      "title": "Funnel Editor",
+      "subtitle": "Edit the booking funnel (/termin) — changes go live immediately after saving.",
+      "preview": "👁 Open preview",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "✓ Saved — the funnel is up to date.",
+      "saveError": "Saving failed — please try again.",
+      "invalid": "Each question needs a title and at least 2 filled answers.",
+      "unsaved": "Unsaved changes",
+      "welcome": "1 · Start page",
+      "questions": "2 · Questions",
+      "contact": "3 · Contact step",
+      "done": "4 · Thank-you page (after booking)",
+      "headline": "Headline",
+      "subline": "Subtitle",
+      "buttonText": "Button text",
+      "footnote": "Footnote",
+      "privacy": "Privacy note",
+      "heroImage": "Image (start page)",
+      "changeImage": "📷 Change image",
+      "resetImage": "Default (Sven photo)",
+      "uploading": "Uploading…",
+      "uploadError": "Upload failed.",
+      "addQuestion": "+ Add question",
+      "questionTitle": "Question text",
+      "questionSub": "Subtitle (optional)",
+      "tiles": "Tiles with image",
+      "confirmDelete": "Really delete this question?",
+      "optionLabel": "Answer text",
+      "addOption": "+ Add answer",
+      "removeOption": "Remove answer",
+      "visualNone": "No image",
+      "icon": "Pictogram",
+      "emoji": "Emoji",
+      "ownImage": "Own image…",
+      "iconHint": "Pictograms: ",
+      "iconHint2": "— load instantly. Keep custom images small (under 300 KB).",
+      "thanksUrl": "Link “Tips & blog” (website)",
+      "youtubeUrl": "YouTube link"
     }
   },
   "docs": {

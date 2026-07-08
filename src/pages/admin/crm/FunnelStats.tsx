@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, type FunnelConfig } from '../../../lib/funnelConfig'
 
 // ── Termin-Funnel-Statistik: Wo brechen Besucher auf /termin ab? ─────────────
 // Datenquelle: RPC funnel_stats (aggregiert funnel_sessions + funnel_events
@@ -42,33 +43,25 @@ function getPeriodRange(period: Period, customFrom: string, customTo: string): {
   return { from: `${now.getFullYear()}-01-01`, to: tomorrow }
 }
 
-// ── Trichter-Schritte in Funnel-Reihenfolge (Keys = question_key im Tracking) ─
-const STEP_ORDER: Array<{ key: string; labelKey: string; fallback: string; milestone?: boolean }> = [
-  { key: 'view',              labelKey: 'crm.funnel.step.view',      fallback: 'Seite aufgerufen' },
-  { key: 'start',             labelKey: 'crm.funnel.step.start',     fallback: 'Gestartet („Los geht’s")' },
-  { key: 'erfahrung',         labelKey: 'crm.funnel.step.q1',        fallback: 'Frage 1 · Erfahrung' },
-  { key: 'motiv',             labelKey: 'crm.funnel.step.q2',        fallback: 'Frage 2 · Motiv' },
-  { key: 'timing',            labelKey: 'crm.funnel.step.q3',        fallback: 'Frage 3 · Kaufzeitpunkt' },
-  { key: 'kapitalbasis',      labelKey: 'crm.funnel.step.q4',        fallback: 'Frage 4 · Kapitalbasis' },
-  { key: 'beschaeftigung',    labelKey: 'crm.funnel.step.q5',        fallback: 'Frage 5 · Beschäftigung' },
-  { key: 'alter',             labelKey: 'crm.funnel.step.q6',        fallback: 'Frage 6 · Alter' },
-  { key: 'contact_view',      labelKey: 'crm.funnel.step.contactView', fallback: 'Kontaktformular gesehen' },
-  { key: 'contact_submitted', labelKey: 'crm.funnel.step.contact',   fallback: 'Kontaktdaten abgeschickt', milestone: true },
-  { key: 'meeting_type',      labelKey: 'crm.funnel.step.type',      fallback: 'Terminart gewählt' },
-  { key: 'slots_view',        labelKey: 'crm.funnel.step.slots',     fallback: 'Terminauswahl gesehen' },
-  { key: 'slot_picked',       labelKey: 'crm.funnel.step.picked',    fallback: 'Termin angeklickt' },
-  { key: 'booked',            labelKey: 'crm.funnel.step.booked',    fallback: 'Termin gebucht', milestone: true },
-]
-
-const QUESTION_LABELS: Array<{ key: string; labelKey: string; fallback: string }> = [
-  { key: 'erfahrung',      labelKey: 'crm.funnel.q.erfahrung',      fallback: 'Erfahrung' },
-  { key: 'motiv',          labelKey: 'crm.funnel.q.motiv',          fallback: 'Motiv' },
-  { key: 'timing',         labelKey: 'crm.funnel.q.timing',         fallback: 'Kaufzeitpunkt' },
-  { key: 'kapitalbasis',   labelKey: 'crm.funnel.q.kapitalbasis',   fallback: 'Kapitalbasis (100k+)' },
-  { key: 'beschaeftigung', labelKey: 'crm.funnel.q.beschaeftigung', fallback: 'Beschäftigung' },
-  { key: 'alter',          labelKey: 'crm.funnel.q.alter',          fallback: 'Alter' },
-  { key: 'meeting_type',   labelKey: 'crm.funnel.q.meetingType',    fallback: 'Terminart' },
-]
+// Trichter-Schritte: die Fragen kommen dynamisch aus der Funnel-Konfiguration
+// (Editor kann Fragen anlegen/löschen) — feste System-Schritte drumherum.
+interface StepDef { key: string; label: string; milestone?: boolean }
+function buildStepOrder(cfg: FunnelConfig, t: (k: string, f: string) => string): StepDef[] {
+  return [
+    { key: 'view',  label: t('crm.funnel.step.view', 'Seite aufgerufen') },
+    { key: 'start', label: t('crm.funnel.step.start', 'Gestartet („Los geht’s")') },
+    ...cfg.questions.map((q, i) => ({
+      key: q.key,
+      label: `${t('crm.funnel.step.question', 'Frage')} ${i + 1} · ${q.title.length > 28 ? q.title.slice(0, 28) + '…' : q.title}`,
+    })),
+    { key: 'contact_view',      label: t('crm.funnel.step.contactView', 'Kontaktformular gesehen') },
+    { key: 'contact_submitted', label: t('crm.funnel.step.contact', 'Kontaktdaten abgeschickt'), milestone: true },
+    { key: 'meeting_type',      label: t('crm.funnel.step.type', 'Terminart gewählt') },
+    { key: 'slots_view',        label: t('crm.funnel.step.slots', 'Terminauswahl gesehen') },
+    { key: 'slot_picked',       label: t('crm.funnel.step.picked', 'Termin angeklickt') },
+    { key: 'booked',            label: t('crm.funnel.step.booked', 'Termin gebucht'), milestone: true },
+  ]
+}
 
 // ── KPI-Karte ─────────────────────────────────────────────────────────────────
 interface KpiCardProps { label: string; value: string; sub?: string; accent?: boolean }
@@ -89,6 +82,25 @@ export default function FunnelStats() {
   const [customTo, setCustomTo] = useState('')
   const [stats, setStats] = useState<FunnelStatsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [cfg, setCfg] = useState<FunnelConfig>(DEFAULT_FUNNEL_CONFIG)
+  useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
+  const stepOrder = useMemo(() => buildStepOrder(cfg, (k, f) => t(k, f)), [cfg, t])
+  // Antwort-Karten: Funnel-Reihenfolge, dann Terminart, dann Unbekanntes (gelöschte Fragen)
+  const answerKeys = useMemo(() => {
+    const known = cfg.questions.map(q => q.key)
+    const present = Object.keys(stats?.answers ?? {})
+    return [
+      ...known.filter(k => present.includes(k)),
+      ...(present.includes('meeting_type') ? ['meeting_type'] : []),
+      ...present.filter(k => !known.includes(k) && k !== 'meeting_type').sort(),
+    ]
+  }, [cfg, stats])
+  const answerLabel = (key: string): string => {
+    if (key === 'meeting_type') return t('crm.funnel.q.meetingType', 'Terminart')
+    const q = cfg.questions.find(x => x.key === key)
+    if (!q) return key
+    return q.title.length > 60 ? q.title.slice(0, 60) + '…' : q.title
+  }
 
   const fetchStats = useCallback(async () => {
     setLoading(true)
@@ -180,14 +192,14 @@ export default function FunnelStats() {
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
               <h2 className="text-sm font-semibold text-gray-700 mb-4">{t('crm.funnel.funnelTitle', 'Trichter — wer kommt wie weit?')}</h2>
               <div className="space-y-1.5">
-                {STEP_ORDER.map((step, i) => {
+                {stepOrder.map((step, i) => {
                   const n = stepCount(step.key)
-                  const prev = i > 0 ? stepCount(STEP_ORDER[i - 1].key) : n
+                  const prev = i > 0 ? stepCount(stepOrder[i - 1].key) : n
                   const lost = i > 0 ? Math.max(prev - n, 0) : 0
                   return (
                     <div key={step.key} className="flex items-center gap-3">
                       <div className={`w-52 shrink-0 text-[13px] leading-tight text-right ${step.milestone ? 'font-semibold text-gray-900' : 'text-gray-600'}`}>
-                        {t(step.labelKey, step.fallback)}
+                        {step.label}
                       </div>
                       <div className="flex-1 bg-gray-100 rounded-full h-6 overflow-hidden relative">
                         <div className="h-6 rounded-full transition-all"
@@ -210,13 +222,13 @@ export default function FunnelStats() {
 
             {/* Antworten je Frage */}
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {QUESTION_LABELS.map(q => {
-                const rows = stats.answers?.[q.key] ?? []
+              {answerKeys.map(key => {
+                const rows = stats.answers?.[key] ?? []
                 if (!rows.length) return null
                 const total = rows.reduce((s, r) => s + r.n, 0)
                 return (
-                  <div key={q.key} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-                    <h3 className="text-sm font-semibold text-gray-700 mb-3">{t(q.labelKey, q.fallback)}</h3>
+                  <div key={key} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">{answerLabel(key)}</h3>
                     <div className="space-y-2">
                       {rows.map(r => (
                         <div key={r.answer} className="flex items-center gap-2">
