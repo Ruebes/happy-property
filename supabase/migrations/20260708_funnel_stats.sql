@@ -1,0 +1,57 @@
+-- Funnel-Statistik: serverseitige Aggregation für /admin/crm/funnel
+-- Liefert Schritt-Trichter, Antwort-Verteilungen und Quellen-Split in einem Call.
+create or replace function public.funnel_stats(p_from timestamptz, p_to timestamptz)
+returns jsonb
+language sql
+stable
+as $$
+with sess as (
+  select id, utm, completed_at
+  from public.funnel_sessions
+  where started_at >= p_from and started_at < p_to
+),
+ev as (
+  select e.session_id, e.question_key, e.answer
+  from public.funnel_events e
+  join sess s on s.id = e.session_id
+),
+step_counts as (
+  select question_key, count(distinct session_id) as n
+  from ev
+  group by question_key
+),
+answer_counts as (
+  select question_key, answer, count(distinct session_id) as n
+  from ev
+  where question_key in ('erfahrung','motiv','timing','kapitalbasis','beschaeftigung','alter','meeting_type')
+    and answer is not null and answer <> ''
+  group by question_key, answer
+),
+src as (
+  select
+    coalesce(nullif(s.utm->>'utm_source',''), 'direkt') as source,
+    count(*) as sessions,
+    count(*) filter (where exists (
+      select 1 from ev e where e.session_id = s.id and e.question_key = 'contact_submitted'
+    )) as leads,
+    count(s.completed_at) as bookings
+  from sess s
+  group by 1
+  order by 2 desc
+)
+select jsonb_build_object(
+  'sessions', (select count(*) from sess),
+  'bookings', (select count(*) from sess where completed_at is not null),
+  'steps',   coalesce((select jsonb_object_agg(question_key, n) from step_counts), '{}'::jsonb),
+  'answers', coalesce((select jsonb_object_agg(question_key, arr) from (
+                select question_key,
+                       jsonb_agg(jsonb_build_object('answer', answer, 'n', n) order by n desc) as arr
+                from answer_counts
+                group by question_key
+              ) a), '{}'::jsonb),
+  'sources', coalesce((select jsonb_agg(to_jsonb(src.*)) from src), '[]'::jsonb)
+);
+$$;
+
+revoke all on function public.funnel_stats(timestamptz, timestamptz) from public, anon;
+grant execute on function public.funnel_stats(timestamptz, timestamptz) to authenticated, service_role;

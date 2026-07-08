@@ -1198,7 +1198,51 @@
       "groupPipeline": "Pipeline",
       "groupSystem": "System",
       "calendar": "Kalender",
-      "statistics": "Statistiken"
+      "statistics": "Statistiken",
+      "funnel": "Termin-Funnel"
+    },
+    "funnel": {
+      "title": "Termin-Funnel",
+      "subtitle": "Wo brechen Besucher auf /termin ab — vom Aufruf bis zur Buchung.",
+      "noData": "Keine Funnel-Besuche in diesem Zeitraum.",
+      "funnelTitle": "Trichter — wer kommt wie weit?",
+      "funnelHint": "Rote Zahl = Absprünge gegenüber dem vorherigen Schritt. Prozent = Anteil der Seitenaufrufe.",
+      "sourcesTitle": "Quellen (utm_source)",
+      "period": { "week": "Letzte 7 Tage", "month": "Letzte 30 Tage", "year": "Dieses Jahr", "all": "Alle Zeit", "custom": "Benutzerdefiniert" },
+      "kpi": {
+        "views": "Aufrufe",
+        "leads": "Leads (Kontaktdaten)",
+        "bookings": "Termin-Buchungen",
+        "leadToBooking": "Lead → Buchung",
+        "leadToBookingSub": "Leads, die auch buchen",
+        "ofViews": "{{p}} der Aufrufe"
+      },
+      "step": {
+        "view": "Seite aufgerufen",
+        "start": "Gestartet („Los geht’s\")",
+        "q1": "Frage 1 · Erfahrung",
+        "q2": "Frage 2 · Motiv",
+        "q3": "Frage 3 · Kaufzeitpunkt",
+        "q4": "Frage 4 · Kapitalbasis",
+        "q5": "Frage 5 · Beschäftigung",
+        "q6": "Frage 6 · Alter",
+        "contactView": "Kontaktformular gesehen",
+        "contact": "Kontaktdaten abgeschickt",
+        "type": "Terminart gewählt",
+        "slots": "Terminauswahl gesehen",
+        "picked": "Termin angeklickt",
+        "booked": "Termin gebucht"
+      },
+      "q": {
+        "erfahrung": "Erfahrung",
+        "motiv": "Motiv",
+        "timing": "Kaufzeitpunkt",
+        "kapitalbasis": "Kapitalbasis (100k+)",
+        "beschaeftigung": "Beschäftigung",
+        "alter": "Alter",
+        "meetingType": "Terminart"
+      },
+      "src": { "source": "Quelle", "sessions": "Besuche", "leads": "Leads", "bookings": "Buchungen", "conv": "Conversion" }
     },
     "newLead": "+ Neuer Lead",
     "lead": {

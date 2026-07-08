@@ -17,6 +17,7 @@ const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
+const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
 
 // Role-Dashboards
@@ -49,6 +50,7 @@ const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
 const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
+const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 
 // Verwalter-Seiten
 const VerwalterBookings = lazy(() => import('./pages/verwaltung/Bookings'))
@@ -99,6 +101,7 @@ export default function App() {
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />
+            <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
@@ -114,6 +117,7 @@ export default function App() {
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
+              <Route path="/admin/crm/funnel"            element={<FunnelStats />} />
               <Route path="/admin/crm/settings/stages"      element={<CrmStageMessages />} />
               <Route path="/admin/crm/settings/ai"          element={<CrmAiAgent />} />
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />

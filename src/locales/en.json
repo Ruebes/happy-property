@@ -1198,7 +1198,51 @@
       "groupPipeline": "Pipeline",
       "groupSystem": "System",
       "calendar": "Calendar",
-      "statistics": "Statistics"
+      "statistics": "Statistics",
+      "funnel": "Booking Funnel"
+    },
+    "funnel": {
+      "title": "Booking Funnel",
+      "subtitle": "Where visitors drop off on /termin — from page view to booking.",
+      "noData": "No funnel visits in this period.",
+      "funnelTitle": "Funnel — how far do visitors get?",
+      "funnelHint": "Red number = drop-offs vs. the previous step. Percent = share of page views.",
+      "sourcesTitle": "Sources (utm_source)",
+      "period": { "week": "Last 7 days", "month": "Last 30 days", "year": "This year", "all": "All time", "custom": "Custom" },
+      "kpi": {
+        "views": "Page views",
+        "leads": "Leads (contact details)",
+        "bookings": "Bookings",
+        "leadToBooking": "Lead → Booking",
+        "leadToBookingSub": "Leads who also book",
+        "ofViews": "{{p}} of page views"
+      },
+      "step": {
+        "view": "Page viewed",
+        "start": "Started (\"Let's go\")",
+        "q1": "Question 1 · Experience",
+        "q2": "Question 2 · Motive",
+        "q3": "Question 3 · Purchase timing",
+        "q4": "Question 4 · Capital base",
+        "q5": "Question 5 · Employment",
+        "q6": "Question 6 · Age",
+        "contactView": "Contact form seen",
+        "contact": "Contact details submitted",
+        "type": "Meeting type chosen",
+        "slots": "Slot picker seen",
+        "picked": "Slot clicked",
+        "booked": "Appointment booked"
+      },
+      "q": {
+        "erfahrung": "Experience",
+        "motiv": "Motive",
+        "timing": "Purchase timing",
+        "kapitalbasis": "Capital base (100k+)",
+        "beschaeftigung": "Employment",
+        "alter": "Age",
+        "meetingType": "Meeting type"
+      },
+      "src": { "source": "Source", "sessions": "Visits", "leads": "Leads", "bookings": "Bookings", "conv": "Conversion" }
     },
     "newLead": "+ New Lead",
     "lead": {

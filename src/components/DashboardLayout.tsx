@@ -125,6 +125,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'   },
     { to: '/admin/crm/calendar',      key: 'crm.nav.calendar'   },
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics' },
+    { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'     },
   ]
 
   // CRM Settings-Untermenü-Einträge
