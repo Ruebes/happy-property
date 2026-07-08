@@ -1,5 +1,9 @@
 -- Funnel-Statistik: serverseitige Aggregation für /admin/crm/funnel
 -- Liefert Schritt-Trichter, Antwort-Verteilungen und Quellen-Split in einem Call.
+-- HINWEIS: identisch mit der Definition in 20260708_funnel_config.sql (Antworten
+-- über Blacklist statt Fragen-Whitelist, damit im Editor NEU angelegte Fragen
+-- automatisch mitgezählt werden) — beide Dateien müssen dieselbe Version tragen,
+-- sonst hängt das Ergebnis von der Migrations-Reihenfolge ab.
 create or replace function public.funnel_stats(p_from timestamptz, p_to timestamptz)
 returns jsonb
 language sql
@@ -23,8 +27,8 @@ step_counts as (
 answer_counts as (
   select question_key, answer, count(distinct session_id) as n
   from ev
-  where question_key in ('erfahrung','motiv','timing','kapitalbasis','beschaeftigung','alter','meeting_type')
-    and answer is not null and answer <> ''
+  where answer is not null and answer <> ''
+    and question_key not in ('view','start','contact_view','contact_submitted','slots_view','slot_picked')
   group by question_key, answer
 ),
 src as (

@@ -163,7 +163,9 @@ export default function Funnel() {
 
   const totalSteps = QUESTIONS.length + 3
   const stepNow = phase === 'welcome' ? 0 : phase === 'questions' ? qIdx + 1 : phase === 'contact' ? QUESTIONS.length + 1 : phase === 'meeting_type' ? QUESTIONS.length + 2 : phase === 'slot' ? QUESTIONS.length + 3 : totalSteps
-  const q = QUESTIONS[qIdx]
+  // Clamp: die Config lädt asynchron nach — hat sie weniger Fragen als der
+  // Default (oder als schon beantwortet), darf qIdx nie ins Leere zeigen.
+  const q = QUESTIONS[Math.min(qIdx, QUESTIONS.length - 1)]
 
   const fmtSlot = (s: string) => new Date(s).toLocaleTimeString('de-DE', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
   const fmtSlotFull = (s: string) => new Date(s).toLocaleString('de-DE', { timeZone: tz, weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' })
