@@ -174,11 +174,12 @@ Deno.serve(async (req) => {
       const utmNote = body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : ''
       const answersText = (body.answers ?? []).map(a => `• ${a.question}: ${a.answer}`).join('\n')
       if (!leadId) {
-        const { data: nl } = await admin.from('leads').insert({
+        const { data: nl, error: nlErr } = await admin.from('leads').insert({
           first_name: c.first_name?.trim(), last_name: (c.last_name ?? '').trim(),
           email, phone, whatsapp: phone, source: 'website',
           notes: `Fragebogen (eigener Funnel):\n${answersText}${utmNote}`,
         }).select('id').single()
+        if (nlErr) console.error('[funnel-api] Lead-Insert fehlgeschlagen:', nlErr.message)
         leadId = (nl as { id: string } | null)?.id ?? null
       } else {
         const { data: old } = await admin.from('leads').select('notes').eq('id', leadId).single()
@@ -194,8 +195,17 @@ Deno.serve(async (req) => {
         })
       } catch { /* egal */ }
       if (body.session_id) await admin.from('funnel_sessions').update({ lead_id: leadId }).eq('id', body.session_id)
+      // Pipeline: Deal in Phase „Erstkontakt" anlegen (nur wenn noch keiner existiert) —
+      // gleiche Semantik wie typeform-webhook. Bestands-Deals behalten ihre Phase.
+      let dealId: string | null = null
+      const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
+      if (exDeals?.length) dealId = (exDeals[0] as { id: string }).id
+      else {
+        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'erstkontakt' }).select('id').single()
+        dealId = (nd as { id: string } | null)?.id ?? null
+      }
       // Fallback-Automation: greift nur, wenn KEIN Termin gebucht wird (book storniert)
-      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, event_type: 'erstkontakt' } }) }
+      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' } }) }
       catch (e) { console.warn('[funnel-api] erstkontakt-Trigger fehlgeschlagen:', e) }
       return json({ ok: true, lead_id: leadId })
     }
@@ -220,6 +230,18 @@ Deno.serve(async (req) => {
 
       // Erstkontakt-Fallback stornieren — der Kunde HAT ja jetzt einen Termin
       try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending') } catch { /* egal */ }
+
+      // Pipeline: Deal auf „Termin gebucht" (bestehenden updaten, sonst anlegen) —
+      // gleiche Semantik wie calendly-webhook.
+      let dealId: string | null = null
+      const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
+      if (exDeals?.length) {
+        dealId = (exDeals[0] as { id: string }).id
+        await admin.from('deals').update({ phase: 'termin_gebucht' }).eq('id', dealId)
+      } else {
+        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht' }).select('id').single()
+        dealId = (nd as { id: string } | null)?.id ?? null
+      }
 
       // Zoom-Meeting (nur bei Zoom-Terminart)
       let zoomLink: string | null = null
@@ -249,7 +271,7 @@ Deno.serve(async (req) => {
 
       // CRM-Termin
       const { data: appt } = await admin.from('crm_appointments').insert({
-        lead_id: leadId, title: `Beratungsgespräch – ${c.first_name}`,
+        lead_id: leadId, deal_id: dealId, title: `Beratungsgespräch – ${c.first_name}`,
         description: 'Über den Website-Funnel gebucht', type,
         start_time: start.toISOString(), end_time: end.toISOString(),
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
@@ -257,7 +279,7 @@ Deno.serve(async (req) => {
       }).select('id').single()
 
       // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp)
-      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, event_type: 'termin_gebucht' } }) }
+      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'termin_gebucht' } }) }
       catch (e) { console.warn('[funnel-api] termin_gebucht-Trigger fehlgeschlagen:', e) }
 
       // Session abschließen
@@ -318,6 +340,10 @@ Deno.serve(async (req) => {
         await admin.from('scheduled_messages').update({ status: 'cancelled' })
           .eq('lead_id', a.lead_id).eq('status', 'pending').eq('event_type', 'termin_gebucht')
         await admin.from('crm_appointments').delete().eq('id', a.id)
+        // Pipeline: „Termin gebucht" stimmt nicht mehr → zurück auf Erstkontakt.
+        // Spätere Phasen (Beratung, Registrierung, …) bleiben unangetastet.
+        await admin.from('deals').update({ phase: 'erstkontakt' })
+          .eq('lead_id', a.lead_id).eq('phase', 'termin_gebucht')
         try {
           await admin.from('activities').insert({
             lead_id: a.lead_id, type: 'note', direction: 'inbound',
