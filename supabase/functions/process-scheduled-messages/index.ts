@@ -236,6 +236,16 @@ Deno.serve(async (req: Request) => {
     claimedIds = (messages as Array<{ id: string }>).map(m => m.id)
     console.log(`[process-scheduled] Verarbeite ${messages.length} Nachricht(en)`)
 
+    // Vor-Termin-Regeln (Terminerinnerungen): für den Verschiebe-Guard unten.
+    // Texte + scheduled_at wurden bei der PLANUNG aus der damaligen Terminzeit gerendert —
+    // wurde der Termin danach verschoben, stimmt beides nicht mehr.
+    const { data: beforeRulesData } = await supabase
+      .from('automation_rules').select('id, delay_minutes, event_type').eq('timing_type', 'before_appointment')
+    const beforeRules = new Map<string, { delay_minutes: number; event_type: string }>(
+      ((beforeRulesData ?? []) as Array<{ id: string; delay_minutes: number; event_type: string }>).map(r => [r.id, r]),
+    )
+    const refiredLeads = new Set<string>()
+
     // ── Schritt 2: Jede Nachricht senden ─────────────────────────────────────
     for (const msg of messages as {
       id:            string
@@ -250,6 +260,8 @@ Deno.serve(async (req: Request) => {
       appointment_condition: string | null
       bot_nudge_stage:  number | null
       bot_nudge_source: string | null
+      rule_id:       string | null
+      scheduled_at:  string
     }[]) {
       let success = true
       const errors: string[] = []
@@ -290,6 +302,40 @@ Deno.serve(async (req: Request) => {
           .eq('id', msg.id)
         processed.push({ id: msg.id, result: 'failed:no_lead' })
         continue
+      }
+
+      // ── Terminerinnerung: Verschiebe-Guard ────────────────────────────────
+      // Weicht die Soll-Sendezeit (aktuelle Terminzeit − delay) von der geplanten
+      // Sendezeit ab, wurde der Termin verschoben → alte Erinnerungen (falscher Text!)
+      // verwerfen und aus der neuen Terminzeit frisch planen. Ein Re-Fire pro Lead.
+      const beforeRule = msg.rule_id ? beforeRules.get(msg.rule_id) : undefined
+      if (beforeRule) {
+        const { data: nx } = await supabase.from('crm_appointments')
+          .select('start_time').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+          .order('start_time', { ascending: true }).limit(1).maybeSingle()
+        const nxStart = (nx as { start_time?: string } | null)?.start_time
+        const expected = nxStart ? new Date(nxStart).getTime() - beforeRule.delay_minutes * 60000 : null
+        if (expected !== null && Math.abs(expected - new Date(msg.scheduled_at).getTime()) > 15 * 60000) {
+          await supabase.from('scheduled_messages')
+            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Termin verschoben – Erinnerung neu geplant' })
+            .eq('id', msg.id)
+          if (!refiredLeads.has(msg.lead_id)) {
+            refiredLeads.add(msg.lead_id)
+            // übrige veraltete Erinnerungen des Leads mit verwerfen, dann frisch planen
+            await supabase.from('scheduled_messages')
+              .update({ status: 'skipped', error_message: 'Termin verschoben – Erinnerung neu geplant' })
+              .eq('lead_id', msg.lead_id).eq('status', 'pending').in('rule_id', [...beforeRules.keys()])
+            try {
+              await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/schedule-message`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ lead_id: msg.lead_id, deal_id: msg.deal_id, event_type: beforeRule.event_type, only_timing: 'before_appointment' }),
+              })
+            } catch (e) { console.warn('[process-scheduled] Erinnerungs-Neuplanung fehlgeschlagen:', e) }
+          }
+          processed.push({ id: msg.id, result: 'skipped:rescheduled' })
+          continue
+        }
       }
 
       // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──

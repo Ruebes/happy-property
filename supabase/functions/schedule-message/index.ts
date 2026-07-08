@@ -49,7 +49,9 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
 
   try {
-    const { lead_id, deal_id, event_type, probe_docs } = await req.json() as { lead_id?: string; deal_id?: string | null; event_type?: string; probe_docs?: boolean }
+    // only_timing='before_appointment': nur Vor-Termin-Regeln (neu) planen — für die
+    // Erinnerungs-Neuplanung nach Terminverschiebung, OHNE die Bestätigung erneut zu senden.
+    const { lead_id, deal_id, event_type, probe_docs, only_timing } = await req.json() as { lead_id?: string; deal_id?: string | null; event_type?: string; probe_docs?: boolean; only_timing?: string }
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     if (probe_docs) return new Response(JSON.stringify(await finDocs(supabase)), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     if (!lead_id || !event_type) {
@@ -63,7 +65,9 @@ Deno.serve(async (req: Request) => {
     }
 
     // 2. Aktive Regeln
-    const { data: rules, error: rulesErr } = await supabase.from('automation_rules').select('*').eq('event_type', event_type).eq('is_active', true)
+    let rulesQuery = supabase.from('automation_rules').select('*').eq('event_type', event_type).eq('is_active', true)
+    if (only_timing) rulesQuery = rulesQuery.eq('timing_type', only_timing)
+    const { data: rules, error: rulesErr } = await rulesQuery
     if (rulesErr) throw rulesErr
     // Bot-Auslöser (no_show/erstkontakt/immobilienauswahl) planen ihre WhatsApps
     // unten selbst — auch OHNE aktive Regeln nicht früh aussteigen.
@@ -130,11 +134,14 @@ Deno.serve(async (req: Request) => {
     // Termine: nächster (zukünftig) für Timing/Bedingung, sonst letzter für zoom_link
     const nowIso = new Date().toISOString()
     const { data: nextAppt } = await supabase.from('crm_appointments')
-      .select('start_time, zoom_link').eq('lead_id', lead_id).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
+      .select('start_time, zoom_link, manage_token').eq('lead_id', lead_id).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
-      .select('zoom_link, start_time').eq('lead_id', lead_id).order('start_time', { ascending: false }).limit(1).maybeSingle()
+      .select('zoom_link, start_time, manage_token').eq('lead_id', lead_id).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
     const zoomLink  = ((nextAppt as { zoom_link?: string } | null)?.zoom_link) || ((lastAppt as { zoom_link?: string } | null)?.zoom_link) || ''
+    // Öffentlicher „Termin verwalten"-Link (verschieben/absagen ohne Login)
+    const manageToken = ((nextAppt as { manage_token?: string } | null)?.manage_token) || ((lastAppt as { manage_token?: string } | null)?.manage_token) || ''
+    const terminLink  = manageToken ? `https://portal.happy-property.com/termin/verwalten/${manageToken}` : ''
 
     // Termin für die Anzeige in DEUTSCHER Zeit (der Kunde sitzt in DE, nicht auf Zypern).
     // Tag + volles Datum + Uhrzeit + Zeitzonen-Kürzel (MEZ/MESZ). Fällt auf den letzten
@@ -170,6 +177,7 @@ Deno.serve(async (req: Request) => {
       zoom_link:    zoomLink,
       termin_datum: terminDatum,   // Tag + Datum + Uhrzeit in deutscher Zeit (MEZ/MESZ)
       termin:       terminDatum,   // Alias
+      termin_link:  terminLink,    // öffentlicher Verwalten-Link (verschieben/absagen)
       objekt:       objektName,
       projekt:      objektName,
       unit:         unitNumber,
@@ -208,7 +216,9 @@ Deno.serve(async (req: Request) => {
       if (rule.timing_type === 'before_appointment') {
         if (!apptStart) { skipped++; continue }   // kein Termin → vor-Termin-Nachricht nicht planbar
         scheduledAt = new Date(new Date(apptStart).getTime() - rule.delay_minutes * 60 * 1000)
-        if (scheduledAt.getTime() < Date.now()) scheduledAt = new Date()   // Termin schon zu nah → sofort
+        // Termin zu nah (Erinnerungszeitpunkt schon vorbei / in <30 Min): NICHT nachträglich
+        // senden — der Kunde hat gerade erst die Bestätigung bekommen, das wäre Spam.
+        if (scheduledAt.getTime() < Date.now() + 30 * 60 * 1000) { skipped++; continue }
       } else {
         scheduledAt = new Date(Date.now() + rule.delay_minutes * 60 * 1000)
       }

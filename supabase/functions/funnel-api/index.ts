@@ -113,9 +113,11 @@ Deno.serve(async (req) => {
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as {
-      action: 'track' | 'slots' | 'contact' | 'book'
+      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule'
       session_id?: string
       lead_id?: string
+      token?: string
+      reason?: string
       step?: number; question_key?: string; answer?: string
       utm?: Record<string, string>; referrer?: string
       slot_start_iso?: string
@@ -263,6 +265,111 @@ Deno.serve(async (req) => {
         await admin.from('funnel_sessions').update({ lead_id: leadId, completed_at: new Date().toISOString() }).eq('id', body.session_id)
       }
       return json({ ok: true, appointment_id: (appt as { id: string } | null)?.id ?? null, zoom: !!zoomLink })
+    }
+
+    // ── Termin verwalten (öffentlich, Token-gebunden): ansehen / absagen / verschieben ──
+    if (body.action === 'manage_get' || body.action === 'manage_cancel' || body.action === 'manage_reschedule') {
+      if (!body.token) return json({ error: 'token fehlt' }, 400)
+      const { data: ap } = await admin.from('crm_appointments')
+        .select('id, lead_id, title, type, start_time, end_time, zoom_link, google_event_id, google_calendar_id, leads(first_name, last_name)')
+        .eq('manage_token', body.token).maybeSingle()
+      const a = ap as {
+        id: string; lead_id: string; title: string | null; type: string | null
+        start_time: string; end_time: string | null; zoom_link: string | null
+        google_event_id: string | null; google_calendar_id: string | null
+        leads: { first_name: string | null; last_name: string | null } | null
+      } | null
+      if (!a) return json({ error: 'not_found' }, 404)
+      const isPast = new Date(a.start_time).getTime() < Date.now()
+
+      if (body.action === 'manage_get') {
+        return json({
+          ok: true,
+          first_name: a.leads?.first_name ?? '',
+          start_iso: a.start_time,
+          meeting_type: a.zoom_link ? 'zoom' : 'whatsapp',
+          past: isPast,
+        })
+      }
+      if (isPast) return json({ error: 'past' }, 409)
+
+      const leadName = `${a.leads?.first_name ?? ''} ${a.leads?.last_name ?? ''}`.trim() || 'Kunde'
+      const fmtDe = (iso: string) => new Date(iso).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' }) + ' Uhr (DE)'
+      const notifySven = async (subject: string, text: string) => {
+        try {
+          await admin.functions.invoke('send-email', { body: {
+            to: 'sven@happy-property.com', lead_id: a.lead_id, subject,
+            html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`,
+          } })
+        } catch (e) { console.warn('[funnel-api] Sven-Benachrichtigung fehlgeschlagen:', e) }
+      }
+
+      if (body.action === 'manage_cancel') {
+        const reason = (body.reason ?? '').trim().slice(0, 500)
+        if (a.google_event_id) {
+          try {
+            const token = await getSaToken()
+            await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(a.google_calendar_id || await getCalendarId(admin))}/events/${encodeURIComponent(a.google_event_id)}`, {
+              method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+            })
+          } catch (e) { console.warn('[funnel-api] Google-Event löschen fehlgeschlagen:', e) }
+        }
+        // Erinnerungen + noch offene Termin-Nachrichten stoppen
+        await admin.from('scheduled_messages').update({ status: 'cancelled' })
+          .eq('lead_id', a.lead_id).eq('status', 'pending').eq('event_type', 'termin_gebucht')
+        await admin.from('crm_appointments').delete().eq('id', a.id)
+        try {
+          await admin.from('activities').insert({
+            lead_id: a.lead_id, type: 'note', direction: 'inbound',
+            subject: '❌ Termin vom Kunden abgesagt',
+            content: `Termin ${fmtDe(a.start_time)} wurde über den Verwalten-Link abgesagt.${reason ? `\nGrund: ${reason}` : ''}`,
+            completed_at: new Date().toISOString(),
+          })
+        } catch { /* egal */ }
+        await notifySven(`❌ Terminabsage: ${leadName}`,
+          `${leadName} hat den Termin am ${fmtDe(a.start_time)} abgesagt.${reason ? `\n\nGrund: ${reason}` : ''}`)
+        return json({ ok: true, cancelled: true })
+      }
+
+      // manage_reschedule
+      if (!body.slot_start_iso) return json({ error: 'slot_start_iso fehlt' }, 400)
+      const start = new Date(body.slot_start_iso)
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' }, 409)
+      const end = new Date(start.getTime() + SLOT_MIN * 60000)
+      // Eigenen alten Termin nicht als Konflikt werten (CRM-Quelle filtern; Google-freeBusy
+      // enthält ihn nur, wenn der neue Slot den alten überlappt — dann greift der Filter unten)
+      const oldStartMs = new Date(a.start_time).getTime()
+      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
+        .filter(b => b.start !== oldStartMs)
+      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' }, 409)
+
+      const oldStart = a.start_time
+      await admin.from('crm_appointments').update({ start_time: start.toISOString(), end_time: end.toISOString() }).eq('id', a.id)
+      if (a.google_event_id) {
+        try {
+          const token = await getSaToken()
+          await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(a.google_calendar_id || await getCalendarId(admin))}/events/${encodeURIComponent(a.google_event_id)}`, {
+            method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY } }),
+          })
+        } catch (e) { console.warn('[funnel-api] Google-Event verschieben fehlgeschlagen:', e) }
+      }
+      // Alte Erinnerungen/offene Nachrichten verwerfen, neue Bestätigung (inkl. ICS) + Erinnerungen planen
+      await admin.from('scheduled_messages').update({ status: 'cancelled' })
+        .eq('lead_id', a.lead_id).eq('status', 'pending').eq('event_type', 'termin_gebucht')
+      try { await admin.functions.invoke('schedule-message', { body: { lead_id: a.lead_id, event_type: 'termin_gebucht' } }) }
+      catch (e) { console.warn('[funnel-api] termin_gebucht-Trigger fehlgeschlagen:', e) }
+      try {
+        await admin.from('activities').insert({
+          lead_id: a.lead_id, type: 'note', direction: 'inbound',
+          subject: '🔄 Termin vom Kunden verschoben',
+          content: `Von ${fmtDe(oldStart)} auf ${fmtDe(start.toISOString())} (über den Verwalten-Link).`,
+          completed_at: new Date().toISOString(),
+        })
+      } catch { /* egal */ }
+      await notifySven(`🔄 Termin verschoben: ${leadName}`,
+        `${leadName} hat den Termin verschoben:\nAlt: ${fmtDe(oldStart)}\nNeu: ${fmtDe(start.toISOString())}${a.zoom_link ? '\n\nZoom-Link bleibt unverändert.' : ''}`)
+      return json({ ok: true, rescheduled: true, start_iso: start.toISOString() })
     }
 
     return json({ error: `Unbekannte action` }, 400)
