@@ -2565,8 +2565,15 @@
       "ownImage": "Own image…",
       "iconHint": "Pictograms: ",
       "iconHint2": "— load instantly. Keep custom images small (under 300 KB).",
-      "thanksUrl": "Link “Tips & blog” (website)",
-      "youtubeUrl": "YouTube link"
+      "thanksUrl": "Main button: link (tips & blog)",
+      "youtubeUrl": "YouTube link",
+      "doneNote": "Note (below the appointment)",
+      "doneCta": "Main button: text",
+      "doneVisual": "Top symbol (emoji or image)",
+      "useEmoji": "Emoji instead of image",
+      "socials": "Channel buttons (icon · name · link)",
+      "socialLabel": "Name",
+      "addSocial": "+ Add channel"
     }
   },
   "docs": {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { DECK_LOGO, DECK_CONTACT } from '../lib/deckTypes'
+import { DECK_LOGO } from '../lib/deckTypes'
 import { OptionVisual } from '../components/FunnelIcon'
 import {
   loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT,
@@ -352,14 +352,14 @@ export default function Funnel() {
 
           {phase === 'done' && (
             <div className="text-center">
-              <div className="text-6xl">🎉</div>
+              {cfg.done.image_url
+                ? <img src={cfg.done.image_url} alt="" className="w-28 h-28 mx-auto object-cover rounded-full shadow-lg" />
+                : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
               <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
                 <strong>{fmtSlotFull(slot)} Uhr</strong> · {meetingType === 'zoom' ? '📹 Zoom' : '💬 WhatsApp-Call'}
               </p>
-              <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">
-                Die Bestätigung {meetingType === 'zoom' ? 'mit deinem Zoom-Link ' : ''}ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.
-              </p>
+              <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">{cfg.done.note}</p>
               <div className="flex flex-wrap justify-center gap-3 mt-6">
                 <a href={gcalUrl} target="_blank" rel="noreferrer"
                   className="px-5 py-2.5 rounded-full text-sm font-semibold text-white shadow hover:shadow-md transition" style={{ background: NAVY }}>
@@ -372,17 +372,11 @@ export default function Funnel() {
               </div>
               <a href={cfg.done.thanks_url}
                 className="mt-8 inline-block px-8 py-3.5 rounded-full text-white font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition" style={{ background: CORAL }}>
-                Bis dahin: Tipps, Blog & Videos →
+                {cfg.done.cta}
               </a>
-              {/* Soziale Kanäle — gleiche Quelle wie die Sales-Decks (DECK_CONTACT) */}
+              {/* Soziale Kanäle — im Funnel-Editor pflegbar (Defaults = Sales-Deck-Kanäle) */}
               <div className="flex flex-wrap justify-center gap-2 mt-6">
-                {[
-                  ...DECK_CONTACT.socials.map(s => ({
-                    icon: s.icon, label: s.platform,
-                    url: s.platform === 'YouTube' ? (cfg.done.youtube_url || s.url) : s.url,
-                  })),
-                  { icon: '✍', label: 'Blog', url: 'https://steuervorteil-zypern-immobilien.com/blog/' },
-                ].map(s => (
+                {cfg.done.socials.map(s => (
                   <a key={s.label} href={s.url} target="_blank" rel="noreferrer"
                     className="flex items-center gap-2 pl-1.5 pr-4 py-1.5 rounded-full bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] hover:-translate-y-0.5 transition text-[13px] font-semibold shadow-sm"
                     style={{ color: NAVY }}>

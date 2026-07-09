@@ -1,5 +1,5 @@
 import { supabase } from './supabase'
-import { DECK_PHOTO } from './deckTypes'
+import { DECK_PHOTO, DECK_CONTACT } from './deckTypes'
 
 // ── Editierbare Funnel-Konfiguration (Tabelle funnel_config, id='default') ────
 // Gepflegt im Editor /admin/crm/funnel-editor (Rollen admin + funnel).
@@ -22,11 +22,22 @@ export interface FunnelQuestion {
   options: FunnelOption[]
 }
 
+export interface FunnelSocial { icon: string; label: string; url: string }
+
 export interface FunnelConfig {
   welcome: { title: string; subtitle: string; cta: string; footnote: string; hero_url: string }
   questions: FunnelQuestion[]
   contact: { title: string; subtitle: string; cta: string; privacy: string }
-  done: { title: string; thanks_url: string; youtube_url: string }
+  done: {
+    emoji: string          // Symbol oben (wird von image_url ersetzt, falls gesetzt)
+    image_url: string      // optionales Bild statt Emoji
+    title: string
+    note: string           // Hinweistext unter dem Termin
+    cta: string            // Haupt-Button-Text
+    thanks_url: string     // Haupt-Button-Link
+    socials: FunnelSocial[]
+    youtube_url?: string   // Altfeld (vor der Social-Liste) — wird nicht mehr gerendert
+  }
 }
 
 export const FUNNEL_ICONS = ['steuern', 'kapital', 'auswandern', 'langfristig', 'unsicher'] as const
@@ -108,9 +119,16 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
     privacy: 'Mit dem Absenden stimmst du zu, dass wir dich zur Terminabstimmung per E-Mail und WhatsApp kontaktieren. Kostenlos & unverbindlich.',
   },
   done: {
+    emoji: '🎉',
+    image_url: '',
     title: 'Dein Termin steht!',
+    note: 'Die Bestätigung ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.',
+    cta: 'Bis dahin: Tipps, Blog & Videos →',
     thanks_url: 'https://steuervorteil-zypern-immobilien.com/termin-wurde-bestaetigt/',
-    youtube_url: 'https://www.youtube.com/@HappyPropertyCyprus',
+    socials: [
+      ...DECK_CONTACT.socials.map(s => ({ icon: s.icon, label: s.platform, url: s.url })),
+      { icon: '✍', label: 'Blog', url: 'https://steuervorteil-zypern-immobilien.com/blog/' },
+    ],
   },
 }
 
@@ -125,11 +143,15 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
         .map(q => ({ ...q, options: q.options.filter(o => o && typeof o.key === 'string' && typeof o.label === 'string') }))
         .filter(q => q.options.length >= 2)
     : d.questions
+  const doneRaw = (r.done ?? {}) as Partial<FunnelConfig['done']>
+  const socials = Array.isArray(doneRaw.socials)
+    ? doneRaw.socials.filter(s => s && typeof s.label === 'string' && typeof s.url === 'string' && s.label.trim() && s.url.trim())
+    : d.done.socials
   return {
     welcome: { ...d.welcome, ...(r.welcome ?? {}) },
     questions: questions.length ? questions : d.questions,
     contact: { ...d.contact, ...(r.contact ?? {}) },
-    done: { ...d.done, ...(r.done ?? {}) },
+    done: { ...d.done, ...doneRaw, socials },
   }
 }
 

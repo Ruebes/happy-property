@@ -2565,8 +2565,15 @@
       "ownImage": "Eigenes Bild…",
       "iconHint": "Piktogramme: ",
       "iconHint2": "— laden ohne Wartezeit. Eigene Bilder bitte klein halten (unter 300 KB).",
-      "thanksUrl": "Link „Tipps & Blog“ (Website)",
-      "youtubeUrl": "YouTube-Link"
+      "thanksUrl": "Haupt-Button: Link (Tipps & Blog)",
+      "youtubeUrl": "YouTube-Link",
+      "doneNote": "Hinweistext (unter dem Termin)",
+      "doneCta": "Haupt-Button: Text",
+      "doneVisual": "Symbol oben (Emoji oder Bild)",
+      "useEmoji": "Emoji statt Bild",
+      "socials": "Kanal-Buttons (Icon · Name · Link)",
+      "socialLabel": "Name",
+      "addSocial": "+ Kanal hinzufügen"
     }
   },
   "docs": {

@@ -117,6 +117,8 @@ export default function FunnelEditor() {
   const [toast, setToast] = useState('')
   const [heroUploading, setHeroUploading] = useState(false)
   const heroRef = useRef<HTMLInputElement>(null)
+  const [doneImgUploading, setDoneImgUploading] = useState(false)
+  const doneImgRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void loadFunnelConfig().then(c => { setCfg(c); setLoading(false) })
@@ -325,10 +327,71 @@ export default function FunnelEditor() {
         {/* ── Danke-Seite ── */}
         <div className={card}>
           <h2 className="text-sm font-semibold text-gray-700 mb-4">{t('crm.funnelEditor.done', '4 · Danke-Seite (nach Buchung)')}</h2>
-          <div className="grid md:grid-cols-3 gap-4">
-            <Field label={t('crm.funnelEditor.headline', 'Überschrift')} value={cfg.done.title} onChange={v => update(c => ({ ...c, done: { ...c.done, title: v } }))} />
-            <Field label={t('crm.funnelEditor.thanksUrl', 'Link „Tipps & Blog" (Website)')} value={cfg.done.thanks_url} onChange={v => update(c => ({ ...c, done: { ...c.done, thanks_url: v } }))} />
-            <Field label={t('crm.funnelEditor.youtubeUrl', 'YouTube-Link')} value={cfg.done.youtube_url} onChange={v => update(c => ({ ...c, done: { ...c.done, youtube_url: v } }))} />
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <Field label={t('crm.funnelEditor.headline', 'Überschrift')} value={cfg.done.title} onChange={v => update(c => ({ ...c, done: { ...c.done, title: v } }))} />
+              <Field label={t('crm.funnelEditor.doneNote', 'Hinweistext (unter dem Termin)')} textarea value={cfg.done.note} onChange={v => update(c => ({ ...c, done: { ...c.done, note: v } }))} />
+              <Field label={t('crm.funnelEditor.doneCta', 'Haupt-Button: Text')} value={cfg.done.cta} onChange={v => update(c => ({ ...c, done: { ...c.done, cta: v } }))} />
+              <Field label={t('crm.funnelEditor.thanksUrl', 'Haupt-Button: Link (Tipps & Blog)')} value={cfg.done.thanks_url} onChange={v => update(c => ({ ...c, done: { ...c.done, thanks_url: v } }))} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.doneVisual', 'Symbol oben (Emoji oder Bild)')}</label>
+              <div className="flex items-center gap-3">
+                {cfg.done.image_url
+                  ? <img src={cfg.done.image_url} alt="" className="w-16 h-16 object-cover rounded-full border border-gray-100" />
+                  : <span className="text-4xl">{cfg.done.emoji || '🎉'}</span>}
+                <div className="space-y-2">
+                  {!cfg.done.image_url && (
+                    <input value={cfg.done.emoji} onChange={e => update(c => ({ ...c, done: { ...c.done, emoji: e.target.value.slice(0, 4) } }))}
+                      className="w-20 border border-gray-200 rounded-lg px-2 py-2 text-xl text-center" />
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={() => doneImgRef.current?.click()} disabled={doneImgUploading}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                      {doneImgUploading ? t('crm.funnelEditor.uploading', 'Lädt hoch…') : t('crm.funnelEditor.changeImage', '📷 Bild ändern')}
+                    </button>
+                    {cfg.done.image_url && (
+                      <button onClick={() => update(c => ({ ...c, done: { ...c.done, image_url: '' } }))}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                        {t('crm.funnelEditor.useEmoji', 'Emoji statt Bild')}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <input ref={doneImgRef} type="file" accept="image/*" className="hidden"
+                onChange={async e => {
+                  const f = e.target.files?.[0]; e.target.value = ''
+                  if (!f) return
+                  setDoneImgUploading(true)
+                  const url = await uploadImage(f)
+                  setDoneImgUploading(false)
+                  if (url) update(c => ({ ...c, done: { ...c.done, image_url: url } }))
+                  else showToast(t('crm.funnelEditor.uploadError', 'Upload fehlgeschlagen.'))
+                }} />
+
+              <label className="block text-xs font-semibold text-gray-500 mt-5 mb-2">{t('crm.funnelEditor.socials', 'Kanal-Buttons (Icon · Name · Link)')}</label>
+              <div className="space-y-2">
+                {cfg.done.socials.map((s, si) => (
+                  <div key={si} className="flex items-center gap-2 bg-gray-50 rounded-lg p-2">
+                    <input value={s.icon} onChange={e => update(c => { const so = [...c.done.socials]; so[si] = { ...s, icon: e.target.value.slice(0, 3) }; return { ...c, done: { ...c.done, socials: so } } })}
+                      className="w-11 border border-gray-200 rounded-lg px-1 py-1.5 text-center text-sm bg-white" />
+                    <input value={s.label} onChange={e => update(c => { const so = [...c.done.socials]; so[si] = { ...s, label: e.target.value }; return { ...c, done: { ...c.done, socials: so } } })}
+                      placeholder={t('crm.funnelEditor.socialLabel', 'Name') as string}
+                      className="w-28 border border-gray-200 rounded-lg px-2 py-1.5 text-sm bg-white" />
+                    <input value={s.url} onChange={e => update(c => { const so = [...c.done.socials]; so[si] = { ...s, url: e.target.value }; return { ...c, done: { ...c.done, socials: so } } })}
+                      placeholder="https://…"
+                      className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+                    <button onClick={() => update(c => ({ ...c, done: { ...c.done, socials: c.done.socials.filter((_, i) => i !== si) } }))}
+                      className="shrink-0 w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
+                  </div>
+                ))}
+                <button onClick={() => update(c => ({ ...c, done: { ...c.done, socials: [...c.done.socials, { icon: '★', label: '', url: '' }] } }))}
+                  className="text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors">
+                  {t('crm.funnelEditor.addSocial', '+ Kanal hinzufügen')}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
