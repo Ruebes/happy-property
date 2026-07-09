@@ -88,16 +88,25 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Einmalig: Consent-Code gegen refresh_token tauschen ──────────────────
+    // Wird von der öffentlichen Seite /revolut aufgerufen (fängt den OAuth-Redirect).
+    // Der refresh_token wird NUR serverseitig gespeichert (integration_secrets,
+    // RLS ohne Policies = nur service_role) und nie an den Browser zurückgegeben.
     if (body.action === 'exchange_code') {
       if (!body.code) return json({ error: 'code fehlt' }, 400)
       const d = await tokenRequest({ grant_type: 'authorization_code', code: body.code })
-      console.log('[revolut-sync] Code getauscht, refresh_token erhalten')
-      return json({ success: true, refresh_token: d.refresh_token, access_token: !!d.access_token })
+      if (!d.refresh_token) return json({ error: 'Revolut hat keinen refresh_token geliefert' }, 500)
+      const { error: se } = await supabase.from('integration_secrets')
+        .upsert({ key: 'revolut_refresh_token', value: d.refresh_token as string, updated_at: new Date().toISOString() })
+      if (se) throw se
+      console.log('[revolut-sync] Code getauscht, refresh_token gespeichert')
+      return json({ success: true })
     }
 
     // ── Täglicher Sync ────────────────────────────────────────────────────────
-    const refreshToken = Deno.env.get('REVOLUT_REFRESH_TOKEN')
-    if (!refreshToken) return json({ error: 'REVOLUT_REFRESH_TOKEN fehlt — erst exchange_code ausführen' }, 400)
+    const { data: tokRow } = await supabase.from('integration_secrets')
+      .select('value').eq('key', 'revolut_refresh_token').maybeSingle()
+    const refreshToken = (tokRow as { value?: string } | null)?.value || Deno.env.get('REVOLUT_REFRESH_TOKEN')
+    if (!refreshToken) return json({ error: 'Kein refresh_token — erst die Verbindung über /revolut abschließen' }, 400)
 
     const tok = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
     const accessToken = tok.access_token as string

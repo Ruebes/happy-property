@@ -18,6 +18,7 @@ const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
+const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
 
 // Role-Dashboards
@@ -103,6 +104,7 @@ export default function App() {
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />
             <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
+            <Route path="/revolut" element={<RevolutCallback />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
