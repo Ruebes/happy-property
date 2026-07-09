@@ -73,8 +73,39 @@ interface RevolutTx {
 }
 interface OpenInvoice {
   id: string; invoice_number: string; total_gross: number; currency: string
-  lead_id: string | null; deal_id: string | null
-  customer_snapshot: { name?: string } | null
+  lead_id: string | null; deal_id: string | null; token: string | null
+  customer_snapshot: { company_name?: string; contact_name?: string; email?: string } | null
+}
+
+const BRAND_LOGO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+const eur = (n: number, c: string) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: c || 'EUR' }).format(n)
+const dDe = (iso: string) => new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })
+
+// Zahlungsbestätigung an den Bezahler — CI-Template (Cream/Coral, Logo, Karte)
+function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
+  const greet = inv.customer_snapshot?.contact_name ? `Hallo ${inv.customer_snapshot.contact_name},` : 'Guten Tag,'
+  const publicUrl = inv.token ? `https://portal.happy-property.com/re/${inv.token}` : null
+  return `
+  <div style="background:#FAF6EC;padding:32px 16px;font-family:Montserrat,Arial,sans-serif">
+    <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:36px 32px">
+      <img src="${BRAND_LOGO}" alt="Happy Property" style="height:34px;margin-bottom:24px" />
+      <div style="font-size:15px;color:#1b1b22;line-height:1.65">
+        <p style="margin:0 0 14px">${greet}</p>
+        <p style="margin:0 0 20px">vielen Dank — deine Zahlung ist bei uns eingegangen. Die Rechnung ist damit vollständig beglichen.</p>
+      </div>
+      <div style="background:#FAF6EC;border-radius:12px;padding:20px 24px;margin:0 0 20px">
+        <table style="width:100%;font-size:14px;color:#1b1b22;border-collapse:collapse">
+          <tr><td style="padding:4px 0;color:#6b7280">Rechnung</td><td style="padding:4px 0;text-align:right;font-weight:600">${inv.invoice_number}</td></tr>
+          <tr><td style="padding:4px 0;color:#6b7280">Betrag</td><td style="padding:4px 0;text-align:right;font-weight:700;color:#ff795d;font-size:17px">${eur(inv.total_gross, inv.currency)}</td></tr>
+          <tr><td style="padding:4px 0;color:#6b7280">Eingegangen am</td><td style="padding:4px 0;text-align:right">${dDe(paidIso)}</td></tr>
+          <tr><td style="padding:4px 0;color:#6b7280">Status</td><td style="padding:4px 0;text-align:right;color:#15803d;font-weight:600">✓ Bezahlt</td></tr>
+        </table>
+      </div>
+      ${publicUrl ? `<p style="font-size:13px;color:#6b7280;margin:0 0 20px">Rechnung online ansehen: <a href="${publicUrl}" style="color:#ff795d">${publicUrl}</a></p>` : ''}
+      <p style="font-size:15px;color:#1b1b22;margin:0">Beste Grüße<br/>Happy Property</p>
+    </div>
+    <p style="max-width:560px;margin:14px auto 0;font-size:11px;color:#9ca3af;text-align:center">sveru ltd · Tepeleniou 13, Tepelenio Court, 8010 Paphos · Diese Bestätigung wurde automatisch erstellt.</p>
+  </div>`
 }
 
 Deno.serve(async (req: Request) => {
@@ -114,7 +145,7 @@ Deno.serve(async (req: Request) => {
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase
       .from('crm_invoices')
-      .select('id, invoice_number, total_gross, currency, lead_id, deal_id, customer_snapshot')
+      .select('id, invoice_number, total_gross, currency, lead_id, deal_id, token, customer_snapshot')
       .eq('status', 'sent')
     if (invErr) throw invErr
     const open = (openInv ?? []) as OpenInvoice[]
@@ -183,13 +214,21 @@ Deno.serve(async (req: Request) => {
           })
         } catch (e) { console.warn('[revolut-sync] Aktivität fehlgeschlagen:', e) }
       }
-      try {
-        await supabase.functions.invoke('send-email', { body: {
-          to: 'sven@happy-property.com', lead_id: inv.lead_id,
-          subject: `💶 Zahlungseingang: ${inv.invoice_number} (${inv.total_gross} ${inv.currency})`,
-          html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151">Auf dem Revolut-Konto ist die Zahlung zu <strong>${inv.invoice_number}</strong>${inv.customer_snapshot?.name ? ` von ${inv.customer_snapshot.name}` : ''} eingegangen (${inv.total_gross} ${inv.currency}, ${tx.created_at.slice(0, 10)}).<br><br>Die Rechnung wurde automatisch auf <strong>bezahlt</strong> gesetzt.</div>`,
-        } })
-      } catch (e) { console.warn('[revolut-sync] Info-Mail fehlgeschlagen:', e) }
+      // Zahlungsbestätigung an den BEZAHLER (Sven will keine eigene Info-Mail —
+      // er sieht den Eingang als Aktivität und am Rechnungsstatus)
+      const payerEmail = (inv.customer_snapshot?.email ?? '').trim()
+      if (payerEmail) {
+        try {
+          await supabase.functions.invoke('send-email', { body: {
+            to: payerEmail, lead_id: inv.lead_id, deal_id: inv.deal_id,
+            subject: `Zahlungseingang bestätigt — Rechnung ${inv.invoice_number}`,
+            html: paymentConfirmationHtml(inv, tx.created_at),
+          } })
+          console.log(`[revolut-sync] Zahlungsbestätigung an ${payerEmail} gesendet`)
+        } catch (e) { console.warn('[revolut-sync] Zahlungsbestätigung fehlgeschlagen:', e) }
+      } else {
+        console.warn(`[revolut-sync] Keine Kunden-E-Mail an ${inv.invoice_number} — Bestätigung übersprungen`)
+      }
     }
 
     if (ambiguous.length) {
