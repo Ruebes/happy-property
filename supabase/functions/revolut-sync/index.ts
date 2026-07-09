@@ -141,12 +141,19 @@ Deno.serve(async (req: Request) => {
 
     for (const inv of open) {
       const invCents = cents(inv.total_gross)
-      // 1) Referenz enthält Rechnungsnummer
-      let tx = incoming.find(t => {
+      // 1) Referenz enthält Rechnungsnummer — Betrag muss trotzdem stimmen,
+      //    sonst würde eine TEILZAHLUNG die Rechnung fälschlich voll schließen.
+      const refTx = incoming.find(t => {
         const txt = `${t.reference ?? ''} ${(t.legs ?? []).map(l => l.description ?? '').join(' ')}`.toLowerCase()
         return txt.includes(inv.invoice_number.toLowerCase())
       })
+      let tx = refTx
       let via = 'referenz'
+      if (refTx && !(refTx.legs ?? []).some(l => l.amount > 0 && cents(l.amount) === invCents)) {
+        const got = (refTx.legs ?? []).find(l => l.amount > 0)
+        ambiguous.push(`${inv.invoice_number}: Zahlung mit passender Referenz, aber abweichendem Betrag (${got?.amount ?? '?'} statt ${inv.total_gross} ${inv.currency}) — Teilzahlung? Bitte manuell prüfen.`)
+        continue
+      }
       // 2) Betrag exakt + eindeutig
       if (!tx) {
         const sameAmountInvoices = open.filter(o => cents(o.total_gross) === invCents && o.currency === inv.currency)
