@@ -72,7 +72,7 @@ interface RevolutTx {
   reference?: string; legs?: RevolutLeg[]
 }
 interface OpenInvoice {
-  id: string; invoice_number: string; total_gross: number; currency: string
+  id: string; invoice_number: string; subtotal_net: number | null; total_gross: number; currency: string
   lead_id: string | null; deal_id: string | null; token: string | null
   customer_snapshot: { company_name?: string; contact_name?: string; email?: string } | null
 }
@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase
       .from('crm_invoices')
-      .select('id, invoice_number, total_gross, currency, lead_id, deal_id, token, customer_snapshot')
+      .select('id, invoice_number, subtotal_net, total_gross, currency, lead_id, deal_id, token, customer_snapshot')
       .eq('status', 'sent')
     if (invErr) throw invErr
     const open = (openInv ?? []) as OpenInvoice[]
@@ -202,6 +202,19 @@ Deno.serve(async (req: Request) => {
         .eq('id', inv.id).eq('status', 'sent')
       if (updErr) { console.error(`[revolut-sync] Update ${inv.invoice_number}:`, updErr.message); continue }
       matched.push({ invoice: inv.invoice_number, tx: tx.id, via })
+
+      // Provision am Deal als erhalten markieren (Dashboard/Statistik)
+      if (inv.deal_id) {
+        try {
+          const { data: dRow } = await supabase.from('deals').select('commission_amount').eq('id', inv.deal_id).maybeSingle()
+          const patch: Record<string, unknown> = { commission_paid_at: tx.created_at }
+          if (dRow && (dRow as { commission_amount: number | null }).commission_amount == null && inv.subtotal_net != null) {
+            patch.commission_amount = inv.subtotal_net
+          }
+          const { error: cErr } = await supabase.from('deals').update(patch).eq('id', inv.deal_id)
+          if (cErr) console.warn('[revolut-sync] commission_paid_at:', cErr.message)
+        } catch (e) { console.warn('[revolut-sync] Deal-Provision:', e) }
+      }
       console.log(`[revolut-sync] ✓ ${inv.invoice_number} bezahlt (${via}, tx ${tx.id})`)
 
       if (inv.lead_id) {

@@ -77,6 +77,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
           .select('unit_id, lead_id, leads(first_name, last_name)')
           .is('archived_from_phase', null)
           .neq('phase', 'deal_verloren')
+          .neq('phase', 'archiviert')
           .not('unit_id', 'is', null),
       ])
       if (dealErr) console.error('[UnitPickerModal] deals:', dealErr.message)

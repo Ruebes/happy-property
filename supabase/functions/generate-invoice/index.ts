@@ -172,6 +172,16 @@ Deno.serve(async (req) => {
     }).select('*').single()
     if (invErr || !inv) return json({ error: 'Insert: ' + (invErr?.message ?? '') }, 500)
 
+    // Provision am Deal hinterlegen (Dashboard/Statistik lesen deals.commission_*):
+    // Rechnungsbetrag netto = erwartete Provision; „erhalten" setzt der Revolut-Abgleich.
+    if (body.deal_id) {
+      const { data: dRow } = await supabase.from('deals').select('commission_amount').eq('id', body.deal_id).maybeSingle()
+      if (dRow && (dRow as { commission_amount: number | null }).commission_amount == null) {
+        const { error: cErr } = await supabase.from('deals').update({ commission_amount: subtotal_net }).eq('id', body.deal_id)
+        if (cErr) console.warn('[generate-invoice] commission_amount:', cErr.message)
+      }
+    }
+
     await supabase.from('crm_invoice_items').insert(
       items.map(it => ({ invoice_id: inv.id, description: it.description, quantity: it.quantity, unit_price_net: it.unit_price_net, line_net: it.line_net, sort: it.sort }))
     )
