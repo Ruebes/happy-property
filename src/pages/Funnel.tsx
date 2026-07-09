@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { DECK_LOGO } from '../lib/deckTypes'
+import { DECK_LOGO, DECK_CONTACT } from '../lib/deckTypes'
 import { OptionVisual } from '../components/FunnelIcon'
 import {
   loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT,
@@ -374,9 +374,23 @@ export default function Funnel() {
                 className="mt-8 inline-block px-8 py-3.5 rounded-full text-white font-semibold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition" style={{ background: CORAL }}>
                 Bis dahin: Tipps, Blog & Videos →
               </a>
-              <p className="mt-3 text-xs text-gray-400">
-                Oder direkt auf YouTube: <a className="underline" href={cfg.done.youtube_url} target="_blank" rel="noreferrer">Sven nimmt dich mit nach Zypern</a>
-              </p>
+              {/* Soziale Kanäle — gleiche Quelle wie die Sales-Decks (DECK_CONTACT) */}
+              <div className="flex flex-wrap justify-center gap-2 mt-6">
+                {[
+                  ...DECK_CONTACT.socials.map(s => ({
+                    icon: s.icon, label: s.platform,
+                    url: s.platform === 'YouTube' ? (cfg.done.youtube_url || s.url) : s.url,
+                  })),
+                  { icon: '✍', label: 'Blog', url: 'https://steuervorteil-zypern-immobilien.com/blog/' },
+                ].map(s => (
+                  <a key={s.label} href={s.url} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-2 pl-1.5 pr-4 py-1.5 rounded-full bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] hover:-translate-y-0.5 transition text-[13px] font-semibold shadow-sm"
+                    style={{ color: NAVY }}>
+                    <span className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[11px] font-bold shrink-0" style={{ background: CORAL }}>{s.icon}</span>
+                    {s.label}
+                  </a>
+                ))}
+              </div>
             </div>
           )}
 
