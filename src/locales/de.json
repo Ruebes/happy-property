@@ -1644,7 +1644,8 @@
       "allAssignees": "Alle Zuständigen",
       "moveTo": "Verschieben nach",
       "currentPhase": "aktuell",
-      "unitAssignError": "Wohnung konnte nicht zugewiesen werden."
+      "unitAssignError": "Wohnung konnte nicht zugewiesen werden.",
+      "unitStatusError": "Wohnungs-Status konnte nicht gesetzt werden — Phase nicht geändert."
     },
     "archived": {
       "title": "Archivierte Deals",

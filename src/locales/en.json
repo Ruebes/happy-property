@@ -1644,7 +1644,8 @@
       "allAssignees": "All assignees",
       "moveTo": "Move to",
       "currentPhase": "current",
-      "unitAssignError": "Could not assign the unit."
+      "unitAssignError": "Could not assign the unit.",
+      "unitStatusError": "Could not update the unit status — phase not changed."
     },
     "archived": {
       "title": "Archived Deals",
