@@ -147,6 +147,7 @@ export default function LeadDetail() {
   const [editingLead, setEditingLead] = useState(false)
   const [leadForm, setLeadForm] = useState({
     first_name: '', last_name: '', email: '', phone: '', whatsapp: '',
+    alt_emails: '', alt_phones: '',
     country: '', source: 'sonstiges', language: 'de', notes: '', assigned_to: '',
   })
   const [savingLead, setSavingLead] = useState(false)
@@ -1323,6 +1324,8 @@ export default function LeadDetail() {
       email:       lead.email,
       phone:       lead.phone       ?? '',
       whatsapp:    lead.whatsapp    ?? '',
+      alt_emails:  (lead.alt_emails ?? []).join(', '),
+      alt_phones:  (lead.alt_phones ?? []).join(', '),
       country:     lead.country     ?? '',
       source:      lead.source,
       language:    lead.language,
@@ -1342,6 +1345,8 @@ export default function LeadDetail() {
         email:       leadForm.email.trim(),
         phone:       leadForm.phone.trim()     || null,
         whatsapp:    leadForm.whatsapp.trim()  || null,
+        alt_emails:  leadForm.alt_emails.split(',').map(x => x.trim()).filter(Boolean),
+        alt_phones:  leadForm.alt_phones.split(',').map(x => x.trim()).filter(Boolean),
         country:     leadForm.country.trim()   || null,
         source:      leadForm.source,
         language:    leadForm.language,
@@ -2754,6 +2759,26 @@ export default function LeadDetail() {
                           />
                         </div>
                       </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.altEmails', 'Weitere E-Mails (Komma-getrennt)')}</label>
+                          <input
+                            value={leadForm.alt_emails}
+                            onChange={e => setLeadForm(f => ({ ...f, alt_emails: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                            placeholder="privat@gmail.com, buero@firma.de"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.altPhones', 'Weitere Nummern (Komma-getrennt)')}</label>
+                          <input
+                            value={leadForm.alt_phones}
+                            onChange={e => setLeadForm(f => ({ ...f, alt_phones: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                            placeholder="+49 …, +357 …"
+                          />
+                        </div>
+                      </div>
                       <div>
                         <label className="block text-xs text-gray-500 mb-1">{t('crm.lead.country')}</label>
                         <input
@@ -4119,6 +4144,7 @@ export default function LeadDetail() {
       {showUnitPicker && lead && (
         <UnitPickerModal
           leadName={`${lead.first_name} ${lead.last_name}`}
+          currentLeadId={lead.id}
           preselectedProjectId={unitPickerProjectId}
           onClose={() => { setShowUnitPicker(false); setUnitPickerProjectId(null) }}
           onSelect={handleUnitAssign}

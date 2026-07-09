@@ -1283,7 +1283,9 @@
       "details": "Details",
       "countryPlaceholder": "e.g. Germany",
       "newLead": "New lead",
-      "noAssignee": "— Nobody —"
+      "noAssignee": "— Nobody —",
+      "altEmails": "More emails (comma-separated)",
+      "altPhones": "More phone numbers (comma-separated)"
     },
     "sources": {
       "meta": "META Ads",
@@ -1641,7 +1643,8 @@
       "allSources": "All sources",
       "allAssignees": "All assignees",
       "moveTo": "Move to",
-      "currentPhase": "current"
+      "currentPhase": "current",
+      "unitAssignError": "Could not assign the unit."
     },
     "archived": {
       "title": "Archived Deals",
@@ -3377,7 +3380,15 @@
     "priceNetSuffix": "{{price}} net",
     "cancel": "Cancel",
     "assignAndActivate": "Assign & Activate",
-    "selectUnitPrompt": "Please select a unit."
+    "selectUnitPrompt": "Please select a unit.",
+    "statusProposal": "Offered",
+    "statusReserved": "Reserved",
+    "statusSold": "Sold",
+    "reasonSold": "Sold",
+    "reasonTaken": "Taken · {{name}}",
+    "mineBadge": "This client's unit",
+    "confirmReserve": "Reserve",
+    "confirmSell": "Mark as sold"
   },
   "deckChat": {
     "title": "Edit deck",

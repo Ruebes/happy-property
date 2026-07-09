@@ -1,6 +1,9 @@
 // UnitPickerModal – wählt eine spezifische Wohnung aus CRM-Projekten aus
 // Zeigt alle Projekteinheiten mit vollständigen Parametern (m², Preis, Zimmer, etc.)
-// Wird in LeadDetail im Kaufvertrag-Schritt genutzt
+// Genutzt in LeadDetail (Zuweisung) und Pipeline (Reservierung/Kaufvertrag).
+// Verfügbarkeits-Regel (Sven): Was im Sales-Deck anbietbar ist, ist auch hier
+// wählbar — d.h. NICHT verkauft, NICHT fremd-reserviert, NICHT an fremdem
+// aktiven Deal. Die Einheit des EIGENEN Kunden (currentLeadId) bleibt immer wählbar.
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,13 +13,20 @@ import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 interface Props {
   leadName:              string
   preselectedProjectId?: string | null
+  currentLeadId?:        string | null
+  confirmLabel?:         string
   onClose:               () => void
-  onSelect:              (unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location'>) => void
+  onSelect:              (unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location' | 'developer'>) => void
 }
+
+interface UnitHolder { lead_id: string; name: string }
 
 const STATUS_PILL: Record<string, string> = {
   under_construction: 'bg-blue-100 text-blue-700',
   active:             'bg-green-100 text-green-700',
+  proposal:           'bg-amber-100 text-amber-700',
+  reserved:           'bg-purple-100 text-purple-700',
+  sold:               'bg-red-100 text-red-700',
 }
 
 function fmtPrice(v: number | null | undefined): string {
@@ -31,11 +41,14 @@ function fmtDate(d: string | null): string {
   return new Date(d).toLocaleDateString('de-DE')
 }
 
-export default function UnitPickerModal({ leadName, preselectedProjectId, onClose, onSelect }: Props) {
+export default function UnitPickerModal({ leadName, preselectedProjectId, currentLeadId, confirmLabel, onClose, onSelect }: Props) {
   const { t } = useTranslation()
   const STATUS_LABEL: Record<string, string> = {
     under_construction: t('unitPickerModal.statusUnderConstruction', 'Im Bau'),
     active:             t('unitPickerModal.statusActive', 'Aktiv'),
+    proposal:           t('unitPickerModal.statusProposal', 'Angeboten'),
+    reserved:           t('unitPickerModal.statusReserved', 'Reserviert'),
+    sold:               t('unitPickerModal.statusSold', 'Verkauft'),
   }
   const [projects,       setProjects]       = useState<CrmProject[]>([])
   const [loading,        setLoading]        = useState(true)
@@ -44,6 +57,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
   const [expanded,       setExpanded]       = useState<Record<string, boolean>>({})
   const [selectedUnitId, setSelectedUnitId] = useState<string | null>(null)
   const [selectedUnit,   setSelectedUnit]   = useState<{ unit: CrmProjectUnit; project: CrmProject } | null>(null)
+  const [unitHolders,    setUnitHolders]    = useState<Record<string, UnitHolder>>({})
 
   useEffect(() => {
     load()
@@ -52,10 +66,25 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
   async function load() {
     setLoading(true)
     try {
-      const { data } = await supabase
-        .from('crm_projects')
-        .select('*, units:crm_project_units(*, verwalter:verwalter_id(id,full_name))')
-        .order('name')
+      const [{ data }, { data: dealRows, error: dealErr }] = await Promise.all([
+        supabase
+          .from('crm_projects')
+          .select('*, units:crm_project_units(*, verwalter:verwalter_id(id,full_name))')
+          .order('name'),
+        // Aktive Deals mit verknüpfter Einheit → "vergeben an"
+        supabase
+          .from('deals')
+          .select('unit_id, lead_id, leads(first_name, last_name)')
+          .is('archived_from_phase', null)
+          .neq('phase', 'deal_verloren')
+          .not('unit_id', 'is', null),
+      ])
+      if (dealErr) console.error('[UnitPickerModal] deals:', dealErr.message)
+      const holders: Record<string, UnitHolder> = {}
+      for (const r of (dealRows ?? []) as unknown as Array<{ unit_id: string; lead_id: string; leads: { first_name: string | null; last_name: string | null } | null }>) {
+        holders[r.unit_id] = { lead_id: r.lead_id, name: `${r.leads?.first_name ?? ''} ${r.leads?.last_name ?? ''}`.trim() }
+      }
+      setUnitHolders(holders)
       const projs = (data ?? []) as CrmProject[]
       setProjects(projs)
       // Auto-expand all projects (preselected project is always expanded)
@@ -65,6 +94,17 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
     } finally {
       setLoading(false)
     }
+  }
+
+  // Verfügbarkeit — gleiche Regel wie im Sales-Deck-Wizard, plus "eigene" Einheit
+  function availability(u: CrmProjectUnit): { selectable: boolean; reason?: string; mine?: boolean } {
+    const holder = unitHolders[u.id]
+    const mine = !!currentLeadId && holder?.lead_id === currentLeadId
+    if (mine) return { selectable: true, mine: true }
+    if (u.status === 'sold') return { selectable: false, reason: t('unitPickerModal.reasonSold', 'Verkauft') }
+    if (holder) return { selectable: false, reason: t('unitPickerModal.reasonTaken', 'Vergeben · {{name}}', { name: holder.name }) }
+    if (u.status === 'reserved') return { selectable: false, reason: t('unitPickerModal.statusReserved', 'Reserviert') }
+    return { selectable: true }
   }
 
   // ── Filter logic ────────────────────────────────────────────────────────────
@@ -93,6 +133,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
     })
 
   function pickUnit(unit: CrmProjectUnit, project: CrmProject) {
+    if (!availability(unit).selectable) return
     setSelectedUnitId(unit.id)
     setSelectedUnit({ unit, project })
   }
@@ -195,15 +236,18 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                   <div className="p-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {project.units.map(unit => {
                       const isSelected = selectedUnitId === unit.id
+                      const avail = availability(unit)
 
                       return (
                         <div
                           key={unit.id}
                           onClick={() => pickUnit(unit, project)}
-                          className={`rounded-xl border-2 p-3 transition-all select-none cursor-pointer ${
-                            isSelected
-                              ? 'border-[#ff795d] bg-orange-50 shadow-sm'
-                              : 'border-gray-100 bg-white hover:border-orange-300 hover:shadow-sm'
+                          className={`rounded-xl border-2 p-3 transition-all select-none ${
+                            !avail.selectable
+                              ? 'border-gray-100 bg-gray-50 opacity-55 cursor-not-allowed'
+                              : isSelected
+                                ? 'border-[#ff795d] bg-orange-50 shadow-sm cursor-pointer'
+                                : 'border-gray-100 bg-white hover:border-orange-300 hover:shadow-sm cursor-pointer'
                           }`}
                         >
                           {/* Unit header row */}
@@ -218,10 +262,18 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                                 {t('unitPickerModal.unitNumberLabel', 'Nr. {{number}}', { number: unit.unit_number })}
                               </span>
                             </div>
-                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_PILL[unit.status]}`}>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_PILL[unit.status] ?? 'bg-gray-100 text-gray-600'}`}>
                               {STATUS_LABEL[unit.status] ?? unit.status}
                             </span>
                           </div>
+
+                          {(avail.mine || avail.reason) && (
+                            <p className={`-mt-1 mb-2 text-[10px] font-semibold ${avail.mine ? 'text-[#ff795d]' : 'text-gray-500'}`}>
+                              {avail.mine
+                                ? `★ ${t('unitPickerModal.mineBadge', 'Einheit dieses Kunden')}`
+                                : `🔒 ${avail.reason}`}
+                            </p>
+                          )}
 
                           {/* Parameters grid */}
                           <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-gray-600">
@@ -321,7 +373,7 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, onClos
                   className="px-5 py-2 text-sm font-medium text-white rounded-xl"
                   style={{ backgroundColor: '#ff795d' }}
                 >
-                  {t('unitPickerModal.assignAndActivate', 'Zuweisen & Aktivieren')}
+                  {confirmLabel ?? t('unitPickerModal.assignAndActivate', 'Zuweisen & Aktivieren')}
                 </button>
               </div>
             </div>

@@ -15,6 +15,7 @@ import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
+import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import PhaseRunToast from '../../../components/crm/PhaseRunToast'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -518,6 +519,8 @@ export default function Pipeline() {
   const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
   const [deckDeal, setDeckDeal] = useState<Deal | null>(null)   // Angebot-Wizard (Deck + optional Berechnung + Mail)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
+  // Wohnungs-Auswahl beim Zug auf Reservierung/Kaufvertrag (wenn keine Unit verknüpft)
+  const [unitPickState, setUnitPickState] = useState<{ deal: Deal; target: DealPhase } | null>(null)
   const [holdDeal,     setHoldDeal]     = useState<Deal | null>(null)
   const [handoverDeal, setHandoverDeal] = useState<Deal | null>(null)
   const [depositDeal,  setDepositDeal]  = useState<Deal | null>(null)   // Anzahlung → Rechnungs-Modal
@@ -670,6 +673,19 @@ export default function Pipeline() {
     if (targetPhase === 'registrierung') {
       setRegistrationDeal({ ...deal })
       return
+    }
+    // Reservierung/Kaufvertrag: Wohnung MUSS verknüpft sein — sonst Auswahl-Popup
+    // (wählbar ist alles, was auch im Sales-Deck anbietbar ist). Mit Wohnung wird
+    // deren Status automatisch mitgezogen (reserviert bzw. verkauft).
+    if ((targetPhase === 'reservierung' || targetPhase === 'kaufvertrag') && !deal.unit_id) {
+      setUnitPickState({ deal: { ...deal }, target: targetPhase })
+      return
+    }
+    if ((targetPhase === 'reservierung' || targetPhase === 'kaufvertrag') && deal.unit_id) {
+      const newStatus = targetPhase === 'reservierung' ? 'reserved' : 'sold'
+      supabase.from('crm_project_units').update({ status: newStatus })
+        .eq('id', deal.unit_id).neq('status', 'sold')
+        .then(({ error: uErr }) => { if (uErr) console.warn('[Pipeline] Unit-Status:', uErr.message) })
     }
     // Hold: Popup mit Kontaktaufnahme-Häkchen
     if (targetPhase === 'hold') { setHoldDeal({ ...deal }); return }
@@ -1119,6 +1135,38 @@ export default function Pipeline() {
           deal={depositDeal}
           onClose={() => setDepositDeal(null)}
           onDone={(msg) => { setDepositDeal(null); showToastMsg(msg); void fetchDeals(true) }}
+        />
+      )}
+
+      {/* Wohnungs-Auswahl bei Reservierung/Kaufvertrag ohne verknüpfte Unit */}
+      {unitPickState && (
+        <UnitPickerModal
+          leadName={unitPickState.deal.lead ? `${unitPickState.deal.lead.first_name} ${unitPickState.deal.lead.last_name}` : ''}
+          currentLeadId={unitPickState.deal.lead_id}
+          confirmLabel={unitPickState.target === 'reservierung'
+            ? t('unitPickerModal.confirmReserve', 'Reservieren')
+            : t('unitPickerModal.confirmSell', 'Als verkauft übernehmen')}
+          onClose={() => setUnitPickState(null)}
+          onSelect={async (unit, project) => {
+            const { deal, target } = unitPickState
+            setUnitPickState(null)
+            const { error: dErr } = await supabase.from('deals')
+              .update({ unit_id: unit.id, developer: project.developer ?? null })
+              .eq('id', deal.id)
+            if (dErr) { console.error('[Pipeline] Unit-Zuweisung:', dErr.message); showToastMsg(t('crm.pipeline.unitAssignError', 'Wohnung konnte nicht zugewiesen werden.')); return }
+            const newStatus = target === 'reservierung' ? 'reserved' : 'sold'
+            const { error: uErr } = await supabase.from('crm_project_units')
+              .update({ status: newStatus }).eq('id', unit.id).neq('status', 'sold')
+            if (uErr) console.warn('[Pipeline] Unit-Status:', uErr.message)
+            await supabase.from('activities').insert({
+              lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
+              content: `🏠 Wohnung verknüpft: ${project.name} · ${unit.unit_number} (${target === 'reservierung' ? 'reserviert' : 'verkauft'})`,
+              created_by: profile?.id ?? null,
+            }).then(({ error: aErr }) => { if (aErr) console.warn('[Pipeline] Aktivität:', aErr.message) })
+            // Phasenwechsel mit verknüpfter Unit fortsetzen (Automation bekommt jetzt
+            // Projekt/Unit/Preis + den richtigen Developer-Empfänger)
+            void changePhase({ ...deal, unit_id: unit.id, developer: project.developer ?? null }, target)
+          }}
         />
       )}
 

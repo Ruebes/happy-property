@@ -167,9 +167,18 @@ Deno.serve(async (req) => {
       let leadId: string | null = null
       const { data: byMail } = await admin.from('leads').select('id').ilike('email', email).limit(1)
       if (byMail?.length) leadId = (byMail[0] as { id: string }).id
+      if (!leadId) {
+        // Zweit-Adressen (alt_emails) mitprüfen — verhindert Dubletten bei Kunden mit mehreren Mails
+        const { data: byAlt } = await admin.from('leads').select('id').contains('alt_emails', [email]).limit(1)
+        if (byAlt?.length) leadId = (byAlt[0] as { id: string }).id
+      }
       if (!leadId && phone) {
         const { data: byPhone } = await admin.from('leads').select('id').or(`phone.eq.${phone},whatsapp.eq.${phone}`).limit(1)
         if (byPhone?.length) leadId = (byPhone[0] as { id: string }).id
+        if (!leadId) {
+          const { data: byAltP } = await admin.from('leads').select('id').contains('alt_phones', [phone]).limit(1)
+          if (byAltP?.length) leadId = (byAltP[0] as { id: string }).id
+        }
       }
       const utmNote = body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : ''
       const answersText = (body.answers ?? []).map(a => `• ${a.question}: ${a.answer}`).join('\n')

@@ -29,6 +29,8 @@ export interface Lead {
   email:             string
   phone:             string | null
   whatsapp:          string | null
+  alt_emails:        string[]        // weitere E-Mail-Adressen (Haupt = email)
+  alt_phones:        string[]        // weitere Telefonnummern (Haupt = phone/whatsapp)
   country:           string | null
   language:          'de' | 'en'
   source:            LeadSource
@@ -185,7 +187,7 @@ export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
 
 export type ProjectStatus = 'available' | 'under_construction' | 'sold_out' | 'completed'
 export type UnitType      = 'villa' | 'apartment' | 'studio'
-export type UnitStatus    = 'under_construction' | 'active'
+export type UnitStatus    = 'under_construction' | 'active' | 'proposal' | 'reserved' | 'sold'
 
 export interface CrmProject {
   id:              string

@@ -1283,7 +1283,9 @@
       "details": "Details",
       "countryPlaceholder": "z.B. Deutschland",
       "newLead": "Neuer Lead",
-      "noAssignee": "— Niemand —"
+      "noAssignee": "— Niemand —",
+      "altEmails": "Weitere E-Mails (Komma-getrennt)",
+      "altPhones": "Weitere Nummern (Komma-getrennt)"
     },
     "sources": {
       "meta": "META Werbung",
@@ -1641,7 +1643,8 @@
       "allSources": "Alle Quellen",
       "allAssignees": "Alle Zuständigen",
       "moveTo": "Verschieben nach",
-      "currentPhase": "aktuell"
+      "currentPhase": "aktuell",
+      "unitAssignError": "Wohnung konnte nicht zugewiesen werden."
     },
     "archived": {
       "title": "Archivierte Deals",
@@ -3377,7 +3380,15 @@
     "priceNetSuffix": "{{price}} netto",
     "cancel": "Abbrechen",
     "assignAndActivate": "Zuweisen & Aktivieren",
-    "selectUnitPrompt": "Bitte eine Wohnung auswählen."
+    "selectUnitPrompt": "Bitte eine Wohnung auswählen.",
+    "statusProposal": "Angeboten",
+    "statusReserved": "Reserviert",
+    "statusSold": "Verkauft",
+    "reasonSold": "Verkauft",
+    "reasonTaken": "Vergeben · {{name}}",
+    "mineBadge": "Einheit dieses Kunden",
+    "confirmReserve": "Reservieren",
+    "confirmSell": "Als verkauft übernehmen"
   },
   "deckChat": {
     "title": "Deck anpassen",

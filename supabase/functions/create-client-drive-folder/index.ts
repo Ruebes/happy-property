@@ -66,33 +66,37 @@ Deno.serve(async (req) => {
     if (leadErr) return json({ error: `Lead: ${leadErr.message}` }, 500)
     if (!lead) return json({ error: 'Lead nicht gefunden' }, 404)
 
-    // Wiederverwendung: schon ein Ordner vorhanden → den zurückgeben.
-    if (lead.drive_folder_id) {
-      return json({ ok: true, folder_id: lead.drive_folder_id, folder_url: lead.drive_folder_url, existing: true })
-    }
-
-    // Parent-Ordner: Secret → crm_settings → Default.
-    let parentId = Deno.env.get('GOOGLE_DRIVE_PARENT_FOLDER_ID') || ''
-    if (!parentId) {
-      const { data: s } = await supabase.from('crm_settings').select('value').eq('key', 'drive_clients_parent_folder_id').maybeSingle()
-      parentId = (s?.value as string) || PARENT_DEFAULT
-    }
-
     const token = await getWriteToken()
-    const name = [lead.last_name, lead.first_name].map(x => (x ?? '').trim()).filter(Boolean).join(', ') || lead.email || `Kunde ${lead_id.slice(0, 8)}`
+    let folderId  = lead.drive_folder_id as string | null
+    let folderUrl = lead.drive_folder_url as string | null
+    const existing = !!folderId
 
-    // 1) Ordner anlegen
-    const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,webViewLink&supportsAllDrives=true', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
-    })
-    const created = await createRes.json() as { id?: string; webViewLink?: string; error?: { message?: string } }
-    if (!createRes.ok || !created.id) {
-      return json({ error: `Ordner-Anlage fehlgeschlagen: ${created.error?.message ?? createRes.status}. Hat der Service Account Editor-Rechte auf dem Parent-Ordner?` }, 502)
+    if (!folderId) {
+      // Parent-Ordner: Secret → crm_settings → Default.
+      let parentId = Deno.env.get('GOOGLE_DRIVE_PARENT_FOLDER_ID') || ''
+      if (!parentId) {
+        const { data: s } = await supabase.from('crm_settings').select('value').eq('key', 'drive_clients_parent_folder_id').maybeSingle()
+        parentId = (s?.value as string) || PARENT_DEFAULT
+      }
+
+      const name = [lead.last_name, lead.first_name].map(x => (x ?? '').trim()).filter(Boolean).join(', ') || lead.email || `Kunde ${lead_id.slice(0, 8)}`
+
+      // 1) Ordner anlegen
+      const createRes = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,webViewLink&supportsAllDrives=true', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
+      })
+      const created = await createRes.json() as { id?: string; webViewLink?: string; error?: { message?: string } }
+      if (!createRes.ok || !created.id) {
+        return json({ error: `Ordner-Anlage fehlgeschlagen: ${created.error?.message ?? createRes.status}. Hat der Service Account Editor-Rechte auf dem Parent-Ordner?` }, 502)
+      }
+      folderId  = created.id
+      folderUrl = created.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`
     }
-    const folderId  = created.id
-    const folderUrl = created.webViewLink ?? `https://drive.google.com/drive/folders/${folderId}`
+    // Freigaben laufen auch bei EXISTIERENDEM Ordner (Lesen+Schreiben) — z.B. wenn sich
+    // die Kunden-Mail geändert hat oder Entwickler/Partner nachträglich dazukommen.
+    // Google dedupliziert Berechtigungen pro E-Mail selbst.
 
     // 2) Schreibrechte verteilen (ohne Benachrichtigungsmail — Sven entscheidet, wann der Kunde informiert wird)
     // Kunde + Google-Owner (happypropertycyprus@gmail.com) + Sven + zusätzliche Empfänger
@@ -116,7 +120,7 @@ Deno.serve(async (req) => {
     const { error: upErr } = await supabase.from('leads').update({ drive_folder_id: folderId, drive_folder_url: folderUrl }).eq('id', lead_id)
     if (upErr) return json({ error: `Speichern am Lead fehlgeschlagen: ${upErr.message}`, folder_id: folderId, folder_url: folderUrl }, 500)
 
-    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing: false, name, shared, shareErrors })
+    return json({ ok: true, folder_id: folderId, folder_url: folderUrl, existing, shared, shareErrors })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

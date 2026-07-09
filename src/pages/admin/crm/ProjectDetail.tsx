@@ -50,10 +50,16 @@ function formatFileSize(b: number | null): string {
 const STATUS_PILL: Record<UnitStatus, string> = {
   under_construction: 'bg-blue-100 text-blue-700',
   active:             'bg-green-100 text-green-700',
+  proposal:           'bg-amber-100 text-amber-700',
+  reserved:           'bg-purple-100 text-purple-700',
+  sold:               'bg-red-100 text-red-700',
 }
 const STATUS_BAR: Record<UnitStatus, string> = {
   under_construction: '#3b82f6',
   active:             '#22c55e',
+  proposal:           '#f59e0b',
+  reserved:           '#a855f7',
+  sold:               '#ef4444',
 }
 const DOC_PILL: Record<string, string> = {
   kaufvertrag:  'bg-purple-100 text-purple-700',
