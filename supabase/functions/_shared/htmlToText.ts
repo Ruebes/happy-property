@@ -40,7 +40,9 @@ export function htmlToText(html: string): string {
     .replace(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, url, label) => {
       const text = String(label).replace(/<[^>]+>/g, '').trim()
       if (/^(mailto:|tel:)/i.test(url)) return text || url.replace(/^(mailto:|tel:)/i, '')
-      return text ? `${text}: ${url}` : url
+      // Label = URL (verlinkte Klartext-Adresse) → nicht doppeln
+      if (!text || text === url) return url
+      return `${text}: ${url}`
     })
     .replace(/<img\b[^>]*>/gi, '')
     .replace(/<br\s*\/?>/gi, '\n')
