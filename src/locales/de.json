@@ -2611,7 +2611,25 @@
       "outroPh": "z. B. eine persönliche Anmerkung — kann auch leer bleiben",
       "outroHint": "Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen\"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven\".",
       "calcParams": "Rechner-Parameter",
-      "calcSummary": "EK {{ek}} € · Zins {{zins}} % · Rendite {{rend}} % · Wertsteig. {{wert}} %"
+      "calcSummary": "EK {{ek}} € · Zins {{zins}} % · Rendite {{rend}} % · Wertsteig. {{wert}} %",
+      "saved": "💾 Entwurf gespeichert — du kannst jederzeit weitermachen.",
+      "saveDraft": "💾 Entwurf speichern",
+      "new": "🆕 Neue Kampagne",
+      "loadError": "Entwurf konnte nicht geladen werden",
+      "deleteConfirm": "Diesen Entwurf löschen?",
+      "engError": "Öffnungen konnten nicht geladen werden",
+      "past": "Entwürfe & Archiv",
+      "stDraft": "Entwurf",
+      "stSent": "versendet",
+      "mails": "Mails",
+      "edit": "✏️ Weiterbearbeiten",
+      "opens": "📈 Öffnungen",
+      "openersSummary": "{{openers}} von {{recipients}} Empfängern haben ihr Exposé geöffnet.",
+      "noOpens": "Noch keine Öffnungen.",
+      "colName": "Empfänger",
+      "colDeck": "Deck geöffnet",
+      "colViews": "Aufrufe",
+      "colLast": "Zuletzt"
     }
   },
   "docs": {

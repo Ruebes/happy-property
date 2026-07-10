@@ -2611,7 +2611,25 @@
       "outroPh": "e.g. a personal note — can be left empty",
       "outroHint": "The closing is added automatically: invitation to talk + \"Pick a time\" button (straight to the calendar, no questionnaire) + \"Liebe Grüße, Sven\".",
       "calcParams": "Calculator parameters",
-      "calcSummary": "Equity {{ek}} € · Interest {{zins}} % · Yield {{rend}} % · Appreciation {{wert}} %"
+      "calcSummary": "Equity {{ek}} € · Interest {{zins}} % · Yield {{rend}} % · Appreciation {{wert}} %",
+      "saved": "💾 Draft saved — continue any time.",
+      "saveDraft": "💾 Save draft",
+      "new": "🆕 New campaign",
+      "loadError": "Could not load draft",
+      "deleteConfirm": "Delete this draft?",
+      "engError": "Could not load opens",
+      "past": "Drafts & archive",
+      "stDraft": "Draft",
+      "stSent": "sent",
+      "mails": "mails",
+      "edit": "✏️ Continue editing",
+      "opens": "📈 Opens",
+      "openersSummary": "{{openers}} of {{recipients}} recipients opened their exposé.",
+      "noOpens": "No opens yet.",
+      "colName": "Recipient",
+      "colDeck": "Deck opened",
+      "colViews": "Views",
+      "colLast": "Last"
     }
   },
   "docs": {

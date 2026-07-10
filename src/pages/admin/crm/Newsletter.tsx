@@ -188,6 +188,73 @@ export default function Newsletter() {
   const updateProp = (i: number, patch: Partial<WizProperty>) =>
     setProps(prev => prev.map((p, x) => x === i ? { ...p, ...patch } : p))
 
+  // ── Zwischenspeichern / Entwurf laden / Archiv ─────────────────────────────
+  const saveDraft = async () => {
+    setBusyKey('save')
+    try {
+      const id = await saveCampaign()
+      if (id) { showToastMsg(t('crm.newsletter.saved', '💾 Entwurf gespeichert — du kannst jederzeit weitermachen.')); void fetchPast() }
+    } finally { setBusyKey('') }
+  }
+
+  const resetWizard = () => {
+    setCampaignId(null); setTitle(''); setSubject(''); setIntro(''); setOutro('')
+    setProps([]); setStatus(null)
+  }
+
+  // Gespeicherten Entwurf zurück in den Wizard laden
+  const loadCampaign = async (id: string) => {
+    setBusyKey(`load${id}`)
+    try {
+      const { data, error } = await supabase.from('newsletter_campaigns').select('*').eq('id', id).single()
+      if (error) throw error
+      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown }
+      setCampaignId(c.id)
+      setTitle(c.title ?? ''); setSubject(c.subject ?? '')
+      setIntro(c.intro_text ?? ''); setOutro(c.outro_text ?? '')
+      const raw = Array.isArray(c.properties) ? c.properties as Array<Partial<WizProperty> & { units?: WizUnit[] }> : []
+      setProps(raw.filter(x => x && x.project_id).map(x => ({
+        project_id: x.project_id as string, project_name: x.project_name ?? '',
+        units: Array.isArray(x.units) ? x.units : [],
+        bullets: x.bullets ?? '', ai_text: x.ai_text ?? '',
+        master_deck_token: x.master_deck_token ?? null, calc_token: x.calc_token ?? null,
+        params: x.params ?? undefined,
+      })))
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      console.error('[Newsletter] loadCampaign:', err)
+      showToastMsg(`❌ ${t('crm.newsletter.loadError', 'Entwurf konnte nicht geladen werden')}`)
+    } finally { setBusyKey('') }
+  }
+
+  const deleteDraft = async (id: string) => {
+    if (!confirm(t('crm.newsletter.deleteConfirm', 'Diesen Entwurf löschen?') as string)) return
+    const { error } = await supabase.from('newsletter_campaigns').delete().eq('id', id)
+    if (error) { showToastMsg(`❌ ${error.message}`); return }
+    if (campaignId === id) resetWizard()
+    void fetchPast()
+  }
+
+  // Öffnungs-Auswertung (Archiv): wer hat welches Deck geöffnet
+  interface EngRow { lead_id: string; name: string | null; email: string | null; project: string; views: number; last_view: string }
+  const [archiveOpen, setArchiveOpen] = useState<string | null>(null)
+  const [archiveData, setArchiveData] = useState<Record<string, { recipients: number; openers: number; rows: EngRow[] }>>({})
+  const toggleArchive = async (id: string) => {
+    if (archiveOpen === id) { setArchiveOpen(null); return }
+    setArchiveOpen(id)
+    if (archiveData[id]) return
+    setBusyKey(`arch${id}`)
+    try {
+      const { data, error } = await supabase.rpc('newsletter_engagement', { p_campaign: id })
+      if (error) throw error
+      setArchiveData(prev => ({ ...prev, [id]: data as { recipients: number; openers: number; rows: EngRow[] } }))
+    } catch (err) {
+      console.error('[Newsletter] engagement:', err)
+      showToastMsg(`❌ ${t('crm.newsletter.engError', 'Öffnungen konnten nicht geladen werden')}`)
+      setArchiveOpen(null)
+    } finally { setBusyKey('') }
+  }
+
   // ── Aktionen je Projekt ─────────────────────────────────────────────────────
   const generateText = async (i: number) => {
     const p = props[i]
@@ -416,6 +483,12 @@ export default function Newsletter() {
         <div className={card}>
           <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.newsletter.s3', '3 · Testen & Starten')}</h2>
           <div className="flex flex-wrap items-center gap-3">
+            <button onClick={() => void saveDraft()} disabled={busyKey === 'save'} className={btnSec}>
+              {busyKey === 'save' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.saveDraft', '💾 Entwurf speichern')}
+            </button>
+            {(campaignId || title || subject || props.length > 0) && (
+              <button onClick={resetWizard} className={btnSec}>{t('crm.newsletter.new', '🆕 Neue Kampagne')}</button>
+            )}
             <button onClick={() => void sendTest()} disabled={busyKey === 'test' || !subject.trim()} className={btnSec}>
               {busyKey === 'test' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.test', '✉️ Test-Mail an mich')}
             </button>
@@ -441,17 +514,75 @@ export default function Newsletter() {
           )}
         </div>
 
-        {/* ── Bisherige Kampagnen ── */}
+        {/* ── Entwürfe + Archiv ── */}
         {pastCampaigns.length > 0 && (
           <div className={card}>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.newsletter.past', 'Bisherige Kampagnen')}</h2>
-            <div className="space-y-1.5">
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.newsletter.past', 'Entwürfe & Archiv')}</h2>
+            <div className="space-y-2">
               {pastCampaigns.map(c => (
-                <div key={c.id} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-800">{c.title}</span>
-                  <span className="text-xs text-gray-400">
-                    {new Date(c.created_at).toLocaleDateString('de-DE')} · {c.recipients_done}/{c.recipients_total} · {c.status}
-                  </span>
+                <div key={c.id} className="border border-gray-100 rounded-xl">
+                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                    <span className="font-medium text-gray-800">{c.title}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${c.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-orange-50 text-orange-700'}`}>
+                      {c.status === 'draft' ? t('crm.newsletter.stDraft', 'Entwurf') : t('crm.newsletter.stSent', 'versendet')}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(c.created_at).toLocaleDateString('de-DE')}{c.status !== 'draft' && <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>}
+                    </span>
+                    <span className="ml-auto flex items-center gap-2">
+                      {c.status === 'draft' ? (
+                        <>
+                          <button onClick={() => void loadCampaign(c.id)} disabled={busyKey === `load${c.id}`} className={btnSec}>
+                            {t('crm.newsletter.edit', '✏️ Weiterbearbeiten')}
+                          </button>
+                          <button onClick={() => void deleteDraft(c.id)} className="text-gray-400 hover:text-red-600 text-sm">🗑</button>
+                        </>
+                      ) : (
+                        <button onClick={() => void toggleArchive(c.id)} disabled={busyKey === `arch${c.id}`} className={btnSec}>
+                          {busyKey === `arch${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.opens', '📈 Öffnungen')}
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                  {archiveOpen === c.id && archiveData[c.id] && (
+                    <div className="border-t border-gray-100 px-3 py-3">
+                      <p className="text-xs text-gray-500 mb-2">
+                        {t('crm.newsletter.openersSummary', '{{openers}} von {{recipients}} Empfängern haben ihr Exposé geöffnet.', {
+                          openers: archiveData[c.id].openers, recipients: archiveData[c.id].recipients,
+                        })}
+                      </p>
+                      {archiveData[c.id].rows.length === 0 ? (
+                        <p className="text-sm text-gray-400">{t('crm.newsletter.noOpens', 'Noch keine Öffnungen.')}</p>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-[11px] text-gray-400 uppercase">
+                                <th className="py-1 pr-3">{t('crm.newsletter.colName', 'Empfänger')}</th>
+                                <th className="py-1 pr-3">{t('crm.newsletter.colDeck', 'Deck geöffnet')}</th>
+                                <th className="py-1 pr-3 text-right">{t('crm.newsletter.colViews', 'Aufrufe')}</th>
+                                <th className="py-1 text-right">{t('crm.newsletter.colLast', 'Zuletzt')}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {archiveData[c.id].rows.map((r, ri) => (
+                                <tr key={`${r.lead_id}-${ri}`} className="border-t border-gray-50">
+                                  <td className="py-1.5 pr-3">
+                                    <a href={`/admin/crm/leads/${r.lead_id}`} className="font-medium text-gray-800 hover:underline">
+                                      {r.name || r.email || '—'}
+                                    </a>
+                                  </td>
+                                  <td className="py-1.5 pr-3 text-gray-700">{r.project}</td>
+                                  <td className="py-1.5 pr-3 text-right text-gray-700">{r.views}</td>
+                                  <td className="py-1.5 text-right text-gray-500 text-xs">{new Date(r.last_view).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
