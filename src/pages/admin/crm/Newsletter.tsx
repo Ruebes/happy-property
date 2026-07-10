@@ -4,7 +4,8 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
-import { DEFAULT_PARAMS } from '../../../lib/rechner'
+import { NumberStepper } from '../../../components/NumberStepper'
+import { DEFAULT_PARAMS, type CalcParams } from '../../../lib/rechner'
 import type { CrmProjectUnit } from '../../../lib/crmTypes'
 
 // ── Newsletter-Kampagne (individuell, KEINE Massenmail) ──────────────────────
@@ -24,6 +25,79 @@ interface WizProperty {
   bullets: string; ai_text: string
   master_deck_token: string | null
   calc_token: string | null
+  params?: CalcParams          // Rechner-Parameter je Projekt (Default: DEFAULT_PARAMS)
+}
+
+// ── Rechner-Parameter (gleiches Formular wie im Deck-/Angebots-Wizard) ────────
+// Gilt für alle Wohnungen des Projekts; Möbelpaket bleibt pro Wohnung einstellbar.
+function CalcParamsPanel({ value, onChange }: { value: CalcParams; onChange: (p: CalcParams) => void }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const set = (k: keyof CalcParams, v: number | string | boolean) => onChange({ ...value, [k]: v } as CalcParams)
+  const numF = (label: string, k: keyof CalcParams, step = '1', suffix?: string) => (
+    <label key={k} className="block">
+      <span className="block text-xs font-medium text-gray-500 mb-1">{label}</span>
+      <NumberStepper value={Number(value[k] ?? 0)} onChange={v => set(k, v)} step={parseFloat(step)} suffix={suffix} />
+    </label>
+  )
+  const seg = (label: string, k: keyof CalcParams, opts: [string, string][]) => (
+    <div key={k}>
+      <span className="block text-[11px] text-gray-500 mb-0.5">{label}</span>
+      <div className="flex rounded-lg overflow-hidden border border-gray-200">
+        {opts.map(([val, lab]) => (
+          <button key={val} type="button" onClick={() => set(k, val)}
+            className={`flex-1 px-1.5 py-1 text-[11px] font-medium ${String(value[k]) === val ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>{lab}</button>
+        ))}
+      </div>
+    </div>
+  )
+  const tog = (label: string, k: keyof CalcParams) => (
+    <button key={k} type="button" onClick={() => set(k, !value[k])}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] font-medium ${value[k] ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+      <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center text-[9px] ${value[k] ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{value[k] ? '✓' : ''}</span>
+      {label}
+    </button>
+  )
+  const fmt = (n: number) => n.toLocaleString('de-DE')
+  return (
+    <div className="border border-gray-100 rounded-lg bg-gray-50/60">
+      <button type="button" onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-600">
+        <span className="font-semibold">⚙️ {t('crm.newsletter.calcParams', 'Rechner-Parameter')}</span>
+        <span className="text-gray-400">
+          {t('crm.newsletter.calcSummary', 'EK {{ek}} € · Zins {{zins}} % · Rendite {{rend}} % · Wertsteig. {{wert}} %', {
+            ek: fmt(value.equity), zins: String(value.interestPct), rend: String(value.yieldPct), wert: String(value.appreciationPct),
+          })} {open ? '▴' : '▾'}
+        </span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {seg(t('deckWizard.taxResidence', 'Steuersitz'), 'res', [['de', 'DE'], ['cy', 'CY']])}
+            {seg(t('deckWizard.financing', 'Finanzierung'), 'fin', [['yes', t('deckWizard.yes', 'Ja')], ['no', t('deckWizard.cash', 'Cash')]])}
+            {seg(t('deckWizard.rentalType', 'Vermietung'), 'letType', [['short', t('deckWizard.shortTerm', 'Kurz')], ['long', t('deckWizard.longTerm', 'Lang')]])}
+            {seg(t('deckWizard.amortization', 'Tilgung'), 'mode', [['ann', t('deckWizard.annuity', 'Annuität')], ['tilg', t('deckWizard.fixed', 'Fix')]])}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {numF(t('deckWizard.equity', 'Eigenkapital'), 'equity', '1000', '€')}
+            {numF(t('deckWizard.interestRate', 'Zins'), 'interestPct', '0.1', '%')}
+            {numF(t('deckWizard.termYears', 'Laufzeit'), 'termYears', '1', 'J')}
+            {numF(t('deckWizard.yieldLabel', 'Rendite'), 'yieldPct', '0.1', '%')}
+            {numF(t('deckWizard.rentGrowth', 'Mietsteig.'), 'rentGrowth', '0.1', '%')}
+            {numF(t('deckWizard.management', 'Verwaltung'), 'mgmtPct', '0.5', '%')}
+            {numF(t('deckWizard.appreciation', 'Wertsteig.'), 'appreciationPct', '0.1', '%')}
+            {value.res === 'de' && numF(t('deckWizard.deTax', 'DE-Steuer'), 'deTaxPct', '1', '%')}
+            {value.res === 'cy' && numF(t('deckWizard.cyStock', 'CY Bestand'), 'cyBI', '500', '€')}
+            {value.mode === 'tilg' && numF(t('deckWizard.amortization', 'Tilgung'), 'amortPct', '0.1', '%')}
+            {numF(t('deckWizard.discount', 'Rabatt'), 'discountPct', '0.5', '%')}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {value.letType === 'short' && tog('🏨 ' + t('deckWizard.hotelConceptToggle', 'Hotelkonzept'), 'hotelConcept')}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function Newsletter() {
@@ -71,6 +145,7 @@ export default function Newsletter() {
         units: p.units,
         bullets: p.bullets, ai_text: p.ai_text,
         master_deck_token: p.master_deck_token, calc_token: p.calc_token,
+        params: p.params ?? null,
       })),
       created_by: profile?.id ?? null,
       updated_at: new Date().toISOString(),
@@ -140,11 +215,13 @@ export default function Newsletter() {
         project: p.project_name, unit: u.unit_number,
         bedrooms: u.bedrooms, size_sqm: u.size_sqm, price_net: u.price_net,
         params: {
-          ...DEFAULT_PARAMS,
+          ...(p.params ?? DEFAULT_PARAMS),
           dealType: 'single' as const,
           priceNet: u.price_net ?? 0,
           bedrooms: u.bedrooms,
           furnCost: u.furnCost, furnFree: u.furnFree,
+          // Hotelkonzept nur bei Kurzzeitvermietung zulassen
+          hotelConcept: (p.params ?? DEFAULT_PARAMS).letType === 'short' ? (p.params ?? DEFAULT_PARAMS).hotelConcept : false,
           month: new Date().getMonth() + 1, year: new Date().getFullYear(),
         },
       }))
@@ -290,6 +367,10 @@ export default function Newsletter() {
                     <textarea value={p.ai_text} onChange={e => updateProp(i, { ai_text: e.target.value })} rows={5} className={input} />
                   </div>
                 )}
+
+                {/* Rechner-Parameter — wie im Angebots-Wizard, gilt für die Berechnung unten */}
+                <CalcParamsPanel value={p.params ?? DEFAULT_PARAMS}
+                  onChange={np => updateProp(i, { params: np, calc_token: null })} />
 
                 {/* Berechnung + Master-Deck */}
                 <div className="flex flex-wrap items-center gap-2 pt-1">

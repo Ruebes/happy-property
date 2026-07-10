@@ -2609,7 +2609,9 @@
       "title": "Newsletter (individuell)",
       "outro": "Optionaler Zusatz nach den Objekten",
       "outroPh": "z. B. eine persönliche Anmerkung — kann auch leer bleiben",
-      "outroHint": "Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen\"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven\"."
+      "outroHint": "Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen\"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven\".",
+      "calcParams": "Rechner-Parameter",
+      "calcSummary": "EK {{ek}} € · Zins {{zins}} % · Rendite {{rend}} % · Wertsteig. {{wert}} %"
     }
   },
   "docs": {
