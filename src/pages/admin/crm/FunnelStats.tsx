@@ -11,6 +11,10 @@ import { loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, type FunnelConfig } from '../.
 interface FunnelStatsData {
   sessions: number
   bookings: number
+  // Direkteinstiege (Newsletter-Button ?direkt=1): überspringen Fragebogen +
+  // Kontakt und laufen deshalb NICHT im Schritt-Trichter mit, sondern separat.
+  direct_sessions?: number
+  direct_bookings?: number
   steps: Record<string, number>
   answers: Record<string, Array<{ answer: string; n: number }>>
   sources: Array<{ source: string; sessions: number; leads: number; bookings: number }>
@@ -173,7 +177,7 @@ export default function FunnelStats() {
           <div className="flex justify-center py-16">
             <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
           </div>
-        ) : !stats || stats.sessions === 0 ? (
+        ) : !stats || (stats.sessions === 0 && (stats.direct_sessions ?? 0) === 0) ? (
           <p className="text-gray-400 text-center py-16">{t('crm.funnel.noData', 'Keine Funnel-Besuche in diesem Zeitraum.')}</p>
         ) : (
           <>
@@ -187,6 +191,17 @@ export default function FunnelStats() {
               <KpiCard label={t('crm.funnel.kpi.leadToBooking', 'Lead → Buchung')} value={pct(bookings, leads)}
                 sub={t('crm.funnel.kpi.leadToBookingSub', 'Leads, die auch buchen') as string} />
             </div>
+
+            {/* Direkteinstiege (Newsletter-Button): eigener Block, damit sie den
+                klassischen Trichter oben nicht verfälschen */}
+            {(stats.direct_sessions ?? 0) > 0 && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+                <KpiCard label={t('crm.funnel.kpi.directSessions', 'Direktlink-Besuche (Newsletter)')} value={String(stats.direct_sessions ?? 0)}
+                  sub={t('crm.funnel.kpi.directSessionsSub', 'ohne Fragebogen, direkt zum Kalender') as string} />
+                <KpiCard label={t('crm.funnel.kpi.directBookings', 'Direktlink-Buchungen')} value={String(stats.direct_bookings ?? 0)}
+                  sub={t('crm.funnel.kpi.ofDirect', '{{p}} der Direktlink-Besuche', { p: pct(stats.direct_bookings ?? 0, stats.direct_sessions ?? 0) }) as string} accent />
+              </div>
+            )}
 
             {/* Trichter */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">

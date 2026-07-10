@@ -246,11 +246,11 @@ Deno.serve(async (req) => {
     if (body.action === 'book') {
       if (!body.slot_start_iso || !body.lead_id) return json({ error: 'Pflichtfelder fehlen' }, 400)
       const start = new Date(body.slot_start_iso)
-      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' }, 409)
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
       const end = new Date(start.getTime() + SLOT_MIN * 60000)
       // Konflikt-Check direkt vor der Buchung
       const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
-      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' }, 409)
+      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
       const leadId = body.lead_id
@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
       const email = ((leadRow as { email?: string }).email ?? '').trim().toLowerCase()
 
       // Erstkontakt-Fallback stornieren — der Kunde HAT ja jetzt einen Termin
-      try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending') } catch { /* egal */ }
+      try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending').in('event_type', ['erstkontakt', 'no_show', 'immobilienauswahl', 'newsletter', 'bot_nudge', 'deck_viewed_followup']) } catch { /* egal */ }
 
       // Pipeline: Deal auf „Termin gebucht" (bestehenden updaten, sonst anlegen) —
       // gleiche Semantik wie calendly-webhook.
@@ -269,7 +269,7 @@ Deno.serve(async (req) => {
       const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
       if (exDeals?.length) {
         dealId = (exDeals[0] as { id: string }).id
-        await admin.from('deals').update({ phase: 'termin_gebucht' }).eq('id', dealId)
+        await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null }).eq('id', dealId)
       } else {
         const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht' }).select('id').single()
         dealId = (nd as { id: string } | null)?.id ?? null
@@ -345,7 +345,7 @@ Deno.serve(async (req) => {
           past: isPast,
         })
       }
-      if (isPast) return json({ error: 'past' }, 409)
+      if (isPast) return json({ error: 'past' })
 
       const leadName = `${a.leads?.first_name ?? ''} ${a.leads?.last_name ?? ''}`.trim() || 'Kunde'
       const fmtDe = (iso: string) => new Date(iso).toLocaleString('de-DE', { timeZone: 'Europe/Berlin', weekday: 'long', day: '2-digit', month: 'long', hour: '2-digit', minute: '2-digit' }) + ' Uhr (DE)'
@@ -392,14 +392,14 @@ Deno.serve(async (req) => {
       // manage_reschedule
       if (!body.slot_start_iso) return json({ error: 'slot_start_iso fehlt' }, 400)
       const start = new Date(body.slot_start_iso)
-      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' }, 409)
+      if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
       const end = new Date(start.getTime() + SLOT_MIN * 60000)
       // Eigenen alten Termin nicht als Konflikt werten (CRM-Quelle filtern; Google-freeBusy
       // enthält ihn nur, wenn der neue Slot den alten überlappt — dann greift der Filter unten)
       const oldStartMs = new Date(a.start_time).getTime()
       const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
         .filter(b => b.start !== oldStartMs)
-      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' }, 409)
+      if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const oldStart = a.start_time
       await admin.from('crm_appointments').update({ start_time: start.toISOString(), end_time: end.toISOString() }).eq('id', a.id)

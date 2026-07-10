@@ -10,14 +10,20 @@ language sql
 stable
 as $$
 with sess as (
-  select id, utm, completed_at
-  from public.funnel_sessions
-  where started_at >= p_from and started_at < p_to
+  select fs.id, fs.utm, fs.completed_at,
+         exists (
+           select 1 from public.funnel_events e
+           where e.session_id = fs.id and e.question_key = 'direct_entry'
+         ) as is_direct
+  from public.funnel_sessions fs
+  where fs.started_at >= p_from and fs.started_at < p_to
 ),
+-- Trichter/Antworten NUR aus klassischen Sessions: Direkteinstiege (Newsletter,
+-- ?direkt=1) ueberspringen Fragebogen + Kontakt und wuerden die Schritte verzerren.
 ev as (
   select e.session_id, e.question_key, e.answer
   from public.funnel_events e
-  join sess s on s.id = e.session_id
+  join sess s on s.id = e.session_id and not s.is_direct
 ),
 step_counts as (
   select question_key, count(distinct session_id) as n
@@ -36,7 +42,7 @@ src as (
     coalesce(nullif(s.utm->>'utm_source',''), 'direkt') as source,
     count(*) as sessions,
     count(*) filter (where exists (
-      select 1 from ev e where e.session_id = s.id and e.question_key = 'contact_submitted'
+      select 1 from public.funnel_events e where e.session_id = s.id and e.question_key = 'contact_submitted'
     )) as leads,
     count(s.completed_at) as bookings
   from sess s
@@ -44,8 +50,10 @@ src as (
   order by 2 desc
 )
 select jsonb_build_object(
-  'sessions', (select count(*) from sess),
-  'bookings', (select count(*) from sess where completed_at is not null),
+  'sessions', (select count(*) from sess where not is_direct),
+  'bookings', (select count(*) from sess where completed_at is not null and not is_direct),
+  'direct_sessions', (select count(*) from sess where is_direct),
+  'direct_bookings', (select count(*) from sess where completed_at is not null and is_direct),
   'steps',   coalesce((select jsonb_object_agg(question_key, n) from step_counts), '{}'::jsonb),
   'answers', coalesce((select jsonb_object_agg(question_key, arr) from (
                 select question_key,

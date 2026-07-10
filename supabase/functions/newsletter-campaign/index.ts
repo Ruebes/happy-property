@@ -69,7 +69,7 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 // Mail wie Svens normale Mails: schlichter Text-Look, keine Marketing-Optik
 function buildEmailHtml(c: {
   intro_text: string; outro_text: string; properties: CampaignProperty[]
-}, firstName: string, deckTokens: Record<string, string>): string {
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean }): string {
   const parts: string[] = []
   parts.push(`<p>Hallo ${esc(firstName)},</p>`)
   parts.push(`<p style="white-space:pre-wrap">${esc(c.intro_text.trim())}</p>`)
@@ -84,8 +84,14 @@ function buildEmailHtml(c: {
   // Fester Abschluss (immer gleich, Sven 2026-07-10): Einladung zum Gespräch +
   // Termin-Button DIREKT in den Kalender (Funnel-Direkteinstieg über den Deck-Token
   // des Empfängers — kein Fragebogen, kein Kontaktformular) + Verabschiedung.
+  // UTM: Newsletter-Klicks in der Funnel-Statistik als Kampagnen-Traffic ausweisen.
+  // Testmails verlinken OHNE Direkteinstieg (Master-Decks haben keinen Lead —
+  // der Direkt-Link würde im Test nur auf den normalen Funnel zurückfallen).
+  const utmQs = `utm_source=newsletter&utm_medium=email${opts?.campaignId ? `&utm_campaign=${opts.campaignId}` : ''}`
   const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
-  const terminUrl = firstTok ? `${SITE}/termin?direkt=1&d=${firstTok}` : `${SITE}/termin`
+  const terminUrl = opts?.directBooking !== false && firstTok
+    ? `${SITE}/termin?direkt=1&d=${firstTok}&${utmQs}`
+    : `${SITE}/termin?${utmQs}`
   parts.push(`<p style="margin-top:18px">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</p>`)
   parts.push(`<p style="margin:16px 0"><a href="${terminUrl}" style="background:#ff795d;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 22px;border-radius:10px;display:inline-block;white-space:nowrap">Termin aussuchen &rarr;</a></p>`)
   parts.push(`<p style="margin-top:18px">Liebe Grüße<br>Sven</p>`)
@@ -159,7 +165,7 @@ Deno.serve(async (req: Request) => {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
-      const html = buildEmailHtml(camp, 'Sven', deckTokens)
+      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false })
       const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${camp.subject}`, html } })
       if (se) return json({ error: `Testversand: ${se.message}` }, 502)
       return json({ ok: true })
@@ -215,7 +221,7 @@ Deno.serve(async (req: Request) => {
                 console.error(`[newsletter] ${lead.id}: unvollständige Decks — Empfänger übersprungen`)
                 continue
               }
-              const html = buildEmailHtml(camp, first, deckTokens)
+              const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true })
               const subject = String(camp.subject).split('{{vorname}}').join(first)
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,

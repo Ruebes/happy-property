@@ -72,15 +72,24 @@ export default function Funnel() {
 
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin', [])
 
-  const track = useCallback(async (step: number, key: string, answer?: string) => {
-    try {
-      const { data } = await supabase.functions.invoke('funnel-api', { body: {
-        action: 'track', session_id: sessionRef.current, step, question_key: key, answer,
-        utm: sessionRef.current ? undefined : utm, referrer: sessionRef.current ? undefined : document.referrer?.slice(0, 300),
-      } })
-      const sid = (data as { session_id?: string } | null)?.session_id
-      if (sid) sessionRef.current = sid
-    } catch { /* Tracking darf den Funnel nie blockieren */ }
+  // Track-Aufrufe strikt NACHEINANDER ausführen: Feuern zwei Events, bevor die
+  // erste Antwort (mit session_id) zurück ist, legt funnel-api sonst ZWEI Sessions
+  // an (Karteileiche verzerrt die Statistik) — im Direkteinstieg laufen 'view'
+  // und 'direct_entry' sonst parallel.
+  const trackChain = useRef<Promise<void>>(Promise.resolve())
+  const track = useCallback((step: number, key: string, answer?: string): Promise<void> => {
+    const next = trackChain.current.then(async () => {
+      try {
+        const { data } = await supabase.functions.invoke('funnel-api', { body: {
+          action: 'track', session_id: sessionRef.current, step, question_key: key, answer,
+          utm: sessionRef.current ? undefined : utm, referrer: sessionRef.current ? undefined : document.referrer?.slice(0, 300),
+        } })
+        const sid = (data as { session_id?: string } | null)?.session_id
+        if (sid) sessionRef.current = sid
+      } catch { /* Tracking darf den Funnel nie blockieren */ }
+    })
+    trackChain.current = next
+    return next
   }, [utm])
 
   useEffect(() => { void track(0, 'view') }, [track])

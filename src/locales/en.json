@@ -1225,7 +1225,11 @@
         "bookings": "Bookings",
         "leadToBooking": "Lead → Booking",
         "leadToBookingSub": "Leads who also book",
-        "ofViews": "{{p}} of page views"
+        "ofViews": "{{p}} of page views",
+        "directSessions": "Direct-link visits (newsletter)",
+        "directSessionsSub": "no questionnaire, straight to the calendar",
+        "directBookings": "Direct-link bookings",
+        "ofDirect": "{{p}} of direct-link visits"
       },
       "step": {
         "view": "Page viewed",

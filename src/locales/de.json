@@ -1225,7 +1225,11 @@
         "bookings": "Termin-Buchungen",
         "leadToBooking": "Lead → Buchung",
         "leadToBookingSub": "Leads, die auch buchen",
-        "ofViews": "{{p}} der Aufrufe"
+        "ofViews": "{{p}} der Aufrufe",
+        "directSessions": "Direktlink-Besuche (Newsletter)",
+        "directSessionsSub": "ohne Fragebogen, direkt zum Kalender",
+        "directBookings": "Direktlink-Buchungen",
+        "ofDirect": "{{p}} der Direktlink-Besuche"
       },
       "step": {
         "view": "Seite aufgerufen",
