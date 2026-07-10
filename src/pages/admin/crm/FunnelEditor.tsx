@@ -144,6 +144,11 @@ export default function FunnelEditor() {
   const save = async () => {
     if (!cfg) return
     const invalid = (qs: FunnelConfig['questions']) => qs.find(q => !q.title.trim() || q.options.length < 2 || q.options.some(o => !o.label.trim()))
+    if (cfg.questions.length === 0) {
+      // Sonst wuerde normalizeFunnelConfig still die Default-Fragen reanimieren.
+      showToast(t('crm.funnelEditor.mainEmpty', 'Der Standard-Fragebogen braucht mindestens 1 Frage. Für „ohne Fragebogen" nutze den Link „Nur Termin" unten.') as string)
+      return
+    }
     const badMain = invalid(cfg.questions)
     const badQn = cfg.questionnaires.find(x => x.questions.length === 0 || invalid(x.questions))
     if (badMain || badQn) {

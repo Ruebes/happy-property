@@ -15,6 +15,7 @@ interface FunnelStatsData {
   // Kontakt und laufen deshalb NICHT im Schritt-Trichter mit, sondern separat.
   direct_sessions?: number
   direct_bookings?: number
+  variants?: Array<{ variant: string; sessions: number; leads: number; bookings: number }>
   steps: Record<string, number>
   answers: Record<string, Array<{ answer: string; n: number }>>
   sources: Array<{ source: string; sessions: number; leads: number; bookings: number }>
@@ -200,6 +201,39 @@ export default function FunnelStats() {
                   sub={t('crm.funnel.kpi.directSessionsSub', 'ohne Fragebogen, direkt zum Kalender') as string} />
                 <KpiCard label={t('crm.funnel.kpi.directBookings', 'Direktlink-Buchungen')} value={String(stats.direct_bookings ?? 0)}
                   sub={t('crm.funnel.kpi.ofDirect', '{{p}} der Direktlink-Besuche', { p: pct(stats.direct_bookings ?? 0, stats.direct_sessions ?? 0) }) as string} accent />
+              </div>
+            )}
+
+            {/* Fragebogen-Varianten (?f=...): eigener Split — laufen nicht im Standard-Trichter mit */}
+            {(stats.variants?.length ?? 0) > 0 && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="px-5 py-3 border-b border-gray-100">
+                  <h2 className="text-sm font-semibold text-gray-700">{t('crm.funnel.variants.title', 'Fragebogen-Varianten')}</h2>
+                </div>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="px-5 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.funnel.variants.name', 'Variante')}</th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.funnel.src.sessions', 'Besuche')}</th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.funnel.src.leads', 'Leads')}</th>
+                      <th className="px-5 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.funnel.src.bookings', 'Buchungen')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stats.variants ?? []).map(v => (
+                      <tr key={v.variant} className="border-t border-gray-50">
+                        <td className="px-5 py-2.5 font-medium text-gray-800">
+                          {v.variant === 'none'
+                            ? t('crm.funnel.variants.none', 'Nur Termin (ohne Fragebogen)')
+                            : (cfg.questionnaires.find(x => x.slug === v.variant)?.name ?? v.variant)}
+                        </td>
+                        <td className="px-5 py-2.5 text-right text-gray-700">{v.sessions}</td>
+                        <td className="px-5 py-2.5 text-right text-gray-700">{v.leads}</td>
+                        <td className="px-5 py-2.5 text-right font-medium" style={{ color: v.bookings > 0 ? '#ff795d' : '#9ca3af' }}>{v.bookings}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 

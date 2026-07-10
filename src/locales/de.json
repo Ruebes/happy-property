@@ -1263,6 +1263,11 @@
         "leads": "Leads",
         "bookings": "Buchungen",
         "conv": "Conversion"
+      },
+      "variants": {
+        "title": "Fragebogen-Varianten",
+        "name": "Variante",
+        "none": "Nur Termin (ohne Fragebogen)"
       }
     },
     "newLead": "+ Neuer Lead",
@@ -2596,7 +2601,8 @@
       "linkNone": "Nur Termin (ohne Fragebogen)",
       "copy": "Kopieren",
       "linkCopied": "✓ Link kopiert",
-      "linksHint": "Der Newsletter hängt an seinen Termin-Button automatisch den persönlichen Direkteinstieg an (ohne Fragebogen UND ohne Kontaktformular) — dafür musst du hier nichts tun."
+      "linksHint": "Der Newsletter hängt an seinen Termin-Button automatisch den persönlichen Direkteinstieg an (ohne Fragebogen UND ohne Kontaktformular) — dafür musst du hier nichts tun.",
+      "mainEmpty": "Der Standard-Fragebogen braucht mindestens 1 Frage. Für „ohne Fragebogen\" nutze den Link „Nur Termin\" unten."
     },
     "newsletter": {
       "title": "Newsletter (individuell)",

@@ -1263,6 +1263,11 @@
         "leads": "Leads",
         "bookings": "Bookings",
         "conv": "Conversion"
+      },
+      "variants": {
+        "title": "Questionnaire variants",
+        "name": "Variant",
+        "none": "Appointment only (no questionnaire)"
       }
     },
     "newLead": "+ New Lead",
@@ -2596,7 +2601,8 @@
       "linkNone": "Appointment only (no questionnaire)",
       "copy": "Copy",
       "linkCopied": "✓ Link copied",
-      "linksHint": "The newsletter automatically appends the personal direct entry to its booking button (no questionnaire AND no contact form) — nothing to do here."
+      "linksHint": "The newsletter automatically appends the personal direct entry to its booking button (no questionnaire AND no contact form) — nothing to do here.",
+      "mainEmpty": "The default questionnaire needs at least 1 question. For \"no questionnaire\" use the \"Appointment only\" link below."
     },
     "newsletter": {
       "title": "Newsletter (individual)",
