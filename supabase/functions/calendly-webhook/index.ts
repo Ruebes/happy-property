@@ -192,6 +192,19 @@ Deno.serve(async (req) => {
     // KEIN crm_appointments-Eintrag — Kalender wird extern (Google) synchronisiert,
     // Doppeleinträge würden entstehen. Nur Aktivität loggen.
 
+    // Offene Termin-Bot-Gespräche schließen: Der Kunde hat (extern via Calendly)
+    // gebucht — sonst blockiert das verwaiste Gespräch spätere Bot-Auslöser
+    // (z.B. Deck-Ansicht-Follow-up prüft auf aktive Konversation).
+    try {
+      const { error: convErr } = await supabase.from('booking_conversations')
+        .update({ state: 'booked', last_message: 'Extern gebucht (Calendly) — Gespräch automatisch geschlossen.' })
+        .eq('lead_id', leadId)
+        .not('state', 'in', '(booked,handoff,expired)')
+      if (convErr) console.warn('[calendly-webhook] booking_conversations schließen fehlgeschlagen:', convErr.message)
+    } catch (e) {
+      console.warn('[calendly-webhook] booking_conversations schließen fehlgeschlagen:', e)
+    }
+
     // Aktivität loggen
     await supabase.from('activities').insert({
       lead_id:      leadId,

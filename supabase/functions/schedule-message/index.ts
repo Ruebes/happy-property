@@ -64,6 +64,21 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ ok: true, skipped: 'opted_out', scheduled: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     }
 
+    // Termin gebucht → offene Termin-Bot-Gespräche schließen (egal über welchen Weg
+    // gebucht wurde: Funnel, Kalender, manuelle Phase). Sonst blockiert das verwaiste
+    // Gespräch spätere Bot-Auslöser (z.B. das Deck-Ansicht-Follow-up in track-engagement).
+    if (event_type === 'termin_gebucht') {
+      try {
+        const { error: convErr } = await supabase.from('booking_conversations')
+          .update({ state: 'booked', last_message: 'Termin gebucht — Gespräch automatisch geschlossen.' })
+          .eq('lead_id', lead_id)
+          .not('state', 'in', '(booked,handoff,expired)')
+        if (convErr) console.warn('[schedule-message] booking_conversations schließen fehlgeschlagen:', convErr.message)
+      } catch (e) {
+        console.warn('[schedule-message] booking_conversations schließen fehlgeschlagen:', e)
+      }
+    }
+
     // 2. Aktive Regeln
     let rulesQuery = supabase.from('automation_rules').select('*').eq('event_type', event_type).eq('is_active', true)
     if (only_timing) rulesQuery = rulesQuery.eq('timing_type', only_timing)
