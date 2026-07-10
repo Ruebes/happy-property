@@ -2629,7 +2629,8 @@
       "colName": "Recipient",
       "colDeck": "Deck opened",
       "colViews": "Views",
-      "colLast": "Last"
+      "colLast": "Last",
+      "noFacts": "No project facts — run \"Load from Drive\" in the project first."
     }
   },
   "docs": {

@@ -6,7 +6,7 @@ import { useAuth } from '../../../lib/auth'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import { NumberStepper } from '../../../components/NumberStepper'
 import { DEFAULT_PARAMS, type CalcParams } from '../../../lib/rechner'
-import type { CrmProjectUnit } from '../../../lib/crmTypes'
+import type { CrmProjectUnit, DeckAssetsCache } from '../../../lib/crmTypes'
 
 // ── Newsletter-Kampagne (individuell, KEINE Massenmail) ──────────────────────
 // Jeder Empfänger (Leads ohne aktiven Pipeline-Deal) bekommt eine persönliche
@@ -310,11 +310,28 @@ export default function Newsletter() {
     const p = props[i]
     setBusyKey(`deck${i}`)
     try {
+      // Projekt-Fakten + Bilder mitgeben (wie im Angebots-Wizard) — generate-deck
+      // braucht beides und antwortet sonst mit "facts fehlt".
+      const { data: pr, error: pe } = await supabase.from('crm_projects')
+        .select('deck_assets, latitude, longitude').eq('id', p.project_id).single()
+      if (pe) throw new Error(pe.message)
+      const prj = pr as { deck_assets: DeckAssetsCache | null; latitude: number | null; longitude: number | null }
+      const a = prj.deck_assets ?? ({} as DeckAssetsCache)
+      if (!a.facts) throw new Error(t('crm.newsletter.noFacts', 'Keine Projekt-Fakten — erst „Aus Drive laden" im Projekt ausführen.') as string)
+      const unitFacts = p.units.map(u => `\n\n=== WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche.`).join('')
+      const fps = (a.floorplans ?? []).map(f => f.url).filter(Boolean)
+      const images = {
+        renders: a.renders ?? [], gallery: a.gallery ?? [],
+        floorplan: fps[0], floorplans: fps,
+        map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined,
+        mapLat: prj.latitude ?? undefined, mapLng: prj.longitude ?? undefined,
+      }
       const { data, error } = await supabase.functions.invoke('generate-deck', { body: {
         project_id: p.project_id,
         units: p.units.map(u => ({ unit_number: u.unit_number, price_net: u.price_net ?? undefined })),
         recipient_name: '{{vorname}}',
         angle: 'investment',
+        facts: a.facts + unitFacts, images,
         briefing: `${p.bullets}\n\nWICHTIG: Dieses Exposé geht an viele Empfänger. Verwende im Anschreiben wörtlich die Anrede "Hallo {{vorname}}," und den Platzhalter {{vorname}} überall dort, wo der Vorname stehen soll. Keinen anderen Namen erfinden.`,
         created_by: profile?.id ?? null,
       } })

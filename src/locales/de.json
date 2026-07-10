@@ -2629,7 +2629,8 @@
       "colName": "Empfänger",
       "colDeck": "Deck geöffnet",
       "colViews": "Aufrufe",
-      "colLast": "Zuletzt"
+      "colLast": "Zuletzt",
+      "noFacts": "Keine Projekt-Fakten — erst „Aus Drive laden\" im Projekt ausführen."
     }
   },
   "docs": {
