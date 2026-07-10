@@ -135,6 +135,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics'   },
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
     { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
+    { to: '/admin/crm/newsletter',    key: 'crm.nav.newsletter'   },
   ]
 
   // Rolle 'funnel' (Mitarbeiter, z.B. Giona): sieht NUR den Termin-Funnel —

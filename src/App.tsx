@@ -53,6 +53,7 @@ const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
+const Newsletter            = lazy(() => import('./pages/admin/crm/Newsletter'))
 
 // Verwalter-Seiten
 const VerwalterBookings = lazy(() => import('./pages/verwaltung/Bookings'))
@@ -120,6 +121,7 @@ export default function App() {
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
+              <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
             </Route>
 
             {/* ── Admin + Funnel-Redaktion (Mitarbeiter-Rolle 'funnel') ── */}
