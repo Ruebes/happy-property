@@ -2582,7 +2582,21 @@
       "useEmoji": "Emoji statt Bild",
       "socials": "Kanal-Buttons (Icon · Name · Link)",
       "socialLabel": "Name",
-      "addSocial": "+ Kanal hinzufügen"
+      "addSocial": "+ Kanal hinzufügen",
+      "invalidQn": "Fragebogen „{{name}}\": jede Frage braucht Titel + mindestens 2 ausgefüllte Antworten.",
+      "qnNamePrompt": "Name des neuen Fragebogens (z. B. „Ärzte-Kampagne\"):",
+      "qnRenamePrompt": "Neuer Name:",
+      "qnDeleteConfirm": "Diesen Fragebogen löschen? Links darauf zeigen danach den Standard-Fragebogen.",
+      "qnDefault": "Standard",
+      "qnAdd": "+ Neuer Fragebogen",
+      "qnRename": "Umbenennen",
+      "qnDelete": "Fragebogen löschen",
+      "links": "Links zum Teilen",
+      "linkDefault": "Standard-Fragebogen",
+      "linkNone": "Nur Termin (ohne Fragebogen)",
+      "copy": "Kopieren",
+      "linkCopied": "✓ Link kopiert",
+      "linksHint": "Der Newsletter hängt an seinen Termin-Button automatisch den persönlichen Direkteinstieg an (ohne Fragebogen UND ohne Kontaktformular) — dafür musst du hier nichts tun."
     },
     "newsletter": {
       "title": "Newsletter (individuell)",

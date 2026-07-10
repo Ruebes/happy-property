@@ -35,23 +35,37 @@ function useUtm(): Record<string, string> {
   }, [])
 }
 
-// Direkteinstieg (?direkt=1&d=<deck-token>): bekannter Kontakt aus Newsletter/Mail —
-// Fragebogen + Kontaktformular überspringen, direkt Terminart → Kalender.
-function useDirectEntry(): { wanted: boolean; deckToken: string } {
+// Einstiegs-Parameter:
+//   ?direkt=1&d=<deck-token> → bekannter Kontakt (Newsletter/Mail): Fragebogen +
+//     Kontaktformular überspringen, direkt Terminart → Kalender.
+//   ?f=<slug> → Fragebogen-Variante aus dem Editor; ?f=none → GAR KEIN Fragebogen
+//     (Welcome → Kontakt → Termin). Unbekannter Slug fällt auf den Standard zurück.
+function useEntryParams(): { wanted: boolean; deckToken: string; variant: string } {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
     const deckToken = (p.get('d') ?? '').trim()
-    return { wanted: (p.get('direkt') === '1' || p.get('direct') === '1') && !!deckToken, deckToken }
+    return {
+      wanted: (p.get('direkt') === '1' || p.get('direct') === '1') && !!deckToken,
+      deckToken,
+      variant: (p.get('f') ?? '').trim().slice(0, 60),
+    }
   }, [])
 }
 
 export default function Funnel() {
   const { t } = useTranslation()
-  const utm = useUtm()
-  const directEntry = useDirectEntry()
+  const utmBase = useUtm()
+  const directEntry = useEntryParams()
   const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
   useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
-  const QUESTIONS = cfg.questions
+  // Fragebogen-Auswahl: 'none' = keine Fragen, sonst Variante per Slug, Fallback Standard
+  const QUESTIONS = useMemo(() => {
+    if (directEntry.variant === 'none') return []
+    if (directEntry.variant) return cfg.questionnaires.find(x => x.slug === directEntry.variant)?.questions ?? cfg.questions
+    return cfg.questions
+  }, [cfg, directEntry.variant])
+  // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
+  const utm = useMemo(() => directEntry.variant ? { ...utmBase, funnel_variant: directEntry.variant } : utmBase, [utmBase, directEntry.variant])
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
   const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
   const [phase, setPhase] = useState<Phase>(directEntry.wanted ? 'meeting_type' : 'welcome')
@@ -204,7 +218,10 @@ export default function Funnel() {
   const back = () => {
     if (phase === 'questions' && qIdx > 0) setQIdx(qIdx - 1)
     else if (phase === 'questions') setPhase('welcome')
-    else if (phase === 'contact') { setPhase('questions'); setQIdx(QUESTIONS.length - 1) }
+    else if (phase === 'contact') {
+      if (QUESTIONS.length) { setPhase('questions'); setQIdx(QUESTIONS.length - 1) }
+      else setPhase('welcome')
+    }
     else if (phase === 'meeting_type') { if (!direct) setPhase('contact') }
     else if (phase === 'slot') setPhase('meeting_type')
   }
@@ -267,7 +284,11 @@ export default function Funnel() {
               <p className="mt-4 text-gray-600 text-[15px] md:text-base max-w-xl mx-auto">
                 {cfg.welcome.subtitle}
               </p>
-              <button onClick={() => { setPhase('questions'); void track(0, 'start') }}
+              <button onClick={() => {
+                void track(0, 'start')
+                if (QUESTIONS.length) setPhase('questions')
+                else { setPhase('contact'); void track(1, 'contact_view') }
+              }}
                 className="mt-8 px-10 py-4 rounded-full text-white font-semibold text-lg shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition"
                 style={{ background: CORAL }}>
                 {cfg.welcome.cta}

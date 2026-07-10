@@ -24,9 +24,14 @@ export interface FunnelQuestion {
 
 export interface FunnelSocial { icon: string; label: string; url: string }
 
+// Zusätzlicher Fragebogen (Variante): erreichbar über /termin?f=<slug>.
+// Reservierter Slug 'none' = ganz ohne Fragebogen (nur Kontakt + Termin).
+export interface FunnelQuestionnaire { slug: string; name: string; questions: FunnelQuestion[] }
+
 export interface FunnelConfig {
   welcome: { title: string; subtitle: string; cta: string; footnote: string; hero_url: string }
   questions: FunnelQuestion[]
+  questionnaires: FunnelQuestionnaire[]
   contact: { title: string; subtitle: string; cta: string; privacy: string }
   done: {
     emoji: string          // Symbol oben (wird von image_url ersetzt, falls gesetzt)
@@ -45,6 +50,7 @@ export const FUNNEL_ICONS = ['steuern', 'kapital', 'auswandern', 'langfristig', 
 export const FUNNEL_HERO_DEFAULT = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=1100&height=620&resize=cover&quality=78'
 
 export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
+  questionnaires: [],
   welcome: {
     title: 'Dein kostenloses Beratungsgespräch mit Sven',
     subtitle: 'Beantworte 6 kurze Fragen und such dir direkt deinen Wunschtermin aus — per Zoom oder WhatsApp-Call. Dauer: 1 Minute.',
@@ -137,12 +143,21 @@ export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
 export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
   const r = (raw ?? {}) as Partial<FunnelConfig>
   const d = DEFAULT_FUNNEL_CONFIG
-  const questions = Array.isArray(r.questions) && r.questions.length
-    ? r.questions
+  const cleanQuestions = (qs: unknown): FunnelQuestion[] => Array.isArray(qs)
+    ? (qs as FunnelQuestion[])
         .filter(q => q && typeof q.key === 'string' && typeof q.title === 'string' && Array.isArray(q.options))
         .map(q => ({ ...q, options: q.options.filter(o => o && typeof o.key === 'string' && typeof o.label === 'string') }))
         .filter(q => q.options.length >= 2)
-    : d.questions
+    : []
+  const questions = cleanQuestions(r.questions)
+  // Varianten-Fragebögen: leere Varianten (0 gültige Fragen) fliegen raus —
+  // ein Link darauf fällt dann im Funnel auf den Standard zurück.
+  const questionnaires = Array.isArray(r.questionnaires)
+    ? r.questionnaires
+        .filter(x => x && typeof x.slug === 'string' && x.slug.trim() && x.slug !== 'none' && typeof x.name === 'string')
+        .map(x => ({ slug: x.slug.trim(), name: x.name, questions: cleanQuestions(x.questions) }))
+        .filter(x => x.questions.length > 0)
+    : []
   const doneRaw = (r.done ?? {}) as Partial<FunnelConfig['done']>
   const socials = Array.isArray(doneRaw.socials)
     ? doneRaw.socials.filter(s => s && typeof s.label === 'string' && typeof s.url === 'string' && s.label.trim() && s.url.trim())
@@ -150,6 +165,7 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
   return {
     welcome: { ...d.welcome, ...(r.welcome ?? {}) },
     questions: questions.length ? questions : d.questions,
+    questionnaires,
     contact: { ...d.contact, ...(r.contact ?? {}) },
     done: { ...d.done, ...doneRaw, socials },
   }

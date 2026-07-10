@@ -130,10 +130,28 @@ export default function FunnelEditor() {
     setDirty(true)
   }, [])
 
+  // ── Fragebogen-Varianten: '' = Standard, sonst Slug aus cfg.questionnaires ──
+  // Alle Fragen-Operationen laufen über getQs/setQs und wirken damit auf den
+  // gerade aktiven Fragebogen.
+  const [activeQn, setActiveQn] = useState('')
+  const getQs = useCallback((c: FunnelConfig) =>
+    activeQn ? (c.questionnaires.find(x => x.slug === activeQn)?.questions ?? []) : c.questions, [activeQn])
+  const setQs = useCallback((c: FunnelConfig, qs: FunnelConfig['questions']): FunnelConfig =>
+    activeQn
+      ? { ...c, questionnaires: c.questionnaires.map(x => x.slug === activeQn ? { ...x, questions: qs } : x) }
+      : { ...c, questions: qs }, [activeQn])
+
   const save = async () => {
     if (!cfg) return
-    const bad = cfg.questions.find(q => !q.title.trim() || q.options.length < 2 || q.options.some(o => !o.label.trim()))
-    if (bad) { showToast(t('crm.funnelEditor.invalid', 'Jede Frage braucht einen Titel und mindestens 2 ausgefüllte Antworten.')); return }
+    const invalid = (qs: FunnelConfig['questions']) => qs.find(q => !q.title.trim() || q.options.length < 2 || q.options.some(o => !o.label.trim()))
+    const badMain = invalid(cfg.questions)
+    const badQn = cfg.questionnaires.find(x => x.questions.length === 0 || invalid(x.questions))
+    if (badMain || badQn) {
+      showToast(badQn
+        ? (t('crm.funnelEditor.invalidQn', 'Fragebogen „{{name}}": jede Frage braucht Titel + mindestens 2 ausgefüllte Antworten.', { name: badQn.name }) as string)
+        : (t('crm.funnelEditor.invalid', 'Jede Frage braucht einen Titel und mindestens 2 ausgefüllte Antworten.') as string))
+      return
+    }
     setSaving(true)
     try {
       const clean = normalizeFunnelConfig(cfg)
@@ -151,24 +169,50 @@ export default function FunnelEditor() {
   }
 
   const moveQuestion = (idx: number, dir: -1 | 1) => update(c => {
-    const qs = [...c.questions]
+    const qs = [...getQs(c)]
     const to = idx + dir
     if (to < 0 || to >= qs.length) return c
     ;[qs[idx], qs[to]] = [qs[to], qs[idx]]
-    return { ...c, questions: qs }
+    return setQs(c, qs)
   })
 
   const addQuestion = () => update(c => {
-    const taken = new Set(c.questions.map(q => q.key))
-    return {
-      ...c,
-      questions: [...c.questions, {
-        key: slugify(`frage ${c.questions.length + 1}`, taken),
-        title: '',
-        options: [{ key: 'a', label: '' }, { key: 'b', label: '' }],
-      }],
-    }
+    const qs = getQs(c)
+    const taken = new Set(qs.map(q => q.key))
+    return setQs(c, [...qs, {
+      key: slugify(`frage ${qs.length + 1}`, taken),
+      title: '',
+      options: [{ key: 'a', label: '' }, { key: 'b', label: '' }],
+    }])
   })
+
+  // Neue Variante startet als Kopie des Standards (und bleibt so auch beim
+  // Speichern erhalten — leere Varianten würden bei der Normalisierung entfernt).
+  const addQuestionnaire = () => {
+    if (!cfg) return
+    const name = (window.prompt(t('crm.funnelEditor.qnNamePrompt', 'Name des neuen Fragebogens (z. B. „Ärzte-Kampagne"):') as string) ?? '').trim()
+    if (!name) return
+    const taken = new Set(['none', ...cfg.questionnaires.map(x => x.slug)])
+    const slug = slugify(name, taken)
+    update(c => ({ ...c, questionnaires: [...c.questionnaires, { slug, name, questions: c.questions.map(q => ({ ...q, options: q.options.map(o => ({ ...o })) })) }] }))
+    setActiveQn(slug)
+  }
+  const renameQuestionnaire = () => {
+    if (!cfg || !activeQn) return
+    const cur = cfg.questionnaires.find(x => x.slug === activeQn)
+    const name = (window.prompt(t('crm.funnelEditor.qnRenamePrompt', 'Neuer Name:') as string, cur?.name ?? '') ?? '').trim()
+    if (!name) return
+    update(c => ({ ...c, questionnaires: c.questionnaires.map(x => x.slug === activeQn ? { ...x, name } : x) }))
+  }
+  const removeQuestionnaire = () => {
+    if (!activeQn) return
+    if (!confirm(t('crm.funnelEditor.qnDeleteConfirm', 'Diesen Fragebogen löschen? Links darauf zeigen danach den Standard-Fragebogen.') as string)) return
+    update(c => ({ ...c, questionnaires: c.questionnaires.filter(x => x.slug !== activeQn) }))
+    setActiveQn('')
+  }
+  const copyLink = (url: string) => {
+    void navigator.clipboard.writeText(url).then(() => showToast(t('crm.funnelEditor.linkCopied', '✓ Link kopiert') as string))
+  }
 
   const card = 'bg-white rounded-2xl shadow-sm border border-gray-100 p-5'
 
@@ -249,28 +293,56 @@ export default function FunnelEditor() {
               {t('crm.funnelEditor.addQuestion', '+ Frage hinzufügen')}
             </button>
           </div>
+
+          {/* Fragebogen-Auswahl: Standard + Varianten + Neu/Umbenennen/Löschen */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <button onClick={() => setActiveQn('')}
+              className="px-3 py-1.5 rounded-full text-xs font-semibold border-2 transition"
+              style={activeQn === '' ? { background: '#ff795d', color: '#fff', borderColor: '#ff795d' } : { background: '#fff', color: '#374151', borderColor: '#e5e7eb' }}>
+              {t('crm.funnelEditor.qnDefault', 'Standard')}
+            </button>
+            {cfg.questionnaires.map(x => (
+              <button key={x.slug} onClick={() => setActiveQn(x.slug)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold border-2 transition"
+                style={activeQn === x.slug ? { background: '#ff795d', color: '#fff', borderColor: '#ff795d' } : { background: '#fff', color: '#374151', borderColor: '#e5e7eb' }}>
+                {x.name}
+              </button>
+            ))}
+            <button onClick={addQuestionnaire}
+              className="px-3 py-1.5 rounded-full text-xs font-semibold border-2 border-dashed border-gray-300 text-gray-500 hover:border-gray-400 hover:text-gray-700 transition">
+              {t('crm.funnelEditor.qnAdd', '+ Neuer Fragebogen')}
+            </button>
+            {activeQn && (
+              <span className="flex items-center gap-1 ml-1">
+                <button onClick={renameQuestionnaire} title={t('crm.funnelEditor.qnRename', 'Umbenennen') as string}
+                  className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100">✏️</button>
+                <button onClick={removeQuestionnaire} title={t('crm.funnelEditor.qnDelete', 'Fragebogen löschen') as string}
+                  className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">🗑</button>
+              </span>
+            )}
+          </div>
           <div className="space-y-4">
-            {cfg.questions.map((q, qi) => (
+            {getQs(cfg).map((q, qi) => (
               <div key={q.key} className="border border-gray-200 rounded-xl p-4">
                 <div className="flex flex-wrap items-start gap-2">
                   <span className="mt-2 shrink-0 w-7 h-7 rounded-full text-white text-xs font-bold flex items-center justify-center" style={{ backgroundColor: '#ff795d' }}>{qi + 1}</span>
                   <div className="flex-1 min-w-[220px] space-y-2">
-                    <input value={q.title} onChange={e => update(c => { const qs = [...c.questions]; qs[qi] = { ...q, title: e.target.value }; return { ...c, questions: qs } })}
+                    <input value={q.title} onChange={e => update(c => { const qs = [...getQs(c)]; qs[qi] = { ...q, title: e.target.value }; return setQs(c, qs) })}
                       placeholder={t('crm.funnelEditor.questionTitle', 'Frage-Text')}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
-                    <input value={q.sub ?? ''} onChange={e => update(c => { const qs = [...c.questions]; qs[qi] = { ...q, sub: e.target.value || undefined }; return { ...c, questions: qs } })}
+                    <input value={q.sub ?? ''} onChange={e => update(c => { const qs = [...getQs(c)]; qs[qi] = { ...q, sub: e.target.value || undefined }; return setQs(c, qs) })}
                       placeholder={t('crm.funnelEditor.questionSub', 'Untertitel (optional)')}
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <label className="flex items-center gap-1.5 text-xs text-gray-600 mr-2 select-none">
                       <input type="checkbox" checked={!!q.tiles}
-                        onChange={e => update(c => { const qs = [...c.questions]; qs[qi] = { ...q, tiles: e.target.checked }; return { ...c, questions: qs } })} />
+                        onChange={e => update(c => { const qs = [...getQs(c)]; qs[qi] = { ...q, tiles: e.target.checked }; return setQs(c, qs) })} />
                       {t('crm.funnelEditor.tiles', 'Kacheln mit Bild')}
                     </label>
                     <button onClick={() => moveQuestion(qi, -1)} disabled={qi === 0} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↑</button>
-                    <button onClick={() => moveQuestion(qi, 1)} disabled={qi === cfg.questions.length - 1} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↓</button>
-                    <button onClick={() => { if (confirm(t('crm.funnelEditor.confirmDelete', 'Frage wirklich löschen?') as string)) update(c => ({ ...c, questions: c.questions.filter((_, i) => i !== qi) })) }}
+                    <button onClick={() => moveQuestion(qi, 1)} disabled={qi === getQs(cfg).length - 1} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↓</button>
+                    <button onClick={() => { if (confirm(t('crm.funnelEditor.confirmDelete', 'Frage wirklich löschen?') as string)) update(c => setQs(c, getQs(c).filter((_, i) => i !== qi))) }}
                       className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">🗑</button>
                   </div>
                 </div>
@@ -278,24 +350,24 @@ export default function FunnelEditor() {
                   {q.options.map((o, oi) => (
                     <OptionRow key={oi} opt={o} showVisual={!!q.tiles}
                       onChange={no => update(c => {
-                        const qs = [...c.questions]
+                        const qs = [...getQs(c)]
                         const os = [...q.options]; os[oi] = no
                         qs[qi] = { ...q, options: os }
-                        return { ...c, questions: qs }
+                        return setQs(c, qs)
                       })}
                       onRemove={() => update(c => {
-                        const qs = [...c.questions]
+                        const qs = [...getQs(c)]
                         qs[qi] = { ...q, options: q.options.filter((_, i) => i !== oi) }
-                        return { ...c, questions: qs }
+                        return setQs(c, qs)
                       })} />
                   ))}
                   <button onClick={() => update(c => {
-                    const qs = [...c.questions]
+                    const qs = [...getQs(c)]
                     const takenOpt = new Set(q.options.map(o => o.key))
                     let k = 'a'.charCodeAt(0)
                     while (takenOpt.has(String.fromCharCode(k))) k++
                     qs[qi] = { ...q, options: [...q.options, { key: String.fromCharCode(k), label: '' }] }
-                    return { ...c, questions: qs }
+                    return setQs(c, qs)
                   })}
                     className="text-xs font-medium text-gray-500 hover:text-gray-800 transition-colors">
                     {t('crm.funnelEditor.addOption', '+ Antwort hinzufügen')}
@@ -311,6 +383,28 @@ export default function FunnelEditor() {
             </span>
             {' '}{t('crm.funnelEditor.iconHint2', '— laden ohne Wartezeit. Eigene Bilder bitte klein halten (unter 300 KB).')}
           </p>
+
+          {/* Links je Fragebogen — inkl. „nur Termin" ganz ohne Fragen */}
+          <div className="mt-4 border-t border-gray-100 pt-4">
+            <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.funnelEditor.links', 'Links zum Teilen')}</p>
+            <div className="space-y-1.5">
+              {[
+                { label: t('crm.funnelEditor.linkDefault', 'Standard-Fragebogen') as string, url: 'https://portal.happy-property.com/termin' },
+                ...cfg.questionnaires.map(x => ({ label: x.name, url: `https://portal.happy-property.com/termin?f=${x.slug}` })),
+                { label: t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)') as string, url: 'https://portal.happy-property.com/termin?f=none' },
+              ].map(l => (
+                <div key={l.url} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="w-56 shrink-0 font-medium text-gray-600">{l.label}</span>
+                  <code className="px-2 py-1 rounded bg-gray-50 border border-gray-100 text-gray-500 break-all">{l.url}</code>
+                  <button onClick={() => copyLink(l.url)}
+                    className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium">
+                    {t('crm.funnelEditor.copy', 'Kopieren')}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-2">{t('crm.funnelEditor.linksHint', 'Der Newsletter hängt an seinen Termin-Button automatisch den persönlichen Direkteinstieg an (ohne Fragebogen UND ohne Kontaktformular) — dafür musst du hier nichts tun.')}</p>
+          </div>
         </div>
 
         {/* ── Kontakt-Schritt ── */}

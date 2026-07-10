@@ -2582,7 +2582,21 @@
       "useEmoji": "Emoji instead of image",
       "socials": "Channel buttons (icon · name · link)",
       "socialLabel": "Name",
-      "addSocial": "+ Add channel"
+      "addSocial": "+ Add channel",
+      "invalidQn": "Questionnaire \"{{name}}\": every question needs a title + at least 2 filled answers.",
+      "qnNamePrompt": "Name of the new questionnaire (e.g. \"Doctors campaign\"):",
+      "qnRenamePrompt": "New name:",
+      "qnDeleteConfirm": "Delete this questionnaire? Links to it will fall back to the default questionnaire.",
+      "qnDefault": "Default",
+      "qnAdd": "+ New questionnaire",
+      "qnRename": "Rename",
+      "qnDelete": "Delete questionnaire",
+      "links": "Links to share",
+      "linkDefault": "Default questionnaire",
+      "linkNone": "Appointment only (no questionnaire)",
+      "copy": "Copy",
+      "linkCopied": "✓ Link copied",
+      "linksHint": "The newsletter automatically appends the personal direct entry to its booking button (no questionnaire AND no contact form) — nothing to do here."
     },
     "newsletter": {
       "title": "Newsletter (individual)",
