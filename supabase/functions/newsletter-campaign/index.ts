@@ -27,6 +27,19 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 const SITE = 'https://portal.happy-property.com'
+// Happy-Property-CI (= compose-deck-mail): Playfair/Montserrat, Creme/Navy/Coral,
+// Logo-Header, Objekt-Karten, Signatur mit Foto, dunkler Social-Footer.
+const LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
+const PHOTO_SQ = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/render/image/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg?width=112&height=112&resize=cover&quality=80'
+const CI = { cream: '#fffcf6', navy: '#1a2332', coral: '#ff795d', ink: '#2a2a2a', line: '#e6dfd0', mute: '#999' }
+const DARK = '#1b1b22', GOLD = '#C2A15E'
+const SERIF = "'Playfair Display',Georgia,serif", SANS = "'Montserrat',Helvetica,Arial,sans-serif"
+const SOCIALS = [
+  { icon: '▶',  platform: 'YouTube',   handle: 'HappyPropertyCyprus',   url: 'https://www.youtube.com/@HappyPropertyCyprus' },
+  { icon: '◎',  platform: 'Instagram', handle: 'happy_property_cyprus', url: 'https://www.instagram.com/happy_property_cyprus' },
+  { icon: 'f',  platform: 'Facebook',  handle: 'Immobilien in Zypern',  url: 'https://www.facebook.com/profile.php?id=61573780546599' },
+  { icon: 'in', platform: 'LinkedIn',  handle: 'Sven Rüprich',          url: 'https://www.linkedin.com/in/sven-r%C3%BCprich/' },
+]
 const TZ = 'Europe/Berlin'
 const SEND_START_H = 8, SEND_END_H = 20
 const STEP_SEC = 180            // Grundabstand 3 Min
@@ -66,36 +79,124 @@ function firstNameOf(l: { first_name: string | null }): string {
 
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;') }
 
-// Mail wie Svens normale Mails: schlichter Text-Look, keine Marketing-Optik
+// Newsletter-Mail im Happy-Property-CI (Sven 2026-07-11: "im HTML im Happy
+// Property Template"). E-Mail-sicher: Tabellen-Layout, nowrap-Buttons, Bilder
+// über Supabase-Transform verkleinert + feste width/height (Apple-Mail-Gotcha),
+// p{margin:0}. Der Plaintext-Fallback entsteht zentral via htmlToText (send-email/
+// process-scheduled-messages) — Links bleiben dort als URLs erhalten.
 function buildEmailHtml(c: {
-  intro_text: string; outro_text: string; properties: CampaignProperty[]
-}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean }): string {
-  const parts: string[] = []
-  parts.push(`<p>Hallo ${esc(firstName)},</p>`)
-  parts.push(`<p style="white-space:pre-wrap">${esc(c.intro_text.trim())}</p>`)
-  for (const p of c.properties) {
-    parts.push(`<p style="margin-top:18px"><strong>${esc(p.project_name)}${p.unit_numbers.length ? ` · ${esc(p.unit_numbers.join(' & '))}` : ''}</strong></p>`)
-    if (p.ai_text?.trim()) parts.push(`<p style="white-space:pre-wrap">${esc(p.ai_text.trim())}</p>`)
-    const deckTok = deckTokens[p.project_id]
-    if (deckTok) parts.push(`<p>👉 Dein persönliches Exposé: <a href="${SITE}/deck/${deckTok}" style="color:#ff795d">${SITE}/deck/${deckTok}</a></p>`)
-    if (p.calc_token) parts.push(`<p>📊 Beispielrechnung mit allen Zahlen: <a href="${SITE}/rechnung/${p.calc_token}" style="color:#ff795d">${SITE}/rechnung/${p.calc_token}</a></p>`)
-  }
-  if (c.outro_text?.trim()) parts.push(`<p style="white-space:pre-wrap;margin-top:18px">${esc(c.outro_text.trim())}</p>`)
-  // Fester Abschluss (immer gleich, Sven 2026-07-10): Einladung zum Gespräch +
-  // Termin-Button DIREKT in den Kalender (Funnel-Direkteinstieg über den Deck-Token
-  // des Empfängers — kein Fragebogen, kein Kontaktformular) + Verabschiedung.
-  // UTM: Newsletter-Klicks in der Funnel-Statistik als Kampagnen-Traffic ausweisen.
-  // Testmails verlinken OHNE Direkteinstieg (Master-Decks haben keinen Lead —
-  // der Direkt-Link würde im Test nur auf den normalen Funnel zurückfallen).
+  subject?: string; intro_text: string; outro_text: string; properties: CampaignProperty[]
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined> }): string {
+  const paras = (t: string) => t.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean).map(esc).join('<br><br>')
+  // H1 aus dem Betreff ableiten (Teil vor ":" bzw. "—"), Fallback generisch
+  const rawH = (c.subject ?? '').split(/[:—]/)[0].trim()
+  const headline = rawH.length >= 6 && rawH.length <= 60 ? rawH : 'Deine Paphos-Auswahl.'
+
   const utmQs = `utm_source=newsletter&utm_medium=email${opts?.campaignId ? `&utm_campaign=${opts.campaignId}` : ''}`
   const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
   const terminUrl = opts?.directBooking !== false && firstTok
     ? `${SITE}/termin?direkt=1&d=${firstTok}&${utmQs}`
     : `${SITE}/termin?${utmQs}`
-  parts.push(`<p style="margin-top:18px">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</p>`)
-  parts.push(`<p style="margin:16px 0"><a href="${terminUrl}" style="background:#ff795d;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 22px;border-radius:10px;display:inline-block;white-space:nowrap">Termin aussuchen &rarr;</a></p>`)
-  parts.push(`<p style="margin-top:18px">Liebe Grüße<br>Sven</p>`)
-  return `<div style="font-family:Montserrat,Arial,sans-serif;color:#1b1b22;font-size:14px;line-height:1.65">${parts.join('\n')}</div>`
+
+  const cards = c.properties.map(p => {
+    const deckTok = deckTokens[p.project_id]
+    const deckLink = deckTok ? `${SITE}/deck/${deckTok}` : ''
+    const calcLink = p.calc_token ? `${SITE}/rechnung/${p.calc_token}` : ''
+    const label = `${p.project_name}${p.unit_numbers.length ? ` · ${p.unit_numbers.join(' & ')}` : ''}`
+    const raw = opts?.projectImages?.[p.project_id]
+    const imgSrc = raw && raw.includes('/storage/v1/object/public/')
+      ? raw.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=560&height=300&resize=cover&quality=72'
+      : raw
+    const img = imgSrc
+      ? `<tr><td style="padding:0 40px;"><a href="${esc(deckLink || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
+      : ''
+    return `<tr><td style="padding:36px 0 0 0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        ${img}
+        <tr><td style="padding:24px 40px 0 40px;">
+          <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${CI.coral};font-weight:700;">Dein persönliches Exposé</div>
+          <h2 style="margin:6px 0 0 0;font-family:${SERIF};font-size:26px;line-height:1.2;font-weight:700;color:${CI.navy};">${esc(label)}</h2>
+          ${p.ai_text?.trim() ? `<p style="margin:14px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${CI.ink};">${paras(p.ai_text)}</p>` : ''}
+        </td></tr>
+        <tr><td style="padding:22px 40px 0 40px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+            ${deckLink ? `<td bgcolor="${CI.navy}" style="border-radius:2px;">
+              <a href="${esc(deckLink)}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Exposé ansehen →</a>
+            </td>` : ''}
+            ${calcLink ? `<td style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
+            <td style="border:1px solid ${CI.navy};border-radius:2px;">
+              <a href="${esc(calcLink)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${CI.navy};text-decoration:none;white-space:nowrap;">Beispielrechnung</a>
+            </td>` : ''}
+          </tr></table>
+        </td></tr>
+      </table>
+    </td></tr>
+    <tr><td style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${CI.line};"></div></td></tr>`
+  }).join('')
+
+  const socialCard = (so: typeof SOCIALS[number]) => {
+    const inner = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#2a2a33;border-radius:10px;"><tr>
+      <td width="52" valign="middle" style="padding:11px 0 11px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td width="34" height="34" align="center" valign="middle" style="width:34px;height:34px;background-color:${GOLD};border-radius:17px;font-family:${SANS};font-size:14px;font-weight:700;color:${DARK};">${so.icon}</td></tr></table></td>
+      <td valign="middle" style="padding:11px 12px 11px 10px;"><div style="font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${GOLD};">${so.platform}</div><div style="font-family:${SANS};font-size:13px;color:#ffffff;">${esc(so.handle)}</div></td>
+    </tr></table>`
+    return `<a href="${esc(so.url)}" target="_blank" style="text-decoration:none;">${inner}</a>`
+  }
+  const socialRow = (a: typeof SOCIALS[number], b: typeof SOCIALS[number]) =>
+    `<tr><td width="50%" valign="top" style="padding:0 5px 10px 0;">${socialCard(a)}</td><td width="50%" valign="top" style="padding:0 0 10px 5px;">${socialCard(b)}</td></tr>`
+
+  return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${CI.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}}</style></head>
+<body style="margin:0;padding:0;background-color:${CI.cream};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${CI.cream};"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:${CI.cream};">
+  <tr><td style="padding:8px 40px 28px 40px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="left" valign="middle"><img src="${LOGO}" width="120" height="37" alt="Happy Property Cyprus" style="display:block;width:120px;height:37px;"></td>
+      <td align="right" valign="middle" style="font-family:${SANS};font-size:11px;color:${CI.mute};letter-spacing:0.12em;text-transform:uppercase;">Paphos · Zypern</td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${CI.coral};"></div></td></tr>
+  <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${CI.navy};">${esc(headline)}</h1></td></tr>
+  <tr><td style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo ${esc(firstName)},<br><br>${paras(c.intro_text)}</td></tr>
+  ${cards}
+  ${c.outro_text?.trim() ? `<tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">${paras(c.outro_text)}</td></tr>` : ''}
+  <tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</td></tr>
+  <tr><td style="padding:20px 40px 0 40px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${CI.coral}" style="border-radius:2px;">
+      <a href="${terminUrl}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
+    </td></tr></table>
+  </td></tr>
+  <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Liebe Grüße</p></td></tr>
+  <tr><td style="padding:14px 40px 0 40px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td valign="middle" width="64"><img src="${PHOTO_SQ}" width="56" height="56" alt="Sven" style="width:56px;height:56px;border-radius:50%;display:block;"></td>
+      <td valign="middle" style="padding-left:14px;"><div style="font-family:${SERIF};font-size:18px;color:${CI.navy};">Sven</div><div style="font-family:${SANS};font-size:12px;color:#888;margin-top:2px;">Happy Property Cyprus</div></td>
+    </tr></table>
+  </td></tr>
+  <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${CI.ink};"><a href="mailto:sven@happy-property.com" style="color:${CI.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
+  <tr><td style="padding:36px 0 0 0;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${DARK};"><tr><td style="padding:32px 36px;">
+      <div style="font-family:${SERIF};font-size:23px;font-weight:700;line-height:1.2;color:#ffffff;">Folge mir — ich nehme dich mit nach Zypern.</div>
+      <div style="font-family:${SANS};font-size:13px;color:#9a9aa3;margin-top:6px;">Projekte, Baufortschritt, Markt-Insights — schau rein und folge:</div>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
+        ${socialRow(SOCIALS[0], SOCIALS[1])}
+        ${socialRow(SOCIALS[2], SOCIALS[3])}
+      </table>
+      <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
+    </td></tr></table>
+  </td></tr>
+</table></td></tr></table></body></html>`
+}
+
+// Titelbilder je Projekt (erste Render-URL) — für die Objekt-Karten der Mail
+async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Promise<Record<string, string | undefined>> {
+  const out: Record<string, string | undefined> = {}
+  if (!projectIds.length) return out
+  const { data } = await sb.from('crm_projects').select('id, deck_assets').in('id', projectIds)
+  for (const p of (data ?? []) as Array<{ id: string; deck_assets: { renders?: string[] } | null }>) {
+    out[p.id] = p.deck_assets?.renders?.[0]
+  }
+  return out
 }
 
 // Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
@@ -165,7 +266,8 @@ Deno.serve(async (req: Request) => {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
-      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false })
+      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
+      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages })
       const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${camp.subject}`, html } })
       if (se) return json({ error: `Testversand: ${se.message}` }, 502)
       return json({ ok: true })
@@ -180,6 +282,7 @@ Deno.serve(async (req: Request) => {
       const audience = await loadAudience(sb)
       if (!audience.length) return json({ error: 'Zielgruppe ist leer' }, 400)
       await sb.from('newsletter_campaigns').update({ status: 'launching', recipients_total: audience.length, recipients_done: 0, updated_at: new Date().toISOString() }).eq('id', camp.id)
+      const projectImages = await loadProjectImages(sb, properties.map((p: CampaignProperty) => p.project_id))
 
       // Master-Decks einmal laden
       const masters: Record<string, { content: unknown; project_id: string | null; angle: string | null }> = {}
@@ -221,7 +324,7 @@ Deno.serve(async (req: Request) => {
                 console.error(`[newsletter] ${lead.id}: unvollständige Decks — Empfänger übersprungen`)
                 continue
               }
-              const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true })
+              const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
               const subject = String(camp.subject).split('{{vorname}}').join(first)
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
