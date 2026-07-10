@@ -178,39 +178,57 @@ Deno.serve(async (req: Request) => {
       const job = (async () => {
         try {
           let slot = clampToWindow(new Date(Date.now() + 120e3))
-          let done = 0
+          let done = 0, skipped = 0
           for (const lead of audience) {
-            const first = firstNameOf(lead)
-            const fullName = `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim()
-            const deckTokens: Record<string, string> = {}
-            for (const p of properties) {
-              const master = masters[p.project_id]
-              const token = randToken()
-              // Personalisierung: {{vorname}}-Platzhalter im Master-Content ersetzen
-              const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(first)
-              const { error: ie } = await sb.from('sales_decks').insert({
-                token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
-                status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
-                content: JSON.parse(contentStr),
+            // Pro-Empfänger-Fehlerbehandlung: EIN problematischer Lead darf nie
+            // die restliche Kampagne stoppen.
+            try {
+              const first = firstNameOf(lead)
+              // JSON-sicher einsetzen (Namen können Anführungszeichen/Backslashes enthalten)
+              const firstJsonSafe = JSON.stringify(first).slice(1, -1)
+              const fullName = `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim()
+              const deckTokens: Record<string, string> = {}
+              for (const p of properties) {
+                const master = masters[p.project_id]
+                const token = randToken()
+                const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+                const { error: ie } = await sb.from('sales_decks').insert({
+                  token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
+                  status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
+                  content: JSON.parse(contentStr),
+                })
+                if (ie) { console.error(`[newsletter] Deck-Klon ${lead.id}/${p.project_name}:`, ie.message); continue }
+                deckTokens[p.project_id] = token
+              }
+              // Mail NUR planen, wenn ALLE Deck-Links da sind — lieber auslassen
+              // als eine Mail ohne das versprochene Exposé verschicken.
+              if (Object.keys(deckTokens).length !== properties.length) {
+                skipped++
+                console.error(`[newsletter] ${lead.id}: unvollständige Decks — Empfänger übersprungen`)
+                continue
+              }
+              const html = buildEmailHtml(camp, first, deckTokens)
+              const subject = String(camp.subject).split('{{vorname}}').join(first)
+              const { error: se } = await sb.from('scheduled_messages').insert({
+                lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+                status: 'pending', scheduled_at: slot.toISOString(),
+                email_subject: subject, email_body: html,
+                recipient: 'client', appointment_condition: 'none',
               })
-              if (ie) { console.error(`[newsletter] Deck-Klon ${lead.id}/${p.project_name}:`, ie.message); continue }
-              deckTokens[p.project_id] = token
+              if (se) { skipped++; console.error(`[newsletter] Mail-Planung ${lead.id}:`, se.message); continue }
+              slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
+              done++
+              if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
+            } catch (leadErr) {
+              skipped++
+              console.error(`[newsletter] Empfänger ${lead.id} übersprungen:`, leadErr)
             }
-            const html = buildEmailHtml(camp, first, deckTokens)
-            const subject = String(camp.subject).split('{{vorname}}').join(first)
-            const { error: se } = await sb.from('scheduled_messages').insert({
-              lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
-              status: 'pending', scheduled_at: slot.toISOString(),
-              email_subject: subject, email_body: html,
-              recipient: 'client', appointment_condition: 'none',
-            })
-            if (se) console.error(`[newsletter] Mail-Planung ${lead.id}:`, se.message)
-            slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
-            done++
-            if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
           }
-          await sb.from('newsletter_campaigns').update({ status: 'sending', recipients_done: done, updated_at: new Date().toISOString() }).eq('id', camp.id)
-          console.log(`[newsletter] Kampagne ${camp.id}: ${done} Mails geplant`)
+          await sb.from('newsletter_campaigns').update({
+            status: 'sending', recipients_done: done, updated_at: new Date().toISOString(),
+            launch_error: skipped > 0 ? `${skipped} Empfänger übersprungen (Details im Log)` : null,
+          }).eq('id', camp.id)
+          console.log(`[newsletter] Kampagne ${camp.id}: ${done} Mails geplant, ${skipped} übersprungen`)
         } catch (e) {
           console.error('[newsletter] Launch-Fehler:', e)
           await sb.from('newsletter_campaigns').update({ status: 'draft', launch_error: (e as Error).message }).eq('id', camp.id)

@@ -39,7 +39,7 @@ export default function Newsletter() {
   const [audience, setAudience] = useState<number | null>(null)
   const [busyKey, setBusyKey] = useState<string>('')      // welcher Button arbeitet gerade
   const [toast, setToast] = useState('')
-  const [status, setStatus] = useState<{ status: string; total: number; done: number } | null>(null)
+  const [status, setStatus] = useState<{ status: string; total: number; done: number; error?: string | null } | null>(null)
   const [pastCampaigns, setPastCampaigns] = useState<Array<{ id: string; title: string; status: string; recipients_total: number; recipients_done: number; created_at: string }>>([])
 
   const showToastMsg = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
@@ -210,8 +210,8 @@ export default function Newsletter() {
       setStatus({ status: 'launching', total: d.total ?? 0, done: 0 })
       const poll = setInterval(async () => {
         const { data: st } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'status', campaign_id: id } })
-        const s = st as { status?: string; total?: number; done?: number } | null
-        if (s?.status) setStatus({ status: s.status, total: s.total ?? 0, done: s.done ?? 0 })
+        const s = st as { status?: string; total?: number; done?: number; error?: string | null } | null
+        if (s?.status) setStatus({ status: s.status, total: s.total ?? 0, done: s.done ?? 0, error: s.error })
         if (s?.status === 'sending' || s?.status === 'done') { clearInterval(poll); void fetchPast() }
       }, 4000)
     } catch (err) {
@@ -350,7 +350,7 @@ export default function Newsletter() {
             <div className="mt-4">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>{status.status === 'launching' ? t('crm.newsletter.preparing', 'Decks werden erstellt & Mails geplant…') : t('crm.newsletter.sendingNow', 'Geplant — Versand läuft gestaffelt.')}</span>
-                <span>{status.done}/{status.total}</span>
+                <span>{status.done}/{status.total}{status.error ? ` · ⚠️ ${status.error}` : ''}</span>
               </div>
               <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
                 <div className="h-3 rounded-full transition-all" style={{ width: `${status.total ? (status.done / status.total) * 100 : 0}%`, backgroundColor: '#ff795d' }} />
