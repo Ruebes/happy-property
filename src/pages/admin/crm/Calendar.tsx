@@ -27,6 +27,15 @@ const APPT_COLORS = {
   whatsapp: { bg: '#d9fdd3', text: '#128c7e', pill: '#25d366' },
 } as const
 
+// Newsletter-Buchungen: Herkunft schlägt Terminart bei der Kachel-Farbe —
+// Sven erkennt auf einen Blick, dass der Termin aus einer Kampagne kommt.
+const NEWSLETTER_COLORS = { bg: '#fce7f3', text: '#be185d', pill: '#ec4899' } as const
+
+function apptColors(appt: CrmAppointment) {
+  if (appt.source === 'newsletter') return NEWSLETTER_COLORS
+  return APPT_COLORS[appt.type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
+}
+
 /** Google-Event Farben: blau für normale, grün für Ganztagstermine (Feiertage) */
 function gColor(gEvt: GoogleCalendarEvent) {
   const base = isAllDay(gEvt) ? '#34A853' : '#4285f4'
@@ -149,6 +158,15 @@ function TypeBadge({ type, t }: { type: string; t: TFunction }) {
       style={{ backgroundColor: colors.bg, color: colors.text }}
     >
       {label}
+    </span>
+  )
+}
+
+function NewsletterBadge({ t }: { t: TFunction }) {
+  return (
+    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold"
+      style={{ backgroundColor: NEWSLETTER_COLORS.pill, color: '#fff' }}>
+      📰 {t('crm.appointment.newsletter', 'Newsletter')}
     </span>
   )
 }
@@ -424,7 +442,7 @@ export default function CrmCalendar() {
                         key={appt.id}
                         className="truncate font-semibold cursor-pointer hover:opacity-85"
                         style={{
-                          backgroundColor: '#ff795d',
+                          backgroundColor: appt.source === 'newsletter' ? NEWSLETTER_COLORS.pill : '#ff795d',
                           color: '#fff',
                           fontSize: '11px',
                           padding: '2px 4px',
@@ -432,7 +450,7 @@ export default function CrmCalendar() {
                         }}
                         onClick={e => { e.stopPropagation(); setSelectedAppt(appt) }}
                       >
-                        ● {time ? `${time} ` : ''}{appt.title}
+                        ● {time ? `${time} ` : ''}{appt.source === 'newsletter' ? `${t('crm.appointment.newsletter', 'Newsletter')} · ` : ''}{appt.title}
                       </div>
                     )
                   })}
@@ -512,7 +530,7 @@ export default function CrmCalendar() {
                   <p className="text-xs text-gray-300 mt-2 text-center">–</p>
                 )}
                 {appts.map(appt => {
-                  const colors = APPT_COLORS[appt.type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
+                  const colors = apptColors(appt)
                   return (
                     <div
                       key={appt.id}
@@ -524,7 +542,7 @@ export default function CrmCalendar() {
                         {formatTime(appt.start_time)}
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
-                      <TypeBadge type={appt.type} t={t} />
+                      <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
                     </div>
                   )
                 })}
@@ -582,7 +600,7 @@ export default function CrmCalendar() {
 
         <div className="space-y-3">
           {appts.map(appt => {
-            const colors = APPT_COLORS[appt.type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
+            const colors = apptColors(appt)
             return (
               <div
                 key={appt.id}
@@ -597,7 +615,7 @@ export default function CrmCalendar() {
                       {formatTimeRange(appt.start_time, appt.end_time)}
                     </p>
                   </div>
-                  <TypeBadge type={appt.type} t={t} />
+                  <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
                 </div>
                 {appt.zoom_link && (
                   <a
@@ -691,7 +709,7 @@ export default function CrmCalendar() {
               </span>
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
-                <TypeBadge type={appt.type} t={t} />
+                <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
               </div>
             </div>
           </div>

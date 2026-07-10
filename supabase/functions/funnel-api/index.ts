@@ -123,6 +123,7 @@ Deno.serve(async (req) => {
       utm?: Record<string, string>; referrer?: string
       slot_start_iso?: string
       meeting_type?: 'zoom' | 'whatsapp'
+      source?: string
       contact?: { first_name?: string; last_name?: string; phone?: string; email?: string; website?: string }
       answers?: Array<{ question: string; answer: string }>
     }
@@ -253,6 +254,8 @@ Deno.serve(async (req) => {
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
+      // Herkunft der Buchung (Kalender-Kennzeichnung): nur bekannte Werte übernehmen
+      const source = body.source === 'newsletter' || body.source === 'direktlink' ? body.source : null
       const leadId = body.lead_id
       const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
       if (!leadRow) return json({ error: 'lead_not_found' }, 404)
@@ -292,8 +295,8 @@ Deno.serve(async (req) => {
         const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            summary: `Beratungsgespräch – ${c.first_name} ${c.last_name ?? ''}`.trim(),
-            description: `Über den Website-Funnel gebucht (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            summary: `${source === 'newsletter' ? '[Newsletter] ' : ''}Beratungsgespräch – ${c.first_name} ${c.last_name ?? ''}`.trim(),
+            description: `${source === 'newsletter' ? 'Über den NEWSLETTER gebucht' : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
         })
@@ -308,6 +311,7 @@ Deno.serve(async (req) => {
         start_time: start.toISOString(), end_time: end.toISOString(),
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
         google_event_id: gcal?.id ?? null, google_calendar_id: gcal?.calId ?? null,
+        source,
       }).select('id').single()
 
       // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp)

@@ -198,9 +198,11 @@ export default function Funnel() {
     setSlot(s); setError(''); setBusy(true)
     void track(QUESTIONS.length + 3, 'slot_picked', s)
     try {
+      // Herkunft für den Kalender: Newsletter-Kampagne bzw. personalisierter Direktlink
+      const source = utm.utm_source === 'newsletter' ? 'newsletter' : (direct ? 'direktlink' : undefined)
       const { data, error: e } = await supabase.functions.invoke('funnel-api', { body: {
         action: 'book', session_id: sessionRef.current, lead_id: leadRef.current,
-        slot_start_iso: s, meeting_type: meetingType,
+        slot_start_iso: s, meeting_type: meetingType, source,
       } })
       if (e) throw new Error(e.message)
       const d = data as { ok?: boolean; error?: string } | null
