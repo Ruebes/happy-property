@@ -182,18 +182,26 @@ Deno.serve(async (req) => {
       }
       const utmNote = body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : ''
       const answersText = (body.answers ?? []).map(a => `• ${a.question}: ${a.answer}`).join('\n')
+      const utm = body.utm ?? {}
       if (!leadId) {
         const { data: nl, error: nlErr } = await admin.from('leads').insert({
           first_name: c.first_name?.trim(), last_name: (c.last_name ?? '').trim(),
           email, phone, whatsapp: phone, source: 'website',
+          utm_source: utm.utm_source ?? null, utm_medium: utm.utm_medium ?? null,
+          utm_campaign: utm.utm_campaign ?? null, utm_content: utm.utm_content ?? null,
           notes: `Fragebogen (eigener Funnel):\n${answersText}${utmNote}`,
         }).select('id').single()
         if (nlErr) console.error('[funnel-api] Lead-Insert fehlgeschlagen:', nlErr.message)
         leadId = (nl as { id: string } | null)?.id ?? null
       } else {
-        const { data: old } = await admin.from('leads').select('notes').eq('id', leadId).single()
+        const { data: old } = await admin.from('leads').select('notes, utm_source').eq('id', leadId).single()
         const prev = (old as { notes?: string } | null)?.notes ?? ''
-        await admin.from('leads').update({ notes: `${prev ? prev + '\n\n' : ''}Fragebogen (eigener Funnel, ${new Date().toLocaleDateString('de-DE')}):\n${answersText}${utmNote}` }).eq('id', leadId)
+        const patch: Record<string, unknown> = { notes: `${prev ? prev + '\n\n' : ''}Fragebogen (eigener Funnel, ${new Date().toLocaleDateString('de-DE')}):\n${answersText}${utmNote}` }
+        if (!(old as { utm_source?: string } | null)?.utm_source && utm.utm_source) {
+          patch.utm_source = utm.utm_source; patch.utm_medium = utm.utm_medium ?? null
+          patch.utm_campaign = utm.utm_campaign ?? null; patch.utm_content = utm.utm_content ?? null
+        }
+        await admin.from('leads').update(patch).eq('id', leadId)
       }
       if (!leadId) return json({ error: 'lead_failed' }, 500)
       try {
