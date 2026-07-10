@@ -113,10 +113,11 @@ Deno.serve(async (req) => {
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as {
-      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule'
+      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule' | 'lead_prefill'
       session_id?: string
       lead_id?: string
       token?: string
+      deck_token?: string
       reason?: string
       step?: number; question_key?: string; answer?: string
       utm?: Record<string, string>; referrer?: string
@@ -124,6 +125,20 @@ Deno.serve(async (req) => {
       meeting_type?: 'zoom' | 'whatsapp'
       contact?: { first_name?: string; last_name?: string; phone?: string; email?: string; website?: string }
       answers?: Array<{ question: string; answer: string }>
+    }
+
+    // ── lead_prefill ─────────────────────────────────────────────────────────
+    // Direkteinstieg aus Newsletter/Mails: Deck-Token → Lead. Der Funnel überspringt
+    // damit Fragebogen + Kontaktformular und geht direkt zur Terminwahl. Es wird
+    // bewusst NUR der Vorname zurückgegeben (Begrüßung) — keine weiteren Daten.
+    if (body.action === 'lead_prefill') {
+      const tok = (body.deck_token ?? '').trim()
+      if (!tok) return json({ error: 'deck_token fehlt' }, 400)
+      const { data: deck } = await admin.from('sales_decks').select('lead_id').eq('token', tok).maybeSingle()
+      const leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      if (!leadId) return json({ error: 'not_found' }, 404)
+      const { data: lead } = await admin.from('leads').select('first_name').eq('id', leadId).maybeSingle()
+      return json({ ok: true, lead_id: leadId, first_name: ((lead as { first_name?: string | null } | null)?.first_name ?? '').trim() })
     }
 
     // ── track ────────────────────────────────────────────────────────────────

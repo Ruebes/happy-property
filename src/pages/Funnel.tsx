@@ -35,15 +35,28 @@ function useUtm(): Record<string, string> {
   }, [])
 }
 
+// Direkteinstieg (?direkt=1&d=<deck-token>): bekannter Kontakt aus Newsletter/Mail —
+// Fragebogen + Kontaktformular überspringen, direkt Terminart → Kalender.
+function useDirectEntry(): { wanted: boolean; deckToken: string } {
+  return useMemo(() => {
+    const p = new URLSearchParams(window.location.search)
+    const deckToken = (p.get('d') ?? '').trim()
+    return { wanted: (p.get('direkt') === '1' || p.get('direct') === '1') && !!deckToken, deckToken }
+  }, [])
+}
+
 export default function Funnel() {
   const { t } = useTranslation()
   const utm = useUtm()
+  const directEntry = useDirectEntry()
   const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
   useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
   const QUESTIONS = cfg.questions
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
   const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
-  const [phase, setPhase] = useState<Phase>('welcome')
+  const [phase, setPhase] = useState<Phase>(directEntry.wanted ? 'meeting_type' : 'welcome')
+  const [direct, setDirect] = useState(directEntry.wanted)
+  const [directName, setDirectName] = useState('')
   const [qIdx, setQIdx] = useState(0)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [meetingType, setMeetingType] = useState<'zoom' | 'whatsapp' | null>(null)
@@ -71,6 +84,32 @@ export default function Funnel() {
   }, [utm])
 
   useEffect(() => { void track(0, 'view') }, [track])
+
+  // Direkteinstieg: Lead über den Deck-Token auflösen. Klappt es nicht
+  // (Token ungültig/Master-Deck ohne Lead), fällt der Funnel auf den
+  // normalen Flow zurück — niemand bleibt hängen.
+  useEffect(() => {
+    if (!directEntry.wanted) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const { data, error: e } = await supabase.functions.invoke('funnel-api', {
+          body: { action: 'lead_prefill', deck_token: directEntry.deckToken },
+        })
+        const d = data as { ok?: boolean; lead_id?: string; first_name?: string } | null
+        if (e || !d?.ok || !d.lead_id) throw new Error('prefill failed')
+        if (cancelled) return
+        leadRef.current = d.lead_id
+        setDirectName(d.first_name ?? '')
+        void track(0, 'direct_entry')
+      } catch {
+        if (cancelled) return
+        setDirect(false)
+        setPhase('welcome')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [directEntry, track])
 
   const answerQuestion = (q: FunnelQuestion, opt: FunnelOption) => {
     setAnswers(prev => ({ ...prev, [q.key]: opt.label }))
@@ -157,12 +196,14 @@ export default function Funnel() {
     if (phase === 'questions' && qIdx > 0) setQIdx(qIdx - 1)
     else if (phase === 'questions') setPhase('welcome')
     else if (phase === 'contact') { setPhase('questions'); setQIdx(QUESTIONS.length - 1) }
-    else if (phase === 'meeting_type') setPhase('contact')
+    else if (phase === 'meeting_type') { if (!direct) setPhase('contact') }
     else if (phase === 'slot') setPhase('meeting_type')
   }
 
-  const totalSteps = QUESTIONS.length + 3
-  const stepNow = phase === 'welcome' ? 0 : phase === 'questions' ? qIdx + 1 : phase === 'contact' ? QUESTIONS.length + 1 : phase === 'meeting_type' ? QUESTIONS.length + 2 : phase === 'slot' ? QUESTIONS.length + 3 : totalSteps
+  const totalSteps = direct ? 2 : QUESTIONS.length + 3
+  const stepNow = direct
+    ? (phase === 'meeting_type' ? 1 : phase === 'slot' ? 2 : totalSteps)
+    : phase === 'welcome' ? 0 : phase === 'questions' ? qIdx + 1 : phase === 'contact' ? QUESTIONS.length + 1 : phase === 'meeting_type' ? QUESTIONS.length + 2 : phase === 'slot' ? QUESTIONS.length + 3 : totalSteps
   // Clamp: die Config lädt asynchron nach — hat sie weniger Fragen als der
   // Default (oder als schon beantwortet), darf qIdx nie ins Leere zeigen.
   const q = QUESTIONS[Math.min(qIdx, QUESTIONS.length - 1)]
@@ -200,7 +241,7 @@ export default function Funnel() {
       </div>
       <div className="flex items-center justify-between px-5 md:px-10 py-4">
         <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
-        {phase !== 'welcome' && phase !== 'done' && (
+        {phase !== 'welcome' && phase !== 'done' && !(direct && phase === 'meeting_type') && (
           <button onClick={back} className="text-sm text-gray-500 hover:text-gray-800">← {t('funnel.back', 'Zurück')}</button>
         )}
       </div>
@@ -300,7 +341,9 @@ export default function Funnel() {
           {phase === 'meeting_type' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Dein Wunschtermin</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>Wie möchtest du mit Sven sprechen?</h2>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>
+                {direct && directName ? `Hallo ${directName} — wie möchtest du mit Sven sprechen?` : 'Wie möchtest du mit Sven sprechen?'}
+              </h2>
               <div className="grid md:grid-cols-2 gap-4 mt-6">
                 <button onClick={() => chooseType('zoom')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">📹</div>

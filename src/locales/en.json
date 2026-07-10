@@ -2581,7 +2581,10 @@
       "addSocial": "+ Add channel"
     },
     "newsletter": {
-      "title": "Newsletter (individual)"
+      "title": "Newsletter (individual)",
+      "outro": "Optional note after the properties",
+      "outroPh": "e.g. a personal note — can be left empty",
+      "outroHint": "The closing is added automatically: invitation to talk + \"Pick a time\" button (straight to the calendar, no questionnaire) + \"Liebe Grüße, Sven\"."
     }
   },
   "docs": {

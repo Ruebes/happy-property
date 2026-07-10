@@ -81,6 +81,14 @@ function buildEmailHtml(c: {
     if (p.calc_token) parts.push(`<p>📊 Beispielrechnung mit allen Zahlen: <a href="${SITE}/rechnung/${p.calc_token}" style="color:#ff795d">${SITE}/rechnung/${p.calc_token}</a></p>`)
   }
   if (c.outro_text?.trim()) parts.push(`<p style="white-space:pre-wrap;margin-top:18px">${esc(c.outro_text.trim())}</p>`)
+  // Fester Abschluss (immer gleich, Sven 2026-07-10): Einladung zum Gespräch +
+  // Termin-Button DIREKT in den Kalender (Funnel-Direkteinstieg über den Deck-Token
+  // des Empfängers — kein Fragebogen, kein Kontaktformular) + Verabschiedung.
+  const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
+  const terminUrl = firstTok ? `${SITE}/termin?direkt=1&d=${firstTok}` : `${SITE}/termin`
+  parts.push(`<p style="margin-top:18px">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</p>`)
+  parts.push(`<p style="margin:16px 0"><a href="${terminUrl}" style="background:#ff795d;color:#ffffff;text-decoration:none;font-weight:600;padding:11px 22px;border-radius:10px;display:inline-block;white-space:nowrap">Termin aussuchen &rarr;</a></p>`)
+  parts.push(`<p style="margin-top:18px">Liebe Grüße<br>Sven</p>`)
   return `<div style="font-family:Montserrat,Arial,sans-serif;color:#1b1b22;font-size:14px;line-height:1.65">${parts.join('\n')}</div>`
 }
 

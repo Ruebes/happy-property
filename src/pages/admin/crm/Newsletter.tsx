@@ -324,8 +324,9 @@ export default function Newsletter() {
               <textarea value={intro} onChange={e => setIntro(e.target.value)} rows={4} className={input} />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.outro', 'Abschluss (nach den Objekten, inkl. Gruß)')}</label>
-              <textarea value={outro} onChange={e => setOutro(e.target.value)} rows={3} className={input} placeholder={'Bei Fragen melde dich gern direkt…\n\nBeste Grüße\nSven'} />
+              <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.outro', 'Optionaler Zusatz nach den Objekten')}</label>
+              <textarea value={outro} onChange={e => setOutro(e.target.value)} rows={3} className={input} placeholder={t('crm.newsletter.outroPh', 'z. B. eine persönliche Anmerkung — kann auch leer bleiben')} />
+              <p className="mt-1 text-[11px] text-gray-400">{t('crm.newsletter.outroHint', 'Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven".')}</p>
             </div>
           </div>
         </div>

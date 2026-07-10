@@ -2581,7 +2581,10 @@
       "addSocial": "+ Kanal hinzufügen"
     },
     "newsletter": {
-      "title": "Newsletter (individuell)"
+      "title": "Newsletter (individuell)",
+      "outro": "Optionaler Zusatz nach den Objekten",
+      "outroPh": "z. B. eine persönliche Anmerkung — kann auch leer bleiben",
+      "outroHint": "Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen\"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven\"."
     }
   },
   "docs": {
