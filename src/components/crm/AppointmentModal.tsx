@@ -121,6 +121,8 @@ interface InviteParams {
   zoomLink?: string; zoomPassword?: string
   location?: string; locationUrl?: string; phone?: string
   gcalHref: string
+  // false = Partner/Teilnehmer: neutraler Text, keine Kunden-Telefonnummer
+  isPrimary?: boolean
 }
 
 function buildInviteHtml(pr: InviteParams): string {
@@ -128,13 +130,20 @@ function buildInviteHtml(pr: InviteParams): string {
   const intro = pr.isEdit
     ? `unser Termin hat sich geändert — hier sind die neuen Details:`
     : `ich freue mich auf unser Treffen! Hier die Details:`
-  const where = pr.apptType === 'inperson' && pr.location
-    ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.`
+  // Zoom/Telefon: Zeitzone dazu — der Kalender-Eintrag rechnet automatisch um,
+  // der Text soll dem nicht widersprechen. Vor Ort ist die Ortszeit gemeint.
+  const tzNote = pr.apptType === 'inperson' ? '' : ' (Zypern-Zeit)'
+  const where = pr.apptType === 'inperson'
+    ? (pr.location
+        ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.`
+        : `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong>.`)
     : pr.apptType === 'zoom'
-      ? `Wir sprechen um <strong>${e(pr.von)} Uhr</strong> per Zoom${pr.zoomPassword ? ` (Passwort: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.`
-      : pr.apptType === 'whatsapp'
-        ? `Ich rufe dich um <strong>${e(pr.von)} Uhr</strong> per WhatsApp an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
-        : `Ich rufe dich um <strong>${e(pr.von)} Uhr</strong> an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
+      ? `Wir sprechen um <strong>${e(pr.von)} Uhr${tzNote}</strong> per Zoom${pr.zoomPassword ? ` (Passwort: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.`
+      : pr.isPrimary === false
+        ? `Der Termin findet um <strong>${e(pr.von)} Uhr${tzNote}</strong> ${pr.apptType === 'whatsapp' ? 'per WhatsApp-Call' : 'telefonisch'} statt.`
+        : pr.apptType === 'whatsapp'
+          ? `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> per WhatsApp an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
+          : `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
   const btn = (href: string, label: string, solid: boolean) =>
     `<a href="${e(href)}" target="_blank" style="display:inline-block;white-space:nowrap;font-family:${HP_SANS};font-size:13px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:10px;margin:0 8px 8px 0;${solid ? 'background-color:#ff795d;color:#ffffff;' : 'background-color:#ffffff;color:#1a2332;border:1px solid #e6dfd0;'}">${label}</a>`
   const buttons = [
@@ -287,25 +296,30 @@ export default function AppointmentModal({
   const [placeResults, setPlaceResults] = useState<Array<{ name: string; display: string; lat: number; lon: number }>>([])
   const [placeLoading, setPlaceLoading] = useState(false)
   const placeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const placeSeqRef = useRef(0)
 
   function handleLocationChange(val: string) {
     setLocation(val)
     if (placeDebounceRef.current) clearTimeout(placeDebounceRef.current)
     if (val.trim().length < 3) { setPlaceResults([]); return }
     placeDebounceRef.current = setTimeout(async () => {
+      const seq = ++placeSeqRef.current   // ältere Antworten dürfen neuere nicht überschreiben
       setPlaceLoading(true)
       try {
         const { data, error } = await supabase.functions.invoke('place-search', { body: { q: val } })
         if (error) throw error
+        if (seq !== placeSeqRef.current) return
         setPlaceResults(((data as { results?: typeof placeResults } | null)?.results) ?? [])
       } catch (err) {
         console.warn('[AppointmentModal] place-search:', err)
-        setPlaceResults([])
-      } finally { setPlaceLoading(false) }
+        if (seq === placeSeqRef.current) setPlaceResults([])
+      } finally { if (seq === placeSeqRef.current) setPlaceLoading(false) }
     }, 400)
   }
   function selectPlace(pl: { name: string; display: string; lat: number; lon: number }) {
-    setLocation(pl.display ? `${pl.name}, ${pl.display}` : pl.name)
+    // Kein doppeltes erstes Segment, wenn name aus display abgeleitet wurde
+    const dupe = pl.display && pl.display.split(',')[0].trim() === pl.name.trim()
+    setLocation(pl.display && !dupe ? `${pl.name}, ${pl.display}` : (pl.display || pl.name))
     // Google-Link mit Name + Koordinaten — landet exakt am richtigen Pin
     setLocationUrl(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pl.name} ${pl.lat},${pl.lon}`)}`)
     setPlaceResults([])
@@ -421,6 +435,8 @@ export default function AppointmentModal({
       const effLocationUrl   = apptType === 'inperson' ? locationUrl : ''
       const effPhone         = (apptType === 'phone' || apptType === 'whatsapp') ? phoneNumber : ''
 
+      const attendeeLine = attendees.length ? `Teilnehmer: ${attendees.map(a => a.name).join(', ')}` : ''
+      const googleDesc = [description, attendeeLine].filter(Boolean).join('\n')
       const payload = {
         title,
         description:     description || null,
@@ -449,7 +465,7 @@ export default function AppointmentModal({
           try {
             await updateGoogleEvent(appointment.google_event_id, {
               title,
-              description: description || '',
+              description: googleDesc || '',
               location:    effLocation || '',
               startIso:    start_time,
               endIso:      end_time,
@@ -460,7 +476,7 @@ export default function AppointmentModal({
           }
         } else if (saveToGoogle && googleAvailable) {
           try {
-            const g = await createGoogleEvent({ title, startIso: start_time, endIso: end_time, description: description || undefined, location: effLocation || undefined })
+            const g = await createGoogleEvent({ title, startIso: start_time, endIso: end_time, description: googleDesc || undefined, location: effLocation || undefined })
             await supabase.from('crm_appointments')
               .update({ google_event_id: g.id, google_calendar_id: g.calendar_id ?? null })
               .eq('id', appointment.id)
@@ -497,7 +513,7 @@ export default function AppointmentModal({
               title,
               startIso:    start_time,
               endIso:      end_time,
-              description: description || undefined,
+              description: googleDesc || undefined,
               location:    effLocation || undefined,
             })
             await supabase
@@ -547,8 +563,15 @@ export default function AppointmentModal({
       }
       for (const a of attendees) {
         const first = a.name.split(' ')[0]
-        if (a.email) mailTargets.push({ firstName: first, email: a.email })
-        if (a.phone) waTargets.push({ firstName: first, fullName: a.name, phone: a.phone })
+        // Dedupe: Lead kann auch als Geschäftskontakt erfasst sein — keine Doppel-Einladung
+        const mailKey = (a.email ?? '').trim().toLowerCase()
+        if (mailKey && !mailTargets.some(x => x.email.trim().toLowerCase() === mailKey)) {
+          mailTargets.push({ firstName: first, email: a.email as string })
+        }
+        const phoneKey = (a.phone ?? '').replace(/\D/g, '')
+        if (phoneKey && !waTargets.some(x => x.phone.replace(/\D/g, '') === phoneKey)) {
+          waTargets.push({ firstName: first, fullName: a.name, phone: a.phone as string })
+        }
       }
 
       if (sendEmailInvite) {
@@ -558,7 +581,8 @@ export default function AppointmentModal({
               firstName: tgt.firstName, isEdit, title, dateStr, von, bis, apptType,
               zoomLink: effZoomLink || undefined, zoomPassword: effZoomPassword || undefined,
               location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
-              phone: effPhone || undefined, gcalHref,
+              phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
+              isPrimary: !!tgt.leadId,
             })
             const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
             const ics = buildIcs({
@@ -600,7 +624,7 @@ export default function AppointmentModal({
                 ? `\n📍 ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
                 : ''
             const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
-            const { error: waErr } = await supabase.functions.invoke('send-whatsapp', {
+            const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
                 override_text: waText,
@@ -609,6 +633,12 @@ export default function AppointmentModal({
               },
             })
             if (waErr) throw new Error(waErr.message)
+            // send-whatsapp antwortet auch bei abgelehntem Versand mit 200 —
+            // Erfolg steht NUR in results[].ok (bekanntes 200+error-Feld-Gotcha).
+            const waResults = (waData as { results?: Array<{ ok?: boolean }> } | null)?.results
+            if (Array.isArray(waResults) && waResults.length > 0 && !waResults.some(r => r.ok)) {
+              throw new Error('Versand vom WhatsApp-Dienst abgelehnt')
+            }
           } catch (waErr) {
             console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', waErr)
             warnings.push(t('crm.appt.waInviteFailedTo', 'WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.', { name: tgt.firstName || tgt.phone }))
@@ -1198,8 +1228,8 @@ export default function AppointmentModal({
                 </p>
               )}
 
-              {/* Email invite checkbox (mit Kalender-Anhang) — nur mit verknüpftem Lead */}
-              {(selectedLeadId || leadId) && (
+              {/* Email invite checkbox (mit Kalender-Anhang) — Lead und/oder Teilnehmer */}
+              {(selectedLeadId || leadId || attendees.length > 0) && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1209,14 +1239,14 @@ export default function AppointmentModal({
                   />
                   <span className="text-sm text-gray-700">
                     {isEdit
-                      ? t('crm.appt.sendEmailUpdate', 'Terminänderung per E-Mail an Lead senden (mit Kalender-Anhang)')
-                      : t('crm.appt.sendEmailInviteIcs', 'Einladung per E-Mail an Lead senden (mit Kalender-Anhang)')}
+                      ? t('crm.appt.sendEmailUpdateAll', 'Terminänderung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)')
+                      : t('crm.appt.sendEmailInviteAll', 'Einladung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)')}
                   </span>
                 </label>
               )}
 
               {/* WhatsApp invite checkbox */}
-              {(selectedLeadId || leadId) && (
+              {(selectedLeadId || leadId || attendees.length > 0) && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1225,7 +1255,7 @@ export default function AppointmentModal({
                     className="rounded border-gray-300"
                   />
                   <span className="text-sm text-gray-700">
-                    {t('crm.appt.sendWhatsAppInvite', 'Einladung per WhatsApp an Lead senden')}
+                    {t('crm.appt.sendWhatsAppInviteAll', 'Einladung per WhatsApp senden — an Lead & Teilnehmer mit Nummer')}
                   </span>
                 </label>
               )}

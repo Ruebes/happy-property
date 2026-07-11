@@ -2218,7 +2218,10 @@
       "attendeesPlaceholder": "Geschäftskontakt suchen (z. B. Valery, Burkhard…)",
       "attendeesHint": "Teilnehmer bekommen die Einladung per E-Mail (und WhatsApp, falls Nummer hinterlegt).",
       "mailInviteFailedTo": "E-Mail-Einladung an {{name}} konnte NICHT gesendet werden.",
-      "waInviteFailedTo": "WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden."
+      "waInviteFailedTo": "WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.",
+      "sendEmailUpdateAll": "Terminänderung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)",
+      "sendEmailInviteAll": "Einladung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)",
+      "sendWhatsAppInviteAll": "Einladung per WhatsApp senden — an Lead & Teilnehmer mit Nummer"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",
