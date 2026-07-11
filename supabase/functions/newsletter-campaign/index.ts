@@ -203,6 +203,7 @@ function buildEmailHtml(c: {
       <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
     </td></tr></table>
   </td></tr>
+  ${firstTok ? `<tr><td align="center" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${SITE}/abmelden?d=${firstTok}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>` : ''}
 </table></td></tr></table></body></html>`
 }
 
@@ -231,7 +232,7 @@ async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Prom
 // Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
 async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string }>> {
   const [{ data: leads }, { data: deals }, { data: optouts }] = await Promise.all([
-    sb.from('leads').select('id, first_name, last_name, email'),
+    sb.from('leads').select('id, first_name, last_name, email').is('newsletter_optout_at', null),
     sb.from('deals').select('lead_id, phase, archived_from_phase'),
     sb.from('communication_optouts').select('lead_id'),
   ])
@@ -247,7 +248,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe'
+      deck_token?: string
       campaign_id?: string; to?: string
       project_name?: string; bullets?: string
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
@@ -277,6 +279,29 @@ Deno.serve(async (req: Request) => {
       if (!res.ok) return json({ error: `KI-Fehler ${res.status}: ${(await res.text()).slice(0, 200)}` }, 502)
       const d = await res.json() as { content?: Array<{ text?: string }> }
       return json({ ok: true, text: (d.content?.[0]?.text ?? '').trim() })
+    }
+
+    // ── Abmelden (öffentlich, per persönlichem Deck-Token aus der Mail) ─────
+    // Setzt NUR leads.newsletter_optout_at — Termin-/Transaktionskommunikation
+    // läuft weiter (dafür gibt es communication_optouts).
+    if (body.action === 'unsubscribe') {
+      const tok = (body.deck_token ?? '').trim()
+      if (!tok) return json({ error: 'token fehlt' }, 400)
+      const { data: deck } = await sb.from('sales_decks').select('lead_id').eq('token', tok).maybeSingle()
+      const leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      if (!leadId) return json({ error: 'not_found' }, 404)
+      const { error: ue } = await sb.from('leads').update({ newsletter_optout_at: new Date().toISOString() }).eq('id', leadId)
+      if (ue) return json({ error: ue.message }, 500)
+      try {
+        await sb.from('activities').insert({
+          lead_id: leadId, type: 'note', direction: 'inbound',
+          subject: 'Newsletter abbestellt',
+          content: 'Der Kontakt hat sich über den Abmelde-Link im Newsletter von künftigen Aussendungen abgemeldet.',
+          completed_at: new Date().toISOString(),
+        })
+      } catch (e) { console.warn('[newsletter] optout activity:', e) }
+      console.log(`[newsletter] Abmeldung: Lead ${leadId}`)
+      return json({ ok: true })
     }
 
     // Ab hier: Kampagne nötig
