@@ -2643,7 +2643,16 @@
       "stCalcs": "Berechnung",
       "stCalcViews": "Aufrufe",
       "colMail": "Mail geöffnet",
-      "colDecks": "Decks angesehen"
+      "colDecks": "Decks angesehen",
+      "startAt": "Versandstart:",
+      "startNow": "sofort senden",
+      "startNowLabel": "(leer = sofort)",
+      "launchAt": "🗓 Versand planen ({{n}} Empfänger)",
+      "confirmLaunchAt": "Kampagne vorbereiten und ab {{dt}} versenden? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).",
+      "confirmLaunch": "Kampagne wirklich JETZT starten? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).",
+      "plannedFrom": "geplant ab",
+      "sentLabel": "gesendet",
+      "running": "läuft"
     }
   },
   "docs": {

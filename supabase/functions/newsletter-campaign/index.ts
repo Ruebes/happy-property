@@ -250,7 +250,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json() as {
       action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe'
       deck_token?: string
-      campaign_id?: string; to?: string
+      campaign_id?: string; to?: string; start_at?: string
       project_name?: string; bullets?: string
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
     }
@@ -292,6 +292,10 @@ Deno.serve(async (req: Request) => {
       if (!leadId) return json({ error: 'not_found' }, 404)
       const { error: ue } = await sb.from('leads').update({ newsletter_optout_at: new Date().toISOString() }).eq('id', leadId)
       if (ue) return json({ error: ue.message }, 500)
+      // Noch nicht versendete Newsletter-Mails (auch geplante Kampagnen) stoppen
+      const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
+        .eq('lead_id', leadId).eq('event_type', 'newsletter').eq('status', 'pending')
+      if (ce) console.warn('[newsletter] optout cancel:', ce.message)
       try {
         await sb.from('activities').insert({
           lead_id: leadId, type: 'note', direction: 'inbound',
@@ -360,7 +364,10 @@ Deno.serve(async (req: Request) => {
 
       const job = (async () => {
         try {
-          let slot = clampToWindow(new Date(Date.now() + 120e3))
+          // Geplanter Versandstart: Staffelung beginnt frühestens zum Wunschtermin
+          const startAt = body.start_at ? new Date(body.start_at) : null
+          const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
+          let slot = clampToWindow(new Date(base))
           let done = 0, skipped = 0
           for (const lead of audience) {
             // Pro-Empfänger-Fehlerbehandlung: EIN problematischer Lead darf nie

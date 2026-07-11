@@ -114,6 +114,8 @@ export default function Newsletter() {
   const [busyKey, setBusyKey] = useState<string>('')      // welcher Button arbeitet gerade
   const [toast, setToast] = useState('')
   const [status, setStatus] = useState<{ status: string; total: number; done: number; error?: string | null } | null>(null)
+  const [startAt, setStartAt] = useState('')   // '' = sofort; sonst datetime-local
+  const [progress, setProgress] = useState<Record<string, { sent: number; pending: number; next_at: string | null }>>({})
   const [pastCampaigns, setPastCampaigns] = useState<Array<{ id: string; title: string; status: string; recipients_total: number; recipients_done: number; created_at: string }>>([])
 
   const showToastMsg = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
@@ -123,6 +125,10 @@ export default function Newsletter() {
       .select('id, title, status, recipients_total, recipients_done, created_at')
       .order('created_at', { ascending: false }).limit(10)
     setPastCampaigns((data as typeof pastCampaigns) ?? [])
+    try {
+      const { data: prog, error } = await supabase.rpc('newsletter_progress')
+      if (!error && prog) setProgress(prog as typeof progress)
+    } catch (err) { console.warn('[Newsletter] progress:', err) }
   }, [])
 
   useEffect(() => {
@@ -380,11 +386,15 @@ export default function Newsletter() {
   }
 
   const launch = async () => {
-    if (!confirm(t('crm.newsletter.confirmLaunch', 'Kampagne wirklich starten? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).') as string)) return
+    const planned = startAt ? new Date(startAt) : null
+    const q = planned
+      ? (t('crm.newsletter.confirmLaunchAt', 'Kampagne vorbereiten und ab {{dt}} versenden? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).', { dt: planned.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) }) as string)
+      : (t('crm.newsletter.confirmLaunch', 'Kampagne wirklich JETZT starten? Jeder Empfänger bekommt eine persönliche Mail (gestaffelt, 08–20 Uhr).') as string)
+    if (!confirm(q)) return
     setBusyKey('launch')
     try {
       const id = await saveCampaign(); if (!id) return
-      const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'launch', campaign_id: id } })
+      const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'launch', campaign_id: id, start_at: planned ? planned.toISOString() : undefined } })
       const d = data as { ok?: boolean; total?: number; error?: string } | null
       if (error || !d?.ok) throw new Error(error?.message ?? d?.error ?? 'Launch fehlgeschlagen')
       setStatus({ status: 'launching', total: d.total ?? 0, done: 0 })
@@ -531,10 +541,20 @@ export default function Newsletter() {
             <button onClick={() => void sendTest()} disabled={busyKey === 'test' || !subject.trim()} className={btnSec}>
               {busyKey === 'test' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.test', '✉️ Test-Mail an mich')}
             </button>
+            <label className="flex items-center gap-2 text-xs text-gray-600">
+              {t('crm.newsletter.startAt', 'Versandstart:')}
+              <input type="datetime-local" value={startAt} onChange={e => setStartAt(e.target.value)}
+                min={new Date(Date.now() + 10 * 60000).toISOString().slice(0, 16)}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 bg-white" />
+              {startAt && <button onClick={() => setStartAt('')} className="text-gray-400 hover:text-gray-700" title={t('crm.newsletter.startNow', 'sofort senden') as string}>✕</button>}
+              {!startAt && <span className="text-gray-400">{t('crm.newsletter.startNowLabel', '(leer = sofort)')}</span>}
+            </label>
             <button onClick={() => void launch()}
               disabled={busyKey === 'launch' || !subject.trim() || props.length === 0 || props.some(p => !p.master_deck_token)}
               className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-              {t('crm.newsletter.launch', '🚀 Kampagne starten ({{n}} Empfänger)', { n: audience ?? '…' })}
+              {startAt
+                ? t('crm.newsletter.launchAt', '🗓 Versand planen ({{n}} Empfänger)', { n: audience ?? '…' })
+                : t('crm.newsletter.launch', '🚀 Kampagne starten ({{n}} Empfänger)', { n: audience ?? '…' })}
             </button>
             {props.some(p => !p.master_deck_token) && props.length > 0 && (
               <span className="text-xs text-gray-400">{t('crm.newsletter.needDecks', 'Erst alle Master-Decks erstellen.')}</span>
@@ -567,7 +587,16 @@ export default function Newsletter() {
                       {c.status === 'draft' ? t('crm.newsletter.stDraft', 'Entwurf') : t('crm.newsletter.stSent', 'versendet')}
                     </span>
                     <span className="text-xs text-gray-400">
-                      {new Date(c.created_at).toLocaleDateString('de-DE')}{c.status !== 'draft' && <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>}
+                      {new Date(c.created_at).toLocaleDateString('de-DE')}
+                      {c.status !== 'draft' && (() => {
+                        const pr = progress[c.id]
+                        if (!pr) return <> · {c.recipients_done}/{c.recipients_total} {t('crm.newsletter.mails', 'Mails')}</>
+                        const total = pr.sent + pr.pending
+                        if (pr.sent === 0 && pr.next_at && new Date(pr.next_at).getTime() > Date.now() + 10 * 60000) {
+                          return <> · 🗓 {t('crm.newsletter.plannedFrom', 'geplant ab')} {new Date(pr.next_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} · {total} {t('crm.newsletter.mails', 'Mails')}</>
+                        }
+                        return <> · <strong className="text-gray-600">{pr.sent}/{total}</strong> {t('crm.newsletter.sentLabel', 'gesendet')}{pr.pending > 0 && <> · {t('crm.newsletter.running', 'läuft')}</>}</>
+                      })()}
                     </span>
                     <span className="ml-auto flex items-center gap-2">
                       {c.status === 'draft' ? (

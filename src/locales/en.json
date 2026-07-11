@@ -2643,7 +2643,16 @@
       "stCalcs": "Calculation",
       "stCalcViews": "views",
       "colMail": "Mail opened",
-      "colDecks": "Decks viewed"
+      "colDecks": "Decks viewed",
+      "startAt": "Send start:",
+      "startNow": "send now",
+      "startNowLabel": "(empty = now)",
+      "launchAt": "🗓 Schedule send ({{n}} recipients)",
+      "confirmLaunchAt": "Prepare campaign and send from {{dt}}? Every recipient gets a personal mail (staggered, 8am–8pm).",
+      "confirmLaunch": "Really start the campaign NOW? Every recipient gets a personal mail (staggered, 8am–8pm).",
+      "plannedFrom": "scheduled from",
+      "sentLabel": "sent",
+      "running": "running"
     }
   },
   "docs": {

@@ -339,6 +339,18 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
+      // Newsletter-Abmeldung zwischen Planung und Versand: Mail überspringen.
+      if (msg.event_type === 'newsletter' && msg.lead_id) {
+        const { data: ol } = await supabase.from('leads').select('newsletter_optout_at').eq('id', msg.lead_id).maybeSingle()
+        if ((ol as { newsletter_optout_at?: string | null } | null)?.newsletter_optout_at) {
+          await supabase.from('scheduled_messages')
+            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Newsletter abbestellt' })
+            .eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'skipped_newsletter_optout' })
+          continue
+        }
+      }
+
       const cond = msg.appointment_condition
       if (cond && cond !== 'none') {
         const { data: appt } = await supabase.from('crm_appointments')
