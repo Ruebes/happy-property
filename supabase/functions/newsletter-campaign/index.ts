@@ -86,7 +86,7 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 // process-scheduled-messages) — Links bleiben dort als URLs erhalten.
 function buildEmailHtml(c: {
   subject?: string; intro_text: string; outro_text: string; properties: CampaignProperty[]
-}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined> }): string {
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined>; bookingToken?: string }): string {
   const paras = (t: string) => t.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean).map(esc).join('<br><br>')
   // H1 aus dem Betreff ableiten (Teil vor ":" bzw. "—"), Fallback generisch
   const rawH = (c.subject ?? '').split(/[:—]/)[0].trim()
@@ -94,8 +94,13 @@ function buildEmailHtml(c: {
 
   const utmQs = `utm_source=newsletter&utm_medium=email${opts?.campaignId ? `&utm_campaign=${opts.campaignId}` : ''}`
   const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
-  const terminUrl = opts?.directBooking !== false && firstTok
-    ? `${SITE}/termin?direkt=1&d=${firstTok}&${utmQs}`
+  // Termin-Button: Direkteinstieg über ein LEAD-gebundenes Deck. Im echten Versand
+  // ist das der Klon des Empfängers (firstTok); Test/Vorschau reichen stattdessen
+  // bookingToken (ein Deck des Test-Empfängers) — Master-Decks haben keinen Lead
+  // und würden im Fragebogen landen.
+  const bookTok = opts?.bookingToken ?? (opts?.directBooking !== false ? firstTok : undefined)
+  const terminUrl = bookTok
+    ? `${SITE}/termin?direkt=1&d=${bookTok}&${utmQs}`
     : `${SITE}/termin?${utmQs}`
 
   const cards = c.properties.map(p => {
@@ -188,6 +193,17 @@ function buildEmailHtml(c: {
 </table></td></tr></table></body></html>`
 }
 
+// Für Test-Mail/Vorschau: Deck-Token eines Leads mit dieser E-Mail (Direkteinstieg
+// demonstrieren, ohne echte Kunden zu berühren — der Klick bucht auf den TEST-Lead).
+async function bookingTokenFor(sb: SupabaseClient, email: string): Promise<string | undefined> {
+  const { data: lead } = await sb.from('leads').select('id').eq('email', email.trim().toLowerCase()).maybeSingle()
+  const leadId = (lead as { id?: string } | null)?.id
+  if (!leadId) return undefined
+  const { data: deck } = await sb.from('sales_decks').select('token').eq('lead_id', leadId)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle()
+  return (deck as { token?: string } | null)?.token
+}
+
 // Titelbilder je Projekt (erste Render-URL) — für die Objekt-Karten der Mail
 async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Promise<Record<string, string | undefined>> {
   const out: Record<string, string | undefined> = {}
@@ -268,7 +284,8 @@ Deno.serve(async (req: Request) => {
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
-      const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages })
+      const bookingToken = await bookingTokenFor(sb, 'sven@happy-property.com')
+      const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
       return json({ ok: true, subject: String(camp.subject ?? ''), html })
     }
 
@@ -277,7 +294,8 @@ Deno.serve(async (req: Request) => {
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
-      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages })
+      const bookingToken = body.to ? await bookingTokenFor(sb, body.to) : undefined
+      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
       const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${camp.subject}`, html } })
       if (se) return json({ error: `Testversand: ${se.message}` }, 502)
       return json({ ok: true })
