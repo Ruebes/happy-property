@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { DECK_LOGO } from '../lib/deckTypes'
+import { DECK_LOGO, DECK_PHOTO } from '../lib/deckTypes'
 import { OptionVisual } from '../components/FunnelIcon'
 import {
   loadFunnelConfig, DEFAULT_FUNNEL_CONFIG, FUNNEL_HERO_DEFAULT,
@@ -20,6 +20,9 @@ const CREAM = '#FAF6EC'
 const CORAL = '#ff795d'
 const NAVY = '#1a2332'
 const INK = '#1a1a1a'
+// Sven-Porträt für die Terminwahl (rund, server-seitig quadratisch zugeschnitten —
+// das Original ist 5672×3781 Querformat)
+const SVEN_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=224&height=224&resize=cover&quality=80'
 
 
 type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done'
@@ -372,8 +375,12 @@ export default function Funnel() {
 
           {phase === 'meeting_type' && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Dein Wunschtermin</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>
+              <div className="flex justify-center mb-6">
+                <img src={SVEN_SQ} alt="Sven – Happy Property" width={112} height={112}
+                  className="w-24 h-24 md:w-28 md:h-28 rounded-full object-cover shadow-lg ring-4 ring-white" />
+              </div>
+              <p className="text-xs font-bold tracking-widest uppercase mb-2 text-center" style={{ color: CORAL }}>Dein Wunschtermin</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl text-center" style={{ color: NAVY }}>
                 {direct && directName ? `Hallo ${directName} — wie möchtest du mit Sven sprechen?` : 'Wie möchtest du mit Sven sprechen?'}
               </h2>
               <div className="grid md:grid-cols-2 gap-4 mt-6">
