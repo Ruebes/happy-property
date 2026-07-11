@@ -2633,7 +2633,10 @@
       "noFacts": "Keine Projekt-Fakten — erst „Aus Drive laden\" im Projekt ausführen.",
       "preview": "👁 Vorschau",
       "previewTitle": "Vorschau — genau so kommt die Mail an",
-      "previewError": "Vorschau fehlgeschlagen"
+      "previewError": "Vorschau fehlgeschlagen",
+      "calcViews": "Beispielrechnungen",
+      "calcLast": "zuletzt",
+      "calcHint": "die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar"
     }
   },
   "docs": {

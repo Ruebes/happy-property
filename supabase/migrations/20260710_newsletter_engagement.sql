@@ -19,10 +19,24 @@ views as (
   from decks d
   join public.engagement_events e on e.token = d.token and e.type = 'deck_view'
   group by d.lead_id, d.project_id
+),
+calcs as (
+  -- Beispielrechnungen sind KAMPAGNENWEIT (ein Token je Projekt, lead_id null):
+  -- Aufrufe lassen sich keinem Empfaenger zuordnen, nur zaehlen.
+  select pr->>'project_name' as project, pr->>'calc_token' as token
+  from public.newsletter_campaigns c, jsonb_array_elements(c.properties) pr
+  where c.id = p_campaign and coalesce(pr->>'calc_token', '') <> ''
+),
+calc_counts as (
+  select ca.project, count(e.id) as views, max(e.occurred_at) as last_view
+  from calcs ca
+  left join public.engagement_events e on e.token = ca.token and e.type = 'calc_view'
+  group by ca.project
 )
 select jsonb_build_object(
   'recipients', (select count(distinct lead_id) from decks),
   'openers',    (select count(distinct lead_id) from views),
+  'calc_views', coalesce((select jsonb_agg(to_jsonb(calc_counts.*)) from calc_counts), '[]'::jsonb),
   'rows', coalesce((
     select jsonb_agg(jsonb_build_object(
       'lead_id',   v.lead_id,

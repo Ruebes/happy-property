@@ -256,7 +256,7 @@ export default function Newsletter() {
   // Öffnungs-Auswertung (Archiv): wer hat welches Deck geöffnet
   interface EngRow { lead_id: string; name: string | null; email: string | null; project: string; views: number; last_view: string }
   const [archiveOpen, setArchiveOpen] = useState<string | null>(null)
-  const [archiveData, setArchiveData] = useState<Record<string, { recipients: number; openers: number; rows: EngRow[] }>>({})
+  const [archiveData, setArchiveData] = useState<Record<string, { recipients: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> }>>({})
   const toggleArchive = async (id: string) => {
     if (archiveOpen === id) { setArchiveOpen(null); return }
     setArchiveOpen(id)
@@ -265,7 +265,7 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.rpc('newsletter_engagement', { p_campaign: id })
       if (error) throw error
-      setArchiveData(prev => ({ ...prev, [id]: data as { recipients: number; openers: number; rows: EngRow[] } }))
+      setArchiveData(prev => ({ ...prev, [id]: data as { recipients: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> } }))
     } catch (err) {
       console.error('[Newsletter] engagement:', err)
       showToastMsg(`❌ ${t('crm.newsletter.engError', 'Öffnungen konnten nicht geladen werden')}`)
@@ -559,7 +559,8 @@ export default function Newsletter() {
             <div className="space-y-2">
               {pastCampaigns.map(c => (
                 <div key={c.id} className="border border-gray-100 rounded-xl">
-                  <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+                  <div className={`flex flex-wrap items-center gap-2 px-3 py-2 text-sm ${c.status !== 'draft' ? 'cursor-pointer hover:bg-gray-50 rounded-xl' : ''}`}
+                    onClick={() => { if (c.status !== 'draft') void toggleArchive(c.id) }}>
                     <span className="font-medium text-gray-800">{c.title}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${c.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-orange-50 text-orange-700'}`}>
                       {c.status === 'draft' ? t('crm.newsletter.stDraft', 'Entwurf') : t('crm.newsletter.stSent', 'versendet')}
@@ -576,7 +577,7 @@ export default function Newsletter() {
                           <button onClick={() => void deleteDraft(c.id)} className="text-gray-400 hover:text-red-600 text-sm">🗑</button>
                         </>
                       ) : (
-                        <button onClick={() => void toggleArchive(c.id)} disabled={busyKey === `arch${c.id}`} className={btnSec}>
+                        <button onClick={e => { e.stopPropagation(); void toggleArchive(c.id) }} disabled={busyKey === `arch${c.id}`} className={btnSec}>
                           {busyKey === `arch${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.opens', '📈 Öffnungen')}
                         </button>
                       )}
@@ -589,6 +590,14 @@ export default function Newsletter() {
                           openers: archiveData[c.id].openers, recipients: archiveData[c.id].recipients,
                         })}
                       </p>
+                      {(archiveData[c.id].calc_views?.length ?? 0) > 0 && (
+                        <p className="text-xs text-gray-500 mb-2">
+                          📊 {t('crm.newsletter.calcViews', 'Beispielrechnungen')}: {(archiveData[c.id].calc_views ?? []).map(cv =>
+                            `${cv.project}: ${cv.views}× ${cv.views > 0 && cv.last_view ? `(${t('crm.newsletter.calcLast', 'zuletzt')} ${new Date(cv.last_view).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})` : ''}`,
+                          ).join(' · ')}
+                          <span className="text-gray-400"> — {t('crm.newsletter.calcHint', 'die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar')}</span>
+                        </p>
+                      )}
                       {archiveData[c.id].rows.length === 0 ? (
                         <p className="text-sm text-gray-400">{t('crm.newsletter.noOpens', 'Noch keine Öffnungen.')}</p>
                       ) : (

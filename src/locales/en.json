@@ -2633,7 +2633,10 @@
       "noFacts": "No project facts — run \"Load from Drive\" in the project first.",
       "preview": "👁 Preview",
       "previewTitle": "Preview — exactly how the mail arrives",
-      "previewError": "Preview failed"
+      "previewError": "Preview failed",
+      "calcViews": "Sample calculations",
+      "calcLast": "last",
+      "calcHint": "the calculation is identical for all recipients, so views cannot be attributed to individual customers"
     }
   },
   "docs": {
