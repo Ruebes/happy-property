@@ -622,7 +622,15 @@ export default function AppointmentModal({
               ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\nPasswort: ${effZoomPassword}` : ''}`
               : apptType === 'inperson' && (effLocation || effLocationUrl)
                 ? `\n📍 ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
-                : ''
+                : apptType === 'whatsapp'
+                  ? (tgt.leadId
+                      ? `\n📞 Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.`
+                      : `\n📞 Der Termin findet als WhatsApp-Call statt.`)
+                  : apptType === 'phone'
+                    ? (tgt.leadId
+                        ? `\n📞 Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.`
+                        : `\n📞 Der Termin findet telefonisch statt.`)
+                    : ''
             const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {

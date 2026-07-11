@@ -128,6 +128,19 @@ Deno.serve(async (req) => {
         .delete()
         .eq('lead_id', lead.id)
 
+      // Kunde hat GEANTWORTET → Nachfass-Sequenzen stoppen. Die Drips sind für
+      // Nicht-Reagierer; wer im Dialog ist, darf nicht weiter automatisch
+      // angeschrieben werden (Norbert-Fall: „Hatte ich Dir doch geschrieben!").
+      // Newsletter & Termin-Nachrichten bleiben unberührt.
+      if (!fromMe) {
+        const { error: seqErr } = await supabase
+          .from('scheduled_messages')
+          .update({ status: 'cancelled', error_message: 'Kunde hat geantwortet — Nachfass-Sequenz gestoppt' })
+          .eq('lead_id', lead.id).eq('status', 'pending')
+          .in('event_type', ['erstkontakt', 'no_show', 'immobilienauswahl', 'deck_viewed_followup', 'bot_nudge'])
+        if (seqErr) console.warn('[timelines-webhook] Sequenz-Stopp fehlgeschlagen:', seqErr.message)
+      }
+
       // Eingehende Abmeldung erkennen → Opt-Out anlegen (idempotent).
       // Der DB-Trigger storniert dann offene geplante Nachrichten.
       if (!fromMe && detectsStopIntent(text)) {

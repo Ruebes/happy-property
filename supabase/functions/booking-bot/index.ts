@@ -272,8 +272,9 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp).
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
+- content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINE Terminwahl sind. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
 - optout: will nicht kontaktiert werden / kein Interesse.
-- unclear: unverständlich/themenfremd.
+- unclear: kurze unverständliche Nachricht (Tippfehler, einzelnes Wort ohne Sinn).
 WICHTIG:
 - Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?"), IMMER time_hint als "HH:MM" füllen (intent give_preference).
 - Bei JEDER Zwischenfrage (auch zusammen mit einem Terminwunsch) fülle answer mit einer KURZEN, ehrlichen Antwort in Svens lockerem Du-Ton (max 1-2 Sätze). Erlaubte Fakten: Gespräch direkt mit Sven persönlich, ca. 15 Min, unverbindlich & kostenlos, es geht um deine offenen Fragen rund um Immobilien-Investment auf Zypern. Erfinde NICHTS (keine Preise, keine Objektzusagen). Kombiniert der Kunde Frage + Terminwunsch → answer UND die Termin-Felder füllen.
@@ -287,7 +288,7 @@ Fülle nur passende Felder, sonst null.`
         tool_choice: { type: 'tool', name: 'emit_intent' },
         tools: [{ name: 'emit_intent', description: 'Intent der Kundenantwort', input_schema: {
           type: 'object', properties: {
-            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'optout', 'unclear'] },
+            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
             time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
@@ -544,6 +545,18 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
   const { data: active } = await admin.from('booking_conversations').select('id')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
+  // Kürzlich an Sven übergeben oder gebucht? Dann grätscht der Bot NICHT wieder rein
+  // (Rainer-Fall: neuer Deck-View startete den Bot mitten in Svens Gespräch).
+  const since7d = new Date(Date.now() - 7 * 864e5).toISOString()
+  const { data: recent } = await admin.from('booking_conversations').select('id')
+    .eq('lead_id', leadId).in('state', ['handoff', 'booked']).gt('updated_at', since7d).limit(1)
+  if (recent && recent.length) return json({ ok: true, skipped: 'recent_handoff_or_booked' })
+  // Kunde hat in den letzten 48h selbst geschrieben? Dann läuft ein echter Dialog —
+  // kein automatischer Bot-Einstieg.
+  const since48h = new Date(Date.now() - 48 * 3600e3).toISOString()
+  const { data: inb } = await admin.from('activities').select('id')
+    .eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound').gt('created_at', since48h).limit(1)
+  if (inb && inb.length) return json({ ok: true, skipped: 'customer_recently_replied' })
   // Schon ein anstehender Termin?
   const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
@@ -625,6 +638,15 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     return json({ ok: true, handled: 'optout' })
   }
 
+  // INHALTLICHE Nachricht (Budget, Objekte, Situation, Einwand): gehört zu Sven,
+  // nicht in den Termin-Dialog → sofort übergeben, KEIN erneuter Slot-Push.
+  if (it.intent === 'content') {
+    const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter — er meldet sich gleich persönlich bei dir. 🙂`
+    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    await setConv(admin, c.id, { state: 'handoff', last_message: m })
+    return json({ ok: true, handled: 'content_handoff' })
+  }
+
   // Zwischenfrage beantworten (z.B. „Mit wem spreche ich?") — ohne den Faden zu
   // verlieren. Eine Rückfrage ist Interesse, kein Missverstehen → Zähler zurück.
   if (it.answer) {
@@ -632,9 +654,11 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     await setConv(admin, c.id, { attempts: 0 }); c.attempts = 0
   }
   if (it.intent === 'question') {
-    // reine Rückfrage → die aktuellen Optionen nochmal anbieten
-    if (c.last_message) { await sendWa(phone, c.last_message); await logWa(admin, leadId, c.last_message, 'outbound') }
-    return json({ ok: true, handled: 'question' })
+    // Frage beantwortet → Ball beim Kunden lassen (KEIN erneuter Slot-Push).
+    // Konnte die KI nicht antworten → an Sven übergeben statt Optionen wiederholen.
+    if (it.answer) return json({ ok: true, handled: 'question' })
+    await handoff(admin, c.id, phone, leadId, l.first_name)
+    return json({ ok: true, handled: 'question_handoff' })
   }
 
   const bump = async () => {
