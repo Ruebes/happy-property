@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent } from '../../lib/googleCalendar'
 import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
+import { DECK_LOGO, DECK_PHOTO } from '../../lib/deckTypes'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -109,6 +110,73 @@ function StepBar({ step }: { step: number }) {
   )
 }
 
+// ── Einladung im Happy-Property-Template (E-Mail-sicher, Tabellen + Inline-CSS) ──
+const HP_PHOTO_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=112&height=112&resize=cover&quality=80'
+const HP_SANS = "Montserrat, Helvetica, Arial, sans-serif"
+
+interface InviteParams {
+  firstName: string; isEdit: boolean; title: string
+  dateStr: string; von: string; bis: string
+  apptType: ApptType
+  zoomLink?: string; zoomPassword?: string
+  location?: string; locationUrl?: string; phone?: string
+  gcalHref: string
+}
+
+function buildInviteHtml(pr: InviteParams): string {
+  const e = escHtml
+  const intro = pr.isEdit
+    ? `unser Termin hat sich geändert — hier sind die neuen Details:`
+    : `ich freue mich auf unser Treffen! Hier die Details:`
+  const where = pr.apptType === 'inperson' && pr.location
+    ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.`
+    : pr.apptType === 'zoom'
+      ? `Wir sprechen um <strong>${e(pr.von)} Uhr</strong> per Zoom${pr.zoomPassword ? ` (Passwort: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.`
+      : pr.apptType === 'whatsapp'
+        ? `Ich rufe dich um <strong>${e(pr.von)} Uhr</strong> per WhatsApp an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
+        : `Ich rufe dich um <strong>${e(pr.von)} Uhr</strong> an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
+  const btn = (href: string, label: string, solid: boolean) =>
+    `<a href="${e(href)}" target="_blank" style="display:inline-block;white-space:nowrap;font-family:${HP_SANS};font-size:13px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:10px;margin:0 8px 8px 0;${solid ? 'background-color:#ff795d;color:#ffffff;' : 'background-color:#ffffff;color:#1a2332;border:1px solid #e6dfd0;'}">${label}</a>`
+  const buttons = [
+    pr.apptType === 'zoom' && pr.zoomLink ? btn(pr.zoomLink, '📹 Zoom beitreten', true) : '',
+    pr.apptType === 'inperson' && pr.locationUrl ? btn(pr.locationUrl, '📍 Ort auf Google Maps', true) : '',
+    btn(pr.gcalHref, '🗓 In meinen Kalender', pr.apptType !== 'zoom' && !(pr.apptType === 'inperson' && pr.locationUrl)),
+  ].filter(Boolean).join('')
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background-color:#FAF6EC;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FAF6EC;"><tr><td align="center" style="padding:28px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
+  <tr><td style="padding:0 0 20px 0;"><img src="${DECK_LOGO}" alt="Happy Property" width="120" height="37" style="display:block;border:0;"></td></tr>
+  <tr><td style="background-color:#ffffff;border-radius:14px;padding:32px 36px;">
+    <div style="font-family:Georgia, 'Times New Roman', serif;font-size:22px;font-weight:700;color:#1a2332;">${pr.isEdit ? 'Terminänderung' : 'Unser Termin steht'} ✔</div>
+    <div style="font-family:${HP_SANS};font-size:14px;line-height:1.7;color:#1b1b22;margin-top:16px;">
+      Hallo ${e(pr.firstName)},<br><br>
+      ${intro}<br><br>
+      <strong>${e(pr.title)}</strong><br>
+      ${e(pr.dateStr)}<br>
+      ${e(pr.von)}–${e(pr.bis)} Uhr<br><br>
+      ${where}
+    </div>
+    <div style="margin-top:22px;">${buttons}</div>
+    <div style="font-family:${HP_SANS};font-size:11px;color:#9a9aa3;margin-top:8px;">Der Termin hängt außerdem als Kalender-Datei an dieser E-Mail.</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr>
+      <td style="padding-right:14px;"><img src="${HP_PHOTO_SQ}" alt="Sven" width="56" height="56" style="display:block;border-radius:28px;border:0;"></td>
+      <td style="font-family:${HP_SANS};font-size:13px;line-height:1.5;color:#1b1b22;">
+        Bis bald!<br><strong>Sven</strong> · Happy Property<br>
+        <a href="mailto:info@happy-property.com" style="color:#ff795d;text-decoration:none;">info@happy-property.com</a>
+      </td>
+    </tr></table>
+  </td></tr>
+  <tr><td align="center" style="padding:18px 10px 0 10px;font-family:${HP_SANS};font-size:10px;color:#9a9aa3;">Sveru Ltd. · Pallados 1, 8046 Paphos, Zypern</td></tr>
+</table>
+</td></tr></table></body></html>`
+}
+
+// Google-Kalender-Vorlagen-Link („In meinen Kalender") — funktioniert ohne Anmeldung beim Absender
+function buildGcalHref(title: string, startIso: string, endIso: string, details: string, location?: string): string {
+  const f = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${f(startIso)}/${f(endIso)}&details=${encodeURIComponent(details)}${location ? `&location=${encodeURIComponent(location)}` : ''}`
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function AppointmentModal({
@@ -175,6 +243,73 @@ export default function AppointmentModal({
     appointment?.lead ? `${appointment.lead.first_name} ${appointment.lead.last_name}` : (leadName ?? ''),
   )
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Weitere Teilnehmer (Partner/Geschäftskontakte) — bekommen die Einladung mit
+  interface Attendee { name: string; email: string | null; phone: string | null }
+  const [attendees, setAttendees] = useState<Attendee[]>(
+    Array.isArray(appointment?.attendees) ? (appointment!.attendees as Attendee[]) : [],
+  )
+  const [bcQuery, setBcQuery] = useState('')
+  const [bcResults, setBcResults] = useState<Array<{ id: string; first_name: string; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null }>>([])
+  const [bcLoading, setBcLoading] = useState(false)
+  const bcDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const searchContacts = useCallback(async (q: string) => {
+    if (q.trim().length < 2) { setBcResults([]); return }
+    setBcLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('business_contacts')
+        .select('id, first_name, last_name, company, email, phone, whatsapp')
+        .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,company.ilike.%${q}%,email.ilike.%${q}%`)
+        .limit(8)
+      if (error) throw error
+      setBcResults((data ?? []) as typeof bcResults)
+    } catch (err) {
+      console.error('[AppointmentModal] searchContacts:', err)
+      setBcResults([])
+    } finally { setBcLoading(false) }
+  }, [])
+
+  function handleBcSearchChange(val: string) {
+    setBcQuery(val)
+    if (bcDebounceRef.current) clearTimeout(bcDebounceRef.current)
+    bcDebounceRef.current = setTimeout(() => { void searchContacts(val) }, 300)
+  }
+  function addAttendee(c: { first_name: string; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null }) {
+    const name = `${c.first_name} ${c.last_name ?? ''}`.trim()
+    setAttendees(prev => prev.some(a => a.name === name) ? prev : [...prev, { name, email: c.email, phone: c.whatsapp || c.phone }])
+    setBcResults([]); setBcQuery('')
+  }
+  const removeAttendee = (name: string) => setAttendees(prev => prev.filter(a => a.name !== name))
+
+  // Orts-Suche (Photon/OSM via place-search) — Treffer wird zum Google-Maps-Link
+  const [placeResults, setPlaceResults] = useState<Array<{ name: string; display: string; lat: number; lon: number }>>([])
+  const [placeLoading, setPlaceLoading] = useState(false)
+  const placeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function handleLocationChange(val: string) {
+    setLocation(val)
+    if (placeDebounceRef.current) clearTimeout(placeDebounceRef.current)
+    if (val.trim().length < 3) { setPlaceResults([]); return }
+    placeDebounceRef.current = setTimeout(async () => {
+      setPlaceLoading(true)
+      try {
+        const { data, error } = await supabase.functions.invoke('place-search', { body: { q: val } })
+        if (error) throw error
+        setPlaceResults(((data as { results?: typeof placeResults } | null)?.results) ?? [])
+      } catch (err) {
+        console.warn('[AppointmentModal] place-search:', err)
+        setPlaceResults([])
+      } finally { setPlaceLoading(false) }
+    }, 400)
+  }
+  function selectPlace(pl: { name: string; display: string; lat: number; lon: number }) {
+    setLocation(pl.display ? `${pl.name}, ${pl.display}` : pl.name)
+    // Google-Link mit Name + Koordinaten — landet exakt am richtigen Pin
+    setLocationUrl(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pl.name} ${pl.lat},${pl.lon}`)}`)
+    setPlaceResults([])
+  }
 
   // ── Step 4: Confirm ───────────────────────────────────────────
   // Google-Verbindung ist server-seitig (Service-Account) → einmalige Prüfung.
@@ -298,6 +433,7 @@ export default function AppointmentModal({
         location:        effLocation || null,
         location_url:    effLocationUrl || null,
         phone_number:    effPhone || null,
+        attendees:       attendees.length ? attendees : null,
       }
 
       let apptId = appointment?.id ?? ''
@@ -388,24 +524,42 @@ export default function AppointmentModal({
         if (actErr) console.warn('[AppointmentModal] Activity-Log Fehler:', actErr)
       }
 
-      // ── Wo-Zeile für Einladungen (Mail + WhatsApp) — alle Werte HTML-escaped ──
+      // ── Einladungen (Mail im HP-Template + WhatsApp) an Lead + Teilnehmer ──
       const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
-      const whereHtml = apptType === 'zoom' && effZoomLink
-        ? `<p>Zoom-Link: <a href="${escHtml(effZoomLink)}">${escHtml(effZoomLink)}</a>${effZoomPassword ? `<br>Passwort: <strong>${escHtml(effZoomPassword)}</strong>` : ''}</p>`
-        : apptType === 'inperson' && (effLocation || effLocationUrl)
-          ? `<p>Ort: ${escHtml(effLocation)}${effLocationUrl ? ` · <a href="${escHtml(effLocationUrl)}">In Google Maps öffnen</a>` : ''}</p>`
-          : apptType === 'whatsapp' && effPhone
-            ? `<p>Wir melden uns per WhatsApp unter: ${escHtml(effPhone)}</p>`
-            : apptType === 'phone' && effPhone
-              ? `<p>Wir rufen dich an unter: ${escHtml(effPhone)}</p>` : ''
+      const gcalDetails = [
+        description,
+        effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '',
+        effLocationUrl || '',
+      ].filter(Boolean).join('\n')
+      const gcalHref = buildGcalHref(title, start_time, end_time, gcalDetails, effLocation || undefined)
 
-      // Optional: Terminbestätigung per E-Mail an den Lead (mit Kalender-Anhang)
-      if (sendEmailInvite && selectedLeadId) {
-        try {
-          const { data: ld } = await supabase.from('leads').select('email, first_name').eq('id', selectedLeadId).maybeSingle()
-          const le = ld as { email?: string | null; first_name?: string | null } | null
-          if (le?.email) {
-            const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#2b2b2b;line-height:1.6"><p>Hallo ${escHtml(le.first_name || '')},</p><p>${isEdit ? 'unser Termin wurde aktualisiert:' : 'hiermit bestätige ich unseren Termin:'}</p><p><strong>${escHtml(title)}</strong><br>${dateStr}<br>${von}–${bis} Uhr</p>${whereHtml}<p>Im Anhang findest du den Termin für deinen Kalender.</p><p>Ich freue mich auf das Gespräch!</p><p>Bis bald,<br><strong>Sven · Happy Property Cyprus</strong></p></div>`
+      // Empfängerliste: verknüpfter Lead + weitere Teilnehmer (Partner)
+      const mailTargets: Array<{ firstName: string; email: string; leadId?: string }> = []
+      const waTargets: Array<{ firstName: string; fullName: string; phone: string; leadId?: string }> = []
+      if ((sendEmailInvite || sendWhatsAppInvite) && selectedLeadId) {
+        const { data: ld } = await supabase.from('leads').select('email, phone, whatsapp, first_name, last_name').eq('id', selectedLeadId).maybeSingle()
+        const le = ld as { email?: string | null; phone?: string | null; whatsapp?: string | null; first_name?: string | null; last_name?: string | null } | null
+        if (le?.email) mailTargets.push({ firstName: le.first_name || '', email: le.email, leadId: selectedLeadId })
+        else if (sendEmailInvite) warnings.push(t('crm.appt.noLeadEmail', 'Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.'))
+        const waPhone = (le?.whatsapp || le?.phone || phoneNumber || '').trim()
+        if (waPhone) waTargets.push({ firstName: le?.first_name || '', fullName: `${le?.first_name ?? ''} ${le?.last_name ?? ''}`.trim(), phone: waPhone, leadId: selectedLeadId })
+        else if (sendWhatsAppInvite) warnings.push(t('crm.appt.noLeadPhone', 'Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.'))
+      }
+      for (const a of attendees) {
+        const first = a.name.split(' ')[0]
+        if (a.email) mailTargets.push({ firstName: first, email: a.email })
+        if (a.phone) waTargets.push({ firstName: first, fullName: a.name, phone: a.phone })
+      }
+
+      if (sendEmailInvite) {
+        for (const tgt of mailTargets) {
+          try {
+            const html = buildInviteHtml({
+              firstName: tgt.firstName, isEdit, title, dateStr, von, bis, apptType,
+              zoomLink: effZoomLink || undefined, zoomPassword: effZoomPassword || undefined,
+              location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
+              phone: effPhone || undefined, gcalHref,
+            })
             const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
             const ics = buildIcs({
               uid:        apptId || crypto.randomUUID(),
@@ -414,14 +568,14 @@ export default function AppointmentModal({
               location:    effLocation || undefined,
               // SEQUENCE steigt bei jeder Änderungs-Mail → Kalender-Clients ERSETZEN den Eintrag
               sequence:      isEdit ? Math.floor(Date.now() / 1000) : 0,
-              attendeeEmail: le.email,
+              attendeeEmail: tgt.email,
             })
             const { error: mailErr } = await supabase.functions.invoke('send-email', {
               body: {
-                to: le.email,
+                to: tgt.email,
                 subject: `${isEdit ? 'Terminänderung' : 'Terminbestätigung'}: ${title}`,
                 html,
-                lead_id: selectedLeadId,
+                ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
                 attachment: {
                   filename:       'termin.ics',
                   content_base64: btoa(unescape(encodeURIComponent(ics))),
@@ -429,51 +583,36 @@ export default function AppointmentModal({
                 },
               },
             })
-            if (mailErr) {
-              console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr.message)
-              warnings.push(t('crm.appt.mailInviteFailed', 'E-Mail-Einladung konnte NICHT gesendet werden.'))
-            }
-          } else {
-            warnings.push(t('crm.appt.noLeadEmail', 'Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.'))
+            if (mailErr) throw new Error(mailErr.message)
+          } catch (mailErr) {
+            console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr)
+            warnings.push(t('crm.appt.mailInviteFailedTo', 'E-Mail-Einladung an {{name}} konnte NICHT gesendet werden.', { name: tgt.firstName || tgt.email }))
           }
-        } catch (mailErr) {
-          console.warn('[AppointmentModal] Einladungs-Mail Fehler:', mailErr)
-          warnings.push(t('crm.appt.mailInviteFailed', 'E-Mail-Einladung konnte NICHT gesendet werden.'))
         }
       }
 
-      // Optional: Einladung per WhatsApp an den Lead (manueller Klick von Sven).
-      // Nummer: DB-Nummer des Leads, sonst die im Modal eingetippte Nummer.
-      if (sendWhatsAppInvite && selectedLeadId) {
-        try {
-          const { data: ld } = await supabase.from('leads').select('phone, first_name, last_name').eq('id', selectedLeadId).maybeSingle()
-          const lw = ld as { phone?: string | null; first_name?: string | null; last_name?: string | null } | null
-          const waPhone = (lw?.phone || phoneNumber || '').trim()
-          if (waPhone) {
+      if (sendWhatsAppInvite) {
+        for (const tgt of waTargets) {
+          try {
             const whereText = apptType === 'zoom' && effZoomLink
               ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\nPasswort: ${effZoomPassword}` : ''}`
               : apptType === 'inperson' && (effLocation || effLocationUrl)
-                ? `\nOrt: ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
+                ? `\n📍 ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
                 : ''
-            const waText = `Hallo ${lw?.first_name || ''}, ${isEdit ? 'unser Termin wurde aktualisiert' : 'hiermit bestätige ich unseren Termin'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\nIch freue mich auf das Gespräch!\nSven · Happy Property Cyprus`
+            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
             const { error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
                 override_text: waText,
-                lead_data:    { lead_name: `${lw?.first_name ?? ''} ${lw?.last_name ?? ''}`.trim(), lead_phone: waPhone },
-                lead_id:      selectedLeadId,
+                lead_data:    { lead_name: tgt.fullName, lead_phone: tgt.phone },
+                ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
               },
             })
-            if (waErr) {
-              console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', waErr.message)
-              warnings.push(t('crm.appt.waInviteFailed', 'WhatsApp-Einladung konnte NICHT gesendet werden.'))
-            }
-          } else {
-            warnings.push(t('crm.appt.noLeadPhone', 'Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.'))
+            if (waErr) throw new Error(waErr.message)
+          } catch (waErr) {
+            console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', waErr)
+            warnings.push(t('crm.appt.waInviteFailedTo', 'WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.', { name: tgt.firstName || tgt.phone }))
           }
-        } catch (waErr) {
-          console.warn('[AppointmentModal] WhatsApp-Einladung Fehler:', waErr)
-          warnings.push(t('crm.appt.waInviteFailed', 'WhatsApp-Einladung konnte NICHT gesendet werden.'))
         }
       }
 
@@ -762,15 +901,29 @@ export default function AppointmentModal({
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {t('crm.appt.address', 'Adresse')}
+                      {t('crm.appt.address', 'Ort / Restaurant')}
                     </label>
-                    <textarea
+                    <input
+                      type="text"
                       value={location}
-                      onChange={e => setLocation(e.target.value)}
-                      rows={3}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-none"
-                      placeholder={t('crm.appt.addressPlaceholder', 'Straße, Ort...')}
+                      onChange={e => handleLocationChange(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
+                      placeholder={t('crm.appt.addressPlaceholder', 'z. B. Bacchus Paphos, Neon Mall…')}
                     />
+                    {placeLoading && <p className="text-xs text-gray-400 mt-1">{t('crm.appt.searching', 'Suche...')}</p>}
+                    {placeResults.length > 0 && (
+                      <ul className="border border-gray-200 rounded-lg divide-y divide-gray-100 mt-1 max-h-48 overflow-y-auto bg-white shadow-sm">
+                        {placeResults.map((pl, i) => (
+                          <li key={`${pl.name}-${i}`}>
+                            <button type="button" onClick={() => selectPlace(pl)}
+                              className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors">
+                              <span className="text-sm font-medium text-gray-800">📍 {pl.name}</span>
+                              {pl.display && <span className="text-xs text-gray-400 ml-2">{pl.display}</span>}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -917,6 +1070,49 @@ export default function AppointmentModal({
                   )}
                 </>
               )}
+
+              {/* ── Weitere Teilnehmer (Partner/Geschäftskontakte) ── */}
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('crm.appt.attendees', 'Weitere Teilnehmer (Partner)')}
+                </label>
+                {attendees.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {attendees.map(a => (
+                      <span key={a.name}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 text-gray-700">
+                        {a.name}
+                        <button type="button" onClick={() => removeAttendee(a.name)}
+                          className="ml-1 text-xs opacity-70 hover:opacity-100">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="text"
+                  value={bcQuery}
+                  onChange={e => handleBcSearchChange(e.target.value)}
+                  placeholder={t('crm.appt.attendeesPlaceholder', 'Geschäftskontakt suchen (z. B. Valery, Burkhard…)')}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
+                />
+                {bcLoading && <p className="text-xs text-gray-400 mt-1">{t('crm.appt.searching', 'Suche...')}</p>}
+                {bcResults.length > 0 && (
+                  <ul className="border border-gray-200 rounded-lg divide-y divide-gray-100 mt-1 max-h-48 overflow-y-auto bg-white shadow-sm">
+                    {bcResults.map(c => (
+                      <li key={c.id}>
+                        <button type="button" onClick={() => addAttendee(c)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors">
+                          <span className="text-sm font-medium text-gray-800">{c.first_name} {c.last_name ?? ''}</span>
+                          <span className="text-xs text-gray-400 ml-2">{[c.company, c.email].filter(Boolean).join(' · ')}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-xs text-gray-400 mt-2">
+                  {t('crm.appt.attendeesHint', 'Teilnehmer bekommen die Einladung per E-Mail (und WhatsApp, falls Nummer hinterlegt).')}
+                </p>
+              </div>
             </>
           )}
 
