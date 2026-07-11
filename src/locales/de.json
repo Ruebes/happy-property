@@ -2221,7 +2221,8 @@
       "waInviteFailedTo": "WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.",
       "sendEmailUpdateAll": "Terminänderung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)",
       "sendEmailInviteAll": "Einladung per E-Mail senden — an Lead & Teilnehmer (mit Kalender-Anhang)",
-      "sendWhatsAppInviteAll": "Einladung per WhatsApp senden — an Lead & Teilnehmer mit Nummer"
+      "sendWhatsAppInviteAll": "Einladung per WhatsApp senden — an Lead & Teilnehmer mit Nummer",
+      "developerContact": "Developer"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

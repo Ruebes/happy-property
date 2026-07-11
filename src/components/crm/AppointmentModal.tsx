@@ -267,18 +267,30 @@ export default function AppointmentModal({
     if (q.trim().length < 2) { setBcResults([]); return }
     setBcLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('business_contacts')
-        .select('id, first_name, last_name, company, email, phone, whatsapp')
-        .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,company.ilike.%${q}%,email.ilike.%${q}%`)
-        .limit(8)
-      if (error) throw error
-      setBcResults((data ?? []) as typeof bcResults)
+      // Geschäftskontakte UND Developer-Ansprechpartner durchsuchen
+      const [bc, dc] = await Promise.all([
+        supabase.from('crm_business_contacts')
+          .select('id, first_name, last_name, company, email, phone, whatsapp')
+          .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,company.ilike.%${q}%,email.ilike.%${q}%`)
+          .limit(8),
+        supabase.from('crm_developer_contacts')
+          .select('id, name, email, phone')
+          .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+          .limit(8),
+      ])
+      if (bc.error) throw bc.error
+      const rows = ((bc.data ?? []) as typeof bcResults)
+      // Developer-Kontakte ins gleiche Format bringen (name → first/last)
+      for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null }>) {
+        const [first, ...rest] = (d.name ?? '').split(' ')
+        rows.push({ id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null, company: t('crm.appt.developerContact', 'Developer') as string, email: d.email, phone: d.phone, whatsapp: null })
+      }
+      setBcResults(rows.slice(0, 10))
     } catch (err) {
       console.error('[AppointmentModal] searchContacts:', err)
       setBcResults([])
     } finally { setBcLoading(false) }
-  }, [])
+  }, [t])
 
   function handleBcSearchChange(val: string) {
     setBcQuery(val)

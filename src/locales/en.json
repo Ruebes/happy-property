@@ -2221,7 +2221,8 @@
       "waInviteFailedTo": "WhatsApp invitation to {{name}} could NOT be sent.",
       "sendEmailUpdateAll": "Send update by email — to lead & attendees (with calendar attachment)",
       "sendEmailInviteAll": "Send invitation by email — to lead & attendees (with calendar attachment)",
-      "sendWhatsAppInviteAll": "Send invitation by WhatsApp — to lead & attendees with a number"
+      "sendWhatsAppInviteAll": "Send invitation by WhatsApp — to lead & attendees with a number",
+      "developerContact": "Developer"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
