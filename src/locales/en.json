@@ -2215,7 +2215,7 @@
       "savedWithWarnings": "Appointment saved, but:",
       "callWhatsApp": "Call via WhatsApp",
       "attendees": "Additional attendees (partners)",
-      "attendeesPlaceholder": "Search business contact (e.g. Valery, Burkhard…)",
+      "attendeesPlaceholder": "All partners & developer contacts — type to filter",
       "attendeesHint": "Attendees receive the invitation by email (and WhatsApp if a number is on file).",
       "mailInviteFailedTo": "Email invitation to {{name}} could NOT be sent.",
       "waInviteFailedTo": "WhatsApp invitation to {{name}} could NOT be sent.",

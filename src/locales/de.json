@@ -2215,7 +2215,7 @@
       "savedWithWarnings": "Termin gespeichert, aber:",
       "callWhatsApp": "Per WhatsApp anrufen",
       "attendees": "Weitere Teilnehmer (Partner)",
-      "attendeesPlaceholder": "Geschäftskontakt suchen (z. B. Valery, Burkhard…)",
+      "attendeesPlaceholder": "Alle Partner & Developer-Kontakte — tippen filtert",
       "attendeesHint": "Teilnehmer bekommen die Einladung per E-Mail (und WhatsApp, falls Nummer hinterlegt).",
       "mailInviteFailedTo": "E-Mail-Einladung an {{name}} konnte NICHT gesendet werden.",
       "waInviteFailedTo": "WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.",

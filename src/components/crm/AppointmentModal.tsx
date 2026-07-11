@@ -273,39 +273,58 @@ export default function AppointmentModal({
   const [bcLoading, setBcLoading] = useState(false)
   const bcDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const searchContacts = useCallback(async (q: string) => {
-    if (q.trim().length < 2) { setBcResults([]); return }
-    setBcLoading(true)
+  // Alle Kontakte EINMAL laden (Partner + alle Developer-Ansprechpartner mit
+  // Developer-Namen) — beim Fokus erscheint die komplette Liste, Tippen filtert
+  // auch über Firma/Developer/E-Mail.
+  const allContactsRef = useRef<typeof bcResults | null>(null)
+  const loadAllContacts = useCallback(async (): Promise<typeof bcResults> => {
+    if (allContactsRef.current) return allContactsRef.current
     try {
-      // Geschäftskontakte UND Developer-Ansprechpartner durchsuchen
       const [bc, dc] = await Promise.all([
         supabase.from('crm_business_contacts')
           .select('id, first_name, last_name, company, email, phone, whatsapp, language')
-          .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,company.ilike.%${q}%,email.ilike.%${q}%`)
-          .limit(8),
+          .order('first_name'),
         supabase.from('crm_developer_contacts')
-          .select('id, name, email, phone, language')
-          .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
-          .limit(8),
+          .select('id, name, email, phone, whatsapp, language, developer:crm_developers(name)')
+          .order('name'),
       ])
       if (bc.error) throw bc.error
-      const rows = ((bc.data ?? []) as typeof bcResults)
-      // Developer-Kontakte ins gleiche Format bringen (name → first/last)
-      for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null; language?: string | null }>) {
+      if (dc.error) throw dc.error
+      const rows = ((bc.data ?? []) as typeof bcResults).map(r => ({ ...r }))
+      for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null; developer?: { name?: string } | { name?: string }[] | null }>) {
         const [first, ...rest] = (d.name ?? '').split(' ')
-        rows.push({ id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null, company: t('crm.appt.developerContact', 'Developer') as string, email: d.email, phone: d.phone, whatsapp: null, language: d.language ?? null })
+        const dev = Array.isArray(d.developer) ? d.developer[0] : d.developer
+        rows.push({
+          id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null,
+          company: dev?.name ? `${dev.name} (Developer)` : (t('crm.appt.developerContact', 'Developer') as string),
+          email: d.email, phone: d.whatsapp || d.phone, whatsapp: d.whatsapp ?? null, language: d.language ?? null,
+        })
       }
-      setBcResults(rows.slice(0, 10))
+      allContactsRef.current = rows
+      return rows
     } catch (err) {
-      console.error('[AppointmentModal] searchContacts:', err)
-      setBcResults([])
-    } finally { setBcLoading(false) }
+      console.error('[AppointmentModal] loadAllContacts:', err)
+      return []
+    }
   }, [t])
+
+  const filterContacts = useCallback(async (q: string) => {
+    setBcLoading(true)
+    try {
+      const all = await loadAllContacts()
+      const needle = q.trim().toLowerCase()
+      const hits = !needle ? all : all.filter(c =>
+        `${c.first_name} ${c.last_name ?? ''}`.toLowerCase().includes(needle)
+        || (c.company ?? '').toLowerCase().includes(needle)
+        || (c.email ?? '').toLowerCase().includes(needle))
+      setBcResults(hits.slice(0, 30))
+    } finally { setBcLoading(false) }
+  }, [loadAllContacts])
 
   function handleBcSearchChange(val: string) {
     setBcQuery(val)
     if (bcDebounceRef.current) clearTimeout(bcDebounceRef.current)
-    bcDebounceRef.current = setTimeout(() => { void searchContacts(val) }, 300)
+    bcDebounceRef.current = setTimeout(() => { void filterContacts(val) }, 200)
   }
   function addAttendee(c: { first_name: string; last_name: string | null; company?: string | null; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null }) {
     const name = `${c.first_name} ${c.last_name ?? ''}`.trim()
@@ -1211,13 +1230,14 @@ export default function AppointmentModal({
                   type="text"
                   value={bcQuery}
                   onChange={e => handleBcSearchChange(e.target.value)}
-                  placeholder={t('crm.appt.attendeesPlaceholder', 'Geschäftskontakt suchen (z. B. Valery, Burkhard…)')}
+                  onFocus={() => { void filterContacts(bcQuery) }}
+                  placeholder={t('crm.appt.attendeesPlaceholder', 'Alle Partner & Developer-Kontakte — tippen filtert')}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
                 />
                 {bcLoading && <p className="text-xs text-gray-400 mt-1">{t('crm.appt.searching', 'Suche...')}</p>}
                 {bcResults.length > 0 && (
-                  <ul className="border border-gray-200 rounded-lg divide-y divide-gray-100 mt-1 max-h-48 overflow-y-auto bg-white shadow-sm">
-                    {bcResults.map(c => (
+                  <ul className="border border-gray-200 rounded-lg divide-y divide-gray-100 mt-1 max-h-56 overflow-y-auto bg-white shadow-sm">
+                    {bcResults.filter(c => !attendees.some(a => a.name === `${c.first_name} ${c.last_name ?? ''}`.trim())).map(c => (
                       <li key={c.id}>
                         <button type="button" onClick={() => addAttendee(c)}
                           className="w-full text-left px-3 py-2 hover:bg-gray-50 transition-colors">
