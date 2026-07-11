@@ -113,7 +113,8 @@ Deno.serve(async (req) => {
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as {
-      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule' | 'lead_prefill'
+      action: 'track' | 'slots' | 'contact' | 'book' | 'manage_get' | 'manage_cancel' | 'manage_reschedule' | 'lead_prefill' | 'rsvp'
+      p?: string
       session_id?: string
       lead_id?: string
       token?: string
@@ -126,6 +127,35 @@ Deno.serve(async (req) => {
       source?: string
       contact?: { first_name?: string; last_name?: string; phone?: string; email?: string; website?: string }
       answers?: Array<{ question: string; answer: string }>
+    }
+
+    // ── rsvp: Zu-/Absage zu einer Termin-Einladung (öffentlich, manage_token) ──
+    if (body.action === 'rsvp') {
+      const tok = (body.token ?? '').trim()
+      const pKey = (body.p ?? '').trim()
+      const answer = body.answer === 'yes' ? 'yes' : body.answer === 'no' ? 'no' : null
+      if (!tok || !pKey || !answer) return json({ error: 'Pflichtfelder fehlen' }, 400)
+      const { data: appt } = await admin.from('crm_appointments')
+        .select('id, lead_id, title, start_time, rsvps').eq('manage_token', tok).maybeSingle()
+      const a = appt as { id: string; lead_id: string | null; title: string; start_time: string; rsvps: Record<string, { name?: string; status?: string; at?: string }> | null } | null
+      if (!a) return json({ error: 'not_found' }, 404)
+      const rsvps = a.rsvps ?? {}
+      const entry = rsvps[pKey] ?? {}
+      rsvps[pKey] = { ...entry, status: answer, at: new Date().toISOString() }
+      const { error: ue } = await admin.from('crm_appointments').update({ rsvps }).eq('id', a.id)
+      if (ue) return json({ error: ue.message }, 500)
+      if (a.lead_id) {
+        try {
+          const who = entry.name || (pKey === 'lead' ? 'Der Kunde' : pKey.replace(/^a:/, ''))
+          await admin.from('activities').insert({
+            lead_id: a.lead_id, type: 'note', direction: 'inbound',
+            subject: answer === 'yes' ? `✅ Zusage: ${a.title}` : `❌ Absage: ${a.title}`,
+            content: `${who} hat für den Termin am ${new Date(a.start_time).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} ${answer === 'yes' ? 'zugesagt' : 'abgesagt'}.`,
+            completed_at: new Date().toISOString(),
+          })
+        } catch (e) { console.warn('[funnel-api] rsvp activity:', e) }
+      }
+      return json({ ok: true, answer, title: a.title })
     }
 
     // ── lead_prefill ─────────────────────────────────────────────────────────

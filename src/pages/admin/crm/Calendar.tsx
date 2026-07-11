@@ -710,6 +710,15 @@ export default function CrmCalendar() {
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
                 <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
+                {appt.rsvps && Object.keys(appt.rsvps).length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {Object.entries(appt.rsvps).map(([k, r]) => (
+                      <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+                        {r.status === 'yes' ? '✅' : r.status === 'no' ? '❌' : '⏳'} {r.name ?? k.replace(/^a:/, '')}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

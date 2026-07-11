@@ -19,6 +19,7 @@ const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
+const Zusage = lazy(() => import('./pages/Zusage'))
 const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
 
@@ -108,6 +109,8 @@ export default function App() {
             <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
             {/* Öffentliche Newsletter-Abmeldung (per Token, kein Login) */}
             <Route path="/abmelden" element={<Abmelden />} />
+            {/* Öffentliche Termin-Zu-/Absage (per Token, kein Login) */}
+            <Route path="/zusage" element={<Zusage />} />
             <Route path="/revolut" element={<RevolutCallback />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />

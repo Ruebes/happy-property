@@ -125,6 +125,9 @@ interface InviteParams {
   isPrimary?: boolean
   // KI-personalisierter Absatz (aus Svens Beschreibung, je Empfänger)
   personalNote?: string
+  // Zu-/Absage-Links (One-Click, /zusage)
+  rsvpYesHref?: string
+  rsvpNoHref?: string
 }
 
 function buildInviteHtml(pr: InviteParams): string {
@@ -149,10 +152,14 @@ function buildInviteHtml(pr: InviteParams): string {
   const btn = (href: string, label: string, solid: boolean) =>
     `<a href="${e(href)}" target="_blank" style="display:inline-block;white-space:nowrap;font-family:${HP_SANS};font-size:13px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:10px;margin:0 8px 8px 0;${solid ? 'background-color:#ff795d;color:#ffffff;' : 'background-color:#ffffff;color:#1a2332;border:1px solid #e6dfd0;'}">${label}</a>`
   const buttons = [
-    pr.apptType === 'zoom' && pr.zoomLink ? btn(pr.zoomLink, '📹 Zoom beitreten', true) : '',
-    pr.apptType === 'inperson' && pr.locationUrl ? btn(pr.locationUrl, '📍 Ort auf Google Maps', true) : '',
-    btn(pr.gcalHref, '🗓 In meinen Kalender', pr.apptType !== 'zoom' && !(pr.apptType === 'inperson' && pr.locationUrl)),
+    pr.rsvpYesHref ? btn(pr.rsvpYesHref, '✅ Ich bin dabei', true) : '',
+    pr.apptType === 'zoom' && pr.zoomLink ? btn(pr.zoomLink, '📹 Zoom beitreten', !pr.rsvpYesHref) : '',
+    pr.apptType === 'inperson' && pr.locationUrl ? btn(pr.locationUrl, '📍 Ort auf Google Maps', false) : '',
+    btn(pr.gcalHref, '🗓 In meinen Kalender', false),
   ].filter(Boolean).join('')
+  const rsvpNoLine = pr.rsvpNoHref
+    ? `<div style="font-family:${HP_SANS};font-size:12px;color:#9a9aa3;margin-top:10px;">Passt der Termin nicht? <a href="${e(pr.rsvpNoHref)}" style="color:#9a9aa3;text-decoration:underline;">Kurz Bescheid geben</a> — dann finden wir einen neuen.</div>`
+    : ''
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background-color:#FAF6EC;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FAF6EC;"><tr><td align="center" style="padding:28px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
@@ -168,6 +175,7 @@ function buildInviteHtml(pr: InviteParams): string {
       ${pr.personalNote ? `${e(pr.personalNote)}<br><br>` : ''}${where}
     </div>
     <div style="margin-top:22px;">${buttons}</div>
+    ${rsvpNoLine}
     <div style="font-family:${HP_SANS};font-size:11px;color:#9a9aa3;margin-top:8px;">Der Termin hängt außerdem als Kalender-Datei an dieser E-Mail.</div>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr>
       <td style="padding-right:14px;"><img src="${HP_PHOTO_SQ}" alt="Sven" width="56" height="56" style="display:block;border-radius:28px;border:0;"></td>
@@ -467,6 +475,7 @@ export default function AppointmentModal({
       }
 
       let apptId = appointment?.id ?? ''
+      let manageToken: string | null = appointment?.manage_token ?? null
       if (isEdit && appointment) {
         // ── Bearbeiten: DB-Update + Google-Event mitziehen ──
         const { error } = await supabase
@@ -519,6 +528,7 @@ export default function AppointmentModal({
           throw new Error(msg)
         }
         apptId = (appt as { id: string }).id
+        manageToken = (appt as { manage_token?: string | null }).manage_token ?? null
 
         // In den Google-Kalender spiegeln (server-seitig, Service-Account)
         if (saveToGoogle && googleAvailable) {
@@ -618,6 +628,26 @@ export default function AppointmentModal({
         for (const k of persons.keys()) if (!personalTexts[k]) personalTexts[k] = description.trim()
       }
 
+      // Zu-/Absage-Links je Empfänger + Status am Termin initialisieren
+      const rsvpHref = (pKey: string, a: 'yes' | 'no') => manageToken
+        ? `https://portal.happy-property.com/zusage?t=${manageToken}&p=${encodeURIComponent(pKey)}&a=${a}`
+        : ''
+      if ((sendEmailInvite || sendWhatsAppInvite) && manageToken && (mailTargets.length || waTargets.length)) {
+        try {
+          const init: Record<string, { name: string; status: string }> = {}
+          for (const tgt of [...mailTargets, ...waTargets]) {
+            if (!init[tgt.pKey]) {
+              const existing = (appointment?.rsvps ?? {})[tgt.pKey]
+              // Terminänderung = neue Zusage nötig → zurück auf pending
+              init[tgt.pKey] = { name: 'fullName' in tgt ? tgt.fullName : tgt.firstName, status: isEdit ? 'pending' : (existing?.status ?? 'pending') }
+            }
+          }
+          const { error: re } = await supabase.from('crm_appointments')
+            .update({ rsvps: { ...(appointment?.rsvps ?? {}), ...init } }).eq('id', apptId)
+          if (re) console.warn('[AppointmentModal] rsvps-Init:', re.message)
+        } catch (e) { console.warn('[AppointmentModal] rsvps-Init:', e) }
+      }
+
       if (sendEmailInvite) {
         for (const tgt of mailTargets) {
           try {
@@ -628,6 +658,8 @@ export default function AppointmentModal({
               phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
               isPrimary: !!tgt.leadId,
               personalNote: personalTexts[tgt.pKey],
+              rsvpYesHref: rsvpHref(tgt.pKey, 'yes') || undefined,
+              rsvpNoHref: rsvpHref(tgt.pKey, 'no') || undefined,
             })
             const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
             const ics = buildIcs({
@@ -677,7 +709,9 @@ export default function AppointmentModal({
                         : `\n📞 Der Termin findet telefonisch statt.`)
                     : ''
             const pNote = personalTexts[tgt.pKey] ? `\n\n${personalTexts[tgt.pKey]}` : ''
-            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
+            const yes = rsvpHref(tgt.pKey, 'yes')
+            const rsvpText = yes ? `\n\n✅ Sagst du mir kurz zu? Ein Klick genügt:\n${yes}\n(Falls es nicht passt: ${rsvpHref(tgt.pKey, 'no')})` : ''
+            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)

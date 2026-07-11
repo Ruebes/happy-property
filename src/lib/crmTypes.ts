@@ -553,7 +553,9 @@ export interface CrmAppointment {
   google_event_id: string | null
   google_calendar_id: string | null
   source:          string | null   // 'newsletter' | 'direktlink' — Herkunft der Buchung
-  attendees?:      Array<{ name: string; email: string | null; phone: string | null }> | null
+  attendees?:      Array<{ name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }> | null
+  manage_token?:   string | null
+  rsvps?:          Record<string, { name?: string; status?: 'pending' | 'yes' | 'no'; at?: string }> | null
   created_by:      string | null
   created_at:      string
   updated_at:      string
