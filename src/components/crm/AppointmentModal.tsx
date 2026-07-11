@@ -123,6 +123,8 @@ interface InviteParams {
   gcalHref: string
   // false = Partner/Teilnehmer: neutraler Text, keine Kunden-Telefonnummer
   isPrimary?: boolean
+  // KI-personalisierter Absatz (aus Svens Beschreibung, je Empfänger)
+  personalNote?: string
 }
 
 function buildInviteHtml(pr: InviteParams): string {
@@ -163,7 +165,7 @@ function buildInviteHtml(pr: InviteParams): string {
       <strong>${e(pr.title)}</strong><br>
       ${e(pr.dateStr)}<br>
       ${e(pr.von)}–${e(pr.bis)} Uhr<br><br>
-      ${where}
+      ${pr.personalNote ? `${e(pr.personalNote)}<br><br>` : ''}${where}
     </div>
     <div style="margin-top:22px;">${buttons}</div>
     <div style="font-family:${HP_SANS};font-size:11px;color:#9a9aa3;margin-top:8px;">Der Termin hängt außerdem als Kalender-Datei an dieser E-Mail.</div>
@@ -254,12 +256,12 @@ export default function AppointmentModal({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Weitere Teilnehmer (Partner/Geschäftskontakte) — bekommen die Einladung mit
-  interface Attendee { name: string; email: string | null; phone: string | null }
+  interface Attendee { name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }
   const [attendees, setAttendees] = useState<Attendee[]>(
     Array.isArray(appointment?.attendees) ? (appointment!.attendees as Attendee[]) : [],
   )
   const [bcQuery, setBcQuery] = useState('')
-  const [bcResults, setBcResults] = useState<Array<{ id: string; first_name: string; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null }>>([])
+  const [bcResults, setBcResults] = useState<Array<{ id: string; first_name: string; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null }>>([])
   const [bcLoading, setBcLoading] = useState(false)
   const bcDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -270,20 +272,20 @@ export default function AppointmentModal({
       // Geschäftskontakte UND Developer-Ansprechpartner durchsuchen
       const [bc, dc] = await Promise.all([
         supabase.from('crm_business_contacts')
-          .select('id, first_name, last_name, company, email, phone, whatsapp')
+          .select('id, first_name, last_name, company, email, phone, whatsapp, language')
           .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,company.ilike.%${q}%,email.ilike.%${q}%`)
           .limit(8),
         supabase.from('crm_developer_contacts')
-          .select('id, name, email, phone')
+          .select('id, name, email, phone, language')
           .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
           .limit(8),
       ])
       if (bc.error) throw bc.error
       const rows = ((bc.data ?? []) as typeof bcResults)
       // Developer-Kontakte ins gleiche Format bringen (name → first/last)
-      for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null }>) {
+      for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null; language?: string | null }>) {
         const [first, ...rest] = (d.name ?? '').split(' ')
-        rows.push({ id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null, company: t('crm.appt.developerContact', 'Developer') as string, email: d.email, phone: d.phone, whatsapp: null })
+        rows.push({ id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null, company: t('crm.appt.developerContact', 'Developer') as string, email: d.email, phone: d.phone, whatsapp: null, language: d.language ?? null })
       }
       setBcResults(rows.slice(0, 10))
     } catch (err) {
@@ -297,9 +299,9 @@ export default function AppointmentModal({
     if (bcDebounceRef.current) clearTimeout(bcDebounceRef.current)
     bcDebounceRef.current = setTimeout(() => { void searchContacts(val) }, 300)
   }
-  function addAttendee(c: { first_name: string; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null }) {
+  function addAttendee(c: { first_name: string; last_name: string | null; company?: string | null; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null }) {
     const name = `${c.first_name} ${c.last_name ?? ''}`.trim()
-    setAttendees(prev => prev.some(a => a.name === name) ? prev : [...prev, { name, email: c.email, phone: c.whatsapp || c.phone }])
+    setAttendees(prev => prev.some(a => a.name === name) ? prev : [...prev, { name, email: c.email, phone: c.whatsapp || c.phone, company: c.company ?? null, language: c.language ?? null }])
     setBcResults([]); setBcQuery('')
   }
   const removeAttendee = (name: string) => setAttendees(prev => prev.filter(a => a.name !== name))
@@ -562,15 +564,15 @@ export default function AppointmentModal({
       const gcalHref = buildGcalHref(title, start_time, end_time, gcalDetails, effLocation || undefined)
 
       // Empfängerliste: verknüpfter Lead + weitere Teilnehmer (Partner)
-      const mailTargets: Array<{ firstName: string; email: string; leadId?: string }> = []
-      const waTargets: Array<{ firstName: string; fullName: string; phone: string; leadId?: string }> = []
+      const mailTargets: Array<{ firstName: string; email: string; leadId?: string; pKey: string }> = []
+      const waTargets: Array<{ firstName: string; fullName: string; phone: string; leadId?: string; pKey: string }> = []
       if ((sendEmailInvite || sendWhatsAppInvite) && selectedLeadId) {
         const { data: ld } = await supabase.from('leads').select('email, phone, whatsapp, first_name, last_name').eq('id', selectedLeadId).maybeSingle()
         const le = ld as { email?: string | null; phone?: string | null; whatsapp?: string | null; first_name?: string | null; last_name?: string | null } | null
-        if (le?.email) mailTargets.push({ firstName: le.first_name || '', email: le.email, leadId: selectedLeadId })
+        if (le?.email) mailTargets.push({ firstName: le.first_name || '', email: le.email, leadId: selectedLeadId, pKey: 'lead' })
         else if (sendEmailInvite) warnings.push(t('crm.appt.noLeadEmail', 'Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.'))
         const waPhone = (le?.whatsapp || le?.phone || phoneNumber || '').trim()
-        if (waPhone) waTargets.push({ firstName: le?.first_name || '', fullName: `${le?.first_name ?? ''} ${le?.last_name ?? ''}`.trim(), phone: waPhone, leadId: selectedLeadId })
+        if (waPhone) waTargets.push({ firstName: le?.first_name || '', fullName: `${le?.first_name ?? ''} ${le?.last_name ?? ''}`.trim(), phone: waPhone, leadId: selectedLeadId, pKey: 'lead' })
         else if (sendWhatsAppInvite) warnings.push(t('crm.appt.noLeadPhone', 'Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.'))
       }
       for (const a of attendees) {
@@ -578,12 +580,42 @@ export default function AppointmentModal({
         // Dedupe: Lead kann auch als Geschäftskontakt erfasst sein — keine Doppel-Einladung
         const mailKey = (a.email ?? '').trim().toLowerCase()
         if (mailKey && !mailTargets.some(x => x.email.trim().toLowerCase() === mailKey)) {
-          mailTargets.push({ firstName: first, email: a.email as string })
+          mailTargets.push({ firstName: first, email: a.email as string, pKey: `a:${a.name}` })
         }
         const phoneKey = (a.phone ?? '').replace(/\D/g, '')
         if (phoneKey && !waTargets.some(x => x.phone.replace(/\D/g, '') === phoneKey)) {
-          waTargets.push({ firstName: first, fullName: a.name, phone: a.phone as string })
+          waTargets.push({ firstName: first, fullName: a.name, phone: a.phone as string, pKey: `a:${a.name}` })
         }
+      }
+
+      // ── Beschreibung per KI je Empfänger personalisieren (Mail + WhatsApp) ──
+      // Fallback bei KI-Fehler: Svens Rohtext für alle.
+      let personalTexts: Record<string, string> = {}
+      if (description.trim() && (sendEmailInvite || sendWhatsAppInvite) && (mailTargets.length || waTargets.length)) {
+        const persons = new Map<string, { key: string; firstName: string; role: 'lead' | 'partner'; company?: string | null; language?: string | null }>()
+        for (const tgt of [...mailTargets, ...waTargets]) {
+          if (!persons.has(tgt.pKey)) {
+            const att = attendees.find(x => `a:${x.name}` === tgt.pKey)
+            persons.set(tgt.pKey, {
+              key: tgt.pKey, firstName: tgt.firstName,
+              role: tgt.pKey === 'lead' ? 'lead' : 'partner',
+              company: att?.company ?? null, language: att?.language ?? null,
+            })
+          }
+        }
+        try {
+          const { data: pd, error: pe } = await supabase.functions.invoke('personalize-invite', { body: {
+            briefing: description,
+            appointment: { title, dateStr, von, bis, type: apptType, location: effLocation || undefined },
+            recipients: [...persons.values()],
+          } })
+          if (pe) throw new Error(pe.message)
+          personalTexts = ((pd as { texts?: Record<string, string> } | null)?.texts) ?? {}
+        } catch (perr) {
+          console.warn('[AppointmentModal] personalize-invite fehlgeschlagen — nutze Rohtext:', perr)
+        }
+        // Fallback: Rohtext für alle ohne KI-Text
+        for (const k of persons.keys()) if (!personalTexts[k]) personalTexts[k] = description.trim()
       }
 
       if (sendEmailInvite) {
@@ -595,6 +627,7 @@ export default function AppointmentModal({
               location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
               phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
               isPrimary: !!tgt.leadId,
+              personalNote: personalTexts[tgt.pKey],
             })
             const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
             const ics = buildIcs({
@@ -643,7 +676,8 @@ export default function AppointmentModal({
                         ? `\n📞 Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.`
                         : `\n📞 Der Termin findet telefonisch statt.`)
                     : ''
-            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
+            const pNote = personalTexts[tgt.pKey] ? `\n\n${personalTexts[tgt.pKey]}` : ''
+            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
@@ -818,7 +852,7 @@ export default function AppointmentModal({
               {/* Description */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('crm.appt.description', 'Beschreibung')}
+                  {t('crm.appt.descriptionAi', 'Beschreibung / Briefing ✨')}
                 </label>
                 <textarea
                   value={description}
@@ -826,6 +860,7 @@ export default function AppointmentModal({
                   rows={2}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-none"
                 />
+                <p className="text-xs text-gray-400 mt-1">{t('crm.appt.descriptionAiHint', 'Wird per KI für jeden Empfänger individuell formuliert — der Kunde liest, worum es für ihn geht, Partner bekommen ihren Part. Interna weglassen oder als solche markieren.')}</p>
               </div>
             </>
           )}

@@ -2222,7 +2222,9 @@
       "sendEmailUpdateAll": "Send update by email — to lead & attendees (with calendar attachment)",
       "sendEmailInviteAll": "Send invitation by email — to lead & attendees (with calendar attachment)",
       "sendWhatsAppInviteAll": "Send invitation by WhatsApp — to lead & attendees with a number",
-      "developerContact": "Developer"
+      "developerContact": "Developer",
+      "descriptionAi": "Description / briefing ✨",
+      "descriptionAiHint": "AI tailors this for each recipient — the customer reads what the meeting means for them, partners get their part. Leave out internals or mark them as such."
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
