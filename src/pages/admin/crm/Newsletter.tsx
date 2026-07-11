@@ -197,6 +197,24 @@ export default function Newsletter() {
     } finally { setBusyKey('') }
   }
 
+  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null)
+  const showPreview = async () => {
+    setBusyKey('preview')
+    try {
+      // Erst speichern — die Vorschau rendert die Edge aus dem DB-Stand
+      const id = await saveCampaign()
+      if (!id) return
+      const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'preview', campaign_id: id } })
+      if (error) throw new Error(error.message)
+      const d = data as { ok?: boolean; subject?: string; html?: string } | null
+      if (!d?.ok || !d.html) throw new Error('keine Vorschau')
+      setPreview({ subject: d.subject ?? '', html: d.html })
+    } catch (err) {
+      console.error('[Newsletter] preview:', err)
+      showToastMsg(`❌ ${t('crm.newsletter.previewError', 'Vorschau fehlgeschlagen')}`)
+    } finally { setBusyKey('') }
+  }
+
   const resetWizard = () => {
     setCampaignId(null); setTitle(''); setSubject(''); setIntro(''); setOutro('')
     setProps([]); setStatus(null)
@@ -506,6 +524,9 @@ export default function Newsletter() {
             {(campaignId || title || subject || props.length > 0) && (
               <button onClick={resetWizard} className={btnSec}>{t('crm.newsletter.new', '🆕 Neue Kampagne')}</button>
             )}
+            <button onClick={() => void showPreview()} disabled={busyKey === 'preview' || props.length === 0} className={btnSec}>
+              {busyKey === 'preview' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.preview', '👁 Vorschau')}
+            </button>
             <button onClick={() => void sendTest()} disabled={busyKey === 'test' || !subject.trim()} className={btnSec}>
               {busyKey === 'test' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.test', '✉️ Test-Mail an mich')}
             </button>
@@ -615,6 +636,20 @@ export default function Newsletter() {
           />
         )}
 
+        {preview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setPreview(null)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                <div className="min-w-0">
+                  <p className="text-xs text-gray-400">{t('crm.newsletter.previewTitle', 'Vorschau — genau so kommt die Mail an')}</p>
+                  <p className="text-sm font-semibold text-gray-900 truncate">{preview.subject.split('{{vorname}}').join('Vorname')}</p>
+                </div>
+                <button onClick={() => setPreview(null)} className="text-gray-400 hover:text-gray-700 text-xl shrink-0 ml-3">✕</button>
+              </div>
+              <iframe title="Mail-Vorschau" sandbox="" srcDoc={preview.html} className="w-full flex-1 min-h-[60vh] bg-white" />
+            </div>
+          </div>
+        )}
         {toast && <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">{toast}</div>}
       </div>
     </DashboardLayout>

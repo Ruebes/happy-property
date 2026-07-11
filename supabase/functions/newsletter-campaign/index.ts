@@ -218,7 +218,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview'
       campaign_id?: string; to?: string
       project_name?: string; bullets?: string
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
@@ -262,6 +262,16 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Test-Mail (Master-Links, sofort, an Sven) ────────────────────────────
+    // ── Vorschau: exakt das HTML, das auch versendet wird (ohne Versand) ─────
+    if (body.action === 'preview') {
+      const properties = (camp.properties ?? []) as CampaignProperty[]
+      const deckTokens: Record<string, string> = {}
+      for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
+      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
+      const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages })
+      return json({ ok: true, subject: String(camp.subject ?? ''), html })
+    }
+
     if (body.action === 'test_mail') {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       const deckTokens: Record<string, string> = {}

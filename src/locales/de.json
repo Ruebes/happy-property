@@ -2630,7 +2630,10 @@
       "colDeck": "Deck geöffnet",
       "colViews": "Aufrufe",
       "colLast": "Zuletzt",
-      "noFacts": "Keine Projekt-Fakten — erst „Aus Drive laden\" im Projekt ausführen."
+      "noFacts": "Keine Projekt-Fakten — erst „Aus Drive laden\" im Projekt ausführen.",
+      "preview": "👁 Vorschau",
+      "previewTitle": "Vorschau — genau so kommt die Mail an",
+      "previewError": "Vorschau fehlgeschlagen"
     }
   },
   "docs": {

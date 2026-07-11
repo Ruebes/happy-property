@@ -2630,7 +2630,10 @@
       "colDeck": "Deck opened",
       "colViews": "Views",
       "colLast": "Last",
-      "noFacts": "No project facts — run \"Load from Drive\" in the project first."
+      "noFacts": "No project facts — run \"Load from Drive\" in the project first.",
+      "preview": "👁 Preview",
+      "previewTitle": "Preview — exactly how the mail arrives",
+      "previewError": "Preview failed"
     }
   },
   "docs": {
