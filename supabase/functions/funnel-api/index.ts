@@ -272,9 +272,9 @@ Deno.serve(async (req) => {
       const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
       if (exDeals?.length) {
         dealId = (exDeals[0] as { id: string }).id
-        await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null }).eq('id', dealId)
+        await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null, ...(source ? { source } : {}) }).eq('id', dealId)
       } else {
-        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht' }).select('id').single()
+        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht', ...(source ? { source } : {}) }).select('id').single()
         dealId = (nd as { id: string } | null)?.id ?? null
       }
 

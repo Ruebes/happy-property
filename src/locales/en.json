@@ -1301,7 +1301,8 @@
       "meta": "META Ads",
       "google": "Google",
       "empfehlung": "Referral",
-      "sonstiges": "Other"
+      "sonstiges": "Other",
+      "newsletter": "Newsletter"
     },
     "statuses": {
       "new": "New",

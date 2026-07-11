@@ -319,8 +319,12 @@ interface DealCardProps {
 function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealCardProps) {
   const { t } = useTranslation()
   const lead = deal.lead
+  // Newsletter-Buchung: Herkunft schlägt die Lead-Quelle — Kachel + Badge in Magenta
+  const isNewsletter = deal.source === 'newsletter'
   const source = (lead?.source ?? 'sonstiges') as keyof typeof SOURCE_BADGE_STYLE
-  const badgeStyle = SOURCE_BADGE_STYLE[source] ?? SOURCE_BADGE_STYLE.sonstiges
+  const badgeStyle = isNewsletter
+    ? { backgroundColor: '#fce7f3', color: '#be185d' }
+    : (SOURCE_BADGE_STYLE[source] ?? SOURCE_BADGE_STYLE.sonstiges)
   // Kommender Termin → Kachel grün markieren, damit Sven Folgetermine sofort sieht.
   const apptLabel = apptDate
     ? new Date(apptDate).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -349,7 +353,7 @@ function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealC
       onDragStart={e => onDragStart(e, deal.id)}
       onClick={() => lead?.id && onClick(lead.id)}
       onContextMenu={e => onContextMenu(e, deal)}
-      className={`border rounded-xl p-3 cursor-pointer hover:shadow-md transition-shadow select-none ${apptDate ? 'bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200' : 'bg-white border-gray-200'}`}
+      className={`border rounded-xl p-3 cursor-pointer hover:shadow-md transition-shadow select-none ${isNewsletter ? 'bg-pink-50 border-pink-300 ring-1 ring-pink-200' : apptDate ? 'bg-emerald-50 border-emerald-300 ring-1 ring-emerald-200' : 'bg-white border-gray-200'}`}
     >
       <div className="flex items-start justify-between gap-1 mb-2">
         <p className="text-sm font-medium text-gray-800 leading-tight">
@@ -359,7 +363,7 @@ function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealC
           className="text-xs px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
           style={badgeStyle}
         >
-          {t(`crm.sources.${source}`, source)}
+          {isNewsletter ? `📰 ${t('crm.sources.newsletter', 'Newsletter')}` : t(`crm.sources.${source}`, source)}
         </span>
       </div>
 
@@ -561,7 +565,7 @@ export default function Pipeline() {
       const { data, error } = await supabase
         .from('deals')
         .select(`
-          id, lead_id, property_id, phase, developer, created_at, updated_at,
+          id, lead_id, property_id, phase, source, developer, created_at, updated_at,
           registration_notes, finanzierung_de_notes, finanzierung_cy_notes,
           immobilien_notes, kaufvertrag_notes, provision_notes,
           lead:leads(id, first_name, last_name, email, phone, whatsapp, source, assigned_to,

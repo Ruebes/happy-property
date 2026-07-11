@@ -1301,7 +1301,8 @@
       "meta": "META Werbung",
       "google": "Google",
       "empfehlung": "Empfehlung",
-      "sonstiges": "Sonstiges"
+      "sonstiges": "Sonstiges",
+      "newsletter": "Newsletter"
     },
     "statuses": {
       "new": "Neu",

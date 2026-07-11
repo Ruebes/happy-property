@@ -59,6 +59,7 @@ export interface Deal {
   property_id:                  string | null
   unit_id:                      string | null   // direkte CRM-Einheit
   phase:                        DealPhase
+  source?:                      string | null   // 'newsletter' | 'direktlink' — Buchungs-Herkunft
   developer:                    string | null
   registration_sent_at:         string | null
   financing_required:           boolean
