@@ -347,8 +347,10 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         description_en:  form.description_en.trim() || null,
         location:        form.location.trim() || null,
         maps_url:        form.maps_url.trim() || null,
-        latitude:        form.latitude,
-        longitude:       form.longitude,
+        // Nie stillschweigend nullen (stale Formular-State hat so schon einmal
+        // die Genesis-Koordinaten gelöscht — der Karten-Pin verschwand aus Decks)
+        latitude:        form.latitude ?? project?.latitude ?? null,
+        longitude:       form.longitude ?? project?.longitude ?? null,
         equipment_list:  form.equipment_list.trim() || null,
         furniture_cost:     form.furniture_cost.trim() ? Number(form.furniture_cost.replace(/[^\d.]/g, '')) || null : null,
         furniture_included: form.furniture_included,

@@ -526,14 +526,22 @@ Deno.serve(async (req) => {
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
-          .select('name, location, latitude, longitude').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null } | null
+          .select('name, location, latitude, longitude, deck_assets').eq('id', body.project_id).maybeSingle()
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; deck_assets?: { mapUrl?: string } | null } | null
         projRow = pr
         if (pr) {
           body.images = body.images ?? {}
           if (body.images.mapLat == null && pr.latitude != null && pr.longitude != null) {
             body.images.mapLat = pr.latitude
             body.images.mapLng = pr.longitude
+          }
+          // Sicherheitsnetz: Projekt-Koordinaten wurden schon einmal durch ein
+          // Formular-Save genullt (Genesis) — die deck_assets.mapUrl trägt sie oft
+          // noch (query=…lat,lng). Daraus wiederherstellen, damit der Karten-Pin
+          // nie wieder still verschwindet.
+          if (body.images.mapLat == null) {
+            const m = decodeURIComponent(pr.deck_assets?.mapUrl ?? '').match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/)
+            if (m) { body.images.mapLat = Number(m[1]); body.images.mapLng = Number(m[2]) }
           }
           if (body.images.mapLat == null) {
             const loc = (pr.location ?? '').trim()
