@@ -48,6 +48,7 @@ const JITTER_SEC = 60           // + Zufall bis 60s
 interface CampaignProperty {
   project_id: string; project_name: string
   unit_numbers: string[]
+  units?: Array<{ unit_number?: string; price_net?: number | null }>
   bullets: string; ai_text: string
   master_deck_token: string | null
   calc_token: string | null
@@ -115,9 +116,21 @@ function buildEmailHtml(c: {
     const img = imgSrc
       ? `<tr><td style="padding:0 40px;"><a href="${esc(deckLink || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
       : ''
+    const fmt = (n: number) => n.toLocaleString('de-DE')
+    const priceRows = (p.units ?? []).filter(u => u.price_net != null && u.price_net > 0)
+    const priceBlock = priceRows.length ? `<tr><td style="padding:14px 40px 0 40px;">${priceRows.map(u => {
+      const net = u.price_net as number, vat = Math.round(net * 0.19), gross = net + vat
+      return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border:1px solid ${CI.line};border-radius:6px;"><tr>
+        ${priceRows.length > 1 ? `<td style="padding:12px 0 12px 18px;font-family:${SANS};font-size:12px;font-weight:700;color:${CI.navy};white-space:nowrap;">${esc(u.unit_number ?? '')}</td>` : ''}
+        <td style="padding:12px 8px 12px 18px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">Netto</div><div style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(net)} €</div></td>
+        <td style="padding:12px 8px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">MwSt 19 %</div><div style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(vat)} €</div></td>
+        <td style="padding:12px 18px 12px 8px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.coral};white-space:nowrap;">Brutto</div><div style="font-size:15px;font-weight:700;color:${CI.coral};white-space:nowrap;">${fmt(gross)} €</div></td>
+      </tr></table>`
+    }).join('<div style="height:8px;"></div>')}</td></tr>` : ''
     return `<tr><td style="padding:36px 0 0 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         ${img}
+        ${priceBlock}
         <tr><td style="padding:24px 40px 0 40px;">
           <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${CI.coral};font-weight:700;">Dein persönliches Exposé</div>
           <h2 style="margin:6px 0 0 0;font-family:${SERIF};font-size:26px;line-height:1.2;font-weight:700;color:${CI.navy};">${esc(label)}</h2>
