@@ -2636,7 +2636,14 @@
       "previewError": "Preview failed",
       "calcViews": "Sample calculations",
       "calcLast": "last",
-      "calcHint": "the calculation is identical for all recipients, so views cannot be attributed to individual customers"
+      "calcHint": "the calculation is identical for all recipients, so views cannot be attributed to individual customers",
+      "stRecipients": "Recipients",
+      "stOpens": "Mail opened",
+      "stDecks": "Deck viewed",
+      "stCalcs": "Calculation",
+      "stCalcViews": "views",
+      "colMail": "Mail opened",
+      "colDecks": "Decks viewed"
     }
   },
   "docs": {

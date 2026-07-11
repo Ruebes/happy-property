@@ -2636,7 +2636,14 @@
       "previewError": "Vorschau fehlgeschlagen",
       "calcViews": "Beispielrechnungen",
       "calcLast": "zuletzt",
-      "calcHint": "die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar"
+      "calcHint": "die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar",
+      "stRecipients": "Empfänger",
+      "stOpens": "Mail geöffnet",
+      "stDecks": "Deck angesehen",
+      "stCalcs": "Berechnung",
+      "stCalcViews": "Aufrufe",
+      "colMail": "Mail geöffnet",
+      "colDecks": "Decks angesehen"
     }
   },
   "docs": {

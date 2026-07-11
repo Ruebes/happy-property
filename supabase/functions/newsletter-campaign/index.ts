@@ -204,7 +204,7 @@ function buildEmailHtml(c: {
     </td></tr></table>
   </td></tr>
   ${firstTok ? `<tr><td align="center" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${SITE}/abmelden?d=${firstTok}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>` : ''}
-</table></td></tr></table></body></html>`
+</table></td></tr></table>${firstTok ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/track-engagement?type=email_open&token=${firstTok}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">` : ''}</body></html>`
 }
 
 // Für Test-Mail/Vorschau: Deck-Token eines Leads mit dieser E-Mail (Direkteinstieg

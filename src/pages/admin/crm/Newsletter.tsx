@@ -253,10 +253,11 @@ export default function Newsletter() {
     void fetchPast()
   }
 
-  // Öffnungs-Auswertung (Archiv): wer hat welches Deck geöffnet
-  interface EngRow { lead_id: string; name: string | null; email: string | null; project: string; views: number; last_view: string }
+  // Öffnungs-Auswertung (Archiv): Mail-Öffnungen + Deck-Ansichten je Empfänger
+  interface EngRow { lead_id: string; name: string | null; email: string | null; mail_opened: string | null; decks: Array<{ project: string; views: number; last_view: string }>; last_view: string | null }
+  interface EngData { recipients: number; mail_openers: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> }
   const [archiveOpen, setArchiveOpen] = useState<string | null>(null)
-  const [archiveData, setArchiveData] = useState<Record<string, { recipients: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> }>>({})
+  const [archiveData, setArchiveData] = useState<Record<string, EngData>>({})
   const toggleArchive = async (id: string) => {
     if (archiveOpen === id) { setArchiveOpen(null); return }
     setArchiveOpen(id)
@@ -265,7 +266,7 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.rpc('newsletter_engagement', { p_campaign: id })
       if (error) throw error
-      setArchiveData(prev => ({ ...prev, [id]: data as { recipients: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> } }))
+      setArchiveData(prev => ({ ...prev, [id]: data as EngData }))
     } catch (err) {
       console.error('[Newsletter] engagement:', err)
       showToastMsg(`❌ ${t('crm.newsletter.engError', 'Öffnungen konnten nicht geladen werden')}`)
@@ -583,53 +584,76 @@ export default function Newsletter() {
                       )}
                     </span>
                   </div>
-                  {archiveOpen === c.id && archiveData[c.id] && (
-                    <div className="border-t border-gray-100 px-3 py-3">
-                      <p className="text-xs text-gray-500 mb-2">
-                        {t('crm.newsletter.openersSummary', '{{openers}} von {{recipients}} Empfängern haben ihr Exposé geöffnet.', {
-                          openers: archiveData[c.id].openers, recipients: archiveData[c.id].recipients,
-                        })}
-                      </p>
-                      {(archiveData[c.id].calc_views?.length ?? 0) > 0 && (
-                        <p className="text-xs text-gray-500 mb-2">
-                          📊 {t('crm.newsletter.calcViews', 'Beispielrechnungen')}: {(archiveData[c.id].calc_views ?? []).map(cv =>
-                            `${cv.project}: ${cv.views}× ${cv.views > 0 && cv.last_view ? `(${t('crm.newsletter.calcLast', 'zuletzt')} ${new Date(cv.last_view).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})` : ''}`,
-                          ).join(' · ')}
-                          <span className="text-gray-400"> — {t('crm.newsletter.calcHint', 'die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar')}</span>
-                        </p>
-                      )}
-                      {archiveData[c.id].rows.length === 0 ? (
-                        <p className="text-sm text-gray-400">{t('crm.newsletter.noOpens', 'Noch keine Öffnungen.')}</p>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="text-left text-[11px] text-gray-400 uppercase">
-                                <th className="py-1 pr-3">{t('crm.newsletter.colName', 'Empfänger')}</th>
-                                <th className="py-1 pr-3">{t('crm.newsletter.colDeck', 'Deck geöffnet')}</th>
-                                <th className="py-1 pr-3 text-right">{t('crm.newsletter.colViews', 'Aufrufe')}</th>
-                                <th className="py-1 text-right">{t('crm.newsletter.colLast', 'Zuletzt')}</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {archiveData[c.id].rows.map((r, ri) => (
-                                <tr key={`${r.lead_id}-${ri}`} className="border-t border-gray-50">
-                                  <td className="py-1.5 pr-3">
-                                    <a href={`/admin/crm/leads/${r.lead_id}`} className="font-medium text-gray-800 hover:underline">
-                                      {r.name || r.email || '—'}
-                                    </a>
-                                  </td>
-                                  <td className="py-1.5 pr-3 text-gray-700">{r.project}</td>
-                                  <td className="py-1.5 pr-3 text-right text-gray-700">{r.views}</td>
-                                  <td className="py-1.5 text-right text-gray-500 text-xs">{new Date(r.last_view).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                  {archiveOpen === c.id && archiveData[c.id] && (() => {
+                    const ad = archiveData[c.id]
+                    const pct = (n: number) => ad.recipients > 0 ? `${Math.round((n / ad.recipients) * 100)} %` : '–'
+                    const totalCalcViews = (ad.calc_views ?? []).reduce((a, cv) => a + cv.views, 0)
+                    const fmtDt = (v: string) => new Date(v).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                    return (
+                      <div className="border-t border-gray-100 px-3 py-3">
+                        {/* Statistik */}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                          <div className="bg-gray-50 rounded-lg p-2.5">
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">{t('crm.newsletter.stRecipients', 'Empfänger')}</p>
+                            <p className="text-lg font-bold text-gray-900">{ad.recipients}</p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2.5">
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">📧 {t('crm.newsletter.stOpens', 'Mail geöffnet')}</p>
+                            <p className="text-lg font-bold text-gray-900">{ad.mail_openers ?? 0} <span className="text-xs font-semibold" style={{ color: '#ff795d' }}>({pct(ad.mail_openers ?? 0)})</span></p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2.5">
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">📖 {t('crm.newsletter.stDecks', 'Deck angesehen')}</p>
+                            <p className="text-lg font-bold text-gray-900">{ad.openers} <span className="text-xs font-semibold" style={{ color: '#ff795d' }}>({pct(ad.openers)})</span></p>
+                          </div>
+                          <div className="bg-gray-50 rounded-lg p-2.5">
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400">📊 {t('crm.newsletter.stCalcs', 'Berechnung')}</p>
+                            <p className="text-lg font-bold text-gray-900">{totalCalcViews} <span className="text-xs font-semibold text-gray-400">{t('crm.newsletter.stCalcViews', 'Aufrufe')} (≈{pct(totalCalcViews)})</span></p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {(ad.calc_views?.length ?? 0) > 0 && totalCalcViews > 0 && (
+                          <p className="text-[11px] text-gray-400 mb-2">
+                            📊 {(ad.calc_views ?? []).map(cv => `${cv.project}: ${cv.views}×`).join(' · ')} — {t('crm.newsletter.calcHint', 'die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar')}
+                          </p>
+                        )}
+                        {ad.rows.length === 0 ? (
+                          <p className="text-sm text-gray-400">{t('crm.newsletter.noOpens', 'Noch keine Öffnungen.')}</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-left text-[11px] text-gray-400 uppercase">
+                                  <th className="py-1 pr-3">{t('crm.newsletter.colName', 'Empfänger')}</th>
+                                  <th className="py-1 pr-3">📧 {t('crm.newsletter.colMail', 'Mail geöffnet')}</th>
+                                  <th className="py-1 pr-3">📖 {t('crm.newsletter.colDecks', 'Decks angesehen')}</th>
+                                  <th className="py-1 text-right">{t('crm.newsletter.colLast', 'Zuletzt')}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {ad.rows.map(r => (
+                                  <tr key={r.lead_id} className="border-t border-gray-50">
+                                    <td className="py-1.5 pr-3">
+                                      <a href={`/admin/crm/leads/${r.lead_id}`} className="font-medium text-gray-800 hover:underline">
+                                        {r.name || r.email || '—'}
+                                      </a>
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-gray-600 text-xs">
+                                      {r.mail_opened ? <>✓ {fmtDt(r.mail_opened)}</> : <span className="text-gray-300">—</span>}
+                                    </td>
+                                    <td className="py-1.5 pr-3 text-gray-700">
+                                      {r.decks.length ? r.decks.map(dk => `${dk.project} (${dk.views}×)`).join(' · ') : <span className="text-gray-300">—</span>}
+                                    </td>
+                                    <td className="py-1.5 text-right text-gray-500 text-xs">
+                                      {(r.last_view || r.mail_opened) ? fmtDt((r.last_view ?? r.mail_opened) as string) : '—'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               ))}
             </div>

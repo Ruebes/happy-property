@@ -94,11 +94,13 @@ async function logEvent(type: string, token: string | null) {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   let leadId: string | null = null
   let label = ''
+  let isCampaignClone = false
   try {
     if (type === 'deck_view' || type === 'email_open') {
-      const { data: d } = await supabase.from('sales_decks').select('lead_id, project_id, recipient_name').eq('token', token).maybeSingle()
+      const { data: d } = await supabase.from('sales_decks').select('lead_id, project_id, recipient_name, batch_id').eq('token', token).maybeSingle()
       if (d) {
         leadId = (d.lead_id as string) ?? null
+        isCampaignClone = !!(d as { batch_id?: string | null }).batch_id && !!leadId
         if (d.project_id) {
           const { data: p } = await supabase.from('crm_projects').select('name').eq('id', d.project_id).maybeSingle()
           label = (p?.name as string) ?? ''
@@ -114,7 +116,9 @@ async function logEvent(type: string, token: string | null) {
   // den Kunden gesendet wurde (deck_outbox.email_sent_at). Sonst stammt die Öffnung
   // aus einer Vorschau/internen Mail (z.B. Test an die eigene Adresse) → kein echtes
   // Kundenverhalten, nicht zählen.
-  if (type === 'email_open') {
+  // Newsletter-Kampagnen-Klone (batch_id + lead_id) tragen den Öffnungs-Pixel
+  // direkt in der Kampagnen-Mail — sie brauchen keinen deck_outbox-Nachweis.
+  if (type === 'email_open' && !isCampaignClone) {
     try {
       const { data: sent } = await supabase.from('deck_outbox')
         .select('id').contains('deck_tokens', [token]).not('email_sent_at', 'is', null).limit(1)
