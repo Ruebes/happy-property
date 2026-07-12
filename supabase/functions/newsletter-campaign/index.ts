@@ -78,7 +78,7 @@ function firstNameOf(l: { first_name: string | null }): string {
   return (l.first_name ?? '').trim() || 'zusammen'
 }
 
-function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;') }
+function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;') }
 
 // Newsletter-Mail im Happy-Property-CI (Sven 2026-07-11: "im HTML im Happy
 // Property Template"). E-Mail-sicher: Tabellen-Layout, nowrap-Buttons, Bilder
@@ -111,7 +111,7 @@ function buildEmailHtml(c: {
     const label = `${p.project_name}${p.unit_numbers.length ? ` · ${p.unit_numbers.join(' & ')}` : ''}`
     const raw = opts?.projectImages?.[p.project_id]
     const imgSrc = raw && raw.includes('/storage/v1/object/public/')
-      ? raw.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=560&height=300&resize=cover&quality=72'
+      ? raw.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=1040&height=558&resize=cover&quality=70'
       : raw
     const img = imgSrc
       ? `<tr><td class="px" style="padding:0 40px;"><a href="${esc(deckLink || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
@@ -126,7 +126,7 @@ function buildEmailHtml(c: {
         <td class="price-cell" style="padding:12px 8px;font-family:${SANS};"><div class="price-label" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">MwSt 19 %</div><div class="price-val" style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(vat)} €</div></td>
         <td class="price-cell" style="padding:12px 18px 12px 8px;font-family:${SANS};"><div class="price-label" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.coral};white-space:nowrap;">Brutto</div><div class="price-val" style="font-size:15px;font-weight:700;color:${CI.coral};white-space:nowrap;">${fmt(gross)} €</div></td>
       </tr></table>`
-    }).join('<div style="height:8px;"></div>')}</td></tr>` : ''
+    }).join('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="8" style="height:8px;font-size:1px;line-height:1px;">&nbsp;</td></tr></table>')}</td></tr>` : ''
     return `<tr><td style="padding:36px 0 0 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         ${img}
@@ -138,32 +138,33 @@ function buildEmailHtml(c: {
         </td></tr>
         <tr><td class="px" style="padding:22px 40px 0 40px;">
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table"><tr>
-            ${deckLink ? `<td bgcolor="${CI.navy}" class="stack" style="border-radius:2px;">
-              <a href="${esc(deckLink)}" target="_blank" class="btn" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Exposé ansehen →</a>
+            ${deckLink ? `<td bgcolor="${CI.navy}" class="stack" style="border-radius:2px;padding:13px 26px;">
+              <a href="${esc(deckLink)}" target="_blank" class="btn" style="display:inline-block;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Exposé ansehen →</a>
             </td>` : ''}
             ${calcLink ? `<td class="stack-gap" style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
-            <td class="stack" style="border:1px solid ${CI.navy};border-radius:2px;">
-              <a href="${esc(calcLink)}" target="_blank" class="btn" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${CI.navy};text-decoration:none;white-space:nowrap;">Beispielrechnung</a>
+            <td class="stack" style="border:1px solid ${CI.navy};border-radius:2px;padding:12px 22px;">
+              <a href="${esc(calcLink)}" target="_blank" class="btn" style="display:inline-block;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${CI.navy};text-decoration:none;white-space:nowrap;">Beispielrechnung</a>
             </td>` : ''}
           </tr></table>
         </td></tr>
       </table>
     </td></tr>
-    <tr><td class="px" style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${CI.line};"></div></td></tr>`
+    <tr><td class="px" style="padding:40px 40px 0 40px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td height="1" bgcolor="${CI.line}" style="height:1px;font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td></tr>`
   }).join('')
 
   const socialCard = (so: typeof SOCIALS[number]) => {
     const inner = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#2a2a33;border-radius:10px;"><tr>
-      <td width="52" valign="middle" style="padding:11px 0 11px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td width="34" height="34" align="center" valign="middle" style="width:34px;height:34px;background-color:${GOLD};border-radius:17px;font-family:${SANS};font-size:14px;font-weight:700;color:${DARK};">${so.icon}</td></tr></table></td>
-      <td valign="middle" style="padding:11px 12px 11px 10px;"><div style="font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${GOLD};">${so.platform}</div><div style="font-family:${SANS};font-size:13px;color:#ffffff;">${esc(so.handle)}</div></td>
+      <td width="52" valign="middle" style="padding:11px 0 11px 12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td width="34" height="34" align="center" valign="middle" style="width:34px;height:34px;background-color:${GOLD};border-radius:17px;font-family:${SANS};font-size:14px;font-weight:700;">${`<a href="${esc(so.url)}" target="_blank" style="display:block;color:${DARK};text-decoration:none;">${so.icon}</a>`}</td></tr></table></td>
+      <td valign="middle" style="padding:11px 12px 11px 10px;"><a href="${esc(so.url)}" target="_blank" style="text-decoration:none;display:block;"><div style="font-family:${SANS};font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${GOLD};">${so.platform}</div><div style="font-family:${SANS};font-size:13px;color:#ffffff;">${esc(so.handle)}</div></a></td>
     </tr></table>`
-    return `<a href="${esc(so.url)}" target="_blank" style="text-decoration:none;">${inner}</a>`
+    return inner
   }
   const socialRow = (a: typeof SOCIALS[number], b: typeof SOCIALS[number]) =>
     `<tr><td width="50%" valign="top" class="social-td" style="padding:0 5px 10px 0;">${socialCard(a)}</td><td width="50%" valign="top" class="social-td" style="padding:0 0 10px 5px;">${socialCard(b)}</td></tr>`
 
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${CI.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}.outer{padding:20px 8px!important;}.px{padding-left:20px!important;padding-right:20px!important;}.h1{font-size:26px!important;}.h2{font-size:22px!important;}.btn-table{width:100%!important;}.stack{display:block!important;width:100%!important;}.stack-gap{display:block!important;width:100%!important;height:10px!important;}.btn{display:block!important;text-align:center!important;}.price-cell{padding-left:10px!important;padding-right:10px!important;}.price-label{font-size:9px!important;}.price-val{font-size:13px!important;}.social-td{display:block!important;width:100%!important;padding:0 0 10px 0!important;}.footer-pad{padding:26px 20px!important;}}</style></head>
+<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');</style>
+<style>body{margin:0;padding:0;background:${CI.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}.outer{padding:20px 8px!important;}.px{padding-left:20px!important;padding-right:20px!important;}.h1{font-size:26px!important;}.h2{font-size:22px!important;}.btn-table{width:100%!important;}.stack{display:block!important;width:100%!important;box-sizing:border-box!important;}.stack-gap{display:block!important;width:100%!important;height:10px!important;}.btn{display:block!important;text-align:center!important;}.price-cell{padding-left:10px!important;padding-right:10px!important;}.price-label{font-size:9px!important;}.price-val{font-size:13px!important;}.social-td{display:block!important;width:100%!important;padding:0 0 10px 0!important;}.footer-pad{padding:26px 20px!important;}}</style></head>
 <body style="margin:0;padding:0;background-color:${CI.cream};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${CI.cream};"><tr><td align="center" class="outer" style="padding:32px 16px;">
 <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:${CI.cream};">
@@ -173,15 +174,15 @@ function buildEmailHtml(c: {
       <td align="right" valign="middle" style="font-family:${SANS};font-size:11px;color:${CI.mute};letter-spacing:0.12em;text-transform:uppercase;">Paphos · Zypern</td>
     </tr></table>
   </td></tr>
-  <tr><td class="px" style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${CI.coral};"></div></td></tr>
+  <tr><td class="px" style="padding:0 40px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="48"><tr><td width="48" height="2" bgcolor="${CI.coral}" style="width:48px;height:2px;font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td></tr>
   <tr><td class="px" style="padding:24px 40px 8px 40px;"><h1 class="h1" style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${CI.navy};">${esc(headline)}</h1></td></tr>
   <tr><td class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo ${esc(firstName)},<br><br>${paras(c.intro_text)}</td></tr>
   ${cards}
   ${c.outro_text?.trim() ? `<tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">${paras(c.outro_text)}</td></tr>` : ''}
   <tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</td></tr>
   <tr><td class="px" style="padding:20px 40px 0 40px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table"><tr><td bgcolor="${CI.coral}" class="stack" style="border-radius:2px;">
-      <a href="${terminUrl}" target="_blank" class="btn" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table"><tr><td bgcolor="${CI.coral}" class="stack" style="border-radius:2px;padding:13px 26px;">
+      <a href="${esc(terminUrl)}" target="_blank" class="btn" style="display:inline-block;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
     </td></tr></table>
   </td></tr>
   <tr><td class="px" style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Liebe Grüße</p></td></tr>
@@ -191,7 +192,7 @@ function buildEmailHtml(c: {
       <td valign="middle" style="padding-left:14px;"><div style="font-family:${SERIF};font-size:18px;color:${CI.navy};">Sven</div><div style="font-family:${SANS};font-size:12px;color:#888;margin-top:2px;">Happy Property Cyprus</div></td>
     </tr></table>
   </td></tr>
-  <tr><td class="px" style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${CI.ink};"><a href="mailto:sven@happy-property.com" style="color:${CI.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
+  <tr><td class="px" style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${CI.ink};"><a href="mailto:sven@happy-property.com" style="color:${CI.navy};text-decoration:none;">sven@happy-property.com</a><br><a href="tel:+35795096409" style="color:${CI.ink};text-decoration:none;">+357 95 09 64 09</a><br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
   <tr><td style="padding:36px 0 0 0;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${DARK};"><tr><td class="footer-pad" style="padding:32px 36px;">
       <div style="font-family:${SERIF};font-size:23px;font-weight:700;line-height:1.2;color:#ffffff;">Folge mir — ich nehme dich mit nach Zypern.</div>
@@ -200,11 +201,11 @@ function buildEmailHtml(c: {
         ${socialRow(SOCIALS[0], SOCIALS[1])}
         ${socialRow(SOCIALS[2], SOCIALS[3])}
       </table>
-      <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
+      <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; <a href="#" style="color:#6b6b74;text-decoration:none;">Pallados 1, 8046 Paphos, Zypern</a></div>
     </td></tr></table>
   </td></tr>
-  ${firstTok ? `<tr><td align="center" class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${SITE}/abmelden?d=${firstTok}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>` : ''}
-</table></td></tr></table>${firstTok ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/track-engagement?type=email_open&token=${firstTok}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">` : ''}</body></html>`
+  <tr><td align="center" class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${firstTok ? `${SITE}/abmelden?d=${firstTok}` : 'mailto:info@happy-property.com?subject=Newsletter%20abmelden'}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>
+</table></td></tr></table>${firstTok ? `<img src="${esc(`${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/track-engagement?type=email_open&token=${firstTok}`)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">` : ''}</body></html>`
 }
 
 // Für Test-Mail/Vorschau: Deck-Token eines Leads mit dieser E-Mail (Direkteinstieg
