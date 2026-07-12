@@ -269,7 +269,8 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - pick_slot: Kunde wählt einen vorgeschlagenen Slot (pick_index 0 oder 1).
 - reject_slots: keiner der Slots passt (evtl. mit day_hint/daypart/time_hint-Wunsch).
 - give_preference: Kunde nennt Tag-/Zeit-Wunsch (day_hint z.B. "Dienstag","morgen","nächste Woche"; daypart "vormittags"|"nachmittags"|"abends"; time_hint = KONKRETE Uhrzeit als 24h "HH:MM", z.B. "15:00" aus "15 Uhr"/"um 3"/"halb 4"→"15:30"). ZEITRAUM: Nennt der Kunde ein FRÜHESTES Datum ("nach dem 9.7.", "ab nächster Woche", "erst in 2 Wochen", "erst ab dem 10."), fülle after_date = frühestes noch passendes Datum als "YYYY-MM-DD" (bei "nach dem 9.7." der 10.7. — der Tag DANACH; bei "ab dem 9.7." der 9.7.). Meint er GENAU EIN Datum ("am 10.7.", "diesen Freitag den 11."), fülle on_date = "YYYY-MM-DD". Jahr aus dem heutigen Datum ableiten (nächstes Vorkommen).
-- choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp).
+- choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp; nennt er MEHRERE ("Zoom oder WhatsApp, beides ok") → das ZUERST genannte).
+- indifferent: Kunde hat KEINE Präferenz / ist mit allem einverstanden ("egal", "beides ok", "wie du willst", "such du aus", "passt alles").
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
 - content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINE Terminwahl sind. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
@@ -288,7 +289,7 @@ Fülle nur passende Felder, sonst null.`
         tool_choice: { type: 'tool', name: 'emit_intent' },
         tools: [{ name: 'emit_intent', description: 'Intent der Kundenantwort', input_schema: {
           type: 'object', properties: {
-            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'optout', 'unclear'] },
+            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'indifferent', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
             time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
@@ -672,6 +673,10 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     if (it.intent === 'pick_slot' && it.pick_index != null && slots[it.pick_index]) {
       await askType(admin, c.id, phone, leadId, l.first_name, slots[it.pick_index]); return json({ ok: true })
     }
+    if (it.intent === 'indifferent' && slots[0]) {
+      // „Egal / such du aus" → ersten Vorschlag nehmen und weiter zur Terminart
+      await askType(admin, c.id, phone, leadId, l.first_name, slots[0]); return json({ ok: true })
+    }
     if (it.intent === 'give_preference' || it.intent === 'reject_slots') {
       // Direkt mit Präferenz Slots rechnen, sonst nach Tag/Tageszeit fragen
       if (it.day_hint || it.daypart || it.time_hint || it.after_date || it.on_date) return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
@@ -688,7 +693,15 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     if (it.intent === 'choose_type' && (it.meeting_type === 'zoom' || it.meeting_type === 'whatsapp') && c.chosen_slot) {
       await book(admin, c, l, c.chosen_slot, it.meeting_type); return json({ ok: true, handled: 'booked' })
     }
-    if (await bump()) return json({ ok: true, handled: 'handoff' })
+    // Der Slot steht bereits — hier wird NIE aufgegeben (Raffi-Fall: „Egal" führte
+    // zu handoff statt Buchung). Keine Präferenz oder zweite unklare Antwort →
+    // unkompliziertester Standard: WhatsApp-Call.
+    if (c.chosen_slot && (it.intent === 'indifferent' || (c.attempts ?? 0) >= 1)) {
+      const m = `Alles klar — dann machen wir es ganz unkompliziert per WhatsApp-Call. 🙂`
+      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+      await book(admin, c, l, c.chosen_slot, 'whatsapp'); return json({ ok: true, handled: 'booked_default' })
+    }
+    await setConv(admin, c.id, { attempts: (c.attempts ?? 0) + 1 })
     const m = `Kurze Rückfrage: lieber telefonieren wir über WhatsApp, oder machen wir einen Zoom-Call?`
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
   }

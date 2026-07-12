@@ -190,6 +190,23 @@ function buildInviteHtml(pr: InviteParams): string {
 </td></tr></table></body></html>`
 }
 
+// Kurzlink anlegen (nur für WhatsApp — Mail versteckt URLs hinter Buttons).
+// Fällt bei jedem Fehler still auf die Original-URL zurück.
+async function shortenUrl(target: string): Promise<string> {
+  try {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
+    const buf = new Uint8Array(7)
+    crypto.getRandomValues(buf)
+    const code = Array.from(buf, b => chars[b % chars.length]).join('')
+    const { error } = await supabase.from('short_links').insert({ code, target })
+    if (error) throw error
+    return `https://portal.happy-property.com/s/${code}`
+  } catch (err) {
+    console.warn('[AppointmentModal] shortenUrl:', err)
+    return target
+  }
+}
+
 // Google-Kalender-Vorlagen-Link („In meinen Kalender") — funktioniert ohne Anmeldung beim Absender
 function buildGcalHref(title: string, startIso: string, endIso: string, details: string, location?: string): string {
   const f = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
@@ -728,9 +745,15 @@ export default function AppointmentModal({
                         : `\n📞 Der Termin findet telefonisch statt.`)
                     : ''
             const pNote = personalTexts[tgt.pKey] ? `\n\n${personalTexts[tgt.pKey]}` : ''
-            const yes = rsvpHref(tgt.pKey, 'yes')
-            const rsvpText = yes ? `\n\n✅ Sagst du mir kurz zu? Ein Klick genügt:\n${yes}\n(Falls es nicht passt: ${rsvpHref(tgt.pKey, 'no')})` : ''
-            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalHref}\n\nBis bald!\nSven · Happy Property`
+            // Lange URLs für WhatsApp kürzen (portal.../s/<code>)
+            const yesRaw = rsvpHref(tgt.pKey, 'yes')
+            const [yes, no, gcalShort] = await Promise.all([
+              yesRaw ? shortenUrl(yesRaw) : Promise.resolve(''),
+              yesRaw ? shortenUrl(rsvpHref(tgt.pKey, 'no')) : Promise.resolve(''),
+              shortenUrl(gcalHref),
+            ])
+            const rsvpText = yes ? `\n\n✅ Sagst du mir kurz zu? Ein Klick genügt:\n${yes}\n(Falls es nicht passt: ${no})` : ''
+            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalShort}\n\nBis bald!\nSven · Happy Property`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)

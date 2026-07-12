@@ -20,6 +20,7 @@ const Funnel   = lazy(() => import('./pages/Funnel'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
 const Zusage = lazy(() => import('./pages/Zusage'))
+const ShortLink = lazy(() => import('./pages/ShortLink'))
 const RevolutCallback = lazy(() => import('./pages/RevolutCallback'))
 const Invoice  = lazy(() => import('./pages/Invoice'))
 
@@ -111,6 +112,8 @@ export default function App() {
             <Route path="/abmelden" element={<Abmelden />} />
             {/* Öffentliche Termin-Zu-/Absage (per Token, kein Login) */}
             <Route path="/zusage" element={<Zusage />} />
+            {/* Kurzlink-Weiterleitung (WhatsApp-taugliche kurze URLs) */}
+            <Route path="/s/:code" element={<ShortLink />} />
             <Route path="/revolut" element={<RevolutCallback />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
