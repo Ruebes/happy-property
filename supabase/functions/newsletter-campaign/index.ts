@@ -248,7 +248,8 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient'
+      lead_id?: string
       deck_token?: string
       campaign_id?: string; to?: string; start_at?: string
       project_name?: string; bullets?: string
@@ -329,6 +330,54 @@ Deno.serve(async (req: Request) => {
       const bookingToken = await bookingTokenFor(sb, 'sven@happy-property.com')
       const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
       return json({ ok: true, subject: String(camp.subject ?? ''), html })
+    }
+
+    // ── Einzelnen Empfänger NACHTRÄGLICH aufnehmen (gleiche Behandlung wie beim
+    // Launch: eigene Deck-Klone, personalisierte Mail, Abmelde-Link, Pixel) ──
+    if (body.action === 'add_recipient') {
+      if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
+      const { data: leadRow } = await sb.from('leads').select('id, first_name, last_name, email, newsletter_optout_at').eq('id', body.lead_id).maybeSingle()
+      const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; newsletter_optout_at: string | null } | null
+      if (!lead?.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
+      if (lead.newsletter_optout_at) return json({ error: 'Lead hat den Newsletter abbestellt' }, 409)
+      const { data: dup } = await sb.from('scheduled_messages').select('id').eq('lead_id', lead.id).eq('campaign_id', camp.id).limit(1)
+      if (dup && dup.length) return json({ error: 'Lead hat diese Kampagne bereits erhalten' }, 409)
+      const properties = (camp.properties ?? []) as CampaignProperty[]
+      // Master-Decks laden
+      const masters: Record<string, { project_id: string; angle: string | null; content: unknown }> = {}
+      for (const p of properties) {
+        if (!p.master_deck_token) return json({ error: `Master-Deck fehlt für ${p.project_name}` }, 400)
+        const { data: m } = await sb.from('sales_decks').select('project_id, angle, content').eq('token', p.master_deck_token).maybeSingle()
+        if (!m) return json({ error: `Master-Deck nicht gefunden für ${p.project_name}` }, 400)
+        masters[p.project_id] = m as typeof masters[string]
+      }
+      const first = firstNameOf(lead)
+      const firstJsonSafe = JSON.stringify(first).slice(1, -1)
+      const fullName = `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim()
+      const deckTokens: Record<string, string> = {}
+      for (const p of properties) {
+        const master = masters[p.project_id]
+        const token = randToken()
+        const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+        const { error: ie } = await sb.from('sales_decks').insert({
+          token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
+          status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
+          content: JSON.parse(contentStr),
+        })
+        if (ie) return json({ error: `Deck-Klon fehlgeschlagen: ${ie.message}` }, 500)
+        deckTokens[p.project_id] = token
+      }
+      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
+      const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
+      const subject = String(camp.subject).split('{{vorname}}').join(first)
+      const { error: se } = await sb.from('scheduled_messages').insert({
+        lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+        status: 'pending', scheduled_at: clampToWindow(new Date()).toISOString(),
+        email_subject: subject, email_body: html,
+      })
+      if (se) return json({ error: `Mail-Planung fehlgeschlagen: ${se.message}` }, 500)
+      await sb.from('newsletter_campaigns').update({ recipients_total: (camp.recipients_total ?? 0) + 1, recipients_done: (camp.recipients_done ?? 0) + 1, updated_at: new Date().toISOString() }).eq('id', camp.id)
+      return json({ ok: true, deck_tokens: deckTokens })
     }
 
     if (body.action === 'test_mail') {
