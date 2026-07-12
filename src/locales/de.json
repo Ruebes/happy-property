@@ -2638,7 +2638,18 @@
       "linkAdd": "+ Link anlegen",
       "linkPreview": "Vorschau:",
       "linksStatHint": "Jeder Link trägt einen eindeutigen Code (utm_campaign) — damit lassen sich die Links später in der Statistik einzeln auswerten. Speichern nicht vergessen.",
-      "linkNeedsName": "Bitte gib dem Link einen Namen."
+      "linkNeedsName": "Bitte gib dem Link einen Namen.",
+      "linkDest": "Wohin führt der Link?",
+      "destFragebogen": "📋 Zum Fragebogen",
+      "destKalender": "📅 Direkt zum Kalender",
+      "linkWhichForm": "Welcher Fragebogen?",
+      "linkContactMode": "Kontaktdaten",
+      "calWithContact": "Mit Kontaktabfrage (öffentlicher Link)",
+      "calNoContact": "Ohne Kontaktabfrage (nur bekannte Empfänger)",
+      "calNoContactHint": "Ohne Kontaktabfrage klappt nur, wenn wir den Empfänger kennen: häng pro Person „&d=<Deck-Token>\" an den Link. Der Newsletter macht das automatisch. Klickt jemand ohne Token, fragt der Link einmalig die Kontaktdaten ab (aber nie den Fragebogen).",
+      "qnBuchenShort": "Kalender · mit Kontaktabfrage",
+      "qnDirektShort": "Kalender · ohne Kontaktabfrage",
+      "qnPrefix": "Fragebogen: "
     },
     "newsletter": {
       "title": "Newsletter (individuell)",

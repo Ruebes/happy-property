@@ -2638,7 +2638,18 @@
       "linkAdd": "+ Create link",
       "linkPreview": "Preview:",
       "linksStatHint": "Each link carries a unique code (utm_campaign) so the links can be evaluated individually in statistics later. Don't forget to save.",
-      "linkNeedsName": "Please give the link a name."
+      "linkNeedsName": "Please give the link a name.",
+      "linkDest": "Where does the link go?",
+      "destFragebogen": "📋 To the questionnaire",
+      "destKalender": "📅 Straight to the calendar",
+      "linkWhichForm": "Which questionnaire?",
+      "linkContactMode": "Contact details",
+      "calWithContact": "With contact form (public link)",
+      "calNoContact": "Without contact form (known recipients only)",
+      "calNoContactHint": "Skipping the contact form only works when we know the recipient: append \"&d=<deck token>\" per person. The newsletter does this automatically. If someone clicks without a token, the link asks for contact details once (but never the questionnaire).",
+      "qnBuchenShort": "Calendar · with contact form",
+      "qnDirektShort": "Calendar · without contact form",
+      "qnPrefix": "Questionnaire: "
     },
     "newsletter": {
       "title": "Newsletter (individual)",

@@ -149,7 +149,9 @@ export default function Funnel() {
       } catch {
         if (cancelled) return
         setDirect(false)
-        setPhase('welcome')
+        // Direkt-Link ohne gültigen Token: wenn Schnellbuchung mitgegeben wurde
+        // (rebook), NICHT in den Fragebogen fallen, sondern bei der Terminart bleiben.
+        setPhase(rebook ? 'meeting_type' : 'welcome')
       }
     })()
     return () => { cancelled = true }
