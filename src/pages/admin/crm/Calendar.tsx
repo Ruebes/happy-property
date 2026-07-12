@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import type { CrmAppointment } from '../../../lib/crmTypes'
+import { CHANNEL_BADGES } from '../../../lib/crmTypes'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import {
   checkCalendarStatus,
@@ -27,12 +28,14 @@ const APPT_COLORS = {
   whatsapp: { bg: '#d9fdd3', text: '#128c7e', pill: '#25d366' },
 } as const
 
-// Newsletter-Buchungen: Herkunft schlägt Terminart bei der Kachel-Farbe —
-// Sven erkennt auf einen Blick, dass der Termin aus einer Kampagne kommt.
-const NEWSLETTER_COLORS = { bg: '#fce7f3', text: '#be185d', pill: '#ec4899' } as const
-
+// Kanal-Buchungen (Newsletter, YouTube, …): Herkunft schlägt Terminart bei der
+// Kachel-Farbe — Sven erkennt auf einen Blick, woher der Termin kommt.
+function apptChannel(appt: CrmAppointment) {
+  return appt.source ? CHANNEL_BADGES[appt.source] : undefined
+}
 function apptColors(appt: CrmAppointment) {
-  if (appt.source === 'newsletter') return NEWSLETTER_COLORS
+  const ch = apptChannel(appt)
+  if (ch) return { bg: String(ch.badge.backgroundColor), text: String(ch.badge.color), pill: ch.pill }
   return APPT_COLORS[appt.type as keyof typeof APPT_COLORS] ?? APPT_COLORS.phone
 }
 
@@ -162,11 +165,13 @@ function TypeBadge({ type, t }: { type: string; t: TFunction }) {
   )
 }
 
-function NewsletterBadge({ t }: { t: TFunction }) {
+function SourceBadge({ source }: { source: string }) {
+  const ch = CHANNEL_BADGES[source]
+  if (!ch) return null
   return (
     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold"
-      style={{ backgroundColor: NEWSLETTER_COLORS.pill, color: '#fff' }}>
-      📰 {t('crm.appointment.newsletter', 'Newsletter')}
+      style={{ backgroundColor: ch.pill, color: '#fff' }}>
+      {ch.icon} {ch.label}
     </span>
   )
 }
@@ -442,7 +447,7 @@ export default function CrmCalendar() {
                         key={appt.id}
                         className="truncate font-semibold cursor-pointer hover:opacity-85"
                         style={{
-                          backgroundColor: appt.source === 'newsletter' ? NEWSLETTER_COLORS.pill : '#ff795d',
+                          backgroundColor: apptChannel(appt)?.pill ?? '#ff795d',
                           color: '#fff',
                           fontSize: '11px',
                           padding: '2px 4px',
@@ -450,7 +455,7 @@ export default function CrmCalendar() {
                         }}
                         onClick={e => { e.stopPropagation(); setSelectedAppt(appt) }}
                       >
-                        ● {time ? `${time} ` : ''}{appt.source === 'newsletter' ? `${t('crm.appointment.newsletter', 'Newsletter')} · ` : ''}{appt.title}
+                        ● {time ? `${time} ` : ''}{apptChannel(appt) ? `${apptChannel(appt)!.label} · ` : ''}{appt.title}
                       </div>
                     )
                   })}
@@ -542,7 +547,7 @@ export default function CrmCalendar() {
                         {formatTime(appt.start_time)}
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
-                      <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
+                      <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
                     </div>
                   )
                 })}
@@ -615,7 +620,7 @@ export default function CrmCalendar() {
                       {formatTimeRange(appt.start_time, appt.end_time)}
                     </p>
                   </div>
-                  <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
+                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
                 </div>
                 {appt.zoom_link && (
                   <a
@@ -709,7 +714,7 @@ export default function CrmCalendar() {
               </span>
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
-                <TypeBadge type={appt.type} t={t} />{appt.source === 'newsletter' && <> <NewsletterBadge t={t} /></>}
+                <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
                 {appt.rsvps && Object.keys(appt.rsvps).length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {Object.entries(appt.rsvps).map(([k, r]) => (

@@ -27,6 +27,10 @@ const SVEN_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') +
 
 type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'done'
 
+// Veröffentlichte Kanal-Links (/termin?src=youtube auf dem YouTube-Kanal usw.):
+// Buchungen darüber bekommen den Kanal als Quelle an Lead, Deal und Termin.
+const KNOWN_CHANNELS = ['newsletter', 'youtube', 'instagram', 'facebook', 'linkedin', 'tiktok', 'google']
+
 function useUtm(): Record<string, string> {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
@@ -34,6 +38,9 @@ function useUtm(): Record<string, string> {
     for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'ref']) {
       const v = p.get(k); if (v) utm[k] = v.slice(0, 120)
     }
+    // Kurzform ?src=<kanal> → wie utm_source behandeln (schöner für Social-Bios)
+    const src = (p.get('src') ?? '').trim().toLowerCase().slice(0, 40)
+    if (src && !utm.utm_source) utm.utm_source = src
     return utm
   }, [])
 }
@@ -201,8 +208,10 @@ export default function Funnel() {
     setSlot(s); setError(''); setBusy(true)
     void track(QUESTIONS.length + 3, 'slot_picked', s)
     try {
-      // Herkunft für den Kalender: Newsletter-Kampagne bzw. personalisierter Direktlink
-      const source = utm.utm_source === 'newsletter' ? 'newsletter' : (direct ? 'direktlink' : undefined)
+      // Herkunft für Pipeline/Kalender: bekannter Kanal (YouTube, Newsletter, …)
+      // schlägt den personalisierten Direktlink.
+      const chan = (utm.utm_source ?? '').toLowerCase()
+      const source = KNOWN_CHANNELS.includes(chan) ? chan : (direct ? 'direktlink' : undefined)
       const { data, error: e } = await supabase.functions.invoke('funnel-api', { body: {
         action: 'book', session_id: sessionRef.current, lead_id: leadRef.current,
         slot_start_iso: s, meeting_type: meetingType, source,

@@ -284,8 +284,12 @@ Deno.serve(async (req) => {
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
-      // Herkunft der Buchung (Kalender-Kennzeichnung): nur bekannte Werte übernehmen
-      const source = body.source === 'newsletter' || body.source === 'direktlink' ? body.source : null
+      // Herkunft der Buchung (Pipeline-/Kalender-Kennzeichnung): nur bekannte Werte
+      // übernehmen — Kanäle kommen von veröffentlichten Links (/termin?src=<kanal>).
+      const KNOWN_SOURCES = ['newsletter', 'direktlink', 'youtube', 'instagram', 'facebook', 'linkedin', 'tiktok', 'google']
+      const SOURCE_LABELS: Record<string, string> = { newsletter: 'Newsletter', youtube: 'YouTube', instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', google: 'Google' }
+      const source = body.source && KNOWN_SOURCES.includes(body.source) ? body.source : null
+      const sourceLabel = source ? SOURCE_LABELS[source] : undefined
       const leadId = body.lead_id
       const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
       if (!leadRow) return json({ error: 'lead_not_found' }, 404)
@@ -325,8 +329,8 @@ Deno.serve(async (req) => {
         const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            summary: `${source === 'newsletter' ? '[Newsletter] ' : ''}Beratungsgespräch – ${c.first_name} ${c.last_name ?? ''}`.trim(),
-            description: `${source === 'newsletter' ? 'Über den NEWSLETTER gebucht' : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
+            summary: `${sourceLabel ? `[${sourceLabel}] ` : ''}Beratungsgespräch – ${c.first_name} ${c.last_name ?? ''}`.trim(),
+            description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
         })

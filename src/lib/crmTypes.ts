@@ -172,6 +172,26 @@ export const SOURCE_BADGE_STYLE: Record<LeadSource, React.CSSProperties> = {
   sonstiges:  { backgroundColor: '#f3f4f6', color: '#6b7280' },
 }
 
+// Buchungs-Kanäle (deals.source / crm_appointments.source): gesetzt, wenn über einen
+// veröffentlichten Kanal-Link (/termin?src=<kanal>) oder den Newsletter gebucht wurde.
+// card = komplette Tailwind-Klassen (nicht dynamisch zusammensetzen — Purge!).
+export interface ChannelBadge {
+  label: string
+  icon: string
+  badge: React.CSSProperties
+  card: string
+  pill: string
+}
+export const CHANNEL_BADGES: Record<string, ChannelBadge> = {
+  newsletter: { label: 'Newsletter', icon: '📰', badge: { backgroundColor: '#fce7f3', color: '#be185d' }, card: 'bg-pink-50 border-pink-300 ring-1 ring-pink-200', pill: '#ec4899' },
+  youtube:    { label: 'YouTube',    icon: '▶',  badge: { backgroundColor: '#fee2e2', color: '#b91c1c' }, card: 'bg-red-50 border-red-300 ring-1 ring-red-200',    pill: '#dc2626' },
+  instagram:  { label: 'Instagram',  icon: '◎',  badge: { backgroundColor: '#f3e8ff', color: '#7e22ce' }, card: 'bg-purple-50 border-purple-300 ring-1 ring-purple-200', pill: '#a855f7' },
+  facebook:   { label: 'Facebook',   icon: 'f',  badge: { backgroundColor: '#dbeafe', color: '#1d4ed8' }, card: 'bg-blue-50 border-blue-300 ring-1 ring-blue-200',  pill: '#3b82f6' },
+  linkedin:   { label: 'LinkedIn',   icon: 'in', badge: { backgroundColor: '#e0f2fe', color: '#0369a1' }, card: 'bg-sky-50 border-sky-300 ring-1 ring-sky-200',    pill: '#0ea5e9' },
+  tiktok:     { label: 'TikTok',     icon: '♪',  badge: { backgroundColor: '#f5f5f5', color: '#171717' }, card: 'bg-neutral-100 border-neutral-300 ring-1 ring-neutral-200', pill: '#404040' },
+  google:     { label: 'Google',     icon: 'G',  badge: { backgroundColor: '#fef3c7', color: '#b45309' }, card: 'bg-amber-50 border-amber-300 ring-1 ring-amber-200', pill: '#f59e0b' },
+}
+
 // Phase → n8n webhook event mapping
 export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
   no_show:            'deal.no_show',
