@@ -114,42 +114,42 @@ function buildEmailHtml(c: {
       ? raw.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?width=560&height=300&resize=cover&quality=72'
       : raw
     const img = imgSrc
-      ? `<tr><td style="padding:0 40px;"><a href="${esc(deckLink || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
+      ? `<tr><td class="px" style="padding:0 40px;"><a href="${esc(deckLink || '#')}" target="_blank"><img src="${esc(imgSrc)}" width="520" height="279" alt="${esc(label)}" style="width:100%;max-width:520px;height:auto;display:block;border-radius:8px;"></a></td></tr>`
       : ''
     const fmt = (n: number) => n.toLocaleString('de-DE')
     const priceRows = (p.units ?? []).filter(u => u.price_net != null && u.price_net > 0)
-    const priceBlock = priceRows.length ? `<tr><td style="padding:14px 40px 0 40px;">${priceRows.map(u => {
+    const priceBlock = priceRows.length ? `<tr><td class="px" style="padding:14px 40px 0 40px;">${priceRows.map(u => {
       const net = u.price_net as number, vat = Math.round(net * 0.19), gross = net + vat
       return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border:1px solid ${CI.line};border-radius:6px;"><tr>
-        ${priceRows.length > 1 ? `<td style="padding:12px 0 12px 18px;font-family:${SANS};font-size:12px;font-weight:700;color:${CI.navy};white-space:nowrap;">${esc(u.unit_number ?? '')}</td>` : ''}
-        <td style="padding:12px 8px 12px 18px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">Netto</div><div style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(net)} €</div></td>
-        <td style="padding:12px 8px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">MwSt 19 %</div><div style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(vat)} €</div></td>
-        <td style="padding:12px 18px 12px 8px;font-family:${SANS};"><div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.coral};white-space:nowrap;">Brutto</div><div style="font-size:15px;font-weight:700;color:${CI.coral};white-space:nowrap;">${fmt(gross)} €</div></td>
+        ${priceRows.length > 1 ? `<td class="price-cell" style="padding:12px 0 12px 18px;font-family:${SANS};font-size:12px;font-weight:700;color:${CI.navy};white-space:nowrap;">${esc(u.unit_number ?? '')}</td>` : ''}
+        <td class="price-cell" style="padding:12px 8px 12px 18px;font-family:${SANS};"><div class="price-label" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">Netto</div><div class="price-val" style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(net)} €</div></td>
+        <td class="price-cell" style="padding:12px 8px;font-family:${SANS};"><div class="price-label" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.mute};white-space:nowrap;">MwSt 19 %</div><div class="price-val" style="font-size:15px;font-weight:700;color:${CI.navy};white-space:nowrap;">${fmt(vat)} €</div></td>
+        <td class="price-cell" style="padding:12px 18px 12px 8px;font-family:${SANS};"><div class="price-label" style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${CI.coral};white-space:nowrap;">Brutto</div><div class="price-val" style="font-size:15px;font-weight:700;color:${CI.coral};white-space:nowrap;">${fmt(gross)} €</div></td>
       </tr></table>`
     }).join('<div style="height:8px;"></div>')}</td></tr>` : ''
     return `<tr><td style="padding:36px 0 0 0;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         ${img}
         ${priceBlock}
-        <tr><td style="padding:24px 40px 0 40px;">
+        <tr><td class="px" style="padding:24px 40px 0 40px;">
           <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${CI.coral};font-weight:700;">Dein persönliches Exposé</div>
-          <h2 style="margin:6px 0 0 0;font-family:${SERIF};font-size:26px;line-height:1.2;font-weight:700;color:${CI.navy};">${esc(label)}</h2>
+          <h2 class="h2" style="margin:6px 0 0 0;font-family:${SERIF};font-size:26px;line-height:1.2;font-weight:700;color:${CI.navy};">${esc(label)}</h2>
           ${p.ai_text?.trim() ? `<p style="margin:14px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${CI.ink};">${paras(p.ai_text)}</p>` : ''}
         </td></tr>
-        <tr><td style="padding:22px 40px 0 40px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
-            ${deckLink ? `<td bgcolor="${CI.navy}" style="border-radius:2px;">
-              <a href="${esc(deckLink)}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Exposé ansehen →</a>
+        <tr><td class="px" style="padding:22px 40px 0 40px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table"><tr>
+            ${deckLink ? `<td bgcolor="${CI.navy}" class="stack" style="border-radius:2px;">
+              <a href="${esc(deckLink)}" target="_blank" class="btn" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.15em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Exposé ansehen →</a>
             </td>` : ''}
-            ${calcLink ? `<td style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
-            <td style="border:1px solid ${CI.navy};border-radius:2px;">
-              <a href="${esc(calcLink)}" target="_blank" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${CI.navy};text-decoration:none;white-space:nowrap;">Beispielrechnung</a>
+            ${calcLink ? `<td class="stack-gap" style="width:10px;font-size:1px;line-height:1px;">&nbsp;</td>
+            <td class="stack" style="border:1px solid ${CI.navy};border-radius:2px;">
+              <a href="${esc(calcLink)}" target="_blank" class="btn" style="display:inline-block;padding:12px 22px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:${CI.navy};text-decoration:none;white-space:nowrap;">Beispielrechnung</a>
             </td>` : ''}
           </tr></table>
         </td></tr>
       </table>
     </td></tr>
-    <tr><td style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${CI.line};"></div></td></tr>`
+    <tr><td class="px" style="padding:40px 40px 0 40px;"><div style="height:1px;background-color:${CI.line};"></div></td></tr>`
   }).join('')
 
   const socialCard = (so: typeof SOCIALS[number]) => {
@@ -160,40 +160,40 @@ function buildEmailHtml(c: {
     return `<a href="${esc(so.url)}" target="_blank" style="text-decoration:none;">${inner}</a>`
   }
   const socialRow = (a: typeof SOCIALS[number], b: typeof SOCIALS[number]) =>
-    `<tr><td width="50%" valign="top" style="padding:0 5px 10px 0;">${socialCard(a)}</td><td width="50%" valign="top" style="padding:0 0 10px 5px;">${socialCard(b)}</td></tr>`
+    `<tr><td width="50%" valign="top" class="social-td" style="padding:0 5px 10px 0;">${socialCard(a)}</td><td width="50%" valign="top" class="social-td" style="padding:0 0 10px 5px;">${socialCard(b)}</td></tr>`
 
   return `<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${CI.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}}</style></head>
+<style>@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Montserrat:wght@400;500;600;700&display=swap');body{margin:0;padding:0;background:${CI.cream};}table{border-collapse:collapse;}img{display:block;border:0;}a{text-decoration:none;}p{margin:0;}@media only screen and (max-width:620px){.container{width:100%!important;max-width:100%!important;}.outer{padding:20px 8px!important;}.px{padding-left:20px!important;padding-right:20px!important;}.h1{font-size:26px!important;}.h2{font-size:22px!important;}.btn-table{width:100%!important;}.stack{display:block!important;width:100%!important;}.stack-gap{display:block!important;width:100%!important;height:10px!important;}.btn{display:block!important;text-align:center!important;}.price-cell{padding-left:10px!important;padding-right:10px!important;}.price-label{font-size:9px!important;}.price-val{font-size:13px!important;}.social-td{display:block!important;width:100%!important;padding:0 0 10px 0!important;}.footer-pad{padding:26px 20px!important;}}</style></head>
 <body style="margin:0;padding:0;background-color:${CI.cream};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${CI.cream};"><tr><td align="center" style="padding:32px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${CI.cream};"><tr><td align="center" class="outer" style="padding:32px 16px;">
 <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background-color:${CI.cream};">
-  <tr><td style="padding:8px 40px 28px 40px;">
+  <tr><td class="px" style="padding:8px 40px 28px 40px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
       <td align="left" valign="middle"><img src="${LOGO}" width="120" height="37" alt="Happy Property Cyprus" style="display:block;width:120px;height:37px;"></td>
       <td align="right" valign="middle" style="font-family:${SANS};font-size:11px;color:${CI.mute};letter-spacing:0.12em;text-transform:uppercase;">Paphos · Zypern</td>
     </tr></table>
   </td></tr>
-  <tr><td style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${CI.coral};"></div></td></tr>
-  <tr><td style="padding:24px 40px 8px 40px;"><h1 style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${CI.navy};">${esc(headline)}</h1></td></tr>
-  <tr><td style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo ${esc(firstName)},<br><br>${paras(c.intro_text)}</td></tr>
+  <tr><td class="px" style="padding:0 40px;"><div style="height:2px;width:48px;background-color:${CI.coral};"></div></td></tr>
+  <tr><td class="px" style="padding:24px 40px 8px 40px;"><h1 class="h1" style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${CI.navy};">${esc(headline)}</h1></td></tr>
+  <tr><td class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo ${esc(firstName)},<br><br>${paras(c.intro_text)}</td></tr>
   ${cards}
-  ${c.outro_text?.trim() ? `<tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">${paras(c.outro_text)}</td></tr>` : ''}
-  <tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</td></tr>
-  <tr><td style="padding:20px 40px 0 40px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${CI.coral}" style="border-radius:2px;">
-      <a href="${terminUrl}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
+  ${c.outro_text?.trim() ? `<tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">${paras(c.outro_text)}</td></tr>` : ''}
+  <tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</td></tr>
+  <tr><td class="px" style="padding:20px 40px 0 40px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table"><tr><td bgcolor="${CI.coral}" class="stack" style="border-radius:2px;">
+      <a href="${terminUrl}" target="_blank" class="btn" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
     </td></tr></table>
   </td></tr>
-  <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Liebe Grüße</p></td></tr>
-  <tr><td style="padding:14px 40px 0 40px;">
+  <tr><td class="px" style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Liebe Grüße</p></td></tr>
+  <tr><td class="px" style="padding:14px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
       <td valign="middle" width="64"><img src="${PHOTO_SQ}" width="56" height="56" alt="Sven" style="width:56px;height:56px;border-radius:50%;display:block;"></td>
       <td valign="middle" style="padding-left:14px;"><div style="font-family:${SERIF};font-size:18px;color:${CI.navy};">Sven</div><div style="font-family:${SANS};font-size:12px;color:#888;margin-top:2px;">Happy Property Cyprus</div></td>
     </tr></table>
   </td></tr>
-  <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${CI.ink};"><a href="mailto:sven@happy-property.com" style="color:${CI.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
+  <tr><td class="px" style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${CI.ink};"><a href="mailto:sven@happy-property.com" style="color:${CI.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
   <tr><td style="padding:36px 0 0 0;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${DARK};"><tr><td style="padding:32px 36px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${DARK};"><tr><td class="footer-pad" style="padding:32px 36px;">
       <div style="font-family:${SERIF};font-size:23px;font-weight:700;line-height:1.2;color:#ffffff;">Folge mir — ich nehme dich mit nach Zypern.</div>
       <div style="font-family:${SANS};font-size:13px;color:#9a9aa3;margin-top:6px;">Projekte, Baufortschritt, Markt-Insights — schau rein und folge:</div>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:16px;">
@@ -203,7 +203,7 @@ function buildEmailHtml(c: {
       <div style="font-family:${SANS};font-size:10px;color:#6b6b74;margin-top:22px;">Sveru Ltd. &nbsp;·&nbsp; Pallados 1, 8046 Paphos, Zypern</div>
     </td></tr></table>
   </td></tr>
-  ${firstTok ? `<tr><td align="center" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${SITE}/abmelden?d=${firstTok}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>` : ''}
+  ${firstTok ? `<tr><td align="center" class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${SITE}/abmelden?d=${firstTok}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>` : ''}
 </table></td></tr></table>${firstTok ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/track-engagement?type=email_open&token=${firstTok}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">` : ''}</body></html>`
 }
 
@@ -248,7 +248,7 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'rebuild_pending'
       lead_id?: string
       deck_token?: string
       campaign_id?: string; to?: string; start_at?: string
@@ -330,6 +330,27 @@ Deno.serve(async (req: Request) => {
       const bookingToken = await bookingTokenFor(sb, 'sven@happy-property.com')
       const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
       return json({ ok: true, subject: String(camp.subject ?? ''), html })
+    }
+
+    // ── Noch nicht gesendete Kampagnen-Mails mit dem AKTUELLEN Template neu
+    // bauen (z.B. nach Template-Fixes). Nutzt die vorhandenen Deck-Klone des
+    // Empfängers; das status-Guard im Update verhindert Rennen mit dem Cron. ──
+    if (body.action === 'rebuild_pending') {
+      const properties = (camp.properties ?? []) as CampaignProperty[]
+      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
+      const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id').eq('campaign_id', camp.id).eq('status', 'pending')
+      let rebuilt = 0, skipped = 0
+      for (const m of (pend ?? []) as Array<{ id: string; lead_id: string }>) {
+        const { data: lead } = await sb.from('leads').select('id, first_name').eq('id', m.lead_id).maybeSingle()
+        const { data: clones } = await sb.from('sales_decks').select('token, project_id').eq('batch_id', camp.id).eq('lead_id', m.lead_id)
+        const deckTokens: Record<string, string> = {}
+        for (const c2 of (clones ?? []) as Array<{ token: string; project_id: string }>) deckTokens[c2.project_id] = c2.token
+        if (!lead || !Object.keys(deckTokens).length) { skipped++; continue }
+        const html = buildEmailHtml(camp, firstNameOf(lead as { first_name: string | null }), deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
+        const { error: ue } = await sb.from('scheduled_messages').update({ email_body: html }).eq('id', m.id).eq('status', 'pending')
+        if (ue) skipped++; else rebuilt++
+      }
+      return json({ ok: true, rebuilt, skipped })
     }
 
     // ── Einzelnen Empfänger NACHTRÄGLICH aufnehmen (gleiche Behandlung wie beim
