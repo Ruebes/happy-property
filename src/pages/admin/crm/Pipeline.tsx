@@ -9,7 +9,7 @@ import {
   DEAL_PHASES,
   PHASE_ICONS,
   SOURCE_BADGE_STYLE,
-  CHANNEL_BADGES,
+  channelBadgeFor,
   PHASE_WEBHOOK_EVENTS,
 } from '../../../lib/crmTypes'
 import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
@@ -322,7 +322,7 @@ function DealCard({ deal, apptDate, onDragStart, onClick, onContextMenu }: DealC
   const lead = deal.lead
   // Buchungs-Kanal (Newsletter, YouTube, …): Herkunft schlägt die Lead-Quelle —
   // Kachel + Badge in der Kanal-Farbe, damit Sven die Herkunft sofort sieht.
-  const channel = deal.source ? CHANNEL_BADGES[deal.source] : undefined
+  const channel = channelBadgeFor(deal.source)
   const source = (lead?.source ?? 'sonstiges') as keyof typeof SOURCE_BADGE_STYLE
   const badgeStyle = channel ? channel.badge : (SOURCE_BADGE_STYLE[source] ?? SOURCE_BADGE_STYLE.sonstiges)
   // Kommender Termin → Kachel grün markieren, damit Sven Folgetermine sofort sieht.

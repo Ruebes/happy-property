@@ -284,12 +284,17 @@ Deno.serve(async (req) => {
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
-      // Herkunft der Buchung (Pipeline-/Kalender-Kennzeichnung): nur bekannte Werte
-      // übernehmen — Kanäle kommen von veröffentlichten Links (/termin?src=<kanal>).
-      const KNOWN_SOURCES = ['newsletter', 'direktlink', 'youtube', 'instagram', 'facebook', 'linkedin', 'tiktok', 'google']
+      // Herkunft der Buchung (Pipeline-/Kalender-Kennzeichnung). Kanäle kommen aus
+      // veröffentlichten Links (/termin?src=<kanal>). Frei im Funnel-Editor angelegte
+      // Quellen werden akzeptiert, wenn sie das Slug-Format erfüllen (a–z, 0–9, -, _).
       const SOURCE_LABELS: Record<string, string> = { newsletter: 'Newsletter', youtube: 'YouTube', instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', tiktok: 'TikTok', google: 'Google' }
-      const source = body.source && KNOWN_SOURCES.includes(body.source) ? body.source : null
-      const sourceLabel = source ? SOURCE_LABELS[source] : undefined
+      const srcClean = typeof body.source === 'string' ? body.source.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40) : ''
+      const source = srcClean.length >= 2 ? srcClean : null
+      // Kalender-Präfix: interner Marker 'direktlink' bleibt unbeschriftet, sonst
+      // fester Label oder aus dem Slug kapitalisiert.
+      const sourceLabel = source && source !== 'direktlink'
+        ? (SOURCE_LABELS[source] ?? (source.charAt(0).toUpperCase() + source.slice(1)))
+        : undefined
       const leadId = body.lead_id
       const { data: leadRow } = await admin.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
       if (!leadRow) return json({ error: 'lead_not_found' }, 404)

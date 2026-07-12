@@ -80,6 +80,13 @@ export default function Funnel() {
   }, [cfg, directEntry.variant])
   // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
   const utm = useMemo(() => directEntry.variant ? { ...utmBase, funnel_variant: directEntry.variant } : utmBase, [utmBase, directEntry.variant])
+  // Als Buchungs-Quelle (deals.source → Pipeline-Badge) zählen die festen Kanäle
+  // PLUS alle im Funnel-Editor angelegten Link-Quellen — sonst würde eine frei
+  // definierte Quelle (z.B. „podcast") verworfen.
+  const allowedSources = useMemo(
+    () => new Set<string>([...KNOWN_CHANNELS, ...(cfg.links ?? []).map(l => l.source).filter(Boolean)]),
+    [cfg],
+  )
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
   const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
   const [phase, setPhase] = useState<Phase>(directEntry.wanted || directEntry.rebook ? 'meeting_type' : 'welcome')
@@ -219,7 +226,7 @@ export default function Funnel() {
       // Herkunft für Pipeline/Kalender: bekannter Kanal (YouTube, Newsletter, …)
       // schlägt den personalisierten Direktlink.
       const chan = (utm.utm_source ?? '').toLowerCase()
-      const source = KNOWN_CHANNELS.includes(chan) ? chan : (direct ? 'direktlink' : undefined)
+      const source = allowedSources.has(chan) ? chan : (direct ? 'direktlink' : undefined)
       const { data, error: e } = await supabase.functions.invoke('funnel-api', { body: {
         action: 'book', session_id: sessionRef.current, lead_id: leadRef.current,
         slot_start_iso: s, meeting_type: meetingType, source,

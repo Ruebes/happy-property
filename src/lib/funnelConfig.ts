@@ -28,10 +28,26 @@ export interface FunnelSocial { icon: string; label: string; url: string }
 // Reservierter Slug 'none' = ganz ohne Fragebogen (nur Kontakt + Termin).
 export interface FunnelQuestionnaire { slug: string; name: string; questions: FunnelQuestion[] }
 
+// Kampagnen-/Quellen-Link (Funnel-Editor → „Links & Quellen"): ein teilbarer
+// /termin-Link, der eine Buchung einer Quelle zuordnet (deals.source →
+// Kachel-Badge in der Pipeline) und über utm_campaign=<code> für die spätere
+// Statistik eindeutig zählbar ist.
+//   source        = Kanal, der als Badge erscheint (youtube/instagram/… oder frei)
+//   questionnaire = welcher Einstieg: 'standard' | '<variant-slug>' | 'none' (nur
+//                   Termin) | 'buchen' (Schnellbuchung, direkt Terminart)
+export interface FunnelLink {
+  code: string
+  name: string
+  source: string
+  questionnaire: string
+  created_at?: string
+}
+
 export interface FunnelConfig {
   welcome: { title: string; subtitle: string; cta: string; footnote: string; hero_url: string }
   questions: FunnelQuestion[]
   questionnaires: FunnelQuestionnaire[]
+  links: FunnelLink[]
   contact: { title: string; subtitle: string; cta: string; privacy: string }
   done: {
     emoji: string          // Symbol oben (wird von image_url ersetzt, falls gesetzt)
@@ -49,8 +65,25 @@ export const FUNNEL_ICONS = ['steuern', 'kapital', 'auswandern', 'langfristig', 
 
 export const FUNNEL_HERO_DEFAULT = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=1100&height=620&resize=cover&quality=78'
 
+export const SITE_URL = 'https://portal.happy-property.com'
+
+// Aus einem Kampagnen-Link die teilbare /termin-URL bauen. `src` setzt im Funnel
+// die utm_source (= Kanal/Badge), `utm_campaign` trägt den eindeutigen Link-Code
+// für die spätere Auswertung. Der Fragebogen-Modus hängt zusätzliche Parameter an.
+export function buildFunnelLinkUrl(link: Pick<FunnelLink, 'code' | 'source' | 'questionnaire'>): string {
+  const p = new URLSearchParams()
+  if (link.source) p.set('src', link.source)
+  if (link.code) p.set('utm_campaign', link.code)
+  if (link.questionnaire === 'none') p.set('f', 'none')
+  else if (link.questionnaire === 'buchen') p.set('buchen', '1')
+  else if (link.questionnaire && link.questionnaire !== 'standard') p.set('f', link.questionnaire)
+  const qs = p.toString()
+  return qs ? `${SITE_URL}/termin?${qs}` : `${SITE_URL}/termin`
+}
+
 export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
   questionnaires: [],
+  links: [],
   welcome: {
     title: 'Dein kostenloses Beratungsgespräch mit Sven',
     subtitle: 'Beantworte 6 kurze Fragen und such dir direkt deinen Wunschtermin aus — per Zoom oder WhatsApp-Call. Dauer: 1 Minute.',
@@ -158,6 +191,20 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
         .map(x => ({ slug: x.slug.trim(), name: x.name, questions: cleanQuestions(x.questions) }))
         .filter(x => x.questions.length > 0)
     : []
+  // Kampagnen-/Quellen-Links: code + name Pflicht, source/questionnaire tolerant.
+  const cleanKey = (v: unknown, max: number) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, max)
+  const links = Array.isArray(r.links)
+    ? r.links
+        .filter(x => x && typeof x.code === 'string' && typeof x.name === 'string')
+        .map(x => ({
+          code: cleanKey(x.code, 40),
+          name: String(x.name).trim().slice(0, 80),
+          source: cleanKey(x.source, 40),
+          questionnaire: typeof x.questionnaire === 'string' && x.questionnaire.trim() ? x.questionnaire.trim() : 'standard',
+          created_at: typeof x.created_at === 'string' ? x.created_at : undefined,
+        }))
+        .filter(x => x.code && x.name)
+    : []
   const doneRaw = (r.done ?? {}) as Partial<FunnelConfig['done']>
   const socials = Array.isArray(doneRaw.socials)
     ? doneRaw.socials.filter(s => s && typeof s.label === 'string' && typeof s.url === 'string' && s.label.trim() && s.url.trim())
@@ -166,6 +213,7 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
     welcome: { ...d.welcome, ...(r.welcome ?? {}) },
     questions: questions.length ? questions : d.questions,
     questionnaires,
+    links,
     contact: { ...d.contact, ...(r.contact ?? {}) },
     done: { ...d.done, ...doneRaw, socials },
   }

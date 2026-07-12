@@ -6,8 +6,9 @@ import { useAuth } from '../../../lib/auth'
 import FunnelIcon, { OptionVisual } from '../../../components/FunnelIcon'
 import {
   loadFunnelConfig, normalizeFunnelConfig, FUNNEL_ICONS, FUNNEL_HERO_DEFAULT,
-  type FunnelConfig, type FunnelOption,
+  buildFunnelLinkUrl, type FunnelConfig, type FunnelOption,
 } from '../../../lib/funnelConfig'
+import { CHANNEL_BADGES, channelBadgeFor } from '../../../lib/crmTypes'
 
 // ── Funnel-Editor (/admin/crm/funnel-editor) ─────────────────────────────────
 // Inhalte des öffentlichen Termin-Funnels (/termin) pflegen: Startseite, Fragen
@@ -104,6 +105,17 @@ function Field({ label, value, onChange, textarea }: { label: string; value: str
         ? <textarea value={value} onChange={e => onChange(e.target.value)} rows={2} className={cls} />
         : <input value={value} onChange={e => onChange(e.target.value)} className={cls} />}
     </div>
+  )
+}
+
+// Vorschau, wie die Quelle als Badge in der Pipeline-Kachel erscheint.
+function SourcePreview({ source }: { source: string }) {
+  const b = channelBadgeFor(source)
+  if (!b) return <span className="text-xs text-gray-400 italic">— (Werbe-Quelle des Leads)</span>
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap" style={b.badge}>
+      {b.icon} {b.label}
+    </span>
   )
 }
 
@@ -217,6 +229,28 @@ export default function FunnelEditor() {
   }
   const copyLink = (url: string) => {
     void navigator.clipboard.writeText(url).then(() => showToast(t('crm.funnelEditor.linkCopied', '✓ Link kopiert') as string))
+  }
+
+  // ── Kampagnen-/Quellen-Links ───────────────────────────────────────────────
+  const [linkForm, setLinkForm] = useState({ name: '', source: 'youtube', sourceCustom: '', questionnaire: 'standard' })
+  const addLink = () => {
+    if (!cfg) return
+    const name = linkForm.name.trim()
+    if (!name) { showToast(t('crm.funnelEditor.linkNeedsName', 'Bitte gib dem Link einen Namen.') as string); return }
+    const rawSource = (linkForm.source === 'custom' ? linkForm.sourceCustom : linkForm.source)
+    const source = rawSource.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    const taken = new Set((cfg.links ?? []).map(l => l.code))
+    const code = slugify(name, taken)
+    update(c => ({ ...c, links: [...(c.links ?? []), { code, name, source, questionnaire: linkForm.questionnaire, created_at: new Date().toISOString() }] }))
+    setLinkForm({ name: '', source: 'youtube', sourceCustom: '', questionnaire: 'standard' })
+  }
+  const removeLink = (code: string) => update(c => ({ ...c, links: (c.links ?? []).filter(l => l.code !== code) }))
+  // Klartext-Bezeichnung des Fragebogen-Modus eines Links
+  const qnLabel = (mode: string): string => {
+    if (mode === 'standard') return t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen') as string
+    if (mode === 'none') return t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)') as string
+    if (mode === 'buchen') return t('crm.funnelEditor.qnBuchen', 'Schnellbuchung (direkt Terminart)') as string
+    return cfg?.questionnaires.find(x => x.slug === mode)?.name ?? mode
   }
 
   const card = 'bg-white rounded-2xl shadow-sm border border-gray-100 p-5'
@@ -491,6 +525,125 @@ export default function FunnelEditor() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ── Links & Quellen ── */}
+        <div className={card}>
+          <h2 className="text-sm font-semibold text-gray-700">{t('crm.funnelEditor.linksTitle', '5 · Links & Quellen')}</h2>
+          <p className="text-xs text-gray-500 mt-1 mb-4">
+            {t('crm.funnelEditor.linksIntro', 'Lege pro Kanal oder Kampagne einen eigenen Link an. Wer darüber einen Termin bucht, bekommt automatisch die gewählte Quelle in der Pipeline-Kachel — und du kannst die Links später einzeln auswerten.')}
+          </p>
+
+          {/* Feste Einstiege (Referenz, nicht editierbar) */}
+          <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.funnelEditor.linksBuiltin', 'Feste Einstiege')}</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs mb-6">
+              <thead>
+                <tr className="text-left text-gray-400">
+                  <th className="font-medium py-1 pr-3">{t('crm.funnelEditor.linkColName', 'Was')}</th>
+                  <th className="font-medium py-1 pr-3">{t('crm.funnelEditor.linkColSource', 'Quelle in der Kachel')}</th>
+                  <th className="font-medium py-1">{t('crm.funnelEditor.linkColUrl', 'Link')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  { label: t('crm.funnelEditor.linkDefault', 'Standard-Fragebogen') as string, url: 'https://portal.happy-property.com/termin', source: '' },
+                  { label: t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)') as string, url: 'https://portal.happy-property.com/termin?f=none', source: '' },
+                  { label: t('crm.funnelEditor.qnBuchen', 'Schnellbuchung (direkt Terminart)') as string, url: 'https://portal.happy-property.com/termin?buchen=1', source: '' },
+                  { label: t('crm.funnelEditor.linkNewsletterAuto', 'Newsletter-Button (automatisch)') as string, url: '—', source: 'newsletter' },
+                ].map(l => (
+                  <tr key={l.label} className="border-t border-gray-100 align-middle">
+                    <td className="py-2 pr-3 font-medium text-gray-600 whitespace-nowrap">{l.label}</td>
+                    <td className="py-2 pr-3"><SourcePreview source={l.source} /></td>
+                    <td className="py-2">
+                      {l.url === '—'
+                        ? <span className="text-gray-400">{t('crm.funnelEditor.linkAutoHint', 'wird je Empfänger erzeugt')}</span>
+                        : <span className="inline-flex items-center gap-2">
+                            <code className="px-2 py-1 rounded bg-gray-50 border border-gray-100 text-gray-500 break-all">{l.url}</code>
+                            <button onClick={() => copyLink(l.url)} className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium shrink-0">{t('crm.funnelEditor.copy', 'Kopieren')}</button>
+                          </span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Eigene Kampagnen-Links */}
+          <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.funnelEditor.linksYours', 'Deine Kampagnen-Links')}</p>
+          {cfg.links.length === 0 ? (
+            <p className="text-xs text-gray-400 mb-4">{t('crm.funnelEditor.linksEmpty', 'Noch keine eigenen Links. Leg unten den ersten an — z. B. für deine YouTube-Videobeschreibung.')}</p>
+          ) : (
+            <div className="space-y-2 mb-4">
+              {cfg.links.map(link => {
+                const url = buildFunnelLinkUrl(link)
+                return (
+                  <div key={link.code} className="flex flex-wrap items-center gap-2 text-xs bg-gray-50 rounded-lg p-2.5 border border-gray-100">
+                    <span className="w-44 shrink-0 font-semibold text-gray-700 truncate">{link.name}</span>
+                    <SourcePreview source={link.source} />
+                    <span className="text-gray-400">{qnLabel(link.questionnaire)}</span>
+                    <code className="px-2 py-1 rounded bg-white border border-gray-200 text-gray-500 break-all flex-1 min-w-[12rem]">{url}</code>
+                    <button onClick={() => copyLink(url)} className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium">{t('crm.funnelEditor.copy', 'Kopieren')}</button>
+                    <button onClick={() => removeLink(link.code)} className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* Neuen Link anlegen */}
+          <div className="border-t border-gray-100 pt-4">
+            <p className="text-xs font-semibold text-gray-500 mb-3">{t('crm.funnelEditor.linksNew', 'Neuen Link anlegen')}</p>
+            <div className="grid md:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormName', 'Name (nur für dich)')}</label>
+                <input value={linkForm.name} onChange={e => setLinkForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder={t('crm.funnelEditor.linkFormNamePh', 'z. B. YouTube Videobeschreibung') as string}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormSource', 'Quelle (Badge in der Kachel)')}</label>
+                <select value={linkForm.source} onChange={e => setLinkForm(f => ({ ...f, source: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                  {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
+                    <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
+                  ))}
+                  <option value="custom">{t('crm.funnelEditor.linkSourceCustom', 'Andere / eigene …')}</option>
+                </select>
+                {linkForm.source === 'custom' && (
+                  <input value={linkForm.sourceCustom} onChange={e => setLinkForm(f => ({ ...f, sourceCustom: e.target.value }))}
+                    placeholder={t('crm.funnelEditor.linkSourceCustomPh', 'z. B. podcast, messe, flyer') as string}
+                    className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                )}
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormMode', 'Einstieg')}</label>
+                <select value={linkForm.questionnaire} onChange={e => setLinkForm(f => ({ ...f, questionnaire: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                  <option value="standard">{t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen')}</option>
+                  {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
+                  <option value="none">{t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)')}</option>
+                  <option value="buchen">{t('crm.funnelEditor.qnBuchen', 'Schnellbuchung (direkt Terminart)')}</option>
+                </select>
+              </div>
+              <div className="flex items-end">
+                <button onClick={addLink}
+                  className="w-full py-2 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                  {t('crm.funnelEditor.linkAdd', '+ Link anlegen')}
+                </button>
+              </div>
+            </div>
+            {linkForm.name.trim() && (
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                <span className="font-semibold text-gray-500">{t('crm.funnelEditor.linkPreview', 'Vorschau:')}</span>
+                <SourcePreview source={(linkForm.source === 'custom' ? linkForm.sourceCustom : linkForm.source).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')} />
+                <code className="px-2 py-1 rounded bg-gray-50 border border-gray-100 break-all">
+                  {buildFunnelLinkUrl({ code: slugify(linkForm.name.trim(), new Set(cfg.links.map(l => l.code))), source: (linkForm.source === 'custom' ? linkForm.sourceCustom : linkForm.source).trim().toLowerCase().replace(/[^a-z0-9_-]/g, ''), questionnaire: linkForm.questionnaire })}
+                </code>
+              </div>
+            )}
+            <p className="text-[11px] text-gray-400 mt-3">{t('crm.funnelEditor.linksStatHint', 'Jeder Link trägt einen eindeutigen Code (utm_campaign) — damit lassen sich die Links später in der Statistik einzeln auswerten. Speichern nicht vergessen.')}</p>
           </div>
         </div>
 

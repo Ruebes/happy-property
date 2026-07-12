@@ -192,6 +192,27 @@ export const CHANNEL_BADGES: Record<string, ChannelBadge> = {
   google:     { label: 'Google',     icon: 'G',  badge: { backgroundColor: '#fef3c7', color: '#b45309' }, card: 'bg-amber-50 border-amber-300 ring-1 ring-amber-200', pill: '#f59e0b' },
 }
 
+// Interne Buchungs-Marker, die KEIN Kanal-Badge bekommen (kein Marketing-Kanal).
+const INTERNAL_SOURCES = new Set(['direktlink'])
+
+// Badge zu einer Buchungs-Quelle: bekannter Kanal → feste CI-Farbe; frei im
+// Funnel-Editor angelegte Quelle → generisches Badge mit lesbarem Namen; interne
+// Marker (direktlink) → keins. So erscheinen auch eigene Kampagnen-Quellen sofort
+// in Pipeline + Kalender, ohne dass eine neue Farbe hinterlegt werden muss.
+export function channelBadgeFor(source: string | null | undefined): ChannelBadge | undefined {
+  if (!source) return undefined
+  const known = CHANNEL_BADGES[source]
+  if (known) return known
+  if (INTERNAL_SOURCES.has(source)) return undefined
+  const label = source.charAt(0).toUpperCase() + source.slice(1).replace(/[-_]/g, ' ')
+  return {
+    label, icon: '🔗',
+    badge: { backgroundColor: '#f1f5f9', color: '#475569' },
+    card: 'bg-slate-50 border-slate-300 ring-1 ring-slate-200',
+    pill: '#64748b',
+  }
+}
+
 // Phase → n8n webhook event mapping
 export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
   no_show:            'deal.no_show',

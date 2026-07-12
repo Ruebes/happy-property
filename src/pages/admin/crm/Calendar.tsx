@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import type { CrmAppointment } from '../../../lib/crmTypes'
-import { CHANNEL_BADGES } from '../../../lib/crmTypes'
+import { channelBadgeFor } from '../../../lib/crmTypes'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import {
   checkCalendarStatus,
@@ -31,7 +31,7 @@ const APPT_COLORS = {
 // Kanal-Buchungen (Newsletter, YouTube, …): Herkunft schlägt Terminart bei der
 // Kachel-Farbe — Sven erkennt auf einen Blick, woher der Termin kommt.
 function apptChannel(appt: CrmAppointment) {
-  return appt.source ? CHANNEL_BADGES[appt.source] : undefined
+  return channelBadgeFor(appt.source)
 }
 function apptColors(appt: CrmAppointment) {
   const ch = apptChannel(appt)
@@ -166,7 +166,7 @@ function TypeBadge({ type, t }: { type: string; t: TFunction }) {
 }
 
 function SourceBadge({ source }: { source: string }) {
-  const ch = CHANNEL_BADGES[source]
+  const ch = channelBadgeFor(source)
   if (!ch) return null
   return (
     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold"
