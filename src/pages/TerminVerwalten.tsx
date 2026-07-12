@@ -116,7 +116,7 @@ export default function TerminVerwalten() {
               <div className="text-4xl">🤔</div>
               <h1 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>Diesen Termin gibt es nicht mehr</h1>
               <p className="text-sm text-gray-500 mt-2">Der Link ist ungültig oder der Termin wurde bereits abgesagt.</p>
-              <a href="/termin" className="mt-6 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin buchen →</a>
+              <a href="/termin?buchen=1" className="mt-6 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin buchen →</a>
             </div>
           )}
 
@@ -131,7 +131,7 @@ export default function TerminVerwalten() {
                 <p className="text-sm text-gray-500 mt-1">{appt.meeting_type === 'zoom' ? '📹 Zoom-Call mit Sven' : '💬 WhatsApp-Call mit Sven'} · Zeiten in deiner Zeitzone</p>
               </div>
               {appt.past ? (
-                <p className="text-sm text-gray-500 mt-4">Dieser Termin liegt in der Vergangenheit. <a href="/termin" className="underline" style={{ color: CORAL }}>Hier kannst du einen neuen buchen.</a></p>
+                <p className="text-sm text-gray-500 mt-4">Dieser Termin liegt in der Vergangenheit. <a href="/termin?buchen=1" className="underline" style={{ color: CORAL }}>Hier kannst du einen neuen buchen.</a></p>
               ) : (
                 <div className="grid md:grid-cols-2 gap-3 mt-5">
                   <button onClick={() => void openReschedule()} className="px-5 py-3 rounded-full text-white font-semibold shadow hover:shadow-md transition" style={{ background: NAVY }}>
@@ -209,7 +209,7 @@ export default function TerminVerwalten() {
               <div className="text-5xl">👋</div>
               <h2 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>Termin abgesagt</h2>
               <p className="text-sm text-gray-500 mt-2">Schade! Wenn es später wieder passt, freut sich Sven auf dich.</p>
-              <a href="/termin" className="mt-5 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin finden →</a>
+              <a href="/termin?buchen=1" className="mt-5 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin finden →</a>
             </div>
           )}
 

@@ -50,7 +50,7 @@ function useUtm(): Record<string, string> {
 //     Kontaktformular überspringen, direkt Terminart → Kalender.
 //   ?f=<slug> → Fragebogen-Variante aus dem Editor; ?f=none → GAR KEIN Fragebogen
 //     (Welcome → Kontakt → Termin). Unbekannter Slug fällt auf den Standard zurück.
-function useEntryParams(): { wanted: boolean; deckToken: string; variant: string } {
+function useEntryParams(): { wanted: boolean; deckToken: string; variant: string; rebook: boolean } {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
     const deckToken = (p.get('d') ?? '').trim()
@@ -58,6 +58,9 @@ function useEntryParams(): { wanted: boolean; deckToken: string; variant: string
       wanted: (p.get('direkt') === '1' || p.get('direct') === '1') && !!deckToken,
       deckToken,
       variant: (p.get('f') ?? '').trim().slice(0, 60),
+      // Schnellbuchung ohne Fragebogen (z.B. aus dem „Termin verwalten"-Fallback,
+      // wenn der alte Termin weg ist): direkt Terminart → Slot → Kontakt.
+      rebook: p.get('buchen') === '1',
     }
   }, [])
 }
@@ -66,6 +69,7 @@ export default function Funnel() {
   const { t } = useTranslation()
   const utmBase = useUtm()
   const directEntry = useEntryParams()
+  const rebook = directEntry.rebook
   const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
   useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
   // Fragebogen-Auswahl: 'none' = keine Fragen, sonst Variante per Slug, Fallback Standard
@@ -78,7 +82,7 @@ export default function Funnel() {
   const utm = useMemo(() => directEntry.variant ? { ...utmBase, funnel_variant: directEntry.variant } : utmBase, [utmBase, directEntry.variant])
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))
   const HERO = cfg.welcome.hero_url || FUNNEL_HERO_DEFAULT
-  const [phase, setPhase] = useState<Phase>(directEntry.wanted ? 'meeting_type' : 'welcome')
+  const [phase, setPhase] = useState<Phase>(directEntry.wanted || directEntry.rebook ? 'meeting_type' : 'welcome')
   const [direct, setDirect] = useState(directEntry.wanted)
   const [directName, setDirectName] = useState('')
   const [qIdx, setQIdx] = useState(0)
@@ -169,6 +173,8 @@ export default function Funnel() {
       if (e) throw new Error(e.message)
       leadRef.current = (data as { lead_id?: string } | null)?.lead_id ?? null
       void track(QUESTIONS.length + 1, 'contact_submitted')
+      // Schnellbuchung: Terminart + Slot stehen schon → jetzt verbindlich buchen.
+      if (rebook && slot) { await performBooking(slot); return }
       setPhase('meeting_type')
     } catch {
       setError('Das hat leider nicht geklappt. Bitte versuche es noch einmal.')
@@ -204,9 +210,11 @@ export default function Funnel() {
     return map
   }, [slots, tz])
 
-  const bookSlot = async (s: string) => {
+  // Kern-Buchung (Slot gewählt, Lead bekannt). In der Schnellbuchung ohne
+  // Deck-Token wird der Kontakt ERST nach der Slot-Wahl erfasst — daher ruft auch
+  // submitContact hier hinein.
+  const performBooking = async (s: string) => {
     setSlot(s); setError(''); setBusy(true)
-    void track(QUESTIONS.length + 3, 'slot_picked', s)
     try {
       // Herkunft für Pipeline/Kalender: bekannter Kanal (YouTube, Newsletter, …)
       // schlägt den personalisierten Direktlink.
@@ -220,7 +228,7 @@ export default function Funnel() {
       const d = data as { ok?: boolean; error?: string } | null
       if (d?.error === 'slot_taken' || d?.error === 'slot_invalid') {
         setError('Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.')
-        setSlot(''); void loadSlots(); return
+        setSlot(''); setPhase('slot'); void loadSlots(); return
       }
       if (!d?.ok) throw new Error(d?.error || 'Buchung fehlgeschlagen')
       setPhase('done')
@@ -229,19 +237,29 @@ export default function Funnel() {
     } finally { setBusy(false) }
   }
 
+  const bookSlot = (s: string) => {
+    void track(QUESTIONS.length + 3, 'slot_picked', s)
+    // Schnellbuchung: Kontakt fehlt noch → erst erfassen, dann buchen.
+    if (rebook && !leadRef.current) { setSlot(s); setError(''); setPhase('contact'); return }
+    void performBooking(s)
+  }
+
   const back = () => {
     if (phase === 'questions' && qIdx > 0) setQIdx(qIdx - 1)
     else if (phase === 'questions') setPhase('welcome')
     else if (phase === 'contact') {
-      if (QUESTIONS.length) { setPhase('questions'); setQIdx(QUESTIONS.length - 1) }
+      if (rebook) setPhase('slot')                     // Schnellbuchung: Kontakt kommt NACH dem Slot
+      else if (QUESTIONS.length) { setPhase('questions'); setQIdx(QUESTIONS.length - 1) }
       else setPhase('welcome')
     }
-    else if (phase === 'meeting_type') { if (!direct) setPhase('contact') }
+    else if (phase === 'meeting_type') { if (!direct && !rebook) setPhase('contact') }
     else if (phase === 'slot') setPhase('meeting_type')
   }
 
-  const totalSteps = direct ? 2 : QUESTIONS.length + 3
-  const stepNow = direct
+  const totalSteps = rebook ? 3 : direct ? 2 : QUESTIONS.length + 3
+  const stepNow = rebook
+    ? (phase === 'meeting_type' ? 1 : phase === 'slot' ? 2 : phase === 'contact' ? 3 : totalSteps)
+    : direct
     ? (phase === 'meeting_type' ? 1 : phase === 'slot' ? 2 : totalSteps)
     : phase === 'welcome' ? 0 : phase === 'questions' ? qIdx + 1 : phase === 'contact' ? QUESTIONS.length + 1 : phase === 'meeting_type' ? QUESTIONS.length + 2 : phase === 'slot' ? QUESTIONS.length + 3 : totalSteps
   // Clamp: die Config lädt asynchron nach — hat sie weniger Fragen als der
@@ -281,7 +299,7 @@ export default function Funnel() {
       </div>
       <div className="flex items-center justify-between px-5 md:px-10 py-4">
         <img src={DECK_LOGO} alt="Happy Property" className="h-8 md:h-9 w-auto" />
-        {phase !== 'welcome' && phase !== 'done' && !(direct && phase === 'meeting_type') && (
+        {phase !== 'welcome' && phase !== 'done' && !((direct || rebook) && phase === 'meeting_type') && (
           <button onClick={back} className="text-sm text-gray-500 hover:text-gray-800">← {t('funnel.back', 'Zurück')}</button>
         )}
       </div>
@@ -345,8 +363,13 @@ export default function Funnel() {
           {phase === 'contact' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Fast geschafft</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{cfg.contact.title}</h2>
-              <p className="mt-1 text-sm text-gray-600">{cfg.contact.subtitle}</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{rebook ? 'Nur noch deine Kontaktdaten' : cfg.contact.title}</h2>
+              <p className="mt-1 text-sm text-gray-600">{rebook ? 'Danach buchen wir deinen Termin sofort verbindlich.' : cfg.contact.subtitle}</p>
+              {rebook && slot && meetingType && (
+                <div className="mt-4 rounded-xl bg-white border border-[#e6dfd0] p-4 text-sm" style={{ color: NAVY }}>
+                  <span className="font-semibold">{meetingType === 'zoom' ? '📹 Zoom-Call' : '💬 WhatsApp-Call'}</span> · {fmtSlotFull(slot)} Uhr
+                </div>
+              )}
               <div className="mt-6 space-y-4 bg-white rounded-2xl border border-[#e6dfd0] p-6 shadow-sm">
                 <input type="text" tabIndex={-1} autoComplete="off" value={contact.website} onChange={e => setContact({ ...contact, website: e.target.value })} className="hidden" aria-hidden="true" />
                 <div className="grid md:grid-cols-2 gap-4">
@@ -375,7 +398,7 @@ export default function Funnel() {
                 <button onClick={() => void submitContact()} disabled={busy}
                   className="w-full py-3.5 rounded-full text-white font-semibold text-lg shadow-md hover:shadow-lg transition disabled:opacity-50"
                   style={{ background: CORAL }}>
-                  {busy ? 'Einen Moment…' : cfg.contact.cta}
+                  {busy ? 'Einen Moment…' : (rebook ? 'Termin verbindlich buchen' : cfg.contact.cta)}
                 </button>
                 <p className="text-[11px] text-gray-400 text-center">{cfg.contact.privacy}</p>
               </div>
