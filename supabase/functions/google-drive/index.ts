@@ -172,15 +172,27 @@ async function importFile(
 ): Promise<{ url: string; name: string; mimeType: string }> {
   const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
   const meta = await metaRes.json() as { name?: string; mimeType?: string }
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  // Native Google-Dateien (Sheets/Docs) haben kein alt=media → über den Export-
+  // Endpoint holen (Sheets als xlsx, Rest als PDF); binäre Dateien direkt.
+  const isNative = (meta.mimeType ?? '').startsWith('application/vnd.google-apps')
+  const exportMime = meta.mimeType === 'application/vnd.google-apps.spreadsheet'
+    ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    : 'application/pdf'
+  const dlUrl = isNative
+    ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`
+    : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+  const res = await fetch(dlUrl, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) throw new Error(`Download fehlgeschlagen (${res.status})`)
   const bytes = new Uint8Array(await res.arrayBuffer())
-  const ext  = (meta.name?.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const outMime = isNative ? exportMime : (meta.mimeType ?? 'application/octet-stream')
+  const ext = isNative
+    ? (exportMime.endsWith('sheet') ? 'xlsx' : 'pdf')
+    : ((meta.name?.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin')
   const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-  const { error } = await supabase.storage.from('deck-assets').upload(path, bytes, { contentType: meta.mimeType ?? 'application/octet-stream', upsert: false })
+  const { error } = await supabase.storage.from('deck-assets').upload(path, bytes, { contentType: outMime, upsert: false })
   if (error) throw new Error(`Upload fehlgeschlagen: ${error.message}`)
   const { data } = supabase.storage.from('deck-assets').getPublicUrl(path)
-  return { url: data.publicUrl, name: meta.name ?? 'file', mimeType: meta.mimeType ?? 'application/octet-stream' }
+  return { url: data.publicUrl, name: meta.name ?? 'file', mimeType: outMime }
 }
 
 // Datei-Inhalt als Base64 holen (Bilder → Storage, PDFs → Claude).

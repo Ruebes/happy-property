@@ -162,8 +162,10 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
 
     let created = 0, deleted = 0, updated = 0
     if (body.create && body.project_id) {
-      const norm = (s: unknown) => String(s ?? '').trim().toLowerCase()
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_gross').eq('project_id', body.project_id)
+      // Namens-Normalisierung: Penthouse-Suffix „(P)" und Sonderzeichen ignorieren,
+      // sonst matcht „C-301 (P)" (Liste) nicht auf „C-301" (Bestand) → Duplikate.
+      const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s*\(p\)\s*$/, '').replace(/[^a-z0-9]/g, '')
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_gross, status').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
@@ -173,15 +175,22 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       const listByNum = new Map<string, Unit>()
       for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_gross: number | null }
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_gross: number | null; status: string | null }
       const driveAll  = (existing ?? []).filter(r => (r as ExRow).source === 'drive_import') as ExRow[]
       const driveFree = driveAll.filter(r => !dealLinked.has(r.id))   // löschbar (Deal-Units bleiben)
-      // „Vollständige" Liste? Mind. so viele Einträge wie wir Drive-Units haben → dann ist
-      // sicher, dass komplett VERSCHWUNDENE Units = verkauft sind (schützt vor Parse-Aussetzern).
-      const listComplete = units.length >= driveAll.length
+      // Developer liefern oft BLOCK-Teillisten (Luma: „A&B" und „C&D" getrennt).
+      // „Verschwunden = verkauft" darf nur für Units gelten, deren Block in DIESER
+      // Liste überhaupt vorkommt — sonst löscht der A&B-Lauf alle C/D-Units und
+      // umgekehrt. Block = Buchstaben-Präfix der Unit-Nummer (fehlt er, Scope '').
+      const blockOf = (n: unknown) => (String(n ?? '').trim().match(/^([A-Za-z]+)[-\s]?\d/)?.[1] ?? '').toLowerCase()
+      const listBlocks = new Set(units.map(u => blockOf(u.unit_number)))
+      const inScope = (r: ExRow) => listBlocks.has(blockOf(r.unit_number))
+      // „Vollständige" Liste? Mind. so viele Einträge wie unsere Drive-Units IM SCOPE →
+      // dann ist sicher, dass verschwundene Scope-Units verkauft sind (schützt vor Parse-Aussetzern).
+      const listComplete = units.length >= driveAll.filter(inScope).length
       const isUnavail = (r: ExRow) => {
         const av = avail.get(norm(r.unit_number))
-        return av === 'sold' || av === 'reserved' || (!av && listComplete)
+        return av === 'sold' || av === 'reserved' || (!av && listComplete && inScope(r))
       }
 
       // (1) LÖSCHEN: freie Drive-Units, die jetzt sold/reserved oder (bei vollständiger Liste)
@@ -203,9 +212,13 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         const lu = listByNum.get(norm(r.unit_number))
         if (!lu) continue
         const newNet = num(lu.price_net), newGross = num(lu.price_gross)
-        const patch: Record<string, number> = {}
+        const patch: Record<string, number | string> = {}
         if (newNet != null && Number(newNet) !== Number(r.price_net)) patch.price_net = newNet
         if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
+        // REAKTIVIERUNG: Der Bauträger führt die Unit wieder mit Preis (available),
+        // bei uns steht sie noch sold/reserved (z.B. freigegebene Reservierung oder
+        // wieder eröffneter Block) → zurück in den anbietbaren Zustand.
+        if (r.status === 'sold' || r.status === 'reserved') patch.status = 'proposal'
         if (Object.keys(patch).length) {
           const { error } = await supabase.from('crm_project_units').update(patch).eq('id', r.id)
           if (!error) updated++
