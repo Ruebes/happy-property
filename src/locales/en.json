@@ -61,7 +61,7 @@
     "forgotError": "Could not send email. Please check the address.",
     "forgotSentSubtitle": "Check your inbox",
     "forgotSentTitle": "Email on its way!",
-    "forgotSentDesc": "We sent a link to {{email}}. Click it to reset your password.",
+    "forgotSentDesc": "If an account exists for {{email}}, we've sent you a reset link. If nothing arrives, you may have registered with a different email address — try that one.",
     "forgotSentSpam": "Nothing there? Check your spam folder. The link is valid for 60 minutes.",
     "backToLogin": "Back to login"
   },

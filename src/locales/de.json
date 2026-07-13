@@ -61,7 +61,7 @@
     "forgotError": "E-Mail konnte nicht gesendet werden. Bitte prüfe die Adresse.",
     "forgotSentSubtitle": "Überprüfe dein Postfach",
     "forgotSentTitle": "E-Mail unterwegs!",
-    "forgotSentDesc": "Wir haben einen Link an {{email}} gesendet. Klicke darauf um dein Passwort zurückzusetzen.",
+    "forgotSentDesc": "Falls ein Konto mit {{email}} existiert, haben wir dir einen Link zum Zurücksetzen geschickt. Kommt nichts an, hast du dich vielleicht mit einer anderen E-Mail-Adresse registriert — dann probiere diese.",
     "forgotSentSpam": "Nichts in Sicht? Prüfe auch deinen Spam-Ordner. Der Link ist 60 Minuten gültig.",
     "backToLogin": "Zurück zum Login"
   },

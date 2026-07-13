@@ -86,6 +86,17 @@ export const ROLE_META: Record<UserRole, { color: string }> = {
   funnel:      { color: 'bg-rose-100   text-rose-800'   },
 }
 
+// Passwort-Setzen-Kontext: sind wir auf /set-password oder kam der Nutzer über
+// einen Recovery-Link (#type=recovery)? Dann darf die Sofort-Init / ein SIGNED_IN
+// den needsPasswordSetup-Zustand NICHT auf false ziehen — sonst wird der Nutzer
+// vom Passwort-Formular weggeleitet, bevor er ein neues Passwort setzen kann.
+function isPwSetupContext(): boolean {
+  try {
+    return window.location.pathname === '/set-password'
+      || window.location.hash.includes('type=recovery')
+  } catch { return false }
+}
+
 // ── Context ───────────────────────────────────────────────────
 const AuthContext = createContext<AuthContextValue | null>(null)
 
@@ -113,7 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         user:     session.user,
         profile:  cached,
-        needsPasswordSetup: !!(session.user.user_metadata?.needs_password_setup),
+        needsPasswordSetup: !!(session.user.user_metadata?.needs_password_setup) || isPwSetupContext(),
       })
     }).catch(() => {})
   }, [])
@@ -189,7 +200,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const cachedProfile = session?.user ? getCachedProfile(session.user.id) : null
         const needsPasswordSetup = !!(
           session?.user?.user_metadata?.needs_password_setup === true ||
-          event === 'PASSWORD_RECOVERY'
+          event === 'PASSWORD_RECOVERY' ||
+          isPwSetupContext()
         )
         const myId = ++fetchIdRef.current
 
@@ -248,7 +260,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ── Auth-Aktionen ────────────────────────────────────────────
 
   async function signIn(email: string, password: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    // E-Mail normalisieren — sonst führt " Foo@X.de" vs. "foo@x.de" zu „kein Konto".
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
     return { error: error?.message ?? null }
   }
 
@@ -283,7 +296,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function resetPasswordEmail(email: string): Promise<{ error: string | null }> {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
       redirectTo: `${window.location.origin}/set-password`,
     })
     return { error: error?.message ?? null }
