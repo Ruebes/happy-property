@@ -247,9 +247,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Aktivität in CRM loggen ───────────────────────────────────────────────
+    const attachNames = [
+      ...(pdfAttachment ? [pdfAttachment.filename] : []),
+      ...extraAttachments.map(a => a.filename),
+    ]
     if (lead_id) {
-      const contentWithAttachInfo = pdfAttachment
-        ? `${stripHtml(html).slice(0, 1900)}\n\n📎 Anhang: ${pdfAttachment.filename}`
+      const contentWithAttachInfo = attachNames.length
+        ? `${stripHtml(html).slice(0, 1900)}\n\n📎 Anhang: ${attachNames.join(', ')}`
         : stripHtml(html).slice(0, 2000)
 
       const { error: logErr } = await supabase.from('activities').insert({
@@ -268,8 +272,9 @@ Deno.serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success:          true,
-        attachmentSent:   !!pdfAttachment,
-        attachmentFile:   pdfAttachment?.filename ?? null,
+        attachmentSent:   attachNames.length > 0,
+        attachmentFile:   attachNames[0] ?? null,
+        attachmentCount:  attachNames.length,
       }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     )
