@@ -656,6 +656,7 @@ export default function PropertyDetail() {
   const [crmProjectImages, setCrmProjectImages] = useState<string[]>([])
   const [crmUnitImages,    setCrmUnitImages]    = useState<string[]>([])
   const [constructionPhotos, setConstructionPhotos] = useState<ConstructionPhoto[]>([])
+  const [constructionUrls, setConstructionUrls] = useState<Record<string, string>>({})   // file_path → signierte URL (privater Bucket)
   const [crmProjectCoords, setCrmProjectCoords] = useState<{ lat: number; lng: number; name: string } | null>(null)
   // Baustellenfotos-Upload
   const [uploadingPhoto,     setUploadingPhoto]     = useState(false)
@@ -926,7 +927,19 @@ export default function PropertyDetail() {
       setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
       setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
       setEigentuemerDocs((ownDocsRes.data ?? []) as CrmUnitDocument[])
-      setConstructionPhotos((constPhotosRes.data ?? []) as ConstructionPhoto[])
+      const cPhotos = (constPhotosRes.data ?? []) as ConstructionPhoto[]
+      setConstructionPhotos(cPhotos)
+      // Bucket ist privat → signierte URLs erzeugen (path → URL)
+      if (cPhotos.length) {
+        const { data: signed } = await supabase.storage
+          .from('construction-photos')
+          .createSignedUrls(cPhotos.map(p => p.file_path), 3600)
+        const map: Record<string, string> = {}
+        for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
+        setConstructionUrls(map)
+      } else {
+        setConstructionUrls({})
+      }
       const proj = projRes.data as { images?: string[]; latitude?: number; longitude?: number; name?: string; location?: string } | null
       setCrmProjectImages(proj?.images ?? [])
       if (proj?.latitude && proj?.longitude) {
@@ -2704,7 +2717,8 @@ export default function PropertyDetail() {
     const isVid = (name: string) => /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(name)
     const constructionImgs = constructionPhotos
       .filter(p => !isVid(p.file_name))
-      .map(p => `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${p.file_path}`)
+      .map(p => constructionUrls[p.file_path])
+      .filter(Boolean)
 
     // Helper: image grid (read-only)
     function ImageGrid({ images, emptyText }: { images: string[]; emptyText: string }) {
@@ -2752,7 +2766,7 @@ export default function PropertyDetail() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {constructionPhotos.map(photo => {
                 const isVideo = isVid(photo.file_name)
-                const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
+                const mediaUrl = constructionUrls[photo.file_path] ?? ''
                 return (
                   <div key={photo.id} className="rounded-xl overflow-hidden bg-gray-100 border border-gray-100">
                     {isVideo ? (

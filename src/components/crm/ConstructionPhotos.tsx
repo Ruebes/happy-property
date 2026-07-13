@@ -18,6 +18,7 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
   const [photoDate, setPhotoDate] = useState(new Date().toISOString().slice(0, 10))
   const [photoDesc, setPhotoDesc] = useState('')
   const [msg,       setMsg]       = useState('')
+  const [urls,      setUrls]      = useState<Record<string, string>>({})   // file_path → signierte URL
   const inputRef = useRef<HTMLInputElement>(null)
 
   const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3500) }
@@ -30,7 +31,19 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
       .eq('project_id', projectId)
       .order('photo_date', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
-    setPhotos((data ?? []) as ConstructionPhoto[])
+    const list = (data ?? []) as ConstructionPhoto[]
+    setPhotos(list)
+    // Bucket ist privat → signierte URLs erzeugen (path → URL)
+    if (list.length) {
+      const { data: signed } = await supabase.storage
+        .from('construction-photos')
+        .createSignedUrls(list.map(p => p.file_path), 3600)
+      const map: Record<string, string> = {}
+      for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
+      setUrls(map)
+    } else {
+      setUrls({})
+    }
   }, [projectId])
 
   useEffect(() => { fetchPhotos() }, [fetchPhotos])
@@ -154,7 +167,7 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
         <div className="p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {photos.map(photo => {
             const isVideo  = /\.(mp4|mov|webm|mpeg|m4v|avi)$/i.test(photo.file_name)
-            const mediaUrl = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/construction-photos/${photo.file_path}`
+            const mediaUrl = urls[photo.file_path] ?? ''
             return (
               <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
                 {isVideo ? (
