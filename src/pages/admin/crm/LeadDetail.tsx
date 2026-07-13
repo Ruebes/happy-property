@@ -12,6 +12,7 @@ import RegistrationModal from '../../../components/crm/RegistrationModal'
 import { deleteGoogleEvent } from '../../../lib/googleCalendar'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
+import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
@@ -163,6 +164,7 @@ export default function LeadDetail() {
   // Email / Nachrichten-Composer
   const [emailForm, setEmailForm] = useState({ templateId: '', subject: '', body: '' })
   const [sendingEmail, setSendingEmail] = useState(false)
+  const mailAttach = useMailAttachments()
   // Empfängerauswahl + Kanal + Objekt-Bemerkungen
   const [composeChannel, setComposeChannel] = useState<'email' | 'whatsapp'>('email')
   const [composeTo,      setComposeTo]      = useState('client')   // 'client' | `bc:<id>` | `dc:<id>`
@@ -943,6 +945,7 @@ export default function LeadDetail() {
 
       console.log('[send-email] Rufe Edge Function auf …', { to: toEmail, subject: resolvedSubject })
 
+      const attachments = await mailAttach.toAttachments()
       const { data: fnData, error: fnErr } = await supabase.functions.invoke('send-email', {
         body: {
           to:      toEmail,
@@ -950,6 +953,7 @@ export default function LeadDetail() {
           html:    resolvedBody,
           lead_id: id ?? null,
           deal_id: deal?.id ?? null,
+          ...(attachments ? { attachments } : {}),
         },
       })
 
@@ -984,7 +988,7 @@ export default function LeadDetail() {
 
       showToast(t('crm.email.sent', 'E-Mail gesendet! ✓'))
       setEmailForm({ templateId: '', subject: '', body: '' })
-      setBemerkungen(''); setComposeTo('client')
+      setBemerkungen(''); setComposeTo('client'); mailAttach.reset()
       await fetchAll(true)
     } catch (err) {
       console.error('[send-email] Kompletter Fehler:', err)
@@ -3465,6 +3469,13 @@ export default function LeadDetail() {
                     {t('crm.placeholders', 'Platzhalter: {{vorname}}, {{nachname}}, {{email}}, {{phone}}, {{developer}}, {{projekt}}, {{wohnung}}, {{preis}}, {{bemerkungen}}')}
                   </p>
                 </div>
+
+                {/* Dateianhänge — nur bei E-Mail */}
+                {composeChannel === 'email' && (
+                  <MailAttachmentField files={mailAttach.files}
+                    onAdd={list => { if (mailAttach.add(list) === 'too-big') showToast(t('crm.quick.attachTooBig', 'Anhänge zusammen zu groß (max. 8 MB).')) }}
+                    onRemove={mailAttach.remove} />
+                )}
 
                 {/* Senden */}
                 {composeChannel === 'email' ? (

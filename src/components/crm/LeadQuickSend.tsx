@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { sendWhatsApp } from '../../lib/whatsapp'
 import type { Lead } from '../../lib/crmTypes'
+import { useMailAttachments, MailAttachmentField } from './MailAttachments'
 
 // Schnell-Versand aus der Lead-Kachel (Rechtsklick → Menü):
 //  - 'whatsapp'  → WhatsApp an den Kunden
@@ -26,31 +27,14 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [contactId, setContactId] = useState('')
   const [fwdChannel, setFwdChannel] = useState<'whatsapp' | 'mail'>('whatsapp')
-  const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // Dateianhänge (nur E-Mail). Gesamt-Limit, damit der Edge-Function-Body nicht platzt
-  // (Base64 bläht ~+33 %; 8 MB roh ≈ ~11 MB Base64 — sicher unter dem Request-Limit).
-  const MAX_TOTAL = 8 * 1024 * 1024
-  const addFiles = (list: FileList | null) => {
-    if (!list?.length) return
-    const next = [...files, ...Array.from(list)]
-    if (next.reduce((s, f) => s + f.size, 0) > MAX_TOTAL) {
-      setError(t('crm.quick.attachTooBig', 'Anhänge zusammen zu groß (max. 8 MB).')); return
-    }
-    setError(''); setFiles(next)
+  // Dateianhänge (nur E-Mail) — gemeinsame Komponente, überall gleich.
+  const attach = useMailAttachments()
+  const onAddFiles = (list: FileList | null) => {
+    setError(attach.add(list) === 'too-big' ? (t('crm.quick.attachTooBig', 'Anhänge zusammen zu groß (max. 8 MB).') as string) : '')
   }
-  const removeFile = (i: number) => setFiles(files.filter((_, idx) => idx !== i))
-  const fileToB64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => resolve(String(r.result).split(',')[1] ?? '')   // data:…;base64,XXX → XXX
-    r.onerror = () => reject(new Error('read failed'))
-    r.readAsDataURL(file)
-  })
-  const buildAttachments = async () => files.length
-    ? await Promise.all(files.map(async f => ({ filename: f.name, content_base64: await fileToB64(f), content_type: f.type || 'application/octet-stream' })))
-    : undefined
 
   useEffect(() => {
     if (mode !== 'forward') return
@@ -99,7 +83,7 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
       if (mode === 'mail') {
         if (!lead.email) throw new Error(t('leadQuickSend.errNoEmailOnLead', 'Kein E-Mail am Lead'))
         const html = `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`
-        const attachments = await buildAttachments()
+        const attachments = await attach.toAttachments()
         const { data, error: e } = await supabase.functions.invoke('send-email', { body: { to: lead.email, subject: subject.trim(), html, lead_id: lead.id, ...(attachments ? { attachments } : {}) } })
         if (e || (data as { error?: string })?.error) throw new Error((data as { error?: string })?.error ?? e?.message)
         onSent(t('crm.quick.mailSent', '✅ E-Mail an den Kunden gesendet'))
@@ -116,7 +100,7 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
           if (!target.email) throw new Error(t('leadQuickSend.errNoEmailOnContact', 'Keine E-Mail bei diesem Kontakt'))
           const html = `<div style="font-family:Arial,sans-serif;white-space:pre-wrap">${text.trim().replace(/</g, '&lt;')}</div>`
           const subj = subject.trim() || t('leadQuickSend.defaultForwardSubject', 'Kontakt: {{name}}', { name: fullName })
-          const attachments = await buildAttachments()
+          const attachments = await attach.toAttachments()
           const { data, error: e } = await supabase.functions.invoke('send-email', { body: { to: target.email, subject: subj, html, lead_id: lead.id, ...(attachments ? { attachments } : {}) } })
           if (e || (data as { error?: string })?.error) throw new Error((data as { error?: string })?.error ?? e?.message)
           // send-email protokolliert die Aktivität selbst → kein zweites Insert
@@ -178,23 +162,7 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
 
         {/* Dateianhänge — nur bei E-Mail */}
         {(mode === 'mail' || (mode === 'forward' && fwdChannel === 'mail')) && (
-          <div>
-            <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
-              <span className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">📎 {t('crm.quick.attach', 'Dateien anhängen')}</span>
-              <input type="file" multiple className="hidden"
-                onChange={e => { addFiles(e.target.files); e.currentTarget.value = '' }} />
-            </label>
-            {files.length > 0 && (
-              <ul className="mt-2 space-y-1">
-                {files.map((f, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2 text-xs bg-gray-50 rounded-lg px-2.5 py-1.5">
-                    <span className="truncate text-gray-700">📄 {f.name} <span className="text-gray-400">({Math.round(f.size / 1024)} KB)</span></span>
-                    <button type="button" onClick={() => removeFile(i)} className="shrink-0 w-5 h-5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50">×</button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <MailAttachmentField files={attach.files} onAdd={onAddFiles} onRemove={attach.remove} />
         )}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
