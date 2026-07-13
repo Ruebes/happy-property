@@ -587,6 +587,23 @@ export default function AppointmentModal({
         }
       }
 
+      // Terminerinnerungen (24 h + 1 h vorher, Mail + WhatsApp) planen. Bei manuell
+      // im Kalender angelegten Terminen fehlten sie bisher komplett — nur der
+      // Website-Funnel und der WhatsApp-Bot stießen sie an. only_timing =
+      // 'before_appointment' plant NUR die Vor-Termin-Erinnerungen, NICHT die
+      // Sofort-Bestätigung (die verschickt dieser Dialog oben selbst als persönliche
+      // Einladung). Bei einer Verschiebung erst die alten, noch offenen Erinnerungen
+      // verwerfen, damit nichts doppelt rausgeht.
+      if (selectedLeadId) {
+        if (isEdit) {
+          await supabase.from('scheduled_messages').update({ status: 'cancelled' })
+            .eq('lead_id', selectedLeadId).eq('status', 'pending').eq('event_type', 'termin_gebucht')
+        }
+        void supabase.functions.invoke('schedule-message', {
+          body: { lead_id: selectedLeadId, event_type: 'termin_gebucht', only_timing: 'before_appointment' },
+        }).catch(e => console.warn('[AppointmentModal] Terminerinnerungen planen fehlgeschlagen:', e))
+      }
+
       // Log activity
       if (selectedLeadId) {
         const { error: actErr } = await supabase.from('activities').insert({
