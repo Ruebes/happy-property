@@ -32,6 +32,7 @@ export default function EigentuemerProperties() {
   const [loading,    setLoading]    = useState(true)
   const [search,     setSearch]     = useState('')
   const [crmImages,  setCrmImages]  = useState<Record<string, string>>({}) // property_id → first CRM project image
+  const [imgError,   setImgError]   = useState<Set<string>>(new Set())     // property_ids mit kaputter Bild-URL
 
   // ── Fetch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -152,21 +153,24 @@ export default function EigentuemerProperties() {
 
               {/* Bild */}
               <div className="relative h-44 bg-gray-100 overflow-hidden">
-                {(p.images?.[0] || crmImages[p.id]) ? (
+                {(p.images?.[0] || crmImages[p.id]) && !imgError.has(p.id) ? (
                   <img
                     src={p.images?.[0] ?? crmImages[p.id]}
                     alt={p.project_name}
+                    onError={() => setImgError(s => new Set(s).add(p.id))}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-5xl text-gray-300">
                     {TYPE_ICON[p.type] ?? '🏠'}
                   </div>
                 )}
-                {/* Rental badge */}
-                <span className="absolute top-3 right-3 text-xs font-semibold px-2.5 py-1
-                                 rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
-                  {t(`properties.rental.${p.rental_type}`)}
-                </span>
+                {/* Rental badge — nur bei gesetztem Vermietungstyp (sonst roher i18n-Key) */}
+                {p.rental_type && (
+                  <span className="absolute top-3 right-3 text-xs font-semibold px-2.5 py-1
+                                   rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
+                    {t(`properties.rental.${p.rental_type}`)}
+                  </span>
+                )}
               </div>
 
               {/* Info */}

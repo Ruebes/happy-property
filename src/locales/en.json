@@ -190,7 +190,12 @@
   "eigentuemer": {
     "propertiesTitle": "My Properties",
     "propertiesEmpty": "No properties assigned to you yet.",
-    "propertiesHint": "Once a property manager assigns a property to you, it will appear here."
+    "propertiesHint": "Once a property manager assigns a property to you, it will appear here.",
+    "status": {
+      "active": "Active",
+      "construction": "Under construction"
+    },
+    "loadError": "Your properties could not be loaded right now."
   },
   "stats": {
     "users": "Users",

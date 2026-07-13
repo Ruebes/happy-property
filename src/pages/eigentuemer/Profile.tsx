@@ -85,6 +85,8 @@ export default function EigentuemerProfile() {
   const fetchProfile = useCallback(async () => {
     if (!profile) return
     setLoading(true)
+    // Sicherheits-Timeout: Spinner nie ewig hängen lassen (Safari/Query-Timing)
+    const safety = setTimeout(() => setLoading(false), 12_000)
     try {
       const { data: row } = await supabase
         .from('profiles')
@@ -105,6 +107,7 @@ export default function EigentuemerProfile() {
         setBankHolder(d.bank_account_holder ?? '')
       }
     } finally {
+      clearTimeout(safety)
       setLoading(false)
     }
   }, [profile])

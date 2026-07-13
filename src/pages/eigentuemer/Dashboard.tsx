@@ -28,22 +28,27 @@ export default function EigentuemerDashboard() {
   const [bookingCount,  setBookingCount]  = useState<number | null>(null)
   const [docCount,      setDocCount]      = useState<number | null>(null)
   const [loading,       setLoading]       = useState(true)
+  const [loadError,     setLoadError]     = useState(false)
   const [crmImages,     setCrmImages]     = useState<Record<string, string>>({}) // property_id → first CRM project image
 
   // ── Fetch ──────────────────────────────────────────────────
   useEffect(() => {
     if (!profile?.id) return
     let cancelled = false
+    // Sicherheits-Timeout: Spinner nie ewig hängen lassen (Safari/Query-Timing)
+    const safety = setTimeout(() => { if (!cancelled) setLoading(false) }, 12_000)
 
     async function load() {
       setLoading(true)
+      setLoadError(false)
       try {
         // 1. Eigene Immobilien laden
-        const { data: props } = await supabase
+        const { data: props, error } = await supabase
           .from('properties')
           .select('id, project_name, unit_number, type, city, images, rental_type, property_status')
           .eq('owner_id', profile!.id)
           .order('project_name')
+        if (error) throw error
 
         if (cancelled) return
         const propList = (props ?? []) as PropertyCard[]
@@ -106,13 +111,14 @@ export default function EigentuemerDashboard() {
         setDocCount((docRes.count ?? 0) + (crmDocRes.count ?? 0))
       } catch (err) {
         console.error('[Eigentuemer/Dashboard] load:', err)
+        if (!cancelled) setLoadError(true)
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
 
     load()
-    return () => { cancelled = true }
+    return () => { cancelled = true; clearTimeout(safety) }
   }, [profile?.id])
 
   // ── Stat Cards ─────────────────────────────────────────────
@@ -221,6 +227,18 @@ export default function EigentuemerDashboard() {
             <span className="w-4 h-4 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
             {t('common.loading')}
           </div>
+        ) : loadError ? (
+          <div className="text-center py-16 px-6">
+            <div className="text-5xl mb-4">⚠️</div>
+            <p className="text-sm font-semibold text-gray-600 font-body">
+              {t('eigentuemer.loadError', 'Deine Objekte konnten gerade nicht geladen werden.')}
+            </p>
+            <button onClick={() => window.location.reload()}
+              className="mt-4 px-5 py-2 rounded-full text-white text-sm font-semibold"
+              style={{ backgroundColor: 'var(--color-highlight)' }}>
+              {t('common.retry', 'Neu laden')}
+            </button>
+          </div>
         ) : properties.length === 0 ? (
           <div className="text-center py-16 px-6">
             <div className="text-5xl mb-4">🏠</div>
@@ -254,19 +272,21 @@ export default function EigentuemerDashboard() {
                         <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
                                          rounded-full bg-green-500 text-white shadow-sm flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
-                          Aktiv
+                          {t('eigentuemer.status.active', 'Aktiv')}
                         </span>
                       ) : (
                         <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
                                          rounded-full bg-amber-500 text-white shadow-sm">
-                          🏗 Im Bau
+                          🏗 {t('eigentuemer.status.construction', 'Im Bau')}
                         </span>
                       )}
-                      {/* Miettyp-Badge oben rechts */}
-                      <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5
-                                       rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
-                        {t(`properties.rental.${p.rental_type}`)}
-                      </span>
+                      {/* Miettyp-Badge oben rechts — nur bei gesetztem Typ */}
+                      {p.rental_type && (
+                        <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5
+                                         rounded-full bg-white/90 backdrop-blur-sm text-gray-600 shadow-sm">
+                          {t(`properties.rental.${p.rental_type}`)}
+                        </span>
+                      )}
                     </div>
                     {/* Info */}
                     <div className="p-3">

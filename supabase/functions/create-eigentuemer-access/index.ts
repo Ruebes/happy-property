@@ -177,6 +177,19 @@ function buildWelcomeEmail(params: {
   return { subject, html }
 }
 
+// Auth-User per E-Mail über ALLE Seiten suchen (listUsers ist paginiert; ohne
+// Schleife wird ab dem 51. Nutzer keiner gefunden → Resend/Reset schlug fehl).
+async function findAuthUserByEmail(admin: ReturnType<typeof createClient>, email: string) {
+  for (let page = 1; page <= 20; page++) {
+    const { data } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+    const users = data?.users ?? []
+    const hit = users.find(u => (u.email ?? '').trim().toLowerCase() === email)
+    if (hit) return hit
+    if (users.length < 1000) break
+  }
+  return null
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -185,12 +198,15 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { email, full_name, custom_subject, custom_message } = await req.json() as {
+    const { email: rawEmail, full_name, custom_subject, custom_message } = await req.json() as {
       email:           string
       full_name:       string
       custom_subject?: string   // optionaler Betreff (aus Template)
       custom_message?: string   // optionaler E-Mail-Text mit Platzhaltern
     }
+    // E-Mail konsequent normalisieren — sonst führen " Foo@X.de" vs. "foo@x.de" zu
+    // profiles↔auth-Mismatch und „Nutzer nicht gefunden".
+    const email = (rawEmail ?? '').trim().toLowerCase()
 
     if (!email || !full_name) {
       return new Response(
@@ -234,9 +250,8 @@ Deno.serve(async (req: Request) => {
     // ── 2. Auth-User erstellen (oder vorhandenen wiederverwenden) ─────────────
     let userId: string
 
-    // Prüfen ob User bereits existiert
-    const { data: existingUsers } = await adminClient.auth.admin.listUsers()
-    const existingUser = existingUsers?.users?.find(u => u.email === email)
+    // Prüfen ob User bereits existiert (paginiert — findet auch Nutzer > Seite 1)
+    const existingUser = await findAuthUserByEmail(adminClient, email)
 
     if (existingUser) {
       // Passwort aktualisieren + needs_password_setup setzen
@@ -292,9 +307,19 @@ Deno.serve(async (req: Request) => {
     // Lead per E-Mail finden, profile_id setzen und für jede zugewiesene Deal-Wohnung
     // eine Property (owner_id = neuer User) erzeugen/zuordnen. Idempotent.
     try {
-      const { data: leadRow } = await adminClient.from('leads').select('id').ilike('email', email).maybeSingle()
+      // Lead über Haupt- ODER Zweit-Mail finden; bei mehreren Treffern den ältesten
+      // nehmen (maybeSingle brach bei Dubletten → Backfill wurde still übersprungen).
+      let leadRow: { id: string } | null = null
+      const { data: byMain } = await adminClient.from('leads')
+        .select('id, created_at').ilike('email', email).order('created_at', { ascending: true }).limit(1)
+      leadRow = (byMain?.[0] as { id: string } | undefined) ?? null
+      if (!leadRow) {
+        const { data: byAlt } = await adminClient.from('leads')
+          .select('id, created_at').contains('alt_emails', [email]).order('created_at', { ascending: true }).limit(1)
+        leadRow = (byAlt?.[0] as { id: string } | undefined) ?? null
+      }
       if (leadRow) {
-        const leadId = (leadRow as { id: string }).id
+        const leadId = leadRow.id
         await adminClient.from('leads').update({ profile_id: userId }).eq('id', leadId).is('profile_id', null)
         const { data: deals } = await adminClient.from('deals')
           .select('id, unit_id, property_id').eq('lead_id', leadId).not('unit_id', 'is', null)
@@ -305,8 +330,11 @@ Deno.serve(async (req: Request) => {
           if (!unit) continue
           const u = unit as Record<string, unknown> & { property_id?: string | null; project?: { name?: string; location?: string } | null }
           if (u.property_id) {
-            // Property existiert schon → nur Eigentümer setzen, falls noch offen
-            await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string).is('owner_id', null)
+            // Property existiert schon → Eigentümer auf den aktuellen Zugang setzen.
+            // KEIN .is('owner_id', null)-Guard mehr: die Property gehört zur Deal-Unit
+            // GENAU dieses Leads; ein zweiter/abweichender Account (andere Mail) bekam
+            // die Wohnung sonst nie zu sehen (owner_id blieb am alten/verwaisten Konto).
+            await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string)
             continue
           }
           const loc = u.project?.location ?? null
@@ -369,6 +397,11 @@ Deno.serve(async (req: Request) => {
     }
     const { subject, html } = mail
 
+    // Mailversand darf die Funktion NICHT zum Scheitern bringen: das Passwort ist
+    // oben bereits gesetzt — würde ein SMTP-Fehler hier zu 500 führen, wäre der Kunde
+    // ausgesperrt ohne Zugangsdaten. Stattdessen `emailed`-Flag + Passwort zurückgeben,
+    // damit der Admin die Daten im UI sieht und gezielt handeln kann.
+    let emailed = false
     if (smtpUser && smtpPass) {
       const client = new SMTPClient({
         connection: {
@@ -389,7 +422,10 @@ Deno.serve(async (req: Request) => {
             `Hallo ${full_name.split(' ')[0]},\n\ndeine Zugangsdaten:\nE-Mail: ${email}\nPasswort: ${password}\n\nBitte ändere dein Passwort nach dem ersten Login.\n\nPortal: ${appUrl}/login`,
           ),
         })
+        emailed = true
         console.log(`[create-eigentuemer-access] ✓ E-Mail gesendet an: ${email}`)
+      } catch (mailErr) {
+        console.error('[create-eigentuemer-access] E-Mail-Versand fehlgeschlagen:', mailErr instanceof Error ? mailErr.message : String(mailErr))
       } finally {
         await client.close()
       }
@@ -399,7 +435,7 @@ Deno.serve(async (req: Request) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, userId }),
+      JSON.stringify({ success: true, userId, password, emailed }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     )
 

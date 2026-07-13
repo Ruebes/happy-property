@@ -190,7 +190,12 @@
   "eigentuemer": {
     "propertiesTitle": "Meine Immobilien",
     "propertiesEmpty": "Dir sind noch keine Immobilien zugewiesen.",
-    "propertiesHint": "Sobald dir ein Verwalter eine Immobilie zuweist, erscheint sie hier."
+    "propertiesHint": "Sobald dir ein Verwalter eine Immobilie zuweist, erscheint sie hier.",
+    "status": {
+      "active": "Aktiv",
+      "construction": "Im Bau"
+    },
+    "loadError": "Deine Objekte konnten gerade nicht geladen werden."
   },
   "stats": {
     "users": "Benutzer",
