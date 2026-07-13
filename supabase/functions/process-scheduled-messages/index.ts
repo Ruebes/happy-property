@@ -211,6 +211,39 @@ Deno.serve(async (req: Request) => {
   const waApiKey    = Deno.env.get('TIMELINES_API_KEY')  ?? ''
   const waSender    = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
 
+  // ── Sicherheitsnetz: Terminerinnerungen für JEDEN zukünftigen Termin ─────────
+  // Egal über welchen Weg gebucht wurde (Kalender manuell, Website-Funnel,
+  // YouTube-/Meta-/Kanal-Link, WhatsApp-Bot, Calendly): jeder zukünftige Lead-Termin
+  // muss seine 24 h-/1 h-Erinnerung bekommen. Falls ein Buchungspfad das Planen
+  // vergisst oder fehlschlägt, holt dieser 5-Minuten-Lauf es zentral nach.
+  // Idempotent: Leads mit bereits geplanten (pending/processing) termin_gebucht-
+  // Erinnerungen werden übersprungen (keine Doppelung); schedule-message verwirft
+  // selbst, was zeitlich nicht mehr planbar ist. Nur Termine ≥ 90 Min voraus, damit
+  // die 1 h-Erinnerung sicher über dem 30-Min-Skip-Guard liegt (kein Endlos-Retry).
+  try {
+    const horizonIso = new Date(Date.now() + 90 * 60_000).toISOString()
+    const { data: upcoming } = await supabase.from('crm_appointments')
+      .select('lead_id, start_time')
+      .not('lead_id', 'is', null)
+      .gte('start_time', horizonIso)
+      .order('start_time', { ascending: true })
+      .limit(300)
+    const seen = new Set<string>()
+    for (const a of (upcoming ?? []) as Array<{ lead_id: string }>) {
+      if (!a.lead_id || seen.has(a.lead_id)) continue
+      seen.add(a.lead_id)
+      const { data: has } = await supabase.from('scheduled_messages')
+        .select('id').eq('lead_id', a.lead_id).eq('event_type', 'termin_gebucht')
+        .in('status', ['pending', 'processing']).limit(1)
+      if (has && has.length) continue
+      await supabase.functions.invoke('schedule-message', {
+        body: { lead_id: a.lead_id, event_type: 'termin_gebucht', only_timing: 'before_appointment' },
+      }).catch(e => console.warn('[process-scheduled] Erinnerungs-Nachplanung fehlgeschlagen:', e))
+    }
+  } catch (e) {
+    console.warn('[process-scheduled] Sicherheitsnetz Erinnerungen:', e)
+  }
+
   const processed: { id: string; result: string }[] = []
   let claimedIds: string[] = []
 

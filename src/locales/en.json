@@ -2704,6 +2704,10 @@
       "plannedFrom": "scheduled from",
       "sentLabel": "sent",
       "running": "running"
+    },
+    "quick": {
+      "attach": "Attach files",
+      "attachTooBig": "Attachments too large in total (max. 8 MB)."
     }
   },
   "docs": {

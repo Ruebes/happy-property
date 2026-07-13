@@ -84,6 +84,8 @@ Deno.serve(async (req: Request) => {
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
+      // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
+      attachments?:     Array<{ filename: string; content_base64: string; content_type?: string }> | null
     }
 
     const { to, lead_id, deal_id, attach_category, open_token } = body
@@ -167,6 +169,23 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // Mehrere frei angehängte Dateien (Kunden-Mail-Composer) — ergänzen den evtl.
+    // schon gesetzten Einzel-Anhang (Rechnung/Kategorie).
+    const extraAttachments: { filename: string; content: Uint8Array; contentType: string }[] = []
+    if (Array.isArray(body.attachments)) {
+      for (const a of body.attachments) {
+        if (!a?.content_base64) continue
+        try {
+          const bin = atob(a.content_base64)
+          const bytes = new Uint8Array(bin.length)
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+          extraAttachments.push({ filename: a.filename || 'datei', content: bytes, contentType: a.content_type || 'application/octet-stream' })
+        } catch (e) {
+          console.warn('[send-email] Anhang-Dekodierung fehlgeschlagen:', e)
+        }
+      }
+    }
+
     // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
     // track-engagement (Engagement-Tracking fürs CRM-Dashboard).
     if (open_token && html.includes('</body>')) {
@@ -205,19 +224,14 @@ Deno.serve(async (req: Request) => {
           mimeContent: buildMimeContent(html, stripHtml(html)),
         }
 
-        if (pdfAttachment) {
-          mailPayload.attachments = [
-            {
-              filename:    pdfAttachment.filename,
-              content:     pdfAttachment.content,
-              contentType: pdfAttachment.contentType ?? 'application/pdf',
-              encoding:    'base64',
-            },
-          ]
-        }
+        const allAttach = [
+          ...(pdfAttachment ? [{ filename: pdfAttachment.filename, content: pdfAttachment.content, contentType: pdfAttachment.contentType ?? 'application/pdf', encoding: 'base64' as const }] : []),
+          ...extraAttachments.map(a => ({ filename: a.filename, content: a.content, contentType: a.contentType, encoding: 'base64' as const })),
+        ]
+        if (allAttach.length) mailPayload.attachments = allAttach
 
         await client.send(mailPayload)
-        console.log('[send-email] ✓ Gesendet an:', to, pdfAttachment ? `(mit Anhang: ${pdfAttachment.filename})` : '')
+        console.log('[send-email] ✓ Gesendet an:', to, allAttach.length ? `(mit ${allAttach.length} Anhang/Anhängen)` : '')
       } catch (smtpErr) {
         console.error('[send-email] SMTP Fehler (Port 465/TLS):', smtpErr)
         throw smtpErr
