@@ -578,9 +578,66 @@ function MarinaBlock(b: Extract<DeckBlock, { type: 'marina' }>) {
   )
 }
 
+// Normalisiert eine beliebige Video-URL in eine iframe-Embed-Quelle. Deckt YouTube
+// (watch/youtu.be/embed), Vimeo und Google-Drive-Datei-Links ab. null = kein Embed
+// bekannt → dann wird (falls es eine direkte Mediendatei ist) nativ abgespielt.
+function toEmbedSrc(url: string): string | null {
+  const yt = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{6,})/)
+  if (yt) return `https://www.youtube-nocookie.com/embed/${yt[1]}?rel=0&modestbranding=1`
+  const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/)
+  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}`
+  const drive = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/)
+  if (drive) return `https://drive.google.com/file/d/${drive[1]}/preview`
+  return null
+}
+const isDirectVideo = (url: string) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
+
+// ── Video-Sektion (Drohnen-/Meerblick-Video o.Ä.) ────────────────────────────
+// Nimmt embedUrl (iframe) ODER videoUrl (direktes MP4) an und normalisiert selbst,
+// damit auch eine YouTube-URL im videoUrl-Feld korrekt eingebettet wird.
+function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
+  const { t } = useTranslation()
+  const raw = (b.embedUrl || b.videoUrl || '').trim()
+  const embedSrc = b.embedUrl ? (toEmbedSrc(b.embedUrl) ?? (isDirectVideo(b.embedUrl) ? null : b.embedUrl)) : toEmbedSrc(raw)
+  const nativeSrc = embedSrc ? null : (b.videoUrl && isDirectVideo(b.videoUrl) ? b.videoUrl : (isDirectVideo(raw) ? raw : null))
+  if (!embedSrc && !nativeSrc) return null
+  return (
+    <section className="px-5 md:px-20 py-16" style={{ background: DARK }}>
+      <Accent /><Kicker light>{b.kicker}</Kicker>
+      {b.headline && <h2 className="font-heading font-bold text-white text-4xl md:text-6xl mt-2 leading-tight">{b.headline}</h2>}
+      {b.text && <p className="text-[15px] leading-relaxed text-gray-300 mt-4 max-w-2xl">{b.text}</p>}
+      <div className="mt-8 relative w-full overflow-hidden rounded-xl border" style={{ aspectRatio: '16 / 9', borderColor: 'rgba(194,161,94,0.3)' }}>
+        {embedSrc ? (
+          <iframe
+            title={b.headline || t('deck.videoIframeTitle', 'Video')}
+            src={embedSrc}
+            className="absolute inset-0 h-full w-full"
+            style={{ border: 0 }}
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+          />
+        ) : (
+          <video
+            className="absolute inset-0 h-full w-full object-cover"
+            src={nativeSrc ?? undefined}
+            poster={b.poster}
+            controls
+            playsInline
+            preload="metadata"
+          />
+        )}
+      </div>
+      {b.caption && <p className="mt-3 text-sm italic text-gray-400">{b.caption}</p>}
+    </section>
+  )
+}
+
 function Block({ block }: { block: DeckBlock }) {
   switch (block.type) {
     case 'marina':    return <MarinaBlock {...block} />
+    case 'video':     return <VideoBlock {...block} />
     case 'cover':     return <CoverBlock {...block} />
     case 'letter':    return <LetterBlock {...block} />
     case 'unit':      return <UnitBlock {...block} />

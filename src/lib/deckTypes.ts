@@ -24,6 +24,9 @@ export type DeckBlock =
   | { type: 'columns'; kicker?: string; headline?: string; image?: string; cols?: { title: string; sub?: string; text: string }[] }
   | { type: 'feature'; kicker?: string; headline?: string; image?: string; text?: string; quote?: string; link?: string; linkLabel?: string }
   | { type: 'gallery'; kicker?: string; headline?: string; items?: { image?: string; title?: string; caption?: string }[]; note?: string }
+  // Bewegtbild-Sektion (z.B. Drohnen-/Meerblick-Video). embedUrl = YouTube/Vimeo/Drive
+  // (iframe), videoUrl = direktes MP4 (nativer Player). poster = Standbild fürs MP4.
+  | { type: 'video';   kicker?: string; headline?: string; text?: string; embedUrl?: string; videoUrl?: string; poster?: string; caption?: string }
   | { type: 'benefits';kicker?: string; headline?: string; cards?: { icon?: string; title: string; text: string }[] }
   | { type: 'inventory';kicker?: string; headline?: string; intro?: string; image?: string; groups?: { title: string; icon?: string; items: string[] }[]; note?: string }
   | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[]; rooms?: FloorplanRoom[]; planNote?: string }

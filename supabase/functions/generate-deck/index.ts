@@ -239,6 +239,31 @@ function injectLocationAndMarina(
   }
 }
 
+// Projekt-Video (z.B. Drohnen-/Meerblick-Video) nach der Lage-/Marina-Sektion
+// einsetzen — dort, wo der Kunde ohnehin über Standort & Blick liest. Idempotent.
+// Entscheidet nur das Feld (embedUrl vs. videoUrl); die Embed-Normalisierung macht
+// der Renderer (eine Quelle der Wahrheit). Direkte MP4 → nativer Player, sonst iframe.
+function injectVideo(blocks: Array<Record<string, unknown>>, videoUrl?: string | null): void {
+  const url = (videoUrl ?? '').trim()
+  if (!url) return
+  if (blocks.some(b => b.type === 'video')) return
+  const isDirect = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
+  const cover = blocks.find(b => b.type === 'cover') as { image?: string } | undefined
+  const vb: Record<string, unknown> = {
+    type: 'video',
+    kicker: 'Rundgang',
+    headline: 'Sehen statt vorstellen',
+    text: 'Ein Eindruck, den kein Foto ersetzt — das Projekt in Bewegung.',
+    ...(isDirect ? { videoUrl: url } : { embedUrl: url }),
+    ...(cover?.image ? { poster: cover.image } : {}),
+  }
+  let at = blocks.findIndex(b => b.type === 'marina')
+  if (at < 0) at = blocks.findIndex(b => b.type === 'facts')
+  if (at < 0) at = blocks.findIndex(b => b.type === 'cover')
+  at = at < 0 ? Math.min(1, blocks.length) : at + 1
+  blocks.splice(at, 0, vb)
+}
+
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   const renders = images?.renders ?? []
   let ri = 0, pi = 0, fpi = 0
@@ -522,12 +547,12 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
-    let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null } | null = null
+    let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
-          .select('name, location, latitude, longitude, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; deck_assets?: { mapUrl?: string } | null } | null
+          .select('name, location, latitude, longitude, video_url, deck_assets').eq('id', body.project_id).maybeSingle()
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; deck_assets?: { mapUrl?: string } | null } | null
         projRow = pr
         if (pr) {
           body.images = body.images ?? {}
@@ -561,6 +586,8 @@ Deno.serve(async (req) => {
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
     injectLocationAndMarina(blocks, projRow?.name || projName, projRow)
+    // Projekt-Video (falls hinterlegt) nach der Lage-Sektion einsetzen.
+    injectVideo(blocks, projRow?.video_url)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
     const plKeys = Object.keys(priceLinesByUnit)

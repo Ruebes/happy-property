@@ -417,13 +417,19 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   ]
 
   // Video embed URL helper
+  // Deckt dieselben Quellen ab wie der Deck-Renderer: YouTube (watch/youtu.be/shorts/
+  // embed), Vimeo und Google-Drive-Datei-Links. null = kein iframe-Embed (dann ggf.
+  // direktes MP4 via <video>, siehe Vorschau unten).
   const getEmbedUrl = (url: string) => {
-    const ytMatch    = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/)
-    const vimeoMatch = url.match(/vimeo\.com\/(\d+)/)
+    const ytMatch    = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{6,})/)
+    const vimeoMatch = url.match(/vimeo\.com\/(?:video\/)?(\d+)/)
+    const driveMatch = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/)
     if (ytMatch)    return `https://www.youtube.com/embed/${ytMatch[1]}`
     if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`
+    if (driveMatch) return `https://drive.google.com/file/d/${driveMatch[1]}/preview`
     return null
   }
+  const isDirectVideoUrl = (url: string) => /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -700,21 +706,19 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
               {/* Video URL */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('crm.project.videoUrl', 'Video URL (YouTube / Vimeo)')}
+                  {t('crm.project.videoUrl', 'Video-URL (YouTube, Vimeo, Google Drive oder MP4-Link)')}
                 </label>
                 <input value={form.video_url} onChange={e => up('video_url', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
                   placeholder={t('crm.project.videoUrlPlaceholder', 'https://youtube.com/watch?v=…')} />
+                <p className="text-xs text-gray-400 mt-1">
+                  {t('crm.project.videoUrlHint', 'Erscheint als Video-Sektion im Sales-Deck. Für schwere Drohnen-/4K-Aufnahmen YouTube (auch „nicht gelistet“) empfohlen.')}
+                </p>
               </div>
 
-              {form.video_url && (() => {
-                const embedUrl = getEmbedUrl(form.video_url)
-                if (!embedUrl) return (
-                  <p className="text-xs text-red-500">
-                    {t('crm.project.invalidVideoUrl', 'Ungültige Video-URL (YouTube oder Vimeo)')}
-                  </p>
-                )
-                return (
+              {form.video_url.trim() && (() => {
+                const embedUrl = getEmbedUrl(form.video_url.trim())
+                if (embedUrl) return (
                   <div className="rounded-xl overflow-hidden border border-gray-200">
                     <iframe
                       title={t('crm.project.videoIframeTitle', 'Video')}
@@ -726,6 +730,16 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                       style={{ border: 0 }}
                     />
                   </div>
+                )
+                if (isDirectVideoUrl(form.video_url.trim())) return (
+                  <div className="rounded-xl overflow-hidden border border-gray-200 bg-black">
+                    <video src={form.video_url.trim()} controls playsInline preload="metadata" className="w-full max-h-60" />
+                  </div>
+                )
+                return (
+                  <p className="text-xs text-red-500">
+                    {t('crm.project.invalidVideoUrl', 'Nicht erkannte Video-URL (YouTube, Vimeo, Google Drive oder direkter MP4-Link)')}
+                  </p>
                 )
               })()}
 

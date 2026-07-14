@@ -34,7 +34,8 @@ WAHRHEIT & KONSISTENZ (immer, auch ungefragt beibehalten):
 - Preis und Fließtext müssen konsistent bleiben (ist ein Möbelpaket im Preis, muss es auch im Text stehen — und umgekehrt).
 
 Technik:
-- Block-Typen + Felder beibehalten: cover/letter/unit/facts/columns/feature/gallery/benefits/inventory/floorplan/payment/cta. Beginne mit cover, dann letter; ende mit cta.
+- Block-Typen + Felder beibehalten: cover/letter/unit/facts/columns/feature/gallery/benefits/inventory/floorplan/payment/cta/video. Beginne mit cover, dann letter; ende mit cta.
+- Der video-Block (Drohnen-/Meerblick-Video) trägt embedUrl ODER videoUrl (+ optional poster/caption) — diese Felder IMMER unverändert übernehmen, nie leeren oder erfinden. Text/Überschrift darfst du umformulieren; die URL nicht.
 - Bilder NUR aus der Liste VERFÜGBARE BILDER setzen (Feld image bzw. items[].image = eine dieser URLs). Keine erfundenen URLs. Der Lage/facts-Block: image = das Kartenbild (map), mapUrl = der Google-Maps-Link.
 - KRITISCH: in ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze 'einfache' oder keine.
 - Beachte die GELERNTEN VORGABEN immer.`
@@ -52,6 +53,7 @@ const BLOCK_ITEM = {
     cards: { type: 'array', items: { type: 'object' } }, groups: { type: 'array', items: { type: 'object' } },
     stats: { type: 'array', items: { type: 'object' } }, bullets: { type: 'array', items: { type: 'object' } },
     steps: { type: 'array', items: { type: 'object' } }, phase1: { type: 'object' }, phase2: { type: 'object' },
+    embedUrl: { type: 'string' }, videoUrl: { type: 'string' }, poster: { type: 'string' }, caption: { type: 'string' },
   },
   required: ['type'],
 }
