@@ -256,27 +256,38 @@ const LUMA_PAYMENT: PaySchedule = {
   ],
 }
 
-// Baut einen sachlichen payment-Block aus einem Zahlungsplan-Schema. Zeigt die
-// Prozentstufen + festen Reservierungsbetrag; KEINE erfundenen Beträge, KEINE
-// Käufer-Schutz-/Timing-Narrative (Regel 4d). Absolute € überlässt die Software der
-// KI nur dort, wo ein verbindlicher Kaufpreis vorliegt — hier bewusst nur Prozente.
-function buildPaymentBlock(sched: PaySchedule): Record<string, unknown> {
+// Baut einen sachlichen payment-Block aus einem Zahlungsplan-Schema. Ist ein Kaufpreis
+// bekannt (basis = {net, gross}), werden die absoluten Beträge je Stufe ausgewiesen
+// (brutto als Hauptwert, netto zusätzlich); sonst nur die Prozentstufen. KEINE erfundenen
+// Käufer-Schutz-/Timing-Narrative (Regel 4d) — nur sachliche Fälligkeits-Hinweise.
+function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null): Record<string, unknown> {
   const stages = sched.stages ?? []
   const half = Math.ceil(stages.length / 2)
-  const fmtEur = (n: number) => n.toLocaleString('de-DE') + ' €'
+  const fmtEur = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
+  const hasBasis = !!basis && basis.gross > 0
+  const stageVal = (s: PayStage) => hasBasis ? fmtEur(s.pct / 100 * basis!.gross) : `${s.pct} %`
+  const stageSub = (s: PayStage) => {
+    const parts: string[] = []
+    if (s.sub) parts.push(s.sub)
+    if (hasBasis) parts.push(`${s.pct} % · ${fmtEur(s.pct / 100 * basis!.net)} netto`)
+    return parts.length ? parts.join(' · ') : undefined
+  }
   const p1rows: Array<Record<string, unknown>> = []
-  if (sched.reservation) p1rows.push({ label: 'Reservierung', sub: 'sichert die Wohnung', value: fmtEur(sched.reservation) })
-  stages.slice(0, half).forEach(s => p1rows.push({ label: s.label, sub: s.sub, value: `${s.pct} %` }))
-  const p2rows = stages.slice(half).map(s => ({ label: s.label, sub: s.sub, value: `${s.pct} %` }))
-  return {
+  if (sched.reservation) p1rows.push({ label: 'Reservierung', sub: hasBasis ? 'sofort fällig · sichert die Wohnung' : 'sichert die Wohnung', value: fmtEur(sched.reservation) })
+  stages.slice(0, half).forEach(s => p1rows.push({ label: s.label, sub: stageSub(s), value: stageVal(s) }))
+  const p2rows = stages.slice(half).map(s => ({ label: s.label, sub: stageSub(s), value: stageVal(s) }))
+  const block: Record<string, unknown> = {
     type: 'payment',
     kicker: 'Zahlungsplan',
     headline: 'Der Zahlungsplan im Überblick',
     intro: 'In klaren Stufen über die Bauphasen verteilt — transparent und nachvollziehbar.',
     phase1: { label: 'Start', title: 'Reservierung & Vertrag', rows: p1rows },
     phase2: { label: 'Bauphase & Übergabe', title: 'Raten nach Baufortschritt', rows: p2rows },
-    note: 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.',
+    note: hasBasis
+      ? 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.'
+      : 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.',
   }
+  return block   // priceSummary (Netto/MwSt/Brutto-Box) setzt der bestehende Injektionsschritt weiter unten je Wohnung
 }
 
 // Zahlungsplan deterministisch sicherstellen: Hat die KI KEINEN payment-Block gebaut
@@ -287,7 +298,7 @@ function buildPaymentBlock(sched: PaySchedule): Record<string, unknown> {
 // Standard-Plan ersetzen — für Projekt-Decks OHNE Wohnungspreis, wo die KI mangels
 // Zahlen nur „gemäß Konditionen" schreibt. replace=false: nur einsetzen, wenn keiner
 // da ist (Unit-Decks mit echten Beträgen behalten ihren KI-Block).
-function injectPayment(blocks: Array<Record<string, unknown>>, sched: PaySchedule | null | undefined, replace: boolean): void {
+function injectPayment(blocks: Array<Record<string, unknown>>, sched: PaySchedule | null | undefined, replace: boolean, basis?: { net: number; gross: number } | null): void {
   if (!sched || !Array.isArray(sched.stages) || sched.stages.length === 0) return
   const existingIdx = blocks.findIndex(b => b.type === 'payment')
   if (existingIdx >= 0 && !replace) return
@@ -300,7 +311,7 @@ function injectPayment(blocks: Array<Record<string, unknown>>, sched: PaySchedul
     const ctaIdx = blocks.findIndex(b => b.type === 'cta')
     at = ctaIdx >= 0 ? ctaIdx : blocks.length
   }
-  blocks.splice(at, 0, buildPaymentBlock(sched))
+  blocks.splice(at, 0, buildPaymentBlock(sched, basis))
 }
 
 // Projekt-Video (z.B. Drohnen-/Meerblick-Video) nach der Lage-/Marina-Sektion
@@ -416,6 +427,9 @@ Deno.serve(async (req) => {
     // Parallel: Netto/MwSt/Brutto je Wohnung für die priceSummary-Box im Zahlungsplan
     // (MwSt-Berechnung im payment-Block = Standard, nicht der KI überlassen).
     const priceSummaryByUnit: Record<string, { net: string; vatRate: string; vat: string; gross: string }> = {}
+    // Rohe Preisbasis (netto/brutto) EINER Einzelwohnung — für die absoluten Beträge je
+    // Zahlungsplan-Stufe. Nur gesetzt, wenn genau eine Wohnung mit Preis vorliegt.
+    let payBasis: { net: number; gross: number } | null = null
     // GRUNDRISS-STANDARD (Sven): hinterlegte HP-Grundrisse je Wohnung — wenn einer
     // existiert, kommt er ins Deck. Quelle: crm_projects.deck_assets.floorplans
     // (Map Wohnungsnummer → Bild-URL, Fallback-Key "<n>br" je Zimmertyp).
@@ -443,7 +457,12 @@ Deno.serve(async (req) => {
         // Quelle: deck_assets.unit_floorplans (Record) — NICHT deck_assets.floorplans, das ist
         // bei manchen Projekten ein Etagen-Array aus dem Drive-Import.
         const daFp = (p as { deck_assets?: { unit_floorplans?: Record<string, string>; floorplans?: unknown } } | null)?.deck_assets
-        const fpMap = daFp?.unit_floorplans ?? ((daFp && !Array.isArray(daFp.floorplans)) ? (daFp.floorplans as Record<string, string> | undefined) : undefined) ?? {}
+        const rawFp = daFp?.unit_floorplans ?? ((daFp && !Array.isArray(daFp.floorplans)) ? (daFp.floorplans as Record<string, string> | undefined) : undefined) ?? {}
+        // Keys normalisiert (lowercase) indizieren — die Mapping-Keys sind großgeschrieben
+        // (z.B. 'C-202'), der Lookup nutzt normU (lowercase). Ohne das griff der Grundriss
+        // nicht und der Block behielt ein KI-Bild (z.B. Yoga-Raum statt Grundriss).
+        const fpMap: Record<string, string> = {}
+        for (const [k, v] of Object.entries(rawFp)) if (typeof v === 'string') fpMap[normU(k)] = v
         for (const u of unitList) {
           const fpUrl = fpMap[normU(u.unit_number)] ?? (u.bedrooms != null ? fpMap[`${u.bedrooms}br`] : undefined)
           if (fpUrl) floorplanByUnit[normU(u.unit_number)] = fpUrl
@@ -478,6 +497,7 @@ Deno.serve(async (req) => {
           const totalNet = u.price_net + furnNet
           const vat = Math.round(totalNet * vatRate)
           priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: vatPct, vat: eur(vat), gross: eur(totalNet + vat) }
+          if (priced.length === 1) payBasis = { net: totalNet, gross: totalNet + vat }
         }
         // Bei Eigennutz die 5%-Basis explizit als Fakt mitgeben, damit die KI den GESAMTEN
         // Zahlungsplan (Reservierung/Anzahlung/Raten) + Intro auf 5 % rechnet, nicht 19 %.
@@ -674,7 +694,7 @@ Deno.serve(async (req) => {
     // Zahlungsplan: Liegt ein Plan vor (projekteigener oder Luma-Standard), IMMER den
     // konkreten Stufen-Plan setzen und einen vagen KI-Block ersetzen — die KI baut mangels
     // Stufen in den Fakten sonst nur „gemäß Konditionen", auch bei Decks MIT Preis.
-    injectPayment(blocks, paySchedule, true)
+    injectPayment(blocks, paySchedule, true, payBasis)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
     const plKeys = Object.keys(priceLinesByUnit)
