@@ -69,7 +69,7 @@ function computeOrig(){
   const resCY=document.querySelector('input[name="s-res"]:checked').value==='cy';
   var hotelEl=document.getElementById(sdMode?'sd-hotel':'s-hotel');
   const hotelConcept=letT==='short'&&hotelEl?hotelEl.checked:false;
-  let ekAbs=Math.max(0,parseFloat($(sdMode?'sd-equity':'s-equity').value)||(sdMode?200000:75000));
+  let ekEl=parseFloat($(sdMode?'sd-equity':'s-equity').value); let ekAbs=Math.max(0,Number.isFinite(ekEl)?ekEl:(sdMode?200000:75000)); // 0 = gueltig (kein Default)
   if(ekAbs>pGross)ekAbs=pGross;
   const loan=fin==='no'?0:Math.max(0,Math.round(pGross-ekAbs));
   var ekCosts=costs+sdVatClawback;

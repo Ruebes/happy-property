@@ -178,7 +178,10 @@ export function compute(p: CalcParams): CalcResult {
   const resCY = p.res === 'cy'
   const hotelConcept = letT === 'short' ? !!p.hotelConcept : false
 
-  let ekAbs = Math.max(0, p.equity || (sdMode ? 200000 : 75000))
+  // WICHTIG: nullish-Prüfung statt `|| default` — eine ausdrücklich eingegebene 0
+  // (kein Eigenkapital, 100 % Finanzierung) ist gültig und darf NICHT auf den
+  // Default (75.000/200.000) zurückfallen. `0 || 75000` = 75000 war der Bug.
+  let ekAbs = Math.max(0, Number.isFinite(p.equity) ? p.equity : (sdMode ? 200000 : 75000))
   if (ekAbs > pGross) ekAbs = pGross
   const loan = fin === 'no' ? 0 : Math.max(0, Math.round(pGross - ekAbs))
   const ekCosts = costs + sdVatClawback
