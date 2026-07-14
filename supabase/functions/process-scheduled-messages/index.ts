@@ -309,15 +309,36 @@ Deno.serve(async (req: Request) => {
         const botBody = isStart
           ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source }
           : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage, source: msg.bot_nudge_source ?? 'no_show' }
+        // booking-bot meldet per `skipped`, WARUM nichts rausging (no_phone, no_slots,
+        // optout, has_appointment, engaged …). Diese Antwort NICHT ignorieren, sonst
+        // wird ein nie gesendeter Nudge still als „sent" markiert (z.B. Lead ohne
+        // Telefonnummer → Kunde bekommt nie eine WhatsApp, und niemand sieht es).
+        let botSkip: string | null = null
         try {
-          await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+          const br = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(botBody),
           })
-        } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e) }
-        await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
-        processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
+          const bj = await br.json().catch(() => ({})) as { skipped?: string }
+          botSkip = br.ok ? (bj.skipped ?? null) : 'error'
+        } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e); botSkip = 'error' }
+
+        // no_phone/no_slots/error = echtes Problem → failed + Grund (sichtbar im Postausgang).
+        // disabled/optout/has_appointment/engaged/engaged_or_closed = gewollt kein Versand → skipped.
+        if (botSkip === 'no_phone' || botSkip === 'no_slots' || botSkip === 'error') {
+          const reason = botSkip === 'no_phone' ? 'Keine Telefonnummer am Lead — WhatsApp konnte nicht gesendet werden'
+            : botSkip === 'no_slots' ? 'Keine freien Termine für den Vorschlag verfügbar'
+            : 'Termin-Bot-Aufruf fehlgeschlagen'
+          await supabase.from('scheduled_messages').update({ status: 'failed', error_message: reason, sent_at: new Date().toISOString() }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: `bot_failed:${botSkip}` })
+        } else if (botSkip) {
+          await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString() }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: `bot_skipped:${botSkip}` })
+        } else {
+          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
+        }
         continue
       }
 
