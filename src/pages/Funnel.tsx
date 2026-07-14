@@ -84,7 +84,7 @@ export default function Funnel() {
   // PLUS alle im Funnel-Editor angelegten Link-Quellen — sonst würde eine frei
   // definierte Quelle (z.B. „podcast") verworfen.
   const allowedSources = useMemo(
-    () => new Set<string>([...KNOWN_CHANNELS, ...(cfg.links ?? []).map(l => l.source).filter(Boolean)]),
+    () => new Set<string>([...KNOWN_CHANNELS, ...(cfg.sources ?? []).map(s => s.key), ...(cfg.links ?? []).map(l => l.source).filter(Boolean)]),
     [cfg],
   )
   const QUESTION_TEXT: Record<string, string> = Object.fromEntries(QUESTIONS.map(q => [q.key, q.title]))

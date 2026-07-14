@@ -2654,7 +2654,16 @@
       "calNoContactHint": "Ohne Kontaktabfrage klappt nur, wenn wir den Empfänger kennen: häng pro Person „&d=<Deck-Token>\" an den Link. Der Newsletter macht das automatisch. Klickt jemand ohne Token, fragt der Link einmalig die Kontaktdaten ab (aber nie den Fragebogen).",
       "qnBuchenShort": "Kalender · mit Kontaktabfrage",
       "qnDirektShort": "Kalender · ohne Kontaktabfrage",
-      "qnPrefix": "Fragebogen: "
+      "qnPrefix": "Fragebogen: ",
+      "sourcesTitle": "Meine Leadquellen",
+      "sourcesHint": "Kategorien, die in der Pipeline-Kachel als Quelle erscheinen (z. B. „Steuerberater\", „Affiliate\"). Feste Kanäle wie YouTube sind schon da — eigene legst du hier an, danach stehen sie unten im Quellen-Dropdown.",
+      "sourceNamePh": "Neue Quelle, z. B. Steuerberater",
+      "sourceAdd": "+ Quelle",
+      "sourceInUse": "Diese Quelle wird von {{n}} Link(s) genutzt. Trotzdem löschen? Die Links bleiben bestehen, zeigen die Quelle dann nur noch als einfachen Namen.",
+      "sourceGroupChannels": "Kanäle",
+      "sourceGroupMine": "Meine Quellen",
+      "linkSourceNew": "➕ Neue Quelle …",
+      "linkSourceNewPh": "Name der neuen Quelle, z. B. Steuerberater"
     },
     "newsletter": {
       "title": "Newsletter (individuell)",

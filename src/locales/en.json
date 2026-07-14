@@ -2654,7 +2654,16 @@
       "calNoContactHint": "Skipping the contact form only works when we know the recipient: append \"&d=<deck token>\" per person. The newsletter does this automatically. If someone clicks without a token, the link asks for contact details once (but never the questionnaire).",
       "qnBuchenShort": "Calendar · with contact form",
       "qnDirektShort": "Calendar · without contact form",
-      "qnPrefix": "Questionnaire: "
+      "qnPrefix": "Questionnaire: ",
+      "sourcesTitle": "My lead sources",
+      "sourcesHint": "Categories shown as the source on the pipeline card (e.g. “Tax advisor”, “Affiliate”). Fixed channels like YouTube are already there — add your own here, then they appear in the source dropdown below.",
+      "sourceNamePh": "New source, e.g. Tax advisor",
+      "sourceAdd": "+ Source",
+      "sourceInUse": "This source is used by {{n}} link(s). Delete anyway? The links remain, but will show the source only as a plain name.",
+      "sourceGroupChannels": "Channels",
+      "sourceGroupMine": "My sources",
+      "linkSourceNew": "➕ New source …",
+      "linkSourceNewPh": "Name of the new source, e.g. Tax advisor"
     },
     "newsletter": {
       "title": "Newsletter (individual)",

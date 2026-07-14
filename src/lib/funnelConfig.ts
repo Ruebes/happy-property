@@ -43,10 +43,18 @@ export interface FunnelLink {
   created_at?: string
 }
 
+// Selbst angelegte Leadquelle (Kategorie, z.B. „Steuerberater", „Affiliate").
+// key = maschinenlesbarer Slug (landet als deals.source / utm_source → Kachel-Badge
+// + spätere Auswertung „wie viele über <Quelle>"). label = Anzeigename.
+// Feste Kanäle (YouTube/Instagram/…) stecken in crmTypes.CHANNEL_BADGES und werden
+// NICHT hier doppelt geführt.
+export interface FunnelSource { key: string; label: string }
+
 export interface FunnelConfig {
   welcome: { title: string; subtitle: string; cta: string; footnote: string; hero_url: string }
   questions: FunnelQuestion[]
   questionnaires: FunnelQuestionnaire[]
+  sources: FunnelSource[]
   links: FunnelLink[]
   contact: { title: string; subtitle: string; cta: string; privacy: string }
   done: {
@@ -88,6 +96,7 @@ export function buildFunnelLinkUrl(link: Pick<FunnelLink, 'code' | 'source' | 'q
 
 export const DEFAULT_FUNNEL_CONFIG: FunnelConfig = {
   questionnaires: [],
+  sources: [],
   links: [],
   welcome: {
     title: 'Dein kostenloses Beratungsgespräch mit Sven',
@@ -198,6 +207,13 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
     : []
   // Kampagnen-/Quellen-Links: code + name Pflicht, source/questionnaire tolerant.
   const cleanKey = (v: unknown, max: number) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, max)
+  // Selbst angelegte Leadquellen (Kategorien)
+  const sources = Array.isArray(r.sources)
+    ? r.sources
+        .filter(x => x && typeof x.key === 'string' && typeof x.label === 'string')
+        .map(x => ({ key: cleanKey(x.key, 40), label: String(x.label).trim().slice(0, 60) }))
+        .filter(x => x.key && x.label)
+    : []
   const links = Array.isArray(r.links)
     ? r.links
         .filter(x => x && typeof x.code === 'string' && typeof x.name === 'string')
@@ -218,6 +234,7 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
     welcome: { ...d.welcome, ...(r.welcome ?? {}) },
     questions: questions.length ? questions : d.questions,
     questionnaires,
+    sources,
     links,
     contact: { ...d.contact, ...(r.contact ?? {}) },
     done: { ...d.done, ...doneRaw, socials },

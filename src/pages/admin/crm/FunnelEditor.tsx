@@ -244,12 +244,40 @@ export default function FunnelEditor() {
     const name = linkForm.name.trim()
     if (!name) { showToast(t('crm.funnelEditor.linkNeedsName', 'Bitte gib dem Link einen Namen.') as string); return }
     const source = formSource()
+    const customLabel = linkForm.source === 'custom' ? linkForm.sourceCustom.trim() : ''
     const taken = new Set((cfg.links ?? []).map(l => l.code))
     const code = slugify(name, taken)
-    update(c => ({ ...c, links: [...(c.links ?? []), { code, name, source, questionnaire: formQn(), created_at: new Date().toISOString() }] }))
+    update(c => {
+      // Über „Neue Quelle …" getippte Quelle dauerhaft in die Quellenliste aufnehmen,
+      // damit sie künftig im Dropdown steht.
+      let sources = c.sources ?? []
+      if (source && customLabel && !CHANNEL_BADGES[source] && !sources.some(s => s.key === source)) {
+        sources = [...sources, { key: source, label: customLabel }]
+      }
+      return { ...c, sources, links: [...(c.links ?? []), { code, name, source, questionnaire: formQn(), created_at: new Date().toISOString() }] }
+    })
     resetLinkForm()
   }
   const removeLink = (code: string) => update(c => ({ ...c, links: (c.links ?? []).filter(l => l.code !== code) }))
+
+  // ── Leadquellen (Kategorien) verwalten ──────────────────────────────────────
+  const [newSourceName, setNewSourceName] = useState('')
+  const addSource = () => {
+    if (!cfg) return
+    const label = newSourceName.trim()
+    if (!label) return
+    const taken = new Set([...Object.keys(CHANNEL_BADGES), ...(cfg.sources ?? []).map(s => s.key)])
+    const key = slugify(label, taken)
+    update(c => (c.sources ?? []).some(s => s.key === key)
+      ? c
+      : { ...c, sources: [...(c.sources ?? []), { key, label }] })
+    setNewSourceName('')
+  }
+  const removeSource = (key: string) => {
+    const used = (cfg?.links ?? []).filter(l => l.source === key).length
+    if (used && !confirm(t('crm.funnelEditor.sourceInUse', 'Diese Quelle wird von {{n}} Link(s) genutzt. Trotzdem löschen? Die Links bleiben bestehen, zeigen die Quelle dann nur noch als einfachen Namen.', { n: used }) as string)) return
+    update(c => ({ ...c, sources: (c.sources ?? []).filter(s => s.key !== key) }))
+  }
   // Klartext-Bezeichnung des Ziel-/Fragebogen-Modus eines Links
   const qnLabel = (mode: string): string => {
     if (mode === 'standard') return t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen') as string
@@ -541,6 +569,30 @@ export default function FunnelEditor() {
             {t('crm.funnelEditor.linksIntro', 'Lege pro Kanal oder Kampagne einen eigenen Link an. Wer darüber einen Termin bucht, bekommt automatisch die gewählte Quelle in der Pipeline-Kachel — und du kannst die Links später einzeln auswerten.')}
           </p>
 
+          {/* Meine Leadquellen (Kategorien) — feste Kanäle + eigene */}
+          <div className="mb-6">
+            <p className="text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.sourcesTitle', 'Meine Leadquellen')}</p>
+            <p className="text-[11px] text-gray-400 mb-2">{t('crm.funnelEditor.sourcesHint', 'Kategorien, die in der Pipeline-Kachel als Quelle erscheinen (z. B. „Steuerberater", „Affiliate"). Feste Kanäle wie YouTube sind schon da — eigene legst du hier an, danach stehen sie unten im Quellen-Dropdown.')}</p>
+            <div className="flex flex-wrap gap-2 mb-2">
+              {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
+                <span key={k} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold" style={CHANNEL_BADGES[k].badge}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</span>
+              ))}
+              {cfg.sources.map(s => (
+                <span key={s.key} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                  🔗 {s.label}
+                  <button type="button" onClick={() => removeSource(s.key)} className="w-4 h-4 rounded-full text-slate-400 hover:text-red-600 hover:bg-red-100 leading-none">×</button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input value={newSourceName} onChange={e => setNewSourceName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSource() } }}
+                placeholder={t('crm.funnelEditor.sourceNamePh', 'Neue Quelle, z. B. Steuerberater') as string}
+                className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+              <button type="button" onClick={addSource} className="px-4 py-2 rounded-lg text-sm font-semibold text-white shrink-0" style={{ backgroundColor: '#ff795d' }}>{t('crm.funnelEditor.sourceAdd', '+ Quelle')}</button>
+            </div>
+          </div>
+
           {/* Feste Einstiege (Referenz, nicht editierbar) */}
           <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.funnelEditor.linksBuiltin', 'Feste Einstiege')}</p>
           <div className="overflow-x-auto">
@@ -614,14 +666,21 @@ export default function FunnelEditor() {
                 <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormSource', 'Quelle (Badge in der Kachel)')}</label>
                 <select value={linkForm.source} onChange={e => setLinkForm(f => ({ ...f, source: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                  {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
-                    <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
-                  ))}
-                  <option value="custom">{t('crm.funnelEditor.linkSourceCustom', 'Andere / eigene …')}</option>
+                  <optgroup label={t('crm.funnelEditor.sourceGroupChannels', 'Kanäle') as string}>
+                    {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
+                      <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
+                    ))}
+                  </optgroup>
+                  {cfg.sources.length > 0 && (
+                    <optgroup label={t('crm.funnelEditor.sourceGroupMine', 'Meine Quellen') as string}>
+                      {cfg.sources.map(s => <option key={s.key} value={s.key}>🔗 {s.label}</option>)}
+                    </optgroup>
+                  )}
+                  <option value="custom">{t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …')}</option>
                 </select>
                 {linkForm.source === 'custom' && (
                   <input value={linkForm.sourceCustom} onChange={e => setLinkForm(f => ({ ...f, sourceCustom: e.target.value }))}
-                    placeholder={t('crm.funnelEditor.linkSourceCustomPh', 'z. B. podcast, messe, flyer') as string}
+                    placeholder={t('crm.funnelEditor.linkSourceNewPh', 'Name der neuen Quelle, z. B. Steuerberater') as string}
                     className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
                 )}
               </div>

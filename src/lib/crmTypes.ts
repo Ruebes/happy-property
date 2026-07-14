@@ -204,7 +204,7 @@ export function channelBadgeFor(source: string | null | undefined): ChannelBadge
   const known = CHANNEL_BADGES[source]
   if (known) return known
   if (INTERNAL_SOURCES.has(source)) return undefined
-  const label = source.charAt(0).toUpperCase() + source.slice(1).replace(/[-_]/g, ' ')
+  const label = source.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
   return {
     label, icon: '🔗',
     badge: { backgroundColor: '#f1f5f9', color: '#475569' },
