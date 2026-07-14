@@ -377,12 +377,49 @@ Deno.serve(async (req) => {
     const token = await getReadToken()
 
     // ── importfile (Debug/Spezialfall): EINE Drive-Datei per ID in Storage holen ──
+    // stream:true → Drive-Body direkt in Storage pipen (für große Videos, kein OOM).
     if (action === 'importfile') {
       const fid = body.file_id
       if (!fid) return json({ error: 'file_id fehlt' }, 400)
-      const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?fields=name,mimeType&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { name?: string; mimeType?: string }
-      const url = await uploadBytes(supabase, await driveBytes(token, fid), meta.mimeType ?? 'application/octet-stream', `projects/${project_id}/import`, meta.name ?? fid)
-      return json({ ok: true, url, name: meta.name, mimeType: meta.mimeType })
+      const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?fields=name,mimeType,size&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { name?: string; mimeType?: string; size?: string }
+      const mime = meta.mimeType ?? 'application/octet-stream'
+      // Endung aus Name, sonst aus MIME ableiten — endungslose Drive-Dateien (z.B. „Skala")
+      // würden sonst als .bin landen und die Video-Erkennung im Deck aushebeln.
+      const MIME_EXT: Record<string, string> = { 'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm', 'image/jpeg': 'jpg', 'image/png': 'png' }
+      const nameExt = (meta.name ?? '').toLowerCase().match(/\.([a-z0-9]{2,4})$/)?.[1]
+      const ext = nameExt || MIME_EXT[mime] || 'bin'
+      // probe:true → nur Codec prüfen (Anfang+Ende per Range laden, moov kann vorn oder
+      // hinten liegen). avc1=H.264 (Chrome ok), hvc1/hev1=H.265 (Chrome KANN NICHT).
+      if (body.probe) {
+        const size = meta.size ? Number(meta.size) : 0
+        const range = async (a: number, b: number) => {
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}`, Range: `bytes=${a}-${b}` } })
+          return r.ok ? new Uint8Array(await r.arrayBuffer()) : new Uint8Array()
+        }
+        const head = await range(0, 8_000_000)
+        const tail = size > 12_000_000 ? await range(size - 6_000_000, size - 1) : new Uint8Array()
+        const hay = new TextDecoder('latin1').decode(head) + new TextDecoder('latin1').decode(tail)
+        const codecs = ['avc1', 'hvc1', 'hev1', 'mp4v', 'av01', 'vp09'].filter(c => hay.includes(c))
+        const playable = codecs.some(c => c === 'avc1' || c === 'mp4v')
+        return json({ ok: true, probe: true, codecs, playableInChrome: playable, size, mime, name: meta.name })
+      }
+      if (body.stream) {
+        const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!dl.ok || !dl.body) return json({ error: `Drive-Download ${dl.status}` }, 502)
+        const path = `projects/${project_id}/import/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const upInit: RequestInit & { duplex?: string } = {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': mime, 'x-upsert': 'true', ...(meta.size ? { 'Content-Length': meta.size } : {}) },
+          body: dl.body,
+          duplex: 'half',
+        }
+        const up = await fetch(`${SUPABASE_URL}/storage/v1/object/deck-assets/${path}`, upInit)
+        if (!up.ok) return json({ error: `Storage-Upload ${up.status}: ${(await up.text()).slice(0, 300)}` }, 502)
+        const url = `${SUPABASE_URL}/storage/v1/object/public/deck-assets/${path}`
+        return json({ ok: true, url, name: meta.name, mimeType: mime, size: meta.size ? Number(meta.size) : undefined, streamed: true })
+      }
+      const url = await uploadBytes(supabase, await driveBytes(token, fid), mime, `projects/${project_id}/import`, meta.name ?? `${fid}.${ext}`)
+      return json({ ok: true, url, name: meta.name, mimeType: mime })
     }
 
     // ── uploadimage: ein fertig aufbereitetes Bild (base64) in Storage ablegen ────

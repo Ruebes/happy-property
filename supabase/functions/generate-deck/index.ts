@@ -671,10 +671,10 @@ Deno.serve(async (req) => {
     const paySchedule = (projRow?.payment_schedule && Array.isArray(projRow.payment_schedule.stages) && projRow.payment_schedule.stages.length)
       ? projRow.payment_schedule
       : (isLuma ? LUMA_PAYMENT : null)
-    // Ohne verbindliche Wohnungspreise (Projekt-Deck) schreibt die KI nur einen vagen
-    // Plan → durch den konkreten Standard ersetzen. Mit Preisen bleibt der KI-Block.
-    const hasPricedUnits = Object.keys(priceLinesByUnit).length > 0
-    injectPayment(blocks, paySchedule, !hasPricedUnits)
+    // Zahlungsplan: Liegt ein Plan vor (projekteigener oder Luma-Standard), IMMER den
+    // konkreten Stufen-Plan setzen und einen vagen KI-Block ersetzen — die KI baut mangels
+    // Stufen in den Fakten sonst nur „gemäß Konditionen", auch bei Decks MIT Preis.
+    injectPayment(blocks, paySchedule, true)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
     const plKeys = Object.keys(priceLinesByUnit)
