@@ -239,6 +239,70 @@ function injectLocationAndMarina(
   }
 }
 
+// ── Luma-Standard-Zahlungsplan ────────────────────────────────────────────────
+// Quelle: Luma Agent-Guide (Reservierung 10.000 € → 35/20/20/15/10 % + Title Deeds).
+// Wird genutzt, wenn ein Projekt keinen eigenen payment_schedule hinterlegt hat und
+// der Bauträger Luma ist — damit JEDES Luma-Deck einen Zahlungsplan bekommt.
+type PayStage = { label: string; sub?: string; pct: number }
+type PaySchedule = { reservation?: number; currency?: string; stages: PayStage[] }
+const LUMA_PAYMENT: PaySchedule = {
+  reservation: 10000, currency: 'EUR',
+  stages: [
+    { label: 'Bei Vertragsunterzeichnung', sub: 'abzüglich Reservierung', pct: 35 },
+    { label: '2. Rate · Baufortschritt', pct: 20 },
+    { label: '3. Rate · Baufortschritt', pct: 20 },
+    { label: '4. Rate · Baufortschritt', pct: 15 },
+    { label: 'Bei Übergabe · Title Deeds', pct: 10 },
+  ],
+}
+
+// Baut einen sachlichen payment-Block aus einem Zahlungsplan-Schema. Zeigt die
+// Prozentstufen + festen Reservierungsbetrag; KEINE erfundenen Beträge, KEINE
+// Käufer-Schutz-/Timing-Narrative (Regel 4d). Absolute € überlässt die Software der
+// KI nur dort, wo ein verbindlicher Kaufpreis vorliegt — hier bewusst nur Prozente.
+function buildPaymentBlock(sched: PaySchedule): Record<string, unknown> {
+  const stages = sched.stages ?? []
+  const half = Math.ceil(stages.length / 2)
+  const fmtEur = (n: number) => n.toLocaleString('de-DE') + ' €'
+  const p1rows: Array<Record<string, unknown>> = []
+  if (sched.reservation) p1rows.push({ label: 'Reservierung', sub: 'sichert die Wohnung', value: fmtEur(sched.reservation) })
+  stages.slice(0, half).forEach(s => p1rows.push({ label: s.label, sub: s.sub, value: `${s.pct} %` }))
+  const p2rows = stages.slice(half).map(s => ({ label: s.label, sub: s.sub, value: `${s.pct} %` }))
+  return {
+    type: 'payment',
+    kicker: 'Zahlungsplan',
+    headline: 'Der Zahlungsplan im Überblick',
+    intro: 'In klaren Stufen über die Bauphasen verteilt — transparent und nachvollziehbar.',
+    phase1: { label: 'Start', title: 'Reservierung & Vertrag', rows: p1rows },
+    phase2: { label: 'Bauphase & Übergabe', title: 'Raten nach Baufortschritt', rows: p2rows },
+    note: 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.',
+  }
+}
+
+// Zahlungsplan deterministisch sicherstellen: Hat die KI KEINEN payment-Block gebaut
+// (z.B. Projekt-Deck ohne Wohnungspreis, dessen Fakten keinen Plan enthalten), setze
+// den hinterlegten/Standard-Zahlungsplan direkt vor den cta ein. Bestehende, aus echten
+// Preisangaben gebaute payment-Blöcke bleiben unangetastet (kein Override).
+// replace=true: einen bestehenden (vagen) KI-payment-Block durch den konkreten
+// Standard-Plan ersetzen — für Projekt-Decks OHNE Wohnungspreis, wo die KI mangels
+// Zahlen nur „gemäß Konditionen" schreibt. replace=false: nur einsetzen, wenn keiner
+// da ist (Unit-Decks mit echten Beträgen behalten ihren KI-Block).
+function injectPayment(blocks: Array<Record<string, unknown>>, sched: PaySchedule | null | undefined, replace: boolean): void {
+  if (!sched || !Array.isArray(sched.stages) || sched.stages.length === 0) return
+  const existingIdx = blocks.findIndex(b => b.type === 'payment')
+  if (existingIdx >= 0 && !replace) return
+  // vorhandene payment-Blöcke entfernen (bei replace), Einfügeposition bestimmen
+  let at = -1
+  if (existingIdx >= 0) {
+    at = existingIdx
+    for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].type === 'payment') { blocks.splice(i, 1); if (i < at) at-- }
+  } else {
+    const ctaIdx = blocks.findIndex(b => b.type === 'cta')
+    at = ctaIdx >= 0 ? ctaIdx : blocks.length
+  }
+  blocks.splice(at, 0, buildPaymentBlock(sched))
+}
+
 // Projekt-Video (z.B. Drohnen-/Meerblick-Video) nach der Lage-/Marina-Sektion
 // einsetzen — dort, wo der Kunde ohnehin über Standort & Blick liest. Idempotent.
 // Entscheidet nur das Feld (embedUrl vs. videoUrl); die Embed-Normalisierung macht
@@ -428,6 +492,16 @@ Deno.serve(async (req) => {
         }
         const cd = (p as { completion_date?: string } | null)?.completion_date
         if (cd) { const d = new Date(cd); extraFacts += `\n\n=== FERTIGSTELLUNG (muss im Deck genannt werden): ${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ===` }
+        // Möbelpakete bei Projekt-Decks OHNE Wohnungspreis (keine priced units) trotzdem
+        // sichtbar machen: als Fakt fürs inventory-Block, da sie sonst nur an Unit-Preisen
+        // hängen und komplett wegfallen. Nettopreise je Zimmertyp aus furniture_by_bedrooms.
+        if (priced.length === 0 && furnByBed && Object.keys(furnByBed).length > 0) {
+          const lines = Object.entries(furnByBed)
+            .sort((a, b) => Number(a[0]) - Number(b[0]))
+            .map(([bed, net]) => `- ${bed}-Schlafzimmer: ${eur(Number(net))} netto`)
+            .join('\n')
+          extraFacts += `\n\n=== MÖBELPAKETE (Vollausstattung, als 'inventory'-Block oder Fakt nennen; Nettopreise je Wohnungstyp) ===\n${lines}`
+        }
       } catch { /* best effort — ohne Preisangaben generiert die KI wie bisher */ }
     }
     const factsAug = body.facts.trim() + extraFacts
@@ -547,12 +621,12 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
-    let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null } | null = null
+    let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
-          .select('name, location, latitude, longitude, video_url, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; deck_assets?: { mapUrl?: string } | null } | null
+          .select('name, location, latitude, longitude, video_url, developer, payment_schedule, deck_assets').eq('id', body.project_id).maybeSingle()
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string } | null } | null
         projRow = pr
         if (pr) {
           body.images = body.images ?? {}
@@ -573,10 +647,13 @@ Deno.serve(async (req) => {
             const nm  = (pr.name ?? projName ?? '').trim()
             body.images.mapQuery = [nm, loc, 'Cyprus'].filter(Boolean).join(', ')
           }
-          if (!body.images.mapUrl) {
-            body.images.mapUrl = body.images.mapLat != null
-              ? `https://www.google.com/maps?q=${body.images.mapLat},${body.images.mapLng}`
-              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(body.images.mapQuery ?? projName)}`
+          // Bei bekannten Koordinaten IMMER den exakten Pin verlinken (auch wenn eine
+          // alte Such-mapUrl aus den deck_assets mitkommt) — sonst zeigt „In Maps öffnen"
+          // auf eine ungenaue Suche statt auf den Standort.
+          if (body.images.mapLat != null) {
+            body.images.mapUrl = `https://www.google.com/maps?q=${body.images.mapLat},${body.images.mapLng}`
+          } else if (!body.images.mapUrl) {
+            body.images.mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(body.images.mapQuery ?? projName)}`
           }
         }
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
@@ -588,6 +665,16 @@ Deno.serve(async (req) => {
     injectLocationAndMarina(blocks, projRow?.name || projName, projRow)
     // Projekt-Video (falls hinterlegt) nach der Lage-Sektion einsetzen.
     injectVideo(blocks, projRow?.video_url)
+    // Zahlungsplan sicherstellen: eigener payment_schedule des Projekts, sonst — bei
+    // Bauträger Luma — der Luma-Standard. Greift nur, wenn die KI keinen gebaut hat.
+    const isLuma = /luma/i.test(String(projRow?.developer ?? ''))
+    const paySchedule = (projRow?.payment_schedule && Array.isArray(projRow.payment_schedule.stages) && projRow.payment_schedule.stages.length)
+      ? projRow.payment_schedule
+      : (isLuma ? LUMA_PAYMENT : null)
+    // Ohne verbindliche Wohnungspreise (Projekt-Deck) schreibt die KI nur einen vagen
+    // Plan → durch den konkreten Standard ersetzen. Mit Preisen bleibt der KI-Block.
+    const hasPricedUnits = Object.keys(priceLinesByUnit).length > 0
+    injectPayment(blocks, paySchedule, !hasPricedUnits)
     // Preis deterministisch in den unit-Block setzen (KI rechnet nicht) — exakt
     // Netto/MwSt/Brutto + Einrichtungs-Ausweis. Überschreibt KI-Preisfelder.
     const plKeys = Object.keys(priceLinesByUnit)

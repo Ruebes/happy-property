@@ -83,6 +83,58 @@ async function uploadBytes(supabase: ReturnType<typeof createClient>, bytes: Uin
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
 }
 
+const isGDoc = (m: string) => m === 'application/vnd.google-apps.document'
+// Google-Doc als Text exportieren (bzw. reine Textdatei direkt lesen).
+async function driveText(token: string, fileId: string, mimeType: string): Promise<string> {
+  const url = isGDoc(mimeType)
+    ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain&supportsAllDrives=true`
+    : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+  return res.ok ? await res.text() : ''
+}
+// Koordinaten aus einem Google-Maps-Link/Text ziehen. Bevorzugt den exakten Place-Pin
+// (!3d…!4d…), dann Viewport-Center (@lat,lng), dann q=lat,lng.
+function coordsFromMapsText(text: string): { lat: number; lng: number; url: string } | null {
+  // \S* statt Zeichenklasse: Maps-Place-URLs enthalten literale Apostrophe (34°45'54"N).
+  const urlM = text.match(/https?:\/\/\S*google\.\S*maps\S*/i)
+  const raw = urlM ? urlM[0].replace(/[)"'.,]+$/, '') : ''
+  let dec = ''
+  try { dec = decodeURIComponent(text) } catch { dec = text }
+  const match = (hay: string) =>
+    hay.match(/!3d(-?\d{1,2}\.\d{3,})!4d(-?\d{1,3}\.\d{3,})/) ||   // exakter Place-Pin
+    hay.match(/@(-?\d{1,2}\.\d{3,}),(-?\d{1,3}\.\d{3,})/) ||       // Viewport-Center
+    hay.match(/[?&]q=(-?\d{1,2}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/)  // q=lat,lng
+  const m = match(raw) || match(dec)
+  if (!m) return null
+  return { lat: Number(m[1]), lng: Number(m[2]), url: raw }
+}
+// Location aus dem Drive-Ordner einlesen: sucht einen "Location"-Unterordner (bzw.
+// gleichnamige Dokumente im Wurzelordner), liest deren Text, zieht Koordinaten und
+// setzt latitude/longitude/maps_url am Projekt. Idempotent, best effort.
+async function ingestLocation(
+  token: string, folderId: string, supabase: ReturnType<typeof createClient>, projectId: string,
+): Promise<{ found: boolean; lat?: number; lng?: number; source?: string; tried?: Array<{ name: string; mime: string; len: number; hit: boolean }> }> {
+  const kids = await listChildren(token, folderId)
+  const docs: DriveFile[] = []
+  const locFolder = kids.find(f => isFolder(f.mimeType) && folderCategory(f.name) === 'location')
+  if (locFolder) docs.push(...(await listChildren(token, locFolder.id)))
+  docs.push(...kids.filter(f => !isFolder(f.mimeType) && /location|lage/i.test(f.name)))
+  const tried: Array<{ name: string; mime: string; len: number; hit: boolean }> = []
+  for (const d of docs) {
+    if (isFolder(d.mimeType) || isImg(d.mimeType)) continue
+    const txt = await driveText(token, d.id, d.mimeType).catch(() => '')
+    const c = txt ? coordsFromMapsText(txt) : null
+    tried.push({ name: d.name, mime: d.mimeType, len: txt.length, hit: !!c })
+    if (c) {
+      const upd: Record<string, unknown> = { latitude: c.lat, longitude: c.lng }
+      if (c.url) upd.maps_url = c.url
+      await supabase.from('crm_projects').update(upd).eq('id', projectId)
+      return { found: true, lat: c.lat, lng: c.lng, source: d.name, tried }
+    }
+  }
+  return { found: false, tried }
+}
+
 // ── Klassifizierung ──────────────────────────────────────────────────────────────
 function folderCategory(name: string): 'floorplan' | 'location' | 'render' | null {
   const n = name.toLowerCase()
@@ -123,7 +175,7 @@ type DeckAssets = {
 }
 async function loadAssets(supabase: ReturnType<typeof createClient>, projectId: string): Promise<{ folderId: string | null; assets: DeckAssets; project: Record<string, unknown> }> {
   const { data } = await supabase.from('crm_projects')
-    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url, images').eq('id', projectId).maybeSingle()
+    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url, images, latitude, longitude').eq('id', projectId).maybeSingle()
   const p = (data ?? {}) as Record<string, unknown>
   return { folderId: (p.drive_folder_id as string) ?? null, assets: (p.deck_assets as DeckAssets) ?? {}, project: p }
 }
@@ -413,6 +465,12 @@ Deno.serve(async (req) => {
       return json({ ok: true, action, folderId, count: out.length, files: out })
     }
 
+    // ── location: Koordinaten aus dem Location-Doc im Drive-Ordner einlesen ──────
+    if (action === 'location') {
+      const r = await ingestLocation(token, folderId, supabase, project_id)
+      return json({ ok: true, action, ...r })
+    }
+
     // ── images ────────────────────────────────────────────────────────────────
     if (action === 'images') {
       const MAX = 12_000_000, RENDER_CAP = 18, FP_CAP = 5
@@ -492,7 +550,13 @@ Deno.serve(async (req) => {
       if (vetted.length && curImgs.length === 0) {
         await supabase.from('crm_projects').update({ images: vetted.slice(0, 3) }).eq('id', project_id)
       }
-      return json({ ok: true, action, renders: vetted.length, dropped: renders.length - vetted.length, gallery: gallery.length, floorplans: floorplans.length, map: !!map, unitsMatched })
+      // Koordinaten aus dem Location-Doc mitziehen, wenn das Projekt noch keine hat
+      // (macht die Standort-Karte im Deck künftig automatisch korrekt).
+      let locResult: Awaited<ReturnType<typeof ingestLocation>> = { found: false }
+      if (project.latitude == null || project.longitude == null) {
+        try { locResult = await ingestLocation(token, folderId, supabase, project_id) } catch { /* best effort */ }
+      }
+      return json({ ok: true, action, renders: vetted.length, dropped: renders.length - vetted.length, gallery: gallery.length, floorplans: floorplans.length, map: !!map, unitsMatched, location: locResult })
     }
 
     // ── categorize ──────────────────────────────────────────────────────────────
