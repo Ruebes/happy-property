@@ -254,7 +254,7 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 }
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
-interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null }
+interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null; defer_to_sven?: boolean }
 async function classify(state: string, slots: Slot[], text: string): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
@@ -273,7 +273,8 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - indifferent: Kunde hat KEINE Präferenz / ist mit allem einverstanden ("egal", "beides ok", "wie du willst", "such du aus", "passt alles").
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
-- content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINE Terminwahl sind. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
+- content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINEN Terminwunsch enthalten. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
+WICHTIG zum TERMIN-VORRANG: Nennt die Nachricht IRGENDEINEN Terminwunsch (Slot-Wahl, Tag, Datum, Uhrzeit, Tageszeit — z.B. "22.7. abends", "Freitag 15 Uhr") — auch wenn sie zusätzlich fachliche Fragen/Aussagen enthält — dann wähle intent = pick_slot bzw. give_preference (NICHT content/question) und fülle die Termin-Felder (pick_index / on_date / after_date / day_hint / daypart / time_hint). Setze in DIESEM Fall zusätzlich defer_to_sven = true, wenn die Nachricht fachliche/inhaltliche Themen enthält, die Sven persönlich beantworten sollte (Budget, Objekt-Details, Markt, Steuer, Finanzierung, Einwände). answer dann NICHT füllen — die fachlichen Punkte übernimmt Sven.
 - optout: will nicht kontaktiert werden / kein Interesse.
 - unclear: kurze unverständliche Nachricht (Tippfehler, einzelnes Wort ohne Sinn).
 WICHTIG:
@@ -297,6 +298,7 @@ Fülle nur passende Felder, sonst null.`
             on_date: { type: ['string', 'null'], description: 'YYYY-MM-DD — wenn GENAU EIN konkretes Datum gemeint ist (am 10.7.)' },
             meeting_type: { type: ['string', 'null'], enum: ['zoom', 'whatsapp', null] },
             answer: { type: ['string', 'null'], description: 'kurze Antwort auf eine Zwischenfrage (Svens Du-Ton)' },
+            defer_to_sven: { type: ['boolean', 'null'], description: 'true = Nachricht enthält NEBEN dem Termin fachliche Fragen, die Sven persönlich beantworten soll' },
           }, required: ['intent'],
         } }],
       }),
@@ -639,13 +641,27 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     return json({ ok: true, handled: 'optout' })
   }
 
-  // INHALTLICHE Nachricht (Budget, Objekte, Situation, Einwand): gehört zu Sven,
-  // nicht in den Termin-Dialog → sofort übergeben, KEIN erneuter Slot-Push.
-  if (it.intent === 'content') {
+  // Enthält die Nachricht einen Terminwunsch (auch wenn zusätzlich fachliche Fragen dabei sind)?
+  const hasApptSignal = it.pick_index != null || !!it.on_date || !!it.after_date || !!it.day_hint || !!it.daypart || !!it.time_hint
+
+  // REIN inhaltliche Nachricht (Budget, Objekte, Situation, Einwand) OHNE Terminbezug:
+  // gehört zu Sven, nicht in den Termin-Dialog → sofort übergeben, KEIN Slot-Push.
+  if (it.intent === 'content' && !hasApptSignal) {
     const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter — er meldet sich gleich persönlich bei dir. 🙂`
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
     await setConv(admin, c.id, { state: 'handoff', last_message: m })
     return json({ ok: true, handled: 'content_handoff' })
+  }
+
+  // Fachliche Fragen ZUSAMMEN mit einem Terminwunsch (z.B. „diverse Fragen … und Termin
+  // am 22.7. abends"): die fachlichen Themen an Sven verweisen (Kunde + Notiz für Sven),
+  // den Terminwunsch aber ganz normal weiterverarbeiten — statt alles zu blockieren.
+  if ((it.intent === 'content' || it.defer_to_sven) && hasApptSignal) {
+    const m = `Deine inhaltlichen Fragen gebe ich direkt an Sven weiter — er meldet sich dazu zeitnah persönlich. 🙂`
+    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: fachliche Frage — bitte persönlich melden', content: `Der Kunde hat neben dem Termin fachliche Fragen gestellt:\n\n${text}`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    if (it.intent === 'content') it.intent = 'give_preference'   // ab hier übernimmt der Terminfluss
+    it.answer = null                                             // fachliches macht Sven, kein Bot-Halbwissen
   }
 
   // Zwischenfrage beantworten (z.B. „Mit wem spreche ich?") — ohne den Faden zu
@@ -778,7 +794,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[] }
+    // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
+    if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
