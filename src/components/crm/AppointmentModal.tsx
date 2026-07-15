@@ -135,9 +135,9 @@ function buildInviteHtml(pr: InviteParams): string {
   const intro = pr.isEdit
     ? `unser Termin hat sich geändert — hier sind die neuen Details:`
     : `ich freue mich auf unser Treffen! Hier die Details:`
-  // Zoom/Telefon: Zeitzone dazu — der Kalender-Eintrag rechnet automatisch um,
-  // der Text soll dem nicht widersprechen. Vor Ort ist die Ortszeit gemeint.
-  const tzNote = pr.apptType === 'inperson' ? '' : ' (Zypern-Zeit)'
+  // Remote-Termine (Zoom/Telefon/WhatsApp): Uhrzeit in KUNDENZEIT (Deutschland) — der
+  // Kunde sitzt i.d.R. in DE. Vor Ort = Ortszeit (Zypern, das Venue), ohne Zusatz.
+  const tzNote = pr.apptType === 'inperson' ? '' : ' (deutsche Zeit)'
   const where = pr.apptType === 'inperson'
     ? (pr.location
         ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.`
@@ -618,7 +618,15 @@ export default function AppointmentModal({
       }
 
       // ── Einladungen (Mail im HP-Template + WhatsApp) an Lead + Teilnehmer ──
-      const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
+      // Kunden-Anzeige der Uhrzeit: Remote-Termine in KUNDENZEIT (Deutschland), vor-Ort
+      // in Ortszeit (Zypern = Venue). start_time ist als UTC gespeichert (korrekt) — das
+      // hier ist reine Anzeige-Umrechnung, damit der Kunde nicht 1h daneben liegt.
+      const dispTz = apptType === 'inperson' ? 'Asia/Nicosia' : 'Europe/Berlin'
+      const tzHint = apptType === 'inperson' ? '' : ' (deutsche Zeit)'
+      const fmtHM = (iso: string) => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: dispTz }).format(new Date(iso))
+      const vonDisp = fmtHM(start_time)
+      const bisDisp = fmtHM(end_time)
+      const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
       const gcalDetails = [
         description,
         effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '',
@@ -669,7 +677,7 @@ export default function AppointmentModal({
         try {
           const { data: pd, error: pe } = await supabase.functions.invoke('personalize-invite', { body: {
             briefing: description,
-            appointment: { title, dateStr, von, bis, type: apptType, location: effLocation || undefined },
+            appointment: { title, dateStr, von: vonDisp, bis: bisDisp, type: apptType, location: effLocation || undefined },
             recipients: [...persons.values()],
           } })
           if (pe) throw new Error(pe.message)
@@ -705,7 +713,7 @@ export default function AppointmentModal({
         for (const tgt of mailTargets) {
           try {
             const html = buildInviteHtml({
-              firstName: tgt.firstName, isEdit, title, dateStr, von, bis, apptType,
+              firstName: tgt.firstName, isEdit, title, dateStr, von: vonDisp, bis: bisDisp, apptType,
               zoomLink: effZoomLink || undefined, zoomPassword: effZoomPassword || undefined,
               location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
               phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
@@ -770,7 +778,7 @@ export default function AppointmentModal({
               shortenUrl(gcalHref),
             ])
             const rsvpText = yes ? `\n\n✅ Sagst du mir kurz zu? Ein Klick genügt:\n${yes}\n(Falls es nicht passt: ${no})` : ''
-            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${von}–${bis} Uhr${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalShort}\n\nBis bald!\nSven · Happy Property`
+            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${vonDisp}–${bisDisp} Uhr${tzHint}${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalShort}\n\nBis bald!\nSven · Happy Property`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
