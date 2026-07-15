@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { ReactNode } from 'react'
-import { useAuth, ROLE_META, type UserRole } from '../lib/auth'
+import { useAuth, ROLE_META, hasPerm, type UserRole, type PermissionArea } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import LanguageSwitcher from './LanguageSwitcher'
 import AppointmentPrepPopup from './crm/AppointmentPrepPopup'
@@ -138,13 +138,30 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/newsletter',    key: 'crm.nav.newsletter'   },
   ]
 
-  // Rolle 'funnel' (Mitarbeiter, z.B. Giona): sieht NUR den Termin-Funnel —
-  // Statistik + Inhalts-Editor, sonst nichts.
+  // Rolle 'funnel' (Legacy-Mitarbeiter): sieht NUR den Termin-Funnel.
   const isFunnelUser = profile?.role === 'funnel'
   const funnelNavItems = [
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
     { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
   ]
+
+  // Rolle 'mitarbeiter': flache, nach freigeschalteten Rechten gefilterte CRM-Nav —
+  // „schön übersichtlich, nur was sie brauchen". Admin/Verwalter haben ihre eigene Nav.
+  const isStaff = profile?.role === 'mitarbeiter'
+  const staffNavItemsAll: { to: string; key: string; perm: PermissionArea }[] = [
+    { to: '/admin/crm',                key: 'crm.nav.dashboard',   perm: 'pipeline' },
+    { to: '/admin/crm/pipeline',       key: 'crm.nav.pipeline',    perm: 'pipeline' },
+    { to: '/admin/crm/leads',          key: 'crm.nav.leads',       perm: 'pipeline' },
+    { to: '/admin/crm/postausgang',    key: 'crm.nav.outbox',      perm: 'pipeline' },
+    { to: '/admin/crm/calendar',       key: 'crm.nav.calendar',    perm: 'pipeline' },
+    { to: '/admin/crm/projects',       key: 'crm.nav.projects',    perm: 'pipeline' },
+    { to: '/admin/crm/funnel',         key: 'crm.nav.funnel',      perm: 'funnel'   },
+    { to: '/admin/crm/funnel-editor',  key: 'crm.nav.funnelEditor',perm: 'funnel'   },
+    { to: '/admin/crm/newsletter',     key: 'crm.nav.newsletter',  perm: 'funnel'   },
+    { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
+    { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
+  ]
+  const staffNavItems = staffNavItemsAll.filter(i => hasPerm(profile, i.perm))
 
   // CRM Settings-Untermenü-Einträge
   // Nachrichten je Stage (stages) ersetzt die alten Einzelseiten
@@ -389,7 +406,21 @@ export default function DashboardLayout({ children, basePath }: Props) {
                 </>
               )}
 
-              {!isAdmin && !isFunnelUser && (
+              {/* ── Mitarbeiter: nur freigeschaltete Bereiche ── */}
+              {isStaff && (
+                <>
+                  {staffNavItems.map(({ to, key }) => (
+                    <Link key={to} to={to}
+                      className={navLinkClass(to)}
+                      style={isActive(to) ? { backgroundColor: '#ff795d' } : undefined}
+                    >
+                      {t(key)}
+                    </Link>
+                  ))}
+                </>
+              )}
+
+              {!isAdmin && !isFunnelUser && !isStaff && (
                 <>
                   {defaultNavItems.map(({ to, key }) => (
                     <Link key={to} to={to}
@@ -592,8 +623,38 @@ export default function DashboardLayout({ children, basePath }: Props) {
         </nav>
       )}
 
+      {/* ── Mobile Bottom Navigation: Mitarbeiter (freigeschaltete Bereiche + Profil) ── */}
+      {isStaff && (
+        <nav
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+        >
+          <div className="flex items-stretch justify-around">
+            {staffNavItems.slice(0, 4).map(({ to, key }) => (
+              <Link key={to} to={to}
+                className={`flex flex-col items-center gap-0.5 px-2 py-2.5 flex-1 transition-colors
+                            ${isActive(to) ? 'text-hp-highlight' : 'text-gray-400'}`}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                <span className="text-[10px] font-medium font-body truncate max-w-[64px]">{t(key)}</span>
+              </Link>
+            ))}
+            <Link to="/profile"
+              className={`flex flex-col items-center gap-0.5 px-2 py-2.5 flex-1 transition-colors
+                          ${isActive('/profile') ? 'text-hp-highlight' : 'text-gray-400'}`}>
+              <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold font-body shrink-0"
+                style={{ backgroundColor: isActive('/profile') ? 'var(--color-highlight)' : '#9ca3af' }}>
+                {initials}
+              </span>
+              <span className="text-[10px] font-medium font-body">{t('nav.profile')}</span>
+            </Link>
+          </div>
+        </nav>
+      )}
+
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
-      {!isAdmin && !isFunnelUser && (
+      {!isAdmin && !isFunnelUser && !isStaff && (
         <nav
           className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}

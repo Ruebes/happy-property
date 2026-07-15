@@ -130,28 +130,41 @@ export default function App() {
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
+            </Route>
+
+            {/* ── Funnel & Newsletter (Recht 'funnel') ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter', 'funnel']} permission="funnel" />}>
+              <Route path="/admin/crm/funnel"            element={<FunnelStats />} />
+              <Route path="/admin/crm/funnel-editor"     element={<FunnelEditor />} />
               <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
             </Route>
 
-            {/* ── Admin + Funnel-Redaktion (Mitarbeiter-Rolle 'funnel') ── */}
-            <Route element={<ProtectedRoute allowedRoles={['admin', 'funnel']} />}>
-              <Route path="/admin/crm/funnel"            element={<FunnelStats />} />
-              <Route path="/admin/crm/funnel-editor"     element={<FunnelEditor />} />
-            </Route>
-
-            <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+            {/* ── CRM-Einstellungen (nur Admin/Verwalter) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter']} />}>
+              <Route path="/admin/crm/settings"             element={<CrmSettings />} />
               <Route path="/admin/crm/settings/stages"      element={<CrmStageMessages />} />
               <Route path="/admin/crm/settings/ai"          element={<CrmAiAgent />} />
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
               <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />
-              <Route path="/admin/crm/settings/contacts"    element={<CrmContacts />} />
-              <Route path="/admin/crm/settings/invoices"    element={<CrmInvoiceSettings />} />
-              <Route path="/admin/properties/:id"        element={<PropertyDetailRoute />} />
+              <Route path="/admin/properties/:id"           element={<PropertyDetailRoute />} />
+              <Route path="/verwaltung/bookings"            element={<VerwalterBookings />} />
+              <Route path="/verwalter/properties/:id"       element={<PropertyDetailRoute />} />
             </Route>
 
-            {/* ── Admin + Verwalter (CRM + Verwaltung) ── */}
-            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter']} />}>
+            {/* ── Kontakte (Recht 'contacts') — Geschäftskontakte, Developer & Mitarbeiter ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="contacts" />}>
+              <Route path="/admin/crm/settings/contacts"    element={<CrmContacts />} />
+            </Route>
+
+            {/* ── Rechnungen (Recht 'invoices') ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="invoices" />}>
+              <Route path="/admin/crm/invoices"             element={<CrmInvoices />} />
+              <Route path="/admin/crm/settings/invoices"    element={<CrmInvoiceSettings />} />
+            </Route>
+
+            {/* ── Pipeline & Leads (Recht 'pipeline') — inkl. Projekte für Deck-Erstellung ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="pipeline" />}>
               <Route path="/admin/crm"             element={<CrmDashboard />} />
               <Route path="/admin/crm/pipeline"    element={<CrmPipeline />} />
               <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
@@ -160,12 +173,8 @@ export default function App() {
               <Route path="/admin/crm/archived"    element={<CrmArchived />} />
               <Route path="/admin/crm/projects"       element={<CrmProjects />} />
               <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />
-              <Route path="/admin/crm/settings"    element={<CrmSettings />} />
               <Route path="/admin/crm/postausgang" element={<CrmPostausgang />} />
-              <Route path="/admin/crm/invoices"    element={<CrmInvoices />} />
               <Route path="/admin/crm/calendar"    element={<CrmCalendar />} />
-              <Route path="/verwaltung/bookings"   element={<VerwalterBookings />} />
-              <Route path="/verwalter/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 
             {/* ── Verwalter ── */}

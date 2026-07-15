@@ -34,7 +34,17 @@ function setCachedProfile(profile: Profile | null) {
 }
 
 // ── Rollen ─────────────────────────────────────────────────────
-export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'funnel'
+export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'funnel' | 'mitarbeiter'
+
+// Einzeln zuschaltbare Mitarbeiter-Rechte (Bereiche). Admin/Verwalter haben immer alles.
+export type PermissionArea = 'pipeline' | 'funnel' | 'decks' | 'invoices' | 'contacts'
+export const PERMISSION_AREAS: { key: PermissionArea; label: string }[] = [
+  { key: 'pipeline', label: 'Pipeline & Leads' },
+  { key: 'funnel',   label: 'Funnel & Newsletter' },
+  { key: 'decks',    label: 'Sales-Decks erstellen' },
+  { key: 'invoices', label: 'Rechnungen' },
+  { key: 'contacts', label: 'Kontakte' },
+]
 
 export interface Profile {
   id: string
@@ -44,6 +54,15 @@ export interface Profile {
   role: UserRole
   language: 'de' | 'en'
   verwaltung_id: string | null
+  permissions: Partial<Record<PermissionArea, boolean>>
+}
+
+// Zugriff auf einen Bereich? Admin/Verwalter immer; Mitarbeiter nur bei gesetztem Recht.
+export function hasPerm(profile: Profile | null | undefined, area: PermissionArea): boolean {
+  if (!profile) return false
+  if (profile.role === 'admin' || profile.role === 'verwalter') return true
+  if (profile.role === 'mitarbeiter') return !!profile.permissions?.[area]
+  return false
 }
 
 interface AuthState {
@@ -73,8 +92,19 @@ export function roleToPath(role: UserRole | undefined): string {
     case 'verwalter':  return '/verwalter/dashboard'
     case 'feriengast': return '/feriengast/dashboard'
     case 'funnel':     return '/admin/crm/funnel'
+    case 'mitarbeiter': return '/admin/crm'
     default:           return '/eigentuemer/dashboard'
   }
+}
+
+// Landeseite für Mitarbeiter = erste freigeschaltete Fläche (sonst Profil).
+export function landingFor(profile: Profile | null | undefined): string {
+  if (profile?.role !== 'mitarbeiter') return roleToPath(profile?.role)
+  if (hasPerm(profile, 'pipeline')) return '/admin/crm'
+  if (hasPerm(profile, 'funnel'))   return '/admin/crm/funnel'
+  if (hasPerm(profile, 'invoices')) return '/admin/crm/invoices'
+  if (hasPerm(profile, 'contacts')) return '/admin/crm/settings/contacts'
+  return '/profile'
 }
 
 // ── Rollenfarben ──────────────────────────────────────────────
@@ -84,6 +114,7 @@ export const ROLE_META: Record<UserRole, { color: string }> = {
   eigentuemer: { color: 'bg-green-100  text-green-800'  },
   feriengast:  { color: 'bg-amber-100  text-amber-800'  },
   funnel:      { color: 'bg-rose-100   text-rose-800'   },
+  mitarbeiter: { color: 'bg-teal-100   text-teal-800'   },
 }
 
 // Passwort-Setzen-Kontext: sind wir auf /set-password oder kam der Nutzer über
@@ -145,7 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, email, full_name, phone, role, language, verwaltung_id')
+        .select('id, email, full_name, phone, role, language, verwaltung_id, permissions')
         .eq('id', userId)
         .single()
       if (error || !data) {
@@ -155,7 +186,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return null
       }
-      return data as Profile
+      const p = data as Profile
+      return { ...p, permissions: p.permissions ?? {} }
     } catch {
       // fetch timed out (AbortError) oder Netzwerkfehler → einmal retry
       if (attempt < 2) {
@@ -314,7 +346,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       updatePassword,
       resetPasswordEmail,
       clearPasswordSetup,
-      dashboardPath: roleToPath(state.profile?.role),
+      dashboardPath: landingFor(state.profile),
     }}>
       {children}
     </AuthContext.Provider>
