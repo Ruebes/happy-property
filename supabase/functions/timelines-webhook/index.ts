@@ -79,11 +79,12 @@ Deno.serve(async (req) => {
     let lead: { id: string } | null = null
     if (digits.length >= 7) {
       const suffix = digits.slice(-8)
+      // Normalisierter Match via RPC: vergleicht NUR die Ziffern der gespeicherten Nummer
+      // (regexp_replace \D). Der alte ilike-Match scheiterte an Formatierung — z.B. bei
+      // "+49 1515 8415620" ist die Endung "58415620" wegen des Leerzeichens KEIN Substring,
+      // wodurch eingehende Antworten still verworfen wurden (Thomas' Terminbestätigung).
       const { data: rows, error: lErr } = await supabase
-        .from('leads')
-        .select('id')
-        .or(`phone.ilike.*${suffix}*,whatsapp.ilike.*${suffix}*`)
-        .order('created_at', { ascending: false })
+        .rpc('find_leads_by_phone_suffix', { suffix })
       if (lErr) {
         // DB-Fehler NICHT verschlucken — sonst ginge eine eingehende „STOPP"-Abmeldung
         // verloren (Function meldete 200, Provider würde nicht erneut zustellen).

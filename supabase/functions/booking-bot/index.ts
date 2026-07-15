@@ -794,9 +794,24 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[] }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
     if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
+    // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt
+    // buchen (Kalender + CRM-Termin + Bestätigung) — für den Fall, dass eine Bestätigung
+    // den Bot nie erreicht hat (z.B. verworfene Inbound-Nachricht). meeting_type default whatsapp.
+    if (body.action === 'book_now') {
+      if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
+      const { data: conv } = await admin.from('booking_conversations').select('id, lead_id, deal_id, chosen_slot, proposed_slots')
+        .eq('lead_id', body.lead_id).not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
+      const cc = conv as { id: string; lead_id: string; deal_id: string | null; chosen_slot: Slot | null; proposed_slots: Slot[] | null } | null
+      const slot = cc?.chosen_slot ?? cc?.proposed_slots?.[0] ?? null
+      if (!cc || !slot) return json({ ok: false, error: 'keine aktive Konversation mit Slot' }, 400)
+      const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', body.lead_id).maybeSingle()
+      const type = body.meeting_type === 'zoom' ? 'zoom' : 'whatsapp'
+      await book(admin, cc, lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }, slot, type)
+      return json({ ok: true, booked: slot.label, type })
+    }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
