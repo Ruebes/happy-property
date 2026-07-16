@@ -312,17 +312,18 @@ Fülle nur passende Felder, sonst null.`
 // Erkennt in einer FREIEN (nicht-Dialog) WhatsApp, ob der Kunde einen Termin/Anruf/
 // ein Gespräch ausmachen möchte. Konservativ (nur klare Terminwünsche), damit der
 // Bot nicht bei Produktfragen/Smalltalk reingrätscht. Optional Zeit-Hinweise.
-interface ApptReq { wants: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
+interface ApptReq { wants: boolean; onsite: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
 async function detectApptRequest(text: string): Promise<ApptReq> {
-  const off: ApptReq = { wants: false, day_hint: null, daypart: null, time_hint: null, on_date: null, after_date: null }
+  const off: ApptReq = { wants: false, onsite: false, day_hint: null, daypart: null, time_hint: null, on_date: null, after_date: null }
   const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return off
   const tp = berlinParts(new Date())
   const WDN = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
   const todayStr = `${tp.y}-${String(tp.mo).padStart(2, '0')}-${String(tp.d).padStart(2, '0')}`
-  const sys = `Du prüfst EINE WhatsApp-Nachricht eines Immobilien-Interessenten (deutsch). HEUTE: ${WDN[tp.wd]}, ${todayStr} (Europe/Berlin).
-Frage: Möchte die Person einen TERMIN / Anruf / Videocall / ein Gespräch / Treffen mit dem Berater ausmachen ODER fragt sie danach (jetzt oder später)?
-wants=true NUR bei klarem Termin-/Gesprächswunsch. Beispiele JA: "können wir telefonieren?", "hast du morgen Zeit?", "lass uns einen Termin machen", "wann passt es dir?", "ruf mich an", "können wir uns nächste Woche kurz sprechen".
-wants=false bei: reinen Produkt-/Sachfragen, Smalltalk, Dank, "schick mir den Plan", Meinungen, Objektwünschen. Im Zweifel false.
+  const sys = `Du prüfst EINE WhatsApp-Nachricht aus einem Immobilien-Chat (deutsch). Sie kann vom KUNDEN oder von SVEN (Berater) stammen. HEUTE: ${WDN[tp.wd]}, ${todayStr} (Europe/Berlin).
+Frage 1 (wants): Wird gerade eine Zeit für einen TERMIN/Anruf/Videocall/Gespräch ABGESTIMMT, VORGESCHLAGEN oder ERFRAGT, sodass eine Antwort/Zusage des Gegenübers nötig ist (egal ob Kunde oder Sven anfängt)?
+wants=true: "können wir telefonieren?", "hast du morgen Zeit?", "lass uns einen Termin machen", "wann passt es dir?", "sollen wir kurz sprechen?", "wollen wir einen Call machen?".
+wants=false bei: reinen Produkt-/Sachfragen, Smalltalk, Dank, "schick mir den Plan", Meinungen, Objektwünschen; reiner BESTÄTIGUNG eines schon vereinbarten Termins ("Freitag 12 passt", "ok bis dann"); Verweis auf VERGANGENES ("hatten ja telefoniert"); und EINSEITIGER Sofort-/Ankündigung OHNE Abstimmungsbedarf ("ich ruf dich gleich/jetzt/später an", "ich melde mich gleich"). Nur wenn eine Zeit erst noch gemeinsam gefunden werden muss → true. Im Zweifel false.
+Frage 2 (onsite): Geht es klar um einen VOR-ORT-Termin? onsite=true bei Besichtigung/Viewing, Objektbesichtigung, persönliches Treffen vor Ort, "vorbeikommen", "die Wohnung/Objekt anschauen", "vor Ort treffen". onsite=false bei Telefonat/Call/Videocall/Zoom/WhatsApp-Anruf ODER wenn die Art offen/unklar ist (Default false).
 Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hint; daypart vormittags|nachmittags|abends; time_hint "HH:MM"; on_date für GENAU EIN Datum bzw. after_date für frühestes Datum, je "YYYY-MM-DD"). Sonst null. Gib NUR das Tool emit zurück.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -332,7 +333,8 @@ Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hin
         messages: [{ role: 'user', content: text }],
         tool_choice: { type: 'tool', name: 'emit' },
         tools: [{ name: 'emit', description: 'Terminwunsch?', input_schema: { type: 'object', properties: {
-          wants: { type: 'boolean' }, day_hint: { type: ['string', 'null'] },
+          wants: { type: 'boolean' }, onsite: { type: 'boolean', description: 'true = Vor-Ort-Termin/Viewing' },
+          day_hint: { type: ['string', 'null'] },
           daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
           time_hint: { type: ['string', 'null'] }, on_date: { type: ['string', 'null'] }, after_date: { type: ['string', 'null'] },
         }, required: ['wants'] } }],
@@ -841,13 +843,11 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   const { data: active } = await admin.from('booking_conversations').select('id')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
-  if (!force) {
-    const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
-    if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
-  }
-  // Ist es überhaupt ein Terminwunsch? Sonst nichts tun (fachliche Themen bleiben bei Sven).
+  // Ist es überhaupt ein (Remote-)Terminwunsch? Vor-Ort-Termine (Viewing/Besichtigung)
+  // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
   const det = await detectApptRequest(text)
   if (!det.wants && !force) return json({ ok: true, skipped: 'no_appt_intent' })
+  if (det.onsite && !force) return json({ ok: true, skipped: 'onsite_termin' })
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
   const phone = l?.whatsapp || l?.phone

@@ -2164,8 +2164,8 @@
       "botCalendarNote": "Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.",
       "botLiveWarn": "Aktiv: Der Bot führt ECHTE WhatsApp-Gespräche mit echten Kunden und bucht echte Termine. Zum Stoppen den Schalter wieder auf Aus stellen.",
       "aeTitle": "HAPPY klinkt sich bei Terminanfragen ein",
-      "aeDesc": "Fragt ein Kunde mitten im Chat nach einem Termin/Anruf, stellt sich HAPPY (Svens virtuelle Assistentin) kurz vor und schlägt sofort freie Zeiten vor — auch während ein persönliches Gespräch läuft. Fachliche Fragen bleiben bei dir. Den HAPPY-Text bearbeitest du bei den Bot-Nachrichten. Wirkt nur, wenn der Termin-Bot oben AN ist.",
-      "aeConfirm": "Fragt ein Kunde im WhatsApp-Chat nach einem Termin/Anruf, klinkt sich HAPPY (Svens virtuelle Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor — auch mitten in einem laufenden Gespräch. Fachliche Fragen bleiben bei dir. Jetzt scharfschalten?",
+      "aeDesc": "Sobald im Chat ein Termin/Anruf aufkommt — vom Kunden ODER von dir — stellt sich HAPPY (Svens virtuelle Assistentin) kurz vor, schlägt sofort freie Zeiten vor und bucht. Vor-Ort-Termine (Viewing/Besichtigung) macht der Bot NICHT — die planst du selbst. Fachliche Fragen bleiben bei dir. HAPPY-Text bei den Bot-Nachrichten editierbar. Wirkt nur, wenn der Termin-Bot oben AN ist.",
+      "aeConfirm": "Sobald im WhatsApp-Chat ein Termin/Anruf aufkommt — vom Kunden oder von dir selbst — klinkt sich HAPPY (Svens virtuelle Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor (auch mitten im Gespräch). Vor-Ort-Termine/Viewings macht der Bot NICHT. Jetzt dauerhaft aktivieren?",
       "aeOn": "✅ HAPPY klinkt sich bei Terminanfragen ein",
       "aeOff": "Auto-Einklinken aus"
     },

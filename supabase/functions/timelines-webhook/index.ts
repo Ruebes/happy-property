@@ -30,6 +30,10 @@ function detectsStopIntent(text: string): boolean {
   return STOP_PATTERNS.some((re) => re.test(text))
 }
 
+// Günstiger Vorfilter: könnte die Nachricht überhaupt um einen Termin gehen? Nur
+// dann fragt der Bot die KI (spart KI-Aufrufe bei „danke"/„ok"/Produktfragen).
+const APPT_HINT = /termin|telefon|anruf|\bruf|\bcall\b|zoom|video|sprechen|besprech|treffen|meeting|\bzeit\b|\bwann\b|uhrzeit|quatschen/i
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -57,10 +61,36 @@ Deno.serve(async (req) => {
     // AUSGEHENDE/eigene Nachrichten (auch das Echo unserer Bot-Nachrichten!) dürfen
     // NIE verarbeitet werden — sonst antwortet der Bot auf sich selbst (Endlosschleife).
     const acctPhone = payload.whatsapp_account?.phone
+    const viaApi = payload.message?.origin === 'Public API'
     const isOutbound = payload.message?.direction === 'sent'
-      || payload.message?.origin === 'Public API'
+      || viaApi
       || (payload.message?.sender?.phone && acctPhone && payload.message.sender.phone === acctPhone)
-    if (isOutbound) return new Response('OK (outbound)', { headers: corsHeaders })
+    if (isOutbound) {
+      // Sven tippt SELBST im Chat (nicht der Bot / nicht die CRM-API: origin 'Public API')
+      // und fängt mit einem Termin an → der Bot übernimmt die Terminlogistik. Kunde = Chat-
+      // Nummer (Empfänger). engage entscheidet remote vs. Vor-Ort (Vor-Ort macht Sven selbst).
+      const outText = payload.message?.text ?? payload.message?.body
+      const custPhone = payload.chat?.phone ?? payload.contact?.phone
+      if (!viaApi && outText && custPhone && APPT_HINT.test(outText)) {
+        const digits = String(custPhone).replace(/\D/g, '')
+        if (digits.length >= 7) {
+          try {
+            const { data: rows } = await supabase.rpc('find_leads_by_phone_suffix', { suffix: digits.slice(-8) })
+            const lead = ((rows ?? []) as { id: string }[])[0]
+            if (lead) {
+              const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'engage', lead_id: lead.id, text: outText }),
+              }).then(r => r.text()).catch(e => console.error('[timelines-webhook] engage (Sven-outbound):', e))
+              const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+              if (er) er.waitUntil(p); else await p
+            }
+          } catch (e) { console.warn('[timelines-webhook] Sven-outbound engage:', e) }
+        }
+      }
+      return new Response('OK (outbound)', { headers: corsHeaders })
+    }
 
     // Ab hier: nur echte EINGEHENDE Kundennachrichten. Kunden-Nummer = Absender.
     const rawPhone = payload.message?.sender?.phone ?? payload.chat?.phone ?? payload.contact?.phone
@@ -193,17 +223,20 @@ Deno.serve(async (req) => {
           .not('state', 'in', '(booked,handoff,expired)')
           .gt('expires_at', new Date().toISOString())
           .limit(1)
-        // Aktives Gespräch → normale Antwortverarbeitung. Sonst → der Bot prüft, ob
-        // der Kunde nach einem Termin fragt und klinkt sich ggf. selbst ein (engage,
-        // eigener Schalter booking_bot_auto_engage). Beides im Hintergrund.
-        const botAction = (conv && conv.length) ? 'reply' : 'engage'
-        const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
-          method:  'POST',
-          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ action: botAction, lead_id: lead.id, text }),
-        }).then(r => r.text()).catch(e => console.error(`[timelines-webhook] booking-bot ${botAction} Fehler:`, e))
-        const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
-        if (er) er.waitUntil(p); else await p
+        // Aktives Gespräch → normale Antwortverarbeitung (immer). Sonst → nur bei
+        // plausiblem Termin-Bezug prüft der Bot, ob der Kunde einen (Remote-)Termin will
+        // und klinkt sich ein (engage). Beides im Hintergrund.
+        const hasConv = !!(conv && conv.length)
+        if (hasConv || APPT_HINT.test(text)) {
+          const botAction = hasConv ? 'reply' : 'engage'
+          const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+            method:  'POST',
+            headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ action: botAction, lead_id: lead.id, text }),
+          }).then(r => r.text()).catch(e => console.error(`[timelines-webhook] booking-bot ${botAction} Fehler:`, e))
+          const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+          if (er) er.waitUntil(p); else await p
+        }
       }
     }
 
