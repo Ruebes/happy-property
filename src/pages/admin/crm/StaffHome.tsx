@@ -86,10 +86,11 @@ export default function StaffHome() {
       // Prefs laden; leere/unbekannte Werte → Standard = alle verfügbaren Widgets.
       const prefs = (pRes.data?.dashboard_prefs ?? {}) as { widgets?: unknown }
       const saved = Array.isArray(prefs.widgets) ? (prefs.widgets as string[]) : null
-      const cleaned = saved
+      // saved === null → noch nie angepasst → Standard = alle verfügbaren Widgets.
+      // saved === [] (bewusst alle aus) bleibt leer. Ungültige (Recht entzogen) fallen raus.
+      setOrder(saved
         ? saved.filter((id): id is WidgetId => availableIds.includes(id as WidgetId))
-        : availableIds
-      setOrder(cleaned.length ? cleaned : availableIds)
+        : availableIds)
     } catch (err) {
       console.error('[StaffHome] fetch:', err)
       setTasks([]); setOrder(availableIds)
