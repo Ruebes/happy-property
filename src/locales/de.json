@@ -1240,7 +1240,8 @@
       "due": "Frist",
       "dueLabel": "Frist (optional)",
       "overdue": "überfällig",
-      "accept": "Aufgabe annehmen"
+      "accept": "Aufgabe annehmen",
+      "dragHint": "Tipp: Kachel in eine andere Spalte ziehen, um den Status zu ändern."
     },
     "home": {
       "hello": "Hallo",

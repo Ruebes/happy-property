@@ -272,7 +272,23 @@ export default function Tasks() {
   const [creating, setCreating] = useState(false)
   const [detail, setDetail] = useState<Task | null>(null)
   const [toast, setToast]   = useState('')
+  const [dragId, setDragId]     = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState<TaskStatus | null>(null)
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
+
+  // Kachel per Drag & Drop in eine andere Spalte ziehen = Status ändern
+  // (z.B. „In Arbeit" = angenommen). Optimistisch mit Rollback bei Fehler.
+  const handleDrop = async (status: TaskStatus) => {
+    const id = dragId
+    setDragId(null); setDragOver(null)
+    if (!id) return
+    const tk = tasks.find(x => x.id === id)
+    if (!tk || tk.status === status) return
+    const prev = tasks
+    setTasks(ts => ts.map(x => x.id === id ? { ...x, status } : x))
+    const { error } = await supabase.from('crm_tasks').update({ status }).eq('id', id)
+    if (error) { setTasks(prev); showToast(t('common.error', 'Fehler')) }
+  }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -306,6 +322,7 @@ export default function Tasks() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{t('crm.tasks.title', 'Aufgaben')}</h1>
             <p className="text-sm text-gray-500 mt-0.5">{t('crm.tasks.subtitle', 'Aufgaben stellen, zuweisen und den Status verfolgen. Erledigte werden zum Tagesende archiviert.')}</p>
+            <p className="hidden md:block text-xs text-gray-400 mt-0.5">{t('crm.tasks.dragHint', 'Tipp: Kachel in eine andere Spalte ziehen, um den Status zu ändern.')}</p>
           </div>
           <button onClick={() => setCreating(true)} className="px-3 py-1.5 rounded-xl text-white text-sm font-medium whitespace-nowrap" style={{ backgroundColor: '#ff795d' }}>
             {t('crm.tasks.add', '+ Aufgabe')}
@@ -319,7 +336,11 @@ export default function Tasks() {
             {COLUMNS.map(col => {
               const colTasks = tasks.filter(x => x.status === col.status)
               return (
-                <div key={col.status} className="bg-gray-50 rounded-2xl p-3">
+                <div key={col.status}
+                  onDragOver={e => { e.preventDefault(); setDragOver(col.status) }}
+                  onDragLeave={() => setDragOver(null)}
+                  onDrop={e => { e.preventDefault(); handleDrop(col.status) }}
+                  className={`rounded-2xl p-3 transition-colors ${dragOver === col.status ? 'bg-orange-50 ring-2 ring-orange-300' : 'bg-gray-50'}`}>
                   <div className="flex items-center gap-2 mb-3 px-1">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.accent }} />
                     <span className="text-sm font-semibold text-gray-700">{col.label}</span>
@@ -331,7 +352,10 @@ export default function Tasks() {
                       const mine = task.created_by === myId
                       return (
                         <button key={task.id} onClick={() => setDetail(task)}
-                          className="w-full text-left rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow"
+                          draggable
+                          onDragStart={() => setDragId(task.id)}
+                          onDragEnd={() => { setDragId(null); setDragOver(null) }}
+                          className={`w-full text-left rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing ${dragId === task.id ? 'opacity-50' : ''}`}
                           style={{ backgroundColor: cardBg(task.status), borderLeft: `3px solid ${accentOf(task.status)}` }}>
                           <div className="flex items-start justify-between gap-2">
                             <span className="font-medium text-gray-900 text-sm">{task.title}</span>

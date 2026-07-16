@@ -1240,7 +1240,8 @@
       "due": "Due",
       "dueLabel": "Deadline (optional)",
       "overdue": "overdue",
-      "accept": "Accept task"
+      "accept": "Accept task",
+      "dragHint": "Tip: drag a card to another column to change its status."
     },
     "home": {
       "hello": "Hello",
