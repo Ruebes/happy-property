@@ -111,7 +111,11 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       // Zustellung (Mail/WhatsApp an Externe, Mail an Interne) im Hintergrund
       supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[Tasks] dispatch:', e))
       onCreated(t('crm.tasks.created', 'Aufgabe angelegt'))
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setSaving(false) }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message
+        : (e && typeof e === 'object' && 'message' in e) ? String((e as { message: unknown }).message) : 'Fehler'
+      console.error('[Tasks] create:', e); setErr(msg); setSaving(false)
+    }
   }
 
   const input = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
