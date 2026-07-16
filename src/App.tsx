@@ -57,6 +57,7 @@ const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
 const Newsletter            = lazy(() => import('./pages/admin/crm/Newsletter'))
+const CrmTasks              = lazy(() => import('./pages/admin/crm/Tasks'))
 
 // Verwalter-Seiten
 const VerwalterBookings = lazy(() => import('./pages/verwaltung/Bookings'))
@@ -150,6 +151,11 @@ export default function App() {
               <Route path="/admin/properties/:id"           element={<PropertyDetailRoute />} />
               <Route path="/verwaltung/bookings"            element={<VerwalterBookings />} />
               <Route path="/verwalter/properties/:id"       element={<PropertyDetailRoute />} />
+            </Route>
+
+            {/* ── Aufgaben (alle Mitarbeitenden, kein Bereichs-Recht nötig) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} />}>
+              <Route path="/admin/crm/tasks"                element={<CrmTasks />} />
             </Route>
 
             {/* ── Kontakte (Recht 'contacts') — Geschäftskontakte, Developer & Mitarbeiter ── */}

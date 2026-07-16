@@ -6,6 +6,7 @@ import { useAuth, ROLE_META, hasPerm, type UserRole, type PermissionArea } from 
 import { supabase } from '../lib/supabase'
 import LanguageSwitcher from './LanguageSwitcher'
 import AppointmentPrepPopup from './crm/AppointmentPrepPopup'
+import TaskNotifications from './crm/TaskNotifications'
 
 interface Props {
   children: ReactNode
@@ -130,6 +131,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
   ]
   const crmMoreItems = [
     { to: '/admin/crm',               key: 'crm.nav.dashboard'    },
+    { to: '/admin/crm/tasks',         key: 'crm.nav.tasks'        },
     { to: '/admin/crm/projects',      key: 'crm.nav.projects'     },
     { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'     },
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics'   },
@@ -161,7 +163,12 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
   ]
-  const staffNavItems = staffNavItemsAll.filter(i => hasPerm(profile, i.perm))
+  // Aufgaben stehen JEDEM Mitarbeiter offen (kein Bereichs-Recht), davor die
+  // rechte-gefilterten Bereiche.
+  const staffNavItems: { to: string; key: string }[] = [
+    { to: '/admin/crm/tasks', key: 'crm.nav.tasks' },
+    ...staffNavItemsAll.filter(i => hasPerm(profile, i.perm)).map(({ to, key }) => ({ to, key })),
+  ]
 
   // CRM Settings-Untermenü-Einträge
   // Nachrichten je Stage (stages) ersetzt die alten Einzelseiten
@@ -586,6 +593,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
 
       {/* Termin-Vorbereitung: poppt ~2 Min vor einem Termin auf (nur Admin) */}
       {isAdmin && <AppointmentPrepPopup />}
+      <TaskNotifications />
 
       {/* ── Mobile Bottom Navigation: Funnel-Mitarbeiter (2 Seiten + Profil) ── */}
       {isFunnelUser && (

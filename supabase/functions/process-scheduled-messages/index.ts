@@ -211,6 +211,21 @@ Deno.serve(async (req: Request) => {
   const waApiKey    = Deno.env.get('TIMELINES_API_KEY')  ?? ''
   const waSender    = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
 
+  // ── Aufgaben-Archivierung: erledigte Aufgaben zum Tagesende archivieren ──────
+  // Eine Aufgabe, die auf 'erledigt' steht und deren Erledigung VOR dem heutigen
+  // Tag (Europe/Berlin) liegt, wandert aus dem Board. So bleibt eine heute erledigte
+  // Aufgabe bis Tagesende sichtbar und verschwindet danach. Idempotent, läuft im 5-Min-Cron.
+  try {
+    const now = new Date()
+    const p: Record<string, string> = {}
+    for (const x of new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(now)) p[x.type] = x.value
+    const berlinWallMs = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second)
+    const offsetMs     = berlinWallMs - now.getTime()                              // Berlin-Offset zu UTC (DST-sicher)
+    const midnightUtc  = new Date(Date.UTC(+p.year, +p.month - 1, +p.day, 0, 0, 0) - offsetMs).toISOString()
+    await supabase.from('crm_tasks').update({ archived: true })
+      .eq('status', 'erledigt').eq('archived', false).lt('completed_at', midnightUtc)
+  } catch (e) { console.warn('[process-scheduled] Aufgaben-Archivierung:', e) }
+
   // ── Sicherheitsnetz: Terminerinnerungen für JEDEN zukünftigen Termin ─────────
   // Egal über welchen Weg gebucht wurde (Kalender manuell, Website-Funnel,
   // YouTube-/Meta-/Kanal-Link, WhatsApp-Bot, Calendly): jeder zukünftige Lead-Termin
