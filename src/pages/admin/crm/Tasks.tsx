@@ -36,12 +36,30 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
   const save = async () => {
     if (!title.trim()) { setErr(t('crm.tasks.titleRequired', 'Bitte einen Titel angeben.')); return }
     setSaving(true); setErr('')
+    const ttl = title.trim(); const desc = description.trim()
     try {
       const { error } = await supabase.from('crm_tasks').insert({
-        title: title.trim(), description: description.trim() || null,
+        title: ttl, description: desc || null,
         created_by: myId, assigned_to: assignedTo, status: 'offen',
       })
       if (error) throw error
+      // E-Mail an den zugewiesenen Mitarbeiter (nicht an sich selbst), fire-and-forget.
+      // Das In-App-Popup zeigt TaskNotifications auf dessen Seite separat an.
+      if (assignedTo !== myId) {
+        const rec = staff.find(s => s.id === assignedTo)
+        const me  = staff.find(s => s.id === myId)
+        if (rec?.email) {
+          const first = (rec.full_name || '').split(' ')[0]
+          supabase.functions.invoke('send-email', { body: {
+            to: rec.email,
+            subject: `Neue Aufgabe: ${ttl}`,
+            html: `<p>Hallo ${first},</p><p>${me?.full_name || 'Ein Kollege'} hat dir eine neue Aufgabe zugewiesen:</p>`
+              + `<p style="font-size:16px;font-weight:600;color:#111827;">${ttl.replace(/</g, '&lt;')}</p>`
+              + (desc ? `<blockquote style="border-left:3px solid #ff795d;padding-left:12px;color:#374151;white-space:pre-wrap;">${desc.replace(/</g, '&lt;')}</blockquote>` : '')
+              + `<p style="font-size:13px;color:#6b7280;">Du findest sie in der App unter <strong>Mehr → Aufgaben</strong>.</p>`,
+          } }).catch(e => console.warn('[Tasks] Zuweisungs-Mail:', e))
+        }
+      }
       onCreated(t('crm.tasks.created', 'Aufgabe angelegt'))
     } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setSaving(false) }
   }
