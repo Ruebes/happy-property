@@ -304,48 +304,193 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
 
   const assigneeLabel = (a: Assignee) => a.profile_id ? nameOf(a.profile_id) : `${a.ext_name ?? 'Extern'} (${chLabel(a.channel)})`
 
+  // ── Bearbeiten (nur Ersteller): Text + Zuständige + Kunden ────────────────
+  const [editing, setEditing] = useState(false)
+  const [eTitle, setETitle] = useState(task.title)
+  const [eDesc, setEDesc] = useState(task.description ?? '')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [exName, setExName] = useState(''); const [exEmail, setExEmail] = useState(''); const [exPhone, setExPhone] = useState(''); const [exCh, setExCh] = useState<Channel>('both')
+  const [custQuery, setCustQuery] = useState('')
+  const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
+
+  const startEdit = async () => {
+    setETitle(task.title); setEDesc(task.description ?? ''); setEditing(true)
+    if (contacts.length === 0) {
+      const [le, bz] = await Promise.all([
+        supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp').limit(1000),
+        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp').limit(1000),
+      ])
+      const list: Contact[] = []
+      for (const l of (le.data ?? []) as Record<string, string | null>[]) list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone })
+      for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? 'Kontakt'), email: b.email, phone: b.whatsapp || b.phone })
+      setContacts(list.filter(c => c.name))
+    }
+  }
+  const saveText = async () => {
+    if (!eTitle.trim()) return
+    setSavingEdit(true)
+    const { error } = await supabase.from('crm_tasks').update({ title: eTitle.trim(), description: eDesc.trim() || null }).eq('id', task.id)
+    setSavingEdit(false)
+    if (!error) { setEditing(false); onChanged() }
+  }
+  const dispatchNew = () => supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: task.id } }).catch(e => console.warn('[Tasks] dispatch:', e))
+  const toggleInternalEdit = async (pid: string) => {
+    const existing = assignees.find(a => a.profile_id === pid)
+    if (existing) await supabase.from('crm_task_assignees').delete().eq('id', existing.id)
+    else { await supabase.from('crm_task_assignees').insert({ task_id: task.id, profile_id: pid, channel: 'system' }); dispatchNew() }
+    await loadAll()
+  }
+  const addExternalEdit = async () => {
+    if (!exName.trim() || (!exEmail.trim() && !exPhone.trim())) return
+    await supabase.from('crm_task_assignees').insert({ task_id: task.id, ext_name: exName.trim(), ext_email: exEmail.trim() || null, ext_phone: exPhone.trim() || null, channel: exCh })
+    setExName(''); setExEmail(''); setExPhone(''); setExCh('both'); dispatchNew(); await loadAll()
+  }
+  const removeAssignee = async (id: string) => { await supabase.from('crm_task_assignees').delete().eq('id', id); await loadAll() }
+  const custMatches = custQuery.trim().length >= 2 ? contacts.filter(c => c.kind === 'lead' && c.name.toLowerCase().includes(custQuery.toLowerCase()) && !customers.some(x => x.lead_id === c.id)).slice(0, 6) : []
+  const addCustomerEdit = async (c: Contact) => { await supabase.from('crm_task_leads').insert({ task_id: task.id, lead_id: c.id }); setCustQuery(''); await loadAll() }
+  const removeCustomer = async (leadId: string) => { await supabase.from('crm_task_leads').delete().eq('task_id', task.id).eq('lead_id', leadId); await loadAll() }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-gray-900 truncate">{task.title}</h2>
+          <div className="min-w-0 flex-1">
+            {editing
+              ? <input value={eTitle} onChange={e => setETitle(e.target.value)} className={inputCls + ' font-semibold'} />
+              : <h2 className="text-lg font-semibold text-gray-900 truncate">{task.title}</h2>}
             <p className="text-xs text-gray-400 mt-0.5">{t('crm.tasks.from', 'von')} {nameOf(task.created_by)}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none shrink-0">✕</button>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            {iAmCreator && !editing && (
+              <button onClick={startEdit} className="text-base leading-none" title={t('common.edit', 'Bearbeiten')}>✏️</button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+          </div>
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto">
-          {task.description && <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>}
-
-          {/* Zuständige */}
-          {assignees.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.assignees', 'Zuständig')}</h3>
-              <div className="flex flex-wrap gap-1.5">
-                {assignees.map(a => (
-                  <span key={a.id} className="inline-flex items-center gap-1 text-xs rounded-full px-2.5 py-1 border"
-                    style={a.accepted_at ? { backgroundColor: '#fffbeb', borderColor: '#fde68a', color: '#92400e' } : { backgroundColor: '#f9fafb', borderColor: '#f1f1f1', color: '#374151' }}>
-                    {a.accepted_at && '✓ '}{assigneeLabel(a)}
-                  </span>
-                ))}
+          {editing ? (
+            <div className="space-y-2">
+              <textarea value={eDesc} onChange={e => setEDesc(e.target.value)} rows={3} className={inputCls} placeholder={t('crm.tasks.descPh', 'Details zur Aufgabe …')} />
+              <div className="flex gap-2">
+                <button onClick={saveText} disabled={savingEdit || !eTitle.trim()} className="px-3 py-1.5 rounded-lg text-white text-sm font-medium disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>{savingEdit ? '…' : t('common.save', 'Speichern')}</button>
+                <button onClick={() => setEditing(false)} className="px-3 py-1.5 rounded-lg text-sm text-gray-600 hover:bg-gray-100">{t('common.done', 'Fertig')}</button>
               </div>
             </div>
-          )}
+          ) : task.description ? (
+            <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>
+          ) : null}
 
-          {/* Verknüpfte Kunden mit Kontaktdaten */}
-          {customers.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.customers', 'Kunden')}</h3>
-              <div className="space-y-1.5">
-                {customers.map(c => (
-                  <div key={c.lead_id} className="text-xs bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
-                    <span className="font-medium text-gray-800">{c.name}</span>
-                    {(c.phone || c.email) && <span className="text-gray-500"> · {[c.phone, c.email].filter(Boolean).join(' · ')}</span>}
+          {editing ? (
+            <div className="space-y-3">
+              {/* Interne Zuständige */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.internalAssignees', 'Mitarbeiter')}</h3>
+                <div className="flex flex-wrap gap-1.5">
+                  {staff.map(s => {
+                    const on = assignees.some(a => a.profile_id === s.id)
+                    return (
+                      <button key={s.id} onClick={() => toggleInternalEdit(s.id)}
+                        className={`text-xs px-3 py-1.5 rounded-full border ${on ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                        style={on ? { backgroundColor: '#ff795d' } : undefined}>
+                        {(s.full_name || s.email)}{s.id === myId ? ` (${t('crm.tasks.me', 'ich')})` : ''}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              {/* Externe Zuständige */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.externalAssignees', 'Externe Personen (per Mail/WhatsApp)')}</h3>
+                {assignees.filter(a => !a.profile_id).length > 0 && (
+                  <div className="space-y-1.5 mb-2">
+                    {assignees.filter(a => !a.profile_id).map(a => (
+                      <div key={a.id} className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5">
+                        <span className="text-xs text-gray-700 truncate">{a.ext_name} · {a.ext_email || a.ext_phone} · <span className="text-gray-400">{chLabel(a.channel)}</span></span>
+                        <button onClick={() => removeAssignee(a.id)} className="text-gray-400 hover:text-red-500 text-xs shrink-0">✕</button>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
+                <div className="space-y-1.5 bg-gray-50 border border-gray-100 rounded-xl p-2.5">
+                  {contacts.length > 0 && (
+                    <select onChange={e => { const c = contacts.find(x => x.key === e.target.value); if (c) { setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? '') } e.currentTarget.selectedIndex = 0 }} className={inputCls + ' bg-white'}>
+                      <option value="">{t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}</option>
+                      {contacts.map(c => <option key={c.key} value={c.key}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>)}
+                    </select>
+                  )}
+                  <input value={exName} onChange={e => setExName(e.target.value)} className={inputCls} placeholder={t('crm.tasks.extName', 'Name')} />
+                  <div className="flex gap-1.5">
+                    <input value={exEmail} onChange={e => setExEmail(e.target.value)} className={inputCls} placeholder={t('crm.tasks.extEmail', 'E-Mail')} />
+                    <input value={exPhone} onChange={e => setExPhone(e.target.value)} className={inputCls} placeholder={t('crm.tasks.extPhone', 'Telefon')} />
+                  </div>
+                  <div className="flex gap-1.5">
+                    <select value={exCh} onChange={e => setExCh(e.target.value as Channel)} className={inputCls + ' bg-white'}>
+                      <option value="both">{t('crm.tasks.chBoth', 'Mail + WhatsApp')}</option>
+                      <option value="mail">{t('crm.tasks.chMail', 'Nur Mail')}</option>
+                      <option value="whatsapp">{t('crm.tasks.chWa', 'Nur WhatsApp')}</option>
+                    </select>
+                    <button onClick={addExternalEdit} className="whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium text-white" style={{ backgroundColor: '#0f172a' }}>{t('crm.tasks.addPerson', '+ Person')}</button>
+                  </div>
+                </div>
+              </div>
+              {/* Kunden verknüpfen */}
+              <div>
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.customers', 'Kunden')}</h3>
+                {customers.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {customers.map(c => (
+                      <span key={c.lead_id} className="inline-flex items-center gap-1 text-xs bg-orange-50 border border-orange-100 text-gray-700 rounded-full px-2.5 py-1">
+                        {c.name}
+                        <button onClick={() => removeCustomer(c.lead_id)} className="text-gray-400 hover:text-red-500">✕</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input value={custQuery} onChange={e => setCustQuery(e.target.value)} className={inputCls} placeholder={t('crm.tasks.custSearch', 'Kunde suchen …')} />
+                  {custMatches.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {custMatches.map(c => (
+                        <button key={c.key} onClick={() => addCustomerEdit(c)} className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50">{c.name}{c.phone ? ` · ${c.phone}` : ''}</button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
+          ) : (
+            <>
+              {/* Zuständige */}
+              {assignees.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.assignees', 'Zuständig')}</h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {assignees.map(a => (
+                      <span key={a.id} className="inline-flex items-center gap-1 text-xs rounded-full px-2.5 py-1 border"
+                        style={a.accepted_at ? { backgroundColor: '#fffbeb', borderColor: '#fde68a', color: '#92400e' } : { backgroundColor: '#f9fafb', borderColor: '#f1f1f1', color: '#374151' }}>
+                        {a.accepted_at && '✓ '}{assigneeLabel(a)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Verknüpfte Kunden mit Kontaktdaten */}
+              {customers.length > 0 && (
+                <div>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">{t('crm.tasks.customers', 'Kunden')}</h3>
+                  <div className="space-y-1.5">
+                    {customers.map(c => (
+                      <div key={c.lead_id} className="text-xs bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
+                        <span className="font-medium text-gray-800">{c.name}</span>
+                        {(c.phone || c.email) && <span className="text-gray-500"> · {[c.phone, c.email].filter(Boolean).join(' · ')}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
 
           {/* Meta: gestellt am + Frist */}

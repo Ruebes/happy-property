@@ -94,7 +94,12 @@ Deno.serve(async (req) => {
       if (!task) return json({ error: 'Aufgabe nicht gefunden' }, 404)
       const { data: asg } = await supabase.from('crm_task_assignees').select('*').eq('task_id', task_id)
       const out = []
-      for (const a of (asg ?? []) as Assignee[]) out.push(await deliver(supabase, a, task as Task, 'dispatch'))
+      // Nur noch nicht benachrichtigte Zuständige zustellen — so benachrichtigt ein
+      // erneuter Dispatch (nachträglich hinzugefügte Person) nur die Neuen.
+      for (const a of (asg ?? []) as Assignee[]) {
+        if (a.last_reminded_at) continue
+        out.push(await deliver(supabase, a, task as Task, 'dispatch'))
+      }
       return json({ ok: true, delivered: out })
     }
 
