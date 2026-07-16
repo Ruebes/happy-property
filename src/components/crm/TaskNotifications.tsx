@@ -26,30 +26,37 @@ export default function TaskNotifications() {
     busy.current = true
     try {
       const now = new Date().toISOString()
-      const [msgRes, taskRes] = await Promise.all([
+      const [msgRes, taskRes, asgRes] = await Promise.all([
         // (1) neue Chat-Nachrichten an mich
         supabase.from('crm_task_messages').select('id, task_id, body, sender_id')
           .eq('recipient_id', myId).is('read_at', null).is('notified_at', null)
           .order('created_at', { ascending: true }).limit(5),
-        // (2) neu an mich zugewiesene Aufgaben (nicht selbst gestellt)
+        // (2) Alt-Pfad: neu an mich zugewiesene Aufgaben (Einzel-assigned_to, Legacy)
         supabase.from('crm_tasks').select('id, title, description, created_by')
           .eq('assigned_to', myId).neq('created_by', myId).eq('archived', false)
           .is('assigned_notified_at', null).order('created_at', { ascending: true }).limit(5),
+        // (3) neue Zuständigkeit über assignee-Zeile (Mehrfach-Zuweisung)
+        supabase.from('crm_task_assignees').select('id, task:crm_tasks!inner(id, title, created_by, archived)')
+          .eq('profile_id', myId).is('notified_at', null).limit(5),
       ])
       const msgs  = (msgRes.data  ?? []) as { id: string; task_id: string; body: string; sender_id: string }[]
       const tasks = (taskRes.data ?? []) as { id: string; title: string; description: string | null; created_by: string }[]
-      if (msgs.length === 0 && tasks.length === 0) return
+      // deno-lint-ignore no-explicit-any
+      const asgs  = ((asgRes.data ?? []) as any[]).filter(a => a.task && !a.task.archived && a.task.created_by !== myId)
+      if (msgs.length === 0 && tasks.length === 0 && asgs.length === 0) return
       // Absender-/Ersteller-Namen holen
       const { data: staff } = await supabase.rpc('list_staff')
       const nameById = new Map(((staff ?? []) as { id: string; full_name: string }[]).map(s => [s.id, s.full_name]))
       const fresh: Popup[] = [
         ...tasks.map(tk => ({ id: `task-${tk.id}`, task_id: tk.id, kind: 'task' as const, body: tk.title, from: nameById.get(tk.created_by) || '' })),
+        ...asgs.map(a => ({ id: `asg-${a.id}`, task_id: a.task.id, kind: 'task' as const, body: a.task.title, from: nameById.get(a.task.created_by) || '' })),
         ...msgs.map(r  => ({ id: `msg-${r.id}`,   task_id: r.task_id, kind: 'msg'  as const, body: r.body,   from: nameById.get(r.sender_id)  || '' })),
       ]
       setPopups(prev => [...prev, ...fresh])
       // als benachrichtigt markieren → poppt nicht erneut
       if (msgs.length)  await supabase.from('crm_task_messages').update({ notified_at: now }).in('id', msgs.map(r => r.id))
       if (tasks.length) await supabase.from('crm_tasks').update({ assigned_notified_at: now }).in('id', tasks.map(tk => tk.id))
+      if (asgs.length)  await supabase.from('crm_task_assignees').update({ notified_at: now }).in('id', asgs.map(a => a.id))
     } catch (e) { console.warn('[TaskNotifications] poll:', e) } finally { busy.current = false }
   }, [myId])
 

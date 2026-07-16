@@ -76,6 +76,25 @@ Deno.serve(async (req) => {
     // „+", Leerzeichen oder Länderformat schickt. Suffix ist reine Ziffern → keine
     // Filter-Injection. Bei mehreren Leads mit gleicher Nummer den neuesten nehmen.
     const digits = String(rawPhone).replace(/\D/g, '')
+
+    // ── Aufgaben-Antwort ────────────────────────────────────────────────────
+    // Gehört die Nummer zu einem/einer Zuständigen einer offenen Aufgabe, wird die
+    // Nachricht als Bemerkung in die Aufgabe geschrieben (additiv, stört den Lead-/
+    // Bot-Fluss nicht). Auf „erledigt" setzt man NUR über den Link.
+    if (digits.length >= 7) {
+      try {
+        const { data: hit } = await supabase.rpc('find_task_by_assignee_phone', { suffix: digits.slice(-8) })
+        const row = Array.isArray(hit) ? hit[0] : hit
+        if (row?.task_id) {
+          await supabase.from('crm_task_messages').insert({
+            task_id: row.task_id, sender_id: null, sender_label: row.label ?? 'Extern',
+            recipient_id: row.created_by, body: String(text).slice(0, 4000),
+          })
+          console.log(`[timelines-webhook] Task-Antwort → Bemerkung (task ${row.task_id})`)
+        }
+      } catch (e) { console.warn('[timelines-webhook] Task-Reply:', e) }
+    }
+
     let lead: { id: string } | null = null
     if (digits.length >= 7) {
       const suffix = digits.slice(-8)

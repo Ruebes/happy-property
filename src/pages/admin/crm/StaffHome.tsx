@@ -14,7 +14,7 @@ import { useAuth, hasPerm, type PermissionArea } from '../../../lib/auth'
 type TaskStatus = 'offen' | 'in_arbeit' | 'erledigt'
 interface Task {
   id: string; title: string; description: string | null
-  created_by: string; assigned_to: string; status: TaskStatus
+  created_by: string; assigned_to: string | null; status: TaskStatus
   due_date: string | null; created_at: string
 }
 interface Staff { id: string; full_name: string; email: string; role: string }
@@ -49,6 +49,7 @@ export default function StaffHome() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [appts, setAppts] = useState<Appt[]>([])
+  const [myAssigneeIds, setMyAssigneeIds] = useState<Set<string>>(new Set())
   const [order, setOrder] = useState<WidgetId[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -59,7 +60,7 @@ export default function StaffHome() {
   const available = CATALOG.filter(w => !w.perm || hasPerm(profile, w.perm))
   const availableIds = available.map(w => w.id)
 
-  const nameOf = (id: string) => staff.find(s => s.id === id)?.full_name || '—'
+  const nameOf = (id: string | null) => (id && staff.find(s => s.id === id)?.full_name) || t('crm.tasks.external', 'extern')
 
   const fetchAll = useCallback(async () => {
     if (!myId) return
@@ -68,7 +69,7 @@ export default function StaffHome() {
       const now = new Date()
       const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
       const dayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
-      const [tRes, sRes, pRes, aRes] = await Promise.all([
+      const [tRes, sRes, pRes, aRes, asgRes] = await Promise.all([
         supabase.from('crm_tasks')
           .select('id, title, description, created_by, assigned_to, status, due_date, created_at')
           .eq('archived', false).order('created_at', { ascending: false }),
@@ -78,11 +79,13 @@ export default function StaffHome() {
           ? supabase.from('crm_appointments').select('id, title, start_time, type')
               .gte('start_time', dayStart).lt('start_time', dayEnd).order('start_time', { ascending: true })
           : Promise.resolve({ data: [], error: null }),
+        supabase.from('crm_task_assignees').select('task_id').eq('profile_id', myId),
       ])
       if (tRes.error) throw tRes.error
       setTasks((tRes.data ?? []) as Task[])
       setStaff((sRes.data ?? []) as Staff[])
       setAppts((aRes.data ?? []) as Appt[])
+      setMyAssigneeIds(new Set(((asgRes.data ?? []) as { task_id: string }[]).map(r => r.task_id)))
       // Prefs laden; leere/unbekannte Werte → Standard = alle verfügbaren Widgets.
       const prefs = (pRes.data?.dashboard_prefs ?? {}) as { widgets?: unknown }
       const saved = Array.isArray(prefs.widgets) ? (prefs.widgets as string[]) : null
@@ -118,11 +121,11 @@ export default function StaffHome() {
     savePrefs(next)
   }
 
-  const myTasks      = tasks.filter(x => x.assigned_to === myId)
-  const myOpenTasks  = myTasks.filter(x => x.status !== 'erledigt')
+  const isMine       = (x: Task) => x.assigned_to === myId || myAssigneeIds.has(x.id)
+  const myOpenTasks  = tasks.filter(x => isMine(x) && x.status !== 'erledigt')
     .sort((a, b) => (isOverdue(b) ? 1 : 0) - (isOverdue(a) ? 1 : 0)
       || (a.due_date || '9999').localeCompare(b.due_date || '9999'))
-  const createdTasks = tasks.filter(x => x.created_by === myId && x.assigned_to !== myId)
+  const createdTasks = tasks.filter(x => x.created_by === myId && !isMine(x))
 
   // ── Aufgaben-Kachel ──────────────────────────────────────────────────────
   const TaskRow = ({ tk, showAssignee }: { tk: Task; showAssignee?: boolean }) => {
