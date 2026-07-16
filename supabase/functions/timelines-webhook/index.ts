@@ -193,15 +193,17 @@ Deno.serve(async (req) => {
           .not('state', 'in', '(booked,handoff,expired)')
           .gt('expires_at', new Date().toISOString())
           .limit(1)
-        if (conv && conv.length) {
-          const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
-            method:  'POST',
-            headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ action: 'reply', lead_id: lead.id, text }),
-          }).then(r => r.text()).catch(e => console.error('[timelines-webhook] booking-bot reply Fehler:', e))
-          const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
-          if (er) er.waitUntil(p); else await p
-        }
+        // Aktives Gespräch → normale Antwortverarbeitung. Sonst → der Bot prüft, ob
+        // der Kunde nach einem Termin fragt und klinkt sich ggf. selbst ein (engage,
+        // eigener Schalter booking_bot_auto_engage). Beides im Hintergrund.
+        const botAction = (conv && conv.length) ? 'reply' : 'engage'
+        const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+          method:  'POST',
+          headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ action: botAction, lead_id: lead.id, text }),
+        }).then(r => r.text()).catch(e => console.error(`[timelines-webhook] booking-bot ${botAction} Fehler:`, e))
+        const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+        if (er) er.waitUntil(p); else await p
       }
     }
 

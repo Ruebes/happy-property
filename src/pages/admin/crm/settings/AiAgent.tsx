@@ -33,6 +33,8 @@ export default function AiAgent() {
   // schreibt automatisch mit Kunden, schlägt Termine vor und bucht sie.
   const [botActive, setBotActive] = useState(false)
   const [botSaving, setBotSaving] = useState(false)
+  const [autoEngage, setAutoEngage] = useState(false)
+  const [aeSaving, setAeSaving] = useState(false)
 
   // Gelernte KI-Vorgaben (deck_ai_rules): Stil-/Inhaltsregeln, die in Decks (kind 'deck')
   // bzw. Begleit-Mails (kind 'mail') einfließen. Das System lernt sie automatisch aus
@@ -81,6 +83,8 @@ export default function AiAgent() {
       // Termin-Bot-Schalter laden
       const { data: b } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
       setBotActive((b as { value?: string } | null)?.value === 'true')
+      const { data: ae } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_auto_engage').maybeSingle()
+      setAutoEngage((ae as { value?: string } | null)?.value === 'true')
     } catch (err) {
       console.error('[AiAgent] fetch:', err)
     } finally {
@@ -130,6 +134,27 @@ export default function AiAgent() {
         : t('crm.aiAgent.botOff', 'Termin-Bot aus'))
     } finally {
       setBotSaving(false)
+    }
+  }
+
+  // HAPPY klinkt sich bei Terminanfragen ein (crm_settings 'booking_bot_auto_engage').
+  const toggleAutoEngage = async () => {
+    const next = !autoEngage
+    if (next && !window.confirm(t('crm.aiAgent.aeConfirm',
+      'Fragt ein Kunde im WhatsApp-Chat nach einem Termin/Anruf, klinkt sich HAPPY (Svens virtuelle Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor — auch mitten in einem laufenden Gespräch. Fachliche Fragen bleiben bei dir. Jetzt scharfschalten?'))) {
+      return
+    }
+    setAeSaving(true)
+    try {
+      const { error } = await supabase.from('crm_settings')
+        .upsert({ key: 'booking_bot_auto_engage', value: next ? 'true' : 'false', updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      if (error) { showToast(`❌ ${error.message}`); return }
+      setAutoEngage(next)
+      showToast(next
+        ? t('crm.aiAgent.aeOn',  '✅ HAPPY klinkt sich bei Terminanfragen ein')
+        : t('crm.aiAgent.aeOff', 'Auto-Einklinken aus'))
+    } finally {
+      setAeSaving(false)
     }
   }
 
@@ -331,6 +356,29 @@ export default function AiAgent() {
           {/* Kalender-Abhängigkeit */}
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800 leading-relaxed">
             {t('crm.aiAgent.botCalendarNote', 'Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.')}
+          </div>
+
+          {/* HAPPY klinkt sich bei Terminanfragen ein */}
+          <div className="border-t border-gray-100 pt-4 flex items-start justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700">🌸 {t('crm.aiAgent.aeTitle', 'HAPPY klinkt sich bei Terminanfragen ein')}</h3>
+              <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+                {t('crm.aiAgent.aeDesc', 'Fragt ein Kunde mitten im Chat nach einem Termin/Anruf, stellt sich HAPPY (Svens virtuelle Assistentin) kurz vor und schlägt sofort freie Zeiten vor — auch während ein persönliches Gespräch läuft. Fachliche Fragen bleiben bei dir. Den HAPPY-Text bearbeitest du bei den Bot-Nachrichten. Wirkt nur, wenn der Termin-Bot oben AN ist.')}
+              </p>
+            </div>
+            <button
+              onClick={() => void toggleAutoEngage()}
+              disabled={aeSaving}
+              role="switch"
+              aria-checked={autoEngage}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                autoEngage ? 'bg-green-500' : 'bg-gray-300'
+              }`}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                autoEngage ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
           </div>
 
           {botActive && (

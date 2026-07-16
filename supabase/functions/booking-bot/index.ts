@@ -309,6 +309,41 @@ Fülle nur passende Felder, sonst null.`
   } catch (e) { console.warn('[booking-bot] classify Fehler:', e); return fallback }
 }
 
+// Erkennt in einer FREIEN (nicht-Dialog) WhatsApp, ob der Kunde einen Termin/Anruf/
+// ein Gespräch ausmachen möchte. Konservativ (nur klare Terminwünsche), damit der
+// Bot nicht bei Produktfragen/Smalltalk reingrätscht. Optional Zeit-Hinweise.
+interface ApptReq { wants: boolean; day_hint: string | null; daypart: string | null; time_hint: string | null; on_date: string | null; after_date: string | null }
+async function detectApptRequest(text: string): Promise<ApptReq> {
+  const off: ApptReq = { wants: false, day_hint: null, daypart: null, time_hint: null, on_date: null, after_date: null }
+  const key = Deno.env.get('ANTHROPIC_API_KEY'); if (!key) return off
+  const tp = berlinParts(new Date())
+  const WDN = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag']
+  const todayStr = `${tp.y}-${String(tp.mo).padStart(2, '0')}-${String(tp.d).padStart(2, '0')}`
+  const sys = `Du prüfst EINE WhatsApp-Nachricht eines Immobilien-Interessenten (deutsch). HEUTE: ${WDN[tp.wd]}, ${todayStr} (Europe/Berlin).
+Frage: Möchte die Person einen TERMIN / Anruf / Videocall / ein Gespräch / Treffen mit dem Berater ausmachen ODER fragt sie danach (jetzt oder später)?
+wants=true NUR bei klarem Termin-/Gesprächswunsch. Beispiele JA: "können wir telefonieren?", "hast du morgen Zeit?", "lass uns einen Termin machen", "wann passt es dir?", "ruf mich an", "können wir uns nächste Woche kurz sprechen".
+wants=false bei: reinen Produkt-/Sachfragen, Smalltalk, Dank, "schick mir den Plan", Meinungen, Objektwünschen. Im Zweifel false.
+Wenn wants=true UND eine Zeitangabe genannt ist, fülle die Hint-Felder (day_hint; daypart vormittags|nachmittags|abends; time_hint "HH:MM"; on_date für GENAU EIN Datum bzw. after_date für frühestes Datum, je "YYYY-MM-DD"). Sonst null. Gib NUR das Tool emit zurück.`
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 200, system: sys,
+        messages: [{ role: 'user', content: text }],
+        tool_choice: { type: 'tool', name: 'emit' },
+        tools: [{ name: 'emit', description: 'Terminwunsch?', input_schema: { type: 'object', properties: {
+          wants: { type: 'boolean' }, day_hint: { type: ['string', 'null'] },
+          daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
+          time_hint: { type: ['string', 'null'] }, on_date: { type: ['string', 'null'] }, after_date: { type: ['string', 'null'] },
+        }, required: ['wants'] } }],
+      }),
+    })
+    const d = await res.json() as { content?: { type: string; input?: ApptReq }[] }
+    const tool = d.content?.find(c => c.type === 'tool_use')
+    return tool?.input ? { ...off, ...tool.input } : off
+  } catch (e) { console.warn('[booking-bot] detectApptRequest:', e); return off }
+}
+
 // ── Konversations-Helfer ──────────────────────────────────────────────────────
 const first = (n: string | null) => (n ?? '').trim()
 const greet = (n: string | null) => first(n) ? `Hey ${first(n)}` : 'Hallo'
@@ -789,6 +824,43 @@ async function proposeSlots(admin: SupabaseClient, convId: string, phone: string
   return json({ ok: true, skipped: 'no_slots' })
 }
 
+// ── ENGAGE ── Kunde fragt MITTEN im freien Chat nach einem Termin → Bot klinkt
+// sich ein (auch während ein persönliches Gespräch läuft). Eigener Schalter
+// booking_bot_auto_engage (zusätzlich zu booking_bot_enabled), Standard AUS.
+async function handleEngage(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
+  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'booking_bot_auto_engage'])
+  const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
+  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('booking_bot_auto_engage') !== 'true') return json({ ok: true, skipped: 'disabled' })
+  const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
+  if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
+  const { data: active } = await admin.from('booking_conversations').select('id')
+    .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
+  if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
+  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
+  if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  // Ist es überhaupt ein Terminwunsch? Sonst nichts tun (fachliche Themen bleiben bei Sven).
+  const det = await detectApptRequest(text)
+  if (!det.wants) return json({ ok: true, skipped: 'no_appt_intent' })
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
+  const phone = l?.whatsapp || l?.phone
+  if (!l || !phone) return json({ ok: true, skipped: 'no_phone' })
+  const hasHint = det.day_hint || det.daypart || det.time_hint || det.on_date || det.after_date
+  const slots = hasHint
+    ? await computeSlots(admin, 2, { dayHint: det.day_hint ?? undefined, daypart: det.daypart ?? undefined, timeHint: det.time_hint ?? undefined, onDate: det.on_date ?? undefined, afterDate: det.after_date ?? undefined })
+    : await computeSlotsAmPm(admin)
+  if (slots.length < 1) return json({ ok: true, skipped: 'no_slots' })
+  // HAPPY stellt sich vor (editierbar: booking_bot_messages key 'chat_request_0').
+  const fallback = 'Hallo {{vorname}} 🌸 Ich bin HAPPY, Svens virtuelle Assistentin — ich helfe dir schnell zu einem Termin mit Sven. Was hältst du von:'
+  const intro = fillName(await botText(admin, 'chat_request_0', fallback), l.first_name)
+  // HAPPY signiert selbst (die Signatur-Erkennung in withSignoff verhindert das
+  // globale „Liebe Grüße, Sven" — sonst spräche HAPPY, würde aber als Sven grüßen).
+  const msg = buildProposal(intro, slots, false) + '\n\nLiebe Grüße\nHAPPY 🌸'
+  await admin.from('booking_conversations').insert({ lead_id: leadId, source: 'chat_request', state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() })
+  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  return json({ ok: true, engaged: true, slots: slots.length })
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -797,6 +869,8 @@ Deno.serve(async (req) => {
     const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
     if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
+    // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
+    if (body.action === 'detect') return json({ ok: true, detect: await detectApptRequest(body.text ?? '') })
     // book_now: den in der aktiven Konversation vorgeschlagenen/bestätigten Slot direkt
     // buchen (Kalender + CRM-Termin + Bestätigung) — für den Fall, dass eine Bestätigung
     // den Bot nie erreicht hat (z.B. verworfene Inbound-Nachricht). meeting_type default whatsapp.
@@ -814,6 +888,7 @@ Deno.serve(async (req) => {
     }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
+    if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '')
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
     return json({ error: `Unbekannte action: ${body.action}` }, 400)

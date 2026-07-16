@@ -2162,7 +2162,12 @@
       "botStep3": "Kunde kann nicht → Bot fragt Tag + vor-/nachmittags, gleicht Kalender ab, schlägt neuen Slot vor",
       "botStep4": "Termin wird gebucht (Kalender + Zoom-Link) + Bestätigung geht raus. Bei Verwirrung: Übergabe an dich.",
       "botCalendarNote": "Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.",
-      "botLiveWarn": "Aktiv: Der Bot führt ECHTE WhatsApp-Gespräche mit echten Kunden und bucht echte Termine. Zum Stoppen den Schalter wieder auf Aus stellen."
+      "botLiveWarn": "Aktiv: Der Bot führt ECHTE WhatsApp-Gespräche mit echten Kunden und bucht echte Termine. Zum Stoppen den Schalter wieder auf Aus stellen.",
+      "aeTitle": "HAPPY klinkt sich bei Terminanfragen ein",
+      "aeDesc": "Fragt ein Kunde mitten im Chat nach einem Termin/Anruf, stellt sich HAPPY (Svens virtuelle Assistentin) kurz vor und schlägt sofort freie Zeiten vor — auch während ein persönliches Gespräch läuft. Fachliche Fragen bleiben bei dir. Den HAPPY-Text bearbeitest du bei den Bot-Nachrichten. Wirkt nur, wenn der Termin-Bot oben AN ist.",
+      "aeConfirm": "Fragt ein Kunde im WhatsApp-Chat nach einem Termin/Anruf, klinkt sich HAPPY (Svens virtuelle Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor — auch mitten in einem laufenden Gespräch. Fachliche Fragen bleiben bei dir. Jetzt scharfschalten?",
+      "aeOn": "✅ HAPPY klinkt sich bei Terminanfragen ein",
+      "aeOff": "Auto-Einklinken aus"
     },
     "settings": {
       "integrations": "Integrationen",
