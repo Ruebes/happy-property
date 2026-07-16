@@ -2979,6 +2979,8 @@
     "purchasePriceGross": "Purchase price gross",
     "furnishing": "Furnishing",
     "furnishingNet": "Furnishing (net)",
+    "furnishingVat": "VAT on furnishing (19%)",
+    "furnishingGross": "Furnishing (incl. VAT)",
     "included": "included",
     "totalPrice": "Total price",
     "legalFees1pct": "Legal fees (1%)",

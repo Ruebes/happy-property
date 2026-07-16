@@ -2979,6 +2979,8 @@
     "purchasePriceGross": "Kaufpreis brutto",
     "furnishing": "Einrichtung",
     "furnishingNet": "Einrichtung (netto)",
+    "furnishingVat": "MwSt auf Einrichtung (19%)",
+    "furnishingGross": "Einrichtung (inkl. MwSt)",
     "included": "inklusive",
     "totalPrice": "Gesamtpreis",
     "legalFees1pct": "Anwaltskosten (1%)",

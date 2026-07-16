@@ -118,7 +118,7 @@ export interface CalcResult {
   prepayC: number[]; propV: number[]; vatA: number[]; taxCY: number[]; taxDE: number[]; taxU: number[]; cfA: number[]
   sumR: number; sumC: number; sumT: number; sumVat: number; sumPP: number; sumCF: number
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
-  furnCost: number; furnFree: boolean; furnForIRR: number
+  furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
 }
 
 export function compute(p: CalcParams): CalcResult {
@@ -285,6 +285,11 @@ export function compute(p: CalcParams): CalcResult {
   const roe10 = ekStart > 0 ? totRet / ekStart * 100 : 0
 
   const furnForIRR = furnFree ? 0 : furnCost
+  // Einrichtung trägt MwSt wie die Immobilie: im Normalfall 19 %, im sdMode (netto
+  // ausgewiesen, VAT via Sondertilgung) keine separate MwSt. Fix: der Gesamtpreis
+  // enthielt bisher die Einrichtung NETTO → MwSt auf die Einrichtung fehlte.
+  const furnVat = (furnFree || sdMode) ? 0 : Math.round(furnCost * 0.19)
+  const furnGross = furnFree ? 0 : furnCost + furnVat
   const ekForIRR = ekStart + furnForIRR
   const cfIRR = [-ekForIRR].concat(cfA); cfIRR[cfIRR.length - 1] += ek10
   const irrV = irrCalc(cfIRR)
@@ -299,6 +304,6 @@ export function compute(p: CalcParams): CalcResult {
     sdMode, sdNumUnits, sdTotalSqm, sdTotalTerr, sdVatDrawn, sdVatYears, sdVatClawback, sdTaxRate,
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
-    furnCost, furnFree, furnForIRR,
+    furnCost, furnFree, furnForIRR, furnVat, furnGross,
   }
 }

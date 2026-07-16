@@ -20,6 +20,11 @@ const eur = (n: number | null | undefined) => n == null || isNaN(n) ? '–'
   : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(Math.round(n))
 const pct = (n: number | null | undefined, d = 1) => n == null || isNaN(n) ? '–'
   : new Intl.NumberFormat('de-DE', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n) + ' %'
+// Einrichtung inkl. MwSt: 19% außer im Share-Deal (sdMode, netto ausgewiesen).
+const furnGrossOf = (pa: { furnCost?: number | null; furnFree?: boolean; dealType?: string }): number => {
+  const c = pa.furnFree ? 0 : (pa.furnCost ?? 0)
+  return pa.dealType === 'share' ? c : Math.round(c * 1.19)
+}
 const short = (v: number) => v >= 1e6 ? (v / 1e6).toFixed(2).replace('.', ',') + ' M' : v >= 1e3 ? Math.round(v / 1e3) + 'k' : Math.round(v).toString()
 
 interface Row { item: CalcItem; color: string; res: CalcResult | null }
@@ -188,11 +193,12 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           </>) : <KV k={t('rechnung.purchasePriceNet', 'Kaufpreis netto')} v={eur(r.pNet)} />}
           <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
           <KV k={t('rechnung.purchasePriceGross', 'Kaufpreis brutto')} v={eur(r.pGross)} />
-          {/* Transparente Gesamtkosten: Kaufpreis + Einrichtung extra = Gesamtpreis.
-              Bei inkludierter Einrichtung (z.B. Infinity) „inklusive", sonst Aufschlag
-              (z.B. Emerald Park +19.000 netto). furnForIRR = furnFree ? 0 : furnCost. */}
+          {/* Transparente Gesamtkosten: Kaufpreis brutto + Einrichtung (netto + MwSt)
+              = Gesamtpreis brutto. Bei inkludierter Einrichtung (z.B. Infinity)
+              „inklusive". furnGross = Einrichtung inkl. MwSt (19%, im sdMode netto). */}
           {(r.furnFree || r.furnCost > 0) && <KV k={r.furnFree ? t('rechnung.furnishing', 'Einrichtung') : t('rechnung.furnishingNet', 'Einrichtung (netto)')} v={r.furnFree ? t('rechnung.included', 'inklusive') : `+ ${eur(r.furnCost)}`} color={r.furnFree ? GREEN : CORAL} />}
-          {(r.furnFree || r.furnCost > 0) && <KV k={t('rechnung.totalPrice', 'Gesamtpreis')} v={eur(r.pGross + r.furnForIRR)} strong />}
+          {r.furnVat > 0 && <KV k={t('rechnung.furnishingVat', 'MwSt auf Einrichtung (19%)')} v={`+ ${eur(r.furnVat)}`} color={CORAL} />}
+          {(r.furnFree || r.furnCost > 0) && <KV k={t('rechnung.totalPrice', 'Gesamtpreis')} v={eur(r.pGross + r.furnGross)} strong />}
           <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
           <KV k={t('rechnung.equityStart', 'Eigenkapital (Start)')} v={eur(r.ekStart)} />
           <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
@@ -451,8 +457,8 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row(t('rechnung.grossYield', 'Bruttorendite'), r => pct(r.res?.yPct ?? null))}
               {sect(t('rechnung.sectionFinancing', 'FINANZIERUNG'))}
               {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
-              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.furnishing', 'Einrichtung'), r => r.res ? (r.res.furnFree ? t('rechnung.included', 'inklusive') : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnCost)}` : '–')) : '–')}
-              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => eur(r.res ? r.res.pGross + r.res.furnForIRR : null), rows.map(() => true))}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.furnishingGross', 'Einrichtung (inkl. MwSt)'), r => r.res ? (r.res.furnFree ? t('rechnung.included', 'inklusive') : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnGross)}` : '–')) : '–')}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => eur(r.res ? r.res.pGross + r.res.furnGross : null), rows.map(() => true))}
               {row(t('rechnung.equityPlusExtras', 'Eigenkapital + NK'), r => eur(r.res?.ekStart))}
               {row(t('rechnung.financingLabel', 'Finanzierung'), r => r.res && r.res.loan > 0 ? eur(r.res.loan) : t('rechnung.cash', 'Cash'))}
               {row(t('rechnung.cashflowYear1', 'Cashflow Jahr 1'), r => eur(r.res ? r.res.cfA[0] - (r.res.vatA[0] || 0) : null))}
@@ -556,8 +562,8 @@ function SpecsCard({ rows }: { rows: Row[] }) {
             {row(t('rechnung.terrace', 'Terrasse'), r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
             {row(t('rechnung.floor', 'Etage'), r => r.item.floor != null ? `${r.item.floor}` : '–')}
             {row(t('rechnung.purchasePrice', 'Kaufpreis'), r => eur(r.item.price_gross ?? r.item.price_net))}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishing', 'Einrichtung'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost)}` : '–')) : '–' })}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? (pa.furnCost ?? 0) : 0; return eur(base + f) })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishingGross', 'Einrichtung (inkl. MwSt)'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(furnGrossOf(pa))}` : '–')) : '–' })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? furnGrossOf(pa) : 0; return eur(base + f) })}
           </tbody>
         </table>
       </div>
