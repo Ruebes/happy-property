@@ -92,19 +92,16 @@ export function roleToPath(role: UserRole | undefined): string {
     case 'verwalter':  return '/verwalter/dashboard'
     case 'feriengast': return '/feriengast/dashboard'
     case 'funnel':     return '/admin/crm/funnel'
-    case 'mitarbeiter': return '/admin/crm'
+    case 'mitarbeiter': return '/admin/crm/home'
     default:           return '/eigentuemer/dashboard'
   }
 }
 
-// Landeseite für Mitarbeiter = erste freigeschaltete Fläche (sonst Profil).
+// Landeseite für Mitarbeiter = persönliche Startseite (Aufgaben + Widgets),
+// unabhängig von den freigeschalteten Bereichen.
 export function landingFor(profile: Profile | null | undefined): string {
   if (profile?.role !== 'mitarbeiter') return roleToPath(profile?.role)
-  if (hasPerm(profile, 'pipeline')) return '/admin/crm'
-  if (hasPerm(profile, 'funnel'))   return '/admin/crm/funnel'
-  if (hasPerm(profile, 'invoices')) return '/admin/crm/invoices'
-  if (hasPerm(profile, 'contacts')) return '/admin/crm/settings/contacts'
-  return '/profile'
+  return '/admin/crm/home'
 }
 
 // ── Rollenfarben ──────────────────────────────────────────────

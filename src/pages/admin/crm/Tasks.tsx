@@ -14,6 +14,7 @@ interface Task {
   id: string; title: string; description: string | null
   created_by: string; assigned_to: string; status: TaskStatus
   archived: boolean; completed_at: string | null; created_at: string
+  due_date: string | null
 }
 interface TaskMessage { id: string; task_id: string; sender_id: string; recipient_id: string; body: string; read_at: string | null; created_at: string }
 interface Staff { id: string; full_name: string; email: string; role: string }
@@ -23,6 +24,12 @@ const COLUMNS: { status: TaskStatus; label: string; accent: string }[] = [
   { status: 'in_arbeit', label: 'In Arbeit', accent: '#f59e0b' },
   { status: 'erledigt',  label: 'Erledigt',  accent: '#10b981' },
 ]
+const accentOf = (s: TaskStatus) => COLUMNS.find(c => c.status === s)?.accent ?? '#94a3b8'
+// Angenommene Aufgaben (in Arbeit) heben sich farblich ab, erledigte grünlich.
+const cardBg   = (s: TaskStatus) => s === 'in_arbeit' ? '#fffbeb' : s === 'erledigt' ? '#f0fdf4' : '#ffffff'
+const d2       = (s: string) => new Date(s).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
+const todayIso = () => new Date().toISOString().slice(0, 10)
+const isOverdue = (tk: Task) => !!tk.due_date && tk.status !== 'erledigt' && tk.due_date < todayIso()
 
 // ── Aufgabe anlegen ──────────────────────────────────────────────────────────
 function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId: string; onClose: () => void; onCreated: (m: string) => void }) {
@@ -30,6 +37,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [assignedTo, setAssignedTo] = useState(myId)
+  const [dueDate, setDueDate] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -41,6 +49,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       const { error } = await supabase.from('crm_tasks').insert({
         title: ttl, description: desc || null,
         created_by: myId, assigned_to: assignedTo, status: 'offen',
+        due_date: dueDate || null,
       })
       if (error) throw error
       // E-Mail an den zugewiesenen Mitarbeiter (nicht an sich selbst), fire-and-forget.
@@ -93,6 +102,11 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
               ))}
             </select>
           </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.dueLabel', 'Frist (optional)')}</label>
+            <input type="date" value={dueDate} min={todayIso()} onChange={e => setDueDate(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+          </div>
           {err && <p className="text-xs text-red-500">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100">
@@ -114,6 +128,15 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   const [sending, setSending] = useState(false)
   const nameOf = (id: string) => staff.find(s => s.id === id)?.full_name || staff.find(s => s.id === id)?.email || '—'
   const other = task.created_by === myId ? task.assigned_to : task.created_by   // Gegenpart
+  const [due, setDue] = useState(task.due_date ?? '')
+  const iAmAssignee = task.assigned_to === myId
+  const iAmCreator  = task.created_by === myId
+
+  const saveDue = async (v: string) => {
+    setDue(v)
+    const { error } = await supabase.from('crm_tasks').update({ due_date: v || null }).eq('id', task.id)
+    if (!error) onChanged()
+  }
 
   const loadMsgs = useCallback(async () => {
     const { data } = await supabase.from('crm_task_messages').select('*').eq('task_id', task.id).order('created_at', { ascending: true })
@@ -166,6 +189,30 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
 
         <div className="p-6 space-y-4 overflow-y-auto">
           {task.description && <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>}
+
+          {/* Meta: gestellt am + Frist */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
+            <span className="text-gray-400">{t('crm.tasks.createdOn', 'Gestellt')} {d2(task.created_at)}</span>
+            {iAmCreator ? (
+              <label className="flex items-center gap-2 text-gray-500">
+                {t('crm.tasks.dueLabel', 'Frist (optional)')}
+                <input type="date" value={due} onChange={e => saveDue(e.target.value)}
+                  className="border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-orange-400" />
+              </label>
+            ) : due ? (
+              <span className={isOverdue({ ...task, due_date: due }) ? 'text-red-500 font-semibold' : 'text-gray-500'}>
+                {t('crm.tasks.due', 'Frist')} {d2(due)}{isOverdue({ ...task, due_date: due }) ? ` · ${t('crm.tasks.overdue', 'überfällig')}` : ''}
+              </span>
+            ) : null}
+          </div>
+
+          {/* Annehmen: Zugewiesener bestätigt die Aufgabe → In Arbeit */}
+          {iAmAssignee && task.status === 'offen' && (
+            <button onClick={() => setStatus('in_arbeit')}
+              className="w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ backgroundColor: '#f59e0b' }}>
+              ✋ {t('crm.tasks.accept', 'Aufgabe annehmen')}
+            </button>
+          )}
 
           {/* Status-Umschalter */}
           <div className="flex gap-2">
@@ -284,15 +331,22 @@ export default function Tasks() {
                       const mine = task.created_by === myId
                       return (
                         <button key={task.id} onClick={() => setDetail(task)}
-                          className="w-full text-left bg-white rounded-xl border border-gray-100 shadow-sm p-3 hover:border-gray-300 transition-colors">
+                          className="w-full text-left rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow"
+                          style={{ backgroundColor: cardBg(task.status), borderLeft: `3px solid ${accentOf(task.status)}` }}>
                           <div className="flex items-start justify-between gap-2">
                             <span className="font-medium text-gray-900 text-sm">{task.title}</span>
                             {unread[task.id] && <span className="shrink-0 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">{unread[task.id]}</span>}
                           </div>
                           {task.description && <p className="text-xs text-gray-400 mt-1 line-clamp-2">{task.description}</p>}
-                          <p className="text-[11px] text-gray-400 mt-2">
-                            {mine ? `→ ${nameOf(task.assigned_to)}` : `${t('crm.tasks.fromShort', 'von')} ${nameOf(task.created_by)}`}
-                          </p>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] text-gray-400">
+                            <span>{mine ? `→ ${nameOf(task.assigned_to)}` : `${t('crm.tasks.fromShort', 'von')} ${nameOf(task.created_by)}`}</span>
+                            <span>· {t('crm.tasks.createdOn', 'Gestellt')} {d2(task.created_at)}</span>
+                            {task.due_date && (
+                              <span className={isOverdue(task) ? 'text-red-500 font-semibold' : ''}>
+                                · {t('crm.tasks.due', 'Frist')} {d2(task.due_date)}
+                              </span>
+                            )}
+                          </div>
                         </button>
                       )
                     })}

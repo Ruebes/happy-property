@@ -1209,7 +1209,8 @@
       "more": "More",
       "funnelEditor": "Funnel Editor",
       "newsletter": "Newsletter",
-      "tasks": "Tasks"
+      "tasks": "Tasks",
+      "home": "Home"
     },
     "tasks": {
       "title": "Tasks",
@@ -1234,7 +1235,33 @@
       "sendMsg": "Send",
       "newMsg": "New task message",
       "newTask": "New task for you",
-      "openTask": "Open task"
+      "openTask": "Open task",
+      "createdOn": "Created",
+      "due": "Due",
+      "dueLabel": "Deadline (optional)",
+      "overdue": "overdue",
+      "accept": "Accept task"
+    },
+    "home": {
+      "hello": "Hello",
+      "customize": "Customize",
+      "done": "Done",
+      "customizeHint": "Choose which cards you want on your home page — and in which order.",
+      "empty": "No cards active. Turn them back on via “Customize”.",
+      "myTasks": "My tasks",
+      "noTasks": "No open tasks. 🎉",
+      "createdTasks": "Assigned by me",
+      "noCreated": "You haven't assigned any tasks yet.",
+      "apptsToday": "Appointments today",
+      "noAppts": "No appointments today.",
+      "appt": "Appointment",
+      "quickLinks": "Quick access",
+      "widget": {
+        "my_tasks": "My tasks",
+        "created_tasks": "Assigned by me",
+        "appointments_today": "Appointments today",
+        "quick_links": "Quick access"
+      }
     },
     "funnel": {
       "title": "Booking Funnel",

@@ -163,9 +163,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
   ]
-  // Aufgaben stehen JEDEM Mitarbeiter offen (kein Bereichs-Recht), davor die
-  // rechte-gefilterten Bereiche.
+  // Startseite + Aufgaben stehen JEDEM Mitarbeiter offen (kein Bereichs-Recht),
+  // davor die rechte-gefilterten Bereiche.
   const staffNavItems: { to: string; key: string }[] = [
+    { to: '/admin/crm/home',  key: 'crm.nav.home'  },
     { to: '/admin/crm/tasks', key: 'crm.nav.tasks' },
     ...staffNavItemsAll.filter(i => hasPerm(profile, i.perm)).map(({ to, key }) => ({ to, key })),
   ]

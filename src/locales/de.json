@@ -1209,7 +1209,8 @@
       "more": "Mehr",
       "funnelEditor": "Funnel-Editor",
       "newsletter": "Newsletter",
-      "tasks": "Aufgaben"
+      "tasks": "Aufgaben",
+      "home": "Start"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -1234,7 +1235,33 @@
       "sendMsg": "Senden",
       "newMsg": "Neue Aufgaben-Nachricht",
       "newTask": "Neue Aufgabe für dich",
-      "openTask": "Zur Aufgabe"
+      "openTask": "Zur Aufgabe",
+      "createdOn": "Gestellt",
+      "due": "Frist",
+      "dueLabel": "Frist (optional)",
+      "overdue": "überfällig",
+      "accept": "Aufgabe annehmen"
+    },
+    "home": {
+      "hello": "Hallo",
+      "customize": "Anpassen",
+      "done": "Fertig",
+      "customizeHint": "Wähle, welche Kacheln du auf deiner Startseite sehen willst — und in welcher Reihenfolge.",
+      "empty": "Keine Kacheln aktiv. Über „Anpassen“ wieder einschalten.",
+      "myTasks": "Meine Aufgaben",
+      "noTasks": "Keine offenen Aufgaben. 🎉",
+      "createdTasks": "Von mir gestellt",
+      "noCreated": "Du hast noch keine Aufgaben verteilt.",
+      "apptsToday": "Termine heute",
+      "noAppts": "Heute keine Termine.",
+      "appt": "Termin",
+      "quickLinks": "Schnellzugriff",
+      "widget": {
+        "my_tasks": "Meine Aufgaben",
+        "created_tasks": "Von mir gestellt",
+        "appointments_today": "Termine heute",
+        "quick_links": "Schnellzugriff"
+      }
     },
     "funnel": {
       "title": "Termin-Funnel",
