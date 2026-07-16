@@ -827,20 +827,27 @@ async function proposeSlots(admin: SupabaseClient, convId: string, phone: string
 // ── ENGAGE ── Kunde fragt MITTEN im freien Chat nach einem Termin → Bot klinkt
 // sich ein (auch während ein persönliches Gespräch läuft). Eigener Schalter
 // booking_bot_auto_engage (zusätzlich zu booking_bot_enabled), Standard AUS.
-async function handleEngage(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
-  const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'booking_bot_auto_engage'])
-  const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
-  if (sv.get('booking_bot_enabled') !== 'true' || sv.get('booking_bot_auto_engage') !== 'true') return json({ ok: true, skipped: 'disabled' })
+async function handleEngage(admin: SupabaseClient, leadId: string, text: string, force = false): Promise<Response> {
+  // force=true = manueller Anstoß durch Sven ("mach den Termin fertig"): umgeht den
+  // Auto-Schalter, den vorhandenen-Termin-Guard und die Wunsch-Erkennung. Opt-Out
+  // und laufendes Gespräch werden IMMER respektiert (kein Doppel-Messaging).
+  if (!force) {
+    const { data: sset } = await admin.from('crm_settings').select('key, value').in('key', ['booking_bot_enabled', 'booking_bot_auto_engage'])
+    const sv = new Map(((sset ?? []) as { key: string; value: string }[]).map(s => [s.key, s.value]))
+    if (sv.get('booking_bot_enabled') !== 'true' || sv.get('booking_bot_auto_engage') !== 'true') return json({ ok: true, skipped: 'disabled' })
+  }
   const { data: opt } = await admin.from('communication_optouts').select('id').eq('lead_id', leadId).limit(1)
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
   const { data: active } = await admin.from('booking_conversations').select('id')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
-  const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
-  if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  if (!force) {
+    const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
+    if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  }
   // Ist es überhaupt ein Terminwunsch? Sonst nichts tun (fachliche Themen bleiben bei Sven).
   const det = await detectApptRequest(text)
-  if (!det.wants) return json({ ok: true, skipped: 'no_appt_intent' })
+  if (!det.wants && !force) return json({ ok: true, skipped: 'no_appt_intent' })
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
   const phone = l?.whatsapp || l?.phone
@@ -866,7 +873,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string }
+    const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean }
     // classify: seiteneffektfreier Test des Intent-Parsers (kein Senden, kein DB-Write).
     if (body.action === 'classify') return json({ ok: true, intent: await classify(body.state ?? 'awaiting_choice', body.slots ?? [], body.text ?? '') })
     // detect: seiteneffektfreier Test des Terminwunsch-Erkenners (kein Senden).
@@ -888,7 +895,7 @@ Deno.serve(async (req) => {
     }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
-    if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '')
+    if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
     if (body.action === 'reply') return await handleReply(admin, body.lead_id, body.text ?? '')
     if (body.action === 'nudge') return await handleNudge(admin, body.lead_id, Number(body.stage) || 0, body.source ?? 'no_show', body.intro)
     return json({ error: `Unbekannte action: ${body.action}` }, 400)
