@@ -16,6 +16,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
+import { SOCIAL_FOOTER_HTML } from '../_shared/socialFooter.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -172,6 +173,7 @@ function buildWelcomeEmail(params: {
       </table>
     </td></tr>
   </table>
+  ${SOCIAL_FOOTER_HTML}
 </body>
 </html>`
   return { subject, html }

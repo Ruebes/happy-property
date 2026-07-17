@@ -9,6 +9,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { SOCIAL_FOOTER_HTML } from '../_shared/socialFooter.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
@@ -195,6 +196,7 @@ function buildHtml(p: {
     Happy Property · ${new Date().getFullYear()}
   </div>
 </div>
+${SOCIAL_FOOTER_HTML}
 </body>
 </html>`
 }

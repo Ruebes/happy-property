@@ -14,6 +14,7 @@ import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
+import { withSocialFooter } from '../_shared/socialFooter.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -185,6 +186,10 @@ Deno.serve(async (req: Request) => {
         }
       }
     }
+
+    // „Folge uns"-Social-Footer an ALLE Mails (die nicht schon Social-Links haben,
+    // z.B. Deck-/Newsletter-Mails) — zentral, deckt alle send-email-Aufrufer ab.
+    html = withSocialFooter(html)
 
     // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
     // track-engagement (Engagement-Tracking fürs CRM-Dashboard).
