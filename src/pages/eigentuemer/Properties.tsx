@@ -53,25 +53,42 @@ export default function EigentuemerProperties() {
         if (cancelled) return
         const propList = (data ?? []) as PropertyCard[]
         setProperties(propList)
-        setLoading(false)   // Objekte da → Spinner sofort weg; Bilder laden im Hintergrund nach
+        setLoading(false)   // Objekte da → Spinner sofort weg; Rest lädt im Hintergrund nach
 
-        // Fetch CRM project images for properties without own images
-        const noImgIds = propList.filter(p => !p.images?.length).map(p => p.id)
-        if (noImgIds.length > 0) {
-          const { data: unitData } = await supabase
-            .from('crm_project_units')
-            .select('property_id, project:crm_projects(images)')
-            .in('property_id', noImgIds)
-          if (!cancelled && unitData) {
-            const imgMap: Record<string, string> = {}
-            for (const u of unitData) {
-              const imgs = (u.project as { images?: string[] } | null)?.images
-              if (imgs?.length && u.property_id && !imgMap[u.property_id]) {
-                imgMap[u.property_id] = imgs[0]
-              }
+        if (propList.length === 0) return
+        const propIds = propList.map(p => p.id)
+
+        // Kanonische Unit-Daten (Name/Zimmer/Größe/Ort/Bild) aus der ZENTRALEN Tabelle
+        // ziehen und über die (evtl. leere/veraltete) properties-Kopie legen. Single source.
+        const { data: unitData } = await supabase
+          .from('crm_project_units')
+          .select('property_id, bedrooms, size_sqm, project:crm_projects(name, images, location)')
+          .in('property_id', propIds)
+        if (!cancelled && unitData) {
+          const metaMap: Record<string, { name?: string; bedrooms?: number; size?: number | null; city?: string; img?: string }> = {}
+          for (const u of unitData) {
+            const pid = (u as { property_id?: string | null }).property_id
+            if (!pid) continue
+            const proj = (u as { project?: { name?: string; images?: string[]; location?: string } | null }).project
+            const loc = proj?.location
+            metaMap[pid] = {
+              name:     proj?.name || undefined,
+              bedrooms: (u as { bedrooms?: number }).bedrooms ?? undefined,
+              size:     (u as { size_sqm?: number | null }).size_sqm ?? undefined,
+              city:     (typeof loc === 'string' && !loc.startsWith('http')) ? loc : undefined,
+              img:      proj?.images?.[0],
             }
-            setCrmImages(imgMap)
           }
+          setProperties(propList.map(p => ({
+            ...p,
+            project_name: metaMap[p.id]?.name || p.project_name,
+            bedrooms:     metaMap[p.id]?.bedrooms ?? p.bedrooms,
+            size_sqm:     metaMap[p.id]?.size ?? p.size_sqm,
+            city:         p.city || metaMap[p.id]?.city || null,
+          })))
+          const imgMap: Record<string, string> = {}
+          for (const p of propList) if (!p.images?.length && metaMap[p.id]?.img) imgMap[p.id] = metaMap[p.id]!.img!
+          setCrmImages(imgMap)
         }
       } catch (err) {
         console.error('[Eigentuemer/Properties] load:', err)

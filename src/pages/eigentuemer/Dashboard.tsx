@@ -52,9 +52,9 @@ export default function EigentuemerDashboard() {
 
         if (cancelled) return
         const propList = (props ?? []) as PropertyCard[]
-        setProperties(propList)
 
         if (propList.length === 0) {
+          setProperties([])
           setBookingCount(0)
           setDocCount(0)
           return
@@ -62,24 +62,35 @@ export default function EigentuemerDashboard() {
 
         const propIds = propList.map(p => p.id)
 
-        // 2a. CRM-Projektbilder für Properties ohne eigene Bilder holen
-        const noImgIds = propList.filter(p => !p.images?.length).map(p => p.id)
-        if (noImgIds.length > 0) {
-          const { data: unitData } = await supabase
-            .from('crm_project_units')
-            .select('property_id, project:crm_projects(images)')
-            .in('property_id', noImgIds)
-          if (!cancelled && unitData) {
-            const imgMap: Record<string, string> = {}
-            for (const u of unitData) {
-              const imgs = (u.project as { images?: string[] } | null)?.images
-              if (imgs?.length && u.property_id && !imgMap[u.property_id]) {
-                imgMap[u.property_id] = imgs[0]
-              }
-            }
-            setCrmImages(imgMap)
+        // 2a. Kanonische Unit-Daten (Projektname/Ort/Bild) aus der ZENTRALEN Tabelle
+        // crm_project_units ziehen — nie die (evtl. leere/veraltete) properties-Kopie
+        // anzeigen. Fixt u.a. den leeren Projektnamen („· 102" ohne Name).
+        const { data: unitData } = await supabase
+          .from('crm_project_units')
+          .select('property_id, project:crm_projects(name, images, location)')
+          .in('property_id', propIds)
+        const metaMap: Record<string, { name?: string; city?: string; img?: string }> = {}
+        for (const u of (unitData ?? [])) {
+          const pid = (u as { property_id?: string | null }).property_id
+          if (!pid) continue
+          const proj = (u as { project?: { name?: string; images?: string[]; location?: string } | null }).project
+          const loc = proj?.location
+          metaMap[pid] = {
+            name: proj?.name || undefined,
+            city: (typeof loc === 'string' && !loc.startsWith('http')) ? loc : undefined,
+            img:  proj?.images?.[0],
           }
         }
+        const enriched = propList.map(p => ({
+          ...p,
+          project_name: metaMap[p.id]?.name || p.project_name,
+          city:         p.city || metaMap[p.id]?.city || null,
+        }))
+        if (cancelled) return
+        setProperties(enriched)
+        const imgMap: Record<string, string> = {}
+        for (const p of enriched) if (!p.images?.length && metaMap[p.id]?.img) imgMap[p.id] = metaMap[p.id]!.img!
+        setCrmImages(imgMap)
 
         // 2b. Unit-IDs für CRM-Dokumente ermitteln
         const { data: unitRows } = await supabase

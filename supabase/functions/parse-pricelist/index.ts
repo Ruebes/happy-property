@@ -225,9 +225,22 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         }
       }
 
-      // Neue VERFÜGBARE Units anlegen (sold/reserved aus der Liste nicht aufnehmen)
+      // Neue VERFÜGBARE Units anlegen (sold/reserved aus der Liste nicht aufnehmen).
+      // Intra-Batch-Dedup: KI/Liste liefern gelegentlich dieselbe Unit-Nummer doppelt
+      // (z.B. zwei „102"-Zeilen). `have` schützt NUR gegen DB-Bestand, nicht gegen
+      // Dubletten IM selben Batch → sonst landen beide in der DB (exakt der Infinity-102-
+      // Bug: eine korrekte + eine mit fremdem Preis). Nur die erste je Nummer behalten.
+      const seenInBatch = new Set<string>()
+      const dupSkipped: string[] = []
       const rows = units
-        .filter(u => u.unit_number && !have.has(norm(u.unit_number)) && u.availability !== 'sold' && u.availability !== 'reserved')
+        .filter(u => {
+          if (!u.unit_number || have.has(norm(u.unit_number))) return false
+          if (u.availability === 'sold' || u.availability === 'reserved') return false
+          const k = norm(u.unit_number)
+          if (seenInBatch.has(k)) { dupSkipped.push(String(u.unit_number)); return false }
+          seenInBatch.add(k)
+          return true
+        })
         .map((u, i) => ({
           project_id:  body.project_id,
           unit_number: String(u.unit_number).trim(),
@@ -245,6 +258,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
           source:      'drive_import',
           sort_order:  i,
         }))
+      if (dupSkipped.length) console.warn(`[parse-pricelist] Dubletten in Liste übersprungen (nur erste je Nummer behalten): ${dupSkipped.join(', ')}`)
       if (rows.length) {
         const { error, count } = await supabase.from('crm_project_units').insert(rows, { count: 'exact' })
         if (error) throw new Error(`Insert: ${error.message}`)

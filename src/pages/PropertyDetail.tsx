@@ -648,6 +648,7 @@ export default function PropertyDetail() {
   const [linkedUnitId,      setLinkedUnitId]      = useState<string | null>(null)
   const [linkedProjectId,   setLinkedProjectId]   = useState<string | null>(null)
   const [linkedUnit,        setLinkedUnit]        = useState<CrmProjectUnit | null>(null)
+  const [linkedProjectName, setLinkedProjectName] = useState<string | null>(null)  // kanonisch aus crm_projects.name
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
   const [eigentuemerDocs,   setEigentuemerDocs]   = useState<CrmUnitDocument[]>([])
@@ -882,6 +883,7 @@ export default function PropertyDetail() {
         setLinkedUnitId(null)
         setLinkedProjectId(null)
         setLinkedUnit(null)
+        setLinkedProjectName(null)
         setUnitPayments([])
         setUnitKaufvertraege([])
         setCrmProjectImages([])
@@ -941,6 +943,7 @@ export default function PropertyDetail() {
         setConstructionUrls({})
       }
       const proj = projRes.data as { images?: string[]; latitude?: number; longitude?: number; name?: string; location?: string } | null
+      setLinkedProjectName(proj?.name?.trim() || null)   // Titel kanonisch aus dem Projekt, nie aus der properties-Kopie
       setCrmProjectImages(proj?.images ?? [])
       if (proj?.latitude && proj?.longitude) {
         setCrmProjectCoords({ lat: proj.latitude, lng: proj.longitude, name: proj.name ?? proj.location ?? '' })
@@ -3422,9 +3425,9 @@ export default function PropertyDetail() {
       <div className="mb-6">
         <h1 className="text-2xl sm:text-3xl font-bold text-hp-black mb-2"
             style={{ fontFamily: 'var(--font-heading)' }}>
-          {p.project_name}
-          {p.unit_number && (
-            <span className="ml-2 text-base font-medium text-gray-400 font-body">#{p.unit_number}</span>
+          {linkedProjectName || p.project_name}
+          {(linkedUnit?.unit_number || p.unit_number) && (
+            <span className="ml-2 text-base font-medium text-gray-400 font-body">#{linkedUnit?.unit_number || p.unit_number}</span>
           )}
         </h1>
         <div className="flex flex-wrap gap-2">
