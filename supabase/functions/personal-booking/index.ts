@@ -122,13 +122,21 @@ Deno.serve(async (req) => {
       } catch (e) { console.warn('[personal-booking] places:', e); return json({ ok: true, predictions: [] }) }
     }
 
-    // Link laden (für alle übrigen Aktionen)
-    const slug = String(body.slug ?? '').trim()
+    // Optionale Einladung (vorbelegte Kontaktdaten + Bild + Sprache je Gast)
+    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; lang: string } | null = null
+    if (body.invite) {
+      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, lang').eq('token', String(body.invite)).maybeSingle()
+      inv = data as typeof inv
+    }
+    // Link laden (Slug aus Einladung oder direkt)
+    const slug = (inv?.slug ?? String(body.slug ?? '')).trim()
     const { data: link } = await admin.from('personal_booking_links').select('slug, title, active, owner_id').eq('slug', slug).maybeSingle()
     const lk = link as { slug: string; title: string | null; active: boolean; owner_id: string | null } | null
     if (!lk || !lk.active) return json({ error: 'Link nicht gefunden' }, 404)
 
-    if (action === 'config') return json({ ok: true, title: lk.title ?? 'Termin', owner: 'Sven Rüprich' })
+    if (action === 'config') return json({ ok: true, title: lk.title ?? 'Termin', owner: 'Sven Rüprich',
+      guest: inv ? { name: inv.guest_name, email: inv.guest_email, phone: inv.guest_phone, subject: inv.subject } : null,
+      image_url: inv?.image_url ?? null, lang: inv?.lang ?? 'de' })
 
     // ── Freie Slots für die gewählte Dauer ─────────────────────────────────
     if (action === 'slots') {
@@ -164,16 +172,32 @@ Deno.serve(async (req) => {
       const busy = await getBusy(admin, new Date(start.getTime() - 60000), new Date(end.getTime() + 60000))
       if (overlaps(start.getTime(), end.getTime(), busy)) return json({ error: 'Der Zeitpunkt ist gerade belegt worden — bitte einen anderen wählen.' }, 409)
 
+      const lang = body.lang === 'en' ? 'en' : 'de'
+      const loc = lang === 'en' ? 'en-GB' : 'de-DE'
+      const fmtL = (iso: string, opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat(loc, { timeZone: TZ, ...opts }).format(new Date(iso))
       const apptType = type === 'onsite' ? 'inperson' : type   // whatsapp|zoom bleiben
-      const dateStr = `${fmt(startIso, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}, ${fmt(startIso, { hour: '2-digit', minute: '2-digit' })} Uhr`
+      const dateStr = lang === 'en'
+        ? `${fmtL(startIso, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}, ${fmtL(startIso, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+        : `${fmtL(startIso, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}, ${fmtL(startIso, { hour: '2-digit', minute: '2-digit' })} Uhr`
       let zoomLink: string | null = null
       if (type === 'zoom') {
         try { const { data: z } = await admin.functions.invoke('create-zoom-meeting', { body: { title: subject, start_time: startIso, duration_minutes: dur } }); zoomLink = (z as { join_url?: string } | null)?.join_url ?? null } catch (e) { console.warn('[personal-booking] zoom:', e) }
       }
       const location = type === 'onsite' ? (address ?? '') : null
       const locUrl = type === 'zoom' ? zoomLink : (type === 'onsite' && address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` : null)
-      const typeLabel = type === 'onsite' ? `Vor Ort${address ? ` · ${address}` : ''}` : type === 'zoom' ? 'Zoom-Videocall' : 'WhatsApp-Anruf'
-      const desc = `Gebucht über Sven360.\nMit: ${name}${email ? ` · ${email}` : ''}${phone ? ` · ${phone}` : ''}\nArt: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
+      const T = lang === 'en'
+        ? { onsite: 'In person', zoom: 'Zoom video call', wa: 'WhatsApp call', with: 'With', kind: 'Type',
+            greet: (n: string) => `Hi ${n},`, confirmed: 'your appointment with Sven is confirmed:',
+            gcalBtn: 'Add to Google Calendar', icsNote: 'The calendar file (.ics) for Apple/Outlook is attached to this email. See you soon!',
+            zoomLinkLbl: 'Zoom link', mailSubj: (s: string, d: string) => `Appointment confirmation: ${s} on ${d}`,
+            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Your appointment with Sven is confirmed:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nSee you soon!\nHappy Property` }
+        : { onsite: 'Vor Ort', zoom: 'Zoom-Videocall', wa: 'WhatsApp-Anruf', with: 'Mit', kind: 'Art',
+            greet: (n: string) => `Hallo ${n},`, confirmed: 'dein Termin mit Sven ist bestätigt:',
+            gcalBtn: 'Zum Google Kalender hinzufügen', icsNote: 'Die Kalender-Datei (.ics) für Apple/Outlook hängt an dieser Mail. Bis bald!',
+            zoomLinkLbl: 'Zoom-Link', mailSubj: (s: string, d: string) => `Terminbestätigung: ${s} am ${d}`,
+            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Dein Termin mit Sven ist bestätigt:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nBis bald!\nHappy Property` }
+      const typeLabel = type === 'onsite' ? `${T.onsite}${address ? ` · ${address}` : ''}` : type === 'zoom' ? T.zoom : T.wa
+      const desc = `Gebucht über Sven360.\n${T.with}: ${name}${email ? ` · ${email}` : ''}${phone ? ` · ${phone}` : ''}\n${T.kind}: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
 
       const ev = await createCalendarEvent(admin, { title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
       // an bestehenden Lead per E-Mail hängen (falls vorhanden)
@@ -192,21 +216,21 @@ Deno.serve(async (req) => {
       // Bestätigung per E-Mail (+ .ics)
       if (email) {
         const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
-          <p>Hallo ${first},</p><p>dein Termin mit Sven ist bestätigt:</p>
+          <p>${T.greet(first)}</p><p>${T.confirmed}</p>
           <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
             <p style="font-size:16px;font-weight:600;margin:0 0 6px;color:#111827;">${subject}</p>
             <p style="margin:0;color:#374151;">📅 ${dateStr}</p>
             <p style="margin:6px 0 0;color:#374151;">📍 ${typeLabel}</p>
-            ${zoomLink ? `<p style="margin:6px 0 0;"><a href="${zoomLink}" style="color:#ff795d;">Zoom-Link</a></p>` : ''}
+            ${zoomLink ? `<p style="margin:6px 0 0;"><a href="${zoomLink}" style="color:#ff795d;">${T.zoomLinkLbl}</a></p>` : ''}
           </div>
-          <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">Zum Google Kalender hinzufügen</a></p>
-          <p style="font-size:13px;color:#6b7280;">Die Kalender-Datei (.ics) für Apple/Outlook hängt an dieser Mail. Bis bald!</p></div>`
+          <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">${T.gcalBtn}</a></p>
+          <p style="font-size:13px;color:#6b7280;">${T.icsNote}</p></div>`
         const ics = buildIcs({ uid: appt?.id ?? crypto.randomUUID(), title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
-        await admin.functions.invoke('send-email', { body: { to: email, subject: `Terminbestätigung: ${subject} am ${fmt(startIso, { day: '2-digit', month: '2-digit' })}`, html, lead_id: leadId, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
+        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, lead_id: leadId, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
       }
       // Bestätigung per WhatsApp
       if (phone) {
-        const wa = `✅ Dein Termin mit Sven ist bestätigt:\n\n*${subject}*\n📅 ${dateStr}\n📍 ${typeLabel}${zoomLink ? `\n🔗 ${zoomLink}` : ''}\n\nBis bald!\nHappy Property`
+        const wa = T.waMsg(subject, dateStr, typeLabel, zoomLink)
         await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: wa, lead_data: { lead_name: name, lead_phone: phone } } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
       }
       return json({ ok: true, appointment: appt?.id, dateStr, typeLabel, zoomLink })
