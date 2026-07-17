@@ -7,6 +7,22 @@ import { supabase } from '../../../lib/supabase'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { channelBadgeFor } from '../../../lib/crmTypes'
 import AppointmentModal from '../../../components/crm/AppointmentModal'
+
+// Persönlicher Buchungslink (Sven360) — Leute buchen selbst in den Kalender.
+function BookingLinkBar() {
+  const [copied, setCopied] = useState(false)
+  const url = 'https://portal.happy-property.com/buchen/sven360'
+  const copy = () => { navigator.clipboard?.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) }) }
+  return (
+    <div className="mx-6 mt-4 flex items-center gap-3 bg-white border border-orange-100 rounded-xl px-4 py-2.5">
+      <span className="text-xs font-medium text-gray-500 shrink-0">🔗 Dein Buchungslink</span>
+      <code className="text-xs text-gray-800 truncate flex-1">portal.happy-property.com/buchen/sven360</code>
+      <button onClick={copy} className="text-xs font-semibold text-white px-3 py-1.5 rounded-lg shrink-0 transition-colors" style={{ backgroundColor: copied ? '#10b981' : '#ff795d' }}>
+        {copied ? 'Kopiert ✓' : 'Kopieren'}
+      </button>
+    </div>
+  )
+}
 import {
   checkCalendarStatus,
   listGoogleEvents,
@@ -969,6 +985,8 @@ export default function CrmCalendar() {
   return (
     <DashboardLayout basePath="/admin/crm">
       <div className="flex flex-col h-full min-h-screen bg-gray-50">
+
+        <BookingLinkBar />
 
         {/* ── Row 1: Title + Google ── */}
         <div className="flex items-center justify-between px-6 pt-6 pb-2">

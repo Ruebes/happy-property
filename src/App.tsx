@@ -17,6 +17,7 @@ const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
+const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
@@ -126,6 +127,8 @@ export default function App() {
             <Route path="/re/:token" element={<Invoice />} />
             {/* Öffentliche Aufgaben-Aktion (per Token, kein Login) */}
             <Route path="/t/:token" element={<TaskAction />} />
+            {/* Persönlicher Buchungslink (öffentlich, z.B. /buchen/sven360) */}
+            <Route path="/buchen/:slug" element={<BookingPage />} />
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
             <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
 
