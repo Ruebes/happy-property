@@ -194,6 +194,7 @@ export default function AdsManager() {
   const [actions, setActions] = useState<AdAction[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState('')
+  const [syncing, setSyncing] = useState(false)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -331,9 +332,27 @@ export default function AdsManager() {
   const pct = (v: number) => `${(v * 100).toLocaleString(locale, { maximumFractionDigits: 1 })} %`
   const per = (spend: number, n: number) => (n > 0 ? eur(spend / n) : '–')
 
+  // ── Sync on demand (Edge Function meta-ads-sync, läuft sonst täglich 07:00) ─
+  const runSync = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-sync', { body: { days: 3 } })
+      if (error) throw error
+      const d = data as { insight_rows?: number } | null
+      showToast(t('crm.ads.toastSynced', '✅ Aktualisiert — {{n}} Tageswerte von Meta geholt', { n: d?.insight_rows ?? 0 }))
+      await fetchAll()
+    } catch (err) {
+      console.error('[AdsManager] runSync:', err)
+      showToast(`❌ ${t('crm.ads.toastSyncError', 'Aktualisierung fehlgeschlagen')}`)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   // ── Aktions-Queue: vormerken / stornieren ─────────────────────────────────
-  // Die eigentliche Ausführung bei Meta übernimmt der tägliche Sync-Lauf
-  // (bzw. „Run now" in der Claude-App) — die Seite selbst hat keinen Meta-Zugriff.
+  // Ausführung bei Meta übernimmt meta-ads-sync — nach dem Vormerken stoßen
+  // wir sie sofort an (fire-and-forget) und laden den Status kurz darauf nach.
   const pendingByAd = useMemo(() => {
     const m = new Map<string, AdAction>()
     for (const a of actions) if (a.status === 'bestätigt') m.set(a.ad_id, a)
@@ -351,8 +370,12 @@ export default function AdsManager() {
       if (error) throw error
       setActions(prev => [data as unknown as AdAction, ...prev])
       showToast(action === 'pause'
-        ? t('crm.ads.toastPauseQueued', '⏸ Vorgemerkt — wird beim nächsten Sync pausiert')
-        : t('crm.ads.toastActivateQueued', '▶ Vorgemerkt — wird beim nächsten Sync aktiviert'))
+        ? t('crm.ads.toastPauseQueued', '⏸ Wird bei Meta pausiert …')
+        : t('crm.ads.toastActivateQueued', '▶ Wird bei Meta aktiviert …'))
+      // Sofort ausführen und Status nachladen (fire-and-forget, UI blockiert nicht)
+      supabase.functions.invoke('meta-ads-sync', { body: { mode: 'actions_only' } })
+        .then(() => fetchAll())
+        .catch(e => console.warn('[AdsManager] Sofort-Ausführung failed:', e))
     } catch (err) {
       console.error('[AdsManager] queueAction:', err)
       showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
@@ -451,13 +474,23 @@ export default function AdsManager() {
               </button>
             ))}
           </div>
-          <div className="ml-auto flex rounded-lg border border-gray-200 overflow-hidden">
-            {([7, 30, 90] as const).map(d => (
-              <button key={d} onClick={() => setDays(d)}
-                className={`px-3 py-1.5 text-sm font-medium ${days === d ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-                {t('crm.ads.days', '{{n}} Tage', { n: d })}
+          <div className="ml-auto flex items-center gap-2">
+            <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+              {([7, 30, 90] as const).map(d => (
+                <button key={d} onClick={() => setDays(d)}
+                  className={`px-3 py-1.5 text-sm font-medium ${days === d ? 'bg-gray-900 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                  {t('crm.ads.days', '{{n}} Tage', { n: d })}
+                </button>
+              ))}
+            </div>
+            {segment === 'meta' && (
+              <button onClick={() => void runSync()} disabled={syncing}
+                className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white flex items-center gap-1.5 disabled:opacity-60"
+                style={{ backgroundColor: '#ff795d' }}>
+                {syncing && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                🔄 {t('crm.ads.syncNow', 'Aktualisieren')}
               </button>
-            ))}
+            )}
           </div>
         </div>
 
@@ -499,7 +532,7 @@ export default function AdsManager() {
             {(recommendations.length > 0 || actions.some(a => a.status !== 'abgelehnt')) && (
               <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
                 <h2 className="text-sm font-bold text-gray-700 mb-1">💡 {t('crm.ads.recTitle', 'Empfehlungen & Aktionen')}</h2>
-                <p className="text-[11px] text-gray-400 mb-3">{t('crm.ads.recSub', 'Bestätigte Aktionen führt der Sync-Lauf bei Meta aus (täglich 7:00 Uhr — oder sofort per „Run now" in der Claude-App).')}</p>
+                <p className="text-[11px] text-gray-400 mb-3">{t('crm.ads.recSub', 'Ein Klick genügt — die Aktion wird sofort direkt bei Meta ausgeführt.')}</p>
                 {recommendations.length > 0 && (
                   <div className="space-y-2 mb-3">
                     {recommendations.map(r => (
@@ -661,13 +694,13 @@ export default function AdsManager() {
                                     </span>
                                   ) : ad.status === 'ACTIVE' ? (
                                     <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'pause', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
-                                      title={t('crm.ads.actPauseTitle', 'Anzeige pausieren (wird beim nächsten Sync ausgeführt)')}
+                                      title={t('crm.ads.actPauseTitle', 'Anzeige sofort bei Meta pausieren')}
                                       className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-orange-400 hover:text-orange-600 whitespace-nowrap">
                                       ⏸ {t('crm.ads.actPause', 'Pausieren')}
                                     </button>
                                   ) : (
                                     <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'activate', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
-                                      title={t('crm.ads.actActivateTitle', 'Anzeige aktivieren (wird beim nächsten Sync ausgeführt)')}
+                                      title={t('crm.ads.actActivateTitle', 'Anzeige sofort bei Meta aktivieren')}
                                       className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-green-400 hover:text-green-600 whitespace-nowrap">
                                       ▶ {t('crm.ads.actActivate', 'Aktivieren')}
                                     </button>
@@ -688,7 +721,7 @@ export default function AdsManager() {
             </div>
 
             <p className="mt-3 text-[11px] text-gray-400">
-              {t('crm.ads.footnote', 'Datenstand: täglicher Sync aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet). * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}
+              {t('crm.ads.footnote', 'Datenstand: automatischer Sync jeden Morgen direkt aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet) — oder sofort über „Aktualisieren". * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}
               {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
             </p>
           </>
