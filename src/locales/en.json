@@ -2841,7 +2841,8 @@
       "paused": "paused",
       "empty": "No ad data in the selected period.",
       "footnote": "Data source: daily sync from the Meta ad account (Sveru Marketing LLC, converted USD → EUR). * = lead count per Meta while CRM attribution via ad URL parameters is not yet active.",
-      "toLeads": "Go to leads"
+      "toLeads": "Go to leads",
+      "clickHint": "👆 Click a campaign to expand its individual ads"
     }
   },
   "docs": {

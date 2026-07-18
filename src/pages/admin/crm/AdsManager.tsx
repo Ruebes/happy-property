@@ -407,9 +407,12 @@ export default function AdsManager() {
 
             {/* Kampagnen → Anzeigen */}
             <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-bold text-gray-700">{t('crm.ads.tableTitle', 'Kampagnen & Anzeigen')}</h2>
-                <span className="text-[11px] text-gray-400">{t('crm.ads.tableHint', 'Frequenz = wie oft dieselbe Person die Werbung im Zeitraum gesehen hat (Ø)')}</span>
+                <span className="text-[11px] text-gray-400">
+                  <span className="font-semibold text-orange-500">{t('crm.ads.clickHint', '👆 Kampagne anklicken = einzelne Anzeigen (Bildchen) aufklappen')}</span>
+                  {' · '}{t('crm.ads.tableHint', 'Frequenz = wie oft dieselbe Person die Werbung im Zeitraum gesehen hat (Ø)')}
+                </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

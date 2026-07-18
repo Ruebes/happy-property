@@ -2841,7 +2841,8 @@
       "paused": "pausiert",
       "empty": "Keine Werbedaten im gewählten Zeitraum.",
       "footnote": "Datenstand: täglicher Sync aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet). * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.",
-      "toLeads": "Zu den Leads"
+      "toLeads": "Zu den Leads",
+      "clickHint": "👆 Kampagne anklicken = einzelne Anzeigen (Bildchen) aufklappen"
     }
   },
   "docs": {
