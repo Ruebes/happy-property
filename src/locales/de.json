@@ -3,6 +3,10 @@
     "name": "Happy Property",
     "copyright": "© {{year}} Happy Property. Alle Rechte vorbehalten."
   },
+  "funnel": {
+    "back": "Zurück",
+    "next": "Weiter"
+  },
   "common": {
     "loading": "Wird geladen …",
     "saving": "Speichert …",

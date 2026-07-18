@@ -265,6 +265,13 @@ export default function Funnel() {
     void performBooking(s)
   }
 
+  // Vorwärts ohne neu zu antworten — nur möglich, wenn die aktuelle Frage schon
+  // beantwortet ist (also nach einem „Zurück" zum Korrigieren).
+  const forward = () => {
+    if (qIdx + 1 < QUESTIONS.length) setQIdx(qIdx + 1)
+    else { setPhase('contact'); void track(QUESTIONS.length + 1, 'contact_view') }
+  }
+
   const back = () => {
     if (phase === 'questions' && qIdx > 0) setQIdx(qIdx - 1)
     else if (phase === 'questions') setPhase('welcome')
@@ -378,6 +385,22 @@ export default function Funnel() {
                   ))}
                 </div>
               )}
+              {/* Sichtbare Vor-/Zurück-Navigation: der kleine Link im Header wird
+                  übersehen — Verklicken muss ohne Suchen korrigierbar sein. */}
+              <div className="flex items-center justify-between mt-8">
+                <button onClick={back}
+                  className="px-5 py-2.5 rounded-full border-2 bg-white text-sm font-semibold text-gray-600 hover:text-gray-900 hover:shadow-md transition"
+                  style={{ borderColor: '#e6dfd0' }}>
+                  ← {t('funnel.back', 'Zurück')}
+                </button>
+                {answers[q.key] && (
+                  <button onClick={forward}
+                    className="px-5 py-2.5 rounded-full border-2 bg-white text-sm font-semibold hover:shadow-md transition"
+                    style={{ borderColor: CORAL, color: CORAL }}>
+                    {t('funnel.next', 'Weiter')} →
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
