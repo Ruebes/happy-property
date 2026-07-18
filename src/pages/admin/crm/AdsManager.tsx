@@ -202,6 +202,11 @@ export default function AdsManager() {
   const [settings, setSettings] = useState<AdSettings>(DEFAULT_SETTINGS)
   const [editSettings, setEditSettings] = useState(false)
   const [settingsForm, setSettingsForm] = useState({ target_cpl: '60', max_budget: '180' })
+  // Anzeigen-Vorschau (FB/IG/Story) + Zielgruppen-Assistent
+  const [preview, setPreview] = useState<{ adName: string; loading: boolean; tab: 'facebook' | 'instagram' | 'story'; previews?: Record<string, string>; caption?: { message: string; headline: string } } | null>(null)
+  const [audienceText, setAudienceText] = useState('')
+  const [audienceBusy, setAudienceBusy] = useState(false)
+  const [audienceDraft, setAudienceDraft] = useState<{ age_min: number; age_max: number; genders: string; countries: string[]; interests: Array<{ id: string; name: string; audience?: number }>; jobs: Array<{ id: string; name: string }>; summary: string } | null>(null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -395,6 +400,56 @@ export default function AdsManager() {
     } catch (err) {
       console.error('[AdsManager] saveSettings:', err)
       showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
+    }
+  }
+
+  // ── Anzeigen-Vorschau (Edge Function meta-ads-tools) ──────────────────────
+  const openPreview = async (ad: AdCatalogRow) => {
+    setPreview({ adName: ad.ad_name ?? ad.ad_id, loading: true, tab: 'facebook' })
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'preview', ad_id: ad.ad_id } })
+      if (error) throw error
+      const d = data as { previews: Record<string, string>; caption: { message: string; headline: string } }
+      setPreview(p => p ? { ...p, loading: false, previews: d.previews, caption: d.caption } : p)
+    } catch (err) {
+      console.error('[AdsManager] openPreview:', err)
+      setPreview(null)
+      showToast(`❌ ${t('crm.ads.previewError', 'Vorschau konnte nicht geladen werden')}`)
+    }
+  }
+
+  // ── Zielgruppen-Assistent ─────────────────────────────────────────────────
+  const suggestAudience = async () => {
+    if (!audienceText.trim() || audienceBusy) return
+    setAudienceBusy(true)
+    setAudienceDraft(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'audience_suggest', description: audienceText.trim() } })
+      if (error) throw error
+      setAudienceDraft((data as { draft: typeof audienceDraft }).draft)
+    } catch (err) {
+      console.error('[AdsManager] suggestAudience:', err)
+      showToast(`❌ ${t('crm.ads.audienceError', 'Vorschlag fehlgeschlagen — bitte nochmal versuchen')}`)
+    } finally {
+      setAudienceBusy(false)
+    }
+  }
+
+  const applyAudience = async () => {
+    if (!audienceDraft || audienceBusy) return
+    setAudienceBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'audience_apply', targeting_draft: audienceDraft } })
+      if (error) throw error
+      if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
+      showToast(t('crm.ads.audienceApplied', '✅ Zielgruppe auf die System-Kampagne angewendet'))
+      setAudienceDraft(null)
+      setAudienceText('')
+    } catch (err) {
+      console.error('[AdsManager] applyAudience:', err)
+      showToast(`❌ ${t('crm.ads.audienceError', 'Vorschlag fehlgeschlagen — bitte nochmal versuchen')}`)
+    } finally {
+      setAudienceBusy(false)
     }
   }
 
@@ -624,6 +679,52 @@ export default function AdsManager() {
               )}
             </div>
 
+            {/* Zielgruppen-Assistent: Beschreibung → Meta-Targeting (System-Kampagne) */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+              <h2 className="text-sm font-bold text-gray-700 mb-1">🧲 {t('crm.ads.audienceTitle', 'Zielgruppen-Assistent (System-Kampagne)')}</h2>
+              <p className="text-[11px] text-gray-400 mb-2">{t('crm.ads.audienceSub', 'Beschreibe in normalen Worten, wen die Werbung erreichen soll — das System übersetzt das in Meta-Targeting und zeigt dir den Vorschlag, bevor er übernommen wird.')}</p>
+              <div className="flex flex-wrap gap-2">
+                <textarea value={audienceText} onChange={e => setAudienceText(e.target.value)} rows={2}
+                  placeholder={t('crm.ads.audiencePh', 'z.B. „Deutsche Ärzte und Apotheker ab 40, die schon Immobilien besitzen und Steuern sparen wollen“')}
+                  className="flex-1 min-w-[260px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                <button onClick={() => void suggestAudience()} disabled={audienceBusy || !audienceText.trim()}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white self-start flex items-center gap-1.5 disabled:opacity-60"
+                  style={{ backgroundColor: '#ff795d' }}>
+                  {audienceBusy && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  🪄 {t('crm.ads.audienceCta', 'Vorschlag erarbeiten')}
+                </button>
+              </div>
+              {audienceDraft && (
+                <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50/50 p-3 text-sm">
+                  <p className="text-gray-800 mb-2">{audienceDraft.summary}</p>
+                  <div className="flex flex-wrap gap-1.5 text-xs">
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">🎂 {audienceDraft.age_min}–{audienceDraft.age_max}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">🌍 {audienceDraft.countries.join(', ')}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-gray-200">
+                      {audienceDraft.genders === 'maenner' ? `♂ ${t('crm.ads.men', 'Männer')}` : audienceDraft.genders === 'frauen' ? `♀ ${t('crm.ads.women', 'Frauen')}` : `⚥ ${t('crm.ads.all', 'Alle')}`}
+                    </span>
+                    {audienceDraft.interests.map(i => (
+                      <span key={i.id} className="px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-800" title={i.audience ? `${t('crm.ads.reach', 'Reichweite')}: ${i.audience.toLocaleString(locale)}` : undefined}>
+                        💡 {i.name}
+                      </span>
+                    ))}
+                    {audienceDraft.jobs.map(j => (
+                      <span key={j.id} className="px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-800">💼 {j.name}</span>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 mt-3">
+                    <button onClick={() => void applyAudience()} disabled={audienceBusy}
+                      className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
+                      ✅ {t('crm.ads.audienceApply', 'Auf System-Kampagne anwenden')}
+                    </button>
+                    <button onClick={() => setAudienceDraft(null)} className="px-3 py-1.5 rounded-lg text-xs text-gray-600 border border-gray-200 hover:bg-gray-50">
+                      {t('crm.ads.audienceDiscard', 'Verwerfen')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Hinweis solange die CRM-Zuordnung noch nicht greift */}
             {total.crmLeads === 0 && (
               <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -775,6 +876,11 @@ export default function AdsManager() {
                                       ? <img src={ad.thumbnail_url} alt="" className="w-7 h-7 rounded object-cover shrink-0" loading="lazy" />
                                       : <span className="w-7 h-7 rounded bg-gray-200 text-gray-500 text-[10px] flex items-center justify-center shrink-0">Ad</span>}
                                     <span className="truncate max-w-[240px]" title={ad.ad_name ?? ad.ad_id}>{ad.ad_name ?? ad.ad_id}</span>
+                                    <button onClick={e => { e.stopPropagation(); void openPreview(ad) }}
+                                      title={t('crm.ads.previewTitle', 'Vorschau ansehen (Facebook & Instagram)')}
+                                      className="px-1.5 py-0.5 rounded border border-gray-200 text-[11px] text-gray-500 hover:border-blue-400 hover:text-blue-600 shrink-0">
+                                      👁 {t('crm.ads.previewBtn', 'Vorschau')}
+                                    </button>
                                     {ad.status !== 'ACTIVE' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">{t('crm.ads.paused', 'pausiert')}</span>}
                                   </span>
                                 </td>
@@ -828,6 +934,47 @@ export default function AdsManager() {
               {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
             </p>
           </>
+        )}
+
+        {/* Anzeigen-Vorschau (Facebook / Instagram / Story) */}
+        {preview && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPreview(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+                <h3 className="font-bold text-gray-900 text-sm truncate">👁 {preview.adName}</h3>
+                <button onClick={() => setPreview(null)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+              </div>
+              <div className="px-5 pt-3">
+                <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+                  {([['facebook', 'Facebook'], ['instagram', 'Instagram'], ['story', 'Story']] as const).map(([key, label]) => (
+                    <button key={key} onClick={() => setPreview(p => p ? { ...p, tab: key } : p)}
+                      className={`flex-1 px-3 py-1.5 font-medium ${preview.tab === key ? 'text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                      style={preview.tab === key ? { backgroundColor: '#ff795d' } : undefined}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="px-5 py-4">
+                {preview.loading ? (
+                  <div className="flex justify-center py-16">
+                    <div className="w-8 h-8 rounded-full border-4 border-orange-300 border-t-orange-500 animate-spin" />
+                  </div>
+                ) : preview.previews?.[preview.tab] ? (
+                  // Meta liefert die Vorschau als fertiges iframe-Snippet
+                  <div className="flex justify-center overflow-x-auto" dangerouslySetInnerHTML={{ __html: preview.previews[preview.tab] }} />
+                ) : (
+                  <p className="text-sm text-gray-400 text-center py-10">{t('crm.ads.previewUnavailable', 'Für dieses Format liefert Meta keine Vorschau.')}</p>
+                )}
+                {preview.caption && !preview.loading && (
+                  <div className="mt-3 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">
+                    <p className="text-xs font-bold text-gray-700">{preview.caption.headline}</p>
+                    <p className="mt-1 text-xs text-gray-600 whitespace-pre-wrap max-h-48 overflow-y-auto">{preview.caption.message}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {toast && (

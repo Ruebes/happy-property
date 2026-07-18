@@ -2874,7 +2874,23 @@
       "sysCampaign": "System-Kampagne",
       "overBudget": "Gestern {{spend}} ausgegeben — über deinem Tageslimit von {{limit}}.",
       "settingsSaved": "✅ Leitplanken gespeichert",
-      "settingsInvalid": "Bitte gültige Beträge eingeben"
+      "settingsInvalid": "Bitte gültige Beträge eingeben",
+      "previewBtn": "Vorschau",
+      "previewTitle": "Vorschau ansehen (Facebook & Instagram)",
+      "previewError": "Vorschau konnte nicht geladen werden",
+      "previewUnavailable": "Für dieses Format liefert Meta keine Vorschau.",
+      "audienceTitle": "Zielgruppen-Assistent (System-Kampagne)",
+      "audienceSub": "Beschreibe in normalen Worten, wen die Werbung erreichen soll — das System übersetzt das in Meta-Targeting und zeigt dir den Vorschlag, bevor er übernommen wird.",
+      "audiencePh": "z.B. „Deutsche Ärzte und Apotheker ab 40, die schon Immobilien besitzen und Steuern sparen wollen“",
+      "audienceCta": "Vorschlag erarbeiten",
+      "audienceApply": "Auf System-Kampagne anwenden",
+      "audienceDiscard": "Verwerfen",
+      "audienceApplied": "✅ Zielgruppe auf die System-Kampagne angewendet",
+      "audienceError": "Vorschlag fehlgeschlagen — bitte nochmal versuchen",
+      "men": "Männer",
+      "women": "Frauen",
+      "all": "Alle",
+      "reach": "Reichweite"
     }
   },
   "docs": {

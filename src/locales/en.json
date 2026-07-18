@@ -2874,7 +2874,23 @@
       "sysCampaign": "System campaign",
       "overBudget": "Spent {{spend}} yesterday — above your daily limit of {{limit}}.",
       "settingsSaved": "✅ Guardrails saved",
-      "settingsInvalid": "Please enter valid amounts"
+      "settingsInvalid": "Please enter valid amounts",
+      "previewBtn": "Preview",
+      "previewTitle": "View preview (Facebook & Instagram)",
+      "previewError": "Preview could not be loaded",
+      "previewUnavailable": "Meta does not provide a preview for this format.",
+      "audienceTitle": "Audience assistant (system campaign)",
+      "audienceSub": "Describe in plain words who the ads should reach — the system translates it into Meta targeting and shows you the proposal before applying it.",
+      "audiencePh": "e.g. \"German doctors and pharmacists 40+, who already own property and want to save taxes\"",
+      "audienceCta": "Build proposal",
+      "audienceApply": "Apply to system campaign",
+      "audienceDiscard": "Discard",
+      "audienceApplied": "✅ Audience applied to the system campaign",
+      "audienceError": "Proposal failed — please try again",
+      "men": "Men",
+      "women": "Women",
+      "all": "All",
+      "reach": "Reach"
     }
   },
   "docs": {
