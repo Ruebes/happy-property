@@ -9,9 +9,14 @@
 //   { days?: number }              — wie viele Tage rückwirkend (Default 3, max 90)
 //   { mode?: 'actions_only' }      — nur die Aktions-Queue ausführen (schnell)
 //
+// Zusätzlich: Conversions-API-Rückspielung ans aktive Pixel — Termin gebucht
+// (Schedule), Termin stattgefunden (AppointmentHeld), 👍-Lead (QualifiedLead),
+// Sale (Purchase mit Provisionswert). Dedupe über capi_log, Fenster 7 Tage.
+//
 // ── Secrets (Supabase Dashboard → Settings → Edge Functions → Secrets) ──
 //   META_ACCESS_TOKEN   = System-User-Token „Analytics Sync" (ads_read + ads_management, Ablauf: nie)
 //   META_AD_ACCOUNT_ID  = 4065490590399677 (Sveru Marketing LLC, USD)
+//   META_PIXEL_ID       = 1083578343946189 (Sveru Marketing LLC's Pixel — das aktive)
 //
 // ── Deployment ──
 //   supabase functions deploy meta-ads-sync --no-verify-jwt
@@ -65,6 +70,40 @@ const num = (v: unknown): number => {
 }
 const actionValue = (arr: InsightRow['actions'], type: string): number =>
   num(arr?.find(a => a.action_type === type)?.value)
+
+// ── Conversions API: Hashing + Event-Bau ─────────────────────────────────────
+async function sha256(s: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+
+interface CapiCandidate {
+  event_id: string
+  event_name: string
+  event_time: number            // Unix-Sekunden, max. 7 Tage alt
+  lead_id: string | null
+  email: string | null
+  phone: string | null
+  value?: number                // nur Purchase (EUR)
+}
+
+async function buildCapiEvent(c: CapiCandidate): Promise<Record<string, unknown> | null> {
+  const user_data: Record<string, string[]> = {}
+  const email = c.email?.trim().toLowerCase()
+  if (email) user_data.em = [await sha256(email)]
+  const phone = c.phone?.replace(/[^0-9]/g, '')
+  if (phone && phone.length >= 8) user_data.ph = [await sha256(phone)]
+  if (!user_data.em && !user_data.ph) return null   // ohne Matching-Daten sinnlos
+  const ev: Record<string, unknown> = {
+    event_name: c.event_name,
+    event_time: c.event_time,
+    event_id: c.event_id,
+    action_source: 'system_generated',
+    user_data,
+  }
+  if (c.value && c.value > 0) ev.custom_data = { currency: 'EUR', value: c.value }
+  return ev
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
@@ -177,6 +216,99 @@ Deno.serve(async (req) => {
       summary.since = since
       summary.until = until
       console.log(`[meta-ads-sync] ${insightRows.length} Insight-Zeilen (${since}–${until}), ${catalogRows.length} Katalog-Zeilen`)
+    }
+
+    // ── 1b. Conversions API: CRM-Qualität an Meta zurückspielen ──────────────
+    // Meta lernt daraus, WER bucht/erscheint/gut ist — und liefert die Anzeigen
+    // an ähnliche Leute aus. Dedupe über capi_log; Events max. 7 Tage alt.
+    if (!actionsOnly) {
+      const pixelId = Deno.env.get('META_PIXEL_ID') ?? ''
+      if (pixelId) {
+        try {
+          const winStart = new Date(Date.now() - 7 * 86_400_000).toISOString()
+          const clampTime = (iso: string) => Math.trunc(new Date(iso).getTime() / 1000)
+          const candidates: CapiCandidate[] = []
+
+          // Termin gebucht → Schedule
+          const { data: appts } = await supabase
+            .from('crm_appointments')
+            .select('id, lead_id, created_at, start_time, outcome, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .gte('created_at', winStart)
+            .not('lead_id', 'is', null)
+          for (const a of (appts ?? []) as unknown as Array<{ id: string; lead_id: string; created_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+            if (!a.lead) continue
+            candidates.push({ event_id: `appt-${a.id}`, event_name: 'Schedule', event_time: clampTime(a.created_at), lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone })
+          }
+
+          // Termin stattgefunden → AppointmentHeld (Bewertungszeitpunkt = updated_at)
+          const { data: held } = await supabase
+            .from('crm_appointments')
+            .select('id, lead_id, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .eq('outcome', 'completed')
+            .gte('updated_at', winStart)
+            .not('lead_id', 'is', null)
+          for (const a of (held ?? []) as unknown as Array<{ id: string; lead_id: string; updated_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+            if (!a.lead) continue
+            candidates.push({ event_id: `held-${a.id}`, event_name: 'AppointmentHeld', event_time: clampTime(a.updated_at), lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone })
+          }
+
+          // 👍-Bewertung → QualifiedLead
+          const { data: rated } = await supabase
+            .from('leads')
+            .select('id, email, phone, whatsapp, quality_rated_at')
+            .eq('quality_rating', 'gut')
+            .gte('quality_rated_at', winStart)
+          for (const l of (rated ?? []) as Array<{ id: string; email: string | null; phone: string | null; whatsapp: string | null; quality_rated_at: string }>) {
+            candidates.push({ event_id: `goodlead-${l.id}`, event_name: 'QualifiedLead', event_time: clampTime(l.quality_rated_at), lead_id: l.id, email: l.email, phone: l.whatsapp ?? l.phone })
+          }
+
+          // Sale (Anzahlung/Provision) → Purchase mit Provisionswert
+          const { data: sales } = await supabase
+            .from('deals')
+            .select('id, lead_id, phase, commission_amount, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .in('phase', ['anzahlung', 'provision_erhalten'])
+            .gte('updated_at', winStart)
+          for (const d of (sales ?? []) as unknown as Array<{ id: string; lead_id: string; commission_amount: number | null; updated_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+            if (!d.lead) continue
+            candidates.push({ event_id: `sale-${d.id}`, event_name: 'Purchase', event_time: clampTime(d.updated_at), lead_id: d.lead_id, email: d.lead.email, phone: d.lead.whatsapp ?? d.lead.phone, value: d.commission_amount ?? 0 })
+          }
+
+          // Bereits gesendete rausfiltern
+          const ids = candidates.map(c => c.event_id)
+          const sent = new Set<string>()
+          for (let i = 0; i < ids.length; i += 200) {
+            const { data: logRows } = await supabase.from('capi_log').select('event_id').in('event_id', ids.slice(i, i + 200))
+            for (const r of (logRows ?? []) as { event_id: string }[]) sent.add(r.event_id)
+          }
+          const fresh = candidates.filter(c => !sent.has(c.event_id))
+
+          const events: Record<string, unknown>[] = []
+          const freshUsed: CapiCandidate[] = []
+          for (const c of fresh) {
+            const ev = await buildCapiEvent(c)
+            if (ev) { events.push(ev); freshUsed.push(c) }
+          }
+          if (events.length) {
+            const res = await fetch(`${GRAPH}/${pixelId}/events`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: events }),
+            })
+            const json = await res.json()
+            if (!res.ok) throw new Error(`CAPI ${res.status}: ${JSON.stringify(json?.error ?? json).slice(0, 200)}`)
+            await supabase.from('capi_log').insert(freshUsed.map(c => ({ event_id: c.event_id, event_name: c.event_name, lead_id: c.lead_id })))
+            summary.capi_sent = json?.events_received ?? events.length
+            console.log(`[meta-ads-sync] CAPI: ${events.length} Events gesendet (${freshUsed.map(c => c.event_name).join(', ')})`)
+          } else {
+            summary.capi_sent = 0
+          }
+        } catch (err) {
+          // Rückspielung darf den Sync nie scheitern lassen
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error('[meta-ads-sync] CAPI-Fehler:', msg)
+          summary.capi_error = msg
+        }
+      }
     }
 
     // ── 2. Bestätigte Aktionen ausführen (pause/activate — sonst NICHTS) ─────
