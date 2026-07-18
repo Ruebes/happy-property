@@ -46,6 +46,23 @@ interface AdLead {
 interface AdAppt { id: string; lead_id: string | null; start_time: string; outcome: 'completed' | 'no_show' | null }
 interface AdDeal { id: string; lead_id: string; phase: string; commission_amount: number | null }
 
+// Aktions-Warteschlange: bestätigte Aktionen führt der tägliche Sync-Lauf bei Meta aus
+interface AdAction {
+  id: string
+  ad_id: string
+  ad_name: string | null
+  campaign_name: string | null
+  action: 'pause' | 'activate'
+  reason: string | null
+  status: 'bestätigt' | 'ausgeführt' | 'fehlgeschlagen' | 'abgelehnt'
+  created_at: string
+  executed_at: string | null
+  result: string | null
+}
+
+// Empfehlung der Regel-Engine (rein deterministisch, transparent begründet)
+interface Recommendation { ad: AdCatalogRow; kind: 'no_leads' | 'high_cpl' | 'fatigue'; reason: string; spend: number }
+
 // Zusammengerollte Kennzahlen (eine Ad oder eine Kampagne)
 interface Agg {
   spendEur: number
@@ -174,7 +191,14 @@ export default function AdsManager() {
   const [leads, setLeads] = useState<AdLead[]>([])
   const [appts, setAppts] = useState<AdAppt[]>([])
   const [deals, setDeals] = useState<AdDeal[]>([])
+  const [actions, setActions] = useState<AdAction[]>([])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [toast, setToast] = useState('')
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 3000)
+  }
 
   useEffect(() => {
     if (segments.length && !segments.includes(segment)) setSegment(segments[0])
@@ -195,6 +219,16 @@ export default function AdsManager() {
       const catRows = (cat as unknown as AdCatalogRow[]) ?? []
       setCatalog(catRows)
       setInsights((ins as unknown as InsightRow[]) ?? [])
+
+      // Aktions-Queue: offene + die letzten 14 Tage erledigte/fehlgeschlagene
+      const { data: act, error: eAct } = await supabase
+        .from('ad_actions')
+        .select('id, ad_id, ad_name, campaign_name, action, reason, status, created_at, executed_at, result')
+        .eq('platform', segment)
+        .or(`status.eq.bestätigt,created_at.gte.${new Date(Date.now() - 14 * 86_400_000).toISOString()}`)
+        .order('created_at', { ascending: false })
+      if (eAct) throw eAct
+      setActions((act as unknown as AdAction[]) ?? [])
 
       // CRM-Zuordnung: Leads über utm_campaign/{{campaign.id}} bzw. Meta-Quellen
       const campaignIds = [...new Set(catRows.map(c => c.campaign_id))]
@@ -224,7 +258,7 @@ export default function AdsManager() {
       }
     } catch (err) {
       console.error('[AdsManager] fetchAll:', err)
-      setCatalog([]); setInsights([]); setLeads([]); setAppts([]); setDeals([])
+      setCatalog([]); setInsights([]); setLeads([]); setAppts([]); setDeals([]); setActions([])
     } finally {
       setLoading(false)
     }
@@ -291,18 +325,103 @@ export default function AdsManager() {
     return { byAd, byCampaign, campaignsSorted, total, trend }
   }, [catalog, insights, leads, appts, deals])
 
+  // ── Formatierung ───────────────────────────────────────────────────────────
+  const eur = (v: number) => v.toLocaleString(locale, { style: 'currency', currency: 'EUR', maximumFractionDigits: v >= 100 ? 0 : 2 })
+  const int = (v: number) => v.toLocaleString(locale)
+  const pct = (v: number) => `${(v * 100).toLocaleString(locale, { maximumFractionDigits: 1 })} %`
+  const per = (spend: number, n: number) => (n > 0 ? eur(spend / n) : '–')
+
+  // ── Aktions-Queue: vormerken / stornieren ─────────────────────────────────
+  // Die eigentliche Ausführung bei Meta übernimmt der tägliche Sync-Lauf
+  // (bzw. „Run now" in der Claude-App) — die Seite selbst hat keinen Meta-Zugriff.
+  const pendingByAd = useMemo(() => {
+    const m = new Map<string, AdAction>()
+    for (const a of actions) if (a.status === 'bestätigt') m.set(a.ad_id, a)
+    return m
+  }, [actions])
+
+  const queueAction = async (ad: AdCatalogRow, action: 'pause' | 'activate', reason: string) => {
+    if (pendingByAd.has(ad.ad_id)) return
+    try {
+      const { data, error } = await supabase.from('ad_actions').insert({
+        platform: segment, ad_id: ad.ad_id, ad_name: ad.ad_name,
+        campaign_name: ad.campaign_name, action, reason,
+        created_by: profile?.id ?? null,
+      }).select('id, ad_id, ad_name, campaign_name, action, reason, status, created_at, executed_at, result').single()
+      if (error) throw error
+      setActions(prev => [data as unknown as AdAction, ...prev])
+      showToast(action === 'pause'
+        ? t('crm.ads.toastPauseQueued', '⏸ Vorgemerkt — wird beim nächsten Sync pausiert')
+        : t('crm.ads.toastActivateQueued', '▶ Vorgemerkt — wird beim nächsten Sync aktiviert'))
+    } catch (err) {
+      console.error('[AdsManager] queueAction:', err)
+      showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
+    }
+  }
+
+  const cancelAction = async (id: string) => {
+    const prev = actions
+    setActions(actions.map(a => (a.id === id ? { ...a, status: 'abgelehnt' as const } : a)))
+    try {
+      const { error } = await supabase.from('ad_actions').update({ status: 'abgelehnt' }).eq('id', id).eq('status', 'bestätigt')
+      if (error) throw error
+      showToast(t('crm.ads.toastCancelled', 'Aktion storniert'))
+    } catch (err) {
+      console.error('[AdsManager] cancelAction:', err)
+      setActions(prev)
+    }
+  }
+
+  // ── Empfehlungen (Regel-Engine über den geladenen Zeitraum) ───────────────
+  const recommendations = useMemo<Recommendation[]>(() => {
+    const recs: Recommendation[] = []
+    // Median-CPL je Kampagne (nur Ads mit Leads)
+    const cplByCampaign = new Map<string, number[]>()
+    for (const c of catalog) {
+      const a = byAd.get(c.ad_id)
+      if (!a) continue
+      const eff = a.crmLeads > 0 ? a.crmLeads : a.platformLeads
+      if (eff > 0) {
+        const arr = cplByCampaign.get(c.campaign_id) ?? []
+        arr.push(a.spendEur / eff)
+        cplByCampaign.set(c.campaign_id, arr)
+      }
+    }
+    const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)] }
+    for (const c of catalog) {
+      if (c.status !== 'ACTIVE' || pendingByAd.has(c.ad_id)) continue
+      const a = byAd.get(c.ad_id)
+      if (!a || a.spendEur < 50) continue
+      const eff = a.crmLeads > 0 ? a.crmLeads : a.platformLeads
+      if (eff === 0 && a.spendEur >= 100) {
+        recs.push({ ad: c, kind: 'no_leads', spend: a.spendEur, reason: t('crm.ads.recReasonNoLeads', '{{spend}} ausgegeben, kein einziger Lead im Zeitraum', { spend: eur(a.spendEur) }) })
+        continue
+      }
+      const meds = cplByCampaign.get(c.campaign_id)
+      if (eff > 0 && meds && meds.length >= 3 && a.spendEur >= 100) {
+        const m = median(meds), cpl = a.spendEur / eff
+        if (cpl > 1.6 * m) {
+          recs.push({ ad: c, kind: 'high_cpl', spend: a.spendEur, reason: t('crm.ads.recReasonCpl', 'Leadpreis {{cpl}} — {{factor}}× teurer als der Kampagnen-Schnitt ({{median}})', { cpl: eur(cpl), factor: (cpl / m).toLocaleString(locale, { maximumFractionDigits: 1 }), median: eur(m) }) })
+          continue
+        }
+      }
+      const freq = a.reach > 0 ? a.impressions / a.reach : 0
+      const ctr = a.impressions > 0 ? a.clicks / a.impressions : 0
+      if (freq > 2.5 && ctr < 0.01) {
+        recs.push({ ad: c, kind: 'fatigue', spend: a.spendEur, reason: t('crm.ads.recReasonFatigue', 'Ermüdung: Frequenz {{freq}} bei nur {{ctr}} Klickrate — Motiv ist verbraucht', { freq: freq.toLocaleString(locale, { maximumFractionDigits: 1 }), ctr: pct(ctr) }) })
+      }
+    }
+    return recs.sort((x, y) => y.spend - x.spend).slice(0, 5)
+    // eur/pct sind stabile Formatter — bewusst nicht in den Deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, byAd, pendingByAd, t, locale])
+
   const campaignName = useCallback((cid: string) => catalog.find(c => c.campaign_id === cid)?.campaign_name || cid, [catalog])
   const campaignColor = useMemo(() => {
     const m = new Map<string, string>()
     campaignsSorted.forEach(([cid], i) => m.set(cid, colorFor(i)))
     return m
   }, [campaignsSorted])
-
-  // ── Formatierung ───────────────────────────────────────────────────────────
-  const eur = (v: number) => v.toLocaleString(locale, { style: 'currency', currency: 'EUR', maximumFractionDigits: v >= 100 ? 0 : 2 })
-  const int = (v: number) => v.toLocaleString(locale)
-  const pct = (v: number) => `${(v * 100).toLocaleString(locale, { maximumFractionDigits: 1 })} %`
-  const per = (spend: number, n: number) => (n > 0 ? eur(spend / n) : '–')
 
   const leadsShown = total.crmLeads > 0 ? total.crmLeads : total.platformLeads
   const leadBasis = total.crmLeads > 0 ? t('crm.ads.basisCrm', 'CRM-zugeordnet') : t('crm.ads.basisMeta', 'laut Meta')
@@ -376,6 +495,50 @@ export default function AdsManager() {
               </div>
             )}
 
+            {/* Empfehlungen + Aktions-Warteschlange */}
+            {(recommendations.length > 0 || actions.some(a => a.status !== 'abgelehnt')) && (
+              <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
+                <h2 className="text-sm font-bold text-gray-700 mb-1">💡 {t('crm.ads.recTitle', 'Empfehlungen & Aktionen')}</h2>
+                <p className="text-[11px] text-gray-400 mb-3">{t('crm.ads.recSub', 'Bestätigte Aktionen führt der Sync-Lauf bei Meta aus (täglich 7:00 Uhr — oder sofort per „Run now" in der Claude-App).')}</p>
+                {recommendations.length > 0 && (
+                  <div className="space-y-2 mb-3">
+                    {recommendations.map(r => (
+                      <div key={r.ad.ad_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+                        <span className="text-sm font-semibold text-gray-800 truncate max-w-[240px]" title={r.ad.ad_name ?? r.ad.ad_id}>{r.ad.ad_name ?? r.ad.ad_id}</span>
+                        <span className="text-[11px] text-gray-500 truncate">{r.ad.campaign_name}</span>
+                        <span className="text-xs text-amber-800 basis-full md:basis-auto md:flex-1">{r.reason}</span>
+                        <button onClick={() => void queueAction(r.ad, 'pause', r.reason)}
+                          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold text-white shrink-0"
+                          style={{ backgroundColor: '#ff795d' }}>
+                          ⏸ {t('crm.ads.recPauseCta', 'Pausieren vormerken')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {actions.filter(a => a.status === 'bestätigt').map(a => (
+                  <div key={a.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 mb-2">
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                      {a.action === 'pause' ? '⏸' : '▶'} {t('crm.ads.actQueued', 'vorgemerkt')}
+                    </span>
+                    <span className="text-sm text-gray-800 truncate max-w-[260px]" title={a.ad_name ?? a.ad_id}>{a.ad_name ?? a.ad_id}</span>
+                    {a.reason && <span className="text-[11px] text-gray-400 truncate flex-1">{a.reason}</span>}
+                    <button onClick={() => void cancelAction(a.id)} className="ml-auto text-xs text-gray-500 hover:text-red-600 underline shrink-0">
+                      {t('crm.ads.actCancel', 'Stornieren')}
+                    </button>
+                  </div>
+                ))}
+                {actions.filter(a => a.status === 'ausgeführt' || a.status === 'fehlgeschlagen').slice(0, 5).map(a => (
+                  <div key={a.id} className="flex items-center gap-2 px-3 py-1 text-[11px] text-gray-400">
+                    <span>{a.status === 'ausgeführt' ? '✅' : '❌'}</span>
+                    <span className="truncate">{a.action === 'pause' ? t('crm.ads.actPaused', 'Pausiert') : t('crm.ads.actActivated', 'Aktiviert')}: {a.ad_name ?? a.ad_id}</span>
+                    {a.executed_at && <span>{new Date(a.executed_at).toLocaleDateString(locale)}</span>}
+                    {a.result && a.status === 'fehlgeschlagen' && <span className="truncate text-red-400">{a.result}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Diagramme */}
             <div className="grid lg:grid-cols-3 gap-4 mb-6">
               <div className="rounded-2xl border border-gray-200 bg-white p-4 lg:col-span-1">
@@ -430,7 +593,8 @@ export default function AdsManager() {
                       <th className="px-2 py-2 font-semibold text-right">No-Show</th>
                       <th className="px-2 py-2 font-semibold text-right">👍/👎</th>
                       <th className="px-2 py-2 font-semibold text-right">Sales</th>
-                      <th className="px-4 py-2 font-semibold text-right">{t('crm.ads.revenue', 'Umsatz')}</th>
+                      <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.revenue', 'Umsatz')}</th>
+                      <th className="px-4 py-2 font-semibold text-right">{t('crm.ads.colAction', 'Aktion')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -461,7 +625,8 @@ export default function AdsManager() {
                             <td className="px-2 py-2.5 text-right tabular-nums">{int(a.noShows)}</td>
                             <td className="px-2 py-2.5 text-right tabular-nums">{a.gut + a.schlecht > 0 ? `${a.gut}/${a.schlecht}` : '–'}</td>
                             <td className="px-2 py-2.5 text-right tabular-nums">{int(a.sales)}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums">{a.revenue > 0 ? eur(a.revenue) : '–'}</td>
+                            <td className="px-2 py-2.5 text-right tabular-nums">{a.revenue > 0 ? eur(a.revenue) : '–'}</td>
+                            <td className="px-4 py-2.5" />
                           </tr>
                           {isOpen && adsOfCampaign.map(ad => {
                             const x = byAd.get(ad.ad_id) ?? emptyAgg()
@@ -488,7 +653,26 @@ export default function AdsManager() {
                                 <td className="px-2 py-2 text-right tabular-nums">{int(x.noShows)}</td>
                                 <td className="px-2 py-2 text-right tabular-nums">{x.gut + x.schlecht > 0 ? `${x.gut}/${x.schlecht}` : '–'}</td>
                                 <td className="px-2 py-2 text-right tabular-nums">{int(x.sales)}</td>
-                                <td className="px-4 py-2 text-right tabular-nums">{x.revenue > 0 ? eur(x.revenue) : '–'}</td>
+                                <td className="px-2 py-2 text-right tabular-nums">{x.revenue > 0 ? eur(x.revenue) : '–'}</td>
+                                <td className="px-4 py-2 text-right">
+                                  {pendingByAd.has(ad.ad_id) ? (
+                                    <span className="text-[10px] px-2 py-1 rounded-full bg-orange-100 text-orange-700 whitespace-nowrap">
+                                      {pendingByAd.get(ad.ad_id)?.action === 'pause' ? '⏸' : '▶'} {t('crm.ads.actQueued', 'vorgemerkt')}
+                                    </span>
+                                  ) : ad.status === 'ACTIVE' ? (
+                                    <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'pause', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
+                                      title={t('crm.ads.actPauseTitle', 'Anzeige pausieren (wird beim nächsten Sync ausgeführt)')}
+                                      className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-orange-400 hover:text-orange-600 whitespace-nowrap">
+                                      ⏸ {t('crm.ads.actPause', 'Pausieren')}
+                                    </button>
+                                  ) : (
+                                    <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'activate', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
+                                      title={t('crm.ads.actActivateTitle', 'Anzeige aktivieren (wird beim nächsten Sync ausgeführt)')}
+                                      className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-green-400 hover:text-green-600 whitespace-nowrap">
+                                      ▶ {t('crm.ads.actActivate', 'Aktivieren')}
+                                    </button>
+                                  )}
+                                </td>
                               </tr>
                             )
                           })}
@@ -496,7 +680,7 @@ export default function AdsManager() {
                       )
                     })}
                     {campaignsSorted.length === 0 && (
-                      <tr><td colSpan={13} className="px-4 py-10 text-center text-gray-400">{t('crm.ads.empty', 'Keine Werbedaten im gewählten Zeitraum.')}</td></tr>
+                      <tr><td colSpan={14} className="px-4 py-10 text-center text-gray-400">{t('crm.ads.empty', 'Keine Werbedaten im gewählten Zeitraum.')}</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -508,6 +692,12 @@ export default function AdsManager() {
               {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
             </p>
           </>
+        )}
+
+        {toast && (
+          <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-gray-900 text-white text-sm shadow-lg">
+            {toast}
+          </div>
         )}
       </div>
     </DashboardLayout>

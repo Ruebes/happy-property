@@ -2842,7 +2842,27 @@
       "empty": "No ad data in the selected period.",
       "footnote": "Data source: daily sync from the Meta ad account (Sveru Marketing LLC, converted USD → EUR). * = lead count per Meta while CRM attribution via ad URL parameters is not yet active.",
       "toLeads": "Go to leads",
-      "clickHint": "👆 Click a campaign to expand its individual ads"
+      "clickHint": "👆 Click a campaign to expand its individual ads",
+      "recTitle": "Recommendations & actions",
+      "recSub": "Confirmed actions are executed on Meta by the sync run (daily at 7:00 — or immediately via \"Run now\" in the Claude app).",
+      "recPauseCta": "Queue pause",
+      "recReasonNoLeads": "{{spend}} spent, not a single lead in the period",
+      "recReasonCpl": "Cost per lead {{cpl}} — {{factor}}× more expensive than the campaign median ({{median}})",
+      "recReasonFatigue": "Fatigue: frequency {{freq}} at only {{ctr}} CTR — the creative is worn out",
+      "reasonManual": "Manually in the ads manager",
+      "actQueued": "queued",
+      "actCancel": "Cancel",
+      "actPause": "Pause",
+      "actActivate": "Activate",
+      "actPaused": "Paused",
+      "actActivated": "Activated",
+      "actPauseTitle": "Pause this ad (executed on the next sync run)",
+      "actActivateTitle": "Activate this ad (executed on the next sync run)",
+      "colAction": "Action",
+      "toastPauseQueued": "⏸ Queued — will be paused on the next sync",
+      "toastActivateQueued": "▶ Queued — will be activated on the next sync",
+      "toastCancelled": "Action cancelled",
+      "toastError": "Error while saving"
     }
   },
   "docs": {

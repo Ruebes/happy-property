@@ -2842,7 +2842,27 @@
       "empty": "Keine Werbedaten im gewählten Zeitraum.",
       "footnote": "Datenstand: täglicher Sync aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet). * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.",
       "toLeads": "Zu den Leads",
-      "clickHint": "👆 Kampagne anklicken = einzelne Anzeigen (Bildchen) aufklappen"
+      "clickHint": "👆 Kampagne anklicken = einzelne Anzeigen (Bildchen) aufklappen",
+      "recTitle": "Empfehlungen & Aktionen",
+      "recSub": "Bestätigte Aktionen führt der Sync-Lauf bei Meta aus (täglich 7:00 Uhr — oder sofort per „Run now\" in der Claude-App).",
+      "recPauseCta": "Pausieren vormerken",
+      "recReasonNoLeads": "{{spend}} ausgegeben, kein einziger Lead im Zeitraum",
+      "recReasonCpl": "Leadpreis {{cpl}} — {{factor}}× teurer als der Kampagnen-Schnitt ({{median}})",
+      "recReasonFatigue": "Ermüdung: Frequenz {{freq}} bei nur {{ctr}} Klickrate — Motiv ist verbraucht",
+      "reasonManual": "Manuell im Werbemanager",
+      "actQueued": "vorgemerkt",
+      "actCancel": "Stornieren",
+      "actPause": "Pausieren",
+      "actActivate": "Aktivieren",
+      "actPaused": "Pausiert",
+      "actActivated": "Aktiviert",
+      "actPauseTitle": "Anzeige pausieren (wird beim nächsten Sync ausgeführt)",
+      "actActivateTitle": "Anzeige aktivieren (wird beim nächsten Sync ausgeführt)",
+      "colAction": "Aktion",
+      "toastPauseQueued": "⏸ Vorgemerkt — wird beim nächsten Sync pausiert",
+      "toastActivateQueued": "▶ Vorgemerkt — wird beim nächsten Sync aktiviert",
+      "toastCancelled": "Aktion storniert",
+      "toastError": "Fehler beim Speichern"
     }
   },
   "docs": {
