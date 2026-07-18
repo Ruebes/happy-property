@@ -134,6 +134,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/tasks',         key: 'crm.nav.tasks'        },
     { to: '/admin/crm/projects',      key: 'crm.nav.projects'     },
     { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'     },
+    { to: '/admin/crm/ads',           key: 'crm.nav.ads'          },
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics'   },
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
     { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
@@ -161,6 +162,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/funnel-editor',  key: 'crm.nav.funnelEditor',perm: 'funnel'   },
     { to: '/admin/crm/newsletter',     key: 'crm.nav.newsletter',  perm: 'funnel'   },
     { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
+    { to: '/admin/crm/ads',            key: 'crm.nav.ads',         perm: 'werbung'  },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
   ]
   // Startseite + Aufgaben stehen JEDEM Mitarbeiter offen (kein Bereichs-Recht),

@@ -38,13 +38,23 @@ export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'f
 
 // Einzeln zuschaltbare Mitarbeiter-Rechte (Bereiche). Admin/Verwalter haben immer alles.
 export type PermissionArea = 'pipeline' | 'funnel' | 'decks' | 'invoices' | 'contacts'
+  | 'werbung' | 'werbung_meta' | 'werbung_youtube' | 'werbung_google'
 export const PERMISSION_AREAS: { key: PermissionArea; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline & Leads' },
   { key: 'funnel',   label: 'Funnel & Newsletter' },
   { key: 'decks',    label: 'Sales-Decks erstellen' },
   { key: 'invoices', label: 'Rechnungen' },
   { key: 'contacts', label: 'Kontakte' },
+  { key: 'werbung',         label: 'Werbemanager (alle Kanäle)' },
+  { key: 'werbung_meta',    label: 'Werbemanager: nur Meta' },
+  { key: 'werbung_youtube', label: 'Werbemanager: nur YouTube' },
+  { key: 'werbung_google',  label: 'Werbemanager: nur Google' },
 ]
+
+// Werbe-Segmente (Kanäle) im Werbemanager — 'werbung' schaltet alle frei,
+// alternativ einzelne 'werbung_<segment>'-Rechte.
+export const AD_SEGMENTS = ['meta', 'youtube', 'google'] as const
+export type AdSegment = typeof AD_SEGMENTS[number]
 
 export interface Profile {
   id: string
@@ -58,11 +68,25 @@ export interface Profile {
 }
 
 // Zugriff auf einen Bereich? Admin/Verwalter immer; Mitarbeiter nur bei gesetztem Recht.
+// Sonderfall 'werbung': auch ein einzelnes Segment-Recht öffnet den Werbemanager
+// (die Seite filtert dann selbst auf die freigegebenen Kanäle).
 export function hasPerm(profile: Profile | null | undefined, area: PermissionArea): boolean {
   if (!profile) return false
   if (profile.role === 'admin' || profile.role === 'verwalter') return true
-  if (profile.role === 'mitarbeiter') return !!profile.permissions?.[area]
+  if (profile.role === 'mitarbeiter') {
+    if (profile.permissions?.[area]) return true
+    if (area === 'werbung') return AD_SEGMENTS.some(s => !!profile.permissions?.[`werbung_${s}` as PermissionArea])
+    return false
+  }
   return false
+}
+
+// Darf dieser Nutzer ein bestimmtes Werbe-Segment (meta/youtube/google) sehen?
+export function hasAdSegment(profile: Profile | null | undefined, segment: AdSegment): boolean {
+  if (!profile) return false
+  if (profile.role === 'admin' || profile.role === 'verwalter') return true
+  if (profile.role !== 'mitarbeiter') return false
+  return !!profile.permissions?.werbung || !!profile.permissions?.[`werbung_${segment}` as PermissionArea]
 }
 
 interface AuthState {

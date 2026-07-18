@@ -1214,7 +1214,8 @@
       "funnelEditor": "Funnel-Editor",
       "newsletter": "Newsletter",
       "tasks": "Aufgaben",
-      "home": "Start"
+      "home": "Start",
+      "ads": "Werbemanager"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -2616,7 +2617,13 @@
       "callNotesPh": "Notizen während des Gesprächs…",
       "saveNote": "Als Notiz speichern",
       "saved": "✓ Als Notiz gespeichert",
-      "openLead": "Zum Kunden →"
+      "openLead": "Zum Kunden →",
+      "rateTitle": "Lead bewerten",
+      "rateGood": "Gut",
+      "rateBad": "Nicht gut",
+      "rateSaved": "Gespeichert — fließt in die Werbe-Auswertung ein.",
+      "ratedVia": "Bewertet über das Termin-Popup",
+      "ratedViaLead": "Bewertet in der Kundenansicht"
     },
     "botMsg": {
       "saved": "✅ Bot-Text gespeichert",
@@ -2802,6 +2809,39 @@
     "quick": {
       "attach": "Dateien anhängen",
       "attachTooBig": "Anhänge zusammen zu groß (max. 8 MB)."
+    },
+    "ads": {
+      "title": "Werbemanager",
+      "days": "{{n}} Tage",
+      "comingSoon": "ist noch nicht angebunden",
+      "comingSoonSub": "META läuft bereits — weitere Kanäle folgen hier im gleichen Format.",
+      "kpiSpend": "Ausgaben",
+      "kpiSpendSub": "umgerechnet aus USD",
+      "kpiCpl": "Leadpreis",
+      "kpiCostPerHeld": "Preis / stattgef. Termin",
+      "held": "stattgefunden",
+      "kpiQuality": "Qualitätsquote",
+      "kpiCostPerGood": "Preis / gutem Lead",
+      "kpiRoas": "ROAS",
+      "revenue": "Umsatz",
+      "basisCrm": "CRM-zugeordnet",
+      "basisMeta": "laut Meta",
+      "noAttribution": "Noch keine CRM-Zuordnung: Sobald die Anzeigen die URL-Parameter tragen (Aufgabe liegt bei Giona), laufen Leads, Termine, Qualität und Sales hier automatisch pro Anzeige ein. Bis dahin zählt die Lead-Zahl von Meta.",
+      "chartLeads": "Leads je Kampagne",
+      "chartSpend": "Budget-Verteilung",
+      "chartTrend": "Ausgaben pro Tag",
+      "tableTitle": "Kampagnen & Anzeigen",
+      "tableHint": "Frequenz = wie oft dieselbe Person die Werbung im Zeitraum gesehen hat (Ø)",
+      "colName": "Kampagne / Anzeige",
+      "colImpressions": "Impressionen",
+      "colFrequency": "Frequenz",
+      "colLeads": "Leads",
+      "colTermine": "Termine",
+      "colHeld": "Stattgef.",
+      "paused": "pausiert",
+      "empty": "Keine Werbedaten im gewählten Zeitraum.",
+      "footnote": "Datenstand: täglicher Sync aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet). * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.",
+      "toLeads": "Zu den Leads"
     }
   },
   "docs": {

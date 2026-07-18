@@ -45,8 +45,12 @@ export interface Lead {
   // Werbe-Tracking (UTM) — aus Calendly payload.tracking bzw. Typeform Hidden Fields
   utm_source:        string | null   // z.B. ig / fb / instagram / google
   utm_medium:        string | null   // z.B. paid / cpc
-  utm_campaign:      string | null   // Kampagnenname
-  utm_content:       string | null   // Anzeige / Ad
+  utm_campaign:      string | null   // Kampagnenname bzw. {{campaign.id}} aus Meta
+  utm_content:       string | null   // Anzeige / {{ad.id}} aus Meta
+  utm_term:          string | null   // {{adset.id}} aus Meta (Anzeigengruppe)
+  // Lead-Qualität: Svens Gut/Schlecht-Bewertung nach dem Erstgespräch
+  quality_rating:    'gut' | 'schlecht' | null
+  quality_rated_at:  string | null
   created_at:        string
   updated_at:        string
   // joined
@@ -185,11 +189,17 @@ export interface ChannelBadge {
 export const CHANNEL_BADGES: Record<string, ChannelBadge> = {
   newsletter: { label: 'Newsletter', icon: '📰', badge: { backgroundColor: '#fce7f3', color: '#be185d' }, card: 'bg-pink-50 border-pink-300 ring-1 ring-pink-200', pill: '#ec4899' },
   youtube:    { label: 'YouTube',    icon: '▶',  badge: { backgroundColor: '#fee2e2', color: '#b91c1c' }, card: 'bg-red-50 border-red-300 ring-1 ring-red-200',    pill: '#dc2626' },
-  instagram:  { label: 'Instagram',  icon: '◎',  badge: { backgroundColor: '#f3e8ff', color: '#7e22ce' }, card: 'bg-purple-50 border-purple-300 ring-1 ring-purple-200', pill: '#a855f7' },
-  facebook:   { label: 'Facebook',   icon: 'f',  badge: { backgroundColor: '#dbeafe', color: '#1d4ed8' }, card: 'bg-blue-50 border-blue-300 ring-1 ring-blue-200',  pill: '#3b82f6' },
+  meta:       { label: 'META',       icon: '∞',  badge: { backgroundColor: '#dbeafe', color: '#1d4ed8' }, card: 'bg-blue-50 border-blue-300 ring-1 ring-blue-200',  pill: '#3b82f6' },
   linkedin:   { label: 'LinkedIn',   icon: 'in', badge: { backgroundColor: '#e0f2fe', color: '#0369a1' }, card: 'bg-sky-50 border-sky-300 ring-1 ring-sky-200',    pill: '#0ea5e9' },
   tiktok:     { label: 'TikTok',     icon: '♪',  badge: { backgroundColor: '#f5f5f5', color: '#171717' }, card: 'bg-neutral-100 border-neutral-300 ring-1 ring-neutral-200', pill: '#404040' },
   google:     { label: 'Google',     icon: 'G',  badge: { backgroundColor: '#fef3c7', color: '#b45309' }, card: 'bg-amber-50 border-amber-300 ring-1 ring-amber-200', pill: '#f59e0b' },
+}
+
+// Instagram + Facebook sind zu EINER Quelle „META" zusammengelegt (Sven, Juli 2026).
+// Alt-Daten und bereits veröffentlichte Links (?src=instagram / ?src=facebook)
+// laufen über diese Aliasse weiter auf das META-Badge.
+const CHANNEL_ALIASES: Record<string, string> = {
+  instagram: 'meta', facebook: 'meta', ig: 'meta', fb: 'meta',
 }
 
 // Interne Buchungs-Marker, die KEIN Kanal-Badge bekommen (kein Marketing-Kanal).
@@ -201,7 +211,7 @@ const INTERNAL_SOURCES = new Set(['direktlink'])
 // in Pipeline + Kalender, ohne dass eine neue Farbe hinterlegt werden muss.
 export function channelBadgeFor(source: string | null | undefined): ChannelBadge | undefined {
   if (!source) return undefined
-  const known = CHANNEL_BADGES[source]
+  const known = CHANNEL_BADGES[CHANNEL_ALIASES[source] ?? source]
   if (known) return known
   if (INTERNAL_SOURCES.has(source)) return undefined
   const label = source.split(/[-_]/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
@@ -594,6 +604,7 @@ export interface CrmAppointment {
   google_event_id: string | null
   google_calendar_id: string | null
   source:          string | null   // 'newsletter' | 'direktlink' — Herkunft der Buchung
+  outcome:         'completed' | 'no_show' | null   // Termin-Ausgang (Vorbereitungs-Popup)
   attendees?:      Array<{ name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }> | null
   manage_token?:   string | null
   rsvps?:          Record<string, { name?: string; status?: 'pending' | 'yes' | 'no'; at?: string }> | null

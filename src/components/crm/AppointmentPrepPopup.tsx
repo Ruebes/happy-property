@@ -29,6 +29,7 @@ export default function AppointmentPrepPopup() {
   const [note, setNote]   = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [rating, setRating] = useState<'gut' | 'schlecht' | 'no_show' | null>(null)
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
   const check = useCallback(async () => {
@@ -44,8 +45,44 @@ export default function AppointmentPrepPopup() {
     if (error) return
     const shown = getShown()
     const next = ((data ?? []) as CrmAppointment[]).find(a => !shown.includes(a.id))
-    if (next) { setAppt(next); setNote(''); setSaved(false); addShown(next.id) }
+    if (next) { setAppt(next); setNote(''); setSaved(false); setRating(null); addShown(next.id) }
   }, [appt])
+
+  // Lead-Bewertung (gut/schlecht) + Termin-Ausgang — fließt in den Werbemanager
+  // (Qualitätsquote, Preis pro gutem Lead, No-Show-Quote je Anzeige).
+  const rate = useCallback(async (value: 'gut' | 'schlecht' | 'no_show') => {
+    if (!appt) return
+    const prev = rating
+    setRating(value)
+    try {
+      if (value === 'no_show') {
+        const { error } = await supabase.from('crm_appointments').update({ outcome: 'no_show' }).eq('id', appt.id)
+        if (error) throw error
+      } else {
+        if (appt.lead_id) {
+          const { error } = await supabase.from('leads')
+            .update({ quality_rating: value, quality_rated_at: new Date().toISOString() })
+            .eq('id', appt.lead_id)
+          if (error) throw error
+        }
+        // Bewertet = Gespräch hat stattgefunden
+        const { error: e2 } = await supabase.from('crm_appointments').update({ outcome: 'completed' }).eq('id', appt.id)
+        if (e2) throw e2
+      }
+      if (appt.lead_id) {
+        supabase.from('activities').insert({
+          lead_id: appt.lead_id, deal_id: appt.deal_id ?? null,
+          type: 'note', direction: 'outbound',
+          subject: value === 'no_show' ? '🚫 No-Show' : value === 'gut' ? '👍 Guter Lead' : '👎 Schlechter Lead',
+          content: t('crm.prep.ratedVia', 'Bewertet über das Termin-Popup'),
+          completed_at: new Date().toISOString(),
+        }).then(({ error }) => { if (error) console.warn('[AppointmentPrepPopup] activity:', error) })
+      }
+    } catch (e) {
+      console.error('[AppointmentPrepPopup] rate:', e)
+      setRating(prev)
+    }
+  }, [appt, rating, t])
 
   useEffect(() => {
     void check()
@@ -136,6 +173,32 @@ export default function AppointmentPrepPopup() {
             <div className="rounded-lg bg-gray-50 border border-gray-100 px-3 py-2 text-sm text-gray-700 whitespace-pre-wrap max-h-40 overflow-y-auto">
               {notes || <span className="text-gray-400">{t('crm.prep.noLeadInfo', 'Keine Angaben aus dem Formular hinterlegt.')}</span>}
             </div>
+          </div>
+
+          {/* Lead-Bewertung: ein Klick — gut / schlecht / No-Show */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+              {t('crm.prep.rateTitle', 'Lead bewerten')}
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              <button type="button" onClick={() => void rate('gut')}
+                className={`py-2 rounded-lg text-sm font-semibold border transition ${rating === 'gut' ? 'bg-green-600 border-green-600 text-white' : 'bg-white border-gray-200 text-gray-700 hover:border-green-400'}`}>
+                👍 {t('crm.prep.rateGood', 'Gut')}
+              </button>
+              <button type="button" onClick={() => void rate('schlecht')}
+                className={`py-2 rounded-lg text-sm font-semibold border transition ${rating === 'schlecht' ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-gray-200 text-gray-700 hover:border-red-400'}`}>
+                👎 {t('crm.prep.rateBad', 'Nicht gut')}
+              </button>
+              <button type="button" onClick={() => void rate('no_show')}
+                className={`py-2 rounded-lg text-sm font-semibold border transition ${rating === 'no_show' ? 'bg-gray-800 border-gray-800 text-white' : 'bg-white border-gray-200 text-gray-700 hover:border-gray-400'}`}>
+                🚫 No-Show
+              </button>
+            </div>
+            {rating && (
+              <p className="mt-1 text-[11px] text-gray-400">
+                {t('crm.prep.rateSaved', 'Gespeichert — fließt in die Werbe-Auswertung ein.')}
+              </p>
+            )}
           </div>
 
           {/* Gesprächsnotizen */}

@@ -235,6 +235,7 @@ Deno.serve(async (req) => {
           email, phone, whatsapp: phone, source: 'website',
           utm_source: utm.utm_source ?? null, utm_medium: utm.utm_medium ?? null,
           utm_campaign: utm.utm_campaign ?? null, utm_content: utm.utm_content ?? null,
+          utm_term: utm.utm_term ?? null,
           notes: `Fragebogen (eigener Funnel):\n${answersText}${utmNote}`,
         }).select('id').single()
         if (nlErr) console.error('[funnel-api] Lead-Insert fehlgeschlagen:', nlErr.message)
@@ -246,6 +247,7 @@ Deno.serve(async (req) => {
         if (!(old as { utm_source?: string } | null)?.utm_source && utm.utm_source) {
           patch.utm_source = utm.utm_source; patch.utm_medium = utm.utm_medium ?? null
           patch.utm_campaign = utm.utm_campaign ?? null; patch.utm_content = utm.utm_content ?? null
+          patch.utm_term = utm.utm_term ?? null
         }
         await admin.from('leads').update(patch).eq('id', leadId)
       }

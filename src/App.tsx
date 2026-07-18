@@ -58,6 +58,7 @@ const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
+const AdsManager            = lazy(() => import('./pages/admin/crm/AdsManager'))
 const Newsletter            = lazy(() => import('./pages/admin/crm/Newsletter'))
 const CrmTasks              = lazy(() => import('./pages/admin/crm/Tasks'))
 const StaffHome             = lazy(() => import('./pages/admin/crm/StaffHome'))
@@ -175,6 +176,11 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="invoices" />}>
               <Route path="/admin/crm/invoices"             element={<CrmInvoices />} />
               <Route path="/admin/crm/settings/invoices"    element={<CrmInvoiceSettings />} />
+            </Route>
+
+            {/* ── Werbemanager (Recht 'werbung' oder ein Segment-Recht) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="werbung" />}>
+              <Route path="/admin/crm/ads"                  element={<AdsManager />} />
             </Route>
 
             {/* ── Pipeline & Leads (Recht 'pipeline') — inkl. Projekte für Deck-Erstellung ── */}

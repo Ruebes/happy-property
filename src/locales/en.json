@@ -1214,7 +1214,8 @@
       "funnelEditor": "Funnel Editor",
       "newsletter": "Newsletter",
       "tasks": "Tasks",
-      "home": "Home"
+      "home": "Home",
+      "ads": "Ads Manager"
     },
     "tasks": {
       "title": "Tasks",
@@ -2616,7 +2617,13 @@
       "callNotesPh": "Notes during the call…",
       "saveNote": "Save as note",
       "saved": "✓ Saved as note",
-      "openLead": "Open customer →"
+      "openLead": "Open customer →",
+      "rateTitle": "Rate lead",
+      "rateGood": "Good",
+      "rateBad": "Not good",
+      "rateSaved": "Saved — feeds into the ads analytics.",
+      "ratedVia": "Rated via the appointment popup",
+      "ratedViaLead": "Rated on the customer page"
     },
     "botMsg": {
       "saved": "✅ Bot text saved",
@@ -2802,6 +2809,39 @@
     "quick": {
       "attach": "Attach files",
       "attachTooBig": "Attachments too large in total (max. 8 MB)."
+    },
+    "ads": {
+      "title": "Ads Manager",
+      "days": "{{n}} days",
+      "comingSoon": "is not connected yet",
+      "comingSoonSub": "META is already live — more channels will follow here in the same format.",
+      "kpiSpend": "Spend",
+      "kpiSpendSub": "converted from USD",
+      "kpiCpl": "Cost per lead",
+      "kpiCostPerHeld": "Cost / held appointment",
+      "held": "held",
+      "kpiQuality": "Quality rate",
+      "kpiCostPerGood": "Cost / good lead",
+      "kpiRoas": "ROAS",
+      "revenue": "Revenue",
+      "basisCrm": "CRM-attributed",
+      "basisMeta": "per Meta",
+      "noAttribution": "No CRM attribution yet: once the ads carry the URL parameters (task assigned to Giona), leads, appointments, quality and sales will flow in here automatically per ad. Until then the Meta lead count is used.",
+      "chartLeads": "Leads per campaign",
+      "chartSpend": "Budget split",
+      "chartTrend": "Spend per day",
+      "tableTitle": "Campaigns & ads",
+      "tableHint": "Frequency = how often the same person saw the ad in the period (avg)",
+      "colName": "Campaign / ad",
+      "colImpressions": "Impressions",
+      "colFrequency": "Frequency",
+      "colLeads": "Leads",
+      "colTermine": "Appointments",
+      "colHeld": "Held",
+      "paused": "paused",
+      "empty": "No ad data in the selected period.",
+      "footnote": "Data source: daily sync from the Meta ad account (Sveru Marketing LLC, converted USD → EUR). * = lead count per Meta while CRM attribution via ad URL parameters is not yet active.",
+      "toLeads": "Go to leads"
     }
   },
   "docs": {

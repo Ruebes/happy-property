@@ -29,7 +29,9 @@ type Phase = 'welcome' | 'questions' | 'contact' | 'meeting_type' | 'slot' | 'do
 
 // Veröffentlichte Kanal-Links (/termin?src=youtube auf dem YouTube-Kanal usw.):
 // Buchungen darüber bekommen den Kanal als Quelle an Lead, Deal und Termin.
-const KNOWN_CHANNELS = ['newsletter', 'youtube', 'instagram', 'facebook', 'linkedin', 'tiktok', 'google']
+// 'instagram'/'facebook' bleiben für bereits veröffentlichte Links gültig,
+// werden im Badge aber als META angezeigt (CHANNEL_ALIASES in crmTypes).
+const KNOWN_CHANNELS = ['newsletter', 'meta', 'youtube', 'instagram', 'facebook', 'linkedin', 'tiktok', 'google']
 
 function useUtm(): Record<string, string> {
   return useMemo(() => {

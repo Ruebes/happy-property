@@ -1319,6 +1319,31 @@ export default function LeadDetail() {
     }
   }
 
+  // ── Lead-Bewertung (gut/schlecht, erneuter Klick = zurücknehmen) ─────────
+  const rateLead = async (value: 'gut' | 'schlecht' | null) => {
+    if (!lead) return
+    const prev = { quality_rating: lead.quality_rating, quality_rated_at: lead.quality_rated_at }
+    const rated_at = value ? new Date().toISOString() : null
+    setLead({ ...lead, quality_rating: value, quality_rated_at: rated_at })
+    try {
+      const { error } = await supabase.from('leads')
+        .update({ quality_rating: value, quality_rated_at: rated_at })
+        .eq('id', lead.id)
+      if (error) throw error
+      if (value) {
+        supabase.from('activities').insert({
+          lead_id: lead.id, type: 'note', direction: 'outbound',
+          subject: value === 'gut' ? '👍 Guter Lead' : '👎 Schlechter Lead',
+          content: t('crm.prep.ratedViaLead', 'Bewertet in der Kundenansicht'),
+          completed_at: new Date().toISOString(),
+        }).then(({ error: e }) => { if (e) console.warn('[LeadDetail] rate activity:', e) })
+      }
+    } catch (err) {
+      console.error('[LeadDetail] rateLead:', err)
+      setLead({ ...lead, ...prev })
+    }
+  }
+
   // ── Stammdaten speichern ────────────────────────────────────────
   const openLeadEdit = () => {
     if (!lead) return
@@ -2059,6 +2084,26 @@ export default function LeadDetail() {
                       👤 {lead.assignee.full_name}
                     </span>
                   )}
+                  {/* Lead-Bewertung (gut/schlecht) — gleiche Daten wie das Termin-Popup,
+                      fließt in den Werbemanager (Qualitätsquote je Anzeige) */}
+                  <span className="inline-flex items-center gap-1 ml-1">
+                    <button
+                      type="button"
+                      onClick={() => void rateLead(lead.quality_rating === 'gut' ? null : 'gut')}
+                      title={t('crm.prep.rateGood', 'Gut')}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium border transition ${lead.quality_rating === 'gut' ? 'bg-green-600 border-green-600 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-green-400'}`}
+                    >
+                      👍
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void rateLead(lead.quality_rating === 'schlecht' ? null : 'schlecht')}
+                      title={t('crm.prep.rateBad', 'Nicht gut')}
+                      className={`px-2 py-0.5 rounded-full text-xs font-medium border transition ${lead.quality_rating === 'schlecht' ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-gray-200 text-gray-500 hover:border-red-400'}`}
+                    >
+                      👎
+                    </button>
+                  </span>
                 </div>
               </div>
 
