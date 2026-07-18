@@ -2739,7 +2739,12 @@
       "sourceGroupChannels": "Channels",
       "sourceGroupMine": "My sources",
       "linkSourceNew": "➕ New source …",
-      "linkSourceNewPh": "Name of the new source, e.g. Tax advisor"
+      "linkSourceNewPh": "Name of the new source, e.g. Tax advisor",
+      "linkEdit": "Edit",
+      "linkEditClose": "Close",
+      "linkEditApply": "Apply",
+      "linkEditStable": "The link stays the same — you can switch the questionnaire without redistributing it.",
+      "linkEditChanges": "Note: switching to the calendar changes the URL — this link has to be shared again."
     },
     "newsletter": {
       "title": "Newsletter (individual)",
@@ -3506,7 +3511,6 @@
     "mapIframeTitle": "Map",
     "videoIframeTitle": "Video",
     "videoUrlPlaceholder": "https://youtube.com/watch?v=…",
-    "videoIframeTitle": "Video",
     "driveFolderPlaceholder": "e.g. 19wlu6PSKy14un9EJeTFZWtPAbpkk-4nU",
     "saveTimeout": "Timeout – connection too slow. Please try again.",
     "unknownError": "Unknown error",

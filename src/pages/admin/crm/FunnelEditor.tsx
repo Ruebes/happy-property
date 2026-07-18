@@ -6,7 +6,7 @@ import { useAuth } from '../../../lib/auth'
 import FunnelIcon, { OptionVisual } from '../../../components/FunnelIcon'
 import {
   loadFunnelConfig, normalizeFunnelConfig, FUNNEL_ICONS, FUNNEL_HERO_DEFAULT,
-  buildFunnelLinkUrl, type FunnelConfig, type FunnelOption,
+  buildFunnelLinkUrl, type FunnelConfig, type FunnelOption, type FunnelLink,
 } from '../../../lib/funnelConfig'
 import { CHANNEL_BADGES, channelBadgeFor } from '../../../lib/crmTypes'
 
@@ -259,6 +259,42 @@ export default function FunnelEditor() {
     resetLinkForm()
   }
   const removeLink = (code: string) => update(c => ({ ...c, links: (c.links ?? []).filter(l => l.code !== code) }))
+
+  // ── Bestehenden Link bearbeiten ─────────────────────────────────────────────
+  // Der Code bleibt FEST: er ist die Identität des Links, steckt als utm_campaign in
+  // bereits veröffentlichten URLs (Insta-Bio, YouTube-Beschreibung) und ist der Anker
+  // der Statistik. Änderbar sind Name, Quelle und Ziel/Fragebogen — die URL bleibt
+  // dabei gleich, nur wohin sie führt ändert sich.
+  const [editCode, setEditCode] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', source: '', sourceCustom: '', dest: 'fragebogen', questionnaire: 'standard', calMode: 'buchen' })
+  const startEdit = (l: FunnelLink) => {
+    const isCal = l.questionnaire === 'buchen' || l.questionnaire === 'direkt'
+    setEditForm({
+      name: l.name,
+      source: l.source,
+      sourceCustom: '',
+      dest: isCal ? 'kalender' : 'fragebogen',
+      questionnaire: isCal ? 'standard' : (l.questionnaire || 'standard'),
+      calMode: isCal ? l.questionnaire : 'buchen',
+    })
+    setEditCode(l.code)
+  }
+  const saveEdit = () => {
+    if (!cfg || !editCode) return
+    const name = editForm.name.trim()
+    if (!name) { showToast(t('crm.funnelEditor.linkNeedsName', 'Bitte gib dem Link einen Namen.') as string); return }
+    const source = (editForm.source === 'custom' ? editForm.sourceCustom : editForm.source).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '')
+    const customLabel = editForm.source === 'custom' ? editForm.sourceCustom.trim() : ''
+    const qn = editForm.dest === 'kalender' ? editForm.calMode : editForm.questionnaire
+    update(c => {
+      let sources = c.sources ?? []
+      if (source && customLabel && !CHANNEL_BADGES[source] && !sources.some(s => s.key === source)) {
+        sources = [...sources, { key: source, label: customLabel }]
+      }
+      return { ...c, sources, links: (c.links ?? []).map(l => l.code === editCode ? { ...l, name, source, questionnaire: qn } : l) }
+    })
+    setEditCode(null)
+  }
 
   // ── Leadquellen (Kategorien) verwalten ──────────────────────────────────────
   const [newSourceName, setNewSourceName] = useState('')
@@ -637,13 +673,94 @@ export default function FunnelEditor() {
               {cfg.links.map(link => {
                 const url = buildFunnelLinkUrl(link)
                 return (
-                  <div key={link.code} className="flex flex-wrap items-center gap-2 text-xs bg-gray-50 rounded-lg p-2.5 border border-gray-100">
-                    <span className="w-44 shrink-0 font-semibold text-gray-700 truncate">{link.name}</span>
-                    <SourcePreview source={link.source} />
-                    <span className="text-gray-400">{qnLabel(link.questionnaire)}</span>
-                    <code className="px-2 py-1 rounded bg-white border border-gray-200 text-gray-500 break-all flex-1 min-w-[12rem]">{url}</code>
-                    <button onClick={() => copyLink(url)} className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium">{t('crm.funnelEditor.copy', 'Kopieren')}</button>
-                    <button onClick={() => removeLink(link.code)} className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
+                  <div key={link.code} className="text-xs bg-gray-50 rounded-lg p-2.5 border border-gray-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="w-44 shrink-0 font-semibold text-gray-700 truncate">{link.name}</span>
+                      <SourcePreview source={link.source} />
+                      <span className="text-gray-400">{qnLabel(link.questionnaire)}</span>
+                      <code className="px-2 py-1 rounded bg-white border border-gray-200 text-gray-500 break-all flex-1 min-w-[12rem]">{url}</code>
+                      <button onClick={() => copyLink(url)} className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium">{t('crm.funnelEditor.copy', 'Kopieren')}</button>
+                      <button onClick={() => editCode === link.code ? setEditCode(null) : startEdit(link)}
+                        className="px-2 py-1 rounded-lg border border-gray-300 bg-white text-gray-600 hover:bg-gray-50 font-medium">
+                        {editCode === link.code ? t('crm.funnelEditor.linkEditClose', 'Schließen') : t('crm.funnelEditor.linkEdit', 'Bearbeiten')}
+                      </button>
+                      <button onClick={() => removeLink(link.code)} className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">✕</button>
+                    </div>
+
+                    {editCode === link.code && (
+                      <div className="mt-3 pt-3 border-t border-gray-200">
+                        <div className="grid md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormName', 'Name (nur für dich)')}</label>
+                            <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormSource', 'Quelle (Badge in der Kachel)')}</label>
+                            <select value={editForm.source} onChange={e => setEditForm(f => ({ ...f, source: e.target.value }))}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                              <optgroup label={t('crm.funnelEditor.sourceGroupChannels', 'Kanäle') as string}>
+                                {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
+                                  <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
+                                ))}
+                              </optgroup>
+                              {cfg.sources.length > 0 && (
+                                <optgroup label={t('crm.funnelEditor.sourceGroupMine', 'Meine Quellen') as string}>
+                                  {cfg.sources.map(s => <option key={s.key} value={s.key}>🔗 {s.label}</option>)}
+                                </optgroup>
+                              )}
+                              <option value="custom">{t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …')}</option>
+                            </select>
+                            {editForm.source === 'custom' && (
+                              <input value={editForm.sourceCustom} onChange={e => setEditForm(f => ({ ...f, sourceCustom: e.target.value }))}
+                                placeholder={t('crm.funnelEditor.linkSourceNewPh', 'Name der neuen Quelle, z. B. Steuerberater') as string}
+                                className="w-full mt-2 border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                            )}
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkDest', 'Wohin führt der Link?')}</label>
+                            <select value={editForm.dest} onChange={e => setEditForm(f => ({ ...f, dest: e.target.value }))}
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                              <option value="fragebogen">{t('crm.funnelEditor.destFragebogen', '📋 Zum Fragebogen')}</option>
+                              <option value="kalender">{t('crm.funnelEditor.destKalender', '📅 Direkt zum Kalender')}</option>
+                            </select>
+                          </div>
+                          <div>
+                            {editForm.dest === 'fragebogen' ? (
+                              <>
+                                <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkWhichForm', 'Welcher Fragebogen?')}</label>
+                                <select value={editForm.questionnaire} onChange={e => setEditForm(f => ({ ...f, questionnaire: e.target.value }))}
+                                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                                  <option value="standard">{t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen')}</option>
+                                  {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
+                                  <option value="none">{t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)')}</option>
+                                </select>
+                              </>
+                            ) : (
+                              <>
+                                <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkContactMode', 'Kontaktdaten')}</label>
+                                <select value={editForm.calMode} onChange={e => setEditForm(f => ({ ...f, calMode: e.target.value }))}
+                                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                                  <option value="buchen">{t('crm.funnelEditor.calWithContact', 'Mit Kontaktabfrage (öffentlicher Link)')}</option>
+                                  <option value="direkt">{t('crm.funnelEditor.calNoContact', 'Ohne Kontaktabfrage (nur bekannte Empfänger)')}</option>
+                                </select>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] text-gray-500">
+                            {editForm.dest === 'fragebogen'
+                              ? t('crm.funnelEditor.linkEditStable', 'Der Link bleibt unverändert — du kannst den Fragebogen wechseln, ohne ihn neu zu verteilen.')
+                              : t('crm.funnelEditor.linkEditChanges', 'Achtung: Beim Wechsel auf den Kalender ändert sich die URL — dieser Link muss neu verteilt werden.')}
+                          </span>
+                          <button onClick={saveEdit}
+                            className="ml-auto px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                            {t('crm.funnelEditor.linkEditApply', 'Übernehmen')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -702,6 +819,7 @@ export default function FunnelEditor() {
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
                       <option value="standard">{t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen')}</option>
                       {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
+                      <option value="none">{t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)')}</option>
                     </select>
                   </>
                 ) : (

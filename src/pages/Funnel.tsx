@@ -72,14 +72,26 @@ export default function Funnel() {
   const rebook = directEntry.rebook
   const [cfg, setCfg] = useState(DEFAULT_FUNNEL_CONFIG)
   useEffect(() => { void loadFunnelConfig().then(setCfg) }, [])
+  // Welcher Fragebogen gilt? Reihenfolge: ausdrückliches ?f= gewinnt (Ad-hoc/Test),
+  // sonst wird der Kampagnen-Link über seinen Code (utm_campaign) in der Konfiguration
+  // nachgeschlagen. Dadurch bleibt ein veröffentlichter Link stabil, während sein
+  // Fragebogen im Editor jederzeit umgestellt werden kann. 'buchen'/'direkt' sind
+  // Kalender-Ziele, keine Fragebögen — sie steuern weiterhin über die URL-Parameter.
+  const variant = useMemo(() => {
+    if (directEntry.variant) return directEntry.variant
+    const code = utmBase.utm_campaign
+    if (!code) return ''
+    const mode = (cfg.links ?? []).find(l => l.code === code)?.questionnaire ?? ''
+    return mode === 'buchen' || mode === 'direkt' || mode === 'standard' ? '' : mode
+  }, [cfg, directEntry.variant, utmBase.utm_campaign])
   // Fragebogen-Auswahl: 'none' = keine Fragen, sonst Variante per Slug, Fallback Standard
   const QUESTIONS = useMemo(() => {
-    if (directEntry.variant === 'none') return []
-    if (directEntry.variant) return cfg.questionnaires.find(x => x.slug === directEntry.variant)?.questions ?? cfg.questions
+    if (variant === 'none') return []
+    if (variant) return cfg.questionnaires.find(x => x.slug === variant)?.questions ?? cfg.questions
     return cfg.questions
-  }, [cfg, directEntry.variant])
+  }, [cfg, variant])
   // Variante in die Session-UTM: macht Varianten in der Statistik auswertbar
-  const utm = useMemo(() => directEntry.variant ? { ...utmBase, funnel_variant: directEntry.variant } : utmBase, [utmBase, directEntry.variant])
+  const utm = useMemo(() => variant ? { ...utmBase, funnel_variant: variant } : utmBase, [utmBase, variant])
   // Als Buchungs-Quelle (deals.source → Pipeline-Badge) zählen die festen Kanäle
   // PLUS alle im Funnel-Editor angelegten Link-Quellen — sonst würde eine frei
   // definierte Quelle (z.B. „podcast") verworfen.

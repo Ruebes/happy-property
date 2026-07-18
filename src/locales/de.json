@@ -2739,7 +2739,12 @@
       "sourceGroupChannels": "Kanäle",
       "sourceGroupMine": "Meine Quellen",
       "linkSourceNew": "➕ Neue Quelle …",
-      "linkSourceNewPh": "Name der neuen Quelle, z. B. Steuerberater"
+      "linkSourceNewPh": "Name der neuen Quelle, z. B. Steuerberater",
+      "linkEdit": "Bearbeiten",
+      "linkEditClose": "Schließen",
+      "linkEditApply": "Übernehmen",
+      "linkEditStable": "Der Link bleibt unverändert — du kannst den Fragebogen wechseln, ohne ihn neu zu verteilen.",
+      "linkEditChanges": "Achtung: Beim Wechsel auf den Kalender ändert sich die URL — dieser Link muss neu verteilt werden."
     },
     "newsletter": {
       "title": "Newsletter (individuell)",
@@ -3506,7 +3511,6 @@
     "mapIframeTitle": "Karte",
     "videoIframeTitle": "Video",
     "videoUrlPlaceholder": "https://youtube.com/watch?v=…",
-    "videoIframeTitle": "Video",
     "driveFolderPlaceholder": "z.B. 19wlu6PSKy14un9EJeTFZWtPAbpkk-4nU",
     "saveTimeout": "Timeout – Verbindung zu langsam. Bitte erneut versuchen.",
     "unknownError": "Unbekannter Fehler",

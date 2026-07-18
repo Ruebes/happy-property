@@ -82,14 +82,19 @@ export function buildFunnelLinkUrl(link: Pick<FunnelLink, 'code' | 'source' | 'q
   const p = new URLSearchParams()
   if (link.source) p.set('src', link.source)
   if (link.code) p.set('utm_campaign', link.code)
-  if (link.questionnaire === 'none') p.set('f', 'none')
+  // Welcher Fragebogen hinter einem Kampagnen-Link liegt, steht NICHT in der URL,
+  // sondern in der Konfiguration — der Funnel löst ihn über den Code (utm_campaign)
+  // auf. Dadurch bleibt ein einmal veröffentlichter Link (Insta-Bio, YouTube-
+  // Beschreibung) für immer gleich, während der Fragebogen jederzeit änderbar ist.
+  // Nur Links OHNE Code (Ad-hoc/Vorschau) tragen die Variante weiter in der URL.
+  if (!link.code && link.questionnaire === 'none') p.set('f', 'none')
   else if (link.questionnaire === 'buchen') p.set('buchen', '1')
   // 'direkt' = direkt zum Kalender OHNE Kontaktabfrage — nur mit persönlichem Token
   // (…&d=<deck-token>, wie beim Newsletter). Zusätzliches buchen=1 sorgt dafür,
   // dass ein Klick OHNE Token sauber auf die Terminart fällt (Kontakt danach),
   // statt in den Fragebogen.
   else if (link.questionnaire === 'direkt') { p.set('direkt', '1'); p.set('buchen', '1') }
-  else if (link.questionnaire && link.questionnaire !== 'standard') p.set('f', link.questionnaire)
+  else if (!link.code && link.questionnaire && link.questionnaire !== 'standard') p.set('f', link.questionnaire)
   const qs = p.toString()
   return qs ? `${SITE_URL}/termin?${qs}` : `${SITE_URL}/termin`
 }
