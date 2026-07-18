@@ -2865,7 +2865,16 @@
       "toastError": "Error while saving",
       "syncNow": "Refresh",
       "toastSynced": "✅ Refreshed — fetched {{n}} daily values from Meta",
-      "toastSyncError": "Refresh failed"
+      "toastSyncError": "Refresh failed",
+      "recReasonTarget": "Cost per lead {{cpl}} — far above your target of {{target}}",
+      "settingsTitle": "Guardrails",
+      "target": "Target",
+      "dailyLimit": "Daily limit",
+      "yesterday": "yesterday",
+      "sysCampaign": "System campaign",
+      "overBudget": "Spent {{spend}} yesterday — above your daily limit of {{limit}}.",
+      "settingsSaved": "✅ Guardrails saved",
+      "settingsInvalid": "Please enter valid amounts"
     }
   },
   "docs": {

@@ -61,7 +61,11 @@ interface AdAction {
 }
 
 // Empfehlung der Regel-Engine (rein deterministisch, transparent begründet)
-interface Recommendation { ad: AdCatalogRow; kind: 'no_leads' | 'high_cpl' | 'fatigue'; reason: string; spend: number }
+interface Recommendation { ad: AdCatalogRow; kind: 'no_leads' | 'high_cpl' | 'over_target' | 'fatigue'; reason: string; spend: number }
+
+// Leitplanken (ad_settings, von Sven festgelegt): Ziel-Leadpreis + Tageslimit
+interface AdSettings { target_cpl: number; max_account_daily_budget: number; system_campaign_daily_budget: number }
+const DEFAULT_SETTINGS: AdSettings = { target_cpl: 60, max_account_daily_budget: 180, system_campaign_daily_budget: 50 }
 
 // Zusammengerollte Kennzahlen (eine Ad oder eine Kampagne)
 interface Agg {
@@ -195,6 +199,9 @@ export default function AdsManager() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState('')
   const [syncing, setSyncing] = useState(false)
+  const [settings, setSettings] = useState<AdSettings>(DEFAULT_SETTINGS)
+  const [editSettings, setEditSettings] = useState(false)
+  const [settingsForm, setSettingsForm] = useState({ target_cpl: '60', max_budget: '180' })
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -220,6 +227,21 @@ export default function AdsManager() {
       const catRows = (cat as unknown as AdCatalogRow[]) ?? []
       setCatalog(catRows)
       setInsights((ins as unknown as InsightRow[]) ?? [])
+
+      // Leitplanken (Ziel-Leadpreis, Tageslimit) — von Sven gepflegt
+      const { data: st } = await supabase.from('ad_settings')
+        .select('target_cpl, max_account_daily_budget, system_campaign_daily_budget')
+        .eq('id', 'default').maybeSingle()
+      if (st) {
+        const s = st as unknown as { target_cpl: string | number; max_account_daily_budget: string | number; system_campaign_daily_budget: string | number }
+        const parsed = {
+          target_cpl: Number(s.target_cpl) || DEFAULT_SETTINGS.target_cpl,
+          max_account_daily_budget: Number(s.max_account_daily_budget) || DEFAULT_SETTINGS.max_account_daily_budget,
+          system_campaign_daily_budget: Number(s.system_campaign_daily_budget) || DEFAULT_SETTINGS.system_campaign_daily_budget,
+        }
+        setSettings(parsed)
+        setSettingsForm({ target_cpl: String(parsed.target_cpl), max_budget: String(parsed.max_account_daily_budget) })
+      }
 
       // Aktions-Queue: offene + die letzten 14 Tage erledigte/fehlgeschlagene
       const { data: act, error: eAct } = await supabase
@@ -350,6 +372,28 @@ export default function AdsManager() {
     }
   }
 
+  // ── Leitplanken speichern ─────────────────────────────────────────────────
+  const saveSettings = async () => {
+    const target = parseFloat(settingsForm.target_cpl.replace(',', '.'))
+    const maxB = parseFloat(settingsForm.max_budget.replace(',', '.'))
+    if (!Number.isFinite(target) || target <= 0 || !Number.isFinite(maxB) || maxB <= 0) {
+      showToast(`❌ ${t('crm.ads.settingsInvalid', 'Bitte gültige Beträge eingeben')}`)
+      return
+    }
+    try {
+      const { error } = await supabase.from('ad_settings')
+        .update({ target_cpl: target, max_account_daily_budget: maxB, updated_at: new Date().toISOString() })
+        .eq('id', 'default')
+      if (error) throw error
+      setSettings(s => ({ ...s, target_cpl: target, max_account_daily_budget: maxB }))
+      setEditSettings(false)
+      showToast(t('crm.ads.settingsSaved', '✅ Leitplanken gespeichert'))
+    } catch (err) {
+      console.error('[AdsManager] saveSettings:', err)
+      showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
+    }
+  }
+
   // ── Aktions-Queue: vormerken / stornieren ─────────────────────────────────
   // Ausführung bei Meta übernimmt meta-ads-sync — nach dem Vormerken stoßen
   // wir sie sofort an (fire-and-forget) und laden den Status kurz darauf nach.
@@ -420,6 +464,14 @@ export default function AdsManager() {
         recs.push({ ad: c, kind: 'no_leads', spend: a.spendEur, reason: t('crm.ads.recReasonNoLeads', '{{spend}} ausgegeben, kein einziger Lead im Zeitraum', { spend: eur(a.spendEur) }) })
         continue
       }
+      // Ziel-Leadpreis (Svens Leitplanke): deutlich drüber = Empfehlung
+      if (eff > 0 && a.spendEur >= 100) {
+        const cpl = a.spendEur / eff
+        if (cpl > 1.5 * settings.target_cpl) {
+          recs.push({ ad: c, kind: 'over_target', spend: a.spendEur, reason: t('crm.ads.recReasonTarget', 'Leadpreis {{cpl}} — weit über deinem Ziel von {{target}}', { cpl: eur(cpl), target: eur(settings.target_cpl) }) })
+          continue
+        }
+      }
       const meds = cplByCampaign.get(c.campaign_id)
       if (eff > 0 && meds && meds.length >= 3 && a.spendEur >= 100) {
         const m = median(meds), cpl = a.spendEur / eff
@@ -437,7 +489,7 @@ export default function AdsManager() {
     return recs.sort((x, y) => y.spend - x.spend).slice(0, 5)
     // eur/pct sind stabile Formatter — bewusst nicht in den Deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog, byAd, pendingByAd, t, locale])
+  }, [catalog, byAd, pendingByAd, settings, t, locale])
 
   const campaignName = useCallback((cid: string) => catalog.find(c => c.campaign_id === cid)?.campaign_name || cid, [catalog])
   const campaignColor = useMemo(() => {
@@ -445,6 +497,14 @@ export default function AdsManager() {
     campaignsSorted.forEach(([cid], i) => m.set(cid, colorFor(i)))
     return m
   }, [campaignsSorted])
+
+  // Gestern-Ausgaben vs. Tageslimit (Budget-Wächter)
+  const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+  const yesterdaySpend = useMemo(
+    () => insights.filter(r => r.day === yesterdayIso).reduce((s, r) => s + r.spend_eur, 0),
+    [insights, yesterdayIso],
+  )
+  const overBudget = yesterdaySpend > settings.max_account_daily_budget
 
   const leadsShown = total.crmLeads > 0 ? total.crmLeads : total.platformLeads
   const leadBasis = total.crmLeads > 0 ? t('crm.ads.basisCrm', 'CRM-zugeordnet') : t('crm.ads.basisMeta', 'laut Meta')
@@ -511,7 +571,7 @@ export default function AdsManager() {
               <KpiTile label={t('crm.ads.kpiSpend', 'Ausgaben')} value={eur(total.spendEur)}
                 sub={t('crm.ads.kpiSpendSub', 'umgerechnet aus USD')} />
               <KpiTile label={t('crm.ads.kpiCpl', 'Leadpreis')} value={per(total.spendEur, leadsShown)}
-                sub={`${int(leadsShown)} Leads (${leadBasis})`} accent />
+                sub={`${int(leadsShown)} Leads (${leadBasis}) · ${leadsShown > 0 && total.spendEur / leadsShown <= settings.target_cpl ? '✅' : '⚠️'} ${t('crm.ads.target', 'Ziel')}: ${eur(settings.target_cpl)}`} accent />
               <KpiTile label={t('crm.ads.kpiCostPerHeld', 'Preis / stattgef. Termin')} value={per(total.spendEur, total.stattgefunden)}
                 sub={`${int(total.stattgefunden)} ${t('crm.ads.held', 'stattgefunden')} · ${int(total.noShows)} No-Shows`} />
               <KpiTile label={t('crm.ads.kpiQuality', 'Qualitätsquote')} value={qualityRated > 0 ? pct(total.gut / qualityRated) : '–'}
@@ -519,6 +579,45 @@ export default function AdsManager() {
               <KpiTile label={t('crm.ads.kpiCostPerGood', 'Preis / gutem Lead')} value={per(total.spendEur, total.gut)} />
               <KpiTile label={t('crm.ads.kpiRoas', 'ROAS')} value={total.revenue > 0 ? `${roas.toLocaleString(locale, { maximumFractionDigits: 2 })}×` : '–'}
                 sub={`${eur(total.revenue)} ${t('crm.ads.revenue', 'Umsatz')} · ${int(total.sales)} Sales`} />
+            </div>
+
+            {/* Budget-Wächter: gestern über dem Tageslimit? */}
+            {overBudget && (
+              <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                🚨 {t('crm.ads.overBudget', 'Gestern {{spend}} ausgegeben — über deinem Tageslimit von {{limit}}.', { spend: eur(yesterdaySpend), limit: eur(settings.max_account_daily_budget) })}
+              </div>
+            )}
+
+            {/* Leitplanken (Ziel-Leadpreis + Tageslimit) — editierbar */}
+            <div className="mb-5 rounded-xl border border-gray-200 bg-white px-4 py-2.5 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+              <span className="font-semibold text-gray-700">🎯 {t('crm.ads.settingsTitle', 'Leitplanken')}:</span>
+              {editSettings ? (
+                <>
+                  <label className="flex items-center gap-1.5 text-gray-600">
+                    {t('crm.ads.target', 'Ziel')}-{t('crm.ads.kpiCpl', 'Leadpreis')}
+                    <input value={settingsForm.target_cpl} onChange={e => setSettingsForm(f => ({ ...f, target_cpl: e.target.value }))}
+                      className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-right" inputMode="decimal" /> €
+                  </label>
+                  <label className="flex items-center gap-1.5 text-gray-600">
+                    {t('crm.ads.dailyLimit', 'Tageslimit')}
+                    <input value={settingsForm.max_budget} onChange={e => setSettingsForm(f => ({ ...f, max_budget: e.target.value }))}
+                      className="w-20 border border-gray-200 rounded-lg px-2 py-1 text-right" inputMode="decimal" /> €
+                  </label>
+                  <button onClick={() => void saveSettings()} className="px-3 py-1 rounded-lg text-xs font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                    {t('common.save', 'Speichern')}
+                  </button>
+                  <button onClick={() => setEditSettings(false)} className="text-xs text-gray-500 underline">{t('common.cancel', 'Abbrechen')}</button>
+                </>
+              ) : (
+                <>
+                  <span className="text-gray-600">{t('crm.ads.target', 'Ziel')}-{t('crm.ads.kpiCpl', 'Leadpreis')}: <b>{eur(settings.target_cpl)}</b></span>
+                  <span className="text-gray-600">{t('crm.ads.dailyLimit', 'Tageslimit')}: <b>{eur(settings.max_account_daily_budget)}</b> · {t('crm.ads.yesterday', 'gestern')}: <b className={overBudget ? 'text-red-600' : 'text-green-700'}>{eur(yesterdaySpend)}</b></span>
+                  <span className="text-gray-500">{t('crm.ads.sysCampaign', 'System-Kampagne')}: <b>{eur(settings.system_campaign_daily_budget)}/Tag</b></span>
+                  <button onClick={() => setEditSettings(true)} className="ml-auto text-xs text-gray-500 underline hover:text-gray-800">
+                    ✏️ {t('common.edit', 'Bearbeiten')}
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Hinweis solange die CRM-Zuordnung noch nicht greift */}

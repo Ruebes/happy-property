@@ -2865,7 +2865,16 @@
       "toastError": "Fehler beim Speichern",
       "syncNow": "Aktualisieren",
       "toastSynced": "✅ Aktualisiert — {{n}} Tageswerte von Meta geholt",
-      "toastSyncError": "Aktualisierung fehlgeschlagen"
+      "toastSyncError": "Aktualisierung fehlgeschlagen",
+      "recReasonTarget": "Leadpreis {{cpl}} — weit über deinem Ziel von {{target}}",
+      "settingsTitle": "Leitplanken",
+      "target": "Ziel",
+      "dailyLimit": "Tageslimit",
+      "yesterday": "gestern",
+      "sysCampaign": "System-Kampagne",
+      "overBudget": "Gestern {{spend}} ausgegeben — über deinem Tageslimit von {{limit}}.",
+      "settingsSaved": "✅ Leitplanken gespeichert",
+      "settingsInvalid": "Bitte gültige Beträge eingeben"
     }
   },
   "docs": {
