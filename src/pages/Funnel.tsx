@@ -67,6 +67,29 @@ function useEntryParams(): { wanted: boolean; deckToken: string; variant: string
   }, [])
 }
 
+// ── Meta-Pixel (nur auf /termin) ─────────────────────────────────────────────
+// PageView + Lead füttern die Anzeigen-Optimierung der System-Kampagne
+// (Adset optimiert auf Pixel-Event „Lead"). Gleiches Pixel wie die Landing
+// Pages der Agentur — „Sveru Marketing LLC's Pixel".
+const META_PIXEL_ID = '1083578343946189'
+function metaPixel(...args: unknown[]) {
+  const w = window as unknown as { fbq?: (...a: unknown[]) => void; _fbq?: unknown }
+  if (!w.fbq) {
+    const fbq = Object.assign(
+      (...a: unknown[]) => { (fbq as unknown as { queue: unknown[][] }).queue.push(a) },
+      { queue: [] as unknown[][], loaded: true, version: '2.0', push: (...a: unknown[]) => { (fbq as unknown as { queue: unknown[][] }).queue.push(a) } },
+    )
+    w.fbq = fbq as unknown as (...a: unknown[]) => void
+    w._fbq = w.fbq
+    const s = document.createElement('script')
+    s.async = true
+    s.src = 'https://connect.facebook.net/en_US/fbevents.js'
+    document.head.appendChild(s)
+    w.fbq('init', META_PIXEL_ID)
+  }
+  w.fbq(...args)
+}
+
 export default function Funnel() {
   const { t } = useTranslation()
   const utmBase = useUtm()
@@ -142,6 +165,7 @@ export default function Funnel() {
   }, [utm])
 
   useEffect(() => { void track(0, 'view') }, [track])
+  useEffect(() => { try { metaPixel('track', 'PageView') } catch { /* Pixel darf nie blocken */ } }, [])
 
   // Direkteinstieg: Lead über den Deck-Token auflösen. Klappt es nicht
   // (Token ungültig/Master-Deck ohne Lead), fällt der Funnel auf den
@@ -196,6 +220,7 @@ export default function Funnel() {
       if (e) throw new Error(e.message)
       leadRef.current = (data as { lead_id?: string } | null)?.lead_id ?? null
       void track(QUESTIONS.length + 1, 'contact_submitted')
+      try { metaPixel('track', 'Lead') } catch { /* Pixel darf nie blocken */ }
       // Schnellbuchung: Terminart + Slot stehen schon → jetzt verbindlich buchen.
       if (rebook && slot) { await performBooking(slot); return }
       setPhase('meeting_type')

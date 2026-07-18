@@ -343,6 +343,10 @@ export default function AdsManager() {
     // CRM-Kette im Gesamt: ALLE Meta-Leads zählen, auch ohne Kampagnen-Zuordnung
     for (const l of leads) applyLead(total, l)
 
+    // Kampagnen ganz ohne Insights (z.B. neu angelegt, pausiert) trotzdem listen —
+    // sonst wären frisch erstellte System-Kampagnen im Werbemanager unsichtbar.
+    for (const c of catalog) if (c.campaign_id && !byCampaign.has(c.campaign_id)) byCampaign.set(c.campaign_id, emptyAgg())
+
     const campaignsSorted = [...byCampaign.entries()].sort((x, y) => y[1].spendEur - x[1].spendEur)
     const trend = [...trendMap.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([day, value]) => ({ day, value }))
     return { byAd, byCampaign, campaignsSorted, total, trend }
@@ -732,7 +736,7 @@ export default function AdsManager() {
                   <tbody>
                     {campaignsSorted.map(([cid, a]) => {
                       const isOpen = expanded.has(cid)
-                      const adsOfCampaign = catalog.filter(c => c.campaign_id === cid && byAd.has(c.ad_id))
+                      const adsOfCampaign = catalog.filter(c => c.campaign_id === cid)
                         .sort((x, y) => (byAd.get(y.ad_id)?.spendEur ?? 0) - (byAd.get(x.ad_id)?.spendEur ?? 0))
                       const leadsC = a.crmLeads > 0 ? a.crmLeads : a.platformLeads
                       return (

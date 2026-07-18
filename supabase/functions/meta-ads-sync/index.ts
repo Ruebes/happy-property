@@ -147,6 +147,10 @@ Deno.serve(async (req) => {
       const ads = await graphAll(adsUrl, token)
       const adMeta = new Map(ads.map(a => [String(a.id), a as Record<string, unknown>]))
 
+      // Kampagnen-/Adset-Namen fürs Katalog-Upsert (auch für Ads ohne Insights)
+      const campaignNames = new Map((await graphAll(`${GRAPH}/act_${account}/campaigns?fields=id,name&limit=200`, token)).map(c => [String(c.id), String(c.name ?? '')]))
+      const adsetNames = new Map((await graphAll(`${GRAPH}/act_${account}/adsets?fields=id,name&limit=500`, token)).map(a => [String(a.id), String(a.name ?? '')]))
+
       // Insights-Upsert
       const insightRows = rows
         .filter(r => r.ad_id && r.date_start && (num(r.spend) > 0 || num(r.impressions) > 0))
@@ -197,15 +201,27 @@ Deno.serve(async (req) => {
           updated_at: new Date().toISOString(),
         })
       }
-      // Thumbnails auch für Ads OHNE frische Insights auffrischen (CDN-URLs laufen ab)
+      // Ads OHNE frische Insights (z.B. neu angelegte, pausierte) trotzdem in den
+      // Katalog aufnehmen/aktualisieren — sonst fehlen sie im Werbemanager und
+      // haben keinen Aktivieren-Button. Thumbnails immer auffrischen (CDN läuft ab).
       for (const [adId, meta] of adMeta) {
         if (seen.has(adId)) continue
+        seen.add(adId)
         const creative = (meta.creative ?? null) as { id?: string; thumbnail_url?: string } | null
-        if (!creative?.thumbnail_url) continue
-        const { error } = await supabase.from('ad_catalog')
-          .update({ status: (meta.status as string) ?? null, thumbnail_url: creative.thumbnail_url, creative_id: creative.id ?? null, updated_at: new Date().toISOString() })
-          .eq('ad_id', adId)
-        if (error) console.warn('[meta-ads-sync] Thumbnail-Update:', error.message)
+        catalogRows.push({
+          ad_id: adId,
+          platform: 'meta',
+          account_id: account,
+          campaign_id: String(meta.campaign_id ?? ''),
+          campaign_name: campaignNames.get(String(meta.campaign_id ?? '')) ?? null,
+          adset_id: (meta.adset_id as string | undefined) ?? null,
+          adset_name: adsetNames.get(String(meta.adset_id ?? '')) ?? null,
+          ad_name: (meta.name as string | undefined) ?? null,
+          status: (meta.status as string | undefined) ?? null,
+          creative_id: creative?.id ?? null,
+          thumbnail_url: creative?.thumbnail_url ?? null,
+          updated_at: new Date().toISOString(),
+        })
       }
       if (catalogRows.length) {
         const { error } = await supabase.from('ad_catalog').upsert(catalogRows, { onConflict: 'ad_id' })
