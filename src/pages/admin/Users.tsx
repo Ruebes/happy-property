@@ -219,10 +219,14 @@ export default function AdminUsers() {
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      // Profile sofort laden und anzeigen
+      // Profile sofort laden und anzeigen.
+      // CRM-Mitarbeiter (Rolle 'mitarbeiter') gehören NICHT hierher — die werden
+      // im CRM unter Einstellungen → Mitarbeiter verwaltet (eigene Rechte-Logik).
+      // Diese Seite verwaltet nur Portal-Nutzer (admin/verwalter/eigentuemer/feriengast/funnel).
       const { data: profileData } = await supabase
         .from('profiles')
         .select('id, email, full_name, phone, role, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, is_active, created_at')
+        .neq('role', 'mitarbeiter')
         .order('created_at', { ascending: false })
         .limit(500)
 
