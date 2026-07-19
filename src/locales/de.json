@@ -2912,6 +2912,24 @@
       "feedbackPh": "Korrektur, z.B. „nur Männer“ oder „ohne Österreich“ …",
       "feedbackCta": "Anpassen (wird gelernt)",
       "ruleLearned": "🧠 Korrektur gespeichert — gilt ab jetzt für alle Vorschläge"
+    },
+    "studio": {
+      "title": "Anzeigen-Studio (KI)",
+      "sub": "Beschreibe die Anzeige, die du willst — z.B. „Erstelle mir ein Karussell vom Projekt Luma\" oder „Einzelbild: ich am Strand, Thema Steuern sparen\". Danach bearbeitest du alles per Chat.",
+      "briefPh": "Was soll die Anzeige zeigen und bewerben?",
+      "cta": "Anzeige erstellen",
+      "generating": "Erstelle Copy und Bildmaterial — bei KI-Bildern dauert das bis zu einer Minute …",
+      "headline": "Überschrift",
+      "caption": "Caption (frei editierbar)",
+      "chatPhSingle": "z.B. „mach den Himmel blauer\", „anderes Motiv: am Pool\", „Caption kürzer\" …",
+      "chatPhCarousel": "z.B. „nur 4 Karten\", „erste Karte: anderes Foto\", „Caption emotionaler\" …",
+      "chatCta": "Ändern",
+      "changed": "Zuletzt geändert",
+      "image": "Bild",
+      "cards": "Karten",
+      "publish": "Als Anzeige anlegen (pausiert)",
+      "published": "✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren",
+      "error": "Das hat nicht geklappt"
     }
   },
   "docs": {

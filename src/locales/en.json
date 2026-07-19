@@ -2912,6 +2912,24 @@
       "feedbackPh": "Correction, e.g. \"men only\" or \"without Austria\" …",
       "feedbackCta": "Adjust (will be learned)",
       "ruleLearned": "🧠 Correction saved — applies to all future proposals"
+    },
+    "studio": {
+      "title": "Ad studio (AI)",
+      "sub": "Describe the ad you want — e.g. \"Create a carousel for the Luma project\" or \"Single image: me at the beach, tax savings topic\". Then edit everything via chat.",
+      "briefPh": "What should the ad show and promote?",
+      "cta": "Create ad",
+      "generating": "Creating copy and imagery — AI images can take up to a minute …",
+      "headline": "Headline",
+      "caption": "Caption (fully editable)",
+      "chatPhSingle": "e.g. \"make the sky bluer\", \"different scene: at the pool\", \"shorter caption\" …",
+      "chatPhCarousel": "e.g. \"only 4 cards\", \"first card: different photo\", \"more emotional caption\" …",
+      "chatCta": "Change",
+      "changed": "Last changed",
+      "image": "Image",
+      "cards": "Cards",
+      "publish": "Create as ad (paused)",
+      "published": "✅ Ad created (paused) — check via 👁 preview, then activate",
+      "error": "That did not work"
     }
   },
   "docs": {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
+import AdStudio from '../../../components/crm/AdStudio'
 import { supabase } from '../../../lib/supabase'
 import { useAuth, hasAdSegment, AD_SEGMENTS, type AdSegment } from '../../../lib/auth'
 
@@ -782,6 +783,9 @@ export default function AdsManager() {
                 </>
               )}
             </div>
+
+            {/* KI-Anzeigen-Studio: Brief → Anzeige (Bild/Karussell + Caption) → Chat-Bearbeitung */}
+            <AdStudio showToast={showToast} onPublished={() => { void runSync() }} />
 
             {/* Zielgruppen-Assistent: Beschreibung → Meta-Targeting (System-Kampagne) */}
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
