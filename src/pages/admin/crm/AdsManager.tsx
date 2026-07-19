@@ -179,6 +179,61 @@ function TrendChart({ points, fmt }: { points: { day: string; value: number }[];
   )
 }
 
+// ── Meta-Enums → lesbare deutsche Labels (unbekannte Werte werden roh gezeigt) ─
+const META_LABELS: Record<string, string> = {
+  OUTCOME_LEADS: 'Leads', OUTCOME_SALES: 'Umsatz', OUTCOME_TRAFFIC: 'Traffic', OUTCOME_AWARENESS: 'Bekanntheit', OUTCOME_ENGAGEMENT: 'Interaktionen',
+  ACTIVE: 'Aktiv', PAUSED: 'Pausiert', CAMPAIGN_PAUSED: 'Pausiert (Kampagne)', ADSET_PAUSED: 'Pausiert (Anzeigengruppe)', IN_PROCESS: 'In Prüfung', WITH_ISSUES: 'Mit Problemen', PENDING_REVIEW: 'In Prüfung', DISAPPROVED: 'Abgelehnt',
+  LOWEST_COST_WITHOUT_CAP: 'Niedrigste Kosten (automatisch)', LOWEST_COST_WITH_BID_CAP: 'Gebotsobergrenze', COST_CAP: 'Kostenobergrenze',
+  OFFSITE_CONVERSIONS: 'Conversions (Website)', LINK_CLICKS: 'Link-Klicks', LEAD_GENERATION: 'Lead-Formulare', REACH: 'Reichweite', LANDING_PAGE_VIEWS: 'Landingpage-Aufrufe',
+  IMPRESSIONS: 'Impressionen', AUCTION: 'Auktion',
+  LEAD: 'Lead', SCHEDULE: 'Termin (Schedule)', PURCHASE: 'Kauf',
+}
+const metaLabel = (v: unknown): string => (v == null ? '–' : META_LABELS[String(v)] ?? String(v))
+
+// Komplettes Meta-Targeting lesbar aufbereitet (alles anzeigen, nichts verstecken)
+function TargetingView({ targeting }: { targeting: Record<string, unknown> | null | undefined }) {
+  if (!targeting) return <span className="text-gray-400">–</span>
+  const tg = targeting as {
+    age_min?: number; age_max?: number; genders?: number[]
+    geo_locations?: { countries?: string[]; cities?: Array<{ name: string }>; regions?: Array<{ name: string }> }
+    excluded_geo_locations?: { countries?: string[] }
+    flexible_spec?: Array<Record<string, Array<{ id: string; name: string }>>>
+    exclusions?: Record<string, Array<{ id: string; name: string }>>
+    custom_audiences?: Array<{ id: string; name: string }>
+    excluded_custom_audiences?: Array<{ id: string; name: string }>
+    publisher_platforms?: string[]
+    targeting_automation?: { advantage_audience?: number }
+  }
+  const chip = (txt: string, cls: string, key: string) => (
+    <span key={key} className={`px-2 py-0.5 rounded-full border text-[11px] ${cls}`}>{txt}</span>
+  )
+  const chips: JSX.Element[] = []
+  chips.push(chip(`🎂 ${tg.age_min ?? 18}–${tg.age_max ?? 65}`, 'bg-white border-gray-200', 'age'))
+  chips.push(chip(tg.genders?.length === 1 ? (tg.genders[0] === 1 ? '♂ Männer' : '♀ Frauen') : '⚥ Alle', 'bg-white border-gray-200', 'gender'))
+  const geo = [
+    ...(tg.geo_locations?.countries ?? []),
+    ...(tg.geo_locations?.regions?.map(r => r.name) ?? []),
+    ...(tg.geo_locations?.cities?.map(c => c.name) ?? []),
+  ]
+  if (geo.length) chips.push(chip(`🌍 ${geo.join(', ')}`, 'bg-white border-gray-200', 'geo'))
+  if (tg.excluded_geo_locations?.countries?.length) chips.push(chip(`🚫🌍 ${tg.excluded_geo_locations.countries.join(', ')}`, 'bg-red-50 border-red-200 text-red-700', 'geoex'))
+  ;(tg.flexible_spec ?? []).forEach((group, gi) => {
+    for (const [key, items] of Object.entries(group)) {
+      if (!Array.isArray(items)) continue
+      const icon = key === 'interests' ? '💡' : key === 'work_positions' ? '💼' : key === 'behaviors' ? '🧭' : key === 'work_employers' ? '🏢' : '🔖'
+      items.forEach(it => chips.push(chip(`${icon} ${it.name}`, gi === 0 ? 'bg-blue-50 border-blue-200 text-blue-800' : 'bg-purple-50 border-purple-200 text-purple-800', `${gi}-${key}-${it.id}`)))
+    }
+  })
+  for (const [key, items] of Object.entries(tg.exclusions ?? {})) {
+    if (Array.isArray(items)) items.forEach(it => chips.push(chip(`🚫 ${it.name}`, 'bg-red-50 border-red-200 text-red-700', `ex-${key}-${it.id}`)))
+  }
+  ;(tg.custom_audiences ?? []).forEach(a => chips.push(chip(`👥 ${a.name}`, 'bg-green-50 border-green-200 text-green-800', `ca-${a.id}`)))
+  ;(tg.excluded_custom_audiences ?? []).forEach(a => chips.push(chip(`🚫👥 ${a.name}`, 'bg-red-50 border-red-200 text-red-700', `cax-${a.id}`)))
+  chips.push(chip(tg.publisher_platforms?.length ? `📱 ${tg.publisher_platforms.join(', ')}` : '📱 Platzierungen: Automatisch', 'bg-white border-gray-200', 'plat'))
+  if (tg.targeting_automation?.advantage_audience === 1) chips.push(chip('✨ Advantage+ Audience', 'bg-amber-50 border-amber-200 text-amber-800', 'adv'))
+  return <div className="flex flex-wrap gap-1.5">{chips}</div>
+}
+
 // ── Seite ─────────────────────────────────────────────────────────────────────
 export default function AdsManager() {
   const { t, i18n } = useTranslation()
@@ -205,8 +260,12 @@ export default function AdsManager() {
   // Anzeigen-Vorschau (FB/IG/Story) + Zielgruppen-Assistent
   const [preview, setPreview] = useState<{ adName: string; loading: boolean; tab: 'facebook' | 'instagram' | 'story'; previews?: Record<string, string>; caption?: { message: string; headline: string } } | null>(null)
   const [audienceText, setAudienceText] = useState('')
+  const [audienceFeedback, setAudienceFeedback] = useState('')
   const [audienceBusy, setAudienceBusy] = useState(false)
   const [audienceDraft, setAudienceDraft] = useState<{ age_min: number; age_max: number; genders: string; countries: string[]; interests: Array<{ id: string; name: string; audience?: number }>; jobs: Array<{ id: string; name: string }>; summary: string } | null>(null)
+  // ⚙ Voll-Einstellungen einer Kampagne (Meta-Rohdaten, lesbar aufbereitet)
+  interface MetaEntity { [k: string]: unknown }
+  const [settingsView, setSettingsView] = useState<{ campaignId: string; campaignName: string; loading: boolean; busy: boolean; data?: { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[] }; budgetEdits: Record<string, string> } | null>(null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -418,15 +477,23 @@ export default function AdsManager() {
     }
   }
 
-  // ── Zielgruppen-Assistent ─────────────────────────────────────────────────
-  const suggestAudience = async () => {
+  // ── Zielgruppen-Assistent (lernend: Feedback wird dauerhafte Regel) ───────
+  const suggestAudience = async (withFeedback?: string) => {
     if (!audienceText.trim() || audienceBusy) return
     setAudienceBusy(true)
-    setAudienceDraft(null)
     try {
-      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'audience_suggest', description: audienceText.trim() } })
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', {
+        body: {
+          mode: 'audience_suggest', description: audienceText.trim(),
+          ...(withFeedback ? { feedback: withFeedback, previous_draft: audienceDraft } : {}),
+        },
+      })
       if (error) throw error
       setAudienceDraft((data as { draft: typeof audienceDraft }).draft)
+      if (withFeedback) {
+        setAudienceFeedback('')
+        showToast(t('crm.ads.ruleLearned', '🧠 Korrektur gespeichert — gilt ab jetzt für alle Vorschläge'))
+      }
     } catch (err) {
       console.error('[AdsManager] suggestAudience:', err)
       showToast(`❌ ${t('crm.ads.audienceError', 'Vorschlag fehlgeschlagen — bitte nochmal versuchen')}`)
@@ -439,7 +506,9 @@ export default function AdsManager() {
     if (!audienceDraft || audienceBusy) return
     setAudienceBusy(true)
     try {
-      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'audience_apply', targeting_draft: audienceDraft } })
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', {
+        body: { mode: 'audience_apply', targeting_draft: audienceDraft, description: audienceText.trim() },
+      })
       if (error) throw error
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
       showToast(t('crm.ads.audienceApplied', '✅ Zielgruppe auf die System-Kampagne angewendet'))
@@ -450,6 +519,41 @@ export default function AdsManager() {
       showToast(`❌ ${t('crm.ads.audienceError', 'Vorschlag fehlgeschlagen — bitte nochmal versuchen')}`)
     } finally {
       setAudienceBusy(false)
+    }
+  }
+
+  // ── ⚙ Voll-Einstellungen laden / ändern ───────────────────────────────────
+  const openSettings = async (cid: string) => {
+    setSettingsView({ campaignId: cid, campaignName: campaignName(cid), loading: true, busy: false, budgetEdits: {} })
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'settings', campaign_id: cid } })
+      if (error) throw error
+      const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; error?: string }
+      if (d.error) throw new Error(d.error)
+      const budgetEdits: Record<string, string> = {}
+      for (const a of d.adsets) if (a.daily_budget) budgetEdits[String(a.id)] = String(Number(a.daily_budget) / 100)
+      setSettingsView(s => s ? { ...s, loading: false, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads }, budgetEdits } : s)
+    } catch (err) {
+      console.error('[AdsManager] openSettings:', err)
+      setSettingsView(null)
+      showToast(`❌ ${t('crm.ads.settingsLoadError', 'Einstellungen konnten nicht geladen werden')}`)
+    }
+  }
+
+  const updateEntity = async (entityId: string, patch: { daily_budget?: number; status?: 'ACTIVE' | 'PAUSED' }) => {
+    if (!settingsView || settingsView.busy) return
+    setSettingsView(s => s ? { ...s, busy: true } : s)
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'update_entity', entity_id: entityId, ...patch } })
+      if (error) throw error
+      if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
+      showToast(t('crm.ads.entityUpdated', '✅ Bei Meta gespeichert'))
+      await openSettings(settingsView.campaignId)   // frisch laden
+      void fetchAll()
+    } catch (err) {
+      console.error('[AdsManager] updateEntity:', err)
+      setSettingsView(s => s ? { ...s, busy: false } : s)
+      showToast(`❌ ${t('crm.ads.entityUpdateError', 'Änderung fehlgeschlagen')}`)
     }
   }
 
@@ -712,13 +816,22 @@ export default function AdsManager() {
                       <span key={j.id} className="px-2 py-0.5 rounded-full bg-purple-50 border border-purple-200 text-purple-800">💼 {j.name}</span>
                     ))}
                   </div>
-                  <div className="flex gap-2 mt-3">
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
                     <button onClick={() => void applyAudience()} disabled={audienceBusy}
                       className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
                       ✅ {t('crm.ads.audienceApply', 'Auf System-Kampagne anwenden')}
                     </button>
                     <button onClick={() => setAudienceDraft(null)} className="px-3 py-1.5 rounded-lg text-xs text-gray-600 border border-gray-200 hover:bg-gray-50">
                       {t('crm.ads.audienceDiscard', 'Verwerfen')}
+                    </button>
+                    {/* Lern-Schleife: Korrektur → dauerhafte Regel + neuer Vorschlag */}
+                    <input value={audienceFeedback} onChange={e => setAudienceFeedback(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && audienceFeedback.trim()) void suggestAudience(audienceFeedback.trim()) }}
+                      placeholder={t('crm.ads.feedbackPh', 'Korrektur, z.B. „nur Männer“ oder „ohne Österreich“ …')}
+                      className="flex-1 min-w-[200px] border border-gray-200 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                    <button onClick={() => void suggestAudience(audienceFeedback.trim())} disabled={audienceBusy || !audienceFeedback.trim()}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                      🧠 {t('crm.ads.feedbackCta', 'Anpassen (wird gelernt)')}
                     </button>
                   </div>
                 </div>
@@ -849,6 +962,11 @@ export default function AdsManager() {
                                 <span className="text-gray-400">{isOpen ? '▾' : '▸'}</span>
                                 <span className="truncate max-w-[260px]" title={campaignName(cid)}>{campaignName(cid)}</span>
                                 <span className="text-[10px] font-normal text-gray-400">({adsOfCampaign.length} Ads)</span>
+                                <button onClick={e => { e.stopPropagation(); void openSettings(cid) }}
+                                  title={t('crm.ads.settingsBtnTitle', 'Alle Meta-Einstellungen ansehen & ändern')}
+                                  className="px-1.5 py-0.5 rounded border border-gray-200 text-[11px] font-normal text-gray-500 hover:border-orange-400 hover:text-orange-600 shrink-0">
+                                  ⚙ {t('crm.ads.settingsBtn', 'Einstellungen')}
+                                </button>
                               </span>
                             </td>
                             <td className="px-2 py-2.5 text-right tabular-nums font-semibold">{eur(a.spendEur)}</td>
@@ -934,6 +1052,106 @@ export default function AdsManager() {
               {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
             </p>
           </>
+        )}
+
+        {/* ⚙ Voll-Einstellungen einer Kampagne (alles von Meta, wichtige Hebel änderbar) */}
+        {settingsView && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSettingsView(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-3 sticky top-0 bg-white z-10">
+                <h3 className="font-bold text-gray-900 text-sm truncate">⚙ {settingsView.campaignName}</h3>
+                <button onClick={() => setSettingsView(null)} className="text-gray-400 hover:text-gray-700 text-lg leading-none">✕</button>
+              </div>
+              {settingsView.loading || !settingsView.data ? (
+                <div className="flex justify-center py-16">
+                  <div className="w-8 h-8 rounded-full border-4 border-orange-300 border-t-orange-500 animate-spin" />
+                </div>
+              ) : (
+                <div className="px-5 py-4 space-y-4 text-sm">
+                  {/* Kampagne */}
+                  <div className="rounded-xl border border-gray-200 p-3">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <p className="font-bold text-gray-800">{t('crm.ads.setCampaign', 'Kampagne')}</p>
+                      <button disabled={settingsView.busy}
+                        onClick={() => void updateEntity(settingsView.campaignId, { status: String(settingsView.data?.campaign.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(settingsView.data.campaign.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
+                        {String(settingsView.data.campaign.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
+                      </button>
+                    </div>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <dt className="text-gray-500">{t('crm.ads.setObjective', 'Ziel')}</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.objective)}</dd>
+                      <dt className="text-gray-500">Status</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.effective_status ?? settingsView.data.campaign.status)}</dd>
+                      <dt className="text-gray-500">{t('crm.ads.setBidStrategy', 'Gebotsstrategie')}</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.bid_strategy)}</dd>
+                      <dt className="text-gray-500">{t('crm.ads.setCreated', 'Erstellt')}</dt><dd className="text-gray-800">{settingsView.data.campaign.created_time ? new Date(String(settingsView.data.campaign.created_time)).toLocaleDateString(locale) : '–'}</dd>
+                    </dl>
+                  </div>
+
+                  {/* Anzeigengruppen */}
+                  {settingsView.data.adsets.map(a => (
+                    <div key={String(a.id)} className="rounded-xl border border-gray-200 p-3">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <p className="font-bold text-gray-800 truncate">{t('crm.ads.setAdset', 'Anzeigengruppe')}: {String(a.name)}</p>
+                        <button disabled={settingsView.busy}
+                          onClick={() => void updateEntity(String(a.id), { status: String(a.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(a.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
+                          {String(a.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
+                        </button>
+                      </div>
+                      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
+                        <dt className="text-gray-500">{t('crm.ads.setOptimization', 'Optimiert auf')}</dt>
+                        <dd className="text-gray-800">{metaLabel(a.optimization_goal)}{(a.promoted_object as { custom_event_type?: string } | undefined)?.custom_event_type ? ` · ${metaLabel((a.promoted_object as { custom_event_type?: string }).custom_event_type)}` : ''}</dd>
+                        <dt className="text-gray-500">{t('crm.ads.setBilling', 'Abrechnung')}</dt><dd className="text-gray-800">{metaLabel(a.billing_event)}</dd>
+                        <dt className="text-gray-500">{t('crm.ads.setBidStrategy', 'Gebotsstrategie')}</dt><dd className="text-gray-800">{metaLabel(a.bid_strategy)}</dd>
+                        <dt className="text-gray-500">{t('crm.ads.setSchedule', 'Laufzeit')}</dt>
+                        <dd className="text-gray-800">{a.start_time ? new Date(String(a.start_time)).toLocaleDateString(locale) : '–'} – {a.end_time ? new Date(String(a.end_time)).toLocaleDateString(locale) : t('crm.ads.setOpenEnd', 'offen')}</dd>
+                      </dl>
+                      {/* Tagesbudget direkt änderbar */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <label className="text-xs text-gray-500">{t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)</label>
+                        <input value={settingsView.budgetEdits[String(a.id)] ?? ''} inputMode="decimal"
+                          onChange={e => setSettingsView(s => s ? { ...s, budgetEdits: { ...s.budgetEdits, [String(a.id)]: e.target.value } } : s)}
+                          className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs text-right" />
+                        <button disabled={settingsView.busy}
+                          onClick={() => {
+                            const v = parseFloat((settingsView.budgetEdits[String(a.id)] ?? '').replace(',', '.'))
+                            if (Number.isFinite(v) && v > 0) void updateEntity(String(a.id), { daily_budget: Math.round(v * 100) })
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+                          {t('common.save', 'Speichern')}
+                        </button>
+                      </div>
+                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.ads.setTargeting', 'Zielgruppe')}</p>
+                      <TargetingView targeting={a.targeting as Record<string, unknown>} />
+                    </div>
+                  ))}
+
+                  {/* Anzeigen */}
+                  <div className="rounded-xl border border-gray-200 p-3">
+                    <p className="font-bold text-gray-800 mb-2">{t('crm.ads.setAds', 'Anzeigen')} ({settingsView.data.ads.length})</p>
+                    <div className="space-y-1.5">
+                      {settingsView.data.ads.map(ad => {
+                        const linkData = ((ad.creative as { object_story_spec?: { link_data?: { link?: string; call_to_action?: { type?: string } } } } | undefined)?.object_story_spec?.link_data)
+                        return (
+                          <div key={String(ad.id)} className="flex flex-wrap items-center gap-2 text-xs">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${String(ad.effective_status ?? ad.status) === 'ACTIVE' ? 'bg-green-500' : 'bg-gray-300'}`} />
+                            <span className="text-gray-800 truncate max-w-[220px]" title={String(ad.name)}>{String(ad.name)}</span>
+                            <span className="text-gray-400">{metaLabel(ad.effective_status ?? ad.status)}</span>
+                            {linkData?.link && <span className="text-gray-400 truncate max-w-[200px]" title={linkData.link}>→ {linkData.link.replace('https://', '')}</span>}
+                            <button disabled={settingsView.busy}
+                              onClick={() => void updateEntity(String(ad.id), { status: String(ad.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
+                              className="ml-auto px-2 py-0.5 rounded border border-gray-200 text-[11px] text-gray-600 hover:border-orange-400 disabled:opacity-50">
+                              {String(ad.status) === 'ACTIVE' ? '⏸' : '▶'}
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-gray-400">{t('crm.ads.settingsHint', 'Änderungen wirken sofort direkt bei Meta. Zielgruppe der System-Kampagne änderst du über den Zielgruppen-Assistenten.')}</p>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Anzeigen-Vorschau (Facebook / Instagram / Story) */}
