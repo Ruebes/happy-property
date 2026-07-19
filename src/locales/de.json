@@ -2911,7 +2911,9 @@
       "settingsHint": "Änderungen wirken sofort direkt bei Meta. Zielgruppe der System-Kampagne änderst du über den Zielgruppen-Assistenten.",
       "feedbackPh": "Korrektur, z.B. „nur Männer“ oder „ohne Österreich“ …",
       "feedbackCta": "Anpassen (wird gelernt)",
-      "ruleLearned": "🧠 Korrektur gespeichert — gilt ab jetzt für alle Vorschläge"
+      "ruleLearned": "🧠 Korrektur gespeichert — gilt ab jetzt für alle Vorschläge",
+      "tabStats": "Statistik",
+      "tabStudio": "Anzeigen-Studio"
     },
     "studio": {
       "title": "Anzeigen-Studio (KI)",

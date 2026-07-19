@@ -91,17 +91,17 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   const spinner = <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
 
   return (
-    <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
-      <h2 className="text-sm font-bold text-gray-700 mb-1">🎨 {t('crm.studio.title', 'Anzeigen-Studio (KI)')}</h2>
-      <p className="text-[11px] text-gray-400 mb-2">
+    <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6">
+      <h2 className="text-lg font-bold text-gray-800 mb-1">🎨 {t('crm.studio.title', 'Anzeigen-Studio (KI)')}</h2>
+      <p className="text-sm text-gray-400 mb-3">
         {t('crm.studio.sub', 'Beschreibe die Anzeige, die du willst — z.B. „Erstelle mir ein Karussell vom Projekt Luma" oder „Einzelbild: ich am Strand, Thema Steuern sparen". Danach bearbeitest du alles per Chat.')}
       </p>
       <div className="flex flex-wrap gap-2">
-        <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={2}
+        <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={3}
           placeholder={t('crm.studio.briefPh', 'Was soll die Anzeige zeigen und bewerben?')}
-          className="flex-1 min-w-[260px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+          className="flex-1 min-w-[280px] border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
         <button onClick={() => void generate()} disabled={busy !== null || !brief.trim()}
-          className="px-4 py-2 rounded-lg text-sm font-semibold text-white self-start flex items-center gap-1.5 disabled:opacity-60"
+          className="px-6 py-3 rounded-xl text-base font-semibold text-white self-start flex items-center gap-2 disabled:opacity-60"
           style={{ backgroundColor: '#ff795d' }}>
           {busy === 'generate' && spinner}
           ✨ {t('crm.studio.cta', 'Anzeige erstellen')}
@@ -112,19 +112,19 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       )}
 
       {draft && (
-        <div className="mt-3 rounded-xl border border-orange-200 bg-orange-50/40 p-3">
+        <div className="mt-4 rounded-2xl border border-orange-200 bg-orange-50/40 p-5">
           {/* Bild bzw. Karussell-Karten */}
           {draft.format === 'single' && draft.image_url && (
-            <img src={draft.image_url} alt="" className="w-full max-w-sm rounded-xl mb-3" />
+            <img src={draft.image_url} alt="" className="w-full max-w-xl rounded-2xl mb-4 shadow-sm" />
           )}
           {draft.format === 'carousel' && (
-            <div className="flex gap-2 overflow-x-auto pb-2 mb-2">
+            <div className="flex gap-3 overflow-x-auto pb-2 mb-3">
               {(draft.cards ?? []).map((c, i) => (
-                <div key={i} className="w-36 shrink-0 rounded-lg border border-gray-200 bg-white overflow-hidden">
-                  <img src={c.image_url} alt="" className="w-36 h-36 object-cover" loading="lazy" />
-                  <div className="p-1.5">
-                    <p className="text-[11px] font-bold text-gray-800 leading-tight">{c.title}</p>
-                    <p className="text-[10px] text-gray-500 leading-tight mt-0.5">{c.description}</p>
+                <div key={i} className="w-52 shrink-0 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+                  <img src={c.image_url} alt="" className="w-52 h-52 object-cover" loading="lazy" />
+                  <div className="p-2.5">
+                    <p className="text-sm font-bold text-gray-800 leading-tight">{c.title}</p>
+                    <p className="text-xs text-gray-500 leading-tight mt-1">{c.description}</p>
                   </div>
                 </div>
               ))}
@@ -132,23 +132,23 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           )}
 
           {/* Caption: komplett direkt editierbar */}
-          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.studio.headline', 'Überschrift')}</label>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.studio.headline', 'Überschrift')}</label>
           <input value={draft.headline} onChange={e => setDraft(d => d ? { ...d, headline: e.target.value } : d)}
-            className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm font-semibold mb-2 bg-white" />
-          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.studio.caption', 'Caption (frei editierbar)')}</label>
-          <textarea value={draft.message} onChange={e => setDraft(d => d ? { ...d, message: e.target.value } : d)} rows={8}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white resize-y" />
+            className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-base font-semibold mb-3 bg-white" />
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.studio.caption', 'Caption (frei editierbar)')}</label>
+          <textarea value={draft.message} onChange={e => setDraft(d => d ? { ...d, message: e.target.value } : d)} rows={10}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base bg-white resize-y leading-relaxed" />
 
           {/* Chat-Bearbeitung */}
-          <div className="flex flex-wrap gap-2 mt-2">
+          <div className="flex flex-wrap gap-2 mt-3">
             <input value={chat} onChange={e => setChat(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') void refine() }}
               placeholder={draft.format === 'single'
                 ? t('crm.studio.chatPhSingle', 'z.B. „mach den Himmel blauer“, „anderes Motiv: am Pool“, „Caption kürzer“ …')
                 : t('crm.studio.chatPhCarousel', 'z.B. „nur 4 Karten“, „erste Karte: anderes Foto“, „Caption emotionaler“ …')}
-              className="flex-1 min-w-[220px] border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+              className="flex-1 min-w-[240px] border border-gray-200 rounded-xl px-4 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
             <button onClick={() => void refine()} disabled={busy !== null || !chat.trim()}
-              className="px-3 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-1.5 disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
+              className="px-5 py-3 rounded-xl text-base font-semibold text-white flex items-center gap-2 disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
               {busy === 'refine' && spinner}
               💬 {t('crm.studio.chatCta', 'Ändern')}
             </button>

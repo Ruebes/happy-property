@@ -97,10 +97,10 @@ const colorFor = (i: number) => CHART_COLORS[i % CHART_COLORS.length]
 // ── KPI-Kachel ────────────────────────────────────────────────────────────────
 function KpiTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
   return (
-    <div className={`rounded-xl border px-4 py-3 ${accent ? 'border-orange-200 bg-orange-50/60' : 'border-gray-200 bg-white'}`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{label}</p>
-      <p className="mt-1 text-xl font-bold text-gray-900 tabular-nums">{value}</p>
-      {sub && <p className="text-[11px] text-gray-500 mt-0.5">{sub}</p>}
+    <div className={`rounded-xl border px-5 py-4 ${accent ? 'border-orange-200 bg-orange-50/60' : 'border-gray-200 bg-white'}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-gray-900 tabular-nums">{value}</p>
+      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
     </div>
   )
 }
@@ -114,13 +114,13 @@ function HBarChart({ data, valueFmt }: { data: BarDatum[]; valueFmt: (v: number)
       {data.map((d, i) => (
         <div key={i} title={`${d.label}: ${valueFmt(d.value)}${d.sub ? ` · ${d.sub}` : ''}`}>
           <div className="flex items-baseline justify-between gap-2">
-            <span className="text-xs text-gray-600 truncate">{d.label}</span>
-            <span className="text-xs font-semibold text-gray-900 tabular-nums whitespace-nowrap">
+            <span className="text-sm text-gray-600 truncate">{d.label}</span>
+            <span className="text-sm font-semibold text-gray-900 tabular-nums whitespace-nowrap">
               {valueFmt(d.value)}{d.sub && <span className="font-normal text-gray-500"> · {d.sub}</span>}
             </span>
           </div>
-          <div className="mt-0.5 h-3 rounded-r bg-gray-100">
-            <div className="h-full rounded-r" style={{ width: `${(d.value / max) * 100}%`, backgroundColor: d.color, minWidth: d.value > 0 ? 4 : 0 }} />
+          <div className="mt-1 h-5 rounded-r bg-gray-100">
+            <div className="h-full rounded-r" style={{ width: `${(d.value / max) * 100}%`, backgroundColor: d.color, minWidth: d.value > 0 ? 5 : 0 }} />
           </div>
         </div>
       ))}
@@ -135,8 +135,8 @@ function DonutChart({ data, centerLabel }: { data: BarDatum[]; centerLabel: stri
   let acc = 0
   const R = 42, C = 2 * Math.PI * R
   return (
-    <div className="flex items-center gap-4">
-      <svg viewBox="0 0 110 110" className="w-32 h-32 shrink-0">
+    <div className="flex items-center gap-5">
+      <svg viewBox="0 0 110 110" className="w-44 h-44 shrink-0">
         {data.map((d, i) => {
           const frac = d.value / total
           const dash = frac * C
@@ -152,9 +152,9 @@ function DonutChart({ data, centerLabel }: { data: BarDatum[]; centerLabel: stri
         })}
         <text x="55" y="59" textAnchor="middle" className="fill-gray-700" style={{ fontSize: 11, fontWeight: 700 }}>{centerLabel}</text>
       </svg>
-      <div className="space-y-1 min-w-0">
+      <div className="space-y-1.5 min-w-0">
         {data.map((d, i) => (
-          <div key={i} className="flex items-center gap-1.5 text-xs text-gray-600 min-w-0">
+          <div key={i} className="flex items-center gap-1.5 text-sm text-gray-600 min-w-0">
             <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: d.color }} />
             <span className="truncate">{d.label}</span>
             <span className="ml-auto font-semibold text-gray-900 tabular-nums pl-2">{Math.round((d.value / total) * 100)} %</span>
@@ -169,11 +169,11 @@ function DonutChart({ data, centerLabel }: { data: BarDatum[]; centerLabel: stri
 function TrendChart({ points, fmt }: { points: { day: string; value: number }[]; fmt: (v: number) => string }) {
   const max = Math.max(1, ...points.map(p => p.value))
   return (
-    <div className="flex items-end gap-[2px] h-28">
+    <div className="flex items-end gap-[3px] h-48">
       {points.map((p, i) => (
         <div key={i} className="flex-1 min-w-0 group relative" title={`${p.day}: ${fmt(p.value)}`}>
           <div className="rounded-t-sm mx-auto w-full transition group-hover:opacity-80"
-            style={{ height: `${Math.max((p.value / max) * 112, p.value > 0 ? 2 : 0)}px`, backgroundColor: '#e8590c' }} />
+            style={{ height: `${Math.max((p.value / max) * 192, p.value > 0 ? 2 : 0)}px`, backgroundColor: '#e8590c' }} />
         </div>
       ))}
     </div>
@@ -244,6 +244,7 @@ export default function AdsManager() {
 
   const segments = AD_SEGMENTS.filter(s => hasAdSegment(profile, s))
   const [segment, setSegment] = useState<AdSegment>('meta')
+  const [view, setView] = useState<'stats' | 'studio'>('stats')
   const [days, setDays] = useState<7 | 30 | 90>(30)
   const [loading, setLoading] = useState(true)
   const [catalog, setCatalog] = useState<AdCatalogRow[]>([])
@@ -730,6 +731,19 @@ export default function AdsManager() {
           </div>
         ) : (
           <>
+            {/* Reiter: Statistik | Anzeigen-Studio */}
+            <div className="flex gap-2 mb-5 border-b border-gray-200">
+              <button onClick={() => setView('stats')}
+                className={`px-5 py-2.5 text-base font-bold rounded-t-xl border-b-2 -mb-px ${view === 'stats' ? 'border-[#ff795d] text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                📊 {t('crm.ads.tabStats', 'Statistik')}
+              </button>
+              <button onClick={() => setView('studio')}
+                className={`px-5 py-2.5 text-base font-bold rounded-t-xl border-b-2 -mb-px ${view === 'studio' ? 'border-[#ff795d] text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                🎨 {t('crm.ads.tabStudio', 'Anzeigen-Studio')}
+              </button>
+            </div>
+
+            {view === 'stats' && (<div>
             {/* KPI-Kacheln */}
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-5">
               <KpiTile label={t('crm.ads.kpiSpend', 'Ausgaben')} value={eur(total.spendEur)}
@@ -784,19 +798,22 @@ export default function AdsManager() {
               )}
             </div>
 
+            </div>)}
+
+            {view === 'studio' && (<div>
             {/* KI-Anzeigen-Studio: Brief → Anzeige (Bild/Karussell + Caption) → Chat-Bearbeitung */}
             <AdStudio showToast={showToast} onPublished={() => { void runSync() }} />
 
             {/* Zielgruppen-Assistent: Beschreibung → Meta-Targeting (System-Kampagne) */}
-            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4">
-              <h2 className="text-sm font-bold text-gray-700 mb-1">🧲 {t('crm.ads.audienceTitle', 'Zielgruppen-Assistent (System-Kampagne)')}</h2>
-              <p className="text-[11px] text-gray-400 mb-2">{t('crm.ads.audienceSub', 'Beschreibe in normalen Worten, wen die Werbung erreichen soll — das System übersetzt das in Meta-Targeting und zeigt dir den Vorschlag, bevor er übernommen wird.')}</p>
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">🧲 {t('crm.ads.audienceTitle', 'Zielgruppen-Assistent (System-Kampagne)')}</h2>
+              <p className="text-sm text-gray-400 mb-3">{t('crm.ads.audienceSub', 'Beschreibe in normalen Worten, wen die Werbung erreichen soll — das System übersetzt das in Meta-Targeting und zeigt dir den Vorschlag, bevor er übernommen wird.')}</p>
               <div className="flex flex-wrap gap-2">
-                <textarea value={audienceText} onChange={e => setAudienceText(e.target.value)} rows={2}
+                <textarea value={audienceText} onChange={e => setAudienceText(e.target.value)} rows={3}
                   placeholder={t('crm.ads.audiencePh', 'z.B. „Deutsche Ärzte und Apotheker ab 40, die schon Immobilien besitzen und Steuern sparen wollen“')}
-                  className="flex-1 min-w-[260px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+                  className="flex-1 min-w-[280px] border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
                 <button onClick={() => void suggestAudience()} disabled={audienceBusy || !audienceText.trim()}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white self-start flex items-center gap-1.5 disabled:opacity-60"
+                  className="px-6 py-3 rounded-xl text-base font-semibold text-white self-start flex items-center gap-2 disabled:opacity-60"
                   style={{ backgroundColor: '#ff795d' }}>
                   {audienceBusy && <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />}
                   🪄 {t('crm.ads.audienceCta', 'Vorschlag erarbeiten')}
@@ -842,6 +859,9 @@ export default function AdsManager() {
               )}
             </div>
 
+            </div>)}
+
+            {view === 'stats' && (<div>
             {/* Hinweis solange die CRM-Zuordnung noch nicht greift */}
             {total.crmLeads === 0 && (
               <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
@@ -893,10 +913,10 @@ export default function AdsManager() {
               </div>
             )}
 
-            {/* Diagramme */}
-            <div className="grid lg:grid-cols-3 gap-4 mb-6">
-              <div className="rounded-2xl border border-gray-200 bg-white p-4 lg:col-span-1">
-                <h2 className="text-sm font-bold text-gray-700 mb-3">{t('crm.ads.chartLeads', 'Leads je Kampagne')}</h2>
+            {/* Diagramme — bewusst groß (Svens Wunsch: Statistik-Reiter mit großen Grafiken) */}
+            <div className="grid lg:grid-cols-2 2xl:grid-cols-3 gap-5 mb-6">
+              <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="text-base font-bold text-gray-700 mb-4">{t('crm.ads.chartLeads', 'Leads je Kampagne')}</h2>
                 <HBarChart valueFmt={int}
                   data={campaignsSorted.slice(0, 6).map(([cid, a]) => ({
                     label: campaignName(cid),
@@ -905,15 +925,15 @@ export default function AdsManager() {
                     color: campaignColor.get(cid) ?? CHART_COLORS[0],
                   }))} />
               </div>
-              <div className="rounded-2xl border border-gray-200 bg-white p-4 lg:col-span-1">
-                <h2 className="text-sm font-bold text-gray-700 mb-3">{t('crm.ads.chartSpend', 'Budget-Verteilung')}</h2>
+              <div className="rounded-2xl border border-gray-200 bg-white p-5">
+                <h2 className="text-base font-bold text-gray-700 mb-4">{t('crm.ads.chartSpend', 'Budget-Verteilung')}</h2>
                 <DonutChart centerLabel={eur(total.spendEur)}
                   data={campaignsSorted.slice(0, 6).map(([cid, a]) => ({
                     label: campaignName(cid), value: a.spendEur, color: campaignColor.get(cid) ?? CHART_COLORS[0],
                   }))} />
               </div>
-              <div className="rounded-2xl border border-gray-200 bg-white p-4 lg:col-span-1">
-                <h2 className="text-sm font-bold text-gray-700 mb-3">{t('crm.ads.chartTrend', 'Ausgaben pro Tag')}</h2>
+              <div className="rounded-2xl border border-gray-200 bg-white p-5 lg:col-span-2 2xl:col-span-1">
+                <h2 className="text-base font-bold text-gray-700 mb-4">{t('crm.ads.chartTrend', 'Ausgaben pro Tag')}</h2>
                 <TrendChart points={trend.map(p => ({ day: new Date(p.day).toLocaleDateString(locale, { day: '2-digit', month: '2-digit' }), value: p.value }))} fmt={eur} />
                 <div className="flex justify-between text-[10px] text-gray-400 mt-1">
                   <span>{trend[0] ? new Date(trend[0].day).toLocaleDateString(locale, { day: '2-digit', month: '2-digit' }) : ''}</span>
@@ -1055,6 +1075,7 @@ export default function AdsManager() {
               {t('crm.ads.footnote', 'Datenstand: automatischer Sync jeden Morgen direkt aus dem Meta-Werbekonto (Sveru Marketing LLC, USD → EUR umgerechnet) — oder sofort über „Aktualisieren". * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}
               {' '}<Link to="/admin/crm/leads" className="underline">{t('crm.ads.toLeads', 'Zu den Leads')}</Link>
             </p>
+            </div>)}
           </>
         )}
 

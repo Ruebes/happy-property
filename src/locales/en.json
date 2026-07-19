@@ -2911,7 +2911,9 @@
       "settingsHint": "Changes take effect immediately on Meta. Change the system campaign audience via the audience assistant.",
       "feedbackPh": "Correction, e.g. \"men only\" or \"without Austria\" …",
       "feedbackCta": "Adjust (will be learned)",
-      "ruleLearned": "🧠 Correction saved — applies to all future proposals"
+      "ruleLearned": "🧠 Correction saved — applies to all future proposals",
+      "tabStats": "Statistics",
+      "tabStudio": "Ad studio"
     },
     "studio": {
       "title": "Ad studio (AI)",
