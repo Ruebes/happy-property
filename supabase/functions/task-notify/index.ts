@@ -110,8 +110,15 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
     .eq('id', task.id).is('done_notified_at', null).select('id')
   if (!claimed || claimed.length === 0) return { skipped: 'bereits_gemeldet' }
 
-  const { data: giver } = await supabase.from('profiles').select('full_name, email, phone').eq('id', task.created_by).maybeSingle()
-  const g = giver as { full_name: string | null; email: string | null; phone: string | null } | null
+  const { data: giver } = await supabase.from('profiles').select('full_name, email, phone, role').eq('id', task.created_by).maybeSingle()
+  const g = giver as { full_name: string | null; email: string | null; phone: string | null; role: string | null } | null
+  // Nur an interne Rollen. Aufgaben koennen ueber die UI zwar nur intern angelegt
+  // werden, aber profiles enthaelt auch Eigentuemer und Feriengaeste — eine interne
+  // Meldung darf dort unter keinen Umstaenden landen.
+  if (!g || !['admin', 'verwalter', 'mitarbeiter'].includes(g.role ?? '')) {
+    console.warn(`[task-notify] Aufgabengeber ${task.created_by} ist nicht intern — keine Meldung`)
+    return { skipped: 'empfaenger_nicht_intern' }
+  }
   const { data: doer } = task.completed_by
     ? await supabase.from('profiles').select('full_name').eq('id', task.completed_by).maybeSingle()
     : { data: null }
@@ -126,21 +133,33 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   const waText = `✅ Zuarbeit erledigt\n\n*${task.title}*${parentTtl ? `\nzu: ${parentTtl}` : ''}\n\n${doerName} hat die Teilaufgabe als erledigt markiert.`
   const phone  = (g?.phone ?? '').trim()
 
+  // Bei Sendefehler wird der Riegel wieder geoeffnet, damit der 5-Minuten-Sweep es
+  // erneut versucht. Sonst waere die Meldung endgueltig verloren: das Compare-and-Swap
+  // sitzt bewusst VOR dem Versand (gegen Doppelmeldungen), und der Versand kann
+  // scheitern, ohne dass es jemand merkt.
+  const release = async (why: unknown) => {
+    console.warn('[task-notify] Versand fehlgeschlagen, Meldung bleibt offen:', why)
+    await supabase.from('crm_tasks').update({ done_notified_at: null }).eq('id', task.id)
+  }
+
   let via = 'keiner'
   if (phone) {
     // Nummer VOR dem Aufruf pruefen: send-whatsapp nutzt ??, ein Leerstring wuerde
     // die Empfaengeraufloesung kippen statt sauber abzubrechen.
-    await supabase.functions.invoke('send-whatsapp', { body: {
+    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: {
       event_type: 'subtask_done', override_text: waText,
-      lead_data: { lead_name: g?.full_name ?? 'Team', lead_phone: phone },
+      lead_data: { lead_name: g.full_name ?? 'Team', lead_phone: phone },
       // KEIN lead_id: sonst landet die interne Meldung in einer Kundenakte.
-    } }).catch((e: unknown) => console.warn('[task-notify] subtask wa:', e))
+    } }).catch((e: unknown) => ({ error: e }))
+    if (waErr) { await release(waErr); return { skipped: 'versand_fehlgeschlagen' } }
     via = 'whatsapp'
-  } else if (g?.email) {
+  } else if (g.email) {
     // Rueckfallebene, damit die Meldung nicht still verschwindet, wenn im Profil
     // keine Telefonnummer hinterlegt ist.
-    await supabase.functions.invoke('send-email', { body: {
-      to: g.email, subject: `Zuarbeit erledigt: ${task.title}`,
+    const { error: mailErr } = await supabase.functions.invoke('send-email', { body: {
+      // Zeilenumbrueche aus dem Titel raus: der Betreff geht ungeprueft in den
+      // Mail-Header, ein CR/LF darin waere eine Header-Injektion.
+      to: g.email, subject: `Zuarbeit erledigt: ${task.title.replace(/[\r\n]+/g, ' ').slice(0, 160)}`,
       html: `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
         <p>Hallo ${esc(first)},</p>
         <p>${esc(doerName)} hat deine Teilaufgabe als erledigt markiert:</p>
@@ -150,7 +169,8 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
         </div>
         <p style="font-size:13px;color:#6b7280;">Trage im Profil eine Telefonnummer ein, dann kommt diese Meldung künftig per WhatsApp.</p>
       </div>`,
-    } }).catch((e: unknown) => console.warn('[task-notify] subtask mail:', e))
+    } }).catch((e: unknown) => ({ error: e }))
+    if (mailErr) { await release(mailErr); return { skipped: 'versand_fehlgeschlagen' } }
     via = 'mail'
   }
   console.log(`[task-notify] Teilaufgabe ${task.id} erledigt → Meldung an ${task.created_by} via ${via}`)

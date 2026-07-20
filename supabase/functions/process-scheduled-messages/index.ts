@@ -225,8 +225,15 @@ Deno.serve(async (req: Request) => {
   try {
     const berlinWeekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', weekday: 'short' }).format(new Date())
     if (berlinWeekday === 'Sun') {
-      await supabase.from('crm_tasks').update({ archived: true })
-        .eq('status', 'erledigt').eq('archived', false)
+      // Hauptaufgaben mit noch offener Zuarbeit bleiben stehen — sonst verschwindet
+      // die Hauptaufgabe vom Board und mit ihr der einzige Ort, an dem die offene
+      // Teilaufgabe fuer den Aufgabengeber sichtbar ist.
+      const { data: withOpen } = await supabase.from('crm_tasks')
+        .select('parent_task_id').not('parent_task_id', 'is', null).neq('status', 'erledigt')
+      const blocked = [...new Set(((withOpen ?? []) as { parent_task_id: string }[]).map(r => r.parent_task_id))]
+      let qy = supabase.from('crm_tasks').update({ archived: true }).eq('status', 'erledigt').eq('archived', false)
+      if (blocked.length) qy = qy.not('id', 'in', `(${blocked.join(',')})`)
+      await qy
     }
   } catch (e) { console.warn('[process-scheduled] Aufgaben-Archivierung:', e) }
 

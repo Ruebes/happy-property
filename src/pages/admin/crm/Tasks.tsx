@@ -337,6 +337,9 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
       const { data: created, error } = await supabase.from('crm_tasks').insert({
         title, parent_task_id: task.id, created_by: myId, assigned_to: subWho,
         status: 'offen', due_date: subDue || null,
+        // Der Popup-Dienst hat zwei Wege (Alt-Feld assigned_to + Assignee-Zeile).
+        // Ohne das hier kaeme jede Teilaufgabe doppelt beim Zuarbeitenden an.
+        assigned_notified_at: new Date().toISOString(),
       }).select('id').single()
       if (error) throw error
       const newId = (created as { id: string }).id
@@ -632,7 +635,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
                       <div className="flex items-start justify-between gap-2">
                         <span className="text-sm text-gray-900">{st.title}</span>
                         <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: accentOf(st.status) }}>
-                          {COLUMNS.find(c => c.status === st.status)?.label}
+                          {t(`crm.tasks.status.${st.status}`, COLUMNS.find(c => c.status === st.status)?.label ?? '')}
                         </span>
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-gray-400">
@@ -730,10 +733,15 @@ export default function Tasks() {
     setLoading(true)
     try {
       const [tRes, sRes, mRes] = await Promise.all([
-        // Nur Hauptaufgaben aufs Board: eine gruen abgehakte Teilaufgabe neben ihrer
-        // noch offenen Hauptaufgabe waere irrefuehrend. Teilaufgaben stehen in der
-        // Hauptaufgabe und auf der Startseite dessen, der sie erledigen soll.
-        supabase.from('crm_tasks').select('*').eq('archived', false).is('parent_task_id', null).order('created_at', { ascending: false }),
+        // Hauptaufgaben — plus die Teilaufgaben, die MIR zugewiesen sind.
+        // Ohne den zweiten Teil haette der Zuarbeitende keinen einzigen Klickweg auf
+        // „erledigt": die Buttons liegen in der Hauptaufgabe, und die darf er per RLS
+        // gar nicht sehen. Uebrig blieb nur der Link aus der Mail.
+        // Fremde Teilaufgaben bleiben draussen — eine gruen abgehakte Teilaufgabe neben
+        // ihrer noch offenen Hauptaufgabe waere irrefuehrend.
+        supabase.from('crm_tasks').select('*').eq('archived', false)
+          .or(`parent_task_id.is.null,assigned_to.eq.${myId}`)
+          .order('created_at', { ascending: false }),
         supabase.rpc('list_staff'),
         supabase.from('crm_task_messages').select('task_id').eq('recipient_id', myId).is('read_at', null),
       ])
@@ -797,7 +805,10 @@ export default function Tasks() {
                           className={`w-full text-left rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing ${dragId === task.id ? 'opacity-50' : ''}`}
                           style={{ backgroundColor: cardBg(task.status), borderLeft: `3px solid ${accentOf(task.status)}` }}>
                           <div className="flex items-start justify-between gap-2">
-                            <span className="font-medium text-gray-900 text-sm">{task.title}</span>
+                            <span className="font-medium text-gray-900 text-sm">
+                              {task.parent_task_id && <span className="text-gray-400 mr-1" title={t('crm.tasks.subtasks', 'Zuarbeit')}>↳</span>}
+                              {task.title}
+                            </span>
                             {unread[task.id] && <span className="shrink-0 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">{unread[task.id]}</span>}
                           </div>
                           {task.description && <p className="text-xs text-gray-400 mt-1 line-clamp-2">{task.description}</p>}

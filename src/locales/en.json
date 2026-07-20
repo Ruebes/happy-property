@@ -1272,7 +1272,12 @@
       "subAssign": "Assign sub-task",
       "subHint": "They accept it and mark it done — you get notified automatically.",
       "noSubtasks": "No sub-tasks assigned yet.",
-      "markDone": "Done"
+      "markDone": "Done",
+      "status": {
+        "offen": "Requested",
+        "in_arbeit": "In progress",
+        "erledigt": "Done"
+      }
     },
     "home": {
       "hello": "Hello",

@@ -39,3 +39,12 @@ create policy crm_tasks_select on crm_tasks for select to authenticated using (
   created_by = auth.uid() or assigned_to = auth.uid() or my_task_assignee(id)
   or (parent_task_id is not null and hp_parent_task_participant(parent_task_id))
 );
+
+-- Nachgezogen nach der Gegenpruefung: eine Teilaufgabe darf nur an eine Aufgabe
+-- gehaengt werden, an der ich selbst beteiligt bin — sonst koennte jemand fremde
+-- Aufgaben mit Eintraegen bestuecken.
+drop policy if exists crm_tasks_insert on crm_tasks;
+create policy crm_tasks_insert on crm_tasks for insert to authenticated with check (
+  created_by = auth.uid()
+  and (parent_task_id is null or hp_parent_task_participant(parent_task_id))
+);

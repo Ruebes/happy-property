@@ -1272,7 +1272,12 @@
       "subAssign": "Zuarbeit vergeben",
       "subHint": "Der andere nimmt sie an und markiert sie als erledigt — du bekommst dann automatisch Bescheid.",
       "noSubtasks": "Noch keine Zuarbeit vergeben.",
-      "markDone": "Erledigt"
+      "markDone": "Erledigt",
+      "status": {
+        "offen": "Gestellt",
+        "in_arbeit": "In Arbeit",
+        "erledigt": "Erledigt"
+      }
     },
     "home": {
       "hello": "Hallo",
