@@ -135,7 +135,12 @@ export default function BookingPage() {
   const input = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400'
   const day = days[dayIdx]
   const pageStyle = image
-    ? { backgroundImage: `linear-gradient(rgba(20,12,8,.62),rgba(20,12,8,.72)), url(${image})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' as const }
+    // Abdunkelung bewusst moderat (.28/.42 statt vorher .62/.72): Der dunkle Schleier
+    // soll nur den Kartenrand absetzen. Bei kontrastarmen Motiven — etwa einem weich
+    // ausgeleuchteten Porträt — wurde das Bild bei .62+ zu einer grauen Fläche und war
+    // nicht mehr erkennbar. Die Lesbarkeit hängt ohnehin an der Karte selbst (weiss,
+    // milchig), nicht am Hintergrund.
+    ? { backgroundImage: `linear-gradient(rgba(20,12,8,.28),rgba(20,12,8,.42)), url(${image})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' as const }
     : { background: 'linear-gradient(160deg,#fff5f2,#faf7f4)' }
   const cardCls = image
     ? 'w-full max-w-md mx-auto bg-white/92 backdrop-blur-md rounded-3xl shadow-2xl border border-white/40 overflow-hidden'
