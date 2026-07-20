@@ -357,6 +357,7 @@ export default function Newsletter() {
         recipient_name: '{{vorname}}',
         angle: 'investment',
         facts: a.facts + unitFacts, images,
+        month_label: new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }),
         briefing: `${p.bullets}\n\nWICHTIG: Dieses Exposé geht an viele Empfänger. Verwende im Anschreiben wörtlich die Anrede "Hallo {{vorname}}," und den Platzhalter {{vorname}} überall dort, wo der Vorname stehen soll. Keinen anderen Namen erfinden.`,
         created_by: profile?.id ?? null,
       } })

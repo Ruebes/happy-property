@@ -117,6 +117,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
       facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId,
       unit_id: items.length === 1 ? first.unit.id : null, units,
+      month_label: new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }),
     } })
     if (error) throw new Error(error.message)
     for (let i = 0; i < 36; i++) {   // bis ~3 Min
