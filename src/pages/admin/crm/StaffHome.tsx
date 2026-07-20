@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { useAuth, hasPerm, type PermissionArea } from '../../../lib/auth'
+import { useAuth, hasPerm, type PermissionArea, type Profile } from '../../../lib/auth'
 
 // ── Mitarbeiter-Startseite ───────────────────────────────────────────────────
 // Landeseite nach dem Login. Aufgaben stehen im Zentrum; jede:r stellt sich die
@@ -19,16 +19,25 @@ interface Task {
 }
 interface Staff { id: string; full_name: string; email: string; role: string }
 interface Appt { id: string; title: string | null; start_time: string; type: string | null }
+// Persoenliche Termin-Einladung (booking_invites), sofern fuer dieses Profil hinterlegt.
+interface Invite { token: string; slug: string }
 
-type WidgetId = 'my_tasks' | 'created_tasks' | 'appointments_today' | 'quick_links'
+type WidgetId = 'my_tasks' | 'created_tasks' | 'appointments_today' | 'booking_link' | 'quick_links'
 interface WidgetDef { id: WidgetId; perm: PermissionArea | null }
 // Katalog in Standard-Reihenfolge. perm=null → immer verfügbar.
 const CATALOG: WidgetDef[] = [
   { id: 'my_tasks',           perm: null },
   { id: 'created_tasks',      perm: null },
   { id: 'appointments_today', perm: 'pipeline' },
+  { id: 'booking_link',       perm: null },
   { id: 'quick_links',        perm: null },
 ]
+
+// „Termin mit Sven" braucht kein Bereichsrecht, sondern einen persönlichen
+// Buchungslink — wer keinen hat, dem wird die Kachel gar nicht erst angeboten.
+function availableWidgets(profile: Profile | null, hasInvite: boolean): WidgetDef[] {
+  return CATALOG.filter(w => (!w.perm || hasPerm(profile, w.perm)) && (w.id !== 'booking_link' || hasInvite))
+}
 
 // Status → Farbakzent (angenommene Aufgaben = amber, erledigt = grün).
 const STATUS_STYLE: Record<TaskStatus, { accent: string; bg: string; label: string }> = {
@@ -49,6 +58,8 @@ export default function StaffHome() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [staff, setStaff] = useState<Staff[]>([])
   const [appts, setAppts] = useState<Appt[]>([])
+  const [invite, setInvite] = useState<Invite | null>(null)
+  const [copied, setCopied] = useState(false)
   const [myAssigneeIds, setMyAssigneeIds] = useState<Set<string>>(new Set())
   const [order, setOrder] = useState<WidgetId[]>([])
   const [loading, setLoading] = useState(true)
@@ -56,9 +67,10 @@ export default function StaffHome() {
   const [saving, setSaving]   = useState(false)
 
   const canPipeline = hasPerm(profile, 'pipeline')
-  // Nach Rechten gefilterter Katalog.
-  const available = CATALOG.filter(w => !w.perm || hasPerm(profile, w.perm))
+  // Nach Rechten (und vorhandenem Buchungslink) gefilterter Katalog.
+  const available = availableWidgets(profile ?? null, !!invite)
   const availableIds = available.map(w => w.id)
+  const bookingUrl = invite ? `https://portal.happy-property.com/buchen/${invite.slug}?g=${invite.token}` : null
 
   const nameOf = (id: string | null) => (id && staff.find(s => s.id === id)?.full_name) || t('crm.tasks.external', 'extern')
 
@@ -69,7 +81,7 @@ export default function StaffHome() {
       const now = new Date()
       const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
       const dayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
-      const [tRes, sRes, pRes, aRes, asgRes] = await Promise.all([
+      const [tRes, sRes, pRes, aRes, asgRes, iRes] = await Promise.all([
         supabase.from('crm_tasks')
           .select('id, title, description, created_by, assigned_to, status, due_date, created_at')
           .eq('archived', false).order('created_at', { ascending: false }),
@@ -80,20 +92,38 @@ export default function StaffHome() {
               .gte('start_time', dayStart).lt('start_time', dayEnd).order('start_time', { ascending: true })
           : Promise.resolve({ data: [], error: null }),
         supabase.from('crm_task_assignees').select('task_id').eq('profile_id', myId),
+        // Eigener Buchungslink. RLS-Policy bi_own_read gibt genau die eigene Zeile frei.
+        supabase.from('booking_invites').select('token, slug').eq('profile_id', myId).limit(1).maybeSingle(),
       ])
       if (tRes.error) throw tRes.error
       setTasks((tRes.data ?? []) as Task[])
       setStaff((sRes.data ?? []) as Staff[])
       setAppts((aRes.data ?? []) as Appt[])
       setMyAssigneeIds(new Set(((asgRes.data ?? []) as { task_id: string }[]).map(r => r.task_id)))
+      const inv = (iRes.data ?? null) as Invite | null
+      setInvite(inv)
+      // Verfügbarkeit hier lokal berechnen — der State oben ist in diesem Lauf noch alt.
+      const availNow = availableWidgets(profile ?? null, !!inv).map(w => w.id)
       // Prefs laden; leere/unbekannte Werte → Standard = alle verfügbaren Widgets.
-      const prefs = (pRes.data?.dashboard_prefs ?? {}) as { widgets?: unknown }
+      const prefs = (pRes.data?.dashboard_prefs ?? {}) as { widgets?: unknown; seen?: unknown }
       const saved = Array.isArray(prefs.widgets) ? (prefs.widgets as string[]) : null
       // saved === null → noch nie angepasst → Standard = alle verfügbaren Widgets.
       // saved === [] (bewusst alle aus) bleibt leer. Ungültige (Recht entzogen) fallen raus.
-      setOrder(saved
-        ? saved.filter((id): id is WidgetId => availableIds.includes(id as WidgetId))
-        : availableIds)
+      // `seen` merkt sich, welche Kacheln beim letzten Anpassen überhaupt zur Wahl
+      // standen. Ohne das würde eine NEU hinzugekommene Kachel bei jedem, der seine
+      // Startseite schon einmal angepasst hat, für immer unsichtbar bleiben — sie
+      // stünde ja nicht in der gespeicherten Liste.
+      const seen = Array.isArray(prefs.seen) ? (prefs.seen as string[]) : (saved ?? [])
+      if (saved) {
+        const kept  = saved.filter((id): id is WidgetId => availNow.includes(id as WidgetId))
+        const fresh = availNow.filter(id => !seen.includes(id) && !kept.includes(id))
+        const next  = [...kept, ...fresh]
+        setOrder(next)
+        if (fresh.length) {
+          supabase.from('profiles').update({ dashboard_prefs: { widgets: next, seen: availNow } }).eq('id', myId)
+            .then(({ error }) => { if (error) console.error('[StaffHome] seen:', error) })
+        }
+      } else setOrder(availNow)
     } catch (err) {
       console.error('[StaffHome] fetch:', err)
       setTasks([]); setOrder(availableIds)
@@ -105,7 +135,7 @@ export default function StaffHome() {
   const savePrefs = async (next: WidgetId[]) => {
     setOrder(next); setSaving(true)
     try {
-      const { error } = await supabase.from('profiles').update({ dashboard_prefs: { widgets: next } }).eq('id', myId)
+      const { error } = await supabase.from('profiles').update({ dashboard_prefs: { widgets: next, seen: availableIds } }).eq('id', myId)
       if (error) throw error
     } catch (err) { console.error('[StaffHome] savePrefs:', err) } finally { setSaving(false) }
   }
@@ -199,6 +229,32 @@ export default function StaffHome() {
                 </div>}
           </CardShell>
         )
+      case 'booking_link': {
+        if (!bookingUrl) return null
+        const copy = () => {
+          navigator.clipboard?.writeText(bookingUrl)
+            .then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000) })
+            .catch(() => { /* Clipboard gesperrt — Link steht ja im Button */ })
+        }
+        return (
+          <CardShell title={t('crm.home.bookSven', 'Termin mit Sven')}>
+            <p className="text-xs text-gray-500 mb-3">
+              {t('crm.home.bookSvenHint', 'Such dir selbst einen freien Zeitpunkt in Svens Kalender aus — deine Daten sind schon hinterlegt.')}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <a href={bookingUrl} target="_blank" rel="noopener noreferrer"
+                className="text-sm font-semibold text-white rounded-xl px-4 py-2 inline-block"
+                style={{ backgroundColor: '#ff795d' }}>
+                📅 {t('crm.home.bookSvenCta', 'Termin buchen')}
+              </a>
+              <button onClick={copy}
+                className="text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-100 rounded-lg px-3 py-2">
+                {copied ? t('crm.home.copied', 'Kopiert ✓') : t('crm.home.copyLink', 'Link kopieren')}
+              </button>
+            </div>
+          </CardShell>
+        )
+      }
       case 'quick_links': {
         const links: { to: string; label: string }[] = [
           { to: '/admin/crm/tasks', label: t('crm.nav.tasks', 'Aufgaben') },
@@ -307,5 +363,6 @@ const WIDGET_FALLBACK: Record<WidgetId, string> = {
   my_tasks: 'Meine Aufgaben',
   created_tasks: 'Von mir gestellt',
   appointments_today: 'Termine heute',
+  booking_link: 'Termin mit Sven',
   quick_links: 'Schnellzugriff',
 }

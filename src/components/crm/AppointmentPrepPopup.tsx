@@ -39,6 +39,10 @@ export default function AppointmentPrepPopup() {
     const { data, error } = await supabase
       .from('crm_appointments')
       .select('*, lead:leads(id, first_name, last_name, phone, whatsapp, notes)')
+      // internal raus: das Popup ist die Kunden-Gespraechsvorbereitung (Badge
+      // "Erstgespraech", Lead-Bewertung 👍/👎/No-Show). Bei einem internen Termin
+      // mit einer Mitarbeiterin ergibt das nichts davon Sinn.
+      .eq('internal', false)
       .gt('start_time', now.toISOString())
       .lte('start_time', until.toISOString())
       .order('start_time', { ascending: true })

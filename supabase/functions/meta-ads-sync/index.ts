@@ -249,6 +249,9 @@ Deno.serve(async (req) => {
           const { data: appts } = await supabase
             .from('crm_appointments')
             .select('id, lead_id, created_at, start_time, outcome, updated_at, lead:leads(id, email, phone, whatsapp)')
+            // internal raus: interne Termine als Conversion zu melden verfaelscht die
+            // Anzeigen-Optimierung (Meta lernt auf Termine, die keine Kundentermine sind).
+            .eq('internal', false)
             .gte('created_at', winStart)
             .not('lead_id', 'is', null)
           for (const a of (appts ?? []) as unknown as Array<{ id: string; lead_id: string; created_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
@@ -261,6 +264,7 @@ Deno.serve(async (req) => {
             .from('crm_appointments')
             .select('id, lead_id, updated_at, lead:leads(id, email, phone, whatsapp)')
             .eq('outcome', 'completed')
+            .eq('internal', false)
             .gte('updated_at', winStart)
             .not('lead_id', 'is', null)
           for (const a of (held ?? []) as unknown as Array<{ id: string; lead_id: string; updated_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {

@@ -190,6 +190,9 @@ const checkAppointmentsNoOutcome: Check = {
     const bis  = new Date(Date.now() - 2 * 3600e3).toISOString()
     const { data: appts } = await sb.from('crm_appointments')
       .select('id, title, start_time, lead_id, outcome')
+      // internal raus: bei internen Terminen gibt es kein "Ergebnis" (kein No-Show,
+      // keine Lead-Bewertung) - sie waeren jede Nacht ein Fehlalarm im Morgenbericht.
+      .eq('internal', false)
       .gte('start_time', seit).lte('start_time', bis).is('outcome', null).limit(50)
     return ((appts ?? []) as Array<Record<string, unknown>>).map(a => ({
       check_key: 'termin_ohne_ergebnis', severity: 'mittel' as const,

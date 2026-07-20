@@ -1283,8 +1283,14 @@
         "my_tasks": "My tasks",
         "created_tasks": "Assigned by me",
         "appointments_today": "Appointments today",
-        "quick_links": "Quick access"
-      }
+        "quick_links": "Quick access",
+        "booking_link": "Meeting with Sven"
+      },
+      "bookSven": "Meeting with Sven",
+      "bookSvenHint": "Pick a free slot in Sven's calendar yourself — your details are already filled in.",
+      "bookSvenCta": "Book a meeting",
+      "copyLink": "Copy link",
+      "copied": "Copied ✓"
     },
     "funnel": {
       "title": "Booking Funnel",

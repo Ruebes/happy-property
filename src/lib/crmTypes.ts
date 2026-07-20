@@ -605,6 +605,10 @@ export interface CrmAppointment {
   google_calendar_id: string | null
   source:          string | null   // 'newsletter' | 'direktlink' — Herkunft der Buchung
   outcome:         'completed' | 'no_show' | null   // Termin-Ausgang (Vorbereitungs-Popup)
+  // Interner Termin (z.B. Mitarbeiterin bucht ueber ihren persoenlichen Link bei Sven).
+  // Wird von allen kundenorientierten Auswertungen ausgeschlossen: Terminerinnerungen,
+  // Nachrichten-Platzhalter, Vorbereitungs-Popup, naechtlicher Check, Meta-Conversions.
+  internal:        boolean
   attendees?:      Array<{ name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }> | null
   manage_token?:   string | null
   rsvps?:          Record<string, { name?: string; status?: 'pending' | 'yes' | 'no'; at?: string }> | null

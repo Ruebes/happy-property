@@ -123,9 +123,9 @@ Deno.serve(async (req) => {
     }
 
     // Optionale Einladung (vorbelegte Kontaktdaten + Bild + Sprache je Gast)
-    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string } | null = null
+    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string; internal: boolean } | null = null
     if (body.invite) {
-      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang').eq('token', String(body.invite)).maybeSingle()
+      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal').eq('token', String(body.invite)).maybeSingle()
       inv = data as typeof inv
     }
     // Link laden (Slug aus Einladung oder direkt)
@@ -200,13 +200,27 @@ Deno.serve(async (req) => {
       const desc = `Gebucht über Sven360.\n${T.with}: ${name}${email ? ` · ${email}` : ''}${phone ? ` · ${phone}` : ''}\n${T.kind}: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
 
       const ev = await createCalendarEvent(admin, { title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
-      // an bestehenden Lead per E-Mail hängen (falls vorhanden)
+      // INTERNE Termine (Mitarbeitende, die selbst einen Slot bei Sven buchen) duerfen
+      // NICHT wie ein Kundentermin behandelt werden. Sonst haengt der Termin am Lead
+      // gleichen Namens und loest die komplette Kundenautomatik aus - genau das ist am
+      // 20.7. passiert: Gionas Buchung traf ihren alten HubSpot-Lead, worauf zwei
+      // "termin_gebucht"-WhatsApps an sie geplant wurden.
+      // Zwei Sicherungen, weil die erste vergessen werden kann:
+      //   1. booking_invites.internal (bewusst gesetzt, z.B. bei Giona)
+      //   2. E-Mail gehoert zu einem Mitarbeitenden-Profil (greift auch ohne Flag)
+      let isInternal = inv?.internal === true
+      if (!isInternal && email) {
+        const { data: prof } = await admin.from('profiles').select('role').ilike('email', email.trim()).limit(1).maybeSingle()
+        const role = (prof as { role?: string } | null)?.role
+        if (role && ['admin', 'verwalter', 'mitarbeiter'].includes(role)) isInternal = true
+      }
+      // an bestehenden Lead per E-Mail haengen (nur bei echten Kundenterminen)
       let leadId: string | null = null
-      if (email) { const { data: l } = await admin.from('leads').select('id').ilike('email', email.trim()).limit(1).maybeSingle(); leadId = (l as { id?: string } | null)?.id ?? null }
+      if (email && !isInternal) { const { data: l } = await admin.from('leads').select('id').ilike('email', email.trim()).limit(1).maybeSingle(); leadId = (l as { id?: string } | null)?.id ?? null }
 
       const { data: appt } = await admin.from('crm_appointments').insert({
         lead_id: leadId, title: subject, type: apptType, start_time: startIso, end_time: end.toISOString(),
-        location, location_url: locUrl, description: desc, source: 'sven360',
+        location, location_url: locUrl, description: desc, source: 'sven360', internal: isInternal,
         google_event_id: ev?.id ?? null, google_calendar_id: ev?.calId ?? null,
         attendees: [{ name, email: email ?? null, phone: phone ?? null }], created_by: lk.owner_id,
       }).select('id').single()

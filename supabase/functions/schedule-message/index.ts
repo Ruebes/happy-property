@@ -148,10 +148,13 @@ Deno.serve(async (req: Request) => {
 
     // Termine: nächster (zukünftig) für Timing/Bedingung, sonst letzter für zoom_link
     const nowIso = new Date().toISOString()
+    // internal ausgeschlossen: sonst kann ein interner Termin, der zeitlich vor dem
+    // echten Beratungstermin liegt, {{termin_datum}}/{{zoom_link}}/{{termin_link}} in
+    // einer Kundennachricht ueberschreiben.
     const { data: nextAppt } = await supabase.from('crm_appointments')
-      .select('start_time, zoom_link, manage_token').eq('lead_id', lead_id).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
+      .select('start_time, zoom_link, manage_token').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
-      .select('zoom_link, start_time, manage_token').eq('lead_id', lead_id).order('start_time', { ascending: false }).limit(1).maybeSingle()
+      .select('zoom_link, start_time, manage_token').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
     const zoomLink  = ((nextAppt as { zoom_link?: string } | null)?.zoom_link) || ((lastAppt as { zoom_link?: string } | null)?.zoom_link) || ''
     // Öffentlicher „Termin verwalten"-Link (verschieben/absagen ohne Login)

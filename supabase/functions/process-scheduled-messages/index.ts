@@ -233,9 +233,13 @@ Deno.serve(async (req: Request) => {
   // die 1 h-Erinnerung sicher über dem 30-Min-Skip-Guard liegt (kein Endlos-Retry).
   try {
     const horizonIso = new Date(Date.now() + 90 * 60_000).toISOString()
+    // internal ausgeschlossen: interne Termine (Mitarbeitende buchen bei Sven ueber
+    // den persoenlichen Link) sind keine Kundentermine und duerfen keine
+    // Termin-Erinnerung an einen Lead ausloesen.
     const { data: upcoming } = await supabase.from('crm_appointments')
       .select('lead_id, start_time')
       .not('lead_id', 'is', null)
+      .eq('internal', false)
       .gte('start_time', horizonIso)
       .order('start_time', { ascending: true })
       .limit(300)

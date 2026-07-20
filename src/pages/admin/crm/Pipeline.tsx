@@ -592,6 +592,8 @@ export default function Pipeline() {
       const { data } = await supabase
         .from('crm_appointments')
         .select('lead_id, start_time')
+        // internal raus: ein interner Termin darf keine Kundenkachel gruen markieren.
+        .eq('internal', false)
         .gte('start_time', new Date().toISOString())
         .order('start_time', { ascending: true })
       const map: Record<string, string> = {}

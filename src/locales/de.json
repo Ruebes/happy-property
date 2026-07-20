@@ -1283,8 +1283,14 @@
         "my_tasks": "Meine Aufgaben",
         "created_tasks": "Von mir gestellt",
         "appointments_today": "Termine heute",
-        "quick_links": "Schnellzugriff"
-      }
+        "quick_links": "Schnellzugriff",
+        "booking_link": "Termin mit Sven"
+      },
+      "bookSven": "Termin mit Sven",
+      "bookSvenHint": "Such dir selbst einen freien Zeitpunkt in Svens Kalender aus — deine Daten sind schon hinterlegt.",
+      "bookSvenCta": "Termin buchen",
+      "copyLink": "Link kopieren",
+      "copied": "Kopiert ✓"
     },
     "funnel": {
       "title": "Termin-Funnel",
