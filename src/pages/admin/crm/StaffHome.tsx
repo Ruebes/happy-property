@@ -89,6 +89,8 @@ export default function StaffHome() {
         supabase.from('profiles').select('dashboard_prefs').eq('id', myId).single(),
         canPipeline
           ? supabase.from('crm_appointments').select('id, title, start_time, type')
+              // Sperrzeiten sind keine Termine und gehoeren nicht in „Termine heute".
+              .eq('kind', 'appointment')
               .gte('start_time', dayStart).lt('start_time', dayEnd).order('start_time', { ascending: true })
           : Promise.resolve({ data: [], error: null }),
         supabase.from('crm_task_assignees').select('task_id').eq('profile_id', myId),

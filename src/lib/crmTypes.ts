@@ -203,7 +203,10 @@ const CHANNEL_ALIASES: Record<string, string> = {
 }
 
 // Interne Buchungs-Marker, die KEIN Kanal-Badge bekommen (kein Marketing-Kanal).
-const INTERNAL_SOURCES = new Set(['direktlink'])
+// sven360 = persoenlicher Buchungslink. Ohne diesen Eintrag baute channelBadgeFor()
+// daraus ein generisches Kanal-Badge „🔗 Sven360", das in der Monatsansicht VOR dem
+// Betreff steht und ihn wegschneidet — es sah aus, als hiesse der Termin „Sven360".
+const INTERNAL_SOURCES = new Set(['direktlink', 'sven360'])
 
 // Badge zu einer Buchungs-Quelle: bekannter Kanal → feste CI-Farbe; frei im
 // Funnel-Editor angelegte Quelle → generisches Badge mit lesbarem Namen; interne
@@ -609,6 +612,8 @@ export interface CrmAppointment {
   // Wird von allen kundenorientierten Auswertungen ausgeschlossen: Terminerinnerungen,
   // Nachrichten-Platzhalter, Vorbereitungs-Popup, naechtlicher Check, Meta-Conversions.
   internal:        boolean
+  // 'block' = Sperrzeit, kein echter Termin („Rest des Tages blocken").
+  kind:            'appointment' | 'block'
   attendees?:      Array<{ name: string; email: string | null; phone: string | null; company?: string | null; language?: string | null }> | null
   manage_token?:   string | null
   rsvps?:          Record<string, { name?: string; status?: 'pending' | 'yes' | 'no'; at?: string }> | null

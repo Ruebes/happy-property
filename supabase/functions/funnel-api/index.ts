@@ -62,8 +62,12 @@ async function getBusy(admin: SupabaseClient, from: Date, to: Date): Promise<Arr
 }
 // CRM-Termine zusätzlich blocken (falls Google mal hakt)
 async function getCrmBusy(admin: SupabaseClient, from: Date, to: Date): Promise<Array<{ start: number; end: number }>> {
+  // Echte Ueberlappung statt Fenster-auf-Startzeit: .gte('start_time', from) uebersieht
+  // jeden Termin, der VOR dem Fenster beginnt und hineinragt. Ein 3-Stunden-Termin ab
+  // 10:00 war so um 11:00 unsichtbar - ein Kunde konnte mitten hineinbuchen. Genauso
+  // waere eine Tagessperre Minuten nach dem Setzen wieder wirkungslos geworden.
   const { data } = await admin.from('crm_appointments').select('start_time, end_time')
-    .gte('start_time', from.toISOString()).lte('start_time', to.toISOString())
+    .lt('start_time', to.toISOString()).gt('end_time', from.toISOString())
   return ((data ?? []) as Array<{ start_time: string; end_time: string | null }>).map(a => ({
     start: new Date(a.start_time).getTime(),
     end: a.end_time ? new Date(a.end_time).getTime() : new Date(a.start_time).getTime() + SLOT_MIN * 60000,
@@ -283,7 +287,8 @@ Deno.serve(async (req) => {
       if (isNaN(start.getTime()) || start.getTime() < Date.now() + (LEAD_HOURS - 0.25) * 3600e3) return json({ error: 'slot_invalid' })
       const end = new Date(start.getTime() + SLOT_MIN * 60000)
       // Konflikt-Check direkt vor der Buchung
-      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
+      // Rueckblick nicht mehr noetig: getCrmBusy prueft jetzt echte Ueberlappung.
+      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, start, end)]
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 
       const type = body.meeting_type === 'whatsapp' ? 'whatsapp' : 'zoom'
@@ -455,7 +460,7 @@ Deno.serve(async (req) => {
       // Eigenen alten Termin nicht als Konflikt werten (CRM-Quelle filtern; Google-freeBusy
       // enthält ihn nur, wenn der neue Slot den alten überlappt — dann greift der Filter unten)
       const oldStartMs = new Date(a.start_time).getTime()
-      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, new Date(start.getTime() - 3600e3), end)]
+      const busy = [...await getBusy(admin, start, end), ...await getCrmBusy(admin, start, end)]
         .filter(b => b.start !== oldStartMs)
       if (busy.some(b => start.getTime() < b.end && end.getTime() > b.start)) return json({ error: 'slot_taken' })
 

@@ -97,7 +97,11 @@ export default function AppointmentPrepPopup() {
   if (!appt) return null
 
   const lead    = appt.lead
-  const name    = lead ? `${lead.first_name} ${lead.last_name ?? ''}`.trim() : (appt.title || t('crm.prep.noName', 'Ohne Namen'))
+  // Ohne Lead (persoenlicher Buchungslink) steht der Name des Gastes in attendees —
+  // vorher wurde stattdessen der Betreff als Name angezeigt.
+  const name    = lead
+    ? `${lead.first_name} ${lead.last_name ?? ''}`.trim()
+    : (appt.attendees?.[0]?.name || appt.title || t('crm.prep.noName', 'Ohne Namen'))
   const rawNum  = appt.phone_number || lead?.whatsapp || lead?.phone || ''
   const waDigits = rawNum.replace(/[^0-9]/g, '')
   const isWa    = appt.type === 'whatsapp' || appt.type === 'phone'

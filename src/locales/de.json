@@ -2045,7 +2045,15 @@
       "editGoogleEvent": "Google-Termin bearbeiten",
       "readOnly": "Google-Kalender ist nur LESEND freigegeben — Freigabestufe auf „Änderungen an Terminen vornehmen\" ändern (Einstellungen → Integrationen).",
       "partialLoadError": "Ein Google-Kalender konnte nicht geladen werden — Termine evtl. unvollständig.",
-      "googleDeleteFailed": "Google-Event konnte nicht gelöscht werden — bitte im Google Kalender manuell entfernen."
+      "googleDeleteFailed": "Google-Event konnte nicht gelöscht werden — bitte im Google Kalender manuell entfernen.",
+      "blockRestOfDay": "Rest des Tages blocken",
+      "unblockRestOfDay": "Sperre aufheben",
+      "blockedHint": "Gesperrt — Kunden können für diesen Tag keinen Termin mehr buchen. Du selbst kannst weiter Termine anlegen.",
+      "blockedShort": "Gesperrt",
+      "blockTitle": "Nicht buchbar",
+      "blockDesc": "Über „Rest des Tages blocken\" gesperrt. Kunden können in dieser Zeit keinen Termin mehr buchen.",
+      "blockFailed": "Sperren fehlgeschlagen.",
+      "unblockFailed": "Aufheben fehlgeschlagen."
     },
     "appointment": {
       "newTitle": "Termin anlegen",

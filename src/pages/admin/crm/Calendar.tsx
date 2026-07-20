@@ -30,6 +30,7 @@ import {
 } from '../../../lib/googleCalendar'
 import type { GoogleCalendarEvent } from '../../../lib/googleCalendar'
 import GoogleEventModal from '../../../components/crm/GoogleEventModal'
+import { useAuth } from '../../../lib/auth'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -215,6 +216,7 @@ function SourceBadge({ source }: { source: string }) {
 
 export default function CrmCalendar() {
   const { t, i18n } = useTranslation()
+  const { profile } = useAuth()
 
   // UI-Sprache → Locale für Datums- und Namensformatierung
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
@@ -229,6 +231,7 @@ export default function CrmCalendar() {
   const [googleConnected, setGoogleConnected] = useState(false)
   const [googleChecked, setGoogleChecked]     = useState(false)
   const [loading, setLoading]         = useState(false)
+  const [blocking, setBlocking] = useState(false)
   const [googleError, setGoogleError] = useState('')
   const [showModal, setShowModal]     = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
@@ -409,6 +412,62 @@ export default function CrmCalendar() {
     }
   }
 
+  // ── Rest des Tages sperren ────────────────────────────────────────────────
+  // Die Sperre ist eine crm_appointments-Zeile mit kind='block'. Genau diese Tabelle
+  // fragen ALLE Buchungswege auf belegte Zeiten ab (Funnel, persoenlicher Link,
+  // WhatsApp-Bot) — die Sperre wirkt dadurch ueberall, auch in einem Buchungsweg,
+  // den es heute noch nicht gibt. internal=true haelt sie aus allen Kunden-
+  // Auswertungen heraus (naechtlicher Check, Meta-Conversions, Erinnerungen).
+  // Ueber Ueberlappung suchen, nicht ueber das Datum im ISO-String: start_time ist UTC,
+  // der angezeigte Tag ist lokal. Spaet abends bzw. nachts fallen die auseinander und
+  // eine gesetzte Sperre waere fuer den Tag nicht mehr gefunden worden.
+  const blockOfDay = (d: Date) => {
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+    const to   = from + 24 * 3600e3
+    return appointments.find(a => a.kind === 'block'
+      && new Date(a.start_time).getTime() < to && new Date(a.end_time).getTime() > from)
+  }
+
+  async function handleBlockRestOfDay() {
+    setBlocking(true)
+    try {
+      const now = new Date()
+      const dayStart = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate())
+      // Ab jetzt — oder ab Tagesbeginn, wenn ein kuenftiger Tag gesperrt wird.
+      const start = dayStart > now ? dayStart : now
+      // Ende: lokale Mitternacht plus 2 Stunden Puffer. Die Buchungsseiten rechnen
+      // teils in Zypern-, teils in Berliner Zeit; der Puffer deckt beide Tagesenden
+      // ab. Ueberblocken faellt in tote Nachtzeit, Unterblocken liesse den letzten
+      // Abend-Slot offen.
+      const end = new Date(dayStart.getTime() + 26 * 3600e3)
+      if (end <= start) { setBlocking(false); return }
+      const { error } = await supabase.from('crm_appointments').insert({
+        title: t('crm.calendar.blockTitle', 'Nicht buchbar'),
+        kind: 'block', internal: true, type: 'phone',
+        start_time: start.toISOString(), end_time: end.toISOString(),
+        description: t('crm.calendar.blockDesc', 'Über „Rest des Tages blocken" gesperrt. Kunden können in dieser Zeit keinen Termin mehr buchen.'),
+        created_by: profile?.id ?? null,
+      })
+      if (error) throw error
+      void reloadAll()
+    } catch (err) {
+      console.error('[Calendar] handleBlockRestOfDay:', err)
+      setGoogleError(t('crm.calendar.blockFailed', 'Sperren fehlgeschlagen.'))
+    } finally { setBlocking(false) }
+  }
+
+  async function handleUnblock(block: CrmAppointment) {
+    setBlocking(true)
+    try {
+      const { error } = await supabase.from('crm_appointments').delete().eq('id', block.id)
+      if (error) throw error
+      void reloadAll()
+    } catch (err) {
+      console.error('[Calendar] handleUnblock:', err)
+      setGoogleError(t('crm.calendar.unblockFailed', 'Aufheben fehlgeschlagen.'))
+    } finally { setBlocking(false) }
+  }
+
   // ── Reload callback ───────────────────────────────────────────
   function reloadAll() {
     const { start, end } = getRange()
@@ -447,8 +506,9 @@ export default function CrmCalendar() {
         {/* Grid */}
         <div className="grid grid-cols-7 flex-1">
           {cells.map((cellDate, idx) => {
-            const appts  = appointmentsForDay(cellDate)
+            const appts  = appointmentsForDay(cellDate).filter(a => a.kind !== 'block')
             const gEvts  = googleEventsForDay(cellDate)
+            const blocked = !!blockOfDay(cellDate)
             // Chronologisch mischen, DANN die ersten 3 zeigen — sonst entscheidet die
             // Quelle darüber, welche Termine in der Monatszelle sichtbar sind.
             const entries  = dayEntries(appts, gEvts)
@@ -474,6 +534,9 @@ export default function CrmCalendar() {
                 >
                   {cellDate.getDate()}
                 </div>
+                {blocked && (
+                  <p className="text-[9px] text-amber-700 -mt-1 mb-0.5" title={t('crm.calendar.blockedShort', 'Gesperrt')}>🔒</p>
+                )}
 
                 <div className="space-y-0.5">
                   {visible.map(entry => entry.kind === 'appt' ? (() => {
@@ -492,7 +555,7 @@ export default function CrmCalendar() {
                         }}
                         onClick={e => { e.stopPropagation(); setSelectedAppt(appt) }}
                       >
-                        ● {time ? `${time} ` : ''}{apptChannel(appt) ? `${apptChannel(appt)!.label} · ` : ''}{appt.title}
+                        ● {time ? `${time} ` : ''}{appt.title}{apptChannel(appt) ? ` · ${apptChannel(appt)!.label}` : ''}
                       </div>
                     )
                   })() : (() => {
@@ -564,10 +627,16 @@ export default function CrmCalendar() {
         {/* Events */}
         <div className="grid grid-cols-7 gap-0">
           {days.map((d, i) => {
-            const appts = appointmentsForDay(d)
+            const appts = appointmentsForDay(d).filter(a => a.kind !== 'block')
             const gEvts = googleEventsForDay(d)
+            const blocked = !!blockOfDay(d)
             return (
               <div key={i} className="border-r border-gray-100 p-2 min-h-[200px]">
+                {blocked && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 mb-1.5">
+                    🔒 {t('crm.calendar.blockedShort', 'Gesperrt')}
+                  </p>
+                )}
                 {appts.length === 0 && gEvts.length === 0 && (
                   <p className="text-xs text-gray-300 mt-2 text-center">–</p>
                 )}
@@ -626,14 +695,38 @@ export default function CrmCalendar() {
 
   // ── DAY VIEW ──────────────────────────────────────────────────
   function renderDayView() {
-    const appts = appointmentsForDay(currentDate)
+    const block = blockOfDay(currentDate)
+    // Sperre selbst nicht als Terminkarte auflisten — sie steht als Hinweis im Kopf.
+    const appts = appointmentsForDay(currentDate).filter(a => a.kind !== 'block')
     const gEvts = googleEventsForDay(currentDate)
     const dow   = daysLong[(currentDate.getDay() + 6) % 7]
     const dateLabel = `${dow}, ${currentDate.getDate()}. ${months[currentDate.getMonth()]} ${currentDate.getFullYear()}`
 
     return (
       <div className="flex-1 overflow-auto p-4">
-        <h2 className="text-base font-semibold text-gray-700 mb-4 font-body">{dateLabel}</h2>
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <h2 className="text-base font-semibold text-gray-700 font-body">{dateLabel}</h2>
+          {block ? (
+            <button
+              type="button" disabled={blocking} onClick={() => void handleUnblock(block)}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
+            >
+              🔒 {t('crm.calendar.unblockRestOfDay', 'Sperre aufheben')}
+            </button>
+          ) : (
+            <button
+              type="button" disabled={blocking} onClick={() => void handleBlockRestOfDay()}
+              className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50"
+            >
+              🔒 {t('crm.calendar.blockRestOfDay', 'Rest des Tages blocken')}
+            </button>
+          )}
+        </div>
+        {block && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 mb-4">
+            {t('crm.calendar.blockedHint', 'Gesperrt — Kunden können für diesen Tag keinen Termin mehr buchen. Du selbst kannst weiter Termine anlegen.')}
+          </p>
+        )}
 
         {appts.length === 0 && gEvts.length === 0 && (
           <p className="text-sm text-gray-400 text-center py-12">
@@ -675,11 +768,15 @@ export default function CrmCalendar() {
                 {appt.location && (
                   <p className="text-xs text-gray-500 mt-1">📍 {appt.location}</p>
                 )}
-                {appt.lead && (
+                {appt.lead ? (
                   <p className="text-xs text-gray-500 mt-1">
                     👤 {appt.lead.first_name} {appt.lead.last_name}
                   </p>
-                )}
+                ) : appt.attendees?.[0]?.name ? (
+                  // Buchungen ueber den persoenlichen Link haben keinen Lead — der Name
+                  // des Gastes steht in attendees. Ohne das stand hier gar nichts.
+                  <p className="text-xs text-gray-500 mt-1">👤 {appt.attendees[0].name}</p>
+                ) : null}
               </div>
             )
           })() : (() => {

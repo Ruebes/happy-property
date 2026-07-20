@@ -66,7 +66,11 @@ interface Busy { start: number; end: number }
 async function getBusy(admin: SupabaseClient, fromUtc: Date, toUtc: Date): Promise<Busy[]> {
   const busy: Busy[] = []
   try {
-    const { data } = await admin.from('crm_appointments').select('start_time, end_time').gte('start_time', fromUtc.toISOString()).lte('start_time', toUtc.toISOString())
+    // Echte Ueberlappung statt Fenster-auf-Startzeit: .gte('start_time', from) uebersieht
+  // jeden Termin, der VOR dem Fenster beginnt und hineinragt. Ein 3-Stunden-Termin ab
+  // 10:00 war so um 11:00 unsichtbar - ein Kunde konnte mitten hineinbuchen. Genauso
+  // waere eine Tagessperre Minuten nach dem Setzen wieder wirkungslos geworden.
+    const { data } = await admin.from('crm_appointments').select('start_time, end_time').lt('start_time', toUtc.toISOString()).gt('end_time', fromUtc.toISOString())
     for (const a of (data ?? []) as { start_time: string; end_time: string }[]) busy.push({ start: new Date(a.start_time).getTime(), end: new Date(a.end_time).getTime() })
   } catch { /* ignore */ }
   try {

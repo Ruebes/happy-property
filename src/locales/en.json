@@ -2045,7 +2045,15 @@
       "editGoogleEvent": "Edit Google event",
       "readOnly": "Google Calendar is shared READ-ONLY — change the permission to \"Make changes to events\" (Settings → Integrations).",
       "partialLoadError": "One Google calendar could not be loaded — events may be incomplete.",
-      "googleDeleteFailed": "Google event could not be deleted — please remove it manually in Google Calendar."
+      "googleDeleteFailed": "Google event could not be deleted — please remove it manually in Google Calendar.",
+      "blockRestOfDay": "Block rest of day",
+      "unblockRestOfDay": "Remove block",
+      "blockedHint": "Blocked — customers can no longer book an appointment for this day. You can still create appointments yourself.",
+      "blockedShort": "Blocked",
+      "blockTitle": "Not bookable",
+      "blockDesc": "Blocked via \"Block rest of day\". Customers cannot book an appointment during this time.",
+      "blockFailed": "Could not block.",
+      "unblockFailed": "Could not remove the block."
     },
     "appointment": {
       "newTitle": "New Appointment",
