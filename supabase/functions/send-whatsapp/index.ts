@@ -7,6 +7,16 @@ const corsHeaders = {
 
 type Recipient = { name: string; phone: string }
 
+// Supabase-Storage-Bild in WhatsApp-tauglicher Größe ausliefern lassen.
+// Die Original-Renders sind 3–7 MB und würden das 2-MB-Limit von TimelinesAI
+// sprengen. Der /render/image/-Pfad liefert dieselbe Datei verkleinert aus
+// (gemessen: 6.078 KB → 284 KB). Fremde URLs bleiben unverändert.
+function waSize(url: string): string {
+  if (!url.includes('/storage/v1/object/public/')) return url
+  const u = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
+  return u + (u.includes('?') ? '&' : '?') + 'width=1280&quality=78'
+}
+
 // Aus einer YouTube-URL das ECHTE Vorschaubild ermitteln.
 // Achtung Falle: YouTube liefert für nicht existierende Größen (z.B. maxresdefault
 // bei älteren Videos) HTTP 404 MIT einem grauen Platzhalter-Bild im Body. Wer nur
@@ -142,12 +152,32 @@ Deno.serve(async (req) => {
           const thumb = await youtubeThumb(ytUrl)
           if (thumb) { attachUrl = thumb; attachName = 'video.jpg' }
         }
+        // Deck-Link im Text? Dann das Titelbild des Angebots anhängen — der Kunde
+        // sieht die Immobilie, statt nur eine kryptische URL. Quelle ist das Deck
+        // selbst (cover-Block, sonst der erste Block mit Bild), also immer das
+        // Motiv, das er beim Öffnen auch wirklich sieht.
+        if (!attachUrl) {
+          const deckTok = message.match(/\/deck\/([A-Za-z0-9_-]{6,})/)?.[1]
+          if (deckTok) {
+            try {
+              const { data: dk } = await supabase.from('sales_decks').select('content').eq('token', deckTok).maybeSingle()
+              const blocks = ((dk as { content?: { blocks?: Array<Record<string, unknown>> } } | null)?.content?.blocks) ?? []
+              const cover = blocks.find(b => b.type === 'cover' && typeof b.image === 'string')
+                         ?? blocks.find(b => typeof b.image === 'string')
+              const img = cover?.image as string | undefined
+              if (img) { attachUrl = waSize(img); attachName = 'angebot.jpg' }
+            } catch (e) { console.warn('[send-whatsapp] Deck-Titelbild:', e) }
+          }
+        }
       }
       if (attachUrl && !fileUidCache) {
         try {
           const fileRes = await fetch(String(attachUrl))
           if (!fileRes.ok) throw new Error(`Datei nicht ladbar (${fileRes.status})`)
           const blob = await fileRes.blob()
+          // Harte Grenze: TimelinesAI nimmt im aktuellen Tarif max. 2 MB. Lieber ohne
+          // Bild verschicken als die ganze Nachricht am Anhang scheitern lassen.
+          if (blob.size > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(blob.size / 1024)} KB)`)
           const name = attachName || String(attachUrl).split('/').pop() || 'anhang'
           const form = new FormData()
           form.append('file', blob, name)
