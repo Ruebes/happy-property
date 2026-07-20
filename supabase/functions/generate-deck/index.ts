@@ -373,7 +373,10 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
       if (images?.mapUrl) b.mapUrl = images.mapUrl   // verlinkt auf Google Maps
     }
     // Mehrere Grundrisse (eine pro Wohnung) der Reihe nach auf die floorplan-Blöcke verteilen.
-    if (t === 'floorplan') { const fps = images?.floorplans ?? []; b.image = (fps.length ? fps[fpi++ % fps.length] : images?.floorplan) ?? nextRender() }
+    // Grundriss: NIEMALS auf ein beliebiges Render ausweichen. Fehlt der Plan, bleibt
+    // das Bild leer — ein Café-/Sauna-Foto unter der Überschrift „Grundriss" ist
+    // schlimmer als gar keins (genau so kam Jessicas Café-Bild ins Deck).
+    if (t === 'floorplan') { const fps = images?.floorplans ?? []; const fp = (fps.length ? fps[fpi++ % fps.length] : images?.floorplan); if (fp) b.image = fp; else delete b.image }
     if (t === 'gallery' && Array.isArray(b.items)) {
       for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
     }
@@ -434,6 +437,9 @@ Deno.serve(async (req) => {
     // existiert, kommt er ins Deck. Quelle: crm_projects.deck_assets.floorplans
     // (Map Wohnungsnummer → Bild-URL, Fallback-Key "<n>br" je Zimmertyp).
     const floorplanByUnit: Record<string, string> = {}
+    // Anzeige-Wohnungsnummer je normalisiertem Schlüssel — für die Beschriftung der
+    // Grundriss-Blöcke, wenn ein Deck MEHRERE Wohnungen enthält.
+    const floorplanLabel: Record<string, string> = {}
     let extraFacts = ''
     if (body.project_id) {
       try {
@@ -465,7 +471,7 @@ Deno.serve(async (req) => {
         for (const [k, v] of Object.entries(rawFp)) if (typeof v === 'string') fpMap[normU(k)] = v
         for (const u of unitList) {
           const fpUrl = fpMap[normU(u.unit_number)] ?? (u.bedrooms != null ? fpMap[`${u.bedrooms}br`] : undefined)
-          if (fpUrl) floorplanByUnit[normU(u.unit_number)] = fpUrl
+          if (fpUrl) { floorplanByUnit[normU(u.unit_number)] = fpUrl; floorplanLabel[normU(u.unit_number)] = u.unit_number }
         }
         const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
         const furnDefault = Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0
@@ -730,10 +736,34 @@ Deno.serve(async (req) => {
     // Wohnungs-Reihenfolge). Der Hinweis „Maße ca." steckt im Grundriss-Bild selbst.
     const fpKeys = Object.keys(floorplanByUnit)
     if (fpKeys.length) {
-      const fpBlocks = blocks.filter(b => b.type === 'floorplan')
+      let fpBlocks = blocks.filter(b => b.type === 'floorplan')
+      // JE WOHNUNG EIN GRUNDRISS-BLOCK. Die KI legt oft nur EINEN an, auch wenn das
+      // Deck zwei Wohnungen enthält — dann fiel die zweite bisher stillschweigend
+      // raus (Jessicas C-104 zeigte den Grundriss von B-202). Fehlende Blöcke daher
+      // ergänzen: den vorhandenen klonen, aber Zahlen/Aufzählung des Prototyps
+      // entfernen — die gehören zur anderen Wohnung und wären sonst schlicht falsch.
+      if (fpBlocks.length && fpBlocks.length < fpKeys.length) {
+        const proto = fpBlocks[fpBlocks.length - 1]
+        const at = blocks.indexOf(proto)
+        const extra = Array.from({ length: fpKeys.length - fpBlocks.length }, () => {
+          const clone = JSON.parse(JSON.stringify(proto)) as Record<string, unknown>
+          delete clone.stats; delete clone.bullets; delete clone.rooms; delete clone.planNote
+          return clone
+        })
+        blocks.splice(at + 1, 0, ...extra)
+        fpBlocks = blocks.filter(b => b.type === 'floorplan')
+      }
       fpBlocks.forEach((fb, i) => {
-        const url = fpKeys.length === 1 ? floorplanByUnit[fpKeys[0]] : floorplanByUnit[fpKeys[Math.min(i, fpKeys.length - 1)]]
+        const key = fpKeys.length === 1 ? fpKeys[0] : fpKeys[Math.min(i, fpKeys.length - 1)]
+        const url = floorplanByUnit[key]
         if (url) { fb.image = url; delete fb.rooms }
+        // Bei mehreren Wohnungen jeden Block klar der seinen zuordnen — sonst weiß
+        // der Kunde nicht, welcher Plan zu welcher Wohnung gehört.
+        const label = floorplanLabel[key]
+        if (label && fpKeys.length > 1) {
+          fb.kicker = `Grundriss & Flächen · ${label}`
+          if (i > 0 || !fb.headline) fb.headline = `${label} — Grundriss`
+        }
       })
     }
 
