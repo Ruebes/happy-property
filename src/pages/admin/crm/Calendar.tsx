@@ -418,14 +418,20 @@ export default function CrmCalendar() {
   // WhatsApp-Bot) — die Sperre wirkt dadurch ueberall, auch in einem Buchungsweg,
   // den es heute noch nicht gibt. internal=true haelt sie aus allen Kunden-
   // Auswertungen heraus (naechtlicher Check, Meta-Conversions, Erinnerungen).
-  // Ueber Ueberlappung suchen, nicht ueber das Datum im ISO-String: start_time ist UTC,
-  // der angezeigte Tag ist lokal. Spaet abends bzw. nachts fallen die auseinander und
-  // eine gesetzte Sperre waere fuer den Tag nicht mehr gefunden worden.
+  // Zuordnung ueber die STARTZEIT im lokalen Tagesfenster — nicht ueber blosse
+  // Ueberlappung. Die Sperre laeuft bewusst bis Mitternacht + 2 h (Zeitzonen-Puffer)
+  // und wuerde sonst auch den Folgetag als gesperrt markieren, obwohl dessen
+  // Buchungsfenster (fruehestens 08:00) voll offen ist. Nicht ueber den ISO-String
+  // vergleichen: start_time ist UTC, der angezeigte Tag lokal — nachts faellt das
+  // auseinander.
   const blockOfDay = (d: Date) => {
     const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
     const to   = from + 24 * 3600e3
-    return appointments.find(a => a.kind === 'block'
-      && new Date(a.start_time).getTime() < to && new Date(a.end_time).getTime() > from)
+    return appointments.find(a => {
+      if (a.kind !== 'block') return false
+      const st = new Date(a.start_time).getTime()
+      return st >= from && st < to
+    })
   }
 
   async function handleBlockRestOfDay() {
@@ -546,6 +552,10 @@ export default function CrmCalendar() {
                       <div
                         key={appt.id}
                         className="truncate font-semibold cursor-pointer hover:opacity-85"
+                        // Kanal steht nicht mehr im Text (er schnitt in der schmalen
+                        // Monatszelle den Betreff weg) — die Pillenfarbe codiert ihn,
+                        // der volle Text inkl. Kanal haengt am Tooltip.
+                        title={`${time ? time + ' ' : ''}${appt.title}${apptChannel(appt) ? ' · ' + apptChannel(appt)!.label : ''}`}
                         style={{
                           backgroundColor: apptChannel(appt)?.pill ?? '#ff795d',
                           color: '#fff',
@@ -555,7 +565,7 @@ export default function CrmCalendar() {
                         }}
                         onClick={e => { e.stopPropagation(); setSelectedAppt(appt) }}
                       >
-                        ● {time ? `${time} ` : ''}{appt.title}{apptChannel(appt) ? ` · ${apptChannel(appt)!.label}` : ''}
+                        ● {time ? `${time} ` : ''}{appt.title}
                       </div>
                     )
                   })() : (() => {
@@ -696,6 +706,9 @@ export default function CrmCalendar() {
   // ── DAY VIEW ──────────────────────────────────────────────────
   function renderDayView() {
     const block = blockOfDay(currentDate)
+    // Ein vergangener Tag laesst sich nicht mehr sperren — der Button tat dort bisher
+    // stillschweigend nichts (end <= start). Lieber gar nicht erst anbieten.
+    const dayOver = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 1).getTime() <= Date.now()
     // Sperre selbst nicht als Terminkarte auflisten — sie steht als Hinweis im Kopf.
     const appts = appointmentsForDay(currentDate).filter(a => a.kind !== 'block')
     const gEvts = googleEventsForDay(currentDate)
@@ -706,7 +719,7 @@ export default function CrmCalendar() {
       <div className="flex-1 overflow-auto p-4">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
           <h2 className="text-base font-semibold text-gray-700 font-body">{dateLabel}</h2>
-          {block ? (
+          {dayOver ? null : block ? (
             <button
               type="button" disabled={blocking} onClick={() => void handleUnblock(block)}
               className="px-3 py-1.5 text-sm font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 disabled:opacity-50"
