@@ -143,7 +143,10 @@ export default function BookingPage() {
     ? { backgroundImage: `linear-gradient(rgba(20,12,8,.28),rgba(20,12,8,.42)), url(${image})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundAttachment: 'fixed' as const }
     : { background: 'linear-gradient(160deg,#fff5f2,#faf7f4)' }
   const cardCls = image
-    ? 'w-full max-w-md mx-auto bg-white/92 backdrop-blur-md rounded-3xl shadow-2xl border border-white/40 overflow-hidden'
+    // bg-white/95, NICHT /92: Tailwind kennt nur seine Opacity-Stufen (…/90, /95, /100).
+    // Ein Zwischenwert wie /92 erzeugt keine Klasse — die Karte hatte dadurch gar keinen
+    // Hintergrund, das Formular stand direkt auf dem Foto.
+    ? 'w-full max-w-md mx-auto bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl border border-white/40 overflow-hidden'
     : 'w-full max-w-md mx-auto bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden'
 
   const LangToggle = (
