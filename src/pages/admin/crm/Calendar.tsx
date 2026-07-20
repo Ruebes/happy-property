@@ -66,6 +66,25 @@ function isAllDay(gEvt: GoogleCalendarEvent): boolean {
   return !!gEvt.start.date && !gEvt.start.dateTime
 }
 
+/**
+ * CRM-Termine und Google-Events zu EINER nach Uhrzeit sortierten Liste mischen.
+ * Vorher wurden beide Gruppen nacheinander gerendert — dadurch standen 12:00-Uhr-
+ * Google-Einträge unter einem 19:30-Uhr-CRM-Termin. Ganztägige Einträge zuerst
+ * (die gehören oben hin), danach streng chronologisch.
+ */
+type DayEntry =
+  | { kind: 'appt'; sort: number; appt: CrmAppointment }
+  | { kind: 'gevt'; sort: number; gEvt: GoogleCalendarEvent }
+
+function dayEntries(appts: CrmAppointment[], gEvts: GoogleCalendarEvent[]): DayEntry[] {
+  const ms = (s?: string | null) => { const t = s ? new Date(s).getTime() : NaN; return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t }
+  const list: DayEntry[] = [
+    ...appts.map(a => ({ kind: 'appt' as const, sort: ms(a.start_time), appt: a })),
+    ...gEvts.map(g => ({ kind: 'gevt' as const, sort: isAllDay(g) ? -1 : ms(g.start.dateTime), gEvt: g })),
+  ]
+  return list.sort((a, b) => a.sort - b.sort)
+}
+
 /** Uhrzeit eines Google-Events – leer bei Ganztagsterminen */
 function gEvtTime(gEvt: GoogleCalendarEvent): string {
   if (isAllDay(gEvt)) return ''
@@ -430,10 +449,11 @@ export default function CrmCalendar() {
           {cells.map((cellDate, idx) => {
             const appts  = appointmentsForDay(cellDate)
             const gEvts  = googleEventsForDay(cellDate)
-            const allEvts = appts.length + gEvts.length
-            const visible = appts.slice(0, 3)
-            const gVisible= gEvts.slice(0, Math.max(0, 3 - appts.length))
-            const overflow = allEvts - visible.length - gVisible.length
+            // Chronologisch mischen, DANN die ersten 3 zeigen — sonst entscheidet die
+            // Quelle darüber, welche Termine in der Monatszelle sichtbar sind.
+            const entries  = dayEntries(appts, gEvts)
+            const visible  = entries.slice(0, 3)
+            const overflow = entries.length - visible.length
 
             return (
               <div
@@ -456,7 +476,8 @@ export default function CrmCalendar() {
                 </div>
 
                 <div className="space-y-0.5">
-                  {visible.map(appt => {
+                  {visible.map(entry => entry.kind === 'appt' ? (() => {
+                    const appt = entry.appt
                     const time = formatTime(appt.start_time)
                     return (
                       <div
@@ -474,8 +495,8 @@ export default function CrmCalendar() {
                         ● {time ? `${time} ` : ''}{apptChannel(appt) ? `${apptChannel(appt)!.label} · ` : ''}{appt.title}
                       </div>
                     )
-                  })}
-                  {gVisible.map(gEvt => {
+                  })() : (() => {
+                    const gEvt  = entry.gEvt
                     const gc    = gColor(gEvt)
                     const time  = gEvtTime(gEvt)
                     const allDy = isAllDay(gEvt)
@@ -498,7 +519,7 @@ export default function CrmCalendar() {
                         {allDy ? '◦' : '●'} {time ? `${time} ` : ''}{gEvt.summary}
                       </div>
                     )
-                  })}
+                  })())}
                   {overflow > 0 && (
                     <div className="text-[10px] text-gray-400 pl-1">
                       +{overflow} {t('crm.calendar.more', 'mehr')}
@@ -550,7 +571,8 @@ export default function CrmCalendar() {
                 {appts.length === 0 && gEvts.length === 0 && (
                   <p className="text-xs text-gray-300 mt-2 text-center">–</p>
                 )}
-                {appts.map(appt => {
+                {dayEntries(appts, gEvts).map(entry => entry.kind === 'appt' ? (() => {
+                  const appt = entry.appt
                   const colors = apptColors(appt)
                   return (
                     <div
@@ -566,8 +588,8 @@ export default function CrmCalendar() {
                       <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
                     </div>
                   )
-                })}
-                {gEvts.map(gEvt => {
+                })() : (() => {
+                  const gEvt  = entry.gEvt
                   const gc    = gColor(gEvt)
                   const time  = gEvtTime(gEvt)
                   const allDy = isAllDay(gEvt)
@@ -593,7 +615,7 @@ export default function CrmCalendar() {
                       )}
                     </div>
                   )
-                })}
+                })())}
               </div>
             )
           })}
@@ -620,7 +642,8 @@ export default function CrmCalendar() {
         )}
 
         <div className="space-y-3">
-          {appts.map(appt => {
+          {dayEntries(appts, gEvts).map(entry => entry.kind === 'appt' ? (() => {
+            const appt = entry.appt
             const colors = apptColors(appt)
             return (
               <div
@@ -659,9 +682,8 @@ export default function CrmCalendar() {
                 )}
               </div>
             )
-          })}
-
-          {gEvts.map(gEvt => {
+          })() : (() => {
+            const gEvt    = entry.gEvt
             const gc      = gColor(gEvt)
             const allDy   = isAllDay(gEvt)
             const timeStr = allDy
@@ -692,7 +714,7 @@ export default function CrmCalendar() {
                 </div>
               </div>
             )
-          })}
+          })())}
         </div>
       </div>
     )

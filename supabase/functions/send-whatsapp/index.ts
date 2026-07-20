@@ -14,7 +14,10 @@ type Recipient = { name: string; phone: string }
 function waSize(url: string): string {
   if (!url.includes('/storage/v1/object/public/')) return url
   const u = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
-  return u + (u.includes('?') ? '&' : '?') + 'width=1280&quality=78'
+  // 1080 statt 1280: Bei 1280 liefert Supabase PNG-Quellen unverändert gross zurück
+  // (gemessen 2.402 KB → über dem 2-MB-Limit), bei 1080 greift die WebP-Umwandlung
+  // (94 KB). Für WhatsApp ist 1080 px ohnehin mehr als ausreichend.
+  return u + (u.includes('?') ? '&' : '?') + 'width=1080&quality=75'
 }
 
 // Aus einer YouTube-URL das ECHTE Vorschaubild ermitteln.
@@ -172,16 +175,26 @@ Deno.serve(async (req) => {
       }
       if (attachUrl && !fileUidCache) {
         try {
-          const fileRes = await fetch(String(attachUrl))
+          // Accept-Header: bringt Supabase dazu, grosse PNG-Renders als WebP
+          // auszuliefern (3.395 KB → 94 KB). Fremde Hosts ignorieren ihn einfach.
+          const fileRes = await fetch(String(attachUrl), { headers: { Accept: 'image/webp,image/*,*/*' } })
           if (!fileRes.ok) throw new Error(`Datei nicht ladbar (${fileRes.status})`)
           const blob = await fileRes.blob()
           // Harte Grenze: TimelinesAI nimmt im aktuellen Tarif max. 2 MB. Lieber ohne
           // Bild verschicken als die ganze Nachricht am Anhang scheitern lassen.
           if (blob.size > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(blob.size / 1024)} KB)`)
-          const name = attachName || String(attachUrl).split('/').pop() || 'anhang'
+          // Dateiendung an das TATSÄCHLICH gelieferte Format anpassen — Supabase kann
+          // ein angefordertes PNG als WebP zurückgeben. Eine .jpg-Datei mit WebP-Inhalt
+          // verwirrt den Empfänger-Client.
+          const ctype = (fileRes.headers.get('content-type') ?? '').split(';')[0].trim()
+          const ext = ctype === 'image/webp' ? 'webp' : ctype === 'image/png' ? 'png'
+                    : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/jpeg' ? 'jpg' : ''
+          let name = attachName || String(attachUrl).split('/').pop() || 'anhang'
+          if (ext) name = name.replace(/\.[A-Za-z0-9]+$/, '') + '.' + ext
           const form = new FormData()
           form.append('file', blob, name)
           form.append('filename', name)
+          if (ctype) form.append('content_type', ctype)
           const upRes = await fetch('https://app.timelines.ai/integrations/api/files_upload', {
             method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: form,
           })
