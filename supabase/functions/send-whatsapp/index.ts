@@ -19,6 +19,8 @@ Deno.serve(async (req) => {
       extra_data,    // { developers, notes, project_name, commission_amount, … }
       lead_id,       // für Aktivitäts-Log (optional)
       override_text, // wenn gesetzt: überschreibt Template-Substitution (no_show preview)
+      file_url,      // optionaler Bild-/Dokument-Anhang (DIREKTER Download-Link!)
+      file_name,     // Dateiname des Anhangs (bei file_url Pflicht laut TimelinesAI)
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -90,13 +92,42 @@ Deno.serve(async (req) => {
     console.log(`[send-whatsapp] event_type="${event_type}" recipients=${recipients.length} sender="${senderPhone}"`)
 
     // ── An alle Empfänger senden ──────────────────────────────────
+    // Anhang nur EINMAL hochladen und die UID für alle Empfänger wiederverwenden.
+    let fileUidCache: string | null = null
     const results = []
     for (const recipient of recipients) {
-      const payload = {
+      const payload: Record<string, unknown> = {
         phone:                  recipient.phone,
         whatsapp_account_phone: senderPhone,
         text:                   message,
       }
+      // Anhang (Bild/PDF) optional — ZWEI Schritte, weil TimelinesAI `file_url`
+      // abgeschafft hat („no longer supported, use file_uid instead"):
+      //   1. Datei laden und per multipart an POST /files_upload → liefert file_uid
+      //   2. file_uid an die Nachricht hängen; der Text wird zur Bildunterschrift,
+      //      der Link steht damit direkt unter dem Bild und bleibt antippbar.
+      // Limit im aktuellen Tarif: 2 MB → Bilder vorher komprimieren (~250 KB reichen).
+      // Schlägt der Upload fehl, geht die Nachricht als reiner Text raus statt gar nicht.
+      if (file_url && !fileUidCache) {
+        try {
+          const fileRes = await fetch(String(file_url))
+          if (!fileRes.ok) throw new Error(`Datei nicht ladbar (${fileRes.status})`)
+          const blob = await fileRes.blob()
+          const name = file_name || String(file_url).split('/').pop() || 'anhang'
+          const form = new FormData()
+          form.append('file', blob, name)
+          form.append('filename', name)
+          const upRes = await fetch('https://app.timelines.ai/integrations/api/files_upload', {
+            method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: form,
+          })
+          const upJson = await upRes.json()
+          fileUidCache = (upJson?.data?.file_uid ?? upJson?.file_uid ?? null) as string | null
+          if (!fileUidCache) console.warn('[send-whatsapp] Upload ohne file_uid:', JSON.stringify(upJson))
+        } catch (e) {
+          console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, sende nur Text:', e)
+        }
+      }
+      if (fileUidCache) payload.file_uid = fileUidCache
       console.log(`[send-whatsapp] Sende an ${recipient.phone}`, JSON.stringify(payload))
 
       const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
