@@ -123,9 +123,9 @@ Deno.serve(async (req) => {
     }
 
     // Optionale Einladung (vorbelegte Kontaktdaten + Bild + Sprache je Gast)
-    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; lang: string } | null = null
+    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string } | null = null
     if (body.invite) {
-      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, lang').eq('token', String(body.invite)).maybeSingle()
+      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang').eq('token', String(body.invite)).maybeSingle()
       inv = data as typeof inv
     }
     // Link laden (Slug aus Einladung oder direkt)
@@ -136,7 +136,7 @@ Deno.serve(async (req) => {
 
     if (action === 'config') return json({ ok: true, title: lk.title ?? 'Termin', owner: 'Sven Rüprich',
       guest: inv ? { name: inv.guest_name, email: inv.guest_email, phone: inv.guest_phone, subject: inv.subject } : null,
-      image_url: inv?.image_url ?? null, lang: inv?.lang ?? 'de' })
+      image_url: inv?.image_url ?? null, image_focus: inv?.image_focus ?? null, lang: inv?.lang ?? 'de' })
 
     // ── Freie Slots für die gewählte Dauer ─────────────────────────────────
     if (action === 'slots') {

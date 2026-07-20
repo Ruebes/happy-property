@@ -69,6 +69,10 @@ export default function BookingPage() {
   const [lang, setLang] = useState<Lang>('de')
   const [title, setTitle] = useState('Termin'); const [owner, setOwner] = useState('')
   const [image, setImage] = useState<string | null>(null); const [guest, setGuest] = useState<Guest | null>(null)
+  // Bildausschnitt des Kopfbilds, je Einladung gepflegt (CSS object-position).
+  // Ein fester Wert reicht nicht: Bei Gionas Portrait liegt das Gesicht oben,
+  // bei Burkhards Selfie vor Mito Infinity in der unteren Bildhaelfte.
+  const [imageFocus, setImageFocus] = useState('center 25%')
   const [notFound, setNotFound] = useState(false)
   const [subject, setSubject] = useState(''); const [duration, setDuration] = useState(30)
   const [type, setType] = useState<Type>('whatsapp')
@@ -85,6 +89,7 @@ export default function BookingPage() {
     call({ action: 'config', slug, invite }).then(d => {
       setTitle(d.title); setOwner(d.owner)
       if (d.image_url) setImage(d.image_url)
+      if (d.image_focus) setImageFocus(String(d.image_focus))
       if (d.lang === 'de' || d.lang === 'en') setLang(d.lang)
       if (d.guest) {
         const g = d.guest as Guest; setGuest(g)
@@ -170,7 +175,7 @@ export default function BookingPage() {
             Der Anschnitt liegt bewusst im oberen Drittel (Gesichtshöhe). */}
         {image && (
           <img src={image} alt={guest?.name ?? owner ?? ''}
-            className="w-full h-56 object-cover" style={{ objectPosition: 'center 22%' }} />
+            className="w-full h-56 object-cover" style={{ objectPosition: imageFocus }} />
         )}
         <div className="px-6 py-5 relative" style={{ backgroundColor: CORAL }}>
           <div className="flex items-start justify-between gap-3">
