@@ -126,6 +126,24 @@ async function logEvent(type: string, token: string | null) {
     } catch { return }
   }
 
+  // Deck-Aufruf NUR als Kundenbesuch zählen, wenn das Deck den Kunden auch
+  // erreicht haben KANN. Liegt zu diesem Token ein Postausgang-Eintrag, der noch
+  // nicht raus ist (Entwurf), hat der Kunde den Link nachweislich nicht — jeder
+  // Aufruf ist dann intern (Kontrolle im CRM, Link kopiert, anderes Gerät, andere
+  // Browser-Session). Das darf weder im Dashboard als „Deck angesehen" erscheinen
+  // NOCH die Follow-up-/Bot-Automatik auslösen (sonst bekommt ein Kunde „Konntest
+  // du schon schauen?" für Unterlagen, die er nie erhalten hat).
+  // Newsletter-Klone (batch_id) laufen nicht über die Outbox → ausgenommen.
+  if (type === 'deck_view' && !isCampaignClone) {
+    try {
+      const { data: ob } = await supabase.from('deck_outbox')
+        .select('sent_at').contains('deck_tokens', [token])
+        .order('created_at', { ascending: false }).limit(1)
+      const row = (ob ?? [])[0] as { sent_at: string | null } | undefined
+      if (row && !row.sent_at) return
+    } catch { /* Outbox nicht lesbar → im Zweifel weiter loggen */ }
+  }
+
   // Dedupe: gleiches Ereignis innerhalb von 2 h nicht doppelt loggen.
   try {
     const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()

@@ -758,10 +758,16 @@ export default function Deck() {
   // (b) wenn der Link als Vorschau markiert ist (?preview=1, so öffnet der Admin es).
   useEffect(() => {
     if (!token) return
-    if (new URLSearchParams(window.location.search).get('preview') === '1') return
+    // Ein Browser, in dem je eine CRM-Session lief oder der ein Vorschau-Link war,
+    // gilt DAUERHAFT als intern. Ohne diese Markierung zählte ein aus dem Postausgang
+    // kopierter Link im selben Browser (ausgeloggt / anderer Tab) als Kundenbesuch.
+    const INTERNAL = 'hp_internal_viewer'
+    const markInternal = () => { try { localStorage.setItem(INTERNAL, '1') } catch { /* Storage gesperrt */ } }
+    if (new URLSearchParams(window.location.search).get('preview') === '1') { markInternal(); return }
+    try { if (localStorage.getItem(INTERNAL) === '1') return } catch { /* egal */ }
     void (async () => {
       const { data: { session } } = await supabase.auth.getSession()
-      if (session) return
+      if (session) { markInternal(); return }
       supabase.functions.invoke('track-engagement', { body: { type: 'deck_view', token } }).catch(() => { /* egal */ })
     })()
   }, [token])
