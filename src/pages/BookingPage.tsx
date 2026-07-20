@@ -160,6 +160,15 @@ export default function BookingPage() {
   return (
     <div className="min-h-screen py-6 px-4" style={pageStyle}>
       <div className={cardCls}>
+        {/* Kopfbild. Der Vollflächen-Hintergrund allein reicht nicht: Auf dem Handy
+            füllt die Karte die ganze Breite, auf dem Desktop bleiben nur schmale
+            Streifen neben der Karte sichtbar — bei einem Portrait also genau der
+            Rand, nicht die Person. Hier ist das Motiv auf jedem Gerät zu sehen.
+            Der Anschnitt liegt bewusst im oberen Drittel (Gesichtshöhe). */}
+        {image && (
+          <img src={image} alt={guest?.name ?? owner ?? ''}
+            className="w-full h-56 object-cover" style={{ objectPosition: 'center 22%' }} />
+        )}
         <div className="px-6 py-5 relative" style={{ backgroundColor: CORAL }}>
           <div className="flex items-start justify-between gap-3">
             <div>
