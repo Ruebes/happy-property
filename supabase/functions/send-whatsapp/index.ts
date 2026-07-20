@@ -20,7 +20,10 @@ async function youtubeThumb(url: string): Promise<string | null> {
     try {
       const r = await fetch(u, { method: 'HEAD' })
       const len = Number(r.headers.get('content-length') ?? 0)
-      if (r.ok && len > 8000) return u   // < 8 KB = Platzhalter, nicht verwenden
+      // Gemessen: der graue Platzhalter kommt IMMER mit HTTP 404 und exakt 1097 Bytes.
+      // Echte Vorschaubilder starten bei ~6 KB (mqdefault). Schwelle 3 KB trennt beides
+      // sicher, ohne kleine echte Bilder auszuschließen.
+      if (r.ok && len > 3000) return u
     } catch { /* nächste Variante */ }
   }
   return null
