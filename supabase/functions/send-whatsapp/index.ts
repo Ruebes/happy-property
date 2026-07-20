@@ -7,6 +7,25 @@ const corsHeaders = {
 
 type Recipient = { name: string; phone: string }
 
+// Aus einer YouTube-URL das ECHTE Vorschaubild ermitteln.
+// Achtung Falle: YouTube liefert für nicht existierende Größen (z.B. maxresdefault
+// bei älteren Videos) HTTP 404 MIT einem grauen Platzhalter-Bild im Body. Wer nur
+// auf "Antwort erhalten" prüft, verschickt am Ende dieses graue Kästchen.
+// Deshalb: Status UND Mindestgröße prüfen, absteigend in der Qualität durchgehen.
+async function youtubeThumb(url: string): Promise<string | null> {
+  const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{6,})/)
+  if (!m) return null
+  for (const v of ['maxresdefault', 'sddefault', 'hqdefault', 'mqdefault']) {
+    const u = `https://i.ytimg.com/vi/${m[1]}/${v}.jpg`
+    try {
+      const r = await fetch(u, { method: 'HEAD' })
+      const len = Number(r.headers.get('content-length') ?? 0)
+      if (r.ok && len > 8000) return u   // < 8 KB = Platzhalter, nicht verwenden
+    } catch { /* nächste Variante */ }
+  }
+  return null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -94,6 +113,8 @@ Deno.serve(async (req) => {
     // ── An alle Empfänger senden ──────────────────────────────────
     // Anhang nur EINMAL hochladen und die UID für alle Empfänger wiederverwenden.
     let fileUidCache: string | null = null
+    let attachUrl:  string | null = file_url  ? String(file_url)  : null
+    let attachName: string | null = file_name ? String(file_name) : null
     const results = []
     for (const recipient of recipients) {
       const payload: Record<string, unknown> = {
@@ -108,12 +129,23 @@ Deno.serve(async (req) => {
       //      der Link steht damit direkt unter dem Bild und bleibt antippbar.
       // Limit im aktuellen Tarif: 2 MB → Bilder vorher komprimieren (~250 KB reichen).
       // Schlägt der Upload fehl, geht die Nachricht als reiner Text raus statt gar nicht.
-      if (file_url && !fileUidCache) {
+      // Kein Anhang übergeben, aber ein YouTube-Link im Text? Dann automatisch das
+      // Video-Vorschaubild anhängen — so steht nie ein nackter Link im Chat.
+      // (TimelinesAI erzeugt zwar eine Link-Vorschau, aber OHNE Bild und mit
+      // fremdsprachiger Beschreibung — daher hängen wir das Bild selbst an.)
+      if (!attachUrl && !fileUidCache && typeof message === 'string') {
+        const ytUrl = message.match(/https?:\/\/\S*(?:youtube\.com|youtu\.be)\/\S*/)?.[0]
+        if (ytUrl) {
+          const thumb = await youtubeThumb(ytUrl)
+          if (thumb) { attachUrl = thumb; attachName = 'video.jpg' }
+        }
+      }
+      if (attachUrl && !fileUidCache) {
         try {
-          const fileRes = await fetch(String(file_url))
+          const fileRes = await fetch(String(attachUrl))
           if (!fileRes.ok) throw new Error(`Datei nicht ladbar (${fileRes.status})`)
           const blob = await fileRes.blob()
-          const name = file_name || String(file_url).split('/').pop() || 'anhang'
+          const name = attachName || String(attachUrl).split('/').pop() || 'anhang'
           const form = new FormData()
           form.append('file', blob, name)
           form.append('filename', name)
@@ -121,8 +153,11 @@ Deno.serve(async (req) => {
             method: 'POST', headers: { 'Authorization': `Bearer ${apiKey}` }, body: form,
           })
           const upJson = await upRes.json()
-          fileUidCache = (upJson?.data?.file_uid ?? upJson?.file_uid ?? null) as string | null
-          if (!fileUidCache) console.warn('[send-whatsapp] Upload ohne file_uid:', JSON.stringify(upJson))
+          // Antwort ist FileInfoResponse: { status, data: { uid, filename, size, … } }
+          // Das Feld heisst `uid` (NICHT file_uid — das ist nur der Parametername
+          // beim Senden). Fallbacks fuer den Fall, dass sich die Form aendert.
+          fileUidCache = (upJson?.data?.uid ?? upJson?.uid ?? upJson?.data?.file_uid ?? null) as string | null
+          console.log(`[send-whatsapp] Upload ${upRes.status}, uid=${fileUidCache ?? 'KEINE'}`, fileUidCache ? '' : JSON.stringify(upJson))
         } catch (e) {
           console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, sende nur Text:', e)
         }
