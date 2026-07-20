@@ -211,6 +211,14 @@ Deno.serve(async (req: Request) => {
   const waApiKey    = Deno.env.get('TIMELINES_API_KEY')  ?? ''
   const waSender    = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
 
+  // ── Sicherheitsnetz: Fertigmeldung erledigter Teilaufgaben ─────────────────
+  // Muss VOR der Archivierung laufen — sonst verschluckt der Sonntagslauf alles,
+  // was seit dem letzten Durchgang erledigt wurde. task-notify riegelt selbst per
+  // done_notified_at ab, doppelte Meldungen sind also ausgeschlossen.
+  try {
+    await supabase.functions.invoke('task-notify', { body: { mode: 'subtask_sweep' } })
+  } catch (e) { console.warn('[process-scheduled] Teilaufgaben-Fertigmeldung:', e) }
+
   // ── Aufgaben-Archivierung: erledigte Aufgaben werden SONNTAGS archiviert ─────
   // Erledigte Aufgaben bleiben die Woche über sichtbar und wandern erst am Sonntag
   // (Europe/Berlin) aus dem Board. Idempotent, läuft im 5-Min-Cron.

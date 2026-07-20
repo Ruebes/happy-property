@@ -1263,7 +1263,16 @@
       "linkCustomers": "Kunden verknüpfen (Kontaktdaten in der Aufgabe)",
       "custSearch": "Kunde suchen …",
       "assignees": "Zuständig",
-      "customers": "Kunden"
+      "customers": "Kunden",
+      "subtasks": "Zuarbeit",
+      "subOpen": "offen",
+      "addSubtask": "Teilaufgabe",
+      "subTitlePh": "Was soll zugearbeitet werden?",
+      "subWho": "Wer arbeitet zu?",
+      "subAssign": "Zuarbeit vergeben",
+      "subHint": "Der andere nimmt sie an und markiert sie als erledigt — du bekommst dann automatisch Bescheid.",
+      "noSubtasks": "Noch keine Zuarbeit vergeben.",
+      "markDone": "Erledigt"
     },
     "home": {
       "hello": "Hallo",

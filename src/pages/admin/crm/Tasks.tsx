@@ -16,6 +16,8 @@ interface Task {
   created_by: string; assigned_to: string | null; status: TaskStatus
   archived: boolean; completed_at: string | null; created_at: string
   due_date: string | null; accepted_at?: string | null
+  // Gesetzt, wenn dies eine Teilaufgabe (Zuarbeit) zu einer anderen Aufgabe ist.
+  parent_task_id?: string | null
 }
 interface TaskMessage { id: string; task_id: string; sender_id: string | null; sender_label: string | null; recipient_id: string; body: string; read_at: string | null; created_at: string }
 interface Staff { id: string; full_name: string; email: string; role: string }
@@ -36,6 +38,24 @@ const cardBg   = (s: TaskStatus) => s === 'in_arbeit' ? '#fffbeb' : s === 'erled
 const d2       = (s: string) => new Date(s).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })
 const todayIso = () => new Date().toISOString().slice(0, 10)
 const isOverdue = (tk: Task) => !!tk.due_date && tk.status !== 'erledigt' && tk.due_date < todayIso()
+
+// Statuswechsel, den ALLE In-App-Wege teilen. Zwei Dinge sind hier wichtig:
+//  · completed_by wird gesetzt — ohne das kann die Fertigmeldung nicht erkennen, ob
+//    jemand seine eigene Zuarbeit erledigt hat (dann soll keine Nachricht rausgehen).
+//    Vorher setzte nur der Token-Link dieses Feld.
+//  · Bei einer erledigten Teilaufgabe wird die Rueckmeldung angestossen. Doppelte
+//    Nachrichten sind ausgeschlossen: task-notify riegelt ueber done_notified_at ab.
+function statusPatch(tk: Task, status: TaskStatus, myId: string): Record<string, unknown> {
+  const patch: Record<string, unknown> = { status }
+  if (status === 'in_arbeit' && !tk.accepted_at) { patch.accepted_at = new Date().toISOString(); patch.accepted_by = myId }
+  if (status === 'erledigt') patch.completed_by = myId
+  return patch
+}
+function notifyIfSubtaskDone(tk: Task, status: TaskStatus) {
+  if (status !== 'erledigt' || !tk.parent_task_id) return
+  supabase.functions.invoke('task-notify', { body: { mode: 'subtask_done', task_id: tk.id } })
+    .catch(e => console.warn('[Tasks] subtask_done:', e))
+}
 
 // ── Aufgabe anlegen ──────────────────────────────────────────────────────────
 function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId: string; onClose: () => void; onCreated: (m: string) => void }) {
@@ -239,6 +259,10 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
 function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; staff: Staff[]; myId: string; onClose: () => void; onChanged: () => void }) {
   const { t } = useTranslation()
   const [messages, setMessages] = useState<TaskMessage[]>([])
+  const [subtasks, setSubtasks] = useState<Task[]>([])
+  const [subOpen, setSubOpen] = useState(false)
+  const [subTitle, setSubTitle] = useState(''); const [subWho, setSubWho] = useState('')
+  const [subDue, setSubDue] = useState(''); const [subBusy, setSubBusy] = useState(false)
   const [assignees, setAssignees] = useState<Assignee[]>([])
   const [customers, setCustomers] = useState<LinkedLead[]>([])
   const [text, setText] = useState('')
@@ -259,11 +283,13 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   }
 
   const loadAll = useCallback(async () => {
-    const [msgRes, asgRes, leadRes] = await Promise.all([
+    const [msgRes, asgRes, leadRes, subRes] = await Promise.all([
       supabase.from('crm_task_messages').select('*').eq('task_id', task.id).order('created_at', { ascending: true }),
       supabase.from('crm_task_assignees').select('id, profile_id, ext_name, ext_email, ext_phone, channel, accepted_at').eq('task_id', task.id),
       supabase.from('crm_task_leads').select('lead_id, lead:leads(first_name, last_name, email, phone, whatsapp)').eq('task_id', task.id),
+      supabase.from('crm_tasks').select('*').eq('parent_task_id', task.id).order('created_at', { ascending: true }),
     ])
+    setSubtasks((subRes.data ?? []) as Task[])
     setMessages((msgRes.data ?? []) as TaskMessage[])
     setAssignees((asgRes.data ?? []) as Assignee[])
     // deno-lint-ignore no-explicit-any
@@ -276,10 +302,8 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   useEffect(() => { loadAll() }, [loadAll])
 
   const setStatus = async (status: TaskStatus) => {
-    const patch: Record<string, unknown> = { status }
-    if (status === 'in_arbeit' && !task.accepted_at) { patch.accepted_at = new Date().toISOString(); patch.accepted_by = myId }
-    const { error } = await supabase.from('crm_tasks').update(patch).eq('id', task.id)
-    if (!error) onChanged()
+    const { error } = await supabase.from('crm_tasks').update(statusPatch(task, status, myId)).eq('id', task.id)
+    if (!error) { notifyIfSubtaskDone(task, status); onChanged() }
   }
 
   const send = async () => {
@@ -300,6 +324,37 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
         } }).catch(e => console.warn('[Tasks] Mail-Benachrichtigung:', e))
       }
     } catch (e) { console.error('[Tasks] send:', e) } finally { setSending(false) }
+  }
+
+  // Teilaufgabe stellen: eine ganz normale Aufgabe mit Elternteil. Sie erbt damit
+  // Annehmen, Erledigen, Chat, Erinnerungen und den Token-Link — nichts davon muss
+  // ein zweites Mal gebaut werden.
+  const addSubtask = async () => {
+    const title = subTitle.trim()
+    if (!title || !subWho || subBusy) return
+    setSubBusy(true)
+    try {
+      const { data: created, error } = await supabase.from('crm_tasks').insert({
+        title, parent_task_id: task.id, created_by: myId, assigned_to: subWho,
+        status: 'offen', due_date: subDue || null,
+      }).select('id').single()
+      if (error) throw error
+      const newId = (created as { id: string }).id
+      const { error: aErr } = await supabase.from('crm_task_assignees').insert({ task_id: newId, profile_id: subWho, channel: 'system' })
+      if (aErr) throw aErr
+      // Zustellung (Mail an interne Zuständige) wie bei jeder anderen Aufgabe.
+      supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: newId } })
+        .catch(e => console.warn('[Tasks] subtask dispatch:', e))
+      setSubTitle(''); setSubWho(''); setSubDue(''); setSubOpen(false)
+      await loadAll(); onChanged()
+    } catch (e) { console.error('[Tasks] addSubtask:', e) } finally { setSubBusy(false) }
+  }
+
+  const setSubStatus = async (st: Task, status: TaskStatus) => {
+    const { error } = await supabase.from('crm_tasks').update(statusPatch(st, status, myId)).eq('id', st.id)
+    if (error) { console.error('[Tasks] setSubStatus:', error); return }
+    notifyIfSubtaskDone(st, status)
+    await loadAll(); onChanged()
   }
 
   const assigneeLabel = (a: Assignee) => a.profile_id ? nameOf(a.profile_id) : `${a.ext_name ?? 'Extern'} (${chLabel(a.channel)})`
@@ -528,6 +583,83 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
             ))}
           </div>
 
+          {/* Teilaufgaben (Zuarbeit) */}
+          <div className="pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                {t('crm.tasks.subtasks', 'Zuarbeit')}{subtasks.length ? ` (${subtasks.filter(x => x.status !== 'erledigt').length}/${subtasks.length} ${t('crm.tasks.subOpen', 'offen')})` : ''}
+              </h3>
+              <button onClick={() => setSubOpen(o => !o)} className="text-xs font-medium text-gray-600 border border-gray-200 rounded-lg px-2 py-1 hover:bg-gray-50">
+                {subOpen ? t('common.cancel', 'Abbrechen') : `+ ${t('crm.tasks.addSubtask', 'Teilaufgabe')}`}
+              </button>
+            </div>
+
+            {subOpen && (
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-2 mb-3">
+                <input value={subTitle} onChange={e => setSubTitle(e.target.value)}
+                  placeholder={t('crm.tasks.subTitlePh', 'Was soll zugearbeitet werden?')}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                <div className="flex gap-2">
+                  <select value={subWho} onChange={e => setSubWho(e.target.value)}
+                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
+                    <option value="">{t('crm.tasks.subWho', 'Wer arbeitet zu?')}</option>
+                    {staff.filter(sf => sf.id !== myId).map(sf => (
+                      <option key={sf.id} value={sf.id}>{sf.full_name || sf.email}</option>
+                    ))}
+                  </select>
+                  <input type="date" value={subDue} onChange={e => setSubDue(e.target.value)}
+                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                </div>
+                <button onClick={addSubtask} disabled={!subTitle.trim() || !subWho || subBusy}
+                  className="w-full py-2 rounded-lg text-white text-sm font-semibold disabled:opacity-40"
+                  style={{ backgroundColor: '#ff795d' }}>
+                  {subBusy ? t('common.saving', 'speichert …') : t('crm.tasks.subAssign', 'Zuarbeit vergeben')}
+                </button>
+                <p className="text-[11px] text-gray-400">
+                  {t('crm.tasks.subHint', 'Der andere nimmt sie an und markiert sie als erledigt — du bekommst dann automatisch Bescheid.')}
+                </p>
+              </div>
+            )}
+
+            {subtasks.length === 0 ? (
+              <p className="text-xs text-gray-400">{t('crm.tasks.noSubtasks', 'Noch keine Zuarbeit vergeben.')}</p>
+            ) : (
+              <div className="space-y-2">
+                {subtasks.map(st => {
+                  const mineToDo = st.assigned_to === myId
+                  return (
+                    <div key={st.id} className="rounded-xl border p-2.5" style={{ borderColor: '#f1f1f1', backgroundColor: cardBg(st.status), borderLeft: `3px solid ${accentOf(st.status)}` }}>
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-sm text-gray-900">{st.title}</span>
+                        <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: accentOf(st.status) }}>
+                          {COLUMNS.find(c => c.status === st.status)?.label}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px] text-gray-400">
+                        <span>→ {nameOf(st.assigned_to)}</span>
+                        {st.due_date && <span className={isOverdue(st) ? 'text-red-500 font-semibold' : ''}>{t('crm.tasks.due', 'Frist')} {d2(st.due_date)}</span>}
+                      </div>
+                      {mineToDo && st.status !== 'erledigt' && (
+                        <div className="flex gap-2 mt-2">
+                          {st.status === 'offen' && (
+                            <button onClick={() => setSubStatus(st, 'in_arbeit')}
+                              className="flex-1 py-1.5 rounded-lg text-white text-xs font-semibold" style={{ backgroundColor: '#f59e0b' }}>
+                              ✋ {t('crm.tasks.accept', 'Aufgabe annehmen')}
+                            </button>
+                          )}
+                          <button onClick={() => setSubStatus(st, 'erledigt')}
+                            className="flex-1 py-1.5 rounded-lg text-white text-xs font-semibold" style={{ backgroundColor: '#10b981' }}>
+                            ✓ {t('crm.tasks.markDone', 'Erledigt')}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Nachrichten / Bemerkungen */}
           <div className="pt-2 border-t border-gray-100">
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('crm.tasks.chat', 'Nachrichten')}</h3>
@@ -589,17 +721,19 @@ export default function Tasks() {
     if (!tk || tk.status === status) return
     const prev = tasks
     setTasks(ts => ts.map(x => x.id === id ? { ...x, status } : x))
-    const patch: Record<string, unknown> = { status }
-    if (status === 'in_arbeit' && !tk.accepted_at) { patch.accepted_at = new Date().toISOString(); patch.accepted_by = myId }
-    const { error } = await supabase.from('crm_tasks').update(patch).eq('id', id)
-    if (error) { setTasks(prev); showToast(t('common.error', 'Fehler')) }
+    const { error } = await supabase.from('crm_tasks').update(statusPatch(tk, status, myId)).eq('id', id)
+    if (error) { setTasks(prev); showToast(t('common.error', 'Fehler')); return }
+    notifyIfSubtaskDone(tk, status)
   }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
       const [tRes, sRes, mRes] = await Promise.all([
-        supabase.from('crm_tasks').select('*').eq('archived', false).order('created_at', { ascending: false }),
+        // Nur Hauptaufgaben aufs Board: eine gruen abgehakte Teilaufgabe neben ihrer
+        // noch offenen Hauptaufgabe waere irrefuehrend. Teilaufgaben stehen in der
+        // Hauptaufgabe und auf der Startseite dessen, der sie erledigen soll.
+        supabase.from('crm_tasks').select('*').eq('archived', false).is('parent_task_id', null).order('created_at', { ascending: false }),
         supabase.rpc('list_staff'),
         supabase.from('crm_task_messages').select('task_id').eq('recipient_id', myId).is('read_at', null),
       ])

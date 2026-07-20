@@ -5,6 +5,8 @@
 // Modi:
 //   { mode: 'dispatch', task_id }  → einmalige Zustellung beim Anlegen
 //   { mode: 'reminder' }           → Cron: alle offenen Aufgaben, 1×/Tag je Zuständigem
+//   { mode: 'subtask_done', task_id } → Teilaufgabe erledigt: Rückmeldung an den,
+//                                       der die Zuarbeit gestellt hat (WhatsApp, sonst Mail)
 //
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PUBLIC_SITE_URL?
 // Deploy: supabase functions deploy task-notify --no-verify-jwt
@@ -82,6 +84,79 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   return { assignee: a.id, mail: wantMail, whatsapp: wantWa }
 }
 
+// ── Fertigmeldung einer Teilaufgabe an den Aufgabengeber ────────────────────
+// Aufrufbar von allen drei Erledigt-Wegen (In-App-Button, Drag & Drop, Token-Link)
+// und zusätzlich vom 5-Minuten-Sweep. Damit daraus trotzdem GENAU EINE Nachricht
+// wird, ist done_notified_at der Riegel: nur wer den Übergang null → jetzt selbst
+// gewinnt, verschickt. Zwei gleichzeitige Aufrufe → einer bekommt keine Zeile
+// zurück und hört auf.
+async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
+  const { data: t } = await supabase.from('crm_tasks')
+    .select('id, title, description, parent_task_id, created_by, completed_by, status, done_notified_at')
+    .eq('id', taskId).maybeSingle()
+  const task = t as { id: string; title: string; parent_task_id: string | null; created_by: string; completed_by: string | null; status: string; done_notified_at: string | null } | null
+  if (!task) return { skipped: 'not_found' }
+  if (!task.parent_task_id) return { skipped: 'keine_teilaufgabe' }
+  if (task.status !== 'erledigt') return { skipped: 'nicht_erledigt' }
+  // Wer sich selbst zuarbeitet, braucht keine Rückmeldung.
+  if (task.completed_by && task.completed_by === task.created_by) {
+    await supabase.from('crm_tasks').update({ done_notified_at: new Date().toISOString() }).eq('id', task.id).is('done_notified_at', null)
+    return { skipped: 'selbst_erledigt' }
+  }
+
+  // Compare-and-swap: nur EIN Aufruf gewinnt.
+  const { data: claimed } = await supabase.from('crm_tasks')
+    .update({ done_notified_at: new Date().toISOString() })
+    .eq('id', task.id).is('done_notified_at', null).select('id')
+  if (!claimed || claimed.length === 0) return { skipped: 'bereits_gemeldet' }
+
+  const { data: giver } = await supabase.from('profiles').select('full_name, email, phone').eq('id', task.created_by).maybeSingle()
+  const g = giver as { full_name: string | null; email: string | null; phone: string | null } | null
+  const { data: doer } = task.completed_by
+    ? await supabase.from('profiles').select('full_name').eq('id', task.completed_by).maybeSingle()
+    : { data: null }
+  const { data: parent } = await supabase.from('crm_tasks').select('title').eq('id', task.parent_task_id).maybeSingle()
+
+  const first     = (g?.full_name ?? '').split(' ')[0] || 'Hallo'
+  const doerName  = (doer as { full_name: string | null } | null)?.full_name ?? 'Jemand aus dem Team'
+  const parentTtl = (parent as { title: string } | null)?.title ?? ''
+
+  // Bewusst OHNE freien Text aus Bemerkungen: send-whatsapp durchsucht den Body nach
+  // /deck/<token> und YouTube-Links und haengt dann eigenstaendig Bilder an.
+  const waText = `✅ Zuarbeit erledigt\n\n*${task.title}*${parentTtl ? `\nzu: ${parentTtl}` : ''}\n\n${doerName} hat die Teilaufgabe als erledigt markiert.`
+  const phone  = (g?.phone ?? '').trim()
+
+  let via = 'keiner'
+  if (phone) {
+    // Nummer VOR dem Aufruf pruefen: send-whatsapp nutzt ??, ein Leerstring wuerde
+    // die Empfaengeraufloesung kippen statt sauber abzubrechen.
+    await supabase.functions.invoke('send-whatsapp', { body: {
+      event_type: 'subtask_done', override_text: waText,
+      lead_data: { lead_name: g?.full_name ?? 'Team', lead_phone: phone },
+      // KEIN lead_id: sonst landet die interne Meldung in einer Kundenakte.
+    } }).catch((e: unknown) => console.warn('[task-notify] subtask wa:', e))
+    via = 'whatsapp'
+  } else if (g?.email) {
+    // Rueckfallebene, damit die Meldung nicht still verschwindet, wenn im Profil
+    // keine Telefonnummer hinterlegt ist.
+    await supabase.functions.invoke('send-email', { body: {
+      to: g.email, subject: `Zuarbeit erledigt: ${task.title}`,
+      html: `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+        <p>Hallo ${esc(first)},</p>
+        <p>${esc(doerName)} hat deine Teilaufgabe als erledigt markiert:</p>
+        <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
+          <p style="font-size:16px;font-weight:600;color:#111827;margin:0;">${esc(task.title)}</p>
+          ${parentTtl ? `<p style="color:#6b7280;font-size:13px;margin:6px 0 0;">zu: ${esc(parentTtl)}</p>` : ''}
+        </div>
+        <p style="font-size:13px;color:#6b7280;">Trage im Profil eine Telefonnummer ein, dann kommt diese Meldung künftig per WhatsApp.</p>
+      </div>`,
+    } }).catch((e: unknown) => console.warn('[task-notify] subtask mail:', e))
+    via = 'mail'
+  }
+  console.log(`[task-notify] Teilaufgabe ${task.id} erledigt → Meldung an ${task.created_by} via ${via}`)
+  return { notified: true, via }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
@@ -101,6 +176,21 @@ Deno.serve(async (req) => {
         out.push(await deliver(supabase, a, task as Task, 'dispatch'))
       }
       return json({ ok: true, delivered: out })
+    }
+
+    if (mode === 'subtask_done') {
+      if (!task_id) return json({ error: 'task_id fehlt' }, 400)
+      return json({ ok: true, ...(await notifySubtaskDone(supabase, task_id)) })
+    }
+
+    // Sicherheitsnetz: erledigte Teilaufgaben, deren Meldung noch aussteht — faengt
+    // jeden Erledigt-Weg ab, auch einen, den es heute noch nicht gibt.
+    if (mode === 'subtask_sweep') {
+      const { data: due } = await supabase.from('crm_tasks').select('id')
+        .eq('status', 'erledigt').is('done_notified_at', null).not('parent_task_id', 'is', null).limit(50)
+      const out = []
+      for (const r of (due ?? []) as { id: string }[]) out.push(await notifySubtaskDone(supabase, r.id))
+      return json({ ok: true, swept: out.length, out })
     }
 
     if (mode === 'reminder') {

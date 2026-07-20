@@ -1263,7 +1263,16 @@
       "linkCustomers": "Link customers (contact details in the task)",
       "custSearch": "Search customer …",
       "assignees": "Assigned to",
-      "customers": "Customers"
+      "customers": "Customers",
+      "subtasks": "Sub-task",
+      "subOpen": "open",
+      "addSubtask": "Sub-task",
+      "subTitlePh": "What should they help with?",
+      "subWho": "Who should help?",
+      "subAssign": "Assign sub-task",
+      "subHint": "They accept it and mark it done — you get notified automatically.",
+      "noSubtasks": "No sub-tasks assigned yet.",
+      "markDone": "Done"
     },
     "home": {
       "hello": "Hello",

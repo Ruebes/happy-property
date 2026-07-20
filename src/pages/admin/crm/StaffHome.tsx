@@ -16,6 +16,9 @@ interface Task {
   id: string; title: string; description: string | null
   created_by: string; assigned_to: string | null; status: TaskStatus
   due_date: string | null; created_at: string
+  // Teilaufgabe (Zuarbeit zu einer anderen Aufgabe) — wird hier bewusst mit
+  // angezeigt, sonst haette der Zuarbeitende keinen Ort, an dem sie auftaucht.
+  parent_task_id: string | null
 }
 interface Staff { id: string; full_name: string; email: string; role: string }
 interface Appt { id: string; title: string | null; start_time: string; type: string | null }
@@ -83,7 +86,7 @@ export default function StaffHome() {
       const dayEnd   = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString()
       const [tRes, sRes, pRes, aRes, asgRes, iRes] = await Promise.all([
         supabase.from('crm_tasks')
-          .select('id, title, description, created_by, assigned_to, status, due_date, created_at')
+          .select('id, title, description, created_by, assigned_to, status, due_date, created_at, parent_task_id')
           .eq('archived', false).order('created_at', { ascending: false }),
         supabase.rpc('list_staff'),
         supabase.from('profiles').select('dashboard_prefs').eq('id', myId).single(),
@@ -168,7 +171,10 @@ export default function StaffHome() {
         className="w-full text-left rounded-xl border p-3 hover:shadow-sm transition-shadow"
         style={{ backgroundColor: st.bg, borderColor: '#f1f1f1', borderLeft: `3px solid ${st.accent}` }}>
         <div className="flex items-start justify-between gap-2">
-          <span className="font-medium text-gray-900 text-sm">{tk.title}</span>
+          <span className="font-medium text-gray-900 text-sm">
+            {tk.parent_task_id && <span className="text-gray-400 mr-1" title={t('crm.tasks.subtasks', 'Zuarbeit')}>↳</span>}
+            {tk.title}
+          </span>
           <span className="shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: st.accent }}>{st.label}</span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1.5 text-[11px] text-gray-400">
