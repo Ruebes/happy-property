@@ -9,6 +9,7 @@
 // Deployment: supabase functions deploy funnel-api --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { isInternalContact } from '../_shared/internalContact.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -307,16 +308,24 @@ Deno.serve(async (req) => {
       // Erstkontakt-Fallback stornieren — der Kunde HAT ja jetzt einen Termin
       try { await admin.from('scheduled_messages').update({ status: 'cancelled' }).eq('lead_id', leadId).eq('status', 'pending').in('event_type', ['erstkontakt', 'no_show', 'immobilienauswahl', 'newsletter', 'bot_nudge', 'deck_viewed_followup']) } catch { /* egal */ }
 
+      // Bucht hier jemand Internes (Mitarbeitende, Verwaltung), darf daraus KEIN
+      // Kundenvorgang werden: kein Deal in der Pipeline, keine Bestaetigungsautomatik,
+      // keine Lead-Verknuepfung am Termin. Der Funnel ist der gefaehrlichere der beiden
+      // Wege, weil er - anders als /buchen - tatsaechlich einen Deal anlegt.
+      const isInternal = await isInternalContact(admin, { email, phone })
+
       // Pipeline: Deal auf „Termin gebucht" (bestehenden updaten, sonst anlegen) —
       // gleiche Semantik wie calendly-webhook.
       let dealId: string | null = null
-      const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
-      if (exDeals?.length) {
-        dealId = (exDeals[0] as { id: string }).id
-        await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null, ...(source ? { source } : {}) }).eq('id', dealId)
-      } else {
-        const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht', ...(source ? { source } : {}) }).select('id').single()
-        dealId = (nd as { id: string } | null)?.id ?? null
+      if (!isInternal) {
+        const { data: exDeals } = await admin.from('deals').select('id').eq('lead_id', leadId).limit(1)
+        if (exDeals?.length) {
+          dealId = (exDeals[0] as { id: string }).id
+          await admin.from('deals').update({ phase: 'termin_gebucht', archived_from_phase: null, ...(source ? { source } : {}) }).eq('id', dealId)
+        } else {
+          const { data: nd } = await admin.from('deals').insert({ lead_id: leadId, phase: 'termin_gebucht', ...(source ? { source } : {}) }).select('id').single()
+          dealId = (nd as { id: string } | null)?.id ?? null
+        }
       }
 
       // Zoom-Meeting (nur bei Zoom-Terminart)
@@ -347,7 +356,8 @@ Deno.serve(async (req) => {
 
       // CRM-Termin
       const { data: appt } = await admin.from('crm_appointments').insert({
-        lead_id: leadId, deal_id: dealId, title: `Beratungsgespräch – ${c.first_name}`,
+        lead_id: isInternal ? null : leadId, deal_id: dealId, internal: isInternal,
+        title: `Beratungsgespräch – ${c.first_name}`,
         description: 'Über den Website-Funnel gebucht', type,
         start_time: start.toISOString(), end_time: end.toISOString(),
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
@@ -355,9 +365,12 @@ Deno.serve(async (req) => {
         source,
       }).select('id').single()
 
-      // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp)
-      try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'termin_gebucht' } }) }
-      catch (e) { console.warn('[funnel-api] termin_gebucht-Trigger fehlgeschlagen:', e) }
+      // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp).
+      // Bei internen Buchungen bewusst nicht: das sind Kundenvorlagen.
+      if (!isInternal) {
+        try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'termin_gebucht' } }) }
+        catch (e) { console.warn('[funnel-api] termin_gebucht-Trigger fehlgeschlagen:', e) }
+      }
 
       // Session abschließen
       if (body.session_id) {

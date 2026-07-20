@@ -9,6 +9,7 @@
 // Secrets: SUPABASE_URL, SERVICE_ROLE_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_API_KEY, ZOOM_*
 // Deploy: supabase functions deploy personal-booking --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
+import { isInternalContact } from '../_shared/internalContact.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -205,15 +206,9 @@ Deno.serve(async (req) => {
       // gleichen Namens und loest die komplette Kundenautomatik aus - genau das ist am
       // 20.7. passiert: Gionas Buchung traf ihren alten HubSpot-Lead, worauf zwei
       // "termin_gebucht"-WhatsApps an sie geplant wurden.
-      // Zwei Sicherungen, weil die erste vergessen werden kann:
-      //   1. booking_invites.internal (bewusst gesetzt, z.B. bei Giona)
-      //   2. E-Mail gehoert zu einem Mitarbeitenden-Profil (greift auch ohne Flag)
-      let isInternal = inv?.internal === true
-      if (!isInternal && email) {
-        const { data: prof } = await admin.from('profiles').select('role').ilike('email', email.trim()).limit(1).maybeSingle()
-        const role = (prof as { role?: string } | null)?.role
-        if (role && ['admin', 'verwalter', 'mitarbeiter'].includes(role)) isInternal = true
-      }
+      // Erkennung liegt in _shared/internalContact.ts, damit /buchen und /termin
+      // dieselbe Entscheidung treffen — sonst umgeht man den Riegel durch die andere Tuer.
+      const isInternal = await isInternalContact(admin, { email, phone, inviteInternal: inv?.internal === true })
       // an bestehenden Lead per E-Mail haengen (nur bei echten Kundenterminen)
       let leadId: string | null = null
       if (email && !isInternal) { const { data: l } = await admin.from('leads').select('id').ilike('email', email.trim()).limit(1).maybeSingle(); leadId = (l as { id?: string } | null)?.id ?? null }
