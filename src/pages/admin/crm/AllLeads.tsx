@@ -179,7 +179,9 @@ export default function AllLeads() {
       if (error) throw error
       const apptId = pastAppt[lead.id]
       if (apptId) {
-        await supabase.from('crm_appointments').update({ outcome: 'completed' }).eq('id', apptId)
+        // updated_at explizit stempeln: crm_appointments hat keinen Automatik-Trigger
+        // dafuer, und der Meta-Sync filtert AppointmentHeld ueber updated_at (7 Tage).
+        await supabase.from('crm_appointments').update({ outcome: 'completed', updated_at: new Date().toISOString() }).eq('id', apptId)
       }
       await supabase.from('activities').insert({
         lead_id: lead.id, type: 'note', direction: 'outbound',

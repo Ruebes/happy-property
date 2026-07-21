@@ -70,7 +70,7 @@ export default function AppointmentPrepPopup() {
           if (error) throw error
         }
         // Bewertet = Gespräch hat stattgefunden
-        const { error: e2 } = await supabase.from('crm_appointments').update({ outcome: 'completed' }).eq('id', appt.id)
+        const { error: e2 } = await supabase.from('crm_appointments').update({ outcome: 'completed', updated_at: new Date().toISOString() }).eq('id', appt.id)
         if (e2) throw e2
       }
       if (appt.lead_id) {
