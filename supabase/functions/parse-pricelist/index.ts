@@ -27,7 +27,7 @@ Pro Einheit:
 - bedrooms: Anzahl Schlafzimmer als Zahl (Studio=0)
 - bathrooms: Anzahl Bäder als Zahl falls angegeben
 - size_sqm: Innen-/Wohnfläche in m² als Zahl
-- terrace_sqm: Außen-/Terrassen-/Balkonfläche in m² als Zahl falls angegeben
+- terrace_sqm: Außen-/Terrassen-/Balkonfläche in m² als Zahl falls angegeben. WICHTIG: Hat die Liste MEHRERE Außenflächen-Spalten (z.B. "Covered Veranda" UND "Uncovered Veranda/Roof garden"), dann ist terrace_sqm die SUMME aller Außenflächen-Spalten — nicht nur eine davon. Lagerraum (Storage) zählt NICHT dazu.
 - price_net: Nettopreis (ohne MwSt) als reine Zahl ohne Punkte/Währung
 - price_gross: Bruttopreis (inkl. MwSt) als reine Zahl, falls angegeben
 - vat_rate: MwSt-Satz als Zahl (z.B. 19), falls erkennbar
