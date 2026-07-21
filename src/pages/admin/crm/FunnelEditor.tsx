@@ -162,7 +162,8 @@ export default function FunnelEditor() {
       return
     }
     const badMain = invalid(cfg.questions)
-    const badQn = cfg.questionnaires.find(x => x.questions.length === 0 || invalid(x.questions))
+    // Leere Varianten sind erlaubt (frisch angelegt) — nur halbfertige Fragen nicht.
+    const badQn = cfg.questionnaires.find(x => invalid(x.questions))
     if (badMain || badQn) {
       showToast(badQn
         ? (t('crm.funnelEditor.invalidQn', 'Fragebogen „{{name}}": jede Frage braucht Titel + mindestens 2 ausgefüllte Antworten.', { name: badQn.name }) as string)
@@ -203,16 +204,24 @@ export default function FunnelEditor() {
     }])
   })
 
-  // Neue Variante startet als Kopie des Standards (und bleibt so auch beim
-  // Speichern erhalten — leere Varianten würden bei der Normalisierung entfernt).
-  const addQuestionnaire = () => {
-    if (!cfg) return
-    const name = (window.prompt(t('crm.funnelEditor.qnNamePrompt', 'Name des neuen Fragebogens (z. B. „Ärzte-Kampagne"):') as string) ?? '').trim()
-    if (!name) return
+  // Neuer Fragebogen: startet leer. Im Anlege-Fenster lassen sich einzelne Fragen
+  // aus einem bestehenden Fragebogen übernehmen (Kopie — danach unabhängig).
+  const [qnDraft, setQnDraft] = useState<{ name: string; from: string; picked: string[] } | null>(null)
+  const qnSourceQuestions = useCallback((c: FunnelConfig, from: string) =>
+    from ? (c.questionnaires.find(x => x.slug === from)?.questions ?? []) : c.questions, [])
+
+  const createQuestionnaire = () => {
+    if (!cfg || !qnDraft) return
+    const name = qnDraft.name.trim()
+    if (!name) { showToast(t('crm.funnelEditor.qnNeedsName', 'Bitte gib dem Fragebogen einen Namen.') as string); return }
     const taken = new Set(['none', ...cfg.questionnaires.map(x => x.slug)])
     const slug = slugify(name, taken)
-    update(c => ({ ...c, questionnaires: [...c.questionnaires, { slug, name, questions: c.questions.map(q => ({ ...q, options: q.options.map(o => ({ ...o })) })) }] }))
+    const questions = qnSourceQuestions(cfg, qnDraft.from)
+      .filter(q => qnDraft.picked.includes(q.key))
+      .map(q => ({ ...q, options: q.options.map(o => ({ ...o })) }))
+    update(c => ({ ...c, questionnaires: [...c.questionnaires, { slug, name, questions }] }))
     setActiveQn(slug)
+    setQnDraft(null)
   }
   const renameQuestionnaire = () => {
     if (!cfg || !activeQn) return
@@ -417,7 +426,7 @@ export default function FunnelEditor() {
                 {x.name}
               </button>
             ))}
-            <button onClick={addQuestionnaire}
+            <button onClick={() => setQnDraft({ name: '', from: '', picked: [] })}
               className="px-3 py-1.5 rounded-full text-xs font-semibold border-2 border-dashed border-gray-300 text-gray-500 hover:border-gray-400 hover:text-gray-700 transition">
               {t('crm.funnelEditor.qnAdd', '+ Neuer Fragebogen')}
             </button>
@@ -430,6 +439,11 @@ export default function FunnelEditor() {
               </span>
             )}
           </div>
+          {activeQn && getQs(cfg).length === 0 && (
+            <div className="mb-4 text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5">
+              {t('crm.funnelEditor.qnEmpty', 'Dieser Fragebogen ist noch leer. Lege oben rechts Fragen an — solange er leer bleibt, zeigt sein Link nur den Termin-Teil.')}
+            </div>
+          )}
           <div className="space-y-4">
             {getQs(cfg).map((q, qi) => (
               <div key={q.key} className="border border-gray-200 rounded-xl p-4">
@@ -870,6 +884,79 @@ export default function FunnelEditor() {
               className="px-4 py-1.5 rounded-full text-sm font-semibold text-white disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
               {saving ? t('crm.funnelEditor.saving', 'Speichert…') : t('crm.funnelEditor.save', 'Speichern')}
             </button>
+          </div>
+        )}
+
+        {/* ── Neuer Fragebogen: Name + optionale Übernahme einzelner Fragen ── */}
+        {qnDraft && (
+          <div className="fixed inset-0 z-50 bg-black/40 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setQnDraft(null)}>
+            <div className="bg-white rounded-t-2xl md:rounded-2xl w-full max-w-lg max-h-[85vh] flex flex-col shadow-xl" onClick={e => e.stopPropagation()}>
+              <div className="px-5 py-4 border-b border-gray-100">
+                <h3 className="text-sm font-semibold text-gray-800">{t('crm.funnelEditor.qnNewTitle', 'Neuer Fragebogen')}</h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">{t('crm.funnelEditor.qnNewHint', 'Der Fragebogen startet leer. Du kannst hier einzelne Fragen aus einem bestehenden Fragebogen übernehmen — Kopien, die du danach frei bearbeitest.')}</p>
+              </div>
+
+              <div className="px-5 py-4 space-y-4 overflow-y-auto">
+                <Field label={t('crm.funnelEditor.qnNewName', 'Name (z. B. „Ärzte-Kampagne“)') as string}
+                  value={qnDraft.name} onChange={v => setQnDraft({ ...qnDraft, name: v })} />
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.qnCopyFrom', 'Fragen übernehmen aus')}</label>
+                  <select value={qnDraft.from} onChange={e => setQnDraft({ ...qnDraft, from: e.target.value, picked: [] })}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                    <option value="">{t('crm.funnelEditor.qnDefault', 'Standard')}</option>
+                    {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-semibold text-gray-500">
+                      {t('crm.funnelEditor.qnPickQuestions', 'Fragen zum Übernehmen ({{n}} ausgewählt)', { n: qnDraft.picked.length })}
+                    </span>
+                    <button
+                      onClick={() => {
+                        const all = qnSourceQuestions(cfg, qnDraft.from).map(q => q.key)
+                        setQnDraft({ ...qnDraft, picked: qnDraft.picked.length === all.length ? [] : all })
+                      }}
+                      className="text-xs font-semibold text-gray-500 hover:text-gray-700">
+                      {qnDraft.picked.length === qnSourceQuestions(cfg, qnDraft.from).length && qnDraft.picked.length > 0
+                        ? t('crm.funnelEditor.qnPickNone', 'Keine')
+                        : t('crm.funnelEditor.qnPickAll', 'Alle')}
+                    </button>
+                  </div>
+                  <div className="space-y-1.5">
+                    {qnSourceQuestions(cfg, qnDraft.from).map(q => (
+                      <label key={q.key} className="flex items-start gap-2 p-2.5 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer">
+                        <input type="checkbox" className="mt-0.5" checked={qnDraft.picked.includes(q.key)}
+                          onChange={e => setQnDraft({
+                            ...qnDraft,
+                            picked: e.target.checked ? [...qnDraft.picked, q.key] : qnDraft.picked.filter(k => k !== q.key),
+                          })} />
+                        <span className="min-w-0">
+                          <span className="block text-sm text-gray-700">{q.title || <em className="text-gray-400">{t('crm.funnelEditor.qnNoTitle', 'ohne Titel')}</em>}</span>
+                          <span className="block text-[11px] text-gray-400 truncate">{q.options.map(o => o.label).filter(Boolean).join(' · ')}</span>
+                        </span>
+                      </label>
+                    ))}
+                    {qnSourceQuestions(cfg, qnDraft.from).length === 0 && (
+                      <p className="text-xs text-gray-400 italic">{t('crm.funnelEditor.qnSourceEmpty', 'Dieser Fragebogen hat noch keine Fragen.')}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-5 py-4 border-t border-gray-100 flex items-center justify-end gap-2">
+                <button onClick={() => setQnDraft(null)}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-gray-600 hover:bg-gray-100">
+                  {t('crm.funnelEditor.cancel', 'Abbrechen')}
+                </button>
+                <button onClick={createQuestionnaire}
+                  className="px-4 py-2 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                  {t('crm.funnelEditor.qnCreate', 'Fragebogen anlegen')}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

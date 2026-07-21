@@ -202,13 +202,13 @@ export function normalizeFunnelConfig(raw: unknown): FunnelConfig {
         .filter(q => q.options.length >= 2)
     : []
   const questions = cleanQuestions(r.questions)
-  // Varianten-Fragebögen: leere Varianten (0 gültige Fragen) fliegen raus —
-  // ein Link darauf fällt dann im Funnel auf den Standard zurück.
+  // Varianten-Fragebögen: bleiben auch ohne Fragen erhalten — ein frisch
+  // angelegter Fragebogen startet leer und wird erst nach und nach gefüllt.
+  // Ein Link auf eine leere Variante zeigt nur den Termin-Teil (wie 'none').
   const questionnaires = Array.isArray(r.questionnaires)
     ? r.questionnaires
         .filter(x => x && typeof x.slug === 'string' && x.slug.trim() && x.slug !== 'none' && typeof x.name === 'string')
         .map(x => ({ slug: x.slug.trim(), name: x.name, questions: cleanQuestions(x.questions) }))
-        .filter(x => x.questions.length > 0)
     : []
   // Kampagnen-/Quellen-Links: code + name Pflicht, source/questionnaire tolerant.
   const cleanKey = (v: unknown, max: number) => String(v ?? '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, max)
