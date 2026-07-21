@@ -58,3 +58,18 @@ create policy nl_subs_admin on newsletter_subscribers for all to authenticated
 create policy nl_members_admin on newsletter_list_members for all to authenticated
   using (exists (select 1 from profiles p where p.id=auth.uid() and p.role in ('admin','verwalter','mitarbeiter')))
   with check (exists (select 1 from profiles p where p.id=auth.uid() and p.role in ('admin','verwalter','mitarbeiter')));
+
+-- 1:1-Uebernahme aus Klaviyo: dort liefert jede Person unterschiedlich viel
+-- (mal nur Name + Mail, mal ein vollstaendiger Datensatz). Bekannte Felder
+-- bekommen eigene Spalten, alles Uebrige wandert roh nach properties, damit
+-- beim Import nichts verloren geht.
+alter table newsletter_subscribers add column if not exists phone text;
+alter table newsletter_subscribers add column if not exists organization text;
+alter table newsletter_subscribers add column if not exists title text;
+alter table newsletter_subscribers add column if not exists city text;
+alter table newsletter_subscribers add column if not exists region text;
+alter table newsletter_subscribers add column if not exists country text;
+alter table newsletter_subscribers add column if not exists klaviyo_id text;
+alter table newsletter_subscribers add column if not exists properties jsonb;
+alter table newsletter_subscribers add column if not exists klaviyo_created_at timestamptz;
+create unique index if not exists idx_nl_sub_klaviyo on newsletter_subscribers(klaviyo_id) where klaviyo_id is not null;

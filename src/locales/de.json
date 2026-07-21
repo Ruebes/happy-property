@@ -3045,7 +3045,9 @@
       "count": "Adressen",
       "lastSync": "Zuletzt geholt",
       "active": "Für Newsletter",
-      "total": "Freigeschaltet: {{n}} Adressen. Deine CRM-Kunden kommen im Newsletter immer dazu; doppelte Adressen werden nur einmal angeschrieben."
+      "total": "Freigeschaltet: {{n}} Adressen. Deine CRM-Kunden kommen im Newsletter immer dazu; doppelte Adressen werden nur einmal angeschrieben.",
+      "syncedN": "{{n}} neue Adressen übernommen.",
+      "syncedPartly": "{{n}} neue Adressen. {{f}} Liste(n) mit Fehler: {{msg}}"
     }
   },
   "docs": {

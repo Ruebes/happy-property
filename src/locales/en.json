@@ -3045,7 +3045,9 @@
       "count": "Addresses",
       "lastSync": "Last fetched",
       "active": "For newsletter",
-      "total": "Enabled: {{n}} addresses. Your CRM customers are always included; duplicates are only mailed once."
+      "total": "Enabled: {{n}} addresses. Your CRM customers are always included; duplicates are only mailed once.",
+      "syncedN": "{{n}} new addresses imported.",
+      "syncedPartly": "{{n}} new addresses. {{f}} list(s) failed: {{msg}}"
     }
   },
   "docs": {

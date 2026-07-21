@@ -25,7 +25,16 @@ const API = 'https://a.klaviyo.com/api'
 const REVISION = '2024-10-15'
 
 interface KlaviyoList { id: string; attributes?: { name?: string } }
-interface KlaviyoProfile { id: string; attributes?: { email?: string; first_name?: string; last_name?: string; subscriptions?: Record<string, unknown> } }
+interface KlaviyoProfile {
+  id: string
+  attributes?: {
+    email?: string; first_name?: string; last_name?: string; phone_number?: string
+    organization?: string; title?: string; created?: string
+    location?: { city?: string; region?: string; country?: string }
+    properties?: Record<string, unknown>
+    subscriptions?: Record<string, unknown>
+  }
+}
 
 async function kFetch(path: string, key: string): Promise<Record<string, unknown>> {
   const res = await fetch(path.startsWith('http') ? path : `${API}${path}`, {
@@ -57,6 +66,8 @@ async function syncLists(sb: SupabaseClient, key: string) {
 
 /** Abonnenten einer Klaviyo-Liste nachziehen (paginiert). */
 async function syncMembers(sb: SupabaseClient, key: string, row: { id: string; klaviyo_list_id: string; name: string }) {
+  // additional-fields[profile]=predictive_analytics waere Extra-Last; die
+  // Standardantwort enthaelt bereits location, properties, organization, title.
   let url = `/lists/${row.klaviyo_list_id}/profiles/?page[size]=100`
   let gesehen = 0, neu = 0, verknuepft = 0, seiten = 0
   while (url && seiten < 100) {                       // Sicherung gegen Endlosschleife
@@ -66,12 +77,34 @@ async function syncMembers(sb: SupabaseClient, key: string, row: { id: string; k
       const email = (p.attributes?.email ?? '').trim().toLowerCase()
       if (!email) continue
       gesehen++
+      const a = p.attributes ?? {}
+      // 1:1 uebernehmen: bekannte Felder in eigene Spalten, alles Uebrige roh in
+      // properties. Klaviyo liefert je Person unterschiedlich viel — mal nur Name
+      // und Mail, mal einen vollstaendigen Datensatz. Nichts soll verloren gehen.
+      const felder = {
+        first_name: a.first_name ?? null,
+        last_name:  a.last_name ?? null,
+        phone:      a.phone_number ?? null,
+        organization: a.organization ?? null,
+        title:      a.title ?? null,
+        city:       a.location?.city ?? null,
+        region:     a.location?.region ?? null,
+        country:    a.location?.country ?? null,
+        klaviyo_id: p.id,
+        properties: a.properties ?? null,
+        klaviyo_created_at: a.created ?? null,
+      }
       const { data: ex } = await sb.from('newsletter_subscribers').select('id').eq('email', email).maybeSingle()
       let subId = (ex as { id?: string } | null)?.id ?? null
-      if (!subId) {
+      if (subId) {
+        // Bestehende Adresse aktualisieren: ein spaeterer Lauf darf Daten
+        // ergaenzen, aber nichts Vorhandenes mit null ueberschreiben.
+        const patch: Record<string, unknown> = {}
+        for (const [k, v] of Object.entries(felder)) if (v !== null && v !== undefined) patch[k] = v
+        if (Object.keys(patch).length) await sb.from('newsletter_subscribers').update(patch).eq('id', subId)
+      } else {
         const { data: ins } = await sb.from('newsletter_subscribers').insert({
-          email, first_name: p.attributes?.first_name ?? null, last_name: p.attributes?.last_name ?? null,
-          source: `klaviyo:${row.name}`,
+          email, ...felder, source: `klaviyo:${row.name}`,
         }).select('id').single()
         subId = (ins as { id?: string } | null)?.id ?? null
         if (subId) neu++

@@ -62,7 +62,14 @@ export default function NewsletterLists() {
       if (d?.gefunden != null) {
         showToast(t('crm.lists.fetched', '{{n}} Listen bei Klaviyo gefunden, {{neu}} neu angelegt.', { n: d.gefunden, neu: d.neu ?? 0 }))
       } else {
-        showToast(t('crm.lists.synced', 'Abonnenten aktualisiert.'))
+        // Ergebnis je Liste zeigen — sonst weiss niemand, ob wirklich etwas ankam
+        // oder eine Liste still auf einen Fehler gelaufen ist.
+        const r = (d?.listen ?? []) as Array<{ liste?: string; gesehen?: number; neu?: number; fehler?: string }>
+        const fehler = r.filter(x => x.fehler)
+        const summe = r.reduce((n, x) => n + (x.neu ?? 0), 0)
+        showToast(fehler.length
+          ? t('crm.lists.syncedPartly', '{{n}} neue Adressen. {{f}} Liste(n) mit Fehler: {{msg}}', { n: summe, f: fehler.length, msg: fehler[0].fehler ?? '' })
+          : t('crm.lists.syncedN', '{{n}} neue Adressen übernommen.', { n: summe }))
       }
       await fetchAll()
     } catch (err) {
