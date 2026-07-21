@@ -254,7 +254,7 @@ Deno.serve(async (req: Request) => {
         } catch { /* Drive-Trigger fehlgeschlagen → drive_link bleibt wie gehabt */ }
       }
 
-      let emailSubject: string | null = null, emailBody: string | null = null, waText: string | null = null
+      let emailSubject: string | null = null, emailBody: string | null = null, waText: string | null = null, waImage: string | null = null
       if ((rule.message_type === 'email' || rule.message_type === 'both') && rule.email_template_id) {
         const { data: tpl } = await supabase.from('email_templates').select('subject, body, html_body').eq('id', rule.email_template_id).maybeSingle()
         if (tpl) {
@@ -268,8 +268,13 @@ Deno.serve(async (req: Request) => {
         }
       }
       if ((rule.message_type === 'whatsapp' || rule.message_type === 'both') && rule.whatsapp_event_type) {
-        const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
-        if (tpl) waText = substitute(tpl.message_template as string, ph)
+        const { data: tpl } = await supabase.from('whatsapp_templates').select('message_template, image_url').eq('event_type', rule.whatsapp_event_type).eq('active', true).single()
+        if (tpl) {
+          waText = substitute(tpl.message_template as string, ph)
+          // Bild der Vorlage mitnehmen — es muss den Weg durch die Warteschlange
+          // ueberstehen, genau wie der Text.
+          waImage = (tpl as { image_url?: string | null }).image_url ?? null
+        }
       }
       // Finanzierung DE: Bemerkung zum Kunden an die PARTNER-Mail (Christof) anhängen —
       // auch ohne {{...}}-Platzhalter. NICHT an die Kunden-Mail (recipient 'client'),
@@ -287,6 +292,7 @@ Deno.serve(async (req: Request) => {
       const { error: insertErr } = await supabase.from('scheduled_messages').insert({
         lead_id, deal_id: deal_id ?? null, type: effectiveType, event_type, status: 'pending',
         scheduled_at: scheduledAt.toISOString(), email_subject: emailSubject, email_body: emailBody, whatsapp_text: waText,
+        whatsapp_image_url: waImage,
         rule_id: rule.id, recipient: rule.recipient ?? 'client',
         appointment_condition: rule.appointment_condition ?? 'none',
       })

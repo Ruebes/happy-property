@@ -68,30 +68,30 @@ async function sendEmail(params: {
   }
 }
 
-// ── WhatsApp via Timelines API senden ─────────────────────────────────────────
+// ── WhatsApp senden — ueber send-whatsapp, NICHT direkt an Timelines ──────────
+// Vorher postete diese Datei selbst an die Timelines-API. Damit war der gesamte
+// Pipeline-, Drip- und Termin-Verkehr strukturell bildunfaehig: die komplette
+// Bild-Logik (Upload, Verkleinerung auf WebP, 2-MB-Guard, automatischer Anhang von
+// Deck-Titelbild bzw. YouTube-Vorschaubild) sitzt in send-whatsapp, und die wurde
+// hier nie berührt. Genau deshalb kam die Terminbestaetigung immer als nackter Text.
 async function sendWhatsApp(params: {
+  supabase:     SupabaseClient
   phone:        string
   message:      string
-  apiKey:       string
-  senderPhone:  string
+  name?:        string
+  imageUrl?:    string | null
 }): Promise<void> {
-  const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
-    method:  'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${params.apiKey}`,
+  const { data, error } = await params.supabase.functions.invoke('send-whatsapp', {
+    body: {
+      event_type: 'scheduled', override_text: params.message,
+      lead_data: { lead_name: params.name ?? 'Kunde', lead_phone: params.phone },
+      ...(params.imageUrl ? { file_url: params.imageUrl, file_name: 'bild.jpg' } : {}),
     },
-    body: JSON.stringify({
-      phone:                  params.phone,
-      whatsapp_account_phone: params.senderPhone,
-      text:                   params.message,
-    }),
   })
-  if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`Timelines API ${res.status}: ${body}`)
-  }
-  console.log(`[process-scheduled] ✓ WhatsApp an ${params.phone}`)
+  if (error) throw error
+  const r = data as { success?: boolean; results?: Array<{ ok?: boolean; status?: number }> } | null
+  if (!r?.success) throw new Error(`send-whatsapp: ${JSON.stringify(data)}`)
+  console.log(`[process-scheduled] ✓ WhatsApp an ${params.phone}${params.imageUrl ? ' (mit Bild)' : ''}`)
 }
 
 // ── Empfänger auflösen ────────────────────────────────────────────────────────
@@ -541,10 +541,11 @@ Deno.serve(async (req: Request) => {
           if (waApiKey && waSender) {
             try {
               await sendWhatsApp({
+                supabase,
                 phone,
-                message:     whatsappText ?? msg.whatsapp_text,
-                apiKey:      waApiKey,
-                senderPhone: waSender,
+                message:  whatsappText ?? msg.whatsapp_text,
+                name:     rcpt.name,
+                imageUrl: msg.whatsapp_image_url ?? null,
               })
               await logActivity(supabase, {
                 lead_id: msg.lead_id,
