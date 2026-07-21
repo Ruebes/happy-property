@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
+import WaImageField from '../../../../components/crm/WaImageField'
 import { supabase } from '../../../../lib/supabase'
 import { WA_FIELDS, WA_SAMPLE_DATA, substituteTemplate } from '../../../../lib/whatsapp'
 
@@ -17,6 +18,7 @@ interface WaTemplate {
   event_type:       string
   recipients:       Recipient[]
   message_template: string
+  image_url:        string | null
   included_fields:  string[]
   active:           boolean
   created_at:       string
@@ -72,6 +74,7 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
   const [recipients, setRecipients]           = useState<Recipient[]>(template.recipients)
   const [includedFields, setIncludedFields]   = useState<string[]>(template.included_fields)
   const [msgTemplate, setMsgTemplate]         = useState(template.message_template)
+  const [waImage, setWaImage]                 = useState<string | null>(template.image_url ?? null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -129,6 +132,7 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
           recipients:       recipients.filter(r => r.phone.trim()),
           included_fields:  includedFields,
           message_template: msgTemplate.trim(),
+          image_url:        waImage,
           updated_at:       new Date().toISOString(),
         })
         .eq('id', template.id)
@@ -326,6 +330,8 @@ function EditModal({ template, onClose, onSaved }: EditModalProps) {
               className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm
                          focus:outline-none focus:border-orange-400 resize-none font-mono leading-relaxed"
             />
+
+            <WaImageField value={waImage} onChange={setWaImage} />
 
             {/* Clickable placeholder chips */}
             {includedFields.length > 0 && (

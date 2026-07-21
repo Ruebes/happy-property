@@ -5,6 +5,7 @@ import { supabase } from '../../../../lib/supabase'
 import { DEAL_PHASES, PHASE_ICONS } from '../../../../lib/crmTypes'
 import type { AutomationRule, EmailTemplate, DealPhase } from '../../../../lib/crmTypes'
 import RecipientPicker from '../../../../components/crm/RecipientPicker'
+import WaImageField from '../../../../components/crm/WaImageField'
 
 // ── Stages = „Neuer Lead" + alle Pipeline-Phasen ────────────────────────────────
 // Die event_types entsprechen exakt dem, was die schedule-message Engine als
@@ -21,6 +22,7 @@ interface WaTpl {
   event_type:       string
   name:             string
   message_template: string
+  image_url:        string | null
   active:           boolean
 }
 
@@ -100,6 +102,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
   const [emailBody,   setEmailBody]   = useState(linkedEmail?.body ?? '')
   const [emailHtml,   setEmailHtml]   = useState(linkedEmail?.html_body ?? '')
   const [waText,      setWaText]      = useState(linkedWa?.message_template ?? '')
+  const [waImage,     setWaImage]     = useState<string | null>(linkedWa?.image_url ?? null)
   const [showHtml,    setShowHtml]    = useState<boolean>(!!linkedEmail?.html_body)
   const [showPreview, setShowPreview] = useState(false)
   const [copied,      setCopied]      = useState<string | null>(null)
@@ -177,6 +180,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
         if (waEventType && !waShared) {
           const { error: e } = await supabase.from('whatsapp_templates').update({
             message_template: waText.trim(),
+            image_url:        waImage,
             active:           true,
             updated_at:       new Date().toISOString(),
           }).eq('event_type', waEventType)
@@ -187,6 +191,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
             name:             `${stageLabel} · ${name.trim() || t('crm.stageEditor.step', 'Schritt')}`,
             event_type:       generated,
             message_template: waText.trim(),
+            image_url:        waImage,
             recipients:       [],
             included_fields:  [],
             active:           true,
@@ -352,6 +357,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
               <textarea rows={5} className={`${inputCls} font-mono resize-y`}
                 value={waText} onChange={e => setWaText(e.target.value)}
                 placeholder={t('crm.stageEditor.waPh', 'Hallo {{vorname}}, …')} />
+              <div className="mt-3"><WaImageField value={waImage} onChange={setWaImage} /></div>
             </div>
           )}
 
@@ -486,6 +492,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
   const [body,    setBody]    = useState('')
   const [html,    setHtml]    = useState('')
   const [waText,  setWaText]  = useState('')
+  const [waImage, setWaImage] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving,  setSaving]  = useState(false)
   const [preview, setPreview] = useState(false)
@@ -501,9 +508,9 @@ function SystemMessageModal({ event, onClose, onSaved }: {
         if (active && tpl) { setSubject(tpl.subject ?? ''); setBody(tpl.body ?? ''); setHtml(tpl.html_body ?? '') }
       }
       if (event.whatsappEventType) {
-        const { data } = await supabase.from('whatsapp_templates').select('message_template').eq('event_type', event.whatsappEventType).maybeSingle()
-        const tpl = data as { message_template?: string } | null
-        if (active && tpl) setWaText(tpl.message_template ?? '')
+        const { data } = await supabase.from('whatsapp_templates').select('message_template, image_url').eq('event_type', event.whatsappEventType).maybeSingle()
+        const tpl = data as { message_template?: string; image_url?: string | null } | null
+        if (active && tpl) { setWaText(tpl.message_template ?? ''); setWaImage(tpl.image_url ?? null) }
       }
       if (active) setLoading(false)
     }
@@ -525,7 +532,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
       } else if (tab === 'whatsapp' && event.whatsappEventType) {
         if (!waText.trim()) { setError(t('crm.sys.errWa', 'WhatsApp-Text ist Pflicht')); setSaving(false); return }
         const { error: e } = await supabase.from('whatsapp_templates')
-          .update({ message_template: waText.trim() }).eq('event_type', event.whatsappEventType)
+          .update({ message_template: waText.trim(), image_url: waImage }).eq('event_type', event.whatsappEventType)
         if (e) throw e
       }
       onSaved(t('crm.sys.saved', '✅ Vorlage gespeichert'))
@@ -605,6 +612,7 @@ function SystemMessageModal({ event, onClose, onSaved }: {
               <div>
                 <label className={labelCls}>{t('crm.sys.waText', 'WhatsApp-Text')} *</label>
                 <textarea rows={7} className={`${inputCls} resize-y`} value={waText} onChange={e => setWaText(e.target.value)} />
+                <div className="mt-3"><WaImageField value={waImage} onChange={setWaImage} /></div>
               </div>
             )}
 
@@ -756,7 +764,7 @@ export default function StageMessages() {
       const [r, e, w] = await Promise.all([
         supabase.from('automation_rules').select('*').order('delay_minutes'),
         supabase.from('email_templates').select('*'),
-        supabase.from('whatsapp_templates').select('id, event_type, name, message_template, active'),
+        supabase.from('whatsapp_templates').select('id, event_type, name, message_template, image_url, active'),
       ])
       setRules((r.data ?? []) as AutomationRule[])
       setEmailTpls((e.data ?? []) as EmailTemplate[])

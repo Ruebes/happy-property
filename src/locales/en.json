@@ -2967,6 +2967,13 @@
       "publish": "Create as ad (paused)",
       "published": "✅ Ad created (paused) — check via 👁 preview, then activate",
       "error": "That did not work"
+    },
+    "waImage": {
+      "label": "Image (optional)",
+      "add": "Upload image — shown as a card above the text",
+      "replace": "Replace image",
+      "remove": "Send without image",
+      "error": "Upload failed — please try again."
     }
   },
   "docs": {

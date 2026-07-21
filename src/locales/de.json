@@ -2967,6 +2967,13 @@
       "publish": "Als Anzeige anlegen (pausiert)",
       "published": "✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren",
       "error": "Das hat nicht geklappt"
+    },
+    "waImage": {
+      "label": "Bild (optional)",
+      "add": "Bild hochladen — wird als Karte über dem Text angezeigt",
+      "replace": "Bild tauschen",
+      "remove": "Ohne Bild senden",
+      "error": "Upload fehlgeschlagen — bitte nochmal versuchen."
     }
   },
   "docs": {
