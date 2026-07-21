@@ -17,6 +17,7 @@
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
+import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -463,6 +464,10 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     try { await admin.from('activities').insert({ lead_id: conv.lead_id, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Buchung fehlgeschlagen', content: `Termin ${slot.label} (${typeLabel}) konnte nicht gespeichert werden: ${apptErr?.message}. Bitte manuell eintragen.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
     return
   }
+
+  // Betrifft die Buchung den HEUTIGEN Tag? Dann Sven sofort Bescheid geben.
+  void notifyIfToday(admin, [slot.startIso],
+    `📅 Neuer Termin HEUTE um ${cyTime(slot.startIso)}\n\n${name || 'Kunde'}\n${typeLabel}${phone ? `\n${phone}` : ''}\n\n(vom Termin-Bot gebucht)`)
 
   // Pipeline → „Termin gebucht" (wenn ein Deal existiert)
   if (dealId) {

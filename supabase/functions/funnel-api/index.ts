@@ -11,6 +11,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { isInternalContact } from '../_shared/internalContact.ts'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
+import { notifyIfToday, cyTime, isTodayCy } from '../_shared/notifyToday.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -374,6 +375,14 @@ Deno.serve(async (req) => {
         source,
       }).select('id').single()
 
+      // Betrifft die Buchung den HEUTIGEN Tag? Dann Sven sofort Bescheid geben —
+      // spaetere Tage sieht er im Kalender.
+      if (!isInternal) {
+        void notifyIfToday(admin, [start.toISOString()],
+          `📅 Neuer Termin HEUTE um ${cyTime(start.toISOString())}\n\n${c.first_name} ${c.last_name ?? ''}`.trim()
+          + `\n${type === 'zoom' ? 'Zoom' : 'WhatsApp-Anruf'}${phone ? `\n${phone}` : ''}`)
+      }
+
       // Bestätigung über die editierbaren „Termin gebucht"-Vorlagen (Mail + WhatsApp).
       // Bei internen Buchungen bewusst nicht: das sind Kundenvorlagen.
       if (!isInternal) {
@@ -453,6 +462,8 @@ Deno.serve(async (req) => {
         } catch { /* egal */ }
         await notifySven(`❌ Terminabsage: ${leadName}`,
           `${leadName} hat den Termin am ${fmtDe(a.start_time)} abgesagt.${reason ? `\n\nGrund: ${reason}` : ''}`)
+        void notifyIfToday(admin, [a.start_time],
+          `❌ Absage für HEUTE ${cyTime(a.start_time)}\n\n${leadName} hat abgesagt.${reason ? `\nGrund: ${reason}` : ''}`)
         return json({ ok: true, cancelled: true })
       }
 
@@ -494,6 +505,16 @@ Deno.serve(async (req) => {
       } catch { /* egal */ }
       await notifySven(`🔄 Termin verschoben: ${leadName}`,
         `${leadName} hat den Termin verschoben:\nAlt: ${fmtDe(oldStart)}\nNeu: ${fmtDe(start.toISOString())}${a.zoom_link ? '\n\nZoom-Link bleibt unverändert.' : ''}`)
+      // Beide Daten pruefen: weggeschoben = Stunde wird heute frei, hergeschoben =
+      // eine kommt heute dazu. Beides muss Sven wissen.
+      {
+        const weg = isTodayCy(oldStart) && !isTodayCy(start.toISOString())
+        const her = !isTodayCy(oldStart) && isTodayCy(start.toISOString())
+        const txt = weg ? `🔄 HEUTE ${cyTime(oldStart)} fällt weg\n\n${leadName} hat auf ${fmtDe(start.toISOString())} verschoben.`
+                  : her ? `🔄 Neu HEUTE um ${cyTime(start.toISOString())}\n\n${leadName} hat von ${fmtDe(oldStart)} vorgezogen.`
+                  : `🔄 HEUTE verschoben: ${cyTime(oldStart)} → ${cyTime(start.toISOString())}\n\n${leadName}`
+        void notifyIfToday(admin, [oldStart, start.toISOString()], txt)
+      }
       return json({ ok: true, rescheduled: true, start_iso: start.toISOString() })
     }
 

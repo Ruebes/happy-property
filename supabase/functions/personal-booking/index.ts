@@ -10,6 +10,7 @@
 // Deploy: supabase functions deploy personal-booking --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { isInternalContact } from '../_shared/internalContact.ts'
+import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -223,6 +224,10 @@ Deno.serve(async (req) => {
         google_event_id: ev?.id ?? null, google_calendar_id: ev?.calId ?? null,
         attendees: [{ name, email: email ?? null, phone: phone ?? null }], created_by: lk.owner_id,
       }).select('id').single()
+
+      // Betrifft die Buchung den HEUTIGEN Tag? Dann Sven sofort Bescheid geben.
+      void notifyIfToday(admin, [startIso],
+        `📅 Neuer Termin HEUTE um ${cyTime(startIso)}\n\n${name}\n${typeLabel}${phone ? `\n${phone}` : ''}\n\n(über deinen persönlichen Link)`)
 
       const first = (name || '').split(' ')[0] || name
       const gcal = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(subject)}&dates=${startIso.replace(/[-:]/g, '').replace(/\.\d{3}/, '')}/${end.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}&details=${encodeURIComponent(desc)}${location ? `&location=${encodeURIComponent(location)}` : ''}`
