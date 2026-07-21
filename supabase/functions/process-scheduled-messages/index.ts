@@ -94,6 +94,21 @@ async function sendWhatsApp(params: {
   console.log(`[process-scheduled] ✓ WhatsApp an ${params.phone}${params.imageUrl ? ' (mit Bild)' : ''}`)
 }
 
+// Newsletter-Abonnent (Klaviyo-Liste): kein Lead, nur eine Mailadresse. Bewusst
+// getrennt gehalten — eine Webinar-Anmeldung ist kein Vertriebs-Lead und darf
+// weder Pipeline noch Auswertungen verschmutzen.
+async function resolveSubscriber(
+  supabase: ReturnType<typeof createClient>,
+  subscriberId: string,
+): Promise<{ email: string | null; phone: string | null; language: string }> {
+  const { data } = await supabase.from('newsletter_subscribers')
+    .select('email, optout_at').eq('id', subscriberId).maybeSingle()
+  const s = data as { email: string | null; optout_at: string | null } | null
+  // Abmeldung nach dem Einplanen: hier nochmal pruefen, sonst geht die Mail raus.
+  if (!s || s.optout_at) return { email: null, phone: null, language: 'de' }
+  return { email: s.email, phone: null, language: 'de' }
+}
+
 // ── Empfänger auflösen ────────────────────────────────────────────────────────
 // 'client' (Standard) → Lead. 'bc:<id>'/'dc:<id>' → fixer Kontakt.
 // Fehlender Kontakt → email/phone null (Versand schlägt sauber fehl, KEINE
@@ -325,6 +340,8 @@ Deno.serve(async (req: Request) => {
       bot_nudge_source: string | null
       rule_id:       string | null
       scheduled_at:  string
+      // Gesetzt bei Newsletter-Empfaengern aus einer Liste (kein CRM-Lead).
+      subscriber_id: string | null
     }[]) {
       let success = true
       const errors: string[] = []
@@ -372,12 +389,16 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
-      // Lead-E-Mail + Telefon für Versand laden
-      const { data: lead } = await supabase
-        .from('leads')
-        .select('email, phone, whatsapp, language')
-        .eq('id', msg.lead_id)
-        .single()
+      // Lead-E-Mail + Telefon für Versand laden. Newsletter-Abonnenten haben
+      // KEINEN Lead — dort wird der Empfaenger unten aus newsletter_subscribers
+      // aufgeloest, der Lead-Schritt wird uebersprungen.
+      const { data: lead } = msg.subscriber_id
+        ? { data: { email: null, phone: null, whatsapp: null, language: 'de' } }
+        : await supabase
+          .from('leads')
+          .select('email, phone, whatsapp, language')
+          .eq('id', msg.lead_id)
+          .single()
 
       if (!lead) {
         await supabase
@@ -456,8 +477,11 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      // Empfänger auflösen: 'client' = Lead, sonst fixer Kontakt (bc:/dc:)
-      const rcpt = await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
+      // Empfänger auflösen: Abonnent (Newsletter-Liste) hat Vorrang, sonst
+      // 'client' = Lead bzw. fixer Kontakt (bc:/dc:).
+      const rcpt = msg.subscriber_id
+        ? await resolveSubscriber(supabase, msg.subscriber_id)
+        : await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
 
       // In Empfängersprache übersetzen (nur wenn ≠ de → sonst 1:1 Original).
       const loc = await translateOutbound(

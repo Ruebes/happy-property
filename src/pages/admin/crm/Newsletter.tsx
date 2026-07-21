@@ -111,6 +111,11 @@ export default function Newsletter() {
   const [props, setProps] = useState<WizProperty[]>([])
   const [showPicker, setShowPicker] = useState(false)
   const [audience, setAudience] = useState<number | null>(null)
+  // Empfaengerlisten (Klaviyo-Import). Standard 'all': normalerweise bekommen alle
+  // den Newsletter — Sven schraenkt nur im Ausnahmefall ein.
+  const [lists, setLists] = useState<Array<{ id: string; name: string; anzahl: number }>>([])
+  const [listMode, setListMode] = useState<'all' | 'include' | 'exclude'>('all')
+  const [listIds, setListIds] = useState<string[]>([])
   const [busyKey, setBusyKey] = useState<string>('')      // welcher Button arbeitet gerade
   const [toast, setToast] = useState('')
   const [status, setStatus] = useState<{ status: string; total: number; done: number; error?: string | null } | null>(null)
@@ -133,10 +138,22 @@ export default function Newsletter() {
 
   useEffect(() => {
     void fetchPast()
-    supabase.functions.invoke('newsletter-campaign', { body: { action: 'audience' } })
+    void (async () => {
+      const { data } = await supabase.from('newsletter_lists')
+        .select('id, name, newsletter_list_members(count)').eq('active', true).order('name')
+      // deno-lint-ignore no-explicit-any
+      setLists(((data ?? []) as any[]).map(l => ({
+        id: l.id, name: l.name, anzahl: l.newsletter_list_members?.[0]?.count ?? 0,
+      })))
+    })()
+  }, [fetchPast])
+
+  // Zielgruppen-Zahl haengt an der Listenauswahl → bei Aenderung neu holen.
+  useEffect(() => {
+    supabase.functions.invoke('newsletter-campaign', { body: { action: 'audience', list_mode: listMode, list_ids: listIds } })
       .then(({ data }) => setAudience((data as { total?: number } | null)?.total ?? null))
       .catch(() => setAudience(null))
-  }, [fetchPast])
+  }, [listMode, listIds])
 
   // Kampagne in DB speichern (upsert) — Edge liest daraus
   const saveCampaign = useCallback(async (): Promise<string | null> => {
@@ -153,6 +170,8 @@ export default function Newsletter() {
         master_deck_token: p.master_deck_token, calc_token: p.calc_token,
         params: p.params ?? null,
       })),
+      list_mode: listMode,
+      list_ids: listIds,
       created_by: profile?.id ?? null,
       updated_at: new Date().toISOString(),
     }
@@ -423,6 +442,45 @@ export default function Newsletter() {
           <p className="text-sm text-gray-500 mt-1">
             {t('crm.newsletter.subtitle', 'Persönliche Einzel-Mails an alle Kontakte ohne aktiven Deal — mit eigenem Deck je Empfänger, zeitversetzt (08–20 Uhr, ~alle 3 Min).')}
             {audience != null && <> · <strong>{t('crm.newsletter.audience', '{{n}} Empfänger', { n: audience })}</strong></>}
+          </p>
+        </div>
+
+        {/* ── Empfängerlisten ── */}
+        <div className={card}>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-semibold text-gray-800">{t('crm.newsletter.lists', 'Empfänger')}</h2>
+            <a href="/admin/crm/settings/lists" className="text-xs font-medium hover:underline" style={{ color: '#ff795d' }}>
+              {t('crm.newsletter.manageLists', 'Listen verwalten')}
+            </a>
+          </div>
+          <select
+            value={listMode}
+            onChange={e => { const v = e.target.value as 'all' | 'include' | 'exclude'; setListMode(v); if (v === 'all') setListIds([]) }}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-orange-400"
+          >
+            <option value="all">{t('crm.newsletter.modeAll', 'Alle — Kunden und alle Listen (Standard)')}</option>
+            <option value="include">{t('crm.newsletter.modeInclude', 'Nur bestimmte Listen (plus Kunden)')}</option>
+            <option value="exclude">{t('crm.newsletter.modeExclude', 'Alle außer bestimmten Listen')}</option>
+          </select>
+
+          {listMode !== 'all' && (
+            <div className="mt-3 space-y-1.5">
+              {lists.length === 0 ? (
+                <p className="text-xs text-gray-400">{t('crm.newsletter.noLists', 'Noch keine Listen freigeschaltet — unter „Listen verwalten" aus Klaviyo holen.')}</p>
+              ) : lists.map(l => (
+                <label key={l.id} className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox" checked={listIds.includes(l.id)}
+                    onChange={e => setListIds(ids => e.target.checked ? [...ids, l.id] : ids.filter(x => x !== l.id))}
+                    className="rounded border-gray-300"
+                  />
+                  {l.name} <span className="text-xs text-gray-400">({l.anzahl})</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <p className="text-[11px] text-gray-400 mt-2">
+            {t('crm.newsletter.listsHint', 'Kunden aus dem CRM sind immer dabei. Doppelte Adressen werden nur einmal angeschrieben.')}
           </p>
         </div>
 

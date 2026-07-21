@@ -230,6 +230,37 @@ async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Prom
   return out
 }
 
+// Empfaenger aus den Newsletter-Listen (Klaviyo-Import). Diese Leute sind KEINE
+// CRM-Leads — bewusst getrennt, eine Webinar-Anmeldung ist kein Vertriebskontakt.
+// list_mode: 'all' = alle Listen (Standard), 'include' = nur die gewaehlten,
+// 'exclude' = alle ausser den gewaehlten.
+async function loadListAudience(
+  sb: SupabaseClient, mode: string, ids: string[],
+): Promise<Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string }>> {
+  // Nur freigegebene Listen: frisch aus Klaviyo geholte sind inaktiv, bis Sven sie
+  // freischaltet — sonst ginge eine neue Liste beim naechsten Versand ungefragt mit.
+  const { data: lists } = await sb.from('newsletter_lists').select('id').eq('active', true)
+  let listIds = ((lists ?? []) as Array<{ id: string }>).map(l => l.id)
+  if (mode === 'include') listIds = listIds.filter(id => ids.includes(id))
+  if (mode === 'exclude') listIds = listIds.filter(id => !ids.includes(id))
+  if (!listIds.length) return []
+
+  const { data: members } = await sb.from('newsletter_list_members').select('subscriber_id').in('list_id', listIds)
+  const subIds = [...new Set(((members ?? []) as Array<{ subscriber_id: string }>).map(m => m.subscriber_id))]
+  if (!subIds.length) return []
+
+  const out: Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string }> = []
+  // In Bloecken laden: .in() mit tausenden IDs sprengt sonst die URL-Laenge.
+  for (let i = 0; i < subIds.length; i += 200) {
+    const { data: subs } = await sb.from('newsletter_subscribers')
+      .select('id, email, first_name, last_name').in('id', subIds.slice(i, i + 200)).is('optout_at', null)
+    for (const s of ((subs ?? []) as Array<{ id: string; email: string | null; first_name: string | null; last_name: string | null }>)) {
+      if (s.email && s.email.includes('@')) out.push({ subscriber_id: s.id, first_name: s.first_name, last_name: s.last_name, email: s.email })
+    }
+  }
+  return out
+}
+
 // Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
 async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string }>> {
   const [{ data: leads }, { data: deals }, { data: optouts }] = await Promise.all([
@@ -253,15 +284,34 @@ Deno.serve(async (req: Request) => {
       lead_id?: string
       deck_token?: string
       campaign_id?: string; to?: string; start_at?: string
+      list_mode?: string; list_ids?: string[]
       project_name?: string; bullets?: string
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
     }
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
+    // Leads UND Listen-Abonnenten, ueber die E-Mail entdoppelt: wer beides ist,
+    // zaehlt einmal — als Lead (der hat die reichhaltigeren Daten).
+    const combined = async (mode: string, ids: string[]) => {
+      const leads = await loadAudience(sb)
+      const subs = await loadListAudience(sb, mode, ids)
+      const seen = new Set(leads.map(l => l.email.trim().toLowerCase()))
+      const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string }> =
+        leads.map(l => ({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email }))
+      for (const s of subs) {
+        const key = s.email.trim().toLowerCase()
+        if (seen.has(key)) continue
+        seen.add(key)
+        merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: s.email })
+      }
+      return merged
+    }
+
     // ── Zielgruppen-Zähler (Wizard-Anzeige) ──────────────────────────────────
     if (body.action === 'audience') {
-      const audience = await loadAudience(sb)
-      return json({ ok: true, total: audience.length })
+      const list = await combined(body.list_mode ?? 'all', body.list_ids ?? [])
+      const nurLeads = list.filter(x => x.lead_id).length
+      return json({ ok: true, total: list.length, leads: nurLeads, abonnenten: list.length - nurLeads })
     }
 
     // ── KI-Text aus Stichpunkten ─────────────────────────────────────────────
@@ -420,7 +470,7 @@ Deno.serve(async (req: Request) => {
       if (!camp.subject?.trim()) return json({ error: 'Betreff fehlt' }, 400)
       if (!properties.length || properties.some(p => !p.master_deck_token)) return json({ error: 'Master-Decks fehlen' }, 400)
 
-      const audience = await loadAudience(sb)
+      const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[])
       if (!audience.length) return json({ error: 'Zielgruppe ist leer' }, 400)
       await sb.from('newsletter_campaigns').update({ status: 'launching', recipients_total: audience.length, recipients_done: 0, updated_at: new Date().toISOString() }).eq('id', camp.id)
       const projectImages = await loadProjectImages(sb, properties.map((p: CampaignProperty) => p.project_id))
@@ -454,35 +504,38 @@ Deno.serve(async (req: Request) => {
                 const token = randToken()
                 const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
                 const { error: ie } = await sb.from('sales_decks').insert({
-                  token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
+                  // Abonnenten aus einer Liste haben keinen Lead — Deck bleibt ohne
+                  // Lead-Bezug, der Link funktioniert trotzdem ueber den Token.
+                  token, lead_id: lead.lead_id, project_id: master.project_id, angle: master.angle,
                   status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
                   content: JSON.parse(contentStr),
                 })
-                if (ie) { console.error(`[newsletter] Deck-Klon ${lead.id}/${p.project_name}:`, ie.message); continue }
+                if (ie) { console.error(`[newsletter] Deck-Klon ${lead.email}/${p.project_name}:`, ie.message); continue }
                 deckTokens[p.project_id] = token
               }
               // Mail NUR planen, wenn ALLE Deck-Links da sind — lieber auslassen
               // als eine Mail ohne das versprochene Exposé verschicken.
               if (Object.keys(deckTokens).length !== properties.length) {
                 skipped++
-                console.error(`[newsletter] ${lead.id}: unvollständige Decks — Empfänger übersprungen`)
+                console.error(`[newsletter] ${lead.email}: unvollständige Decks — Empfänger übersprungen`)
                 continue
               }
               const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
               const subject = String(camp.subject).split('{{vorname}}').join(first)
               const { error: se } = await sb.from('scheduled_messages').insert({
-                lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+                lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
+                type: 'email', event_type: 'newsletter', campaign_id: camp.id,
                 status: 'pending', scheduled_at: slot.toISOString(),
                 email_subject: subject, email_body: html,
                 recipient: 'client', appointment_condition: 'none',
               })
-              if (se) { skipped++; console.error(`[newsletter] Mail-Planung ${lead.id}:`, se.message); continue }
+              if (se) { skipped++; console.error(`[newsletter] Mail-Planung ${lead.email}:`, se.message); continue }
               slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
               done++
               if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
             } catch (leadErr) {
               skipped++
-              console.error(`[newsletter] Empfänger ${lead.id} übersprungen:`, leadErr)
+              console.error(`[newsletter] Empfänger ${lead.email} übersprungen:`, leadErr)
             }
           }
           await sb.from('newsletter_campaigns').update({

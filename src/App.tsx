@@ -52,6 +52,7 @@ const CrmStageMessages      = lazy(() => import('./pages/admin/crm/settings/Stag
 const CrmAiAgent            = lazy(() => import('./pages/admin/crm/settings/AiAgent'))
 const CrmDocuments          = lazy(() => import('./pages/admin/crm/settings/Documents'))
 const CrmContacts           = lazy(() => import('./pages/admin/crm/settings/Contacts'))
+const CrmNewsletterLists   = lazy(() => import('./pages/admin/crm/settings/NewsletterLists'))
 const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
 const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
@@ -170,6 +171,7 @@ export default function App() {
             {/* ── Kontakte (Recht 'contacts') — Geschäftskontakte, Developer & Mitarbeiter ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="contacts" />}>
               <Route path="/admin/crm/settings/contacts"    element={<CrmContacts />} />
+              <Route path="/admin/crm/settings/lists"       element={<CrmNewsletterLists />} />
             </Route>
 
             {/* ── Rechnungen (Recht 'invoices') ── */}
