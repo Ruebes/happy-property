@@ -137,11 +137,11 @@ export default function AiAgent() {
     }
   }
 
-  // HAPPY klinkt sich bei Terminanfragen ein (crm_settings 'booking_bot_auto_engage').
+  // Lotte klinkt sich bei Terminanfragen ein (crm_settings 'booking_bot_auto_engage').
   const toggleAutoEngage = async () => {
     const next = !autoEngage
     if (next && !window.confirm(t('crm.aiAgent.aeConfirm',
-      'Fragt ein Kunde im WhatsApp-Chat nach einem Termin/Anruf, klinkt sich HAPPY (Svens virtuelle Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor — auch mitten in einem laufenden Gespräch. Fachliche Fragen bleiben bei dir. Jetzt scharfschalten?'))) {
+      'Fragt ein Kunde im WhatsApp-Chat nach einem Termin/Anruf, klinkt sich Lotte (Svens persönliche Assistentin) automatisch ein, stellt sich kurz vor und schlägt freie Zeiten vor — auch mitten in einem laufenden Gespräch. Fachliche Fragen bleiben bei dir. Jetzt scharfschalten?'))) {
       return
     }
     setAeSaving(true)
@@ -151,7 +151,7 @@ export default function AiAgent() {
       if (error) { showToast(`❌ ${error.message}`); return }
       setAutoEngage(next)
       showToast(next
-        ? t('crm.aiAgent.aeOn',  '✅ HAPPY klinkt sich bei Terminanfragen ein')
+        ? t('crm.aiAgent.aeOn',  '✅ Lotte klinkt sich bei Terminanfragen ein')
         : t('crm.aiAgent.aeOff', 'Auto-Einklinken aus'))
     } finally {
       setAeSaving(false)
@@ -358,12 +358,12 @@ export default function AiAgent() {
             {t('crm.aiAgent.botCalendarNote', 'Voraussetzung: Dein Google-Kalender muss für die Service-Adresse freigegeben sein (Einstellungen → Integrationen), sonst kennt der Bot deine freien Zeiten nicht.')}
           </div>
 
-          {/* HAPPY klinkt sich bei Terminanfragen ein */}
+          {/* Lotte klinkt sich bei Terminanfragen ein */}
           <div className="border-t border-gray-100 pt-4 flex items-start justify-between gap-4">
             <div>
-              <h3 className="text-sm font-semibold text-gray-700">🌸 {t('crm.aiAgent.aeTitle', 'HAPPY klinkt sich bei Terminanfragen ein')}</h3>
+              <h3 className="text-sm font-semibold text-gray-700">🌸 {t('crm.aiAgent.aeTitle', 'Lotte klinkt sich bei Terminanfragen ein')}</h3>
               <p className="text-xs text-gray-500 mt-1 leading-relaxed">
-                {t('crm.aiAgent.aeDesc', 'Fragt ein Kunde mitten im Chat nach einem Termin/Anruf, stellt sich HAPPY (Svens virtuelle Assistentin) kurz vor und schlägt sofort freie Zeiten vor — auch während ein persönliches Gespräch läuft. Fachliche Fragen bleiben bei dir. Den HAPPY-Text bearbeitest du bei den Bot-Nachrichten. Wirkt nur, wenn der Termin-Bot oben AN ist.')}
+                {t('crm.aiAgent.aeDesc', 'Fragt ein Kunde mitten im Chat nach einem Termin/Anruf, stellt sich Lotte (Svens persönliche Assistentin) kurz vor und schlägt sofort freie Zeiten vor — auch während ein persönliches Gespräch läuft. Fachliche Fragen bleiben bei dir. Den Lottes Text bearbeitest du bei den Bot-Nachrichten. Wirkt nur, wenn der Termin-Bot oben AN ist.')}
               </p>
             </div>
             <button

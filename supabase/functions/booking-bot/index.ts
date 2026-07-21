@@ -241,18 +241,45 @@ async function createCalendarEvent(admin: SupabaseClient, ev: { title: string; s
 // ── WhatsApp senden (Timelines) ──────────────────────────────────────────────
 // Verabschiedung an jede AUSGEHENDE Bot-WhatsApp anhängen (Sven-Wunsch), aber nur,
 // wenn nicht schon eine Grußformel drinsteht (kein Doppel-„LG").
+// ── Lotte ────────────────────────────────────────────────────────────────────
+// Der Bot tritt als „Lotte, Svens persoenliche Assistentin" auf (Svens Hund).
+// Jede Nachricht traegt ein zufaelliges Buero-Bild von ihr. Das macht sichtbar,
+// dass hier eine Assistentin schreibt und kein Mensch — und nimmt einem Fehlgriff
+// des Bots die Schaerfe.
+const LOTTE_BILDER = [
+  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg',
+  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte2.jpg',
+  'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte3.jpg',
+]
+const lotteBild = () => LOTTE_BILDER[Math.floor(Math.random() * LOTTE_BILDER.length)]
+
 function withSignoff(text: string): string {
-  return /(liebe grüße|viele grüße|beste grüße|\blg\b|bis dann)/i.test(text) ? text : `${text}\n\nLiebe Grüße\nSven`
+  // Vorhandene Gruesse nicht doppeln — einige Texte signieren selbst.
+  return /(liebe grüße|viele grüße|beste grüße|\blg\b|bis dann)/i.test(text) ? text : `${text}\n\nLiebe Grüße\nLotte 🐾`
 }
+
+// Ein Client fuer den Versand. Bewusst modulweit und faul angelegt: sendWa hat
+// 22 Aufrufstellen, die sonst alle den admin-Client durchreichen muessten.
+let sbSend: SupabaseClient | null = null
+const sendClient = () => (sbSend ??= createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
+
 async function sendWa(phone: string, text: string): Promise<void> {
-  const apiKey = Deno.env.get('TIMELINES_API_KEY') ?? '', sender = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
   const full = withSignoff(text)
-  if (!apiKey || !sender) { console.warn('[booking-bot] Timelines nicht konfiguriert – simuliert:', full.slice(0, 60)); return }
-  const r = await fetch('https://app.timelines.ai/integrations/api/messages', {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ phone, whatsapp_account_phone: sender, text: full }),
+  // Ueber send-whatsapp statt direkt an Timelines: nur dort sitzen Bild-Upload,
+  // Verkleinerung, JPEG-Wandlung und der 2-MB-Guard.
+  const { data, error } = await sendClient().functions.invoke('send-whatsapp', {
+    body: {
+      event_type: 'booking_bot', override_text: full,
+      lead_data: { lead_name: 'Kunde', lead_phone: phone },
+      file_url: lotteBild(), file_name: 'lotte.jpg',
+    },
   })
-  if (!r.ok) throw new Error(`Timelines ${r.status}: ${await r.text()}`)
+  if (error) throw new Error(`send-whatsapp: ${error.message}`)
+  const r = data as { success?: boolean; attached?: boolean } | null
+  if (!r?.success) throw new Error(`send-whatsapp: ${JSON.stringify(data)}`)
+  // attached=false heisst: Text kam an, Bild nicht. Kein Abbruch — aber sichtbar,
+  // sonst faellt ein dauerhaft kaputtes Bild nie auf.
+  if (!r.attached) console.warn('[booking-bot] Lotte-Bild fehlte bei', phone)
 }
 async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: 'inbound' | 'outbound'): Promise<void> {
   const content = (dir === 'outbound' ? withSignoff(text) : text).slice(0, 2000)
@@ -503,8 +530,8 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
   }
 
   const confirm = type === 'zoom'
-    ? `Perfekt, ${name || 'ich freu mich'}! ✅ Unser Zoom-Termin steht: ${slot.label} Uhr (deutsche Zeit).${zoomLink ? `\n\nZoom-Link: ${zoomLink}` : '\n\nDen Zoom-Link schicke ich dir rechtzeitig vorher.'}${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Sven`
-    : `Perfekt, ${name || 'ich freu mich'}! ✅ Termin steht: ${slot.label} Uhr (deutsche Zeit). Ich rufe dich dann über WhatsApp an.${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Sven`
+    ? `Perfekt${name ? `, ${name}` : ''}! ✅ Dein Zoom-Termin mit Sven steht: ${slot.label} Uhr (deutsche Zeit).${zoomLink ? `\n\nZoom-Link: ${zoomLink}` : '\n\nDen Zoom-Link schicke ich dir rechtzeitig vorher.'}${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Lotte 🐾`
+    : `Perfekt${name ? `, ${name}` : ''}! ✅ Dein Termin mit Sven steht: ${slot.label} Uhr (deutsche Zeit). Er ruft dich dann über WhatsApp an.${lead.email ? '\n\nEine Bestätigung mit Kalender-Eintrag ist auch per Mail unterwegs.' : ''}\n\nBis dann! Liebe Grüße, Lotte 🐾`
   await setConv(admin, conv.id, { state: 'booked', meeting_type: type, last_message: confirm })
   await sendWa(phone, confirm); await logWa(admin, conv.lead_id, confirm, 'outbound')
 }
@@ -720,7 +747,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     const wake = new Date(until.getTime() + 864e5)
     const dLbl = until.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' })
     // Anrede bewusst Singular: der Chat ist 1:1, auch wenn der Kunde von „wir" spricht.
-    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — nimm dir in Ruhe die Zeit. 🙂\n\nIch melde mich nach ${dLbl} nochmal, falls ich bis dahin nichts von dir gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nSven`
+    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — nimm dir in Ruhe die Zeit. 🙂\n\nIch melde mich nach ${dLbl} nochmal, falls ich bis dahin nichts von dir gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nLotte 🐾`
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
     await setConv(admin, c.id, {
       state: 'snoozed', snoozed_until: wake.toISOString(), attempts: 0, last_message: m,
@@ -927,12 +954,10 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
     ? await computeSlots(admin, 2, { dayHint: det.day_hint ?? undefined, daypart: det.daypart ?? undefined, timeHint: det.time_hint ?? undefined, onDate: det.on_date ?? undefined, afterDate: det.after_date ?? undefined })
     : await computeSlotsAmPm(admin)
   if (slots.length < 1) return json({ ok: true, skipped: 'no_slots' })
-  // HAPPY stellt sich vor (editierbar: booking_bot_messages key 'chat_request_0').
-  const fallback = 'Hallo {{vorname}} 🌸 Ich bin HAPPY, Svens virtuelle Assistentin — ich helfe dir schnell zu einem Termin mit Sven. Was hältst du von:'
+  // Lotte stellt sich vor (editierbar: booking_bot_messages key 'chat_request_0').
+  const fallback = 'Hallo {{vorname}} 🐾 Ich bin Lotte, Svens persönliche Assistentin — ich helfe dir schnell zu einem Termin mit Sven. Was hältst du von:'
   const intro = fillName(await botText(admin, 'chat_request_0', fallback), l.first_name)
-  // HAPPY signiert selbst (die Signatur-Erkennung in withSignoff verhindert das
-  // globale „Liebe Grüße, Sven" — sonst spräche HAPPY, würde aber als Sven grüßen).
-  const msg = buildProposal(intro, slots, false) + '\n\nLiebe Grüße\nHAPPY 🌸'
+  const msg = buildProposal(intro, slots, false)
   await admin.from('booking_conversations').insert({ lead_id: leadId, source: 'chat_request', state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: new Date(Date.now() + 4 * 24 * 3600e3).toISOString() })
   await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
   return json({ ok: true, engaged: true, slots: slots.length })

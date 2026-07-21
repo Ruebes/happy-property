@@ -2203,10 +2203,10 @@
       "botStep4": "Appointment gets booked (calendar + Zoom link) + confirmation is sent. If confused: hands over to you.",
       "botCalendarNote": "Prerequisite: your Google Calendar must be shared with the service address (Settings → Integrations), otherwise the bot cannot see your free times.",
       "botLiveWarn": "Active: the bot has REAL WhatsApp conversations with real customers and books real appointments. To stop, switch it back off.",
-      "aeTitle": "HAPPY jumps in on appointment requests",
-      "aeDesc": "As soon as an appointment/call comes up in the chat — from the customer OR from you — HAPPY (Sven's virtual assistant) briefly introduces herself, proposes free times and books. The bot does NOT handle on-site appointments (viewings) — you schedule those yourself. Factual questions stay with you. Edit HAPPY's text under the bot messages. Only works when the appointment bot above is ON.",
-      "aeConfirm": "As soon as an appointment/call comes up in the WhatsApp chat — from the customer or from you — HAPPY (Sven's virtual assistant) automatically jumps in, briefly introduces herself and proposes free times (even mid-conversation). The bot does NOT handle on-site appointments/viewings. Enable permanently now?",
-      "aeOn": "✅ HAPPY jumps in on appointment requests",
+      "aeTitle": "Lotte jumps in on appointment requests",
+      "aeDesc": "As soon as an appointment/call comes up in the chat — from the customer OR from you — Lotte (Sven's personal assistant) briefly introduces herself, proposes free times and books. The bot does NOT handle on-site appointments (viewings) — you schedule those yourself. Factual questions stay with you. Edit Lotte's text under the bot messages. Only works when the appointment bot above is ON.",
+      "aeConfirm": "As soon as an appointment/call comes up in the WhatsApp chat — from the customer or from you — Lotte (Sven's personal assistant) automatically jumps in, briefly introduces herself and proposes free times (even mid-conversation). The bot does NOT handle on-site appointments/viewings. Enable permanently now?",
+      "aeOn": "✅ Lotte jumps in on appointment requests",
       "aeOff": "Auto-engage off"
     },
     "settings": {
