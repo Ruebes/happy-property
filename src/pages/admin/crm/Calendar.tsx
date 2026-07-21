@@ -224,7 +224,8 @@ export default function CrmCalendar() {
   const daysLong  = useMemo(() => buildDayNames(locale, 'long'),  [locale])
   const months    = useMemo(() => buildMonthNames(locale),        [locale])
 
-  const [view, setView]               = useState<CalView>('month')
+  // Tagesansicht als Standard — Sven arbeitet mit dem heutigen Tag, nicht dem Monat.
+  const [view, setView]               = useState<CalView>('day')
   const [currentDate, setCurrentDate] = useState<Date>(new Date())
   const [appointments, setAppointments] = useState<CrmAppointment[]>([])
   const [googleEvents, setGoogleEvents] = useState<GoogleCalendarEvent[]>([])
@@ -664,7 +665,9 @@ export default function CrmCalendar() {
                         {formatTime(appt.start_time)}
                       </p>
                       <p className="text-xs font-semibold text-gray-800 truncate">{appt.title}</p>
-                      <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
+                      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                        <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                      </div>
                     </div>
                   )
                 })() : (() => {
@@ -765,7 +768,9 @@ export default function CrmCalendar() {
                       {formatTimeRange(appt.start_time, appt.end_time)}
                     </p>
                   </div>
-                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                  </div>
                 </div>
                 {appt.zoom_link && (
                   <a
@@ -862,7 +867,9 @@ export default function CrmCalendar() {
               </span>
               <p className="text-base font-bold text-gray-900 font-body pr-6">{appt.title}</p>
               <div className="mt-1">
-                <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <> <SourceBadge source={appt.source!} /></>}
+                <div className="inline-flex items-center gap-1.5">
+                  <TypeBadge type={appt.type} t={t} />{apptChannel(appt) && <SourceBadge source={appt.source!} />}
+                </div>
                 {appt.rsvps && Object.keys(appt.rsvps).length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {Object.entries(appt.rsvps).map(([k, r]) => (

@@ -16,6 +16,7 @@
 //          TIMELINES_WA_SENDER (+ Standard SUPABASE_*)
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { nextApptTitle } from '../_shared/apptTitle.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -431,7 +432,8 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
     } catch (e) { console.warn('[booking-bot] Zoom-Erstellung fehlgeschlagen:', e) }
   }
   const desc = `Automatisch gebucht via WhatsApp-Terminbot.\nKunde: ${name}\nArt: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
-  const cal = await createCalendarEvent(admin, { title: `Beratung – ${name || 'Lead'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp'})`, startIso: slot.startIso, endIso: slot.endIso, description: desc })
+  const apptTitle = await nextApptTitle(admin, conv.lead_id, name || 'Lead', slot.startIso)
+  const cal = await createCalendarEvent(admin, { title: `${apptTitle} (${type === 'zoom' ? 'Zoom' : 'WhatsApp'})`, startIso: slot.startIso, endIso: slot.endIso, description: desc })
 
   // Deal ermitteln: der am Gespräch (no_show/erstkontakt) — sonst der aktive Deal
   // des Leads (z.B. bei Deck-Buchung), damit die Pipeline korrekt wandert.
@@ -444,7 +446,7 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
   // CRM-Termin (AFTER-INSERT-Trigger schließt Gespräch + stoppt Nudges). Fehler
   // NICHT verschlucken — sonst bestätigt der Bot fälschlich einen ungebuchten Termin.
   const { data: apptRow, error: apptErr } = await admin.from('crm_appointments').insert({
-    title: `Beratungsgespräch – ${name || 'Lead'}`, type, start_time: slot.startIso, end_time: slot.endIso,
+    title: apptTitle, type, start_time: slot.startIso, end_time: slot.endIso,
     lead_id: conv.lead_id, deal_id: dealId, zoom_link: zoomLink || null,
     phone_number: type === 'whatsapp' ? phone : null,
     google_event_id: cal?.id ?? null, google_calendar_id: cal?.calId ?? null,

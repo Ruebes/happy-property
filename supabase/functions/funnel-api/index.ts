@@ -10,6 +10,7 @@
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { isInternalContact } from '../_shared/internalContact.ts'
+import { nextApptTitle } from '../_shared/apptTitle.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -333,11 +334,14 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Titel mit Zaehlung: Erstgespraech bzw. N. Folgetermin.
+      const apptTitle = await nextApptTitle(admin, leadId, c.first_name, start.toISOString())
+
       // Zoom-Meeting (nur bei Zoom-Terminart)
       let zoomLink: string | null = null
       if (type === 'zoom') {
         try {
-          const { data: z } = await admin.functions.invoke('create-zoom-meeting', { body: { title: `Beratungsgespräch – ${c.first_name}`, start_time: start.toISOString(), duration_minutes: SLOT_MIN } })
+          const { data: z } = await admin.functions.invoke('create-zoom-meeting', { body: { title: apptTitle, start_time: start.toISOString(), duration_minutes: SLOT_MIN } })
           zoomLink = (z as { join_url?: string } | null)?.join_url ?? null
         } catch (e) { console.warn('[funnel-api] Zoom fehlgeschlagen:', e) }
       }
@@ -350,7 +354,7 @@ Deno.serve(async (req) => {
         const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`, {
           method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            summary: `${sourceLabel ? `[${sourceLabel}] ` : ''}Beratungsgespräch – ${c.first_name} ${c.last_name ?? ''}`.trim(),
+            summary: `${sourceLabel ? `[${sourceLabel}] ` : ''}${apptTitle} ${c.last_name ?? ''}`.trim(),
             description: `${sourceLabel ? `Über ${sourceLabel.toUpperCase()} gebucht` : 'Über den Website-Funnel gebucht'} (${type === 'zoom' ? 'Zoom' : 'WhatsApp-Call'})${zoomLink ? `\nZoom: ${zoomLink}` : ''}\nTel: ${phone}\nMail: ${email}`,
             start: { dateTime: start.toISOString(), timeZone: TZ_CY }, end: { dateTime: end.toISOString(), timeZone: TZ_CY },
           }),
@@ -362,7 +366,7 @@ Deno.serve(async (req) => {
       // CRM-Termin
       const { data: appt } = await admin.from('crm_appointments').insert({
         lead_id: isInternal ? null : leadId, deal_id: dealId, internal: isInternal,
-        title: `Beratungsgespräch – ${c.first_name}`,
+        title: apptTitle,
         description: 'Über den Website-Funnel gebucht', type,
         start_time: start.toISOString(), end_time: end.toISOString(),
         zoom_link: zoomLink, phone_number: type === 'whatsapp' ? phone : null,
