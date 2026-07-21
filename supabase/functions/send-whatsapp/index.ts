@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
@@ -180,24 +181,31 @@ Deno.serve(async (req) => {
       }
       if (attachUrl && !fileUidCache) {
         try {
-          // Accept-Header: bringt Supabase dazu, grosse PNG-Renders als WebP
-          // auszuliefern (3.395 KB → 94 KB). Fremde Hosts ignorieren ihn einfach.
-          const fileRes = await fetch(String(attachUrl), { headers: { Accept: 'image/webp,image/*,*/*' } })
+          // KEIN Accept: image/webp mehr — WhatsApp zeigt WebP-Dateien nicht als
+          // Bild an (Sven: „es kommt ein Bild, kann es aber nicht laden"). PNG holen
+          // und selbst nach JPEG wandeln: der Supabase-Verkleinerer kann kein JPEG
+          // erzeugen, und die PNG-Renders bleiben auch verkleinert bei 3–5 MB.
+          const fileRes = await fetch(String(attachUrl), { headers: { Accept: 'image/*,*/*' } })
           if (!fileRes.ok) throw new Error(`Datei nicht ladbar (${fileRes.status})`)
-          const blob = await fileRes.blob()
+          let bytes = new Uint8Array(await fileRes.arrayBuffer())
+          let ctype = (fileRes.headers.get('content-type') ?? '').split(';')[0].trim()
+          if (ctype === 'image/png' || ctype === 'image/webp') {
+            try {
+              const img = await Image.decode(bytes)
+              bytes = await img.encodeJPEG(82)
+              ctype = 'image/jpeg'
+              console.log(`[send-whatsapp] → JPEG ${Math.round(bytes.length / 1024)} KB`)
+            } catch (e) { console.warn('[send-whatsapp] JPEG-Umwandlung fehlgeschlagen, sende Original:', e) }
+          }
           // Harte Grenze: TimelinesAI nimmt im aktuellen Tarif max. 2 MB. Lieber ohne
           // Bild verschicken als die ganze Nachricht am Anhang scheitern lassen.
-          if (blob.size > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(blob.size / 1024)} KB)`)
-          // Dateiendung an das TATSÄCHLICH gelieferte Format anpassen — Supabase kann
-          // ein angefordertes PNG als WebP zurückgeben. Eine .jpg-Datei mit WebP-Inhalt
-          // verwirrt den Empfänger-Client.
-          const ctype = (fileRes.headers.get('content-type') ?? '').split(';')[0].trim()
-          const ext = ctype === 'image/webp' ? 'webp' : ctype === 'image/png' ? 'png'
-                    : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/jpeg' ? 'jpg' : ''
+          if (bytes.length > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(bytes.length / 1024)} KB)`)
+          const ext = ctype === 'image/jpeg' ? 'jpg' : ctype === 'image/png' ? 'png'
+                    : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/webp' ? 'webp' : ''
           let name = attachName || String(attachUrl).split('/').pop() || 'anhang'
           if (ext) name = name.replace(/\.[A-Za-z0-9]+$/, '') + '.' + ext
           const form = new FormData()
-          form.append('file', blob, name)
+          form.append('file', new Blob([bytes.buffer as ArrayBuffer], { type: ctype || 'application/octet-stream' }), name)
           form.append('filename', name)
           if (ctype) form.append('content_type', ctype)
           const upRes = await fetch('https://app.timelines.ai/integrations/api/files_upload', {
