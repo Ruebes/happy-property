@@ -364,9 +364,16 @@ export default function CrmCalendar() {
   }
 
   // ── Events for a given day ────────────────────────────────────
+  // Ueber die Ortszeit zuordnen, nicht ueber den ISO-String: start_time ist UTC,
+  // der angezeigte Tag ist lokal. Ein Termin um 01:00 zypriotischer Zeit steht als
+  // 22:00 UTC des VORTAGS in der Datenbank und landete damit am falschen Tag.
   function appointmentsForDay(d: Date): CrmAppointment[] {
-    const ds = toDateStr(d)
-    return appointments.filter(a => a.start_time.slice(0, 10) === ds)
+    const from = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+    const to   = from + 24 * 3600e3
+    return appointments.filter(a => {
+      const t = new Date(a.start_time).getTime()
+      return t >= from && t < to
+    })
   }
 
   function googleEventsForDay(d: Date): GoogleCalendarEvent[] {

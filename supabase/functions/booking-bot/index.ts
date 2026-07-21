@@ -424,15 +424,17 @@ async function book(admin: SupabaseClient, conv: { id: string; lead_id: string; 
   const phone = lead.whatsapp || lead.phone || ''
   const name = first(lead.first_name)
   const typeLabel = type === 'zoom' ? 'Zoom-Call' : 'Telefonat über WhatsApp'
+  // Titel VOR dem Zoom-Aufruf berechnen — sonst traegt das Zoom-Meeting einen
+  // anderen Namen als CRM und Google-Kalender (so war es bis eben).
+  const apptTitle = await nextApptTitle(admin, conv.lead_id, name || 'Lead', slot.startIso)
   let zoomLink = ''
   if (type === 'zoom') {
     try {
-      const { data } = await admin.functions.invoke('create-zoom-meeting', { body: { title: `Beratungsgespräch – ${name || 'Happy Property'}`, start_time: slot.startIso, duration_minutes: SLOT_MIN } })
+      const { data } = await admin.functions.invoke('create-zoom-meeting', { body: { title: apptTitle, start_time: slot.startIso, duration_minutes: SLOT_MIN } })
       zoomLink = (data as { join_url?: string } | null)?.join_url ?? ''
     } catch (e) { console.warn('[booking-bot] Zoom-Erstellung fehlgeschlagen:', e) }
   }
   const desc = `Automatisch gebucht via WhatsApp-Terminbot.\nKunde: ${name}\nArt: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
-  const apptTitle = await nextApptTitle(admin, conv.lead_id, name || 'Lead', slot.startIso)
   const cal = await createCalendarEvent(admin, { title: `${apptTitle} (${type === 'zoom' ? 'Zoom' : 'WhatsApp'})`, startIso: slot.startIso, endIso: slot.endIso, description: desc })
 
   // Deal ermitteln: der am Gespräch (no_show/erstkontakt) — sonst der aktive Deal
