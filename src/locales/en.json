@@ -1396,7 +1396,10 @@
       "newLead": "New lead",
       "noAssignee": "— Nobody —",
       "altEmails": "More emails (comma-separated)",
-      "altPhones": "More phone numbers (comma-separated)"
+      "altPhones": "More phone numbers (comma-separated)",
+      "ratedInList": "Rated in the contact list",
+      "ratedGood": "👍 Rated as a good lead — goes back to Meta tonight.",
+      "ratedBad": "👎 Noted as a weak lead."
     },
     "sources": {
       "meta": "META Ads",
@@ -1774,7 +1777,11 @@
       "notAssigned": "Not assigned",
       "autoCreateDeal": "Create deal automatically",
       "create": "Create",
-      "creating": "Creating…"
+      "creating": "Creating…",
+      "quality": "Quality",
+      "rateGood": "Good lead — Meta learns from this",
+      "rateBad": "Weak lead",
+      "noneToRate": "Nothing to rate right now. 🎉"
     },
     "modal": {
       "newLead": "Create New Lead",

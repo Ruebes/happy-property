@@ -1396,7 +1396,10 @@
       "newLead": "Neuer Lead",
       "noAssignee": "— Niemand —",
       "altEmails": "Weitere E-Mails (Komma-getrennt)",
-      "altPhones": "Weitere Nummern (Komma-getrennt)"
+      "altPhones": "Weitere Nummern (Komma-getrennt)",
+      "ratedInList": "Bewertet in der Kontaktliste",
+      "ratedGood": "👍 Als guter Lead bewertet — geht heute Nacht an Meta zurück.",
+      "ratedBad": "👎 Als schwacher Lead vermerkt."
     },
     "sources": {
       "meta": "META Werbung",
@@ -1774,7 +1777,11 @@
       "notAssigned": "Nicht zugewiesen",
       "autoCreateDeal": "Deal automatisch erstellen",
       "create": "Erstellen",
-      "creating": "Erstellt…"
+      "creating": "Erstellt…",
+      "quality": "Qualität",
+      "rateGood": "Guter Lead — Meta lernt daraus",
+      "rateBad": "Schwacher Lead",
+      "noneToRate": "Gerade nichts zu bewerten. 🎉"
     },
     "modal": {
       "newLead": "Neuen Lead anlegen",

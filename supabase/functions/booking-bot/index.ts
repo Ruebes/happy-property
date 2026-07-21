@@ -258,7 +258,7 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 }
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
-interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null; defer_to_sven?: boolean }
+interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null; defer_to_sven?: boolean; defer_until?: string | null }
 async function classify(state: string, slots: Slot[], text: string): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
@@ -278,7 +278,9 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
 - question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
 - content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINEN Terminwunsch enthalten. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
+ALLERWICHTIGSTE REGEL, sie geht dem TERMIN-VORRANG VOR: Unterscheide, WOFUER ein genanntes Datum steht. Sagt der Kunde, wann ER SICH MELDET oder wie lange er noch ueberlegen will, ist das intent = defer — NIEMALS give_preference. Nur wenn er sagt, wann das GESPRAECH stattfinden soll, ist es ein Terminwunsch. "Bis Sonntag geben wir Bescheid" = defer (defer_until = jener Sonntag). "Sonntag passt mir" = give_preference. Im Zweifel defer: einen Kunden, der um Bedenkzeit bittet, erneut nach einem Termin zu fragen, ist der schlimmste Fehler in diesem Dialog.
 WICHTIG zum TERMIN-VORRANG: Nennt die Nachricht IRGENDEINEN Terminwunsch (Slot-Wahl, Tag, Datum, Uhrzeit, Tageszeit — z.B. "22.7. abends", "Freitag 15 Uhr") — auch wenn sie zusätzlich fachliche Fragen/Aussagen enthält — dann wähle intent = pick_slot bzw. give_preference (NICHT content/question) und fülle die Termin-Felder (pick_index / on_date / after_date / day_hint / daypart / time_hint). Setze in DIESEM Fall zusätzlich defer_to_sven = true, wenn die Nachricht fachliche/inhaltliche Themen enthält, die Sven persönlich beantworten sollte (Budget, Objekt-Details, Markt, Steuer, Finanzierung, Einwände). answer dann NICHT füllen — die fachlichen Punkte übernimmt Sven.
+- defer: der Kunde will sich SELBST spaeter melden bzw. braucht Bedenkzeit — er nennt KEINEN Terminwunsch, sondern den Zeitpunkt seiner EIGENEN Rueckmeldung ("wir brauchen das Wochenende", "bis Sonntag geben wir Bescheid", "ich melde mich naechste Woche", "muessen erst in Ruhe schauen", "melde mich schnellstmoeglich"). Fuelle defer_until = das genannte Datum als "YYYY-MM-DD"; ohne Datumsangabe das Datum in 7 Tagen.
 - optout: will nicht kontaktiert werden / kein Interesse.
 - unclear: kurze unverständliche Nachricht (Tippfehler, einzelnes Wort ohne Sinn).
 WICHTIG:
@@ -294,7 +296,7 @@ Fülle nur passende Felder, sonst null.`
         tool_choice: { type: 'tool', name: 'emit_intent' },
         tools: [{ name: 'emit_intent', description: 'Intent der Kundenantwort', input_schema: {
           type: 'object', properties: {
-            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'indifferent', 'optout', 'unclear'] },
+            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'indifferent', 'defer', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
             time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
@@ -303,6 +305,7 @@ Fülle nur passende Felder, sonst null.`
             meeting_type: { type: ['string', 'null'], enum: ['zoom', 'whatsapp', null] },
             answer: { type: ['string', 'null'], description: 'kurze Antwort auf eine Zwischenfrage (Svens Du-Ton)' },
             defer_to_sven: { type: ['boolean', 'null'], description: 'true = Nachricht enthält NEBEN dem Termin fachliche Fragen, die Sven persönlich beantworten soll' },
+            defer_until: { type: ['string', 'null'], description: 'YYYY-MM-DD — bei intent=defer: wann der Kunde sich selbst melden will' },
           }, required: ['intent'],
         } }],
       }),
@@ -556,7 +559,14 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
   const c = conv as null | { id: string; state: string; created_at: string }
-  if (c) {
+  // Wiedervorlage nach einer Bedenkzeit: das Gespraech schlaeft und muss GEWECKT
+  // werden. Ohne diesen Zweig faellt es durch beide Filter darunter (state ist nicht
+  // awaiting_choice, und der Kunde HAT ja geantwortet) und der Bot meldet sich nie
+  // wieder — die Bedenkzeit waere ein stilles Ende statt einer Pause.
+  if (c && source === 'snooze') {
+    if (c.state !== 'snoozed') return json({ ok: true, skipped: 'nicht_mehr_pausiert' })
+    await setConv(admin, c.id, { state: 'awaiting_choice', snoozed_until: null, attempts: 0 })
+  } else if (c) {
     if (c.state !== 'awaiting_choice') return json({ ok: true, skipped: 'engaged_or_closed' })
     const { data: inb } = await admin.from('activities').select('id').eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'inbound').gt('created_at', c.created_at).limit(1)
     if (inb && inb.length) return json({ ok: true, skipped: 'engaged' })
@@ -587,6 +597,8 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
   // Schon ein aktives Gespräch?
   const { data: active } = await admin.from('booking_conversations').select('id')
+    // snoozed bleibt bewusst „aktiv": meldet der Kunde sich frueher als angekuendigt,
+    // soll seine Antwort ganz normal im Dialog landen statt ins Leere zu laufen.
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
   // Kürzlich an Sven übergeben oder gebucht? Dann grätscht der Bot NICHT wieder rein
@@ -680,6 +692,50 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     const m = 'Alles klar, ich lasse dich in Ruhe. Melde dich jederzeit, wenn es doch passt. 🙂'
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
     return json({ ok: true, handled: 'optout' })
+  }
+
+  // Kunde will sich SELBST melden / braucht Bedenkzeit → nicht weiter nach einem
+  // Termin fragen. Genau das ist am 20.7. schiefgegangen: „wir brauchen das
+  // Wochenende" und „bis Sonntag geben wir Bescheid" enthielten Wochentage, die
+  // Termin-Vorrang-Regel machte daraus einen Terminwunsch, und der Bot schlug
+  // zweimal hintereinander neue Slots vor. Das Gespraech schlaeft jetzt bis zum
+  // genannten Tag und meldet sich dann von selbst wieder.
+  if (it.intent === 'defer') {
+    const today = new Date()
+    let until = it.defer_until ? new Date(`${it.defer_until}T09:00:00Z`) : null
+    if (!until || isNaN(until.getTime()) || until.getTime() < today.getTime()) {
+      until = new Date(today.getTime() + 7 * 864e5)   // ohne brauchbares Datum: in einer Woche
+    }
+    // Einen Tag NACH der angekuendigten Rueckmeldung nachfassen — nicht am selben Tag,
+    // sonst faellt die Nachricht mit seiner eigenen zusammen.
+    const wake = new Date(until.getTime() + 864e5)
+    const dLbl = until.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' })
+    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — lasst euch in Ruhe Zeit. 🙂\n\nIch melde mich dann nach ${dLbl} nochmal, falls ich bis dahin nichts von euch gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nSven`
+    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    await setConv(admin, c.id, {
+      state: 'snoozed', snoozed_until: wake.toISOString(), attempts: 0, last_message: m,
+      // Ablauf mitziehen, sonst ist das Gespraech tot, bevor es wieder aufwacht.
+      expires_at: new Date(wake.getTime() + 14 * 864e5).toISOString(),
+    })
+    // Offene Nachfass-Nachrichten stoppen und EINE Wiedervorlage setzen.
+    try {
+      await admin.from('scheduled_messages').update({ status: 'cancelled' })
+        .eq('lead_id', leadId).eq('status', 'pending').eq('event_type', 'bot_nudge')
+      await admin.from('scheduled_messages').insert({
+        lead_id: leadId, deal_id: c.deal_id, type: 'whatsapp', event_type: 'bot_nudge',
+        bot_nudge_stage: 1, bot_nudge_source: 'snooze', status: 'pending',
+        scheduled_at: wake.toISOString(),
+      })
+    } catch (e) { console.warn('[booking-bot] Wiedervorlage:', e) }
+    try {
+      await admin.from('activities').insert({
+        lead_id: leadId, type: 'note', direction: 'inbound',
+        subject: '⏸️ Termin-Bot: Kunde meldet sich selbst',
+        content: `Der Kunde bat um Bedenkzeit bis ${dLbl}. Der Bot fragt bis dahin nicht mehr nach und meldet sich am ${wake.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} wieder.`,
+        completed_at: new Date().toISOString(),
+      })
+    } catch { /* egal */ }
+    return json({ ok: true, handled: 'defer', wake: wake.toISOString() })
   }
 
   // Enthält die Nachricht einen Terminwunsch (auch wenn zusätzlich fachliche Fragen dabei sind)?

@@ -79,6 +79,12 @@ export default function AllLeads() {
   const [search, setSearch] = useState('')
   const [filterSource, setFilterSource] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  // Qualitaets-Ansicht: nur Leads, deren Gespraech vorbei ist und die noch keine
+  // Bewertung haben. Genau diese Bewertung geht als QualifiedLead an Meta zurueck.
+  const [onlyRate, setOnlyRate] = useState(false)
+  // leadId → id des juengsten vergangenen Termins (fuer AppointmentHeld).
+  const [pastAppt, setPastAppt] = useState<Record<string, string>>({})
+  const [rating, setRating] = useState<string | null>(null)
   const [toast, setToast] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
@@ -104,6 +110,17 @@ export default function AllLeads() {
         .limit(500)
       if (error) throw error
       setLeads((data ?? []) as unknown as Lead[])
+      // Vergangene Kundentermine — daraus ergibt sich, wer ueberhaupt bewertbar ist.
+      const { data: appts } = await supabase.from('crm_appointments')
+        .select('id, lead_id, start_time')
+        .eq('internal', false).not('lead_id', 'is', null)
+        .lt('start_time', new Date().toISOString())
+        .order('start_time', { ascending: false })
+      const map: Record<string, string> = {}
+      for (const a of ((appts ?? []) as { id: string; lead_id: string }[])) {
+        if (!map[a.lead_id]) map[a.lead_id] = a.id   // juengster gewinnt
+      }
+      setPastAppt(map)
     } catch (err) {
       console.error('[AllLeads] fetchLeads:', err)
       if (!silent) setLeads([])   // bei Hintergrund-Refresh alte Daten behalten
@@ -131,6 +148,9 @@ export default function AllLeads() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [fetchLeads])
 
+  // Wie viele warten auf eine Bewertung — steht als Zahl am Umschalter.
+  const toRateCount = leads.filter(l => !l.quality_rating && !!pastAppt[l.id]).length
+
   const filteredLeads = leads.filter(lead => {
     const fullName = `${lead.first_name} ${lead.last_name}`.toLowerCase()
     const matchSearch =
@@ -139,8 +159,43 @@ export default function AllLeads() {
       lead.email.toLowerCase().includes(search.toLowerCase())
     const matchSource = !filterSource || lead.source === filterSource
     const matchStatus = !filterStatus || lead.status === filterStatus
-    return matchSearch && matchSource && matchStatus
+    // „Zu bewerten" = Gespraech war, Bewertung fehlt.
+    const matchRate = !onlyRate || (!lead.quality_rating && !!pastAppt[lead.id])
+    return matchSearch && matchSource && matchStatus && matchRate
   })
+
+  // Bewerten direkt aus der Liste. Wichtig: es wird AUCH outcome='completed' am
+  // zugehoerigen Termin gesetzt. Ohne das entsteht nie ein AppointmentHeld-Signal —
+  // dieser Status wurde bisher ausschliesslich vom Termin-Popup geschrieben, weshalb
+  // er in der gesamten Datenbank kein einziges Mal vorkam.
+  const rateLead = async (lead: Lead, value: 'gut' | 'schlecht') => {
+    setRating(lead.id)
+    const prev = leads
+    const ratedAt = new Date().toISOString()
+    setLeads(ls => ls.map(l => l.id === lead.id ? { ...l, quality_rating: value, quality_rated_at: ratedAt } : l))
+    try {
+      const { error } = await supabase.from('leads')
+        .update({ quality_rating: value, quality_rated_at: ratedAt }).eq('id', lead.id)
+      if (error) throw error
+      const apptId = pastAppt[lead.id]
+      if (apptId) {
+        await supabase.from('crm_appointments').update({ outcome: 'completed' }).eq('id', apptId)
+      }
+      await supabase.from('activities').insert({
+        lead_id: lead.id, type: 'note', direction: 'outbound',
+        subject: value === 'gut' ? '👍 Guter Lead' : '👎 Schlechter Lead',
+        content: t('crm.lead.ratedInList', 'Bewertet in der Kontaktliste'),
+        completed_at: ratedAt,
+      })
+      showToast(value === 'gut'
+        ? t('crm.lead.ratedGood', '👍 Als guter Lead bewertet — geht heute Nacht an Meta zurück.')
+        : t('crm.lead.ratedBad', '👎 Als schwacher Lead vermerkt.'))
+    } catch (err) {
+      console.error('[AllLeads] rateLead:', err)
+      setLeads(prev)
+      showToast(t('common.error', 'Fehler'))
+    } finally { setRating(null) }
+  }
 
   const handleDelete = async (id: string) => {
     if (!window.confirm(t('allLeads.confirmDeleteLead', 'Lead wirklich löschen?'))) return
@@ -240,6 +295,16 @@ export default function AllLeads() {
             onChange={e => setSearch(e.target.value)}
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 w-64"
           />
+          <button
+            type="button" onClick={() => setOnlyRate(v => !v)}
+            className={`px-3 py-2 rounded-xl text-sm font-medium whitespace-nowrap border transition-colors ${onlyRate ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}
+            style={onlyRate ? { backgroundColor: '#ff795d' } : undefined}
+          >
+            ⭐ {t('crm.allLeads.quality', 'Qualität')}
+            {toRateCount > 0 && (
+              <span className={`ml-1.5 text-xs ${onlyRate ? 'text-white/80' : 'text-gray-400'}`}>{toRateCount}</span>
+            )}
+          </button>
           <CustomSelect
             value={filterSource}
             onChange={val => setFilterSource(val)}
@@ -298,7 +363,8 @@ export default function AllLeads() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {[t('users.table.name'), t('crm.lead.email'), t('crm.lead.phone'), t('crm.lead.source'), t('crm.lead.status'), t('crm.lead.assignedTo'), t('crm.lead.date'), t('common.actions')].map(col => (
+                    {[t('users.table.name'), t('crm.lead.email'), t('crm.lead.phone'), t('crm.lead.source'), t('crm.lead.status'), t('crm.lead.assignedTo'), t('crm.lead.date'),
+                      ...(onlyRate ? [t('crm.allLeads.quality', 'Qualität')] : []), t('common.actions')].map(col => (
                       <th key={col} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">
                         {col}
                       </th>
@@ -327,6 +393,22 @@ export default function AllLeads() {
                       <td className="px-4 py-3 text-gray-600">{getStatusLabel(t, lead.status)}</td>
                       <td className="px-4 py-3 text-gray-600">{lead.assignee?.full_name ?? '–'}</td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(lead.created_at)}</td>
+                      {onlyRate && (
+                        <td className="px-4 py-3 whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => void rateLead(lead, 'gut')} disabled={rating === lead.id}
+                              title={t('crm.allLeads.rateGood', 'Guter Lead — Meta lernt daraus')}
+                              className="w-9 h-9 rounded-lg border border-green-200 bg-green-50 hover:bg-green-100 disabled:opacity-40 text-base leading-none"
+                            >👍</button>
+                            <button
+                              onClick={() => void rateLead(lead, 'schlecht')} disabled={rating === lead.id}
+                              title={t('crm.allLeads.rateBad', 'Schwacher Lead')}
+                              className="w-9 h-9 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 disabled:opacity-40 text-base leading-none"
+                            >👎</button>
+                          </div>
+                        </td>
+                      )}
                       <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-3">
                           <Link
