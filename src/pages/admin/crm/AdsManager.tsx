@@ -363,6 +363,43 @@ export default function AdsManager() {
     const adToCampaign = new Map(catalog.map(c => [c.ad_id, c.campaign_id]))
     const get = (m: Map<string, Agg>, k: string) => { let a = m.get(k); if (!a) { a = emptyAgg(); m.set(k, a) } return a }
 
+    // Die Anzeigen-Links uebergeben teils den NAMEN statt der ID (utm_campaign =
+    // "20.03.26+-+TOF+-+Leads"), URL-kodiert mit + fuer Leerzeichen. Ein reiner
+    // ID-Vergleich traf deshalb nie, und die CRM-Spalten (Termine, 👍/👎, Sales)
+    // blieben in der Tabelle auf null, obwohl die Leads korrekt bewertet waren.
+    // Namen werden hier auf IDs abgebildet; mehrdeutige Namen bewusst nicht.
+    const norm = (v: string) => {
+      let x = v.replace(/\+/g, ' ')
+      try { x = decodeURIComponent(x) } catch { /* schon dekodiert */ }
+      return x.trim().toLowerCase()
+    }
+    const nameToId = (pairs: Array<[string, string]>) => {
+      const m = new Map<string, string>()
+      const ambiguous = new Set<string>()
+      for (const [nm, id] of pairs) {
+        const k = norm(nm)
+        if (!k) continue
+        const prev = m.get(k)
+        if (prev && prev !== id) ambiguous.add(k)
+        else m.set(k, id)
+      }
+      for (const k of ambiguous) m.delete(k)
+      return m
+    }
+    const campaignNameToId = nameToId(catalog.filter(c => c.campaign_id && c.campaign_name).map(c => [c.campaign_name!, c.campaign_id!]))
+    const adNameToId       = nameToId(catalog.filter(c => c.ad_id && c.ad_name).map(c => [c.ad_name!, c.ad_id]))
+    const resolveAdId = (v: string | null) => {
+      if (!v) return undefined
+      if (byAd.has(v)) return v
+      return adNameToId.get(norm(v))
+    }
+    const resolveCampaignId = (v: string | null, adId?: string) => {
+      if (adId) { const viaAd = adToCampaign.get(adId); if (viaAd) return viaAd }
+      if (!v) return undefined
+      if (byCampaign.has(v)) return v
+      return campaignNameToId.get(norm(v))
+    }
+
     for (const r of insights) {
       const a = get(byAd, r.ad_id)
       a.spendEur += r.spend_eur; a.impressions += r.impressions; a.reach += r.reach
@@ -395,9 +432,9 @@ export default function AdsManager() {
       }
     }
     for (const l of leads) {
-      if (l.utm_content && byAd.has(l.utm_content)) applyLead(get(byAd, l.utm_content), l)
-      const cid = l.utm_campaign && byCampaign.has(l.utm_campaign) ? l.utm_campaign
-        : (l.utm_content ? adToCampaign.get(l.utm_content) : undefined)
+      const adId = resolveAdId(l.utm_content)
+      if (adId) applyLead(get(byAd, adId), l)
+      const cid = resolveCampaignId(l.utm_campaign, adId)
       if (cid) applyLead(get(byCampaign, cid), l)
     }
 
