@@ -710,7 +710,8 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     // sonst faellt die Nachricht mit seiner eigenen zusammen.
     const wake = new Date(until.getTime() + 864e5)
     const dLbl = until.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' })
-    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — lasst euch in Ruhe Zeit. 🙂\n\nIch melde mich dann nach ${dLbl} nochmal, falls ich bis dahin nichts von euch gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nSven`
+    // Anrede bewusst Singular: der Chat ist 1:1, auch wenn der Kunde von „wir" spricht.
+    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — nimm dir in Ruhe die Zeit. 🙂\n\nIch melde mich nach ${dLbl} nochmal, falls ich bis dahin nichts von dir gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nSven`
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
     await setConv(admin, c.id, {
       state: 'snoozed', snoozed_until: wake.toISOString(), attempts: 0, last_message: m,

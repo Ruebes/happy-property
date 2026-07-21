@@ -129,7 +129,12 @@ Deno.serve(async (req) => {
     // ── An alle Empfänger senden ──────────────────────────────────
     // Anhang nur EINMAL hochladen und die UID für alle Empfänger wiederverwenden.
     let fileUidCache: string | null = null
-    let attachUrl:  string | null = file_url  ? String(file_url)  : null
+    let attachError:  string | null = null
+    // waSize auch fuer EXPLIZITE Anhaenge: ein Vorlagenbild aus dem Storage kommt
+    // sonst in Originalgroesse (gemessen 8,4 MB Deck-Render) und scheitert still an
+    // der 2-MB-Grenze — die Nachricht ging dann als nackter Text raus, obwohl der
+    // Scheduler "sent" meldete. Fremde URLs laesst waSize unveraendert.
+    let attachUrl:  string | null = file_url  ? waSize(String(file_url))  : null
     let attachName: string | null = file_name ? String(file_name) : null
     const results = []
     for (const recipient of recipients) {
@@ -206,6 +211,9 @@ Deno.serve(async (req) => {
           console.log(`[send-whatsapp] Upload ${upRes.status}, uid=${fileUidCache ?? 'KEINE'}`, fileUidCache ? '' : JSON.stringify(upJson))
         } catch (e) {
           console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, sende nur Text:', e)
+          // Nicht nur loggen: der Aufrufer (und jeder Test) muss sehen koennen, dass
+          // das Bild fehlt — genau dieser stille Ausfall hat den 2-MB-Fall verdeckt.
+          attachError = e instanceof Error ? e.message : String(e)
         }
       }
       if (fileUidCache) payload.file_uid = fileUidCache
@@ -238,7 +246,10 @@ Deno.serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, sent: results.length, results }),
+      JSON.stringify({ success: true, sent: results.length, results,
+        // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
+        // ein gescheiterter Anhang faellt sonst nie auf.
+        attached: !!fileUidCache, ...(attachError ? { attach_error: attachError } : {}) }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
 
