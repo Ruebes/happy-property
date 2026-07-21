@@ -73,47 +73,28 @@ async function syncMembers(sb: SupabaseClient, key: string, row: { id: string; k
   while (url && seiten < 100) {                       // Sicherung gegen Endlosschleife
     const d = await kFetch(url, key)
     const profiles = (d.data ?? []) as KlaviyoProfile[]
-    for (const p of profiles) {
-      const email = (p.attributes?.email ?? '').trim().toLowerCase()
-      if (!email) continue
-      gesehen++
+    // Ganze Seite in EINEM Aufruf uebernehmen. Vorher waren es drei Roundtrips je
+    // Adresse (pruefen, schreiben, verknuepfen) — damit lief der Import bei 10 Listen
+    // in die Zeitgrenze der Edge Function. Die Merge-Logik (nichts Vorhandenes mit
+    // NULL ueberschreiben) sitzt jetzt in hp_klaviyo_upsert.
+    const rows = profiles.map(p => {
       const a = p.attributes ?? {}
-      // 1:1 uebernehmen: bekannte Felder in eigene Spalten, alles Uebrige roh in
-      // properties. Klaviyo liefert je Person unterschiedlich viel — mal nur Name
-      // und Mail, mal einen vollstaendigen Datensatz. Nichts soll verloren gehen.
-      const felder = {
-        first_name: a.first_name ?? null,
-        last_name:  a.last_name ?? null,
-        phone:      a.phone_number ?? null,
-        organization: a.organization ?? null,
-        title:      a.title ?? null,
-        city:       a.location?.city ?? null,
-        region:     a.location?.region ?? null,
-        country:    a.location?.country ?? null,
-        klaviyo_id: p.id,
-        properties: a.properties ?? null,
-        klaviyo_created_at: a.created ?? null,
+      return {
+        email: (a.email ?? '').trim().toLowerCase(),
+        first_name: a.first_name ?? null, last_name: a.last_name ?? null,
+        phone: a.phone_number ?? null, organization: a.organization ?? null,
+        title: a.title ?? null,
+        city: a.location?.city ?? null, region: a.location?.region ?? null, country: a.location?.country ?? null,
+        klaviyo_id: p.id, properties: a.properties ?? null, klaviyo_created_at: a.created ?? null,
       }
-      const { data: ex } = await sb.from('newsletter_subscribers').select('id').eq('email', email).maybeSingle()
-      let subId = (ex as { id?: string } | null)?.id ?? null
-      if (subId) {
-        // Bestehende Adresse aktualisieren: ein spaeterer Lauf darf Daten
-        // ergaenzen, aber nichts Vorhandenes mit null ueberschreiben.
-        const patch: Record<string, unknown> = {}
-        for (const [k, v] of Object.entries(felder)) if (v !== null && v !== undefined) patch[k] = v
-        if (Object.keys(patch).length) await sb.from('newsletter_subscribers').update(patch).eq('id', subId)
-      } else {
-        const { data: ins } = await sb.from('newsletter_subscribers').insert({
-          email, ...felder, source: `klaviyo:${row.name}`,
-        }).select('id').single()
-        subId = (ins as { id?: string } | null)?.id ?? null
-        if (subId) neu++
-      }
-      if (!subId) continue
-      // Doppelte Mitgliedschaft ist per Primaerschluessel ausgeschlossen; Konflikt
-      // ignorieren statt vorher zu pruefen (spart einen Roundtrip je Adresse).
-      const { error } = await sb.from('newsletter_list_members').insert({ list_id: row.id, subscriber_id: subId })
-      if (!error) verknuepft++
+    }).filter(r => r.email)
+    gesehen += rows.length
+    if (rows.length) {
+      const { data: res, error } = await sb.rpc('hp_klaviyo_upsert', { p_list_id: row.id, p_rows: rows })
+      if (error) throw new Error(`Uebernahme: ${error.message}`)
+      const r0 = (res as Array<{ neu: number; gesamt: number }> | null)?.[0]
+      neu += r0?.neu ?? 0
+      verknuepft += r0?.gesamt ?? 0
     }
     url = ((d.links as Record<string, string> | undefined)?.next) ?? ''
     seiten++
@@ -125,8 +106,10 @@ async function syncMembers(sb: SupabaseClient, key: string, row: { id: string; k
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
-    const key = Deno.env.get('KLAVIYO_API_KEY') ?? ''
-    if (!key) return json({ error: 'KLAVIYO_API_KEY ist nicht hinterlegt. Bitte in den Supabase-Secrets eintragen.' }, 400)
+    // Beide Schreibweisen akzeptieren: Sven hat das Secret als „Klaviyo" angelegt.
+    // Lieber hier nachgeben als ihn den Schluessel ein zweites Mal eintragen lassen.
+    const key = (Deno.env.get('KLAVIYO_API_KEY') || Deno.env.get('Klaviyo') || Deno.env.get('KLAVIYO') || '').trim()
+    if (!key) return json({ error: 'Kein Klaviyo-Schluessel hinterlegt (KLAVIYO_API_KEY oder Klaviyo).' }, 400)
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json().catch(() => ({})) as { action?: string; list_id?: string }
 
