@@ -8,6 +8,7 @@
 //
 // Body: { dry_run?: boolean }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -60,7 +61,8 @@ Deno.serve(async (req: Request) => {
       const phone = l.whatsapp || l.phone
       const wt = holdWa as { message_template?: string } | null
       if (wt && phone) {
-        await callFn('send-whatsapp', { event_type: 'hold_reengagement', override_text: subst(wt.message_template ?? '', vars), lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone } })
+        // Geht automatisch an einen Kunden (Deal in 'hold') → Lotte als Absenderin.
+        await callFn('send-whatsapp', { event_type: 'hold_reengagement', override_text: subst(wt.message_template ?? '', vars), lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone }, persona_image: lotteBild() })
       }
       await supabase.from('deals').update({ last_hold_msg_at: new Date(now).toISOString() }).eq('id', d.id)
       holdSent++

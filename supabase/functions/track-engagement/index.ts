@@ -6,6 +6,7 @@
 // sales_decks / property_calculations aufgelöst. Dedupe: gleiches (lead,type,token)
 // innerhalb von 2 h wird nicht doppelt gezählt.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -65,9 +66,12 @@ async function scheduleDeckFollowup(
     const first = (l.first_name ?? '').trim()
     const greet = first ? `Hey ${first}` : 'Hallo'
     const msg =
-      `${greet}, ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\n` +
-      `Wenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${CALENDLY}\n\n` +
-      `Liebe Grüße, Sven`
+      `${greet}, hier ist Lotte, Svens persönliche Assistentin 🐾 Ich wollte kurz nachhören: Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\n` +
+      `Wenn du magst, nehmt ihr euch 15 Minuten und Sven beantwortet dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${CALENDLY}\n\n` +
+      // Lotte, nicht Sven: diese Nachricht tippt niemand, sie geht automatisch nach
+      // einer Deck-Ansicht raus. Als "Sven" signiert wäre sie eine Verwechslung —
+      // und ein Hundefoto unter Svens Namen erst recht.
+      `Liebe Grüße, Lotte 🐾`
 
     const delay  = (r.delay_minutes ?? 45) * 60 * 1000
     const sendAt = toBusinessHours(new Date(Date.now() + delay))
@@ -79,6 +83,8 @@ async function scheduleDeckFollowup(
       status:                'pending',
       scheduled_at:          sendAt.toISOString(),
       whatsapp_text:         msg,
+      // Lotte-Bild mitgeben, damit die Nachricht wie alle Bot-Nachrichten aussieht.
+      whatsapp_image_url:    lotteBild(),
       recipient:             'client',
       rule_id:               r.id,
       appointment_condition: r.appointment_condition ?? 'no_appointment',

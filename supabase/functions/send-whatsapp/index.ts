@@ -57,6 +57,9 @@ Deno.serve(async (req) => {
       override_text, // wenn gesetzt: überschreibt Template-Substitution (no_show preview)
       file_url,      // optionaler Bild-/Dokument-Anhang (DIREKTER Download-Link!)
       file_name,     // Dateiname des Anhangs (bei file_url Pflicht laut TimelinesAI)
+      persona_image, // NACHRANGIGES Absenderbild (Lotte). Greift nur, wenn weder ein
+                     // ausdruecklicher Anhang noch ein inhaltliches Motiv da ist —
+                     // ein Wohnungsbild schlaegt das Hundefoto immer.
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -135,6 +138,22 @@ Deno.serve(async (req) => {
     // sonst in Originalgroesse (gemessen 8,4 MB Deck-Render) und scheitert still an
     // der 2-MB-Grenze — die Nachricht ging dann als nackter Text raus, obwohl der
     // Scheduler "sent" meldete. Fremde URLs laesst waSize unveraendert.
+    // Unfertige Vorlagen niemals rausschicken. Fuenf aktive Vorlagen enthielten
+    // Platzhalter wie [TERMIN-LINK] und das Wort ENTWURF — Nimet Guerses bekam so
+    // eine WhatsApp, die sie siezte, einen kaputten Platzhalter zeigte und sich
+    // selbst als Entwurf bezeichnete. Lieber gar nicht senden als das.
+    if (typeof message === 'string') {
+      const rest = message.match(/\[[A-ZÄÖÜ][A-ZÄÖÜ _-]{2,}\]/)?.[0]
+      if (rest || /\bENTWURF\b/.test(message)) {
+        const grund = rest ? `Platzhalter ${rest} nicht ersetzt` : 'Text ist als ENTWURF markiert'
+        console.error(`[send-whatsapp] ABGEBROCHEN — ${grund}:`, message.slice(0, 120))
+        return new Response(
+          JSON.stringify({ success: false, error: `Nachricht nicht gesendet: ${grund}.` }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        )
+      }
+    }
+
     let attachUrl:  string | null = file_url  ? waSize(String(file_url))  : null
     let attachName: string | null = file_name ? String(file_name) : null
     const results = []
@@ -178,6 +197,12 @@ Deno.serve(async (req) => {
             } catch (e) { console.warn('[send-whatsapp] Deck-Titelbild:', e) }
           }
         }
+      }
+      // Erst jetzt das Absenderbild: Anhang, YouTube-Vorschau und Deck-Titelbild
+      // hatten Vorrang. Ohne diese Reihenfolge haette der Bot bei jedem Angebot ein
+      // Hundefoto statt der Immobilie geschickt.
+      if (!attachUrl && !fileUidCache && persona_image) {
+        attachUrl = waSize(String(persona_image)); attachName = 'lotte.jpg'
       }
       if (attachUrl && !fileUidCache) {
         try {

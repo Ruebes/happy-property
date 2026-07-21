@@ -263,6 +263,14 @@ function withSignoff(text: string): string {
 let sbSend: SupabaseClient | null = null
 const sendClient = () => (sbSend ??= createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
 
+/** Nachricht auf ihren Kern reduzieren, um Wiederholungen zu erkennen. */
+function normText(t: string): string {
+  return t.toLowerCase()
+    .replace(/liebe gr[üu][ßs]e[\s\S]*$/i, '')            // Signatur weg
+    .replace(/[^a-zäöüß0-9]+/g, ' ')                      // Emojis/Satzzeichen weg
+    .trim()
+}
+
 async function sendWa(phone: string, text: string): Promise<void> {
   const full = withSignoff(text)
   // Ueber send-whatsapp statt direkt an Timelines: nur dort sitzen Bild-Upload,
@@ -271,7 +279,10 @@ async function sendWa(phone: string, text: string): Promise<void> {
     body: {
       event_type: 'booking_bot', override_text: full,
       lead_data: { lead_name: 'Kunde', lead_phone: phone },
-      file_url: lotteBild(), file_name: 'lotte.jpg',
+      // persona_image statt file_url: ein Deck-Titelbild oder eine YouTube-Vorschau
+      // im Text hat Vorrang. Sonst schickt der Bot ein Hundefoto, wo der Kunde die
+      // Immobilie sehen soll.
+      persona_image: lotteBild(),
     },
   })
   if (error) throw new Error(`send-whatsapp: ${error.message}`)
@@ -288,7 +299,8 @@ async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: '
 
 // ── KI: Kundenantwort verstehen ──────────────────────────────────────────────
 interface Intent { intent: string; pick_index: number | null; day_hint: string | null; daypart: string | null; time_hint: string | null; meeting_type: string | null; on_date?: string | null; after_date?: string | null; answer?: string | null; defer_to_sven?: boolean; defer_until?: string | null }
-async function classify(state: string, slots: Slot[], text: string): Promise<Intent> {
+type Turn = { role: 'user' | 'assistant'; content: string }
+async function classify(state: string, slots: Slot[], text: string, verlauf: Turn[] = []): Promise<Intent> {
   const key = Deno.env.get('ANTHROPIC_API_KEY')
   const fallback: Intent = { intent: 'unclear', pick_index: null, day_hint: null, daypart: null, time_hint: null, meeting_type: null }
   if (!key) return fallback
@@ -298,6 +310,7 @@ async function classify(state: string, slots: Slot[], text: string): Promise<Int
   const sys = `Du interpretierst die WhatsApp-Antwort eines Kunden im Terminbuchungs-Dialog (deutsch). Zustand: ${state}. Vorgeschlagene Slots: ${slots.map((s, i) => `[${i}] ${s.label}`).join(' | ') || 'keine'}.
 HEUTE ist ${WDN[tp.wd]}, der ${todayStr} (Europe/Berlin). Rechne relative/teilweise Datumsangaben in KONKRETE Kalenderdaten um.
 Kontext: Es ist ein kurzes, unverbindliches Beratungsgespräch (ca. 15 Min) DIREKT mit Sven persönlich (Immobilien-Investment-Berater bei Happy Property Cyprus, Zypern).
+Du siehst den bisherigen Gesprächsverlauf. Nutze ihn: Widerspricht die neue Nachricht dem, was du zuletzt geschrieben hast, hat der Kunde deine letzte Antwort NICHT akzeptiert — dann darf sie auf keinen Fall wiederholt werden. Wiederholt der Kunde seine Frage, war deine Antwort unbrauchbar → intent=content, damit Sven übernimmt.
 Gib NUR das Tool emit_intent zurück. intent-Werte:
 - pick_slot: Kunde wählt einen vorgeschlagenen Slot (pick_index 0 oder 1).
 - reject_slots: keiner der Slots passt (evtl. mit day_hint/daypart/time_hint-Wunsch).
@@ -305,27 +318,34 @@ Gib NUR das Tool emit_intent zurück. intent-Werte:
 - choose_type: Kunde wählt Terminart (meeting_type "zoom" oder "whatsapp" — WhatsApp-Anruf/Telefon = whatsapp; nennt er MEHRERE ("Zoom oder WhatsApp, beides ok") → das ZUERST genannte).
 - indifferent: Kunde hat KEINE Präferenz / ist mit allem einverstanden ("egal", "beides ok", "wie du willst", "such du aus", "passt alles").
 - confirm_yes / confirm_no: Zustimmung/Ablehnung zu einem konkreten Vorschlag.
-- question: reine Zwischen-/Rückfrage OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "was kostet das?").
-- content: der Kunde macht eine INHALTLICHE Aussage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINEN Terminwunsch enthalten. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
+- question: reine ORGANISATORISCHE Rückfrage zum GESPRÄCH selbst, OHNE Terminangabe (z.B. "mit wem spreche ich?", "wie lange dauert das?", "ist das verbindlich?"). NUR Fragen zum Ablauf des Termins — NICHTS zur Immobilie.
+- content: der Kunde macht eine INHALTLICHE Aussage ODER stellt eine FACHLICHE Frage — Budget ("max 500k"), Objektwünsche, Marktmeinung, persönliche Situation, Einwände, Themenwechsel, ausführliche Antworten, die KEINEN Terminwunsch enthalten. HIERHER GEHÖREN AUSDRÜCKLICH ALLE PREISFRAGEN: "was kostet es", "was kostet die Wohnung", "wie teuer", "Preis", "Nebenkosten", "Rendite", "Finanzierung". Frage nach einem Preis = IMMER content, NIEMALS question — der Kunde meint den Immobilienpreis, nicht den Gesprächspreis. Diese Zahlen kennt nur Sven. Solche Nachrichten gehören zu Sven persönlich, NICHT in den Termin-Dialog. Im Zweifel zwischen unclear und content → content.
 ALLERWICHTIGSTE REGEL, sie geht dem TERMIN-VORRANG VOR: Unterscheide, WOFUER ein genanntes Datum steht. Sagt der Kunde, wann ER SICH MELDET oder wie lange er noch ueberlegen will, ist das intent = defer — NIEMALS give_preference. Nur wenn er sagt, wann das GESPRAECH stattfinden soll, ist es ein Terminwunsch. "Bis Sonntag geben wir Bescheid" = defer (defer_until = jener Sonntag). "Sonntag passt mir" = give_preference. Im Zweifel defer: einen Kunden, der um Bedenkzeit bittet, erneut nach einem Termin zu fragen, ist der schlimmste Fehler in diesem Dialog.
 WICHTIG zum TERMIN-VORRANG: Nennt die Nachricht IRGENDEINEN Terminwunsch (Slot-Wahl, Tag, Datum, Uhrzeit, Tageszeit — z.B. "22.7. abends", "Freitag 15 Uhr") — auch wenn sie zusätzlich fachliche Fragen/Aussagen enthält — dann wähle intent = pick_slot bzw. give_preference (NICHT content/question) und fülle die Termin-Felder (pick_index / on_date / after_date / day_hint / daypart / time_hint). Setze in DIESEM Fall zusätzlich defer_to_sven = true, wenn die Nachricht fachliche/inhaltliche Themen enthält, die Sven persönlich beantworten sollte (Budget, Objekt-Details, Markt, Steuer, Finanzierung, Einwände). answer dann NICHT füllen — die fachlichen Punkte übernimmt Sven.
 - defer: der Kunde will sich SELBST spaeter melden bzw. braucht Bedenkzeit — er nennt KEINEN Terminwunsch, sondern den Zeitpunkt seiner EIGENEN Rueckmeldung ("wir brauchen das Wochenende", "bis Sonntag geben wir Bescheid", "ich melde mich naechste Woche", "muessen erst in Ruhe schauen", "melde mich schnellstmoeglich"). Fuelle defer_until = das genannte Datum als "YYYY-MM-DD"; ohne Datumsangabe das Datum in 7 Tagen.
+- self_followup: der Kunde sagt, dass ER sich melden wird, und will deshalb NICHT nachgefasst werden — "ich melde mich bei dir", "ich komme auf dich zu", "ich sag Bescheid, wenn es so weit ist", "bin noch am Überlegen, melde mich". Er sagt NICHTS Negatives, er will nur die Führung behalten. Diese Regel steht ÜBER defer: bei defer kündigt der Bot eine Wiedervorlage an ("ich melde mich am 28. nochmal") — genau das will dieser Kunde nicht hören.
+- no_contact: der Kunde VERBIETET die Kontaktaufnahme ausdrücklich — "melde dich NICHT bei mir", "schreib mir nicht mehr", "hör auf zu schreiben", "du bist geblockt", "lass mich in Ruhe". Es muss eine Verneinung oder Abwehr enthalten sein. Bloßes "ich melde mich bei dir" ist NICHT no_contact, sondern self_followup.
+  ENTHÄLT die Nachricht BEIDES — ein ausdrückliches Verbot UND die Ankündigung, sich selbst zu melden ("Nein, bitte melde dich nicht bei mir, ich melde mich bei dir!") — dann gewinnt das VERBOT: no_contact. Wer verneint, hat bereits einmal widersprochen; ihn nur weicher zu behandeln, ignoriert die Verschärfung.
 - optout: will nicht kontaktiert werden / kein Interesse.
 - unclear: kurze unverständliche Nachricht (Tippfehler, einzelnes Wort ohne Sinn).
 WICHTIG:
 - Nennt der Kunde eine konkrete Uhrzeit (z.B. "vielleicht 15:00?"), IMMER time_hint als "HH:MM" füllen (intent give_preference).
-- Bei JEDER Zwischenfrage (auch zusammen mit einem Terminwunsch) fülle answer mit einer KURZEN, ehrlichen Antwort in Svens lockerem Du-Ton (max 1-2 Sätze). Erlaubte Fakten: Gespräch direkt mit Sven persönlich, ca. 15 Min, unverbindlich & kostenlos, es geht um deine offenen Fragen rund um Immobilien-Investment auf Zypern. Erfinde NICHTS (keine Preise, keine Objektzusagen). Kombiniert der Kunde Frage + Terminwunsch → answer UND die Termin-Felder füllen.
+- answer NUR füllen, wenn die Frage sich mit diesen Fakten VOLLSTÄNDIG beantworten lässt: Gespräch direkt mit Sven persönlich, ca. 15 Min, unverbindlich & kostenlos, es geht um die offenen Fragen rund um Immobilien-Investment auf Zypern. Ton: Lotte, Svens Assistentin, Du-Form, max 1-2 Sätze. Geht die Frage darüber hinaus — Objektpreise, Kaufpreise, Nebenkosten, Rendite, Finanzierung, Steuern, Verfügbarkeit, konkrete Wohnungen — dann answer LEER LASSEN und intent=content wählen. Eine ausweichende Antwort ist schlimmer als gar keine: Wer nach dem Wohnungspreis fragt und hört, das Gespräch sei kostenlos, fühlt sich veräppelt. Erfinde NIEMALS Zahlen. Kombiniert der Kunde Frage + Terminwunsch → answer UND die Termin-Felder füllen.
 Fülle nur passende Felder, sonst null.`
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6', max_tokens: 300, system: sys,
-        messages: [{ role: 'user', content: text }],
+        // Verlauf mitgeben statt nur der letzten Nachricht. Ohne ihn war Patricks
+        // "Nein, bitte melde dich nicht bei mir" nicht als WIDERSPRUCH zur eben
+        // gesendeten Bot-Nachricht erkennbar — gleiche Eingabe, gleicher Zustand,
+        // also wortgleich die gleiche Ausgabe.
+        messages: [...verlauf, { role: 'user', content: text }],
         tool_choice: { type: 'tool', name: 'emit_intent' },
         tools: [{ name: 'emit_intent', description: 'Intent der Kundenantwort', input_schema: {
           type: 'object', properties: {
-            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'indifferent', 'defer', 'optout', 'unclear'] },
+            intent: { type: 'string', enum: ['pick_slot', 'reject_slots', 'give_preference', 'choose_type', 'confirm_yes', 'confirm_no', 'question', 'content', 'indifferent', 'defer', 'self_followup', 'no_contact', 'optout', 'unclear'] },
             pick_index: { type: ['integer', 'null'] }, day_hint: { type: ['string', 'null'] },
             daypart: { type: ['string', 'null'], enum: ['vormittags', 'nachmittags', 'abends', null] },
             time_hint: { type: ['string', 'null'], description: 'konkrete Uhrzeit 24h HH:MM' },
@@ -694,19 +714,55 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
 
 // ── REPLY ─────────────────────────────────────────────────────────────────────
 async function handleReply(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
+  // 'snoozed' MIT ausschliessen: ein schlafendes Gespraech darf nicht erneut durch
+  // den defer-Zweig laufen. Genau daran ist Patrick Dahlmann eskaliert — er
+  // widersprach der Zusage ("melde dich NICHT bei mir") und bekam sie wortgleich
+  // ein zweites Mal, weil das Gespraech trotz state='snoozed' wieder eingesammelt
+  // wurde. Ein schlafendes Gespraech gehoert zu Sven, nicht zum Bot.
   const { data: conv } = await admin.from('booking_conversations').select('*')
-    .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString())
+    .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired,snoozed)').gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
-  const c = conv as null | { id: string; lead_id: string; deal_id: string | null; state: string; proposed_slots: Slot[] | null; chosen_slot: Slot | null; attempts: number }
+  const c = conv as null | { id: string; lead_id: string; deal_id: string | null; state: string; proposed_slots: Slot[] | null; chosen_slot: Slot | null; attempts: number; rounds_no_progress: number | null; last_sent_norm: string | null }
   if (!c) return json({ ok: true, skipped: 'no_active_conversation' })
+
+  // ANSPRUCH: nur EIN Lauf darf dieses Gespraech gerade bearbeiten.
+  // Nimet Guerses schickte vier Nachrichten in fuenf Sekunden; der Webhook startete
+  // pro Nachricht einen eigenen Lauf, alle lasen denselben Zustand und antworteten.
+  // Ergebnis waren zwei einander widersprechende WhatsApps 240 ms auseinander.
+  // Der bedingte UPDATE ist atomar: wer die Zeile bekommt, arbeitet; die anderen
+  // steigen aus. Ihre Nachricht geht nicht verloren — sie steht im Verlauf, den
+  // der laufende Durchgang ohnehin liest.
+  const claimBis = new Date(Date.now() + 90_000).toISOString()
+  const { data: claimed } = await admin.from('booking_conversations')
+    .update({ processing_until: claimBis }).eq('id', c.id)
+    .or(`processing_until.is.null,processing_until.lt.${new Date().toISOString()}`)
+    .select('id').maybeSingle()
+  if (!claimed) return json({ ok: true, skipped: 'wird_bereits_bearbeitet' })
 
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }
   const phone = l.whatsapp || l.phone || ''
-  await logWa(admin, leadId, text, 'inbound')
+  // KEIN logWa fuer inbound: der timelines-webhook hat die Nachricht bereits
+  // geschrieben, und zwar mit whatsapp_message_id. Der zweite Schreiber hier liess
+  // im Kundenverlauf jede eingehende Nachricht doppelt erscheinen und verfaelschte
+  // die Zaehler, die per count auf activities.direction='inbound' gehen.
 
   const slots = c.proposed_slots ?? []
-  const it = await classify(c.state, c.state === 'awaiting_daypref' ? [] : slots, text)
+  // Die letzten Züge als echten Dialog mitgeben, chronologisch aufsteigend.
+  let verlauf: Turn[] = []
+  try {
+    const { data: hist } = await admin.from('activities').select('direction, content')
+      .eq('lead_id', leadId).eq('type', 'whatsapp')
+      .order('created_at', { ascending: false }).limit(7)
+    verlauf = ((hist ?? []) as Array<{ direction: string; content: string | null }>)
+      .filter(h => (h.content ?? '').trim())
+      .reverse()
+      .map(h => ({ role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const, content: (h.content ?? '').slice(0, 700) }))
+    // Endende user-Züge abschneiden: das ist die gerade eingegangene Nachricht,
+    // die classify selbst anhängt — sie stünde sonst zweimal im Prompt.
+    while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
+  } catch (e) { console.warn('[booking-bot] Verlauf nicht ladbar:', e) }
+  const it = await classify(c.state, c.state === 'awaiting_daypref' ? [] : slots, text, verlauf)
 
   // Tag-Kontext EXAKT behalten: nennt der Kunde nur Tageszeit/Uhrzeit (keinen Tag),
   // während schon konkrete Slots auf dem Tisch lagen → deren Datum pinnen, damit die
@@ -722,12 +778,61 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     it.on_date = ctxDate
   }
 
-  // Opt-Out zuerst
-  if (it.intent === 'optout') {
-    try { await admin.from('communication_optouts').insert({ lead_id: leadId }) } catch { /* Trigger schließt Gespräch */ }
-    const m = 'Alles klar, ich lasse dich in Ruhe. Melde dich jederzeit, wenn es doch passt. 🙂'
+  // Sendet — aber niemals dasselbe zweimal. Der wortgleiche Doppelversand an
+  // Patrick Dahlmann (13:56:12 und 13:56:38) war der Ausloeser fuer sein "ok du
+  // bist geblockt!". Wiederholt sich der Bot, hat er den Kunden nicht verstanden;
+  // dann uebernimmt Sven, statt es ein drittes Mal zu versuchen.
+  // Anspruch loesen, sobald dieser Durchgang fertig ist — sonst wartet die
+  // naechste Kundennachricht bis zu 90 s, obwohl niemand mehr arbeitet.
+  const done = async () => { await setConv(admin, c.id, { processing_until: null }); return json({ ok: true }) }
+
+  const say = async (m: string): Promise<boolean> => {
+    const norm = normText(m)
+    if (norm && norm === (c.last_sent_norm ?? '')) {
+      console.warn('[booking-bot] Wiederholung unterdrueckt, Uebergabe an Sven:', leadId)
+      await handoff(admin, c.id, phone, leadId, l.first_name)
+      return false
+    }
     await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
-    return json({ ok: true, handled: 'optout' })
+    await setConv(admin, c.id, { last_message: m, last_sent_norm: norm })
+    c.last_sent_norm = norm
+    return true
+  }
+
+  // Kontaktverbot und Opt-Out zuerst — vor allem anderen.
+  // "Nein, bitte melde dich nicht bei mir, ich melde mich bei dir!" wurde bisher
+  // als defer gelesen und mit "ich melde mich nochmal" beantwortet: die woertliche
+  // Missachtung dessen, worum der Kunde gebeten hat.
+  if (it.intent === 'optout' || it.intent === 'no_contact') {
+    // NUR beim ausdruecklichen Verbot ein dauerhafter Opt-Out. Er sperrt den Lead
+    // fuer JEDE Automatik, auch kuenftige Kampagnen — das ist richtig, wenn jemand
+    // "schreib mir nicht mehr" sagt, und falsch bei allem Weicheren.
+    try { await admin.from('communication_optouts').insert({ lead_id: leadId }) } catch { /* Trigger schliesst Gespraech */ }
+    await setConv(admin, c.id, { state: 'handoff', processing_until: null })
+    const m = it.intent === 'no_contact'
+      ? 'Alles klar — ich melde mich nicht mehr. Du weißt ja, wo du uns findest. 🙂'
+      : 'Alles klar, ich lasse dich in Ruhe. Melde dich jederzeit, wenn es doch passt. 🙂'
+    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '🚫 Kunde möchte nicht kontaktiert werden', content: `Der Kunde hat die Kontaktaufnahme untersagt:\n\n„${text}"\n\nAlle Automatiken sind gestoppt.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    return json({ ok: true, handled: it.intent })
+  }
+
+  // "Ich melde mich bei dir" — der Kunde will die Führung behalten.
+  // KEIN Opt-Out: Patrick Dahlmann hat genau so angefangen, und ein Lead, der nur
+  // in Ruhe prüfen will, darf nicht dauerhaft gesperrt werden. Sven kann ihn
+  // jederzeit persönlich anschreiben. Der Bot hört hier nur auf zu drängen —
+  // und kündigt vor allem KEINE Wiedervorlage an, denn genau die Ankündigung
+  // ("ich melde mich am 28. nochmal") hat Patrick zum Blockieren gebracht.
+  if (it.intent === 'self_followup') {
+    await setConv(admin, c.id, { state: 'handoff', processing_until: null })
+    try {
+      await admin.from('scheduled_messages').update({ status: 'cancelled' })
+        .eq('lead_id', leadId).eq('status', 'pending').eq('event_type', 'bot_nudge')
+    } catch { /* egal */ }
+    const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — dann warte ich auf dich. 🙂 Melde dich einfach, wenn du so weit bist.`
+    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '✋ Kunde meldet sich selbst — Nachfassen gestoppt', content: `Der Kunde will von sich aus auf uns zukommen:\n\n„${text}"\n\nDer Bot fasst nicht mehr nach. Du kannst ihn jederzeit persönlich anschreiben — es liegt KEINE Kontaktsperre vor.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+    return json({ ok: true, handled: 'self_followup' })
   }
 
   // Kunde will sich SELBST melden / braucht Bedenkzeit → nicht weiter nach einem
@@ -748,7 +853,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     const dLbl = until.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Europe/Berlin' })
     // Anrede bewusst Singular: der Chat ist 1:1, auch wenn der Kunde von „wir" spricht.
     const m = `Alles klar${l.first_name ? `, ${l.first_name}` : ''} — nimm dir in Ruhe die Zeit. 🙂\n\nIch melde mich nach ${dLbl} nochmal, falls ich bis dahin nichts von dir gehört habe. Bis dahin eine schöne Zeit!\n\nLiebe Grüße\nLotte 🐾`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     await setConv(admin, c.id, {
       state: 'snoozed', snoozed_until: wake.toISOString(), attempts: 0, last_message: m,
       // Ablauf mitziehen, sonst ist das Gespraech tot, bevor es wieder aufwacht.
@@ -782,7 +887,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   // gehört zu Sven, nicht in den Termin-Dialog → sofort übergeben, KEIN Slot-Push.
   if (it.intent === 'content' && !hasApptSignal) {
     const m = `Danke dir${l.first_name ? `, ${l.first_name}` : ''}! Das gebe ich direkt an Sven weiter — er meldet sich gleich persönlich bei dir. 🙂`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     await setConv(admin, c.id, { state: 'handoff', last_message: m })
     return json({ ok: true, handled: 'content_handoff' })
   }
@@ -792,7 +897,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   // den Terminwunsch aber ganz normal weiterverarbeiten — statt alles zu blockieren.
   if ((it.intent === 'content' || it.defer_to_sven) && hasApptSignal) {
     const m = `Deine inhaltlichen Fragen gebe ich direkt an Sven weiter — er meldet sich dazu zeitnah persönlich. 🙂`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
     try { await admin.from('activities').insert({ lead_id: leadId, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: fachliche Frage — bitte persönlich melden', content: `Der Kunde hat neben dem Termin fachliche Fragen gestellt:\n\n${text}`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
     if (it.intent === 'content') it.intent = 'give_preference'   // ab hier übernimmt der Terminfluss
     it.answer = null                                             // fachliches macht Sven, kein Bot-Halbwissen
@@ -801,42 +906,63 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   // Zwischenfrage beantworten (z.B. „Mit wem spreche ich?") — ohne den Faden zu
   // verlieren. Eine Rückfrage ist Interesse, kein Missverstehen → Zähler zurück.
   if (it.answer) {
-    await sendWa(phone, it.answer); await logWa(admin, leadId, it.answer, 'outbound')
-    await setConv(admin, c.id, { attempts: 0 }); c.attempts = 0
+    if (!await say(it.answer)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
+    await setConv(admin, c.id, { attempts: 0, processing_until: null }); c.attempts = 0
+    // NACH einer Antwort ist Schluss. Vorher lief die Zustandsmaschine weiter und
+    // schickte eine ZWEITE Nachricht: Nimet Guerses bekam 240 ms nach der Antwort
+    // auf ihre Preisfrage noch die Slot-Wiederholung "Sag mir einfach 1 oder 2".
+    // Zwei Nachrichten gleichzeitig wirken wie zwei Absender, die aneinander
+    // vorbeireden. Der Ball liegt jetzt beim Kunden.
+    return json({ ok: true, handled: 'answered' })
   }
   if (it.intent === 'question') {
-    // Frage beantwortet → Ball beim Kunden lassen (KEIN erneuter Slot-Push).
-    // Konnte die KI nicht antworten → an Sven übergeben statt Optionen wiederholen.
-    if (it.answer) return json({ ok: true, handled: 'question' })
+    // Ohne brauchbare Antwort nicht raten, sondern uebergeben.
     await handoff(admin, c.id, phone, leadId, l.first_name)
     return json({ ok: true, handled: 'question_handoff' })
   }
 
+  // bump() laeuft genau dann, wenn der Bot NICHT weitergekommen ist — er hat die
+  // Antwort nicht verwerten koennen und fragt nach.
+  //
+  // attempts allein reichte dafuer nicht: der Zaehler wird bei jedem Zustands-
+  // wechsel und jeder beantworteten Zwischenfrage auf 0 gesetzt. Nimet Guerses
+  // lief genau in diese Luecke — "Hab ich leider nicht" setzte den Zustand neu
+  // (attempts 0), "Kein Problem ??" zaehlte auf 1, und sie bekam dieselbe Frage
+  // ein zweites Mal in anderen Worten statt einer Uebergabe.
+  //
+  // rounds_no_progress ueberlebt Zustandswechsel und zaehlt ueber das ganze
+  // Gespraech. Zwei erfolglose Runden reichen: wer zweimal nicht verstanden
+  // wurde, will einen Menschen.
   const bump = async () => {
+    const rnp = (c.rounds_no_progress ?? 0) + 1
     const n = (c.attempts ?? 0) + 1
-    if (n >= 2) { await handoff(admin, c.id, phone, leadId, l.first_name); return true }
-    await setConv(admin, c.id, { attempts: n }); return false
+    c.rounds_no_progress = rnp
+    if (n >= 2 || rnp >= 2) {
+      console.warn(`[booking-bot] kein Fortschritt (attempts ${n}, Runden ${rnp}) → Uebergabe:`, leadId)
+      await handoff(admin, c.id, phone, leadId, l.first_name); return true
+    }
+    await setConv(admin, c.id, { attempts: n, rounds_no_progress: rnp }); return false
   }
 
   // ── Zustandsmaschine ──
   if (c.state === 'awaiting_choice') {
     if (it.intent === 'pick_slot' && it.pick_index != null && slots[it.pick_index]) {
-      await askType(admin, c.id, phone, leadId, l.first_name, slots[it.pick_index]); return json({ ok: true })
+      await askType(admin, c.id, phone, leadId, l.first_name, slots[it.pick_index]); return await done()
     }
     if (it.intent === 'indifferent' && slots[0]) {
       // „Egal / such du aus" → ersten Vorschlag nehmen und weiter zur Terminart
-      await askType(admin, c.id, phone, leadId, l.first_name, slots[0]); return json({ ok: true })
+      await askType(admin, c.id, phone, leadId, l.first_name, slots[0]); return await done()
     }
     if (it.intent === 'give_preference' || it.intent === 'reject_slots') {
       // Direkt mit Präferenz Slots rechnen, sonst nach Tag/Tageszeit fragen
       if (it.day_hint || it.daypart || it.time_hint || it.after_date || it.on_date) return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
       const m = `Kein Problem! An welchem Tag passt es dir besser — und eher vormittags oder nachmittags?`
       await setConv(admin, c.id, { state: 'awaiting_daypref', attempts: 0, last_message: m })
-      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+      if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
     }
     if (await bump()) return json({ ok: true, handled: 'handoff' })
     const m = `Sag mir einfach 1 oder 2 — oder wann es dir sonst besser passt. 🙂\n\n1) ${slots[0]?.label} Uhr\n2) ${slots[1]?.label} Uhr`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
   }
 
   if (c.state === 'awaiting_type') {
@@ -848,12 +974,12 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     // unkompliziertester Standard: WhatsApp-Call.
     if (c.chosen_slot && (it.intent === 'indifferent' || (c.attempts ?? 0) >= 1)) {
       const m = `Alles klar — dann machen wir es ganz unkompliziert per WhatsApp-Call. 🙂`
-      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound')
+      if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
       await book(admin, c, l, c.chosen_slot, 'whatsapp'); return json({ ok: true, handled: 'booked_default' })
     }
     await setConv(admin, c.id, { attempts: (c.attempts ?? 0) + 1 })
     const m = `Kurze Rückfrage: lieber telefonieren wir über WhatsApp, oder machen wir einen Zoom-Call?`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
   }
 
   if (c.state === 'awaiting_daypref') {
@@ -862,22 +988,22 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
     }
     if (await bump()) return json({ ok: true, handled: 'handoff' })
     const m = `An welchem Wochentag passt es dir am besten — und eher vormittags oder nachmittags?`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
   }
 
   if (c.state === 'awaiting_confirm') {
     if (it.intent === 'confirm_yes' && c.chosen_slot) {
-      await askType(admin, c.id, phone, leadId, l.first_name, c.chosen_slot); return json({ ok: true })
+      await askType(admin, c.id, phone, leadId, l.first_name, c.chosen_slot); return await done()
     }
     if (it.intent === 'confirm_no' || it.intent === 'give_preference' || it.intent === 'reject_slots') {
       if (it.day_hint || it.daypart || it.time_hint || it.after_date || it.on_date) return await proposeSlots(admin, c.id, phone, leadId, l.first_name, it)
       const m = `Kein Problem — welcher Tag und eher vormittags oder nachmittags?`
       await setConv(admin, c.id, { state: 'awaiting_daypref', attempts: 0, last_message: m })
-      await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+      if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
     }
     if (await bump()) return json({ ok: true, handled: 'handoff' })
     const m = `Passt dir ${c.chosen_slot?.label} Uhr? Ein kurzes „ja" genügt. 🙂`
-    await sendWa(phone, m); await logWa(admin, leadId, m, 'outbound'); return json({ ok: true })
+    if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' }); return await done()
   }
 
   return json({ ok: true, skipped: 'unknown_state' })

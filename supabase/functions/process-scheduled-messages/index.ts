@@ -18,6 +18,7 @@
 //   );
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { lotteBild } from '../_shared/lotte.ts'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
