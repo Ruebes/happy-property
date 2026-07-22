@@ -320,7 +320,7 @@ export default function EigentuemerDashboard() {
                   className="block w-full py-2.5 text-center text-xs font-medium font-body
                              rounded-xl border border-gray-200 text-gray-500
                              hover:border-hp-highlight hover:text-hp-black transition-colors">
-                  + {properties.length - 4} weitere anzeigen
+                  {t('eigentuemer.showMore', '+ {{n}} weitere anzeigen', { n: properties.length - 4 })}
                 </Link>
               </div>
             )}

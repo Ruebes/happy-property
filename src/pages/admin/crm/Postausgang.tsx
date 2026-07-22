@@ -218,7 +218,7 @@ export default function Postausgang() {
       .map(c => `📊 ${c.title?.trim() || t('crm.outbox.waCalcLabel', 'Deine Berechnung')}: ${base}/rechnung/${c.token}`)
     const links = [...deckLines, ...calcLines].join('\n')
     if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck- oder Berechnungs-Links an diesem Eintrag.')); return }
-    const text = `Hallo ${fn},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n${links}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property`
+    const text = t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
     const regWarnWa = await registrationWarning(row)
     if (!window.confirm(regWarnWa + t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
     setBusyId(row.id)

@@ -156,24 +156,24 @@ export default function CheckinInfo() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <InfoCard icon="🕐" title={t('guest.checkin.checkinTime')}
-                    value={info.checkin_time ? `ab ${info.checkin_time} Uhr` : null} />
+                    value={info.checkin_time ? t('guest.checkin.fromTime', 'ab {{time}} Uhr', { time: info.checkin_time }) : null} />
           <InfoCard icon="🕙" title={t('guest.checkin.checkoutTime')}
-                    value={info.checkout_time ? `bis ${info.checkout_time} Uhr` : null} />
+                    value={info.checkout_time ? t('guest.checkin.untilTime', 'bis {{time}} Uhr', { time: info.checkout_time }) : null} />
           <InfoCard icon="🔑" title={t('guest.checkin.keyHandover')} value={info.key_handover} />
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
             <div className="flex items-center gap-3 mb-3">
               <span className="text-2xl">📶</span>
-              <h3 className="font-semibold text-hp-black font-body text-sm">WLAN</h3>
+              <h3 className="font-semibold text-hp-black font-body text-sm">{t('guest.checkin.wifi', 'WLAN')}</h3>
             </div>
             {info.wifi_name ? (
               <div className="space-y-2">
                 <div>
-                  <p className="text-xs text-gray-400 font-body">Netzwerk</p>
+                  <p className="text-xs text-gray-400 font-body">{t('guest.checkin.network', 'Netzwerk')}</p>
                   <p className="text-sm font-mono font-bold text-hp-black">{info.wifi_name}</p>
                 </div>
                 {info.wifi_password && (
                   <div>
-                    <p className="text-xs text-gray-400 font-body">Passwort</p>
+                    <p className="text-xs text-gray-400 font-body">{t('guest.checkin.password', 'Passwort')}</p>
                     <p className="text-sm font-mono font-bold text-hp-black">{info.wifi_password}</p>
                   </div>
                 )}

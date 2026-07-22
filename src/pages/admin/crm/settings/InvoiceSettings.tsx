@@ -10,7 +10,6 @@ import type { InvoiceSettings as TSettings, InvoiceCustomer, InvoiceArticle, Sub
 const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white'
 const labelCls = 'block text-xs font-medium text-gray-500 mb-1'
 const cardCls = 'bg-white rounded-2xl border border-gray-100 shadow-sm p-5'
-const PLAN_LABEL: Record<PlanInterval, string> = { monthly: 'monatlich', quarterly: 'quartalsweise', yearly: 'jährlich' }
 
 export default function InvoiceSettingsPage() {
   const { t } = useTranslation()
@@ -228,7 +227,7 @@ function PlansSection({ onToast }: { onToast: (m: string) => void }) {
       <div className="space-y-2 mb-3">
         {items.map(p => (
           <div key={p.id} className="flex items-center justify-between border border-gray-100 rounded-xl px-3 py-2.5">
-            <div><span className="font-medium text-sm text-gray-800">{p.name}</span><span className="text-xs text-gray-400 ml-2">{eurFmt(p.net_price)} · {PLAN_LABEL[p.interval]}</span></div>
+            <div><span className="font-medium text-sm text-gray-800">{p.name}</span><span className="text-xs text-gray-400 ml-2">{eurFmt(p.net_price)} · {p.interval === 'monthly' ? t('invoiceSettings.intervalMonthly', 'monatlich') : p.interval === 'quarterly' ? t('invoiceSettings.intervalQuarterly', 'quartalsweise') : t('invoiceSettings.intervalYearly', 'jährlich')}</span></div>
             <button onClick={() => del(p)} className="text-xs text-red-500 hover:text-red-700 font-medium">{t('invoiceSettings.delete', 'Löschen')}</button>
           </div>
         ))}

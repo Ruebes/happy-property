@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
@@ -16,6 +17,7 @@ interface ApptInfo { first_name: string; start_iso: string; meeting_type: 'zoom'
 type View = 'loading' | 'invalid' | 'overview' | 'reschedule' | 'cancel' | 'done_reschedule' | 'done_cancel'
 
 export default function TerminVerwalten() {
+  const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [view, setView] = useState<View>('loading')
   const [appt, setAppt] = useState<ApptInfo | null>(null)
@@ -67,7 +69,7 @@ export default function TerminVerwalten() {
       setSlots(s)
       if (s.length) setDayKey(new Date(s[0]).toLocaleDateString('de-DE', { timeZone: tz }))
     } catch {
-      setError('Termine konnten nicht geladen werden — bitte versuche es noch einmal.')
+      setError(t('funnel.manage.errSlotsLoad', 'Termine konnten nicht geladen werden — bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
 
@@ -76,13 +78,13 @@ export default function TerminVerwalten() {
     try {
       const d = await api({ action: 'manage_reschedule', token, slot_start_iso: s })
       if (d?.error === 'slot_taken' || d?.error === 'slot_invalid') {
-        setError('Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.')
+        setError(t('funnel.manage.errSlotTaken', 'Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.'))
         void openReschedule(); return
       }
       if (!d?.ok) throw new Error(String(d?.error ?? 'failed'))
       setView('done_reschedule')
     } catch {
-      setError('Das hat leider nicht geklappt. Bitte versuche es noch einmal.')
+      setError(t('funnel.manage.errGeneric', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
 
@@ -93,7 +95,7 @@ export default function TerminVerwalten() {
       if (!d?.ok) throw new Error(String(d?.error ?? 'failed'))
       setView('done_cancel')
     } catch {
-      setError('Das hat leider nicht geklappt. Bitte versuche es noch einmal.')
+      setError(t('funnel.manage.errGeneric', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
 
@@ -114,31 +116,31 @@ export default function TerminVerwalten() {
           {view === 'invalid' && (
             <div className={`${card} text-center`}>
               <div className="text-4xl">🤔</div>
-              <h1 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>Diesen Termin gibt es nicht mehr</h1>
-              <p className="text-sm text-gray-500 mt-2">Der Link ist ungültig oder der Termin wurde bereits abgesagt.</p>
-              <a href="/termin?buchen=1" className="mt-6 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin buchen →</a>
+              <h1 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>{t('funnel.manage.invalidTitle', 'Diesen Termin gibt es nicht mehr')}</h1>
+              <p className="text-sm text-gray-500 mt-2">{t('funnel.manage.invalidBody', 'Der Link ist ungültig oder der Termin wurde bereits abgesagt.')}</p>
+              <a href="/termin?buchen=1" className="mt-6 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>{t('funnel.manage.bookNew', 'Neuen Termin buchen →')}</a>
             </div>
           )}
 
           {view === 'overview' && appt && (
             <div className={card}>
-              <p className="text-xs font-bold tracking-widest uppercase" style={{ color: CORAL }}>Dein Termin</p>
+              <p className="text-xs font-bold tracking-widest uppercase" style={{ color: CORAL }}>{t('funnel.manage.yourAppt', 'Dein Termin')}</p>
               <h1 className="font-heading font-bold text-2xl md:text-3xl mt-1" style={{ color: NAVY }}>
-                {appt.first_name ? `Hallo ${appt.first_name}!` : 'Hallo!'}
+                {appt.first_name ? t('funnel.manage.helloName', 'Hallo {{name}}!', { name: appt.first_name }) : t('funnel.manage.hello', 'Hallo!')}
               </h1>
               <div className="mt-4 rounded-xl bg-[#FAF6EC] border border-[#e6dfd0] p-4">
-                <p className="font-semibold" style={{ color: NAVY }}>📅 {fmtFull(appt.start_iso)} Uhr</p>
-                <p className="text-sm text-gray-500 mt-1">{appt.meeting_type === 'zoom' ? '📹 Zoom-Call mit Sven' : '💬 WhatsApp-Call mit Sven'} · Zeiten in deiner Zeitzone</p>
+                <p className="font-semibold" style={{ color: NAVY }}>{t('funnel.manage.dateLine', '📅 {{date}} Uhr', { date: fmtFull(appt.start_iso) })}</p>
+                <p className="text-sm text-gray-500 mt-1">{appt.meeting_type === 'zoom' ? t('funnel.manage.zoomCall', '📹 Zoom-Call mit Sven') : t('funnel.manage.whatsappCall', '💬 WhatsApp-Call mit Sven')} · {t('funnel.manage.tzNote', 'Zeiten in deiner Zeitzone')}</p>
               </div>
               {appt.past ? (
-                <p className="text-sm text-gray-500 mt-4">Dieser Termin liegt in der Vergangenheit. <a href="/termin?buchen=1" className="underline" style={{ color: CORAL }}>Hier kannst du einen neuen buchen.</a></p>
+                <p className="text-sm text-gray-500 mt-4">{t('funnel.manage.pastNote', 'Dieser Termin liegt in der Vergangenheit.')} <a href="/termin?buchen=1" className="underline" style={{ color: CORAL }}>{t('funnel.manage.pastBookNew', 'Hier kannst du einen neuen buchen.')}</a></p>
               ) : (
                 <div className="grid md:grid-cols-2 gap-3 mt-5">
                   <button onClick={() => void openReschedule()} className="px-5 py-3 rounded-full text-white font-semibold shadow hover:shadow-md transition" style={{ background: NAVY }}>
-                    🔄 Termin verschieben
+                    {t('funnel.manage.reschedule', '🔄 Termin verschieben')}
                   </button>
                   <button onClick={() => setView('cancel')} className="px-5 py-3 rounded-full font-semibold border-2 bg-white hover:bg-gray-50 transition" style={{ borderColor: '#e6dfd0', color: NAVY }}>
-                    ❌ Termin absagen
+                    {t('funnel.manage.cancel', '❌ Termin absagen')}
                   </button>
                 </div>
               )}
@@ -147,9 +149,9 @@ export default function TerminVerwalten() {
 
           {view === 'reschedule' && appt && (
             <div className={card}>
-              <button onClick={() => setView('overview')} className="text-sm text-gray-500 hover:text-gray-800">← Zurück</button>
-              <h2 className="font-heading font-bold text-2xl mt-2" style={{ color: NAVY }}>Neuen Termin wählen</h2>
-              <p className="text-sm text-gray-500 mt-1">Aktuell: {fmtFull(appt.start_iso)} Uhr. Ein Klick bucht verbindlich um{appt.meeting_type === 'zoom' ? ' — dein Zoom-Link bleibt gleich' : ''}.</p>
+              <button onClick={() => setView('overview')} className="text-sm text-gray-500 hover:text-gray-800">{t('funnel.manage.back', '← Zurück')}</button>
+              <h2 className="font-heading font-bold text-2xl mt-2" style={{ color: NAVY }}>{t('funnel.manage.pickNew', 'Neuen Termin wählen')}</h2>
+              <p className="text-sm text-gray-500 mt-1">{t('funnel.manage.reschedIntro', 'Aktuell: {{date}} Uhr. Ein Klick bucht verbindlich um{{zoomSuffix}}.', { date: fmtFull(appt.start_iso), zoomSuffix: appt.meeting_type === 'zoom' ? t('funnel.manage.zoomLinkStays', ' — dein Zoom-Link bleibt gleich') : '' })}</p>
               {error && <p className="mt-3 text-sm font-medium text-red-600">{error}</p>}
               {busy ? (
                 <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
@@ -173,7 +175,7 @@ export default function TerminVerwalten() {
                       </button>
                     ))}
                   </div>
-                  {!slots.length && <p className="mt-5 text-sm text-gray-500">Gerade sind keine freien Termine verfügbar — schreib uns kurz per WhatsApp, wir finden einen.</p>}
+                  {!slots.length && <p className="mt-5 text-sm text-gray-500">{t('funnel.manage.noSlots', 'Gerade sind keine freien Termine verfügbar — schreib uns kurz per WhatsApp, wir finden einen.')}</p>}
                 </>
               )}
             </div>
@@ -181,16 +183,16 @@ export default function TerminVerwalten() {
 
           {view === 'cancel' && appt && (
             <div className={card}>
-              <button onClick={() => setView('overview')} className="text-sm text-gray-500 hover:text-gray-800">← Zurück</button>
-              <h2 className="font-heading font-bold text-2xl mt-2" style={{ color: NAVY }}>Termin wirklich absagen?</h2>
-              <p className="text-sm text-gray-500 mt-1">{fmtFull(appt.start_iso)} Uhr wird gelöscht. Du kannst stattdessen auch einfach <button onClick={() => void openReschedule()} className="underline" style={{ color: CORAL }}>verschieben</button>.</p>
-              <label className="block text-xs font-semibold text-gray-500 mt-4 mb-1">Magst du kurz sagen, warum? (optional)</label>
+              <button onClick={() => setView('overview')} className="text-sm text-gray-500 hover:text-gray-800">{t('funnel.manage.back', '← Zurück')}</button>
+              <h2 className="font-heading font-bold text-2xl mt-2" style={{ color: NAVY }}>{t('funnel.manage.cancelConfirm', 'Termin wirklich absagen?')}</h2>
+              <p className="text-sm text-gray-500 mt-1">{t('funnel.manage.cancelIntro', '{{date}} Uhr wird gelöscht. Du kannst stattdessen auch einfach ', { date: fmtFull(appt.start_iso) })}<button onClick={() => void openReschedule()} className="underline" style={{ color: CORAL }}>{t('funnel.manage.rescheduleVerb', 'verschieben')}</button>.</p>
+              <label className="block text-xs font-semibold text-gray-500 mt-4 mb-1">{t('funnel.manage.reasonLabel', 'Magst du kurz sagen, warum? (optional)')}</label>
               <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
-                className="w-full border-2 border-[#e6dfd0] rounded-xl p-3 text-sm focus:outline-none focus:border-[#ff795d] bg-white" placeholder="z. B. beruflich verhindert…" />
+                className="w-full border-2 border-[#e6dfd0] rounded-xl p-3 text-sm focus:outline-none focus:border-[#ff795d] bg-white" placeholder={t('funnel.manage.reasonPlaceholder', 'z. B. beruflich verhindert…')} />
               {error && <p className="mt-2 text-sm font-medium text-red-600">{error}</p>}
               <button onClick={() => void doCancel()} disabled={busy}
                 className="mt-4 w-full py-3 rounded-full text-white font-semibold shadow disabled:opacity-50" style={{ background: '#dc2626' }}>
-                {busy ? 'Einen Moment…' : 'Ja, Termin absagen'}
+                {busy ? t('funnel.manage.oneMoment', 'Einen Moment…') : t('funnel.manage.cancelYes', 'Ja, Termin absagen')}
               </button>
             </div>
           )}
@@ -198,24 +200,24 @@ export default function TerminVerwalten() {
           {view === 'done_reschedule' && (
             <div className={`${card} text-center`}>
               <div className="text-5xl">✅</div>
-              <h2 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>Termin verschoben!</h2>
-              <p className="text-gray-600 mt-2"><strong>{newSlot ? fmtFull(newSlot) : ''} Uhr</strong></p>
-              <p className="text-sm text-gray-500 mt-2">Die neue Bestätigung ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.</p>
+              <h2 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>{t('funnel.manage.doneReschedTitle', 'Termin verschoben!')}</h2>
+              <p className="text-gray-600 mt-2"><strong>{newSlot ? t('funnel.manage.dateUhr', '{{date}} Uhr', { date: fmtFull(newSlot) }) : ''}</strong></p>
+              <p className="text-sm text-gray-500 mt-2">{t('funnel.manage.doneReschedBody', 'Die neue Bestätigung ist per E-Mail und WhatsApp unterwegs — inklusive Kalender-Datei.')}</p>
             </div>
           )}
 
           {view === 'done_cancel' && (
             <div className={`${card} text-center`}>
               <div className="text-5xl">👋</div>
-              <h2 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>Termin abgesagt</h2>
-              <p className="text-sm text-gray-500 mt-2">Schade! Wenn es später wieder passt, freut sich Sven auf dich.</p>
-              <a href="/termin?buchen=1" className="mt-5 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>Neuen Termin finden →</a>
+              <h2 className="font-heading font-bold text-2xl mt-3" style={{ color: NAVY }}>{t('funnel.manage.doneCancelTitle', 'Termin abgesagt')}</h2>
+              <p className="text-sm text-gray-500 mt-2">{t('funnel.manage.doneCancelBody', 'Schade! Wenn es später wieder passt, freut sich Sven auf dich.')}</p>
+              <a href="/termin?buchen=1" className="mt-5 inline-block px-8 py-3 rounded-full text-white font-semibold shadow" style={{ background: CORAL }}>{t('funnel.manage.findNew', 'Neuen Termin finden →')}</a>
             </div>
           )}
 
         </div>
       </div>
-      <div className="text-center text-[11px] text-gray-400 pb-5">© Happy Property · Paphos, Zypern</div>
+      <div className="text-center text-[11px] text-gray-400 pb-5">{t('funnel.manage.footer', '© Happy Property · Paphos, Zypern')}</div>
     </div>
   )
 }

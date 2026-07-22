@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 
 // ── Öffentliche Aufgaben-Seite (per Token, kein Login) ───────────────────────
@@ -10,6 +11,7 @@ interface Info { title: string; description: string | null; statusLabel: string;
 const CORAL = '#ff795d'
 
 export default function TaskAction() {
+  const { t } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [info, setInfo] = useState<Info | null>(null)
   const [loading, setLoading] = useState(true)
@@ -22,9 +24,9 @@ export default function TaskAction() {
     setLoading(true); setErr('')
     try {
       const { data, error } = await supabase.functions.invoke('task-action', { body: { token, action: 'info' } })
-      if (error || !data || data.error) { setErr('Dieser Link ist ungültig oder abgelaufen.'); return }
+      if (error || !data || data.error) { setErr(t('taskAction.invalidLink', 'Dieser Link ist ungültig oder abgelaufen.')); return }
       setInfo(data as Info)
-    } catch { setErr('Etwas ist schiefgelaufen.') } finally { setLoading(false) }
+    } catch { setErr(t('taskAction.somethingWrong', 'Etwas ist schiefgelaufen.')) } finally { setLoading(false) }
   }, [token])
   useEffect(() => { load() }, [load])
 
@@ -32,17 +34,17 @@ export default function TaskAction() {
     setBusy(action); setFlash('')
     try {
       const { data, error } = await supabase.functions.invoke('task-action', { body: { token, action, note: note.trim() || undefined } })
-      if (error || data?.error) { setFlash('Konnte nicht gespeichert werden.'); return }
-      if (action === 'note') { setFlash('Bemerkung gesendet ✓'); setNote('') }
-      else { setNote(''); await load(); setFlash(action === 'done' ? 'Als erledigt markiert ✓' : 'Angenommen ✓') }
-    } catch { setFlash('Konnte nicht gespeichert werden.') } finally { setBusy('') }
+      if (error || data?.error) { setFlash(t('taskAction.saveFailed', 'Konnte nicht gespeichert werden.')); return }
+      if (action === 'note') { setFlash(t('taskAction.noteSent', 'Bemerkung gesendet ✓')); setNote('') }
+      else { setNote(''); await load(); setFlash(action === 'done' ? t('taskAction.markedDone', 'Als erledigt markiert ✓') : t('taskAction.accepted', 'Angenommen ✓')) }
+    } catch { setFlash(t('taskAction.saveFailed', 'Konnte nicht gespeichert werden.')) } finally { setBusy('') }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: 'linear-gradient(160deg,#fff5f2 0%,#faf7f4 100%)' }}>
       <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
         <div className="px-6 py-5" style={{ backgroundColor: CORAL }}>
-          <p className="text-white/80 text-xs font-semibold tracking-wide uppercase">Happy Property · Aufgabe</p>
+          <p className="text-white/80 text-xs font-semibold tracking-wide uppercase">{t('taskAction.headerLabel', 'Happy Property · Aufgabe')}</p>
         </div>
 
         {loading ? (
@@ -60,13 +62,13 @@ export default function TaskAction() {
               </div>
               <h1 className="text-xl font-bold text-gray-900">{info.title}</h1>
               {info.description && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{info.description}</p>}
-              <p className="text-xs text-gray-400 mt-3">Hallo {info.assignee.split(' ')[0]}, diese Aufgabe ist dir zugeordnet.</p>
+              <p className="text-xs text-gray-400 mt-3">{t('taskAction.assignedTo', 'Hallo {{name}}, diese Aufgabe ist dir zugeordnet.', { name: info.assignee.split(' ')[0] })}</p>
             </div>
 
             {info.done ? (
               <div className="rounded-2xl bg-green-50 border border-green-100 p-4 text-center">
                 <p className="text-2xl">🎉</p>
-                <p className="text-sm font-medium text-green-800 mt-1">Diese Aufgabe ist erledigt. Danke!</p>
+                <p className="text-sm font-medium text-green-800 mt-1">{t('taskAction.doneMessage', 'Diese Aufgabe ist erledigt. Danke!')}</p>
               </div>
             ) : (
               <>
@@ -74,23 +76,23 @@ export default function TaskAction() {
                   {!info.accepted && (
                     <button onClick={() => act('accept')} disabled={!!busy}
                       className="w-full py-3 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: '#f59e0b' }}>
-                      {busy === 'accept' ? '…' : '✋ Aufgabe annehmen'}
+                      {busy === 'accept' ? '…' : t('taskAction.acceptBtn', '✋ Aufgabe annehmen')}
                     </button>
                   )}
                   <button onClick={() => act('done')} disabled={!!busy}
                     className="w-full py-3 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: '#10b981' }}>
-                    {busy === 'done' ? '…' : '🏁 Als erledigt markieren'}
+                    {busy === 'done' ? '…' : t('taskAction.markDoneBtn', '🏁 Als erledigt markieren')}
                   </button>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Bemerkung / Rückfrage (optional)</label>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">{t('taskAction.noteLabel', 'Bemerkung / Rückfrage (optional)')}</label>
                   <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
                     className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
-                    placeholder="Kurze Nachricht an Happy Property …" />
+                    placeholder={t('taskAction.notePlaceholder', 'Kurze Nachricht an Happy Property …')} />
                   <button onClick={() => act('note')} disabled={!!busy || !note.trim()}
                     className="mt-2 w-full py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                    {busy === 'note' ? '…' : 'Bemerkung senden'}
+                    {busy === 'note' ? '…' : t('taskAction.sendNote', 'Bemerkung senden')}
                   </button>
                 </div>
               </>

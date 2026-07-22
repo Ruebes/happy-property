@@ -228,7 +228,7 @@ export default function DeveloperContactsModal({
                   </label>
                   <input autoFocus value={form.name}
                     onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                    className={inputCls} placeholder="z.B. Maria Sales" />
+                    className={inputCls} placeholder={t('crm.devContacts.namePlaceholder', 'z.B. Maria Sales')} />
                 </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-600 mb-1">
@@ -236,7 +236,7 @@ export default function DeveloperContactsModal({
                   </label>
                   <input value={form.role}
                     onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
-                    className={inputCls} placeholder="z.B. Sales, Reservierungen" />
+                    className={inputCls} placeholder={t('crm.devContacts.rolePlaceholder', 'z.B. Sales, Reservierungen')} />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">

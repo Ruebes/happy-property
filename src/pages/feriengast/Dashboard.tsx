@@ -196,14 +196,14 @@ export default function FeriengastDashboard() {
               <p className="text-xs text-gray-400 font-body mb-0.5">{t('bookings.checkIn')}</p>
               <p className="text-sm font-bold text-hp-black font-body">{fmtDate(booking.check_in, lang)}</p>
               {booking.checkin_time && (
-                <p className="text-xs text-gray-500 font-body">ab {booking.checkin_time} Uhr</p>
+                <p className="text-xs text-gray-500 font-body">{t('guest.booking.fromTime', 'ab {{time}} Uhr', { time: booking.checkin_time })}</p>
               )}
             </div>
             <div>
               <p className="text-xs text-gray-400 font-body mb-0.5">{t('bookings.checkOut')}</p>
               <p className="text-sm font-bold text-hp-black font-body">{fmtDate(booking.check_out, lang)}</p>
               {booking.checkout_time && (
-                <p className="text-xs text-gray-500 font-body">bis {booking.checkout_time} Uhr</p>
+                <p className="text-xs text-gray-500 font-body">{t('guest.booking.untilTime', 'bis {{time}} Uhr', { time: booking.checkout_time })}</p>
               )}
             </div>
             <div>

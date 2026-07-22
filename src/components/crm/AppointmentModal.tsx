@@ -313,7 +313,7 @@ export default function AppointmentModal({
         const dev = Array.isArray(d.developer) ? d.developer[0] : d.developer
         rows.push({
           id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null,
-          company: dev?.name ? `${dev.name} (Developer)` : (t('crm.appt.developerContact', 'Developer') as string),
+          company: dev?.name ? (t('crm.appt.developerSuffix', '{{name}} (Developer)', { name: dev.name }) as string) : (t('crm.appt.developerContact', 'Developer') as string),
           email: d.email, phone: d.whatsapp || d.phone, whatsapp: d.whatsapp ?? null, language: d.language ?? null,
         })
       }
@@ -493,7 +493,7 @@ export default function AppointmentModal({
       const effLocationUrl   = apptType === 'inperson' ? locationUrl : ''
       const effPhone         = (apptType === 'phone' || apptType === 'whatsapp') ? phoneNumber : ''
 
-      const attendeeLine = attendees.length ? `Teilnehmer: ${attendees.map(a => a.name).join(', ')}` : ''
+      const attendeeLine = attendees.length ? t('crm.appt.googleAttendeesLine', 'Teilnehmer: {{names}}', { names: attendees.map(a => a.name).join(', ') }) : ''
       const googleDesc = [description, attendeeLine].filter(Boolean).join('\n')
       const payload = {
         title,
@@ -622,14 +622,14 @@ export default function AppointmentModal({
       // in Ortszeit (Zypern = Venue). start_time ist als UTC gespeichert (korrekt) — das
       // hier ist reine Anzeige-Umrechnung, damit der Kunde nicht 1h daneben liegt.
       const dispTz = apptType === 'inperson' ? 'Asia/Nicosia' : 'Europe/Berlin'
-      const tzHint = apptType === 'inperson' ? '' : ' (deutsche Zeit)'
+      const tzHint = apptType === 'inperson' ? '' : ' ' + t('crm.appt.germanTimeParen', '(deutsche Zeit)')
       const fmtHM = (iso: string) => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: dispTz }).format(new Date(iso))
       const vonDisp = fmtHM(start_time)
       const bisDisp = fmtHM(end_time)
       const dateStr = new Date(start_time).toLocaleDateString('de-DE', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
       const gcalDetails = [
         description,
-        effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '',
+        effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (${t('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword})` : ''}` : '',
         effLocationUrl || '',
       ].filter(Boolean).join('\n')
       const gcalHref = buildGcalHref(title, start_time, end_time, gcalDetails, effLocation || undefined)
@@ -722,7 +722,7 @@ export default function AppointmentModal({
               rsvpYesHref: rsvpHref(tgt.pKey, 'yes') || undefined,
               rsvpNoHref: rsvpHref(tgt.pKey, 'no') || undefined,
             })
-            const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (Passwort: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
+            const icsDesc = [description, effZoomLink ? `Zoom: ${effZoomLink}${effZoomPassword ? ` (${t('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword})` : ''}` : '', effLocationUrl || ''].filter(Boolean).join('\n')
             const ics = buildIcs({
               uid:        apptId || crypto.randomUUID(),
               title, startIso: start_time, endIso: end_time,
@@ -735,7 +735,7 @@ export default function AppointmentModal({
             const { error: mailErr } = await supabase.functions.invoke('send-email', {
               body: {
                 to: tgt.email,
-                subject: `${isEdit ? 'Terminänderung' : 'Terminbestätigung'}: ${title}`,
+                subject: `${isEdit ? t('crm.appt.mailSubjectEdit', 'Terminänderung') : t('crm.appt.mailSubjectNew', 'Terminbestätigung')}: ${title}`,
                 html,
                 ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
                 attachment: {
@@ -757,17 +757,17 @@ export default function AppointmentModal({
         for (const tgt of waTargets) {
           try {
             const whereText = apptType === 'zoom' && effZoomLink
-              ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\nPasswort: ${effZoomPassword}` : ''}`
+              ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\n${t('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword}` : ''}`
               : apptType === 'inperson' && (effLocation || effLocationUrl)
                 ? `\n📍 ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
                 : apptType === 'whatsapp'
                   ? (tgt.leadId
-                      ? `\n📞 Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.`
-                      : `\n📞 Der Termin findet als WhatsApp-Call statt.`)
+                      ? `\n📞 ${t('crm.appt.waCallReminderWa', 'Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.')}`
+                      : `\n📞 ${t('crm.appt.waCallInfoWa', 'Der Termin findet als WhatsApp-Call statt.')}`)
                   : apptType === 'phone'
                     ? (tgt.leadId
-                        ? `\n📞 Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.`
-                        : `\n📞 Der Termin findet telefonisch statt.`)
+                        ? `\n📞 ${t('crm.appt.waCallReminderPhone', 'Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.')}`
+                        : `\n📞 ${t('crm.appt.waCallInfoPhone', 'Der Termin findet telefonisch statt.')}`)
                     : ''
             const pNote = personalTexts[tgt.pKey] ? `\n\n${personalTexts[tgt.pKey]}` : ''
             // Lange URLs für WhatsApp kürzen (portal.../s/<code>)
@@ -777,8 +777,11 @@ export default function AppointmentModal({
               yesRaw ? shortenUrl(rsvpHref(tgt.pKey, 'no')) : Promise.resolve(''),
               shortenUrl(gcalHref),
             ])
-            const rsvpText = yes ? `\n\n✅ Sagst du mir kurz zu? Ein Klick genügt:\n${yes}\n(Falls es nicht passt: ${no})` : ''
-            const waText = `Hallo ${tgt.firstName}, ${isEdit ? 'unser Termin hat sich geändert — hier die neuen Details' : 'ich freue mich auf unser Treffen'}:\n\n${title}\n${dateStr}, ${vonDisp}–${bisDisp} Uhr${tzHint}${pNote}${whereText}${rsvpText}\n\n🗓 Termin in deinen Kalender speichern:\n${gcalShort}\n\nBis bald!\nSven · Happy Property`
+            const rsvpText = yes ? `\n\n✅ ${t('crm.appt.waRsvpAsk', 'Sagst du mir kurz zu? Ein Klick genügt:')}\n${yes}\n(${t('crm.appt.waRsvpNo', 'Falls es nicht passt: {{no}}', { no })})` : ''
+            const waIntro = isEdit
+              ? t('crm.appt.waIntroEdit', 'unser Termin hat sich geändert — hier die neuen Details')
+              : t('crm.appt.waIntroNew', 'ich freue mich auf unser Treffen')
+            const waText = `${t('crm.appt.waHello', 'Hallo {{name}}', { name: tgt.firstName })}, ${waIntro}:\n\n${title}\n${dateStr}, ${vonDisp}–${bisDisp} ${t('crm.appt.clock', 'Uhr')}${tzHint}${pNote}${whereText}${rsvpText}\n\n🗓 ${t('crm.appt.waSaveToCalendar', 'Termin in deinen Kalender speichern:')}\n${gcalShort}\n\n${t('crm.appt.waSignoff', 'Bis bald!\nSven · Happy Property')}`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)

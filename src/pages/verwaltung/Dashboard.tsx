@@ -247,7 +247,10 @@ function WeekCalendar({ bookings, loading }: { bookings: WeekBooking[]; loading:
   // assign stable color per booking id
   const colorOf = (id: string) => COLORS[parseInt(id.replace(/-/g, '').slice(0, 8), 16) % COLORS.length]
 
-  const dayLabels = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+  const dayLabels = [
+    t('calendar.dayMon', 'Mo'), t('calendar.dayTue', 'Di'), t('calendar.dayWed', 'Mi'),
+    t('calendar.dayThu', 'Do'), t('calendar.dayFri', 'Fr'), t('calendar.daySat', 'Sa'), t('calendar.daySun', 'So'),
+  ]
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -681,7 +684,7 @@ export default function VerwaltungDashboard() {
                     {expiringContracts}× {t('dashboard.verwalter.expiringContracts')}
                   </p>
                   <p className="text-xs text-orange-600 font-body mt-0.5">
-                    {t('dashboard.admin.taskExpiresOn')} — 30 Tage
+                    {t('dashboard.admin.taskExpiresOn')} — {t('dashboard.verwalter.within30Days', '30 Tage')}
                   </p>
                 </div>
                 <button onClick={() => navigate('/objekte')}

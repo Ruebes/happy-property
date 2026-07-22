@@ -144,7 +144,7 @@ export default function NewsletterLists() {
                         <button onClick={() => void toggle(r)}
                           className={`w-11 h-6 rounded-full relative transition-colors ${r.active ? '' : 'bg-gray-200'}`}
                           style={r.active ? { backgroundColor: '#ff795d' } : undefined}
-                          aria-label={r.active ? 'aktiv' : 'inaktiv'}>
+                          aria-label={r.active ? t('crm.lists.ariaActive', 'aktiv') : t('crm.lists.ariaInactive', 'inaktiv')}>
                           <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-all ${r.active ? 'left-5' : 'left-0.5'}`} />
                         </button>
                       </td>

@@ -185,7 +185,7 @@ export default function AllLeads() {
       }
       await supabase.from('activities').insert({
         lead_id: lead.id, type: 'note', direction: 'outbound',
-        subject: value === 'gut' ? '👍 Guter Lead' : '👎 Schlechter Lead',
+        subject: value === 'gut' ? t('crm.lead.ratedGoodSubject', '👍 Guter Lead') : t('crm.lead.ratedBadSubject', '👎 Schlechter Lead'),
         content: t('crm.lead.ratedInList', 'Bewertet in der Kontaktliste'),
         completed_at: ratedAt,
       })

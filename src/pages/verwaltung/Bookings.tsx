@@ -151,7 +151,7 @@ export default function VerwalterBookings() {
         })
         if (inviteErr) throw new Error(inviteErr.message)
         const result = inviteData as { success: boolean; userId: string; error?: string }
-        if (!result.success) throw new Error(result.error ?? 'Einladung fehlgeschlagen')
+        if (!result.success) throw new Error(result.error ?? t('bookings.inviteFailed', 'Einladung fehlgeschlagen'))
         guestId = result.userId
       }
 
@@ -233,7 +233,7 @@ export default function VerwalterBookings() {
               style={{ fontFamily: 'var(--font-heading)' }}>
             {t('bookings.title')}
           </h1>
-          <p className="text-sm text-gray-400 font-body">{bookings.length} {t('common.noResults').replace('Keine ', '').replace(' vorhanden.', '')}</p>
+          <p className="text-sm text-gray-400 font-body">{bookings.length} {t('bookings.countLabel', 'Buchungen')}</p>
         </div>
         <button onClick={openModal}
                 className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-sm
@@ -256,7 +256,7 @@ export default function VerwalterBookings() {
           <table className="w-full text-sm font-body">
             <thead>
               <tr className="border-b border-gray-100">
-                {['Nr.', t('bookings.columns.property'), t('guest.dashboard.subtitle').split(' ')[0], t('bookings.checkIn'), t('bookings.checkOut')].map(h => (
+                {[t('bookings.columns.number', 'Nr.'), t('bookings.columns.property'), t('bookings.columns.guest', 'Gast'), t('bookings.checkIn'), t('bookings.checkOut')].map(h => (
                   <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-400 uppercase tracking-widest">
                     {h}
                   </th>
@@ -299,7 +299,7 @@ export default function VerwalterBookings() {
                             step === i+1 ? 'text-white' : 'bg-gray-100 text-gray-400'
                           }`}
                           style={step === i+1 ? { backgroundColor: 'var(--color-highlight)' } : {}}>
-                      {['Gast', 'Buchung', 'Infos'][i]}
+                      {[t('bookings.steps.guest', 'Gast'), t('bookings.steps.booking', 'Buchung'), t('bookings.steps.info', 'Infos')][i]}
                     </span>
                   ))}
                 </div>
@@ -339,7 +339,7 @@ export default function VerwalterBookings() {
                       <div>
                         <Label>{t('guest.profile.nationality')}</Label>
                         <input className={inputCls} value={form.nationality}
-                               onChange={e => setF('nationality', e.target.value)} placeholder="Deutsch" />
+                               onChange={e => setF('nationality', e.target.value)} placeholder={t('guest.profile.nationalityPlaceholder', 'Deutsch')} />
                       </div>
                     </div>
                     <div className="mt-3">
@@ -437,11 +437,11 @@ export default function VerwalterBookings() {
                     </div>
                     <div className="space-y-3">
                       {[
-                        { key: 'key_handover',     label: t('guest.checkin.keyHandover'),  ph: 'Schlüssel liegt im Schlüsselsafe …' },
-                        { key: 'wifi_name',         label: 'WLAN-Name',                    ph: 'Netzwerkname' },
-                        { key: 'wifi_password',     label: 'WLAN-Passwort',                ph: 'Passwort' },
-                        { key: 'parking_info',      label: t('guest.checkin.parking'),     ph: 'Parkplatz Beschreibung …' },
-                        { key: 'emergency_contact', label: t('guest.checkin.emergency'),   ph: '+49 170 … / Name' },
+                        { key: 'key_handover',     label: t('guest.checkin.keyHandover'),  ph: t('guest.checkin.keyHandoverPlaceholder', 'Schlüssel liegt im Schlüsselsafe …') },
+                        { key: 'wifi_name',         label: t('guest.checkin.wifiName', 'WLAN-Name'),         ph: t('guest.checkin.wifiNamePlaceholder', 'Netzwerkname') },
+                        { key: 'wifi_password',     label: t('guest.checkin.wifiPassword', 'WLAN-Passwort'), ph: t('guest.checkin.wifiPasswordPlaceholder', 'Passwort') },
+                        { key: 'parking_info',      label: t('guest.checkin.parking'),     ph: t('guest.checkin.parkingPlaceholder', 'Parkplatz Beschreibung …') },
+                        { key: 'emergency_contact', label: t('guest.checkin.emergency'),   ph: t('guest.checkin.emergencyPlaceholder', '+49 170 … / Name') },
                       ].map(({ key, label, ph }) => (
                         <div key={key}>
                           <Label>{label}</Label>

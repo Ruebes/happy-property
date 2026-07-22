@@ -5,7 +5,82 @@
   },
   "funnel": {
     "back": "Back",
-    "next": "Next"
+    "next": "Next",
+    "manage": {
+      "errSlotsLoad": "The available times couldn't be loaded — please try again.",
+      "errSlotTaken": "That time slot was just taken — please pick another one.",
+      "errGeneric": "Sorry, that didn't work. Please try again.",
+      "invalidTitle": "This appointment no longer exists",
+      "invalidBody": "The link is invalid or the appointment has already been cancelled.",
+      "bookNew": "Book a new appointment →",
+      "yourAppt": "Your appointment",
+      "helloName": "Hi {{name}}!",
+      "hello": "Hi!",
+      "dateLine": "📅 {{date}}",
+      "zoomCall": "📹 Zoom call with Sven",
+      "whatsappCall": "💬 WhatsApp call with Sven",
+      "tzNote": "Times in your time zone",
+      "pastNote": "This appointment is in the past.",
+      "pastBookNew": "You can book a new one here.",
+      "reschedule": "🔄 Reschedule appointment",
+      "cancel": "❌ Cancel appointment",
+      "back": "← Back",
+      "pickNew": "Choose a new time",
+      "reschedIntro": "Currently: {{date}}. One click books it bindingly{{zoomSuffix}}.",
+      "zoomLinkStays": " — your Zoom link stays the same",
+      "noSlots": "There are no free slots right now — drop us a quick message on WhatsApp and we'll find one.",
+      "cancelConfirm": "Really cancel the appointment?",
+      "cancelIntro": "{{date}} will be deleted. Instead you can simply ",
+      "rescheduleVerb": "reschedule",
+      "reasonLabel": "Care to tell us briefly why? (optional)",
+      "reasonPlaceholder": "e.g. work commitment…",
+      "oneMoment": "One moment…",
+      "cancelYes": "Yes, cancel appointment",
+      "doneReschedTitle": "Appointment rescheduled!",
+      "dateUhr": "{{date}}",
+      "doneReschedBody": "The new confirmation is on its way by email and WhatsApp — including a calendar file.",
+      "doneCancelTitle": "Appointment cancelled",
+      "doneCancelBody": "Too bad! Whenever it fits again later, Sven will be happy to hear from you.",
+      "findNew": "Find a new time →",
+      "footer": "© Happy Property · Paphos, Cyprus"
+    },
+    "err_first_name": "Please enter your first name.",
+    "err_email": "Please check your email address.",
+    "err_phone": "Please check your phone number.",
+    "err_generic": "Sorry, that didn't work. Please try again.",
+    "err_slot_taken": "This slot was just taken — please pick another one.",
+    "cal_summary": "Consultation with Sven – Happy Property",
+    "cal_desc_zoom": "Zoom link will arrive via email & WhatsApp.",
+    "cal_desc_whatsapp": "Sven will call you on WhatsApp.",
+    "question_counter": "Question {{n}} of {{total}}",
+    "almost_done": "Almost done",
+    "rebook_contact_title": "Just your contact details",
+    "rebook_contact_sub": "Then we'll book your appointment right away.",
+    "zoom_call": "📹 Zoom call",
+    "whatsapp_call": "💬 WhatsApp call",
+    "oclock": "",
+    "first_name_label": "First name *",
+    "last_name_label": "Last name",
+    "phone_label": "Phone number (WhatsApp) *",
+    "email_label": "Email address *",
+    "email_placeholder": "name@example.com",
+    "one_moment": "One moment…",
+    "book_binding": "Book appointment now",
+    "your_appointment": "Your preferred time",
+    "how_to_talk_named": "Hi {{name}} — how would you like to talk with Sven?",
+    "how_to_talk": "How would you like to talk with Sven?",
+    "zoom_title": "Zoom call",
+    "zoom_desc": "With screen sharing — ideal for reviewing properties and numbers together.",
+    "whatsapp_title": "WhatsApp call",
+    "whatsapp_desc": "Easy via phone — Sven calls you on WhatsApp.",
+    "last_step": "Last step",
+    "when_suits": "When suits you?",
+    "timezone_note": "All times in your timezone ({{tz}}). One click books the appointment.",
+    "no_slots": "No free slots available right now — Sven will get in touch with you personally shortly!",
+    "zoom_short": "📹 Zoom",
+    "add_google_cal": "📅 Add to Google Calendar",
+    "download_ics": "📥 Calendar file (Apple/Outlook)",
+    "footer": "© Happy Property · Paphos, Cyprus"
   },
   "common": {
     "loading": "Loading …",
@@ -33,7 +108,8 @@
     "optional": "Optional",
     "actions": "Actions",
     "noResults": "No entries found.",
-    "copy": "Copy"
+    "copy": "Copy",
+    "error": "Error"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -151,7 +227,8 @@
         "properties": "Manage properties",
         "calendar": "Open calendar",
         "users": "Manage users"
-      }
+      },
+      "within30Days": "30 days"
     },
     "eigentuemer": {
       "subtitle": "Owner portal · Your properties & income",
@@ -199,7 +276,8 @@
       "active": "Active",
       "construction": "Under construction"
     },
-    "loadError": "Your properties could not be loaded right now."
+    "loadError": "Your properties could not be loaded right now.",
+    "showMore": "+ {{n}} more"
   },
   "stats": {
     "users": "Users",
@@ -410,9 +488,18 @@
       "checkOut": "Check-out",
       "source": "Source",
       "nights": "Nights",
-      "actions": "Actions"
+      "actions": "Actions",
+      "number": "No.",
+      "guest": "Guest"
     },
-    "empty": "No bookings found."
+    "empty": "No bookings found.",
+    "inviteFailed": "Invitation failed",
+    "countLabel": "Bookings",
+    "steps": {
+      "guest": "Guest",
+      "booking": "Booking",
+      "info": "Info"
+    }
   },
   "income": {
     "title": "Income",
@@ -580,11 +667,19 @@
       "ownerTaxHint": "Using a property for more than 14 days per year for personal use can jeopardise the input tax deduction entitlement (VAT refund) for that property.",
       "ownerTaxAdvice": "Please discuss this with your tax advisor.",
       "ownerTaxProceed": "Book anyway",
-      "ownerTaxAbort": "Cancel"
+      "ownerTaxAbort": "Cancel",
+      "errInviteFailed": "Invitation failed"
     },
     "googleUnreachable": "Google Calendar unreachable",
     "deleteFailed": "Delete failed",
-    "mapTitle": "Map"
+    "mapTitle": "Map",
+    "dayMon": "Mon",
+    "dayTue": "Tue",
+    "dayWed": "Wed",
+    "dayThu": "Thu",
+    "dayFri": "Fri",
+    "daySat": "Sat",
+    "daySun": "Sun"
   },
   "dates": {
     "locale": "en-US",
@@ -1123,7 +1218,9 @@
       "period": "Booking period",
       "pricePerNight": "Price per night",
       "cancellationPlaceholder": "Cancellation policy …",
-      "houseRulesPlaceholder": "House rules for this property …"
+      "houseRulesPlaceholder": "House rules for this property …",
+      "fromTime": "from {{time}}",
+      "untilTime": "until {{time}}"
     },
     "checkin": {
       "hint": "All the important info for your stay.",
@@ -1133,7 +1230,19 @@
       "keyHandover": "Key handover",
       "parking": "Parking",
       "emergency": "Emergency contact",
-      "navigateBtn": "Navigate to check-in"
+      "navigateBtn": "Navigate to check-in",
+      "fromTime": "from {{time}}",
+      "untilTime": "until {{time}}",
+      "wifi": "WiFi",
+      "network": "Network",
+      "password": "Password",
+      "wifiName": "Wi-Fi name",
+      "wifiNamePlaceholder": "Network name",
+      "wifiPassword": "Wi-Fi password",
+      "wifiPasswordPlaceholder": "Password",
+      "keyHandoverPlaceholder": "Key is in the key safe …",
+      "parkingPlaceholder": "Parking description …",
+      "emergencyPlaceholder": "+49 170 … / Name"
     },
     "map": {
       "title": "Location",
@@ -1177,10 +1286,14 @@
       "cleaningFee": "Cleaning fee",
       "total": "Total",
       "cancellation": "Cancellation policy",
-      "autoGenerated": "Automatically generated booking confirmation"
+      "autoGenerated": "Automatically generated booking confirmation",
+      "fromTime": "from {{time}}",
+      "untilTime": "until {{time}}",
+      "perNight": "/night"
     },
     "profile": {
-      "nationality": "Nationality"
+      "nationality": "Nationality",
+      "nationalityPlaceholder": "German"
     }
   },
   "crm": {
@@ -1280,7 +1393,11 @@
         "erledigt": "Done"
       },
       "accepted": "accepted",
-      "start": "Start working"
+      "start": "Start working",
+      "chSystem": "in the system",
+      "externName": "External",
+      "contactFallback": "Contact",
+      "customerFallback": "Customer"
     },
     "home": {
       "hello": "Hello",
@@ -1402,7 +1519,9 @@
       "altPhones": "More phone numbers (comma-separated)",
       "ratedInList": "Rated in the contact list",
       "ratedGood": "👍 Rated as a good lead — goes back to Meta tonight.",
-      "ratedBad": "👎 Noted as a weak lead."
+      "ratedBad": "👎 Noted as a weak lead.",
+      "ratedGoodSubject": "👍 Good lead",
+      "ratedBadSubject": "👎 Weak lead"
     },
     "sources": {
       "meta": "META Ads",
@@ -2281,7 +2400,9 @@
       "language": "Contact language",
       "langDe": "German",
       "langEn": "English",
-      "langHint": "Automated emails & WhatsApp to this contact in this language."
+      "langHint": "Automated emails & WhatsApp to this contact in this language.",
+      "namePlaceholder": "e.g. Maria Sales",
+      "rolePlaceholder": "e.g. Sales, reservations"
     },
     "appt": {
       "joinZoom": "Join Zoom",
@@ -2348,7 +2469,25 @@
       "sendWhatsAppInviteAll": "Send invitation by WhatsApp — to lead & attendees with a number",
       "developerContact": "Developer",
       "descriptionAi": "Description / briefing ✨",
-      "descriptionAiHint": "AI tailors this for each recipient — the customer reads what the meeting means for them, partners get their part. Leave out internals or mark them as such."
+      "descriptionAiHint": "AI tailors this for each recipient — the customer reads what the meeting means for them, partners get their part. Leave out internals or mark them as such.",
+      "developerSuffix": "{{name}} (Developer)",
+      "googleAttendeesLine": "Attendees: {{names}}",
+      "germanTimeParen": "(German time)",
+      "passwordLabel": "Password",
+      "waCallReminderWa": "I'll call you via WhatsApp at the agreed time — you don't need to do anything.",
+      "waCallInfoWa": "The appointment will take place as a WhatsApp call.",
+      "waCallReminderPhone": "I'll call you at the agreed time — you don't need to do anything.",
+      "waCallInfoPhone": "The appointment will take place by phone.",
+      "waRsvpAsk": "Can you quickly confirm? One click is enough:",
+      "waRsvpNo": "If it doesn't fit: {{no}}",
+      "waIntroEdit": "our appointment has changed — here are the new details",
+      "waIntroNew": "I'm looking forward to our meeting",
+      "waHello": "Hi {{name}}",
+      "clock": "",
+      "waSaveToCalendar": "Save the appointment to your calendar:",
+      "waSignoff": "See you soon!\nSven · Happy Property",
+      "mailSubjectEdit": "Appointment change",
+      "mailSubjectNew": "Appointment confirmation"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
@@ -3051,7 +3190,9 @@
       "active": "For newsletter",
       "total": "Enabled: {{n}} addresses. Your CRM customers are always included; duplicates are only mailed once.",
       "syncedN": "{{n}} new addresses imported.",
-      "syncedPartly": "{{n}} new addresses. {{f}} list(s) failed: {{msg}}"
+      "syncedPartly": "{{n}} new addresses. {{f}} list(s) failed: {{msg}}",
+      "ariaActive": "active",
+      "ariaInactive": "inactive"
     },
     "inbox": {
       "title": "Inbox",
@@ -3075,6 +3216,9 @@
       "defaultSubject": "Your enquiry at Happy Property",
       "minAgo": "{{n}} min ago",
       "hAgo": "{{n}} h ago"
+    },
+    "outbox": {
+      "waBody": "Hi {{name}},\n\ngreat talking with you! Here are your personal offers:\n\n{{links}}\n\nTake your time to look through them – I'm here any time if you have questions.\n\nBest regards\nSven · Happy Property"
     }
   },
   "docs": {
@@ -3244,7 +3388,8 @@
     "uploadMailKindDocument": "document",
     "uploadMailKindImage": "image",
     "uploadMailSubject": "New file in your Happy Property portal",
-    "uploadingImages": "⏳ Uploading…"
+    "uploadingImages": "⏳ Uploading…",
+    "errNoProjectSelected": "No project selected"
   },
   "rechnung": {
     "notFound": "This calculation could not be found.",
@@ -4115,5 +4260,21 @@
         "note": "Please keep {{password}} and {{login_url}} in the template — otherwise the system will automatically fall back to sending the built-in security email."
       }
     }
+  },
+  "taskAction": {
+    "headerLabel": "Happy Property · Task",
+    "invalidLink": "This link is invalid or has expired.",
+    "somethingWrong": "Something went wrong.",
+    "saveFailed": "Could not be saved.",
+    "noteSent": "Comment sent ✓",
+    "markedDone": "Marked as done ✓",
+    "accepted": "Accepted ✓",
+    "assignedTo": "Hi {{name}}, this task is assigned to you.",
+    "doneMessage": "This task is done. Thank you!",
+    "acceptBtn": "✋ Accept task",
+    "markDoneBtn": "🏁 Mark as done",
+    "noteLabel": "Comment / question (optional)",
+    "notePlaceholder": "Short message to Happy Property …",
+    "sendNote": "Send comment"
   }
 }

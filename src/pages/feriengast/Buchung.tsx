@@ -168,12 +168,12 @@ export default function Buchung() {
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400 font-body">{t('bookings.checkIn')}</p>
                 <p className="text-sm font-bold text-hp-black font-body">{fmtDate(booking.check_in, lang)}</p>
-                {booking.checkin_time && <p className="text-xs text-gray-500 font-body">ab {booking.checkin_time} Uhr</p>}
+                {booking.checkin_time && <p className="text-xs text-gray-500 font-body">{t('guest.confirmation.fromTime', 'ab {{time}} Uhr', { time: booking.checkin_time })}</p>}
               </div>
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400 font-body">{t('bookings.checkOut')}</p>
                 <p className="text-sm font-bold text-hp-black font-body">{fmtDate(booking.check_out, lang)}</p>
-                {booking.checkout_time && <p className="text-xs text-gray-500 font-body">bis {booking.checkout_time} Uhr</p>}
+                {booking.checkout_time && <p className="text-xs text-gray-500 font-body">{t('guest.confirmation.untilTime', 'bis {{time}} Uhr', { time: booking.checkout_time })}</p>}
               </div>
               <div className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400 font-body">{t('bookings.nights_other', { count: nights })}</p>
@@ -192,7 +192,7 @@ export default function Buchung() {
                 {booking.price_per_night && (
                   <div className="flex justify-between text-sm font-body">
                     <span className="text-gray-600">
-                      {nights} × {fmtEur(booking.price_per_night, lang)}/Nacht
+                      {nights} × {fmtEur(booking.price_per_night, lang)}{t('guest.confirmation.perNight', '/Nacht')}
                     </span>
                     <span className="font-semibold">{fmtEur(booking.price_per_night * nights, lang)}</span>
                   </div>

@@ -295,7 +295,7 @@ export default function LeadDetail() {
         if (notDeployed) {
           setAiUnavailable(true)
         } else {
-          let msg = (error as { message?: string }).message ?? 'Fehler'
+          let msg = (error as { message?: string }).message ?? t('common.error', 'Fehler')
           try {
             if (ctx && typeof ctx.json === 'function') {
               const errBody = await ctx.json() as { error?: string }
@@ -1494,7 +1494,7 @@ export default function LeadDetail() {
         }
       } else {
         // ── CREATE new unit (Aktivieren ohne bestehende crm_project_unit) ──
-        if (!unitEditProjectId) throw new Error('Kein Projekt ausgewählt')
+        if (!unitEditProjectId) throw new Error(t('leadDetail.errNoProjectSelected', 'Kein Projekt ausgewählt'))
         const { data: newUnit, error } = await supabase
           .from('crm_project_units')
           .insert({ ...unitPayload, project_id: unitEditProjectId })

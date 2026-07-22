@@ -82,7 +82,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       for (const l of (le.data ?? []) as Record<string, string | null>[])
         list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone })
       for (const b of (bz.data ?? []) as Record<string, string | null>[])
-        list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? 'Kontakt'), email: b.email, phone: b.whatsapp || b.phone })
+        list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone })
       setContacts(list.filter(c => c.name))
     })()
   }, [])
@@ -134,7 +134,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       onCreated(t('crm.tasks.created', 'Aufgabe angelegt'))
     } catch (e) {
       const msg = e instanceof Error ? e.message
-        : (e && typeof e === 'object' && 'message' in e) ? String((e as { message: unknown }).message) : 'Fehler'
+        : (e && typeof e === 'object' && 'message' in e) ? String((e as { message: unknown }).message) : t('common.error', 'Fehler')
       console.error('[Tasks] create:', e); setErr(msg); setSaving(false)
     }
   }
@@ -275,7 +275,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   // Gegenpart für In-App-Nachricht: Ersteller → erster interner Zuständiger (nicht ich); sonst → Ersteller.
   const internalOther = assignees.map(a => a.profile_id).find(pid => pid && pid !== myId) ?? null
   const recipient = iAmCreator ? internalOther : task.created_by
-  const chLabel = (c: string) => c === 'mail' ? 'Mail' : c === 'whatsapp' ? 'WhatsApp' : c === 'both' ? 'Mail + WhatsApp' : 'im System'
+  const chLabel = (c: string) => c === 'mail' ? 'Mail' : c === 'whatsapp' ? 'WhatsApp' : c === 'both' ? 'Mail + WhatsApp' : t('crm.tasks.chSystem', 'im System')
 
   const saveDue = async (v: string) => {
     setDue(v)
@@ -295,7 +295,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     setAssignees((asgRes.data ?? []) as Assignee[])
     // deno-lint-ignore no-explicit-any
     setCustomers(((leadRes.data ?? []) as any[]).map(r => ({
-      lead_id: r.lead_id, name: `${r.lead?.first_name ?? ''} ${r.lead?.last_name ?? ''}`.trim() || (r.lead?.email ?? 'Kunde'),
+      lead_id: r.lead_id, name: `${r.lead?.first_name ?? ''} ${r.lead?.last_name ?? ''}`.trim() || (r.lead?.email ?? t('crm.tasks.customerFallback', 'Kunde')),
       email: r.lead?.email ?? null, phone: r.lead?.whatsapp || r.lead?.phone || null,
     })))
     await supabase.from('crm_task_messages').update({ read_at: new Date().toISOString() }).eq('task_id', task.id).eq('recipient_id', myId).is('read_at', null)
@@ -369,7 +369,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     await loadAll(); onChanged()
   }
 
-  const assigneeLabel = (a: Assignee) => a.profile_id ? nameOf(a.profile_id) : `${a.ext_name ?? 'Extern'} (${chLabel(a.channel)})`
+  const assigneeLabel = (a: Assignee) => a.profile_id ? nameOf(a.profile_id) : `${a.ext_name ?? t('crm.tasks.externName', 'Extern')} (${chLabel(a.channel)})`
 
   // ── Bearbeiten (nur Ersteller): Text + Zuständige + Kunden ────────────────
   const [editing, setEditing] = useState(false)
@@ -390,7 +390,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
       ])
       const list: Contact[] = []
       for (const l of (le.data ?? []) as Record<string, string | null>[]) list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone })
-      for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? 'Kontakt'), email: b.email, phone: b.whatsapp || b.phone })
+      for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone })
       setContacts(list.filter(c => c.name))
     }
   }
@@ -600,7 +600,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
               <button key={c.status} onClick={() => setStatus(c.status)}
                 className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${task.status === c.status ? 'text-white border-transparent' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'}`}
                 style={task.status === c.status ? { backgroundColor: c.accent } : undefined}>
-                {c.label}
+                {t(`crm.tasks.status.${c.status}`, c.label)}
               </button>
             ))}
           </div>
@@ -695,7 +695,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
               {messages.length === 0 && <p className="text-xs text-gray-400">{t('crm.tasks.noMsg', 'Noch keine Nachrichten.')}</p>}
               {messages.map(m => {
                 const mine = m.sender_id === myId
-                const who = m.sender_id ? nameOf(m.sender_id) : (m.sender_label || 'Extern')
+                const who = m.sender_id ? nameOf(m.sender_id) : (m.sender_label || t('crm.tasks.externName', 'Extern'))
                 return (
                   <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${mine ? 'bg-orange-100 text-gray-800' : 'bg-gray-100 text-gray-800'}`}>
@@ -815,7 +815,7 @@ export default function Tasks() {
                   className={`rounded-2xl p-3 transition-colors ${dragOver === col.status ? 'bg-orange-50 ring-2 ring-orange-300' : 'bg-gray-50'}`}>
                   <div className="flex items-center gap-2 mb-3 px-1">
                     <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: col.accent }} />
-                    <span className="text-sm font-semibold text-gray-700">{col.label}</span>
+                    <span className="text-sm font-semibold text-gray-700">{t(`crm.tasks.status.${col.status}`, col.label)}</span>
                     <span className="text-xs text-gray-400">{colTasks.length}</span>
                   </div>
                   <div className="space-y-2">

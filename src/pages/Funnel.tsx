@@ -206,9 +206,9 @@ export default function Funnel() {
     setError('')
     const email = contact.email.trim()
     const phone = contact.phone.replace(/[^\d+]/g, '')
-    if (!contact.first_name.trim()) { setError('Bitte gib deinen Vornamen an.'); return }
-    if (!/^\S+@\S+\.\S+$/.test(email)) { setError('Bitte prüfe deine E-Mail-Adresse.'); return }
-    if (phone.length < 8) { setError('Bitte prüfe deine Telefonnummer.'); return }
+    if (!contact.first_name.trim()) { setError(t('funnel.err_first_name', 'Bitte gib deinen Vornamen an.')); return }
+    if (!/^\S+@\S+\.\S+$/.test(email)) { setError(t('funnel.err_email', 'Bitte prüfe deine E-Mail-Adresse.')); return }
+    if (phone.length < 8) { setError(t('funnel.err_phone', 'Bitte prüfe deine Telefonnummer.')); return }
     setBusy(true)
     try {
       const { data, error: e } = await supabase.functions.invoke('funnel-api', { body: {
@@ -225,7 +225,7 @@ export default function Funnel() {
       if (rebook && slot) { await performBooking(slot); return }
       setPhase('meeting_type')
     } catch {
-      setError('Das hat leider nicht geklappt. Bitte versuche es noch einmal.')
+      setError(t('funnel.err_generic', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
 
@@ -275,13 +275,13 @@ export default function Funnel() {
       if (e) throw new Error(e.message)
       const d = data as { ok?: boolean; error?: string } | null
       if (d?.error === 'slot_taken' || d?.error === 'slot_invalid') {
-        setError('Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.')
+        setError(t('funnel.err_slot_taken', 'Dieser Termin wurde gerade vergeben — bitte wähle einen anderen.'))
         setSlot(''); setPhase('slot'); void loadSlots(); return
       }
       if (!d?.ok) throw new Error(d?.error || 'Buchung fehlgeschlagen')
       setPhase('done')
     } catch {
-      setError('Das hat leider nicht geklappt. Bitte versuche es noch einmal.')
+      setError(t('funnel.err_generic', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }
   }
 
@@ -329,15 +329,15 @@ export default function Funnel() {
     if (!slot) return '#'
     const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent('Beratungsgespräch mit Sven – Happy Property')}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(meetingType === 'zoom' ? 'Zoom-Link kommt per E-Mail & WhatsApp.' : 'Sven ruft dich per WhatsApp an.')}`
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t('funnel.cal_summary', 'Beratungsgespräch mit Sven – Happy Property'))}&dates=${f(s)}/${f(e)}&details=${encodeURIComponent(meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.'))}`
   }, [slot, meetingType])
   const downloadIcs = () => {
     const s = new Date(slot), e = new Date(s.getTime() + 30 * 60000)
     const f = (d: Date) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
     const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Happy Property//Termin//DE', 'BEGIN:VEVENT',
       `UID:${slot}@happy-property.com`, `DTSTAMP:${f(new Date())}`, `DTSTART:${f(s)}`, `DTEND:${f(e)}`,
-      'SUMMARY:Beratungsgespräch mit Sven – Happy Property',
-      `DESCRIPTION:${meetingType === 'zoom' ? 'Zoom-Link kommt per E-Mail & WhatsApp.' : 'Sven ruft dich per WhatsApp an.'}`,
+      `SUMMARY:${t('funnel.cal_summary', 'Beratungsgespräch mit Sven – Happy Property')}`,
+      `DESCRIPTION:${meetingType === 'zoom' ? t('funnel.cal_desc_zoom', 'Zoom-Link kommt per E-Mail & WhatsApp.') : t('funnel.cal_desc_whatsapp', 'Sven ruft dich per WhatsApp an.')}`,
       'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }))
@@ -386,7 +386,7 @@ export default function Funnel() {
 
           {phase === 'questions' && q && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Frage {qIdx + 1} von {QUESTIONS.length}</p>
+              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.question_counter', 'Frage {{n}} von {{total}}', { n: qIdx + 1, total: QUESTIONS.length })}</p>
               <h2 className="font-heading font-bold text-2xl md:text-3xl leading-snug" style={{ color: NAVY }}>{q.title}</h2>
               {q.sub && <p className="mt-2 text-sm text-gray-500">{q.sub}</p>}
               {q.tiles ? (
@@ -433,43 +433,43 @@ export default function Funnel() {
 
           {phase === 'contact' && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Fast geschafft</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{rebook ? 'Nur noch deine Kontaktdaten' : cfg.contact.title}</h2>
-              <p className="mt-1 text-sm text-gray-600">{rebook ? 'Danach buchen wir deinen Termin sofort verbindlich.' : cfg.contact.subtitle}</p>
+              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.almost_done', 'Fast geschafft')}</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{rebook ? t('funnel.rebook_contact_title', 'Nur noch deine Kontaktdaten') : cfg.contact.title}</h2>
+              <p className="mt-1 text-sm text-gray-600">{rebook ? t('funnel.rebook_contact_sub', 'Danach buchen wir deinen Termin sofort verbindlich.') : cfg.contact.subtitle}</p>
               {rebook && slot && meetingType && (
                 <div className="mt-4 rounded-xl bg-white border border-[#e6dfd0] p-4 text-sm" style={{ color: NAVY }}>
-                  <span className="font-semibold">{meetingType === 'zoom' ? '📹 Zoom-Call' : '💬 WhatsApp-Call'}</span> · {fmtSlotFull(slot)} Uhr
+                  <span className="font-semibold">{meetingType === 'zoom' ? t('funnel.zoom_call', '📹 Zoom-Call') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}</span> · {fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}
                 </div>
               )}
               <div className="mt-6 space-y-4 bg-white rounded-2xl border border-[#e6dfd0] p-6 shadow-sm">
                 <input type="text" tabIndex={-1} autoComplete="off" value={contact.website} onChange={e => setContact({ ...contact, website: e.target.value })} className="hidden" aria-hidden="true" />
                 <div className="grid md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Vorname *</label>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">{t('funnel.first_name_label', 'Vorname *')}</label>
                     <input value={contact.first_name} onChange={e => setContact({ ...contact, first_name: e.target.value })}
                       className="w-full border-b-2 border-[#e6dfd0] focus:border-[#ff795d] outline-none py-2 text-[15px] bg-transparent" placeholder="Max" />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-gray-500 mb-1">Nachname</label>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">{t('funnel.last_name_label', 'Nachname')}</label>
                     <input value={contact.last_name} onChange={e => setContact({ ...contact, last_name: e.target.value })}
                       className="w-full border-b-2 border-[#e6dfd0] focus:border-[#ff795d] outline-none py-2 text-[15px] bg-transparent" placeholder="Mustermann" />
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1">Telefonnummer (WhatsApp) *</label>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">{t('funnel.phone_label', 'Telefonnummer (WhatsApp) *')}</label>
                   <input value={contact.phone} onChange={e => setContact({ ...contact, phone: e.target.value })} inputMode="tel"
                     className="w-full border-b-2 border-[#e6dfd0] focus:border-[#ff795d] outline-none py-2 text-[15px] bg-transparent" placeholder="+49 151 23456789" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1">E-Mail-Adresse *</label>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">{t('funnel.email_label', 'E-Mail-Adresse *')}</label>
                   <input value={contact.email} onChange={e => setContact({ ...contact, email: e.target.value })} inputMode="email"
-                    className="w-full border-b-2 border-[#e6dfd0] focus:border-[#ff795d] outline-none py-2 text-[15px] bg-transparent" placeholder="name@beispiel.de" />
+                    className="w-full border-b-2 border-[#e6dfd0] focus:border-[#ff795d] outline-none py-2 text-[15px] bg-transparent" placeholder={t('funnel.email_placeholder', 'name@beispiel.de')} />
                 </div>
                 {error && <p className="text-sm font-medium text-red-600">{error}</p>}
                 <button onClick={() => void submitContact()} disabled={busy}
                   className="w-full py-3.5 rounded-full text-white font-semibold text-lg shadow-md hover:shadow-lg transition disabled:opacity-50"
                   style={{ background: CORAL }}>
-                  {busy ? 'Einen Moment…' : (rebook ? 'Termin verbindlich buchen' : cfg.contact.cta)}
+                  {busy ? t('funnel.one_moment', 'Einen Moment…') : (rebook ? t('funnel.book_binding', 'Termin verbindlich buchen') : cfg.contact.cta)}
                 </button>
                 <p className="text-[11px] text-gray-400 text-center">{cfg.contact.privacy}</p>
               </div>
@@ -482,20 +482,20 @@ export default function Funnel() {
                 <img src={SVEN_SQ} alt="Sven – Happy Property" width={112} height={112}
                   className="w-24 h-24 md:w-28 md:h-28 rounded-full object-cover shadow-lg ring-4 ring-white" />
               </div>
-              <p className="text-xs font-bold tracking-widest uppercase mb-2 text-center" style={{ color: CORAL }}>Dein Wunschtermin</p>
+              <p className="text-xs font-bold tracking-widest uppercase mb-2 text-center" style={{ color: CORAL }}>{t('funnel.your_appointment', 'Dein Wunschtermin')}</p>
               <h2 className="font-heading font-bold text-2xl md:text-3xl text-center" style={{ color: NAVY }}>
-                {direct && directName ? `Hallo ${directName} — wie möchtest du mit Sven sprechen?` : 'Wie möchtest du mit Sven sprechen?'}
+                {direct && directName ? t('funnel.how_to_talk_named', 'Hallo {{name}} — wie möchtest du mit Sven sprechen?', { name: directName }) : t('funnel.how_to_talk', 'Wie möchtest du mit Sven sprechen?')}
               </h2>
               <div className="grid md:grid-cols-2 gap-4 mt-6">
                 <button onClick={() => chooseType('zoom')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">📹</div>
-                  <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>Zoom-Call</div>
-                  <p className="text-sm text-gray-500 mt-1">Mit Bildschirm — ideal, um Objekte und Zahlen gemeinsam anzusehen.</p>
+                  <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.zoom_title', 'Zoom-Call')}</div>
+                  <p className="text-sm text-gray-500 mt-1">{t('funnel.zoom_desc', 'Mit Bildschirm — ideal, um Objekte und Zahlen gemeinsam anzusehen.')}</p>
                 </button>
                 <button onClick={() => chooseType('whatsapp')} className="rounded-2xl bg-white border-2 border-[#e6dfd0] hover:border-[#ff795d] p-6 text-left shadow-sm hover:shadow-lg transition">
                   <div className="text-3xl">💬</div>
-                  <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>WhatsApp-Call</div>
-                  <p className="text-sm text-gray-500 mt-1">Unkompliziert übers Handy — Sven ruft dich per WhatsApp an.</p>
+                  <div className="font-heading font-bold text-xl mt-2" style={{ color: NAVY }}>{t('funnel.whatsapp_title', 'WhatsApp-Call')}</div>
+                  <p className="text-sm text-gray-500 mt-1">{t('funnel.whatsapp_desc', 'Unkompliziert übers Handy — Sven ruft dich per WhatsApp an.')}</p>
                 </button>
               </div>
             </div>
@@ -503,9 +503,9 @@ export default function Funnel() {
 
           {phase === 'slot' && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>Letzter Schritt</p>
-              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>Wann passt es dir?</h2>
-              <p className="mt-1 text-sm text-gray-500">Alle Zeiten in deiner Zeitzone ({tz.replace('_', ' ')}). Ein Klick bucht den Termin verbindlich.</p>
+              <p className="text-xs font-bold tracking-widest uppercase mb-2" style={{ color: CORAL }}>{t('funnel.last_step', 'Letzter Schritt')}</p>
+              <h2 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: NAVY }}>{t('funnel.when_suits', 'Wann passt es dir?')}</h2>
+              <p className="mt-1 text-sm text-gray-500">{t('funnel.timezone_note', 'Alle Zeiten in deiner Zeitzone ({{tz}}). Ein Klick bucht den Termin verbindlich.', { tz: tz.replace('_', ' ') })}</p>
               {error && <p className="mt-3 text-sm font-medium text-red-600">{error}</p>}
               {slotsLoading || busy ? (
                 <div className="mt-10 flex justify-center"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
@@ -529,7 +529,7 @@ export default function Funnel() {
                       </button>
                     ))}
                   </div>
-                  {!slots.length && <p className="mt-6 text-sm text-gray-500">Gerade sind keine freien Termine verfügbar — Sven meldet sich in Kürze persönlich bei dir!</p>}
+                  {!slots.length && <p className="mt-6 text-sm text-gray-500">{t('funnel.no_slots', 'Gerade sind keine freien Termine verfügbar — Sven meldet sich in Kürze persönlich bei dir!')}</p>}
                 </>
               )}
             </div>
@@ -542,17 +542,17 @@ export default function Funnel() {
                 : <div className="text-6xl">{cfg.done.emoji || '🎉'}</div>}
               <h2 className="font-heading font-bold text-3xl md:text-4xl mt-4" style={{ color: NAVY }}>{cfg.done.title}</h2>
               <p className="mt-3 text-gray-600 text-[15px]">
-                <strong>{fmtSlotFull(slot)} Uhr</strong> · {meetingType === 'zoom' ? '📹 Zoom' : '💬 WhatsApp-Call'}
+                <strong>{fmtSlotFull(slot)}{t('funnel.oclock', ' Uhr')}</strong> · {meetingType === 'zoom' ? t('funnel.zoom_short', '📹 Zoom') : t('funnel.whatsapp_call', '💬 WhatsApp-Call')}
               </p>
               <p className="mt-2 text-sm text-gray-500 max-w-md mx-auto">{cfg.done.note}</p>
               <div className="flex flex-wrap justify-center gap-3 mt-6">
                 <a href={gcalUrl} target="_blank" rel="noreferrer"
                   className="px-5 py-2.5 rounded-full text-sm font-semibold text-white shadow hover:shadow-md transition" style={{ background: NAVY }}>
-                  📅 In Google Kalender
+                  {t('funnel.add_google_cal', '📅 In Google Kalender')}
                 </a>
                 <button onClick={downloadIcs}
                   className="px-5 py-2.5 rounded-full text-sm font-semibold bg-white border-2 shadow-sm hover:shadow-md transition" style={{ borderColor: NAVY, color: NAVY }}>
-                  📥 Kalender-Datei (Apple/Outlook)
+                  {t('funnel.download_ics', '📥 Kalender-Datei (Apple/Outlook)')}
                 </button>
               </div>
               <a href={cfg.done.thanks_url}
@@ -575,7 +575,7 @@ export default function Funnel() {
 
         </div>
       </div>
-      <div className="text-center text-[11px] text-gray-400 pb-5">© Happy Property · Paphos, Zypern</div>
+      <div className="text-center text-[11px] text-gray-400 pb-5">{t('funnel.footer', '© Happy Property · Paphos, Zypern')}</div>
     </div>
   )
 }

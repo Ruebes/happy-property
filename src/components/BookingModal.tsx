@@ -376,7 +376,7 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
         })
         if (inviteErr) throw new Error(inviteErr.message)
         const result = inviteData as { success: boolean; userId: string; error?: string }
-        if (!result.success) throw new Error(result.error ?? 'Einladung fehlgeschlagen')
+        if (!result.success) throw new Error(result.error ?? t('calendar.modal.errInviteFailed', 'Einladung fehlgeschlagen'))
         guestId = result.userId
       }
 
