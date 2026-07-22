@@ -16,7 +16,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
-import { SOCIAL_FOOTER_HTML } from '../_shared/socialFooter.ts'
+import { SOCIAL_FOOTER_HTML, socialFooterHtml } from '../_shared/socialFooter.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -67,8 +67,9 @@ function buildWelcomeEmail(params: {
   appUrl:        string
   customSubject?: string
   customMessage?: string
+  lang?: string
 }): { subject: string; html: string } {
-  const { fullName, email, password, appUrl, customSubject, customMessage } = params
+  const { fullName, email, password, appUrl, customSubject, customMessage, lang } = params
   const firstName = fullName.split(' ')[0]
   const subject   = customSubject?.trim() || 'Dein Zugang zum Happy Property Portal'
 
@@ -173,7 +174,7 @@ function buildWelcomeEmail(params: {
       </table>
     </td></tr>
   </table>
-  ${SOCIAL_FOOTER_HTML}
+  ${socialFooterHtml(lang === 'en' ? 'en' : 'de')}
 </body>
 </html>`
   return { subject, html }
@@ -287,6 +288,15 @@ Deno.serve(async (req: Request) => {
       console.log(`[create-eigentuemer-access] Neuer User erstellt: ${userId}`)
     }
 
+    // Sprache aus dem verknüpften Lead: ein EN-Kunde soll auch als Eigentümer alle
+    // künftigen Portal-/Drip-Mails auf Englisch bekommen (die werden per Empfänger-
+    // sprache übersetzt). Ohne das bliebe der Account für immer auf Deutsch.
+    let leadLang = 'de'
+    try {
+      const { data: lgMain } = await adminClient.from('leads').select('language').ilike('email', email).order('created_at', { ascending: true }).limit(1)
+      leadLang = ((lgMain?.[0] as { language?: string } | undefined)?.language ?? 'de')
+    } catch { /* Default de */ }
+
     // ── 3. Profil anlegen / aktualisieren ─────────────────────────────────────
     const { error: profileErr } = await adminClient.from('profiles').upsert({
       id:                   userId,
@@ -294,7 +304,7 @@ Deno.serve(async (req: Request) => {
       full_name,
       role:                 'eigentuemer',
       is_active:            true,
-      language:             'de',
+      language:             leadLang,
     }, { onConflict: 'id' })
 
     if (profileErr) {
@@ -376,6 +386,7 @@ Deno.serve(async (req: Request) => {
     // Ergebnis das Passwort nicht (Platzhalter entfernt), bleibt der fest
     // eingebaute Fallback — die Zugangsdaten gehen NIE verloren.
     let mail = buildWelcomeEmail({
+      lang: leadLang,
       fullName:      full_name,
       email,
       password,

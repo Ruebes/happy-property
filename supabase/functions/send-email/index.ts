@@ -85,13 +85,14 @@ Deno.serve(async (req: Request) => {
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
       auto?:            boolean          // true = Automatik → im Posteingang ausgeblendet (Default false)
       from_name?:       string           // Anzeigename des Absenders (Adresse bleibt smtpUser), z.B. „Lotte · Happy Property"
+      lang?:            string           // Empfängersprache (de|en) → Social-Footer in passender Sprache
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
       // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
       attachments?:     Array<{ filename: string; content_base64: string; content_type?: string }> | null
     }
 
-    const { to, lead_id, deal_id, attach_category, open_token, auto, from_name } = body
+    const { to, lead_id, deal_id, attach_category, open_token, auto, from_name, lang } = body
     let { subject = '', html = '' } = body
 
     if (!to) {
@@ -191,7 +192,7 @@ Deno.serve(async (req: Request) => {
 
     // „Folge uns"-Social-Footer an ALLE Mails (die nicht schon Social-Links haben,
     // z.B. Deck-/Newsletter-Mails) — zentral, deckt alle send-email-Aufrufer ab.
-    html = withSocialFooter(html)
+    html = withSocialFooter(html, lang === 'en' ? 'en' : 'de')
 
     // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
     // track-engagement (Engagement-Tracking fürs CRM-Dashboard).
