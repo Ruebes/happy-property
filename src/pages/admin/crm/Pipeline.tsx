@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
+import { useLeadSources, buildSourceOptions, ADD_SOURCE_VALUE } from '../../../lib/leadSources'
 import type { Deal, DealPhase } from '../../../lib/crmTypes'
 import {
   DEAL_PHASES,
@@ -63,6 +64,19 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
 
   const set = (field: keyof LeadForm, value: string | boolean) =>
     setForm(prev => ({ ...prev, [field]: value }))
+
+  // Quellen: eingebaute + eigene aus crm_lead_sources; „Neue Quelle …" legt eine an.
+  const { custom: customSources, addSource } = useLeadSources()
+  const handleSourceChange = async (val: string) => {
+    if (val === ADD_SOURCE_VALUE) {
+      const name = window.prompt(t('crm.sources.addPrompt', 'Wie soll die neue Quelle heißen?'))
+      if (!name || !name.trim()) return
+      const key = await addSource(name)
+      if (key) set('source', key)
+      return
+    }
+    set('source', val)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -208,14 +222,9 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
               </label>
               <CustomSelect
                 value={form.source}
-                onChange={val => set('source', val)}
+                onChange={val => void handleSourceChange(val)}
                 className="w-full border rounded-lg text-sm bg-white"
-                options={[
-                  { value: 'meta', label: t('crm.sources.meta', 'META Werbung') },
-                  { value: 'google', label: t('crm.sources.google', 'Google') },
-                  { value: 'empfehlung', label: t('crm.sources.empfehlung', 'Empfehlung') },
-                  { value: 'sonstiges', label: t('crm.sources.sonstiges', 'Sonstiges') },
-                ]}
+                options={buildSourceOptions(t, customSources, true)}
               />
             </div>
             <div>

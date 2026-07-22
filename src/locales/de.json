@@ -1528,7 +1528,10 @@
       "google": "Google",
       "empfehlung": "Empfehlung",
       "sonstiges": "Sonstiges",
-      "newsletter": "Newsletter"
+      "newsletter": "Newsletter",
+      "youtube": "YouTube",
+      "addNew": "Neue Quelle …",
+      "addPrompt": "Wie soll die neue Quelle heißen?"
     },
     "statuses": {
       "new": "Neu",

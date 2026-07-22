@@ -5,12 +5,12 @@ import type { TFunction } from 'i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import type { Lead, LeadSource } from '../../../lib/crmTypes'
+import type { Lead } from '../../../lib/crmTypes'
 import { SOURCE_BADGE_STYLE, adChannelLabel } from '../../../lib/crmTypes'
+import { useLeadSources, buildSourceOptions, sourceDisplayLabel, ADD_SOURCE_VALUE } from '../../../lib/leadSources'
 import { CustomSelect } from '../../../components/CustomSelect'
 import LeadQuickSend, { type QuickSendMode } from '../../../components/crm/LeadQuickSend'
 
-const SOURCES: Array<'' | LeadSource> = ['', 'meta', 'google', 'empfehlung', 'sonstiges']
 const STATUSES = ['', 'new', 'contacted', 'qualified', 'registered', 'property_selection', 'financing', 'sold', 'archived'] as const
 
 interface NewLeadForm {
@@ -21,7 +21,7 @@ interface NewLeadForm {
   whatsapp: string
   country: string
   language: 'de' | 'en'
-  source: LeadSource
+  source: string
   notes: string
   assigned_to: string
   createDeal: boolean
@@ -52,21 +52,9 @@ const STATUS_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
   archived: { key: 'allLeads.statusArchived', fallback: 'Archiviert' },
 }
 
-const SOURCE_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
-  meta:       { key: 'allLeads.sourceMeta', fallback: 'META Werbung' },
-  google:     { key: 'allLeads.sourceGoogle', fallback: 'Google' },
-  empfehlung: { key: 'allLeads.sourceEmpfehlung', fallback: 'Empfehlung' },
-  sonstiges:  { key: 'allLeads.sourceSonstiges', fallback: 'Sonstiges' },
-}
-
 const getStatusLabel = (t: TFunction, status: string): string => {
   const entry = STATUS_LABEL_KEYS[status]
   return entry ? t(entry.key, entry.fallback) : status
-}
-
-const getSourceLabel = (t: TFunction, source: string): string => {
-  const entry = SOURCE_LABEL_KEYS[source]
-  return entry ? t(entry.key, entry.fallback) : source
 }
 
 export default function AllLeads() {
@@ -78,6 +66,17 @@ export default function AllLeads() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterSource, setFilterSource] = useState('')
+  const { custom: customSources, addSource } = useLeadSources()
+  const handleNewSource = async (val: string) => {
+    if (val === ADD_SOURCE_VALUE) {
+      const name = window.prompt(t('crm.sources.addPrompt', 'Wie soll die neue Quelle heißen?'))
+      if (!name || !name.trim()) return
+      const key = await addSource(name)
+      if (key) setNewLeadForm(f => ({ ...f, source: key }))
+      return
+    }
+    setNewLeadForm(f => ({ ...f, source: val }))
+  }
   const [filterStatus, setFilterStatus] = useState('')
   // Qualitaets-Ansicht: nur Leads, deren Gespraech vorbei ist und die noch keine
   // Bewertung haben. Genau diese Bewertung geht als QualifiedLead an Meta zurueck.
@@ -313,7 +312,7 @@ export default function AllLeads() {
             className="border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
             options={[
               { value: '', label: t('crm.allLeads.allSources') },
-              ...SOURCES.filter(s => s !== '').map(s => ({ value: s, label: getSourceLabel(t, s) })),
+              ...buildSourceOptions(t, customSources),
             ]}
             placeholder={t('crm.allLeads.allSources')}
           />
@@ -347,7 +346,7 @@ export default function AllLeads() {
                 className="bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer p-4">
                 <div className="flex items-start justify-between gap-2">
                   <span className="font-semibold text-gray-900 text-sm">{lead.first_name} {lead.last_name}</span>
-                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0" style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}>{getSourceLabel(t, lead.source)}</span>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium shrink-0" style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}>{sourceDisplayLabel(t, lead.source, customSources)}</span>
                 </div>
                 <p className="text-xs text-gray-500 mt-1.5 truncate">✉ {lead.email || '–'}</p>
                 <p className="text-xs text-gray-500 truncate">📞 {lead.phone || lead.whatsapp || '–'}</p>
@@ -386,7 +385,7 @@ export default function AllLeads() {
                           className="text-xs px-2 py-0.5 rounded-full font-medium"
                           style={SOURCE_BADGE_STYLE[lead.source] ?? SOURCE_BADGE_STYLE.sonstiges}
                         >
-                          {getSourceLabel(t, lead.source)}
+                          {sourceDisplayLabel(t, lead.source, customSources)}
                         </span>
                         {adChannelLabel(lead.utm_source) && (
                           <span className="block text-[11px] text-gray-400 mt-0.5">{adChannelLabel(lead.utm_source)}</span>
@@ -545,9 +544,9 @@ export default function AllLeads() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.lead.source')}</label>
                   <CustomSelect
                     value={newLeadForm.source}
-                    onChange={val => setNewLeadForm(f => ({ ...f, source: val as NewLeadForm['source'] }))}
+                    onChange={val => void handleNewSource(val)}
                     className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-                    options={SOURCES.filter(s => s !== '').map(s => ({ value: s, label: getSourceLabel(t, s) }))}
+                    options={buildSourceOptions(t, customSources, true)}
                   />
                 </div>
                 <div>
