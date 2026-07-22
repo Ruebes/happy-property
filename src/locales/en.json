@@ -3219,6 +3219,16 @@
     },
     "outbox": {
       "waBody": "Hi {{name}},\n\ngreat talking with you! Here are your personal offers:\n\n{{links}}\n\nTake your time to look through them – I'm here any time if you have questions.\n\nBest regards\nSven · Happy Property"
+    },
+    "staff": {
+      "errNameEmail": "Name and email required",
+      "created": "✓ Staff member created — access email sent",
+      "heading": "Staff & permissions",
+      "nameLabel": "Name",
+      "namePlaceholder": "First and last name",
+      "emailLabel": "Email",
+      "addBtn": "+ Staff member",
+      "empty": "No staff members created yet."
     }
   },
   "docs": {
@@ -4276,5 +4286,9 @@
     "noteLabel": "Comment / question (optional)",
     "notePlaceholder": "Short message to Happy Property …",
     "sendNote": "Send comment"
+  },
+  "numberStepper": {
+    "decrease": "decrease",
+    "increase": "increase"
   }
 }

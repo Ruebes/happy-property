@@ -3219,6 +3219,16 @@
     },
     "outbox": {
       "waBody": "Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property"
+    },
+    "staff": {
+      "errNameEmail": "Name und E-Mail nötig",
+      "created": "✓ Mitarbeiter angelegt — Zugangs-Mail versendet",
+      "heading": "Mitarbeiter & Rechte",
+      "nameLabel": "Name",
+      "namePlaceholder": "Vor- und Nachname",
+      "emailLabel": "E-Mail",
+      "addBtn": "+ Mitarbeiter",
+      "empty": "Noch keine Mitarbeiter angelegt."
     }
   },
   "docs": {
@@ -4276,5 +4286,9 @@
     "noteLabel": "Bemerkung / Rückfrage (optional)",
     "notePlaceholder": "Kurze Nachricht an Happy Property …",
     "sendNote": "Bemerkung senden"
+  },
+  "numberStepper": {
+    "decrease": "weniger",
+    "increase": "mehr"
   }
 }

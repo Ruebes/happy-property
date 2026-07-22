@@ -4,6 +4,8 @@
  * tippbar (auch mit Komma), optionaler Suffix (€, %, J). Coral-Akzent, 2026-Look.
  */
 
+import { useTranslation } from 'react-i18next'
+
 interface Props {
   value: number
   onChange: (v: number) => void
@@ -15,6 +17,7 @@ interface Props {
 }
 
 export function NumberStepper({ value, onChange, step = 1, min, max, suffix, className = '' }: Props) {
+  const { t } = useTranslation()
   // Nachkommastellen aus dem Step ableiten (0.1 → 1, 0.01 → 2), damit das Steppen
   // keine Float-Artefakte wie 6.299999 erzeugt.
   const dec = String(step).includes('.') ? String(step).split('.')[1].length : 0
@@ -31,7 +34,7 @@ export function NumberStepper({ value, onChange, step = 1, min, max, suffix, cla
 
   return (
     <div className={`flex items-stretch h-11 rounded-xl border border-gray-200 bg-white overflow-hidden transition-all focus-within:border-orange-400 focus-within:ring-2 focus-within:ring-orange-100 ${className}`}>
-      <button type="button" tabIndex={-1} aria-label="weniger" onClick={() => bump(-1)} className={btn}>−</button>
+      <button type="button" tabIndex={-1} aria-label={t('numberStepper.decrease', 'weniger')} onClick={() => bump(-1)} className={btn}>−</button>
       <div className="relative flex-1 min-w-0 border-x border-gray-100">
         <input
           type="text"
@@ -47,7 +50,7 @@ export function NumberStepper({ value, onChange, step = 1, min, max, suffix, cla
         />
         {suffix && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{suffix}</span>}
       </div>
-      <button type="button" tabIndex={-1} aria-label="mehr" onClick={() => bump(1)} className={btn}>+</button>
+      <button type="button" tabIndex={-1} aria-label={t('numberStepper.increase', 'mehr')} onClick={() => bump(1)} className={btn}>+</button>
     </div>
   )
 }

@@ -11,6 +11,7 @@ import type { BusinessContact, DeveloperContact } from '../../../../lib/crmTypes
 interface StaffRow { id: string; full_name: string; email: string; role: string; permissions: Partial<Record<PermissionArea, boolean>> }
 
 function StaffSection() {
+  const { t } = useTranslation()
   const [staff, setStaff] = useState<StaffRow[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
@@ -42,7 +43,7 @@ function StaffSection() {
   }
 
   const addStaff = async () => {
-    if (!form.full_name.trim() || !form.email.trim()) { flash('Name und E-Mail nötig'); return }
+    if (!form.full_name.trim() || !form.email.trim()) { flash(t('crm.staff.errNameEmail', 'Name und E-Mail nötig')); return }
     setAdding(true)
     try {
       const { data, error } = await supabase.functions.invoke('admin-user-ops', {
@@ -50,41 +51,41 @@ function StaffSection() {
       })
       if (error || (data as { error?: string } | null)?.error) throw new Error((data as { error?: string } | null)?.error || error?.message)
       setForm({ full_name: '', email: '' })
-      flash('✓ Mitarbeiter angelegt — Zugangs-Mail versendet')
+      flash(t('crm.staff.created', '✓ Mitarbeiter angelegt — Zugangs-Mail versendet'))
       load()
-    } catch (e) { flash(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setAdding(false) }
+    } catch (e) { flash(`❌ ${e instanceof Error ? e.message : t('common.error', 'Fehler')}`) } finally { setAdding(false) }
   }
 
   return (
     <div className="pt-4">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Mitarbeiter & Rechte</h2>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">{t('crm.staff.heading', 'Mitarbeiter & Rechte')}</h2>
         {msg && <span className="text-xs text-gray-500">{msg}</span>}
       </div>
 
       {/* Anlegen */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-3 flex flex-wrap items-end gap-2">
         <div className="flex-1 min-w-[140px]">
-          <label className="block text-xs text-gray-500 mb-1">Name</label>
+          <label className="block text-xs text-gray-500 mb-1">{t('crm.staff.nameLabel', 'Name')}</label>
           <input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" placeholder="Vor- und Nachname" />
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" placeholder={t('crm.staff.namePlaceholder', 'Vor- und Nachname')} />
         </div>
         <div className="flex-1 min-w-[160px]">
-          <label className="block text-xs text-gray-500 mb-1">E-Mail</label>
+          <label className="block text-xs text-gray-500 mb-1">{t('crm.staff.emailLabel', 'E-Mail')}</label>
           <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" placeholder="name@…" />
         </div>
         <button onClick={addStaff} disabled={adding}
           className="px-3 py-2 rounded-xl text-white text-sm font-medium whitespace-nowrap disabled:opacity-60"
           style={{ backgroundColor: '#ff795d' }}>
-          {adding ? '…' : '+ Mitarbeiter'}
+          {adding ? '…' : t('crm.staff.addBtn', '+ Mitarbeiter')}
         </button>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-8"><div className="w-6 h-6 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
       ) : staff.length === 0 ? (
-        <p className="text-sm text-gray-400 text-center py-8 bg-white rounded-2xl border border-dashed border-gray-200">Noch keine Mitarbeiter angelegt.</p>
+        <p className="text-sm text-gray-400 text-center py-8 bg-white rounded-2xl border border-dashed border-gray-200">{t('crm.staff.empty', 'Noch keine Mitarbeiter angelegt.')}</p>
       ) : (
         <div className="space-y-2">
           {staff.map(row => (
