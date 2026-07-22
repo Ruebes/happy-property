@@ -228,14 +228,24 @@ function injectLocationAndMarina(
       .filter(it => !/km|min/i.test(String(it.min ?? ''))).slice(0, 2)
     fb.items = [...distanceChips(lat, lng), ...aiItems]
   }
-  const hasMarina = blocks.some(b =>
-    b.type === 'marina' ||
+  // Feature (Story) und schematischer marina-Block werden GETRENNT geprüft:
+  // Ein KI-gebauter Marina-Feature (z.B. via Mamba-Regel) darf den schematischen
+  // Block nicht mehr unterdrücken — sonst fehlt die 'X km zur Marina'-Sektion.
+  const marinaFeatureAt = blocks.findIndex(b =>
+    b.type !== 'marina' &&
     /paphos-marina|marina/i.test(String(b.kicker ?? '') + ' ' + String(b.headline ?? '')))
-  if (!hasMarina) {
+  const hasMarinaSchema = blocks.some(b => b.type === 'marina')
+  if (marinaFeatureAt < 0 || !hasMarinaSchema) {
     let at = fi >= 0 ? fi + 1 : Math.min(4, blocks.length - 1)
     while (at < blocks.length && blocks[at].type === 'columns') at++
     const fromSub = (proj?.location ?? '').split(',')[0].trim() || 'Region Paphos'
-    blocks.splice(at, 0, ...buildMarinaBlocks(projName, fromSub, lat, lng))
+    let ins = buildMarinaBlocks(projName, fromSub, lat, lng)
+    if (marinaFeatureAt >= 0) {
+      ins = ins.filter(b => b.type === 'marina')   // Story existiert schon → nur Schema ergänzen
+      at = marinaFeatureAt + 1                      // direkt hinter den vorhandenen Marina-Feature
+    }
+    if (hasMarinaSchema) ins = ins.filter(b => b.type !== 'marina')
+    blocks.splice(at, 0, ...ins)
   }
 }
 
