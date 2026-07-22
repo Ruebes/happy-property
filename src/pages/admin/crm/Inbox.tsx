@@ -4,26 +4,24 @@ import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import { sendWhatsApp } from '../../../lib/whatsapp'
 
 // ── Posteingang ───────────────────────────────────────────────────────────────
 // EIN Ort für die echte Kundenkommunikation: Mail UND WhatsApp, ein- und
 // ausgehend, nach Kontakt gebündelt. Automatische Nachrichten (Drip, Bot, System)
-// sind bewusst AUSGEBLENDET — Sven: „Was wir in diesem Reiter nicht benötigen,
-// sind die automatischen Mails." Erkennbar an activities.auto=false; eingehende
+// sind bewusst AUSGEBLENDET — erkennbar an activities.auto=false; eingehende
 // Nachrichten sind immer echte Kundennachrichten und werden immer gezeigt.
 //
-// Die Lead-Chronik (LeadDetail → Aktivitäten) zeigt weiter ALLES inkl. Automatik;
-// hier geht es nur um den persönlichen Schriftverkehr.
+// Blauer Punkt = ungelesene eingehende Nachricht. Beim Öffnen der Konversation
+// werden ihre eingehenden Nachrichten als gelesen markiert (activities.read_at).
 
 interface Msg {
   id: string
-  lead_id: string
   type: 'email' | 'whatsapp'
   direction: 'inbound' | 'outbound'
   subject: string | null
   content: string | null
   at: string
+  unread: boolean
 }
 interface Convo {
   lead_id: string
@@ -35,9 +33,18 @@ interface Convo {
   lastAt: string
   lastDir: 'inbound' | 'outbound'
   channels: Set<'email' | 'whatsapp'>
+  unread: number
 }
 
 type ChannelFilter = 'all' | 'whatsapp' | 'email'
+const ATTACH_BUCKET = 'crm-project-images'
+
+const fileToB64 = (f: File): Promise<string> => new Promise((res, rej) => {
+  const r = new FileReader()
+  r.onload = () => res(String(r.result).split(',')[1] ?? '')
+  r.onerror = rej
+  r.readAsDataURL(f)
+})
 
 export default function Inbox() {
   const { t } = useTranslation()
@@ -51,19 +58,20 @@ export default function Inbox() {
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState('')
   const [replyChannel, setReplyChannel] = useState<'whatsapp' | 'email'>('whatsapp')
+  const [attach, setAttach] = useState<File | null>(null)
   const [sending, setSending] = useState(false)
   const [toast, setToast] = useState('')
   const threadRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      // Nur echte Kommunikation: Mail/WhatsApp, nicht automatisch ODER eingehend.
       const { data, error } = await supabase
         .from('activities')
-        .select('id, lead_id, type, direction, subject, content, created_at, completed_at, auto, lead:leads!inner(first_name, last_name, email, phone, whatsapp)')
+        .select('id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)')
         .in('type', ['email', 'whatsapp'])
         .or('auto.eq.false,direction.eq.inbound')
         .not('lead_id', 'is', null)
@@ -76,21 +84,21 @@ export default function Inbox() {
         const lead = r.lead
         if (!lead) continue
         const at = r.completed_at || r.created_at
+        const unread = r.direction === 'inbound' && !r.read_at
         let c = byLead.get(r.lead_id)
         if (!c) {
           c = {
             lead_id: r.lead_id,
             name: `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || t('crm.inbox.unknown', 'Unbekannt'),
             email: lead.email, phone: lead.phone, whatsapp: lead.whatsapp,
-            msgs: [], lastAt: at, lastDir: r.direction, channels: new Set(),
+            msgs: [], lastAt: at, lastDir: r.direction, channels: new Set(), unread: 0,
           }
           byLead.set(r.lead_id, c)
         }
-        c.msgs.push({ id: r.id, lead_id: r.lead_id, type: r.type, direction: r.direction, subject: r.subject, content: r.content, at })
+        c.msgs.push({ id: r.id, type: r.type, direction: r.direction, subject: r.subject, content: r.content, at, unread })
+        if (unread) c.unread++
         c.channels.add(r.type)
       }
-      // msgs kamen absteigend rein → für die Anzeige aufsteigend, und lastAt/lastDir
-      // aus der jüngsten (ersten) Zeile bestimmen.
       const list = Array.from(byLead.values()).map(c => {
         c.lastAt = c.msgs[0]?.at ?? c.lastAt
         c.lastDir = c.msgs[0]?.direction ?? c.lastDir
@@ -107,6 +115,20 @@ export default function Inbox() {
 
   useEffect(() => { void fetchAll() }, [fetchAll])
 
+  // Konversation geöffnet → eingehende Nachrichten als gelesen markieren.
+  const markRead = useCallback(async (leadId: string) => {
+    const c = convos.find(x => x.lead_id === leadId)
+    if (!c || c.unread === 0) return
+    setConvos(cs => cs.map(x => x.lead_id === leadId
+      ? { ...x, unread: 0, msgs: x.msgs.map(m => m.unread ? { ...m, unread: false } : m) }
+      : x))
+    const { error } = await supabase.from('activities').update({ read_at: new Date().toISOString() })
+      .eq('lead_id', leadId).eq('direction', 'inbound').is('read_at', null)
+    if (error) console.warn('[Inbox] markRead:', error.message)
+  }, [convos])
+
+  useEffect(() => { if (selected) void markRead(selected) }, [selected, markRead])
+
   const filtered = useMemo(() => convos.filter(c => {
     if (channel !== 'all' && !c.channels.has(channel)) return false
     if (onlyOpen && c.lastDir !== 'inbound') return false
@@ -118,54 +140,70 @@ export default function Inbox() {
   }), [convos, channel, onlyOpen, search])
 
   const current = useMemo(() => convos.find(c => c.lead_id === selected) ?? null, [convos, selected])
-  const openCount = useMemo(() => convos.filter(c => c.lastDir === 'inbound').length, [convos])
+  const unreadCount = useMemo(() => convos.filter(c => c.unread > 0).length, [convos])
 
-  // Antwortkanal an die Konversation anpassen: WhatsApp, wenn eine Nummer da ist,
-  // sonst Mail.
   useEffect(() => {
     if (!current) return
     const lastCh = current.msgs[current.msgs.length - 1]?.type
     if (lastCh === 'email' && current.email) setReplyChannel('email')
     else if (current.whatsapp || current.phone) setReplyChannel('whatsapp')
     else if (current.email) setReplyChannel('email')
-    setReply('')
+    setReply(''); setAttach(null)
   }, [current])
 
   useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight }, [current, sending])
 
   const sendReply = async () => {
-    if (!current || !reply.trim()) return
+    if (!current || (!reply.trim() && !attach)) return
     const text = reply.trim()
     setSending(true)
     try {
       if (replyChannel === 'whatsapp') {
         const phone = current.whatsapp || current.phone
         if (!phone) { showToast(t('crm.inbox.noPhone', 'Kein WhatsApp-/Telefonkontakt hinterlegt')); return }
-        const res = await sendWhatsApp({
-          event_type: 'no_show', override_text: text, lead_id: null,
+        // Anhang bei WhatsApp: in den Bucket laden, URL an send-whatsapp geben.
+        // Grosse Bilder verkleinert send-whatsapp selbst auf unter 2 MB.
+        let file_url: string | undefined, file_name: string | undefined
+        if (attach) {
+          const ext = (attach.name.split('.').pop() || 'bin').toLowerCase()
+          const path = `whatsapp/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+          const up = await supabase.storage.from(ATTACH_BUCKET).upload(path, attach, { cacheControl: '3600', upsert: false })
+          if (up.error) throw up.error
+          file_url = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
+          file_name = attach.name
+        }
+        const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: {
+          event_type: 'no_show', override_text: text || ' ',
           lead_data: { lead_name: current.name, lead_phone: phone },
-        })
-        if (!res.success) throw new Error(res.error || 'WhatsApp')
+          ...(file_url ? { file_url, file_name } : {}),
+        } })
+        if (error) throw error
+        const r = data as { success?: boolean; attached?: boolean; attach_error?: string } | null
+        if (!r?.success) throw new Error('WhatsApp')
+        if (attach && r.attached === false) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: r.attach_error ?? '' }))
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'whatsapp', direction: 'outbound',
-          subject: `WhatsApp → ${current.name}`, content: text.slice(0, 2000),
+          subject: `WhatsApp → ${current.name}`, content: `${text}${attach ? `\n📎 ${attach.name}` : ''}`.slice(0, 2000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       } else {
         if (!current.email) { showToast(t('crm.inbox.noEmail', 'Keine E-Mail-Adresse hinterlegt')); return }
         const lastSubj = [...current.msgs].reverse().find(m => m.type === 'email')?.subject ?? ''
         const subject = lastSubj ? (/^re:/i.test(lastSubj) ? lastSubj : `Re: ${lastSubj.replace(/^Antwort:\s*/i, '')}`) : t('crm.inbox.defaultSubject', 'Ihre Anfrage bei Happy Property')
-        const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`
-        const { data, error } = await supabase.functions.invoke('send-email', { body: { to: current.email, subject, html, lead_id: null } })
+        const html = text
+          ? `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`
+          : `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151">${t('crm.inbox.seeAttachment', 'Siehe Anhang.')}</div>`
+        const attachments = attach ? [{ filename: attach.name, content_base64: await fileToB64(attach), content_type: attach.type || 'application/octet-stream' }] : undefined
+        const { data, error } = await supabase.functions.invoke('send-email', { body: { to: current.email, subject, html, lead_id: null, ...(attachments ? { attachments } : {}) } })
         if (error) throw error
         if ((data as { success?: boolean } | null)?.success === false) throw new Error((data as { error?: string }).error || 'E-Mail')
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'email', direction: 'outbound',
-          subject, content: text.slice(0, 2000),
+          subject, content: `${text}${attach ? `\n📎 ${attach.name}` : ''}`.slice(0, 2000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       }
-      setReply('')
+      setReply(''); setAttach(null)
       showToast(t('crm.inbox.sent', 'Gesendet ✓'))
       await fetchAll()
     } catch (err) {
@@ -204,7 +242,7 @@ export default function Inbox() {
             <button onClick={() => setOnlyOpen(o => !o)}
               className={`px-3 py-1.5 rounded-xl text-sm font-medium border ${onlyOpen ? 'text-white border-transparent' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
               style={onlyOpen ? { backgroundColor: '#0ea5e9' } : undefined}>
-              {t('crm.inbox.onlyOpen', 'Unbeantwortet')}{openCount > 0 && ` (${openCount})`}
+              {t('crm.inbox.onlyOpen', 'Unbeantwortet')}{unreadCount > 0 && ` (${unreadCount})`}
             </button>
           </div>
         </div>
@@ -225,20 +263,19 @@ export default function Inbox() {
                   <p className="text-sm text-gray-400 text-center py-10">{t('crm.inbox.empty', 'Keine Konversationen.')}</p>
                 ) : filtered.map(c => {
                   const last = c.msgs[c.msgs.length - 1]
-                  const isOpen = c.lastDir === 'inbound'
                   return (
                     <button key={c.lead_id} onClick={() => setSelected(c.lead_id)}
                       className={`w-full text-left px-3 py-2.5 hover:bg-gray-50 transition-colors ${selected === c.lead_id ? 'bg-orange-50' : ''}`}>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-medium text-gray-900 text-sm truncate flex items-center gap-1.5">
-                          {isOpen && <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" title={t('crm.inbox.unanswered', 'unbeantwortet') ?? ''} />}
+                        <span className={`text-sm truncate flex items-center gap-1.5 ${c.unread > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>
+                          {c.unread > 0 && <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" title={t('crm.inbox.unread', 'ungelesen') ?? ''} />}
                           {c.name}
                         </span>
                         <span className="text-[11px] text-gray-400 shrink-0">{relTime(c.lastAt)}</span>
                       </div>
                       <div className="flex items-center gap-1 mt-0.5">
                         <span className="text-xs shrink-0">{Array.from(c.channels).map(chIcon).join('')}</span>
-                        <span className="text-xs text-gray-500 truncate">
+                        <span className={`text-xs truncate ${c.unread > 0 ? 'text-gray-700 font-medium' : 'text-gray-500'}`}>
                           {last?.direction === 'outbound' ? '↩ ' : ''}{(last?.content ?? '').replace(/\s+/g, ' ').slice(0, 60)}
                         </span>
                       </div>
@@ -296,13 +333,33 @@ export default function Inbox() {
                           </button>
                         )
                       })}
+                      <div className="ml-auto" />
+                      <button onClick={() => fileRef.current?.click()} disabled={sending}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                        title={t('crm.inbox.attach', 'Datei anhängen') ?? ''}>
+                        📎 {t('crm.inbox.attach', 'Anhang')}
+                      </button>
+                      <input ref={fileRef} type="file" className="hidden"
+                        onChange={e => { const f = e.target.files?.[0]; if (f) setAttach(f); if (fileRef.current) fileRef.current.value = '' }} />
                     </div>
+                    {attach && (
+                      <div className="flex items-center gap-2 mb-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
+                        <span className="truncate">📎 {attach.name} · {Math.round(attach.size / 1024)} KB</span>
+                        {replyChannel === 'whatsapp' && attach.size > 2_000_000 && !attach.type.startsWith('image/') && (
+                          <span className="text-amber-600 shrink-0">{t('crm.inbox.tooBigForWa', 'zu groß für WhatsApp')}</span>
+                        )}
+                        <button onClick={() => setAttach(null)} className="ml-auto text-gray-400 hover:text-red-500 shrink-0">✕</button>
+                      </div>
+                    )}
                     <div className="flex items-end gap-2">
                       <textarea value={reply} onChange={e => setReply(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void sendReply() }}
-                        rows={2} placeholder={t('crm.inbox.replyPlaceholder', 'Antwort schreiben … (⌘/Strg+Enter sendet)')}
+                        onKeyDown={e => {
+                          // Enter sendet; Cmd/Strg+Enter (und Shift+Enter) macht einen Zeilenumbruch.
+                          if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) { e.preventDefault(); void sendReply() }
+                        }}
+                        rows={2} placeholder={t('crm.inbox.replyPlaceholder', 'Antwort schreiben … (Enter sendet, ⌘/Strg+Enter = Zeilenumbruch)')}
                         className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-200" />
-                      <button onClick={() => void sendReply()} disabled={sending || !reply.trim()}
+                      <button onClick={() => void sendReply()} disabled={sending || (!reply.trim() && !attach)}
                         className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50 shrink-0" style={{ backgroundColor: '#ff795d' }}>
                         {sending ? t('common.saving', 'sendet …') : t('crm.inbox.send', 'Senden')}
                       </button>

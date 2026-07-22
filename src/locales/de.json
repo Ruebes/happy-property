@@ -3207,7 +3207,7 @@
       "pick": "Konversation auswählen",
       "openLead": "Kontakt öffnen",
       "unknown": "Unbekannt",
-      "replyPlaceholder": "Antwort schreiben … (⌘/Strg+Enter sendet)",
+      "replyPlaceholder": "Antwort schreiben … (Enter sendet, ⌘/Strg+Enter = Zeilenumbruch)",
       "send": "Senden",
       "sent": "Gesendet ✓",
       "sendError": "Senden fehlgeschlagen",
@@ -3215,7 +3215,12 @@
       "noEmail": "Keine E-Mail-Adresse hinterlegt",
       "defaultSubject": "Ihre Anfrage bei Happy Property",
       "minAgo": "vor {{n}} Min",
-      "hAgo": "vor {{n}} Std"
+      "hAgo": "vor {{n}} Std",
+      "unread": "ungelesen",
+      "attach": "Anhang",
+      "seeAttachment": "Siehe Anhang.",
+      "tooBigForWa": "zu groß für WhatsApp",
+      "attachFailed": "Text gesendet, Anhang leider nicht: {{e}}"
     },
     "outbox": {
       "waBody": "Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property"

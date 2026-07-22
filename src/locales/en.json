@@ -3207,7 +3207,7 @@
       "pick": "Select a conversation",
       "openLead": "Open contact",
       "unknown": "Unknown",
-      "replyPlaceholder": "Write a reply … (⌘/Ctrl+Enter sends)",
+      "replyPlaceholder": "Write a reply … (Enter sends, ⌘/Ctrl+Enter = line break)",
       "send": "Send",
       "sent": "Sent ✓",
       "sendError": "Sending failed",
@@ -3215,7 +3215,12 @@
       "noEmail": "No email address on file",
       "defaultSubject": "Your enquiry at Happy Property",
       "minAgo": "{{n}} min ago",
-      "hAgo": "{{n}} h ago"
+      "hAgo": "{{n}} h ago",
+      "unread": "unread",
+      "attach": "Attach",
+      "seeAttachment": "See attachment.",
+      "tooBigForWa": "too large for WhatsApp",
+      "attachFailed": "Text sent, but the attachment failed: {{e}}"
     },
     "outbox": {
       "waBody": "Hi {{name}},\n\ngreat talking with you! Here are your personal offers:\n\n{{links}}\n\nTake your time to look through them – I'm here any time if you have questions.\n\nBest regards\nSven · Happy Property"

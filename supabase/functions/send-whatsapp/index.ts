@@ -14,6 +14,10 @@ type Recipient = { name: string; phone: string }
 // (gemessen: 6.078 KB → 284 KB). Fremde URLs bleiben unverändert.
 function waSize(url: string): string {
   if (!url.includes('/storage/v1/object/public/')) return url
+  // Nur Bilder durch den Verkleinerer schicken: /render/image/ wandelt eine PDF/
+  // Doc-URL in einen 400er. Endungen ohne Bild-Typ (pdf/doc/...) unveraendert lassen.
+  const ext = (url.split('?')[0].split('.').pop() || '').toLowerCase()
+  if (ext && !['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext)) return url
   const u = url.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/')
   // 1080 statt 1280: Bei 1280 liefert Supabase PNG-Quellen unverändert gross zurück
   // (gemessen 2.402 KB → über dem 2-MB-Limit), bei 1080 greift die WebP-Umwandlung
@@ -225,9 +229,28 @@ Deno.serve(async (req) => {
               console.log(`[send-whatsapp] → JPEG ${Math.round(bytes.length / 1024)} KB`)
             } catch (e) { console.warn('[send-whatsapp] JPEG-Umwandlung fehlgeschlagen, sende Original:', e) }
           }
-          // Harte Grenze: TimelinesAI nimmt im aktuellen Tarif max. 2 MB. Lieber ohne
-          // Bild verschicken als die ganze Nachricht am Anhang scheitern lassen.
-          if (bytes.length > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(bytes.length / 1024)} KB)`)
+          // TimelinesAI nimmt im aktuellen Tarif max. 2 MB. Ist der Anhang groesser
+          // und ein BILD, verkleinern wir ihn, bis er passt (Sven: „die musst du,
+          // wenn sie groesser sind, direkt verkleinern, so dass es passt") — erst
+          // ueber die Qualitaet, dann ueber die Abmessungen. Nicht-Bilder (PDF) lassen
+          // sich nicht schrumpfen → dann sauberer Fehler statt kaputter Zustellung.
+          if (bytes.length > 2_000_000) {
+            const isImg = /^image\//.test(ctype) || ctype === ''
+            if (isImg) {
+              try {
+                let img = await Image.decode(bytes)
+                let q = 70
+                let out = await img.encodeJPEG(q)
+                while (out.length > 2_000_000 && (q > 30 || img.width > 600)) {
+                  if (q > 30) { q -= 15 } else { img = img.resize(Math.round(img.width * 0.75), Math.round(img.height * 0.75)) }
+                  out = await img.encodeJPEG(q)
+                }
+                bytes = out; ctype = 'image/jpeg'
+                console.log(`[send-whatsapp] Anhang auf ${Math.round(bytes.length / 1024)} KB verkleinert`)
+              } catch (e) { console.warn('[send-whatsapp] Verkleinern fehlgeschlagen:', e) }
+            }
+            if (bytes.length > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(bytes.length / 1024)} KB) — konnte nicht klein genug komprimiert werden`)
+          }
           const ext = ctype === 'image/jpeg' ? 'jpg' : ctype === 'image/png' ? 'png'
                     : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/webp' ? 'webp' : ''
           let name = attachName || String(attachUrl).split('/').pop() || 'anhang'
