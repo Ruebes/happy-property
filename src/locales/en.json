@@ -3308,7 +3308,7 @@
     "apptTypePhone": "Phone",
     "cancelScheduled": "Cancel",
     "chooseFile": "📎 Choose file (PDF, Word, image)",
-    "commissionMsgToBurkhard": "🎉 Deal closed!\nCustomer: {{customer}}\nProject: {{project}}\nCommission: {{amount}}\n\nPlease arrange the commission payout.",
+    "commissionMsgToBurkhard": "🐾 Hi, this is Lotte from Happy Property — a task for you:\n\n🎉 Deal closed!\nClient: {{customer}}\nProject: {{project}}\nCommission: {{amount}}\n\nPlease arrange the commission. Thank you!\n\nBest regards\nLotte 🐾",
     "confirmDeleteDoc": "Delete this document?",
     "confirmRemoveUnit": "Remove this unit from the customer?\n\nThe linked object in the owner portal will be deleted. The unit itself remains in the project.",
     "confirmResendPortalAccess": "Create a new password and send it by email to {{email}}?\n\nThe customer's current password will become invalid.",
