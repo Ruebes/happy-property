@@ -82,6 +82,18 @@ function LeadModal({ onClose, onSaved, staff }: LeadModalProps) {
     e.preventDefault()
     setSaving(true)
     try {
+      // Dublettenprüfung: gleicher Name, gleiche E-Mail oder gleiche Nummer schon da?
+      const { data: dups } = await supabase.rpc('find_duplicate_leads', {
+        p_email: form.email || null, p_first: form.first_name || null,
+        p_last: form.last_name || null, p_phone: form.phone || form.whatsapp || null,
+      })
+      const dupList = (dups ?? []) as { first_name: string | null; last_name: string | null }[]
+      if (dupList.length) {
+        const names = dupList.map(d => `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim()).filter(Boolean).join(', ')
+        if (!window.confirm(t('crm.lead.dupWarn', 'Achtung: Es gibt schon einen Kontakt mit gleichem Namen, gleicher E-Mail oder Nummer: {{names}}. Trotzdem anlegen?', { names }))) {
+          setSaving(false); return
+        }
+      }
       const { data: leadData, error: leadError } = await supabase
         .from('leads')
         .insert({

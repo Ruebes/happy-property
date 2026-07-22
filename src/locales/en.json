@@ -1521,7 +1521,8 @@
       "ratedGood": "👍 Rated as a good lead — goes back to Meta tonight.",
       "ratedBad": "👎 Noted as a weak lead.",
       "ratedGoodSubject": "👍 Good lead",
-      "ratedBadSubject": "👎 Weak lead"
+      "ratedBadSubject": "👎 Weak lead",
+      "dupWarn": "Careful: a contact with the same name, email or number already exists: {{names}}. Create anyway?"
     },
     "sources": {
       "meta": "META Ads",

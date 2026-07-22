@@ -1521,7 +1521,8 @@
       "ratedGood": "👍 Als guter Lead bewertet — geht heute Nacht an Meta zurück.",
       "ratedBad": "👎 Als schwacher Lead vermerkt.",
       "ratedGoodSubject": "👍 Guter Lead",
-      "ratedBadSubject": "👎 Schlechter Lead"
+      "ratedBadSubject": "👎 Schlechter Lead",
+      "dupWarn": "Achtung: Es gibt schon einen Kontakt mit gleichem Namen, gleicher E-Mail oder Nummer: {{names}}. Trotzdem anlegen?"
     },
     "sources": {
       "meta": "META Werbung",

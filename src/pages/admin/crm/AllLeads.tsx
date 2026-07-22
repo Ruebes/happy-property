@@ -210,6 +210,18 @@ export default function AllLeads() {
     if (!newLeadForm.first_name.trim() || !newLeadForm.last_name.trim() || !newLeadForm.email.trim()) return
     setCreating(true)
     try {
+      // Dublettenprüfung: gleicher Name, gleiche E-Mail oder gleiche Nummer schon da?
+      const { data: dups } = await supabase.rpc('find_duplicate_leads', {
+        p_email: newLeadForm.email || null, p_first: newLeadForm.first_name || null,
+        p_last: newLeadForm.last_name || null, p_phone: newLeadForm.phone || newLeadForm.whatsapp || null,
+      })
+      const dupList = (dups ?? []) as { first_name: string | null; last_name: string | null }[]
+      if (dupList.length) {
+        const names = dupList.map(d => `${d.first_name ?? ''} ${d.last_name ?? ''}`.trim()).filter(Boolean).join(', ')
+        if (!window.confirm(t('crm.lead.dupWarn', 'Achtung: Es gibt schon einen Kontakt mit gleichem Namen, gleicher E-Mail oder Nummer: {{names}}. Trotzdem anlegen?', { names }))) {
+          setCreating(false); return
+        }
+      }
       const insertPayload = {
         first_name: newLeadForm.first_name.trim(),
         last_name: newLeadForm.last_name.trim(),
