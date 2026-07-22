@@ -12,6 +12,14 @@ type Recipient = { name: string; phone: string }
 // Die Original-Renders sind 3–7 MB und würden das 2-MB-Limit von TimelinesAI
 // sprengen. Der /render/image/-Pfad liefert dieselbe Datei verkleinert aus
 // (gemessen: 6.078 KB → 284 KB). Fremde URLs bleiben unverändert.
+// Kurzer, stabiler Hash des normalisierten Textes für den Doppel-Schutz.
+const DEDUP_HOURS = 6
+function bodyHash(s: string): string {
+  const t = s.replace(/\s+/g, ' ').trim().toLowerCase()
+  let h = 5381
+  for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0
+  return h.toString(36) + ':' + t.length
+}
 function waSize(url: string): string {
   if (!url.includes('/storage/v1/object/public/')) return url
   // Nur Bilder durch den Verkleinerer schicken: /render/image/ wandelt eine PDF/
@@ -67,6 +75,7 @@ Deno.serve(async (req) => {
       auto,          // true = von einer Automatik erzeugt → im Posteingang ausgeblendet.
                      // Default false: eine vergessene Markierung zeigt eine Nachricht
                      // zu viel; eine echte Kundennachricht zu verstecken waere schlimmer.
+      allow_duplicate, // true = Doppel-Schutz umgehen (bewusst gleicher Text erneut)
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -165,6 +174,22 @@ Deno.serve(async (req) => {
     let attachName: string | null = file_name ? String(file_name) : null
     const results = []
     for (const recipient of recipients) {
+      // ── Universeller Doppel-Schutz ────────────────────────────────
+      // Ging GENAU dieser Text an DIESE Nummer schon in den letzten Stunden raus?
+      // Dann nicht nochmal. Faengt Re-Trigger, ueberlappende Automatiken und Cron-
+      // Races quellenuebergreifend ab. Verschiedene Empfaenger / verschiedene Texte
+      // sind nicht betroffen (Key = Nummer + Text-Hash).
+      const bh = typeof message === 'string' ? bodyHash(message) : ''
+      if (!allow_duplicate && bh) {
+        const win = new Date(Date.now() - DEDUP_HOURS * 3600_000).toISOString()
+        const { data: dup } = await supabase.from('wa_sent').select('id')
+          .eq('phone', recipient.phone).eq('body_hash', bh).gt('sent_at', win).limit(1)
+        if (dup && dup.length) {
+          console.warn(`[send-whatsapp] Doppel unterdrueckt an ${recipient.phone} (event=${event_type})`)
+          results.push({ phone: recipient.phone, ok: true, status: 200, data: { skipped: 'duplicate' } })
+          continue
+        }
+      }
       const payload: Record<string, unknown> = {
         phone:                  recipient.phone,
         whatsapp_account_phone: senderPhone,
@@ -290,6 +315,8 @@ Deno.serve(async (req) => {
       console.log(`[send-whatsapp] Antwort ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
       if (!res.ok) console.error(`[send-whatsapp] FEHLER ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
       results.push({ phone: recipient.phone, ok: res.ok, status: res.status, data: json })
+      // Erfolgreich raus → merken, damit derselbe Text nicht erneut an diese Nummer geht.
+      if (res.ok && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
     }
 
     // ── Aktivität in CRM loggen ───────────────────────────────────

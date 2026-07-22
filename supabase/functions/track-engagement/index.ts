@@ -169,10 +169,13 @@ async function logEvent(type: string, token: string | null) {
     const { data: bot } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
     if ((bot as { value?: string } | null)?.value === 'true') {
       // Bot-Start +40 Min planen (nicht sofort — Kunde soll erst selbst buchen können).
-      // DEDUP gegen Doppel-Trigger (zwei Deck-Views kurz nacheinander): nur wenn weder ein
-      // offener Deck-Start ansteht noch ein aktives Gespräch läuft.
+      // DEDUP gegen Doppel-Trigger: nur wenn weder IRGENDEIN offener Bot-Nudge ansteht
+      // noch ein aktives Gespräch läuft. Quellenübergreifend (nicht nur deck_viewed) —
+      // sonst plant ein Deck-View einen deck_viewed-Start, obwohl schon ein
+      // immobilienauswahl/no_show-Nudge pending ist (Andreas-Fall: zwei fast identische
+      // Lotte-Vorstellungen 5 Min auseinander).
       const { data: pend } = await supabase.from('scheduled_messages').select('id')
-        .eq('lead_id', leadId).eq('event_type', 'bot_nudge').eq('bot_nudge_source', 'deck_viewed').eq('status', 'pending').limit(1)
+        .eq('lead_id', leadId).eq('event_type', 'bot_nudge').in('status', ['pending', 'processing']).limit(1)
       const { data: activeConv } = await supabase.from('booking_conversations').select('id')
         .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
       if (!(pend && pend.length) && !(activeConv && activeConv.length)) {

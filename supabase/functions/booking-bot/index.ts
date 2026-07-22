@@ -604,6 +604,22 @@ function buildProposal(intro: string, slots: Slot[], isFinal: boolean): string {
 // ── NUDGE ── Nachfass-Stufen (No-Show 1-5 · Immobilienauswahl 0-5): frische
 // Vorschläge, nur solange der Kunde NIE geantwortet hat. Für Immobilienauswahl wird ein
 // Gespräch bei Bedarf NEU angelegt (der Kunde hat evtl. gar nicht geöffnet → noch keins).
+// Quellenübergreifender Doppel-Schutz: hat der Lead GERADE ERST eine proaktive
+// Bot-WhatsApp bekommen (egal von welcher Nudge-Quelle), fasst der Bot nicht sofort
+// nochmal nach. Andreas Will bekam sonst zwei fast identische Lotte-Vorstellungen
+// 5 Min auseinander (deck_viewed + immobilienauswahl feuerten überlappend).
+// Marker: logWa setzt bei proaktiven Sends subject='WhatsApp: Termin-Bot'. Der
+// laufende Dialog (handleReply) ist bewusst NICHT betroffen (kundeninitiiert).
+async function recentlyAcqMessaged(admin: SupabaseClient, leadId: string, hours = 6): Promise<boolean> {
+  try {
+    const since = new Date(Date.now() - hours * 3600_000).toISOString()
+    const { data } = await admin.from('activities').select('id')
+      .eq('lead_id', leadId).eq('type', 'whatsapp').eq('direction', 'outbound')
+      .eq('subject', 'WhatsApp: Termin-Bot').gt('created_at', since).limit(1)
+    return !!(data && data.length)
+  } catch { return false }
+}
+
 async function handleNudge(admin: SupabaseClient, leadId: string, stage: number, source: string, introOverride?: string): Promise<Response> {
   const { data: st } = await admin.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
@@ -611,6 +627,7 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   if (opt && opt.length) return json({ ok: true, skipped: 'optout' })
   const { data: appt } = await admin.from('crm_appointments').select('id').eq('lead_id', leadId).gte('start_time', new Date().toISOString()).limit(1)
   if (appt && appt.length) return json({ ok: true, skipped: 'has_appointment' })
+  if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Irgendein aktives Gespräch des Leads (egal welche Quelle) → kein Doppel-Messaging.
   const { data: conv } = await admin.from('booking_conversations').select('id, state, created_at')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').order('created_at', { ascending: false }).limit(1).maybeSingle()
@@ -657,6 +674,7 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
     // soll seine Antwort ganz normal im Dialog landen statt ins Leere zu laufen.
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
+  if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Kürzlich an Sven übergeben oder gebucht? Dann grätscht der Bot NICHT wieder rein
   // (Rainer-Fall: neuer Deck-View startete den Bot mitten in Svens Gespräch).
   const since7d = new Date(Date.now() - 7 * 864e5).toISOString()
@@ -1066,6 +1084,7 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
   const { data: active } = await admin.from('booking_conversations').select('id')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
   if (active && active.length) return json({ ok: true, skipped: 'active_conversation' })
+  if (await recentlyAcqMessaged(admin, leadId)) return json({ ok: true, skipped: 'recent_acquisition_wa' })
   // Ist es überhaupt ein (Remote-)Terminwunsch? Vor-Ort-Termine (Viewing/Besichtigung)
   // macht Sven selbst — da klinkt sich der Bot NICHT ein. Fachliches bleibt bei Sven.
   const det = await detectApptRequest(text)
