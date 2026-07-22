@@ -3238,6 +3238,10 @@
       "emailLabel": "E-Mail",
       "addBtn": "+ Mitarbeiter",
       "empty": "Noch keine Mitarbeiter angelegt."
+    },
+    "wizard": {
+      "handover": "Zeitpunkt der Übergabe",
+      "handoverHint": "Erscheint im Deck als geplante Fertigstellung (wird am Projekt gespeichert)."
     }
   },
   "docs": {

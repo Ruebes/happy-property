@@ -13,7 +13,7 @@ import { NumberStepper } from '../NumberStepper'
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null }
+interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
 
@@ -47,12 +47,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [basket, setBasket]     = useState<BasketItem[]>([])
   const [briefing, setBriefing] = useState('')
   const [angle, setAngle]       = useState<'eigennutz' | 'investment'>('eigennutz')
+  const [handoverDate, setHandoverDate] = useState('')   // Zeitpunkt der Übergabe (= crm_projects.completion_date)
   const [busy, setBusy]         = useState(false)
   const [progress, setProgress] = useState('')
   const [err, setErr]           = useState('')
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, latitude, longitude').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, latitude, longitude, completion_date').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -73,6 +74,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   })() }, [projectId])
 
   const project = projects.find(p => p.id === projectId)
+  // Übergabe-Datum aus dem gewählten Projekt vorbelegen (YYYY-MM-DD fürs date-Input).
+  useEffect(() => { setHandoverDate((project?.completion_date ?? '').slice(0, 10)) }, [projectId, project?.completion_date])
   const toggle = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
 
   // Filter: Schlafzimmer + Preis-Spanne (Preis = brutto, sonst netto — wie in der Liste).
@@ -113,6 +116,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // letztes Deck dieses Projekts für den Lead merken → auf NEUES Token pollen
     const { data: prev } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
     const prevTok = (prev as { token?: string } | null)?.token ?? null
+    // Übergabe-Datum am Projekt sichern, bevor das Deck generiert wird — generate-deck
+    // liest die geplante Fertigstellung aus crm_projects.completion_date.
+    if (handoverDate && handoverDate !== (project?.completion_date ?? '').slice(0, 10)) {
+      await supabase.from('crm_projects').update({ completion_date: handoverDate }).eq('id', first.projectId)
+    }
     const { error } = await supabase.functions.invoke('generate-deck', { body: {
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
       facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId,
@@ -356,6 +364,18 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             </div>
           </div>
 
+          {projectId && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.handover', 'Zeitpunkt der Übergabe')}</label>
+              <input
+                type="date"
+                value={handoverDate}
+                onChange={e => setHandoverDate(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">{t('crm.wizard.handoverHint', 'Erscheint im Deck als geplante Fertigstellung. Auch im Projekt änderbar.')}</p>
+            </div>
+          )}
           {projectId && (
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.wizard.units', 'Vorschlags-Wohnungen')} ({shownUnits.length}{shownUnits.length !== units.length ? ` / ${units.length}` : ''})</label>

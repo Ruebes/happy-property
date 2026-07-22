@@ -3238,6 +3238,10 @@
       "emailLabel": "Email",
       "addBtn": "+ Staff member",
       "empty": "No staff members created yet."
+    },
+    "wizard": {
+      "handover": "Handover date",
+      "handoverHint": "Shown in the deck as the planned completion (saved on the project)."
     }
   },
   "docs": {
