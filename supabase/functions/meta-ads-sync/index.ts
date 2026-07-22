@@ -22,6 +22,7 @@
 //   supabase functions deploy meta-ads-sync --no-verify-jwt
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -109,6 +110,10 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
   try {
+    // Rechte-Guard: läuft mit --no-verify-jwt. pg_cron ruft mit dem
+    // Service-Role-Key (gilt als System-Aufruf), Menschen brauchen 'werbung'.
+    await requireAdsAccess(req)
+
     const token   = Deno.env.get('META_ACCESS_TOKEN')!
     const account = Deno.env.get('META_AD_ACCOUNT_ID') ?? '4065490590399677'
     if (!token) throw new Error('META_ACCESS_TOKEN fehlt (Supabase Secrets)')
@@ -382,9 +387,10 @@ Deno.serve(async (req) => {
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[meta-ads-sync]', msg)
+    const status = err instanceof AdsAuthError ? err.status : 500
+    console.error('[meta-ads-sync]', status, msg)
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500,
+      status,
       headers: { ...CORS, 'Content-Type': 'application/json' },
     })
   }

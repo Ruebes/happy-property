@@ -3,9 +3,17 @@
 //   { mode: 'preview', ad_id }            → FB/IG-Vorschau-iframes + Caption
 //   { mode: 'settings', campaign_id }     → ALLE Einstellungen einer Kampagne
 //       (Kampagne + Anzeigengruppen inkl. komplettem Targeting + Anzeigen)
-//   { mode: 'update_entity', entity_id, daily_budget?, status?, name? }
-//       → ändert Budget/Status/Name von Kampagne/Adset/Ad — Guard: Entität muss
-//       zu unserem Werbekonto gehören
+//   { mode: 'update_entity', entity_id, entity_type, patch: {...} }
+//       → ändert ALLE bei Meta änderbaren Felder von Kampagne/Adset/Ad.
+//       Guard: Entität muss zu unserem Werbekonto gehören; je Ebene gilt eine
+//       Feld-Allowlist (siehe EDITABLE_FIELDS unten).
+//   { mode: 'targeting_apply', adset_id, targeting }
+//       → schreibt ein komplettes Targeting-Objekt auf EINE Anzeigengruppe
+//       (Guard: Adset muss zu unserem Konto gehören)
+//   { mode: 'targeting_search', kind, q }
+//       → Autocomplete für den Zielgruppen-Editor (Interessen, Jobtitel,
+//       Verhalten, Orte) — proxyt Metas /search
+//   { mode: 'custom_audiences' } → Custom Audiences unseres Kontos (für Auswahl)
 //   { mode: 'audience_suggest', description, feedback?, previous_draft? }
 //       → Freitext → Claude (mit GELERNTEN Regeln + Beispielen aus ads_ai_rules/
 //       ads_ai_examples) → Graph-Suche löst echte Targeting-IDs auf → Vorschlag.
@@ -23,6 +31,7 @@
 //   supabase functions deploy meta-ads-tools --no-verify-jwt
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -49,10 +58,125 @@ interface AudienceCriteria {
   summary?: string
 }
 
+// ── Welche Felder dürfen auf welcher Ebene geschrieben werden ────────────────
+// Bewusst als Allowlist: alles, was Meta zwar zurückliefert, aber nach dem
+// Anlegen NICHT mehr ändert (objective, buying_type, billing_event,
+// special_ad_categories), bleibt draußen — sonst quittiert Meta die Änderung
+// scheinbar erfolgreich und das Feld bleibt trotzdem stehen.
+const EDITABLE_FIELDS: Record<string, string[]> = {
+  campaign: ['name', 'status', 'daily_budget', 'lifetime_budget', 'spend_cap', 'bid_strategy', 'start_time', 'stop_time'],
+  adset:    ['name', 'status', 'daily_budget', 'lifetime_budget', 'bid_amount', 'bid_strategy', 'optimization_goal', 'start_time', 'end_time', 'targeting'],
+  ad:       ['name', 'status'],
+}
+
+const BID_STRATEGIES = new Set(['LOWEST_COST_WITHOUT_CAP', 'LOWEST_COST_WITH_BID_CAP', 'COST_CAP', 'LOWEST_COST_WITH_MIN_ROAS'])
+const OPTIMIZATION_GOALS = new Set([
+  'OFFSITE_CONVERSIONS', 'LINK_CLICKS', 'LEAD_GENERATION', 'REACH', 'IMPRESSIONS',
+  'LANDING_PAGE_VIEWS', 'THRUPLAY', 'QUALITY_LEAD', 'QUALITY_CALL', 'VALUE', 'APP_INSTALLS',
+])
+// Geldbeträge kommen in Cent der Konto-Währung (USD). 1 $ … 5.000 $ ist der
+// plausible Rahmen für dieses Konto — schützt vor Tippfehlern wie 5000 statt 50.
+const MONEY_MIN = 100
+const MONEY_MAX = 500_000
+
+function money(value: unknown, label: string): number {
+  const cents = Math.round(Number(value))
+  if (!Number.isFinite(cents) || cents < MONEY_MIN || cents > MONEY_MAX) {
+    throw new Error(`${label} unplausibel (Cent, ${MONEY_MIN}–${MONEY_MAX})`)
+  }
+  return cents
+}
+
+function isoTime(value: unknown, label: string): string {
+  const d = new Date(String(value))
+  if (Number.isNaN(d.getTime())) throw new Error(`${label} ist kein gültiges Datum`)
+  return d.toISOString()
+}
+
+/** Baut aus dem Roh-Patch das validierte Graph-Patch für die jeweilige Ebene. */
+function buildPatch(entityType: string, raw: Record<string, unknown>): Record<string, unknown> {
+  const allowed = EDITABLE_FIELDS[entityType]
+  if (!allowed) throw new Error(`Unbekannter entity_type "${entityType}"`)
+
+  const patch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (value == null || value === '') continue
+    if (!allowed.includes(key)) {
+      throw new Error(`Feld "${key}" ist auf Ebene "${entityType}" nicht änderbar`)
+    }
+    switch (key) {
+      case 'name': {
+        const n = String(value).trim()
+        if (!n) throw new Error('Name darf nicht leer sein')
+        patch.name = n.slice(0, 400)
+        break
+      }
+      case 'status': {
+        const s = String(value)
+        if (s !== 'ACTIVE' && s !== 'PAUSED') throw new Error('status muss ACTIVE oder PAUSED sein')
+        patch.status = s
+        break
+      }
+      case 'daily_budget':    patch.daily_budget    = money(value, 'Tagesbudget');    break
+      case 'lifetime_budget': patch.lifetime_budget = money(value, 'Laufzeitbudget'); break
+      case 'spend_cap':       patch.spend_cap       = money(value, 'Ausgabenlimit');  break
+      case 'bid_amount':      patch.bid_amount      = money(value, 'Gebot');          break
+      case 'bid_strategy': {
+        const s = String(value)
+        if (!BID_STRATEGIES.has(s)) throw new Error(`Unbekannte Gebotsstrategie "${s}"`)
+        patch.bid_strategy = s
+        break
+      }
+      case 'optimization_goal': {
+        const s = String(value)
+        if (!OPTIMIZATION_GOALS.has(s)) throw new Error(`Unbekanntes Optimierungsziel "${s}"`)
+        patch.optimization_goal = s
+        break
+      }
+      case 'start_time': patch.start_time = isoTime(value, 'Startzeit'); break
+      case 'stop_time':  patch.stop_time  = isoTime(value, 'Endzeit');   break
+      case 'end_time':   patch.end_time   = isoTime(value, 'Endzeit');   break
+      case 'targeting': {
+        if (typeof value !== 'object' || Array.isArray(value)) throw new Error('targeting muss ein Objekt sein')
+        const tg = value as Record<string, unknown>
+        const geo = tg.geo_locations as Record<string, unknown> | undefined
+        const hasGeo = geo && Object.values(geo).some(v => Array.isArray(v) && v.length)
+        // Ohne Ort liefert Meta einen unverständlichen Fehler — hier klar abfangen.
+        if (!hasGeo) throw new Error('Zielgruppe braucht mindestens ein Land, eine Region oder eine Stadt')
+        patch.targeting = tg
+        break
+      }
+    }
+  }
+  if (!Object.keys(patch).length) throw new Error('Nichts zu ändern übergeben')
+  // daily_budget und lifetime_budget schließen sich bei Meta gegenseitig aus.
+  if (patch.daily_budget && patch.lifetime_budget) {
+    throw new Error('Tagesbudget und Laufzeitbudget können nicht gleichzeitig gesetzt werden')
+  }
+  return patch
+}
+
+/** POST auf die Graph-API mit einheitlicher Fehlermeldung (Metas Klartext bevorzugt). */
+async function graphPost(id: string, patch: Record<string, unknown>, token: string): Promise<void> {
+  const res = await fetch(`${GRAPH}/${id}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const j = await res.json()
+  if (!res.ok || j?.success === false) {
+    const err = j?.error ?? {}
+    throw new Error(String(err.error_user_msg ?? err.message ?? JSON.stringify(j)).slice(0, 300))
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
   try {
+    // Rechte-Guard: die Function läuft mit --no-verify-jwt, deshalb hier prüfen.
+    await requireAdsAccess(req)
+
     const token   = Deno.env.get('META_ACCESS_TOKEN')!
     const account = Deno.env.get('META_AD_ACCOUNT_ID') ?? '4065490590399677'
     const body = await req.json().catch(() => ({})) as Record<string, unknown>
@@ -97,35 +221,103 @@ Deno.serve(async (req) => {
       return json({ success: true, campaign, adsets: adsets.data ?? [], ads: ads.data ?? [] })
     }
 
-    // ── Budget/Status/Name direkt ändern (Kampagne, Adset oder Ad) ──────────
+    // ── Einstellungen ändern (Kampagne, Adset oder Ad) ──────────────────────
     if (mode === 'update_entity') {
       const entityId = String(body.entity_id ?? '').replace(/[^0-9]/g, '')
       if (!entityId) throw new Error('entity_id fehlt')
+      const entityType = String(body.entity_type ?? '')
       // Guard: Entität muss zu unserem Konto gehören
       const check = await graphGet(`${entityId}?fields=account_id`, token)
       if (String(check.account_id) !== account) throw new Error('Entität gehört nicht zu unserem Werbekonto')
-      const patch: Record<string, unknown> = {}
-      if (body.daily_budget != null) {
-        const cents = Math.round(Number(body.daily_budget))
-        if (!Number.isFinite(cents) || cents < 100 || cents > 100_000) throw new Error('daily_budget unplausibel (Cent, 100–100000)')
-        patch.daily_budget = cents
+
+      const raw = (body.patch ?? {}) as Record<string, unknown>
+      const patch = buildPatch(entityType, raw)
+      await graphPost(entityId, patch, token)
+      console.log(`[meta-ads-tools] update_entity ${entityType} ${entityId}:`, JSON.stringify(patch))
+
+      // Spiegel mitziehen: sonst zeigt die Tabelle bis zum nächsten Sync den
+      // alten Status/Namen, obwohl bei Meta längst geändert wurde.
+      if (entityType === 'ad' && (patch.status || patch.name)) {
+        const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+        const mirror: Record<string, unknown> = { updated_at: new Date().toISOString() }
+        if (patch.status) mirror.status = patch.status
+        if (patch.name)   mirror.ad_name = patch.name
+        const { error } = await supabase.from('ad_catalog').update(mirror).eq('ad_id', entityId)
+        if (error) console.warn('[meta-ads-tools] ad_catalog-Spiegel:', error.message)
       }
-      if (body.status != null) {
-        const s = String(body.status)
-        if (s !== 'ACTIVE' && s !== 'PAUSED') throw new Error('status muss ACTIVE oder PAUSED sein')
-        patch.status = s
-      }
-      if (body.name != null && String(body.name).trim()) patch.name = String(body.name).trim().slice(0, 120)
-      if (!Object.keys(patch).length) throw new Error('Nichts zu ändern übergeben')
-      const res = await fetch(`${GRAPH}/${entityId}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-      const j = await res.json()
-      if (!res.ok || j?.success === false) throw new Error(`Update: ${JSON.stringify(j?.error?.error_user_msg ?? j?.error?.message ?? j).slice(0, 250)}`)
-      console.log(`[meta-ads-tools] update_entity ${entityId}:`, JSON.stringify(patch))
       return json({ success: true, entity_id: entityId, applied: patch })
+    }
+
+    // ── Komplettes Targeting auf EINE Anzeigengruppe schreiben ──────────────
+    // Anders als audience_apply (nur System-Kampagne, KI-Entwurf) schreibt das
+    // hier den handgebauten Entwurf aus dem Zielgruppen-Editor auf ein
+    // beliebiges Adset unseres Kontos.
+    if (mode === 'targeting_apply') {
+      const adsetId = String(body.adset_id ?? '').replace(/[^0-9]/g, '')
+      if (!adsetId) throw new Error('adset_id fehlt')
+      const check = await graphGet(`${adsetId}?fields=account_id`, token)
+      if (String(check.account_id) !== account) throw new Error('Anzeigengruppe gehört nicht zu unserem Werbekonto')
+
+      const patch = buildPatch('adset', { targeting: body.targeting })
+      await graphPost(adsetId, patch, token)
+      console.log(`[meta-ads-tools] targeting_apply ${adsetId}`)
+      return json({ success: true, adset_id: adsetId })
+    }
+
+    // ── Autocomplete für den Zielgruppen-Editor ─────────────────────────────
+    if (mode === 'targeting_search') {
+      const kind = String(body.kind ?? '')
+      const q = String(body.q ?? '').trim().slice(0, 100)
+      // Verhalten ist bei Meta KEINE Freitextsuche, sondern eine feste Kategorie-
+      // Liste (type=adTargetingCategory&class=behaviors). Wir holen die ganze
+      // Liste und filtern serverseitig nach dem Suchbegriff.
+      let params: string
+      if (kind === 'behavior') {
+        params = `search?type=adTargetingCategory&class=behaviors&limit=400`
+      } else {
+        const kinds: Record<string, string> = {
+          interest: 'adinterest',
+          job:      'adworkposition',
+          employer: 'adworkemployer',
+          geo:      'adgeolocation',
+        }
+        const type = kinds[kind]
+        if (!type) throw new Error(`Unbekannte Suchart "${kind}"`)
+        if (!q) throw new Error('Suchbegriff fehlt')
+        params = `search?type=${type}&q=${encodeURIComponent(q)}&limit=25`
+      }
+      const res = await graphGet(params, token)
+      let rows = (res.data ?? []) as Array<Record<string, unknown>>
+      // Verhalten kommt als Gesamtliste — hier nach dem Suchbegriff filtern
+      if (kind === 'behavior' && q) {
+        const needle = q.toLowerCase()
+        rows = rows.filter(r => String(r.name ?? '').toLowerCase().includes(needle)).slice(0, 25)
+      }
+      const results = rows.map(r => ({
+        id: String(r.id ?? r.key ?? ''),
+        name: String(r.name ?? ''),
+        // Ortssuche liefert Typ (country/region/city) + Land zur Unterscheidung
+        type: r.type ? String(r.type) : undefined,
+        country_code: r.country_code ? String(r.country_code) : undefined,
+        region: r.region ? String(r.region) : undefined,
+        path: Array.isArray(r.path) ? (r.path as string[]).join(' › ') : undefined,
+        audience: typeof r.audience_size_upper_bound === 'number' ? r.audience_size_upper_bound : undefined,
+      })).filter(r => r.id && r.name)
+      return json({ success: true, results })
+    }
+
+    // ── Custom Audiences unseres Kontos (Auswahlliste im Editor) ────────────
+    if (mode === 'custom_audiences') {
+      const res = await graphGet(`act_${account}/customaudiences?fields=id,name,approximate_count_lower_bound,subtype&limit=200`, token)
+      const rows = (res.data ?? []) as Array<Record<string, unknown>>
+      return json({
+        success: true,
+        audiences: rows.map(r => ({
+          id: String(r.id), name: String(r.name ?? ''),
+          size: typeof r.approximate_count_lower_bound === 'number' ? r.approximate_count_lower_bound : undefined,
+          subtype: r.subtype ? String(r.subtype) : undefined,
+        })),
+      })
     }
 
     // ── Zielgruppen-Vorschlag aus Freitext ───────────────────────────────────
@@ -271,8 +463,9 @@ Antworte NUR mit einem JSON-Objekt (kein Markdown, keine Erklärung):
     throw new Error(`Unbekannter mode "${mode}"`)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    console.error('[meta-ads-tools]', msg)
-    return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    const status = err instanceof AdsAuthError ? err.status : 500
+    console.error('[meta-ads-tools]', status, msg)
+    return new Response(JSON.stringify({ error: msg }), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
   }
 
   function json(obj: Record<string, unknown>) {

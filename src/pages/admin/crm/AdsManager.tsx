@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import AdStudio from '../../../components/crm/AdStudio'
+import TargetingEditor from '../../../components/crm/TargetingEditor'
+import { CustomSelect } from '../../../components/CustomSelect'
 import { supabase } from '../../../lib/supabase'
 import { useAuth, hasAdSegment, AD_SEGMENTS, type AdSegment } from '../../../lib/auth'
 
@@ -105,6 +107,32 @@ function KpiTile({ label, value, sub, accent }: { label: string; value: string; 
   )
 }
 
+// ── Formularbausteine für die Einstellungen-Maske ────────────────────────────
+const INPUT_CLS = 'mt-0.5 w-full border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-gray-50'
+
+// Bewusst div statt label: einige Felder enthalten CustomSelect (ein <button>),
+// und ein <label> um ein klickbares Element herum leitet Klicks weiter — das
+// führt beim Aufklappen zu Doppel-Toggles.
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  return (
+    <div className="block">
+      <span className="text-[11px] text-gray-500">{label}</span>
+      {children}
+      {hint && <span className="block text-[10px] text-gray-400 mt-0.5">{hint}</span>}
+    </div>
+  )
+}
+
+/** Von Meta nach dem Anlegen gesperrte Felder — anzeigen, aber klar als fix markieren. */
+function LockedField({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <span className="text-[11px] text-gray-500">🔒 {label}</span>
+      <p className="mt-0.5 text-xs text-gray-700 px-2 py-1 rounded-lg bg-gray-50 border border-gray-100 truncate" title={value}>{value}</p>
+    </div>
+  )
+}
+
 // ── Horizontales Balkendiagramm (Leads je Kampagne) ──────────────────────────
 interface BarDatum { label: string; value: number; sub?: string; color: string }
 function HBarChart({ data, valueFmt }: { data: BarDatum[]; valueFmt: (v: number) => string }) {
@@ -191,6 +219,23 @@ const META_LABELS: Record<string, string> = {
 }
 const metaLabel = (v: unknown): string => (v == null ? '–' : META_LABELS[String(v)] ?? String(v))
 
+// Geldfelder kommen von Meta in Cent, werden aber in Dollar bearbeitet.
+const MONEY_FIELDS = new Set(['daily_budget', 'lifetime_budget', 'spend_cap', 'bid_amount'])
+const TIME_FIELDS  = new Set(['start_time', 'stop_time', 'end_time'])
+
+// Auswahllisten für die bearbeitbaren Meta-Enums
+const BID_STRATEGY_OPTIONS = ['LOWEST_COST_WITHOUT_CAP', 'LOWEST_COST_WITH_BID_CAP', 'COST_CAP']
+const OPTIMIZATION_OPTIONS = ['OFFSITE_CONVERSIONS', 'LEAD_GENERATION', 'LINK_CLICKS', 'LANDING_PAGE_VIEWS', 'REACH', 'IMPRESSIONS']
+
+/** ISO-Zeitstempel → Wert für <input type="datetime-local"> (lokale Zeit). */
+const toLocalInput = (iso: unknown): string => {
+  if (!iso) return ''
+  const d = new Date(String(iso))
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // Komplettes Meta-Targeting lesbar aufbereitet (alles anzeigen, nichts verstecken)
 function TargetingView({ targeting }: { targeting: Record<string, unknown> | null | undefined }) {
   if (!targeting) return <span className="text-gray-400">–</span>
@@ -265,9 +310,16 @@ export default function AdsManager() {
   const [audienceFeedback, setAudienceFeedback] = useState('')
   const [audienceBusy, setAudienceBusy] = useState(false)
   const [audienceDraft, setAudienceDraft] = useState<{ age_min: number; age_max: number; genders: string; countries: string[]; interests: Array<{ id: string; name: string; audience?: number }>; jobs: Array<{ id: string; name: string }>; summary: string } | null>(null)
-  // ⚙ Voll-Einstellungen einer Kampagne (Meta-Rohdaten, lesbar aufbereitet)
+  // ⚙ Voll-Einstellungen einer Kampagne (Meta-Rohdaten, bearbeitbar)
   interface MetaEntity { [k: string]: unknown }
-  const [settingsView, setSettingsView] = useState<{ campaignId: string; campaignName: string; loading: boolean; busy: boolean; data?: { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[] }; budgetEdits: Record<string, string> } | null>(null)
+  // edits: entity_id → offene Änderungen (erst beim Speichern zu Meta)
+  // targetingEdits: adset_id → bearbeitetes Targeting-Objekt
+  const [settingsView, setSettingsView] = useState<{
+    campaignId: string; campaignName: string; loading: boolean; busy: boolean
+    data?: { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[] }
+    edits: Record<string, Record<string, string>>
+    targetingEdits: Record<string, Record<string, unknown>>
+  } | null>(null)
 
   const showToast = (msg: string) => {
     setToast(msg)
@@ -563,15 +615,13 @@ export default function AdsManager() {
 
   // ── ⚙ Voll-Einstellungen laden / ändern ───────────────────────────────────
   const openSettings = async (cid: string) => {
-    setSettingsView({ campaignId: cid, campaignName: campaignName(cid), loading: true, busy: false, budgetEdits: {} })
+    setSettingsView({ campaignId: cid, campaignName: campaignName(cid), loading: true, busy: false, edits: {}, targetingEdits: {} })
     try {
       const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'settings', campaign_id: cid } })
       if (error) throw error
       const d = data as { campaign: MetaEntity; adsets: MetaEntity[]; ads: MetaEntity[]; error?: string }
       if (d.error) throw new Error(d.error)
-      const budgetEdits: Record<string, string> = {}
-      for (const a of d.adsets) if (a.daily_budget) budgetEdits[String(a.id)] = String(Number(a.daily_budget) / 100)
-      setSettingsView(s => s ? { ...s, loading: false, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads }, budgetEdits } : s)
+      setSettingsView(s => s ? { ...s, loading: false, data: { campaign: d.campaign, adsets: d.adsets, ads: d.ads } } : s)
     } catch (err) {
       console.error('[AdsManager] openSettings:', err)
       setSettingsView(null)
@@ -579,20 +629,95 @@ export default function AdsManager() {
     }
   }
 
-  const updateEntity = async (entityId: string, patch: { daily_budget?: number; status?: 'ACTIVE' | 'PAUSED' }) => {
+  // ── Formular-Helfer: offene Änderungen je Entität ─────────────────────────
+  const setEdit = (entityId: string, field: string, value: string) =>
+    setSettingsView(s => s ? { ...s, edits: { ...s.edits, [entityId]: { ...(s.edits[entityId] ?? {}), [field]: value } } } : s)
+
+  /** Aktueller Anzeigewert: offene Änderung, sonst der Wert von Meta. */
+  const editVal = (entityId: string, field: string, metaValue: unknown): string => {
+    const pending = settingsView?.edits[entityId]?.[field]
+    if (pending != null) return pending
+    if (metaValue == null) return ''
+    if (MONEY_FIELDS.has(field)) return String(Number(metaValue) / 100)
+    if (TIME_FIELDS.has(field)) return toLocalInput(metaValue)
+    return String(metaValue)
+  }
+
+  const hasEdits = (entityId: string) => Object.keys(settingsView?.edits[entityId] ?? {}).length > 0
+
+  /** Fehlermeldung von Meta durchreichen statt sie hinter „fehlgeschlagen" zu verstecken. */
+  const metaError = (err: unknown): string => {
+    const msg = err instanceof Error ? err.message : String(err)
+    return msg.slice(0, 200)
+  }
+
+  const applyUpdate = async (entityId: string, entityType: 'campaign' | 'adset' | 'ad', patch: Record<string, unknown>) => {
     if (!settingsView || settingsView.busy) return
     setSettingsView(s => s ? { ...s, busy: true } : s)
     try {
-      const { data, error } = await supabase.functions.invoke('meta-ads-tools', { body: { mode: 'update_entity', entity_id: entityId, ...patch } })
-      if (error) throw error
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', {
+        body: { mode: 'update_entity', entity_id: entityId, entity_type: entityType, patch },
+      })
+      // Edge-Fehler: invoke wirft bei non-2xx, die Klartext-Meldung steckt im Body
+      if (error) {
+        const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+        throw new Error((detail as { error?: string })?.error ?? (error as Error).message)
+      }
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
       showToast(t('crm.ads.entityUpdated', '✅ Bei Meta gespeichert'))
-      await openSettings(settingsView.campaignId)   // frisch laden
+      await openSettings(settingsView.campaignId)   // frisch von Meta laden
       void fetchAll()
     } catch (err) {
-      console.error('[AdsManager] updateEntity:', err)
+      console.error('[AdsManager] applyUpdate:', err)
       setSettingsView(s => s ? { ...s, busy: false } : s)
-      showToast(`❌ ${t('crm.ads.entityUpdateError', 'Änderung fehlgeschlagen')}`)
+      showToast(`❌ ${metaError(err)}`)
+    }
+  }
+
+  /** Schnell-Aktion: Status sofort umschalten (ohne Formular). */
+  const toggleStatus = (entityId: string, entityType: 'campaign' | 'adset' | 'ad', current: unknown) =>
+    applyUpdate(entityId, entityType, { status: String(current) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })
+
+  /** Speichert alle offenen Feld-Änderungen einer Entität bei Meta. */
+  const saveEntity = (entityId: string, entityType: 'campaign' | 'adset' | 'ad') => {
+    const raw = settingsView?.edits[entityId] ?? {}
+    const patch: Record<string, unknown> = {}
+    for (const [field, value] of Object.entries(raw)) {
+      if (value === '') continue
+      if (MONEY_FIELDS.has(field)) {
+        const v = parseFloat(value.replace(',', '.'))
+        if (!Number.isFinite(v) || v <= 0) { showToast(`❌ ${t('crm.ads.invalidAmount', 'Betrag ungültig')}`); return }
+        patch[field] = Math.round(v * 100)          // Dollar → Cent
+      } else if (TIME_FIELDS.has(field)) {
+        patch[field] = new Date(value).toISOString()
+      } else {
+        patch[field] = value
+      }
+    }
+    if (!Object.keys(patch).length) return
+    void applyUpdate(entityId, entityType, patch)
+  }
+
+  /** Speichert die bearbeitete Zielgruppe einer Anzeigengruppe. */
+  const saveTargeting = async (adsetId: string) => {
+    const targeting = settingsView?.targetingEdits[adsetId]
+    if (!targeting || !settingsView || settingsView.busy) return
+    setSettingsView(s => s ? { ...s, busy: true } : s)
+    try {
+      const { data, error } = await supabase.functions.invoke('meta-ads-tools', {
+        body: { mode: 'targeting_apply', adset_id: adsetId, targeting },
+      })
+      if (error) {
+        const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+        throw new Error((detail as { error?: string })?.error ?? (error as Error).message)
+      }
+      if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
+      showToast(t('crm.ads.targetingSaved', '✅ Zielgruppe bei Meta gespeichert'))
+      await openSettings(settingsView.campaignId)
+    } catch (err) {
+      console.error('[AdsManager] saveTargeting:', err)
+      setSettingsView(s => s ? { ...s, busy: false } : s)
+      showToast(`❌ ${metaError(err)}`)
     }
   }
 
@@ -1131,61 +1256,183 @@ export default function AdsManager() {
               ) : (
                 <div className="px-5 py-4 space-y-4 text-sm">
                   {/* Kampagne */}
-                  <div className="rounded-xl border border-gray-200 p-3">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <p className="font-bold text-gray-800">{t('crm.ads.setCampaign', 'Kampagne')}</p>
-                      <button disabled={settingsView.busy}
-                        onClick={() => void updateEntity(settingsView.campaignId, { status: String(settingsView.data?.campaign.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(settingsView.data.campaign.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
-                        {String(settingsView.data.campaign.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
-                      </button>
-                    </div>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                      <dt className="text-gray-500">{t('crm.ads.setObjective', 'Ziel')}</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.objective)}</dd>
-                      <dt className="text-gray-500">Status</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.effective_status ?? settingsView.data.campaign.status)}</dd>
-                      <dt className="text-gray-500">{t('crm.ads.setBidStrategy', 'Gebotsstrategie')}</dt><dd className="text-gray-800">{metaLabel(settingsView.data.campaign.bid_strategy)}</dd>
-                      <dt className="text-gray-500">{t('crm.ads.setCreated', 'Erstellt')}</dt><dd className="text-gray-800">{settingsView.data.campaign.created_time ? new Date(String(settingsView.data.campaign.created_time)).toLocaleDateString(locale) : '–'}</dd>
-                    </dl>
-                  </div>
+                  {(() => {
+                    const c = settingsView.data.campaign
+                    const cid = settingsView.campaignId
+                    return (
+                      <div className="rounded-xl border border-gray-200 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="font-bold text-gray-800">{t('crm.ads.setCampaign', 'Kampagne')}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-gray-500">{metaLabel(c.effective_status ?? c.status)}</span>
+                            <button disabled={settingsView.busy} onClick={() => void toggleStatus(cid, 'campaign', c.status)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(c.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
+                              {String(c.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="sm:col-span-2">
+                            <Field label={t('crm.ads.setName', 'Name')}>
+                              <input value={editVal(cid, 'name', c.name)} disabled={settingsView.busy}
+                                onChange={e => setEdit(cid, 'name', e.target.value)} className={INPUT_CLS} />
+                            </Field>
+                          </div>
+                          <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)`}
+                            hint={t('crm.ads.setBudgetHint', 'Nur wenn das Budget auf Kampagnen-Ebene liegt')}>
+                            <input value={editVal(cid, 'daily_budget', c.daily_budget)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(cid, 'daily_budget', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} ($)`}
+                            hint={t('crm.ads.setLifetimeHint', 'Braucht ein Enddatum')}>
+                            <input value={editVal(cid, 'lifetime_budget', c.lifetime_budget)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(cid, 'lifetime_budget', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={`${t('crm.ads.setSpendCap', 'Ausgabenlimit gesamt')} ($)`}>
+                            <input value={editVal(cid, 'spend_cap', c.spend_cap)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(cid, 'spend_cap', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={t('crm.ads.setBidStrategy', 'Gebotsstrategie')}>
+                            <div className="mt-0.5">
+                              <CustomSelect value={editVal(cid, 'bid_strategy', c.bid_strategy)} disabled={settingsView.busy}
+                                onChange={v => setEdit(cid, 'bid_strategy', v)}
+                                options={BID_STRATEGY_OPTIONS.map(o => ({ value: o, label: metaLabel(o) }))} />
+                            </div>
+                          </Field>
+                          <Field label={t('crm.ads.setStart', 'Start')}>
+                            <input type="datetime-local" value={editVal(cid, 'start_time', c.start_time)} disabled={settingsView.busy}
+                              onChange={e => setEdit(cid, 'start_time', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={t('crm.ads.setStop', 'Ende')}>
+                            <input type="datetime-local" value={editVal(cid, 'stop_time', c.stop_time)} disabled={settingsView.busy}
+                              onChange={e => setEdit(cid, 'stop_time', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <LockedField label={t('crm.ads.setObjective', 'Ziel')} value={metaLabel(c.objective)} />
+                          <LockedField label={t('crm.ads.setBuyingType', 'Kaufart')} value={metaLabel(c.buying_type)} />
+                        </div>
+
+                        <div className="mt-2 flex justify-end">
+                          <button disabled={settingsView.busy || !hasEdits(cid)} onClick={() => saveEntity(cid, 'campaign')}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                            {t('common.save', 'Speichern')}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })()}
 
                   {/* Anzeigengruppen */}
-                  {settingsView.data.adsets.map(a => (
-                    <div key={String(a.id)} className="rounded-xl border border-gray-200 p-3">
-                      <div className="flex items-center justify-between gap-2 mb-2">
-                        <p className="font-bold text-gray-800 truncate">{t('crm.ads.setAdset', 'Anzeigengruppe')}: {String(a.name)}</p>
-                        <button disabled={settingsView.busy}
-                          onClick={() => void updateEntity(String(a.id), { status: String(a.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(a.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
-                          {String(a.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
-                        </button>
+                  {settingsView.data.adsets.map(a => {
+                    const aid = String(a.id)
+                    const targetingDraft = settingsView.targetingEdits[aid]
+                    return (
+                      <div key={aid} className="rounded-xl border border-gray-200 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <p className="font-bold text-gray-800 truncate">{t('crm.ads.setAdset', 'Anzeigengruppe')}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[11px] text-gray-500">{metaLabel(a.effective_status ?? a.status)}</span>
+                            <button disabled={settingsView.busy} onClick={() => void toggleStatus(aid, 'adset', a.status)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border disabled:opacity-50 ${String(a.status) === 'ACTIVE' ? 'border-gray-300 text-gray-700 hover:bg-gray-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
+                              {String(a.status) === 'ACTIVE' ? `⏸ ${t('crm.ads.actPause', 'Pausieren')}` : `▶ ${t('crm.ads.actActivate', 'Aktivieren')}`}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="sm:col-span-2">
+                            <Field label={t('crm.ads.setName', 'Name')}>
+                              <input value={editVal(aid, 'name', a.name)} disabled={settingsView.busy}
+                                onChange={e => setEdit(aid, 'name', e.target.value)} className={INPUT_CLS} />
+                            </Field>
+                          </div>
+                          <Field label={`${t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)`}>
+                            <input value={editVal(aid, 'daily_budget', a.daily_budget)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(aid, 'daily_budget', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={`${t('crm.ads.setLifetimeBudget', 'Laufzeitbudget')} ($)`}
+                            hint={t('crm.ads.setLifetimeHint', 'Braucht ein Enddatum')}>
+                            <input value={editVal(aid, 'lifetime_budget', a.lifetime_budget)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(aid, 'lifetime_budget', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={t('crm.ads.setOptimization', 'Optimiert auf')}>
+                            <div className="mt-0.5">
+                              <CustomSelect value={editVal(aid, 'optimization_goal', a.optimization_goal)} disabled={settingsView.busy}
+                                onChange={v => setEdit(aid, 'optimization_goal', v)}
+                                options={OPTIMIZATION_OPTIONS.map(o => ({ value: o, label: metaLabel(o) }))} />
+                            </div>
+                          </Field>
+                          <Field label={t('crm.ads.setBidStrategy', 'Gebotsstrategie')}>
+                            <div className="mt-0.5">
+                              <CustomSelect value={editVal(aid, 'bid_strategy', a.bid_strategy)} disabled={settingsView.busy}
+                                onChange={v => setEdit(aid, 'bid_strategy', v)}
+                                options={BID_STRATEGY_OPTIONS.map(o => ({ value: o, label: metaLabel(o) }))} />
+                            </div>
+                          </Field>
+                          <Field label={`${t('crm.ads.setBidAmount', 'Gebot')} ($)`}
+                            hint={t('crm.ads.setBidHint', 'Nur bei Gebots-/Kostenobergrenze')}>
+                            <input value={editVal(aid, 'bid_amount', a.bid_amount)} inputMode="decimal" disabled={settingsView.busy}
+                              onChange={e => setEdit(aid, 'bid_amount', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={t('crm.ads.setStart', 'Start')}>
+                            <input type="datetime-local" value={editVal(aid, 'start_time', a.start_time)} disabled={settingsView.busy}
+                              onChange={e => setEdit(aid, 'start_time', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <Field label={t('crm.ads.setEnd', 'Ende')}>
+                            <input type="datetime-local" value={editVal(aid, 'end_time', a.end_time)} disabled={settingsView.busy}
+                              onChange={e => setEdit(aid, 'end_time', e.target.value)} className={INPUT_CLS} />
+                          </Field>
+                          <LockedField label={t('crm.ads.setBilling', 'Abrechnung')} value={metaLabel(a.billing_event)} />
+                        </div>
+
+                        <div className="mt-2 flex justify-end">
+                          <button disabled={settingsView.busy || !hasEdits(aid)} onClick={() => saveEntity(aid, 'adset')}
+                            className="px-3 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                            {t('common.save', 'Speichern')}
+                          </button>
+                        </div>
+
+                        {/* Zielgruppe: erst ansehen, auf Klick bearbeitbar */}
+                        <div className="mt-3 pt-3 border-t border-gray-100">
+                          <div className="flex items-center justify-between gap-2 mb-1.5">
+                            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.ads.setTargeting', 'Zielgruppe')}</p>
+                            {targetingDraft ? (
+                              <div className="flex gap-1.5">
+                                <button disabled={settingsView.busy}
+                                  onClick={() => setSettingsView(s => {
+                                    if (!s) return s
+                                    const next = { ...s.targetingEdits }; delete next[aid]
+                                    return { ...s, targetingEdits: next }
+                                  })}
+                                  className="px-2 py-0.5 rounded border border-gray-200 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                                  {t('common.cancel', 'Abbrechen')}
+                                </button>
+                                <button disabled={settingsView.busy} onClick={() => void saveTargeting(aid)}
+                                  className="px-2 py-0.5 rounded text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                                  {t('crm.ads.saveTargeting', 'Zielgruppe speichern')}
+                                </button>
+                              </div>
+                            ) : (
+                              <button disabled={settingsView.busy}
+                                onClick={() => setSettingsView(s => s ? {
+                                  ...s,
+                                  targetingEdits: { ...s.targetingEdits, [aid]: { ...(a.targeting as Record<string, unknown> ?? {}) } },
+                                } : s)}
+                                className="px-2 py-0.5 rounded border border-gray-200 text-[11px] text-gray-600 hover:border-orange-400 disabled:opacity-50">
+                                ✏️ {t('common.edit', 'Bearbeiten')}
+                              </button>
+                            )}
+                          </div>
+                          {targetingDraft ? (
+                            <TargetingEditor value={targetingDraft} disabled={settingsView.busy}
+                              onChange={next => setSettingsView(s => s ? { ...s, targetingEdits: { ...s.targetingEdits, [aid]: next } } : s)} />
+                          ) : (
+                            <TargetingView targeting={a.targeting as Record<string, unknown>} />
+                          )}
+                        </div>
                       </div>
-                      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
-                        <dt className="text-gray-500">{t('crm.ads.setOptimization', 'Optimiert auf')}</dt>
-                        <dd className="text-gray-800">{metaLabel(a.optimization_goal)}{(a.promoted_object as { custom_event_type?: string } | undefined)?.custom_event_type ? ` · ${metaLabel((a.promoted_object as { custom_event_type?: string }).custom_event_type)}` : ''}</dd>
-                        <dt className="text-gray-500">{t('crm.ads.setBilling', 'Abrechnung')}</dt><dd className="text-gray-800">{metaLabel(a.billing_event)}</dd>
-                        <dt className="text-gray-500">{t('crm.ads.setBidStrategy', 'Gebotsstrategie')}</dt><dd className="text-gray-800">{metaLabel(a.bid_strategy)}</dd>
-                        <dt className="text-gray-500">{t('crm.ads.setSchedule', 'Laufzeit')}</dt>
-                        <dd className="text-gray-800">{a.start_time ? new Date(String(a.start_time)).toLocaleDateString(locale) : '–'} – {a.end_time ? new Date(String(a.end_time)).toLocaleDateString(locale) : t('crm.ads.setOpenEnd', 'offen')}</dd>
-                      </dl>
-                      {/* Tagesbudget direkt änderbar */}
-                      <div className="flex items-center gap-2 mb-2">
-                        <label className="text-xs text-gray-500">{t('crm.ads.setDailyBudget', 'Tagesbudget')} ($)</label>
-                        <input value={settingsView.budgetEdits[String(a.id)] ?? ''} inputMode="decimal"
-                          onChange={e => setSettingsView(s => s ? { ...s, budgetEdits: { ...s.budgetEdits, [String(a.id)]: e.target.value } } : s)}
-                          className="w-24 border border-gray-200 rounded-lg px-2 py-1 text-xs text-right" />
-                        <button disabled={settingsView.busy}
-                          onClick={() => {
-                            const v = parseFloat((settingsView.budgetEdits[String(a.id)] ?? '').replace(',', '.'))
-                            if (Number.isFinite(v) && v > 0) void updateEntity(String(a.id), { daily_budget: Math.round(v * 100) })
-                          }}
-                          className="px-2.5 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-                          {t('common.save', 'Speichern')}
-                        </button>
-                      </div>
-                      <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.ads.setTargeting', 'Zielgruppe')}</p>
-                      <TargetingView targeting={a.targeting as Record<string, unknown>} />
-                    </div>
-                  ))}
+                    )
+                  })}
 
                   {/* Anzeigen */}
                   <div className="rounded-xl border border-gray-200 p-3">
@@ -1193,15 +1440,23 @@ export default function AdsManager() {
                     <div className="space-y-1.5">
                       {settingsView.data.ads.map(ad => {
                         const linkData = ((ad.creative as { object_story_spec?: { link_data?: { link?: string; call_to_action?: { type?: string } } } } | undefined)?.object_story_spec?.link_data)
+                        const adId = String(ad.id)
                         return (
-                          <div key={String(ad.id)} className="flex flex-wrap items-center gap-2 text-xs">
+                          <div key={adId} className="flex flex-wrap items-center gap-2 text-xs">
                             <span className={`w-2 h-2 rounded-full shrink-0 ${String(ad.effective_status ?? ad.status) === 'ACTIVE' ? 'bg-green-500' : 'bg-gray-300'}`} />
-                            <span className="text-gray-800 truncate max-w-[220px]" title={String(ad.name)}>{String(ad.name)}</span>
+                            <input value={editVal(adId, 'name', ad.name)} disabled={settingsView.busy}
+                              onChange={e => setEdit(adId, 'name', e.target.value)}
+                              className="flex-1 min-w-[160px] border border-gray-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200 disabled:bg-gray-50" />
                             <span className="text-gray-400">{metaLabel(ad.effective_status ?? ad.status)}</span>
-                            {linkData?.link && <span className="text-gray-400 truncate max-w-[200px]" title={linkData.link}>→ {linkData.link.replace('https://', '')}</span>}
-                            <button disabled={settingsView.busy}
-                              onClick={() => void updateEntity(String(ad.id), { status: String(ad.status) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })}
-                              className="ml-auto px-2 py-0.5 rounded border border-gray-200 text-[11px] text-gray-600 hover:border-orange-400 disabled:opacity-50">
+                            {linkData?.link && <span className="text-gray-400 truncate max-w-[180px]" title={linkData.link}>→ {linkData.link.replace('https://', '')}</span>}
+                            {hasEdits(adId) && (
+                              <button disabled={settingsView.busy} onClick={() => saveEntity(adId, 'ad')}
+                                className="px-2 py-0.5 rounded text-[11px] font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
+                                {t('common.save', 'Speichern')}
+                              </button>
+                            )}
+                            <button disabled={settingsView.busy} onClick={() => void toggleStatus(adId, 'ad', ad.status)}
+                              className="px-2 py-0.5 rounded border border-gray-200 text-[11px] text-gray-600 hover:border-orange-400 disabled:opacity-50">
                               {String(ad.status) === 'ACTIVE' ? '⏸' : '▶'}
                             </button>
                           </div>
@@ -1209,7 +1464,9 @@ export default function AdsManager() {
                       })}
                     </div>
                   </div>
-                  <p className="text-[11px] text-gray-400">{t('crm.ads.settingsHint', 'Änderungen wirken sofort direkt bei Meta. Zielgruppe der System-Kampagne änderst du über den Zielgruppen-Assistenten.')}</p>
+                  <p className="text-[11px] text-gray-400">
+                    {t('crm.ads.settingsHint', 'Änderungen wirken sofort direkt bei Meta. 🔒-Felder legt Meta beim Anlegen fest und lässt sie nachträglich nicht mehr ändern.')}
+                  </p>
                 </div>
               )}
             </div>
