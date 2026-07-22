@@ -3024,7 +3024,8 @@
       "cards": "Karten",
       "publish": "Als Anzeige anlegen (pausiert)",
       "published": "✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren",
-      "error": "Das hat nicht geklappt"
+      "error": "Das hat nicht geklappt",
+      "networkError": "Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten."
     },
     "waImage": {
       "label": "Bild (optional)",

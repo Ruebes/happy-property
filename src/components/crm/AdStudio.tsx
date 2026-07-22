@@ -31,9 +31,22 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   const [busy, setBusy] = useState<'generate' | 'refine' | 'publish' | null>(null)
   const [lastChange, setLastChange] = useState('')
 
+  // Slug „studio" statt „ad-studio": Werbeblocker filtern „ad-"-URLs — der
+  // alte Aufruf kam bei aktivem Blocker nie am Server an (22.7.).
   const call = async (body: Record<string, unknown>) => {
-    const { data, error } = await supabase.functions.invoke('ad-studio', { body })
-    if (error) throw error
+    const { data, error } = await supabase.functions.invoke('studio', { body })
+    if (error) {
+      // Netzwerk-Ebene (gar nicht angekommen) von Function-Fehlern unterscheiden:
+      // die Klartext-Meldung der Function steckt bei non-2xx im Response-Body.
+      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
+      if (detail && typeof (detail as { error?: unknown }).error === 'string') {
+        throw new Error((detail as { error: string }).error)
+      }
+      if (/Failed to send/i.test(error.message ?? '')) {
+        throw new Error(t('crm.studio.networkError', 'Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.'))
+      }
+      throw error
+    }
     const d = data as Record<string, unknown>
     if (d.error) throw new Error(String(d.hint ?? d.error))
     return d
