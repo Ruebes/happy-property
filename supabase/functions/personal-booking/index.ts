@@ -244,7 +244,7 @@ Deno.serve(async (req) => {
           <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">${T.gcalBtn}</a></p>
           <p style="font-size:13px;color:#6b7280;">${T.icsNote}</p></div>`
         const ics = buildIcs({ uid: appt?.id ?? crypto.randomUUID(), title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
-        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, lead_id: leadId, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
+        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
       }
       // Bestätigung per WhatsApp
       if (phone) {

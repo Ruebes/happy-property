@@ -60,6 +60,9 @@ Deno.serve(async (req) => {
       persona_image, // NACHRANGIGES Absenderbild (Lotte). Greift nur, wenn weder ein
                      // ausdruecklicher Anhang noch ein inhaltliches Motiv da ist —
                      // ein Wohnungsbild schlaegt das Hundefoto immer.
+      auto,          // true = von einer Automatik erzeugt → im Posteingang ausgeblendet.
+                     // Default false: eine vergessene Markierung zeigt eine Nachricht
+                     // zu viel; eine echte Kundennachricht zu verstecken waere schlimmer.
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -275,6 +278,7 @@ Deno.serve(async (req) => {
         subject:      `WhatsApp: ${event_type}`,
         content:      message,
         completed_at: new Date().toISOString(),
+        auto:         auto === true,
       })
     }
 

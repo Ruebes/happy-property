@@ -428,7 +428,7 @@ Deno.serve(async (req) => {
       const notifySven = async (subject: string, text: string) => {
         try {
           await admin.functions.invoke('send-email', { body: {
-            to: 'sven@happy-property.com', lead_id: a.lead_id, subject,
+            to: 'sven@happy-property.com', lead_id: a.lead_id, auto: true, subject,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`,
           } })
         } catch (e) { console.warn('[funnel-api] Sven-Benachrichtigung fehlgeschlagen:', e) }

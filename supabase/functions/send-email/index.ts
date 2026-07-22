@@ -83,13 +83,14 @@ Deno.serve(async (req: Request) => {
       deal_id?:         string | null
       attach_category?: string | null
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
+      auto?:            boolean          // true = Automatik → im Posteingang ausgeblendet (Default false)
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
       // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
       attachments?:     Array<{ filename: string; content_base64: string; content_type?: string }> | null
     }
 
-    const { to, lead_id, deal_id, attach_category, open_token } = body
+    const { to, lead_id, deal_id, attach_category, open_token, auto } = body
     let { subject = '', html = '' } = body
 
     if (!to) {
@@ -269,6 +270,7 @@ Deno.serve(async (req: Request) => {
         subject:      subject,
         content:      contentWithAttachInfo,
         completed_at: new Date().toISOString(),
+        auto:         auto === true,
       })
 
       if (logErr) console.warn('[send-email] Aktivitäts-Log fehlgeschlagen:', logErr.message)

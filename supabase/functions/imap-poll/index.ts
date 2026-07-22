@@ -1,9 +1,16 @@
-// imap-poll — liest Antworten auf Aufgaben-Erinnerungen aus dem IONOS-Postfach.
-// Erinnerungs-Mails tragen den Assignee-Token im Betreff: „… [#<token>]".
-// Antworten (Re: … [#<token>]) landen im INBOX; hier extrahieren wir Token +
-// Antworttext und schreiben ihn als Bemerkung in die Aufgabe. Es werden NUR
-// Mails mit „[#" im Betreff angefasst; Flags bleiben unberührt (Dedupe via
-// task_mail_processed-Tabelle über die UID) — das restliche Postfach bleibt unangetastet.
+// imap-poll — liest eingehende Mails aus dem IONOS-Postfach und ordnet sie zu.
+//
+// ZWEI Aufgaben pro Mail:
+//   1) Trägt der Betreff einen Aufgaben-Token „… [#<token>]", ist es die Antwort
+//      auf eine Aufgaben-Erinnerung → als Bemerkung in die Aufgabe schreiben.
+//   2) Sonst: Absender-Adresse gegen leads.email prüfen. Passt sie zu einem Lead,
+//      ist es eine KUNDENANTWORT → als eingehende Nachricht (activities, type email,
+//      direction inbound) ins Lead-Konto schreiben, damit sie im Posteingang und in
+//      der Lead-Chronik steht.
+//
+// Flags bleiben unberührt (BODY.PEEK). Dedupe über task_mail_processed (UID) — jede
+// UID wird nur EINMAL verarbeitet, das restliche Postfach bleibt unangetastet.
+// Fremd-Mails (kein Token, kein Lead-Treffer) werden nur als „gesehen" vermerkt.
 //
 // Secrets: IMAP_USER, IMAP_PASS, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy: supabase functions deploy imap-poll --no-verify-jwt
@@ -105,45 +112,95 @@ function extractPlain(fetched: string): string {
   return stripQuoted(section)
 }
 
+// Absender-Adresse aus dem From-Header ziehen: „Max <max@x.de>" → „max@x.de".
+function fromAddress(raw: string): string {
+  const f = decodeMimeWords(header(raw, 'From'))
+  const m = f.match(/<([^>]+)>/)
+  return (m ? m[1] : f).trim().toLowerCase()
+}
+// IMAP-SINCE-Datum: DD-Mon-YYYY (englische Monatskürzel).
+function imapSince(daysBack: number): string {
+  const d = new Date(Date.now() - daysBack * 864e5)
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getUTCMonth()]
+  return `${String(d.getUTCDate()).padStart(2, '0')}-${mon}-${d.getUTCFullYear()}`
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const imap = new Imap()
-  const result = { scanned: 0, processed: 0, skipped: 0, errors: [] as string[] }
+  const result = { scanned: 0, tasks: 0, leads: 0, skipped: 0, errors: [] as string[] }
   try {
     await imap.connect()
     const li = await imap.login(Deno.env.get('IMAP_USER') ?? '', Deno.env.get('IMAP_PASS') ?? '')
     if (!/OK/m.test(li)) return json({ error: 'IMAP-Login fehlgeschlagen' }, 500)
     await imap.cmd('SELECT INBOX')
-    // Nur Mails mit Token-Marker im Betreff
-    const search = await imap.cmd('UID SEARCH HEADER Subject "[#"')
-    const uids = (search.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+
+    // Token-Mails (Aufgaben-Antworten) UND alle jüngeren Mails (Kunden-Antworten).
+    // Zwei Suchen, per Set entdoppelt. SINCE begrenzt die zweite auf die letzten Tage,
+    // damit nicht das ganze Postfach gescannt wird; task_mail_processed hält den Rest.
+    const s1 = await imap.cmd('UID SEARCH HEADER Subject "[#"')
+    const s2 = await imap.cmd(`UID SEARCH SINCE ${imapSince(14)}`)
+    const parse = (r: string) => (r.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+    const uids = Array.from(new Set([...parse(s1), ...parse(s2)]))
+      .sort((a, b) => Number(b) - Number(a))   // neueste zuerst
+      .slice(0, MAX_PER_RUN)
     result.scanned = uids.length
-    const recent = uids.slice(-MAX_PER_RUN)   // neueste zuerst begrenzen
-    for (const uid of recent) {
+
+    for (const uid of uids) {
       try {
         const { data: seen } = await supabase.from('task_mail_processed').select('uid').eq('uid', uid).maybeSingle()
         if (seen) { result.skipped++; continue }
         const fetched = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[])`)
         const subject = decodeMimeWords(header(fetched, 'Subject'))
         const token = subject.match(/\[#([a-f0-9]{8,20})\]/i)?.[1]
-        // UID immer merken, damit Fremd-Mails nicht bei jedem Lauf neu gescannt werden
+        // UID immer merken, damit dieselbe Mail nicht bei jedem Lauf neu verarbeitet wird.
         await supabase.from('task_mail_processed').insert({ uid })
-        if (!token) { result.skipped++; continue }
-        const { data: asg } = await supabase.from('crm_task_assignees')
-          .select('id, task_id, profile_id, ext_name, task:crm_tasks!inner(created_by)')
-          .eq('token', token).maybeSingle()
-        if (!asg) { result.skipped++; continue }
-        let label = asg.ext_name || 'Extern'
-        if (asg.profile_id) { const { data: p } = await supabase.from('profiles').select('full_name').eq('id', asg.profile_id).single(); label = p?.full_name || label }
-        const bodyText = (extractPlain(fetched) || '(leere Antwort)').slice(0, 4000)
-        // deno-lint-ignore no-explicit-any
-        const createdBy = (asg.task as any)?.created_by
-        await supabase.from('crm_task_messages').insert({
-          task_id: asg.task_id, sender_id: asg.profile_id ?? null, sender_label: `${label} (per Mail)`,
-          recipient_id: createdBy, body: bodyText,
+
+        // (1) Aufgaben-Antwort mit Token → Bemerkung in die Aufgabe.
+        if (token) {
+          const { data: asg } = await supabase.from('crm_task_assignees')
+            .select('id, task_id, profile_id, ext_name, task:crm_tasks!inner(created_by)')
+            .eq('token', token).maybeSingle()
+          if (!asg) { result.skipped++; continue }
+          let label = asg.ext_name || 'Extern'
+          if (asg.profile_id) { const { data: p } = await supabase.from('profiles').select('full_name').eq('id', asg.profile_id).single(); label = p?.full_name || label }
+          const bodyText = (extractPlain(fetched) || '(leere Antwort)').slice(0, 4000)
+          // deno-lint-ignore no-explicit-any
+          const createdBy = (asg.task as any)?.created_by
+          await supabase.from('crm_task_messages').insert({
+            task_id: asg.task_id, sender_id: asg.profile_id ?? null, sender_label: `${label} (per Mail)`,
+            recipient_id: createdBy, body: bodyText,
+          })
+          result.tasks++
+          continue
+        }
+
+        // (2) Kundenantwort → Absender gegen leads.email prüfen.
+        const addr = fromAddress(fetched)
+        if (!addr || !addr.includes('@')) { result.skipped++; continue }
+        // NIEMALS unsere eigene Adresse als Kunde behandeln: sonst würde jede Mail,
+        // die wir selbst von info@ verschicken und die im Postfach landet, als
+        // „Kundenantwort" fehlverbucht (ein Test-Lead trug info@happy-property.com).
+        const own = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
+        if (addr === own || /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr)) { result.skipped++; continue }
+        const { data: leadRow } = await supabase.rpc('find_lead_by_email', { p_email: addr })
+        const leadId = (leadRow as Array<{ id: string }> | null)?.[0]?.id
+        if (!leadId) { result.skipped++; continue }   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
+        const bodyText = (extractPlain(fetched) || '(leere Nachricht)').slice(0, 4000)
+        await supabase.from('activities').insert({
+          lead_id:      leadId,
+          type:         'email',
+          direction:    'inbound',
+          subject:      subject ? `Antwort: ${subject.slice(0, 160)}` : 'E-Mail erhalten',
+          content:      bodyText,
+          completed_at: new Date().toISOString(),
+          auto:         false,   // eingehend = echte Kundennachricht → im Posteingang sichtbar
         })
-        result.processed++
+        // Frische KI-Zusammenfassung erzwingen und Nachfass-Automatik stoppen —
+        // eine echte Antwort ist wie bei WhatsApp ein „Kunde hat geantwortet".
+        try { await supabase.from('lead_ai_summaries').delete().eq('lead_id', leadId) } catch { /* egal */ }
+        result.leads++
       } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
     }
     await imap.logout()

@@ -951,7 +951,10 @@ export default function LeadDetail() {
           to:      toEmail,
           subject: resolvedSubject,
           html:    resolvedBody,
-          lead_id: id ?? null,
+          // KEIN lead_id: sonst loggt die Edge die Mail ein ZWEITES Mal (ohne
+          // Empfängername, ohne created_by). Wir loggen gleich selbst — analog
+          // zum WhatsApp-Composer. Das verhindert doppelte Zeilen im Posteingang.
+          lead_id: null,
           deal_id: deal?.id ?? null,
           ...(attachments ? { attachments } : {}),
         },
