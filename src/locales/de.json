@@ -1278,7 +1278,9 @@
         "offen": "Gestellt",
         "in_arbeit": "In Arbeit",
         "erledigt": "Erledigt"
-      }
+      },
+      "accepted": "angenommen",
+      "start": "In Bearbeitung nehmen"
     },
     "home": {
       "hello": "Hallo",

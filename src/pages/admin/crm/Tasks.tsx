@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
+import { acceptTask } from '../../../lib/crmTasks'
 
 // ── Aufgaben ────────────────────────────────────────────────────────────────────
 // Eigenständige Aufgaben, einem Mitarbeiter zugewiesen, Pipeline gestellt → in Arbeit
@@ -306,6 +307,14 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     if (!error) { notifyIfSubtaskDone(task, status); onChanged() }
   }
 
+  // Annehmen ≠ In Arbeit: bestätigt nur den Eingang (Notiz „angenommen"), die
+  // Aufgabe bleibt in „Gestellt". Der Start ist ein eigener Schritt (setStatus).
+  const accept = async (tk: Task) => {
+    await acceptTask(tk.id, myId, nameOf(myId), tk.created_by)
+    await loadAll(); onChanged()
+  }
+  const myAccepted = assignees.some(a => a.profile_id === myId && a.accepted_at)
+
   const send = async () => {
     if (!text.trim()) return
     setSending(true)
@@ -567,12 +576,22 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
             ) : null}
           </div>
 
-          {/* Annehmen: Zuständige:r bestätigt → In Arbeit */}
-          {iAmAssignee && task.status === 'offen' && (
-            <button onClick={() => setStatus('in_arbeit')}
-              className="w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ backgroundColor: '#f59e0b' }}>
+          {/* Annehmen: bestätigt den Eingang — Aufgabe bleibt in „Gestellt". */}
+          {iAmAssignee && task.status === 'offen' && !myAccepted && (
+            <button onClick={() => void accept(task)}
+              className="w-full py-2.5 rounded-xl text-white text-sm font-semibold" style={{ backgroundColor: '#10b981' }}>
               ✋ {t('crm.tasks.accept', 'Aufgabe annehmen')}
             </button>
+          )}
+          {/* Angenommen, aber noch nicht gestartet → bewusster Schritt „In Bearbeitung". */}
+          {iAmAssignee && task.status === 'offen' && myAccepted && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2 shrink-0">✓ {t('crm.tasks.accepted', 'angenommen')}</span>
+              <button onClick={() => void setStatus('in_arbeit')}
+                className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold" style={{ backgroundColor: '#f59e0b' }}>
+                ▶ {t('crm.tasks.start', 'In Bearbeitung nehmen')}
+              </button>
+            </div>
           )}
 
           {/* Status-Umschalter */}
@@ -644,10 +663,16 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
                       </div>
                       {mineToDo && st.status !== 'erledigt' && (
                         <div className="flex gap-2 mt-2">
-                          {st.status === 'offen' && (
+                          {st.status === 'offen' && !st.accepted_at && (
+                            <button onClick={async () => { await acceptTask(st.id, myId, nameOf(myId), st.created_by); await loadAll(); onChanged() }}
+                              className="flex-1 py-1.5 rounded-lg text-white text-xs font-semibold" style={{ backgroundColor: '#10b981' }}>
+                              ✋ {t('crm.tasks.accept', 'Aufgabe annehmen')}
+                            </button>
+                          )}
+                          {st.status === 'offen' && st.accepted_at && (
                             <button onClick={() => setSubStatus(st, 'in_arbeit')}
                               className="flex-1 py-1.5 rounded-lg text-white text-xs font-semibold" style={{ backgroundColor: '#f59e0b' }}>
-                              ✋ {t('crm.tasks.accept', 'Aufgabe annehmen')}
+                              ▶ {t('crm.tasks.start', 'In Bearbeitung nehmen')}
                             </button>
                           )}
                           <button onClick={() => setSubStatus(st, 'erledigt')}
@@ -812,6 +837,9 @@ export default function Tasks() {
                             {unread[task.id] && <span className="shrink-0 text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5">{unread[task.id]}</span>}
                           </div>
                           {task.description && <p className="text-xs text-gray-400 mt-1 line-clamp-2">{task.description}</p>}
+                          {task.status === 'offen' && task.accepted_at && (
+                            <span className="inline-block mt-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">✓ {t('crm.tasks.accepted', 'angenommen')}</span>
+                          )}
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] text-gray-400">
                             <span>{mine ? `→ ${nameOf(task.assigned_to)}` : `${t('crm.tasks.fromShort', 'von')} ${nameOf(task.created_by)}`}</span>
                             <span>· {t('crm.tasks.createdOn', 'Gestellt')} {d2(task.created_at)}</span>

@@ -73,15 +73,28 @@ Deno.serve(async (req) => {
       return json({ ok: true, status: task.status })
     }
 
-    // ── accept: annehmen → In Arbeit ────────────────────────────────────────
+    // ── accept: annehmen (NICHT starten) ────────────────────────────────────
+    // Annehmen bestätigt nur den Eingang. Die Aufgabe bleibt in „Gestellt"
+    // (status offen); der Wechsel nach „In Arbeit" ist ein eigener Schritt.
     if (action === 'accept') {
       if (task.status === 'erledigt') return json({ ok: true, status: 'erledigt', already: true })
       await supabase.from('crm_task_assignees').update({ accepted_at: asg.accepted_at ?? nowIso }).eq('id', asg.id)
+      // NUR den Karten-Marker setzen, den Status NICHT auf in_arbeit ziehen.
+      if (!task.accepted_at) {
+        await supabase.from('crm_tasks').update({ accepted_at: nowIso, accepted_by: asg.profile_id ?? null }).eq('id', task.id)
+      }
+      if (note && String(note).trim()) await addNote(String(note).trim(), '')
+      await addNote('Aufgabe angenommen.', '✅ ')
+      return json({ ok: true, status: task.status, accepted: true })
+    }
+
+    // ── start: in Bearbeitung nehmen ────────────────────────────────────────
+    if (action === 'start') {
+      if (task.status === 'erledigt') return json({ ok: true, status: 'erledigt', already: true })
       const patch: Record<string, unknown> = { status: 'in_arbeit' }
       if (!task.accepted_at) { patch.accepted_at = nowIso; patch.accepted_by = asg.profile_id ?? null }
       await supabase.from('crm_tasks').update(patch).eq('id', task.id)
-      if (note && String(note).trim()) await addNote(String(note).trim(), '')
-      await addNote('Aufgabe angenommen.', '✅ ')
+      await addNote('In Bearbeitung.', '▶ ')
       return json({ ok: true, status: 'in_arbeit' })
     }
 

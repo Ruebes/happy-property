@@ -11,6 +11,10 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PUBLIC_SITE_URL?
 // Deploy: supabase functions deploy task-notify --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
+import { lotteBossBild } from '../_shared/lotte.ts'
+
+// Lotte tritt gegenüber dem Team als Chefin auf, die Aufgaben verteilt.
+const LOTTE_FROM = 'Lotte · Happy Property'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,9 +32,13 @@ interface Assignee {
 }
 interface Task { id: string; title: string; description: string | null; due_date: string | null; status: string; archived: boolean }
 
-function mailHtml(first: string, intro: string, task: Task, link: string) {
+function mailHtml(first: string, intro: string, task: Task, link: string, bossImg: string) {
   const due = task.due_date ? new Date(task.due_date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
   return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+    <div style="text-align:center;margin-bottom:6px;">
+      <img src="${bossImg}" alt="Lotte" width="88" height="88" style="width:88px;height:88px;border-radius:50%;object-fit:cover;" />
+      <p style="font-size:13px;color:#6b7280;margin:6px 0 0;">Lotte · deine Chefin bei Happy Property 🐾</p>
+    </div>
     <p>Hallo ${esc(first)},</p>
     <p>${intro}</p>
     <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
@@ -42,18 +50,23 @@ function mailHtml(first: string, intro: string, task: Task, link: string) {
       <a href="${link}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 24px;border-radius:10px;font-weight:600;display:inline-block;">Öffnen &amp; erledigen</a>
     </p>
     <p style="font-size:13px;color:#6b7280;">Du kannst auch direkt auf diese Mail antworten — deine Nachricht landet als Bemerkung in der Aufgabe.</p>
+    <p style="margin-top:16px;">Liebe Grüße<br>Lotte 🐾</p>
   </div>`
 }
 
 function waText(intro: string, task: Task, link: string) {
-  return `${intro}\n\n*${task.title}*${task.description ? `\n${task.description}` : ''}\n\nÖffnen & erledigen:\n${link}\n\n(Du kannst auch einfach hier antworten.)`
+  return `${intro}\n\n*${task.title}*${task.description ? `\n${task.description}` : ''}\n\nÖffnen & erledigen:\n${link}\n\nLiebe Grüße\nLotte 🐾\n(Du kannst auch einfach hier antworten.)`
 }
 
-// Eine Aufgabe an einen Zuständigen zustellen (Kanal-abhängig).
+// Eine Aufgabe an einen Zuständigen zustellen. Lotte vergibt sie als Chefin —
+// jede Aufgabe geht ZUSÄTZLICH als WhatsApp mit einem zufälligen Lotte-Boss-Bild
+// raus (Sven: „Alle Aufgaben werden zusätzlich nur noch als WhatsApp gestellt …
+// jeder ein Bild von Lotte"). Fehlt die Telefonnummer (z.B. Giona), bleibt die
+// Mail als Zustellweg.
 async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 'dispatch' | 'reminder') {
   const link = `${PUBLIC_BASE}/t/${a.token}`
-  const introMail = kind === 'dispatch' ? 'dir wurde eine neue Aufgabe zugewiesen:' : 'kurze Erinnerung — ist diese Aufgabe schon erledigt?'
-  const introWa   = kind === 'dispatch' ? '📋 Neue Aufgabe von Happy Property:' : '⏰ Erinnerung — ist diese Aufgabe erledigt?'
+  const introMail = kind === 'dispatch' ? 'ich bin Lotte und verteile die Aufgaben im Team. Hier ist eine für dich:' : 'kurze Erinnerung von mir — ist diese Aufgabe schon erledigt?'
+  const introWa   = kind === 'dispatch' ? '🐾 Hallo, hier ist Lotte. Ich hab eine Aufgabe für dich:' : '🐾 Lotte hier — kurze Erinnerung: ist diese Aufgabe schon erledigt?'
   const subject   = `${kind === 'dispatch' ? 'Neue Aufgabe' : 'Erinnerung'}: ${task.title} [#${a.token}]`
 
   // Empfänger + Kanäle bestimmen
@@ -61,23 +74,27 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   let wantMail = false, wantWa = false
   if (a.profile_id) {
     const { data: p } = await supabase.from('profiles').select('full_name, email, phone').eq('id', a.profile_id).single()
-    name = p?.full_name ?? ''; email = p?.email ?? null
-    wantMail = true                        // interne Zuständige: Mail
+    name = p?.full_name ?? ''; email = p?.email ?? null; phone = (p?.phone ?? '').trim() || null
+    // Interne Zuständige: Mail IMMER, WhatsApp ZUSÄTZLICH wenn eine Nummer da ist.
+    wantMail = !!email
+    wantWa   = !!phone
   } else {
     name = a.ext_name ?? ''; email = a.ext_email; phone = a.ext_phone
     wantMail = (a.channel === 'mail' || a.channel === 'both') && !!email
     wantWa   = (a.channel === 'whatsapp' || a.channel === 'both') && !!phone
   }
   const first = (name || '').split(' ')[0] || name
+  const bossImg = await lotteBossBild(supabase)
 
   if (wantMail && email) {
-    await supabase.functions.invoke('send-email', { body: { to: email, subject, html: mailHtml(first, introMail, task, link) } })
+    await supabase.functions.invoke('send-email', { body: { to: email, subject, from_name: LOTTE_FROM, html: mailHtml(first, introMail, task, link, bossImg) } })
       .catch((e: unknown) => console.warn('[task-notify] mail:', e))
   }
   if (wantWa && phone) {
     await supabase.functions.invoke('send-whatsapp', { body: {
       event_type: `task_${kind}`, override_text: waText(introWa, task, link),
       lead_data: { lead_name: name || 'Empfänger', lead_phone: phone },
+      persona_image: bossImg,   // Lotte als Chefin
     } }).catch((e: unknown) => console.warn('[task-notify] whatsapp:', e))
   }
   await supabase.from('crm_task_assignees').update({ last_reminded_at: new Date().toISOString() }).eq('id', a.id)
@@ -147,8 +164,9 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
     // Nummer VOR dem Aufruf pruefen: send-whatsapp nutzt ??, ein Leerstring wuerde
     // die Empfaengeraufloesung kippen statt sauber abzubrechen.
     const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: {
-      event_type: 'subtask_done', override_text: waText,
+      event_type: 'subtask_done', override_text: `${waText}\n\nLiebe Grüße\nLotte 🐾`,
       lead_data: { lead_name: g.full_name ?? 'Team', lead_phone: phone },
+      persona_image: await lotteBossBild(supabase),   // Lotte meldet zurück
       // KEIN lead_id: sonst landet die interne Meldung in einer Kundenakte.
     } }).catch((e: unknown) => ({ error: e }))
     if (waErr) { await release(waErr); return { skipped: 'versand_fehlgeschlagen' } }
@@ -159,7 +177,7 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
     const { error: mailErr } = await supabase.functions.invoke('send-email', { body: {
       // Zeilenumbrueche aus dem Titel raus: der Betreff geht ungeprueft in den
       // Mail-Header, ein CR/LF darin waere eine Header-Injektion.
-      to: g.email, subject: `Zuarbeit erledigt: ${task.title.replace(/[\r\n]+/g, ' ').slice(0, 160)}`,
+      to: g.email, from_name: LOTTE_FROM, subject: `Zuarbeit erledigt: ${task.title.replace(/[\r\n]+/g, ' ').slice(0, 160)}`,
       html: `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
         <p>Hallo ${esc(first)},</p>
         <p>${esc(doerName)} hat deine Teilaufgabe als erledigt markiert:</p>

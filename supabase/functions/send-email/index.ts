@@ -84,13 +84,14 @@ Deno.serve(async (req: Request) => {
       attach_category?: string | null
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
       auto?:            boolean          // true = Automatik → im Posteingang ausgeblendet (Default false)
+      from_name?:       string           // Anzeigename des Absenders (Adresse bleibt smtpUser), z.B. „Lotte · Happy Property"
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
       // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
       attachments?:     Array<{ filename: string; content_base64: string; content_type?: string }> | null
     }
 
-    const { to, lead_id, deal_id, attach_category, open_token, auto } = body
+    const { to, lead_id, deal_id, attach_category, open_token, auto, from_name } = body
     let { subject = '', html = '' } = body
 
     if (!to) {
@@ -220,7 +221,9 @@ Deno.serve(async (req: Request) => {
           // Absender = das konfigurierte SMTP-Postfach (smtpUser). Stellt Sven den SMTP-Login
           // auf info@ um, wird der Absender automatisch info@ — kein Code/Secret-Timing nötig,
           // und From passt immer zum authentifizierten Konto (sonst lehnt IONOS ab).
-          from:    `Sven von Happy Property Cyprus <${smtpUser}>`,
+          // Der ANZEIGENAME ist frei überschreibbar (from_name), damit interne Aufgaben-
+          // und Partner-Mails von „Lotte" kommen können — die Adresse bleibt smtpUser.
+          from:    `${(typeof from_name === 'string' && from_name.trim()) ? from_name.replace(/[<>\r\n"]/g, '').trim() : 'Sven von Happy Property Cyprus'} <${smtpUser}>`,
           // Antworten laufen ins info@-Postfach (von dort liest sie künftig der CRM-Posteingang).
           replyTo: `info@happy-property.com`,
           to:      to,
