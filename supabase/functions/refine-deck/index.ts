@@ -125,6 +125,30 @@ Deno.serve(async (req: Request) => {
         if (!Array.isArray(newBlocks) || !newBlocks.length || !newBlocks.every(b => b && typeof (b as { type?: string }).type === 'string')) {
           throw new Error('KI lieferte keine gültige Block-Liste')
         }
+        // Marina-Standard (Sven 2026-07): Der Deck-Chat darf die Marina-Sektion nicht
+        // verlieren. War sie im alten Deck und fehlt in den neuen Blöcken, wird sie aus
+        // dem alten Content übernommen — außer die Anweisung dreht sich selbst um die Marina.
+        if (!/marina/i.test(instruction!)) {
+          type Blk = Record<string, unknown>
+          const nb = newBlocks as Blk[]
+          const oldBlocks = ((deck.content as { blocks?: Blk[] })?.blocks ?? [])
+          const isMarinaFeature = (b: Blk) => b.type !== 'marina' &&
+            /paphos-marina|marina/i.test(String(b.kicker ?? '') + ' ' + String(b.headline ?? ''))
+          const anchor = () => {
+            const mf = nb.findIndex(isMarinaFeature)
+            if (mf >= 0) return mf + 1
+            const fi = nb.findIndex(b => b.type === 'facts')
+            return fi >= 0 ? fi + 1 : Math.max(nb.length - 1, 0)
+          }
+          if (!nb.some(isMarinaFeature)) {
+            const oldFeat = oldBlocks.find(isMarinaFeature)
+            if (oldFeat) nb.splice(anchor(), 0, oldFeat)
+          }
+          if (!nb.some(b => b.type === 'marina')) {
+            const oldSchema = oldBlocks.find(b => b.type === 'marina')
+            if (oldSchema) nb.splice(anchor(), 0, oldSchema)
+          }
+        }
         // Fertig: Content tauschen, revision hochzählen (Farbwechsel im CRM), refining aus.
         await supabase.from('sales_decks').update({
           prev_content: deck.content, content: { blocks: newBlocks },
