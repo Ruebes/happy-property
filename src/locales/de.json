@@ -1189,6 +1189,7 @@
       "dashboard": "Dashboard",
       "pipeline": "Pipeline",
       "leads": "Kontakte",
+      "inbox": "Posteingang",
       "templates": "E-Mail Vorlagen",
       "archived": "Archiviert",
       "projects": "Projekte",
@@ -3048,6 +3049,29 @@
       "total": "Freigeschaltet: {{n}} Adressen. Deine CRM-Kunden kommen im Newsletter immer dazu; doppelte Adressen werden nur einmal angeschrieben.",
       "syncedN": "{{n}} neue Adressen übernommen.",
       "syncedPartly": "{{n}} neue Adressen. {{f}} Liste(n) mit Fehler: {{msg}}"
+    },
+    "inbox": {
+      "title": "Posteingang",
+      "subtitle": "Deine Kundenkommunikation — Mail und WhatsApp, ein- und ausgehend. Automatische Nachrichten sind ausgeblendet.",
+      "chAll": "Alle",
+      "chWa": "WhatsApp",
+      "chMail": "Mail",
+      "onlyOpen": "Unbeantwortet",
+      "unanswered": "unbeantwortet",
+      "search": "Suchen …",
+      "empty": "Keine Konversationen.",
+      "pick": "Konversation auswählen",
+      "openLead": "Kontakt öffnen",
+      "unknown": "Unbekannt",
+      "replyPlaceholder": "Antwort schreiben … (⌘/Strg+Enter sendet)",
+      "send": "Senden",
+      "sent": "Gesendet ✓",
+      "sendError": "Senden fehlgeschlagen",
+      "noPhone": "Kein WhatsApp-/Telefonkontakt hinterlegt",
+      "noEmail": "Keine E-Mail-Adresse hinterlegt",
+      "defaultSubject": "Ihre Anfrage bei Happy Property",
+      "minAgo": "vor {{n}} Min",
+      "hAgo": "vor {{n}} Std"
     }
   },
   "docs": {

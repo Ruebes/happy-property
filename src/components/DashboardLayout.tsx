@@ -126,6 +126,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
   const crmTopItems = [
     { to: '/admin/crm/pipeline',      key: 'crm.nav.pipeline'   },
     { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
+    { to: '/admin/crm/inbox',         key: 'crm.nav.inbox'      },
     { to: '/admin/crm/postausgang',   key: 'crm.nav.outbox'     },
     { to: '/admin/crm/calendar',      key: 'crm.nav.calendar'   },
   ]
@@ -155,6 +156,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm',                key: 'crm.nav.dashboard',   perm: 'pipeline' },
     { to: '/admin/crm/pipeline',       key: 'crm.nav.pipeline',    perm: 'pipeline' },
     { to: '/admin/crm/leads',          key: 'crm.nav.leads',       perm: 'pipeline' },
+    { to: '/admin/crm/inbox',          key: 'crm.nav.inbox',       perm: 'pipeline' },
     { to: '/admin/crm/postausgang',    key: 'crm.nav.outbox',      perm: 'pipeline' },
     { to: '/admin/crm/calendar',       key: 'crm.nav.calendar',    perm: 'pipeline' },
     { to: '/admin/crm/projects',       key: 'crm.nav.projects',    perm: 'pipeline' },

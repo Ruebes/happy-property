@@ -1189,6 +1189,7 @@
       "dashboard": "Dashboard",
       "pipeline": "Pipeline",
       "leads": "Contacts",
+      "inbox": "Inbox",
       "templates": "Email Templates",
       "archived": "Archived",
       "projects": "Projects",
@@ -3048,6 +3049,29 @@
       "total": "Enabled: {{n}} addresses. Your CRM customers are always included; duplicates are only mailed once.",
       "syncedN": "{{n}} new addresses imported.",
       "syncedPartly": "{{n}} new addresses. {{f}} list(s) failed: {{msg}}"
+    },
+    "inbox": {
+      "title": "Inbox",
+      "subtitle": "Your customer communication — email and WhatsApp, inbound and outbound. Automated messages are hidden.",
+      "chAll": "All",
+      "chWa": "WhatsApp",
+      "chMail": "Mail",
+      "onlyOpen": "Unanswered",
+      "unanswered": "unanswered",
+      "search": "Search …",
+      "empty": "No conversations.",
+      "pick": "Select a conversation",
+      "openLead": "Open contact",
+      "unknown": "Unknown",
+      "replyPlaceholder": "Write a reply … (⌘/Ctrl+Enter sends)",
+      "send": "Send",
+      "sent": "Sent ✓",
+      "sendError": "Sending failed",
+      "noPhone": "No WhatsApp/phone contact on file",
+      "noEmail": "No email address on file",
+      "defaultSubject": "Your enquiry at Happy Property",
+      "minAgo": "{{n}} min ago",
+      "hAgo": "{{n}} h ago"
     }
   },
   "docs": {
