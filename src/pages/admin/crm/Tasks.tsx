@@ -188,10 +188,13 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
               </div>
             )}
             <div className="space-y-1.5 bg-gray-50 border border-gray-100 rounded-xl p-2.5">
-              {contacts.length > 0 && (
+              {/* Externe Personen = Geschäftskontakte (Partner/Anwalt/Steuerberater …).
+                  Leads/Kunden gehören NICHT hierher — die verknüpft man unten unter
+                  „Kunden verknüpfen". Darum nur kind==='biz' anbieten. */}
+              {contacts.some(c => c.kind === 'biz') && (
                 <select onChange={e => { prefillExternal(e.target.value); e.currentTarget.selectedIndex = 0 }} className={input + ' bg-white'}>
                   <option value="">{t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}</option>
-                  {contacts.map(c => <option key={c.key} value={c.key}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>)}
+                  {contacts.filter(c => c.kind === 'biz').map(c => <option key={c.key} value={c.key}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>)}
                 </select>
               )}
               <input value={exName} onChange={e => setExName(e.target.value)} className={input} placeholder={t('crm.tasks.extName', 'Name')} />
