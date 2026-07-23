@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
+import { CustomSelect } from '../../../../components/CustomSelect'
 import {
   type WorkflowDocument,
   type DocumentCategory,
@@ -112,17 +113,15 @@ function UploadModal({ file, onClose, onUploaded }: UploadModalProps) {
             <label className="block text-xs font-medium text-gray-500 mb-1">
               {t('docs.upload.category', 'Kategorie')} *
             </label>
-            <select
-              className={inputCls}
+            <CustomSelect
+              className="w-full"
               value={category}
-              onChange={e => setCategory(e.target.value as DocumentCategory)}
-            >
-              {CATEGORIES.filter(c => c.value !== 'all').map(c => (
-                <option key={c.value} value={c.value}>
-                  {c.icon} {t(c.labelKey, c.value)}
-                </option>
-              ))}
-            </select>
+              onChange={(v) => setCategory(v as DocumentCategory)}
+              options={CATEGORIES.filter(c => c.value !== 'all').map(c => ({
+                value: c.value,
+                label: `${c.icon} ${t(c.labelKey, c.value)}`,
+              }))}
+            />
             <p className="text-xs text-gray-400 mt-1">
               {t('docs.upload.categoryHint', 'Das Dokument wird automatisch bei passenden E-Mails angehängt.')}
             </p>

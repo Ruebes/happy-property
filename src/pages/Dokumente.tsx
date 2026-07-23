@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../components/DashboardLayout'
+import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -519,27 +520,21 @@ export default function Dokumente() {
                   {t('common.loading')}
                 </div>
               ) : (
-                <select className={inputCls} style={focusRing()}
+                <CustomSelect className="w-full"
                   value={uploadForm.property_id}
-                  onChange={e => setField('property_id', e.target.value)}>
-                  <option value="">{t('documents.selectProperty')}</option>
-                  {propOptions.map(p => (
-                    <option key={p.id} value={p.id}>{propOptionLabel(p)}</option>
-                  ))}
-                </select>
+                  onChange={v => setField('property_id', v)}
+                  placeholder={t('documents.selectProperty')}
+                  options={propOptions.map(p => ({ value: p.id, label: propOptionLabel(p) }))} />
               )}
             </div>
 
             {/* Doc type */}
             <div>
               <Label required>{t('documents.type')}</Label>
-              <select className={inputCls} style={focusRing()}
+              <CustomSelect className="w-full"
                 value={uploadForm.type}
-                onChange={e => setField('type', e.target.value as DocType)}>
-                {(['mietvertrag', 'rechnung', 'sonstiges'] as const).map(v => (
-                  <option key={v} value={v}>{t(`documents.types.${v}`)}</option>
-                ))}
-              </select>
+                onChange={v => setField('type', v as DocType)}
+                options={(['mietvertrag', 'rechnung', 'sonstiges'] as const).map(v => ({ value: v, label: t(`documents.types.${v}`) }))} />
             </div>
 
             {/* Title */}

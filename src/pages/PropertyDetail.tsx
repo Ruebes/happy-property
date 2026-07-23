@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../components/DashboardLayout'
 import ImageLightbox from '../components/ImageLightbox'
+import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -1722,11 +1723,12 @@ export default function PropertyDetail() {
                   </div>
                   <div>
                     <label className="block text-xs text-gray-500 font-body mb-1">{t('users.form.language')}</label>
-                    <select className={inputCls} style={focusRing()} value={ownerForm.language}
-                            onChange={e => setOwnerForm(f => f && ({ ...f, language: e.target.value }))}>
-                      <option value="de">🇩🇪 Deutsch</option>
-                      <option value="en">🇬🇧 English</option>
-                    </select>
+                    <CustomSelect className="w-full" style={focusRing()} value={ownerForm.language}
+                            onChange={(v) => setOwnerForm(f => f && ({ ...f, language: v }))}
+                            options={[
+                              { value: 'de', label: '🇩🇪 Deutsch' },
+                              { value: 'en', label: '🇬🇧 English' },
+                            ]} />
                   </div>
                 </div>
                 {/* Adresse */}
@@ -1965,11 +1967,10 @@ export default function PropertyDetail() {
                   <label className="block text-xs text-gray-500 font-body mb-1.5 font-semibold">
                     {t('propertyDetail.verwaltung.managementCompany', 'Verwaltungsunternehmen')} *
                   </label>
-                  <select value={aktivierVerwaltungId} onChange={e => setAktivierVerwaltungId(e.target.value)}
-                          className={`${inputCls} w-full`} style={focusRing()}>
-                    <option value="">{t('propertyDetail.verwaltung.pleaseSelect', '– Bitte auswählen –')}</option>
-                    {verwaltungList.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
+                  <CustomSelect value={aktivierVerwaltungId} onChange={(v) => setAktivierVerwaltungId(v)}
+                          options={verwaltungList.map(v => ({ value: v.id, label: v.name }))}
+                          placeholder={t('propertyDetail.verwaltung.pleaseSelect', '– Bitte auswählen –')}
+                          className="w-full" style={focusRing()} />
                   {verwaltungList.length === 0 && (
                     <p className="text-xs text-amber-600 font-body mt-1">
                       {t('propertyDetail.verwaltung.noneCreatedYet', 'Noch keine Verwaltungen angelegt.')}{' '}

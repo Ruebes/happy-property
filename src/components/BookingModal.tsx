@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { sendWhatsApp } from '../lib/whatsapp'
+import { CustomSelect } from './CustomSelect'
 
 // ── Types ──────────────────────────────────────────────────────
 export interface ModalProperty {
@@ -547,15 +548,16 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
                 {properties.length === 0 ? (
                   <p className="text-sm text-gray-400 font-body italic">{t('calendar.modal.noProperties')}</p>
                 ) : (
-                  <select value={form.propertyId} onChange={e => setF('propertyId', e.target.value)}
-                          className={inputCls}>
-                    <option value="">— {t('calendar.modal.property')} —</option>
-                    {properties.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.project_name}{p.unit_number ? ` · ${p.unit_number}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    value={form.propertyId}
+                    onChange={(v) => setF('propertyId', v)}
+                    placeholder={`— ${t('calendar.modal.property')} —`}
+                    className="w-full"
+                    options={properties.map(p => ({
+                      value: p.id,
+                      label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`,
+                    }))}
+                  />
                 )}
               </div>
 
@@ -920,12 +922,15 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
                       <label className="block text-xs font-semibold text-gray-500 font-body mb-1.5">
                         {t('calendar.modal.language')}
                       </label>
-                      <select value={form.language}
-                              onChange={e => setF('language', e.target.value as 'de' | 'en')}
-                              className={inputCls}>
-                        <option value="de">Deutsch</option>
-                        <option value="en">English</option>
-                      </select>
+                      <CustomSelect
+                        value={form.language}
+                        onChange={(v) => setF('language', v as 'de' | 'en')}
+                        className="w-full"
+                        options={[
+                          { value: 'de', label: 'Deutsch' },
+                          { value: 'en', label: 'English' },
+                        ]}
+                      />
                     </div>
                   </div>
                 </>

@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { sendWhatsApp } from '../../lib/whatsapp'
 import type { Lead } from '../../lib/crmTypes'
 import { useMailAttachments, MailAttachmentField } from './MailAttachments'
+import { CustomSelect } from '../CustomSelect'
 
 // Schnell-Versand aus der Lead-Kachel (Rechtsklick → Menü):
 //  - 'whatsapp'  → WhatsApp an den Kunden
@@ -133,11 +134,13 @@ export default function LeadQuickSend({ lead, mode, onClose, onSent }: {
 
         {mode === 'forward' && (
           <>
-            <select value={contactId} onChange={e => setContactId(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300">
-              {contacts.length === 0 && <option value="">{t('crm.quick.noContacts', '– keine Kontakte angelegt –')}</option>}
-              {contacts.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
+            <CustomSelect
+              value={contactId}
+              onChange={(v) => setContactId(v)}
+              options={contacts.map(c => ({ value: c.id, label: c.label }))}
+              placeholder={t('crm.quick.noContacts', '– keine Kontakte angelegt –')}
+              className="w-full"
+            />
             {/* Kanal pro Kontakt wählen — nur der Kanal, den der Kontakt hat, ist aktiv */}
             <div className="flex gap-2">
               <button type="button" onClick={() => sel?.phone && setFwdChannel('whatsapp')} disabled={!sel?.phone}

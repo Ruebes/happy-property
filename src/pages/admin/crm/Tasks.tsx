@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import { acceptTask } from '../../../lib/crmTasks'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 // ── Aufgaben ────────────────────────────────────────────────────────────────────
 // Eigenständige Aufgaben, einem Mitarbeiter zugewiesen, Pipeline gestellt → in Arbeit
@@ -192,10 +193,13 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
                   Leads/Kunden gehören NICHT hierher — die verknüpft man unten unter
                   „Kunden verknüpfen". Darum nur kind==='biz' anbieten. */}
               {contacts.some(c => c.kind === 'biz') && (
-                <select onChange={e => { prefillExternal(e.target.value); e.currentTarget.selectedIndex = 0 }} className={input + ' bg-white'}>
-                  <option value="">{t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}</option>
-                  {contacts.filter(c => c.kind === 'biz').map(c => <option key={c.key} value={c.key}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>)}
-                </select>
+                <CustomSelect
+                  value=""
+                  onChange={(v) => prefillExternal(v)}
+                  options={contacts.filter(c => c.kind === 'biz').map(c => ({ value: c.key, label: `${c.name}${c.email ? ` · ${c.email}` : ''}` }))}
+                  placeholder={t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}
+                  className="w-full"
+                />
               )}
               <input value={exName} onChange={e => setExName(e.target.value)} className={input} placeholder={t('crm.tasks.extName', 'Name')} />
               <div className="flex gap-1.5">
@@ -203,15 +207,27 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
                 <input value={exPhone} onChange={e => setExPhone(e.target.value)} className={input} placeholder={t('crm.tasks.extPhone', 'Telefon')} />
               </div>
               <div className="flex gap-1.5">
-                <select value={exCh} onChange={e => setExCh(e.target.value as Channel)} className={input + ' bg-white'}>
-                  <option value="both">{t('crm.tasks.chBoth', 'Mail + WhatsApp')}</option>
-                  <option value="mail">{t('crm.tasks.chMail', 'Nur Mail')}</option>
-                  <option value="whatsapp">{t('crm.tasks.chWa', 'Nur WhatsApp')}</option>
-                </select>
-                <select value={exLang} onChange={e => setExLang(e.target.value as 'de' | 'en')} className={input + ' bg-white'} title={t('crm.tasks.extLangHint', 'Sprache der Nachricht an diese Person')}>
-                  <option value="de">🇩🇪 DE</option>
-                  <option value="en">🇬🇧 EN</option>
-                </select>
+                <CustomSelect
+                  value={exCh}
+                  onChange={(v) => setExCh(v as Channel)}
+                  options={[
+                    { value: 'both', label: t('crm.tasks.chBoth', 'Mail + WhatsApp') },
+                    { value: 'mail', label: t('crm.tasks.chMail', 'Nur Mail') },
+                    { value: 'whatsapp', label: t('crm.tasks.chWa', 'Nur WhatsApp') },
+                  ]}
+                  className="w-full"
+                />
+                <div className="w-full" title={t('crm.tasks.extLangHint', 'Sprache der Nachricht an diese Person')}>
+                  <CustomSelect
+                    value={exLang}
+                    onChange={(v) => setExLang(v as 'de' | 'en')}
+                    options={[
+                      { value: 'de', label: '🇩🇪 DE' },
+                      { value: 'en', label: '🇬🇧 EN' },
+                    ]}
+                    className="w-full"
+                  />
+                </div>
                 <button type="button" onClick={addExternal} className="whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium text-white" style={{ backgroundColor: '#0f172a' }}>
                   {t('crm.tasks.addPerson', '+ Person')}
                 </button>
@@ -489,10 +505,13 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
                 )}
                 <div className="space-y-1.5 bg-gray-50 border border-gray-100 rounded-xl p-2.5">
                   {contacts.length > 0 && (
-                    <select onChange={e => { const c = contacts.find(x => x.key === e.target.value); if (c) { setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? '') } e.currentTarget.selectedIndex = 0 }} className={inputCls + ' bg-white'}>
-                      <option value="">{t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}</option>
-                      {contacts.map(c => <option key={c.key} value={c.key}>{c.name}{c.email ? ` · ${c.email}` : ''}</option>)}
-                    </select>
+                    <CustomSelect
+                      value=""
+                      onChange={(v) => { const c = contacts.find(x => x.key === v); if (c) { setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? '') } }}
+                      options={contacts.map(c => ({ value: c.key, label: `${c.name}${c.email ? ` · ${c.email}` : ''}` }))}
+                      placeholder={t('crm.tasks.pickContact', '— aus Kontakten wählen (optional) —')}
+                      className="w-full"
+                    />
                   )}
                   <input value={exName} onChange={e => setExName(e.target.value)} className={inputCls} placeholder={t('crm.tasks.extName', 'Name')} />
                   <div className="flex gap-1.5">
@@ -500,11 +519,16 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
                     <input value={exPhone} onChange={e => setExPhone(e.target.value)} className={inputCls} placeholder={t('crm.tasks.extPhone', 'Telefon')} />
                   </div>
                   <div className="flex gap-1.5">
-                    <select value={exCh} onChange={e => setExCh(e.target.value as Channel)} className={inputCls + ' bg-white'}>
-                      <option value="both">{t('crm.tasks.chBoth', 'Mail + WhatsApp')}</option>
-                      <option value="mail">{t('crm.tasks.chMail', 'Nur Mail')}</option>
-                      <option value="whatsapp">{t('crm.tasks.chWa', 'Nur WhatsApp')}</option>
-                    </select>
+                    <CustomSelect
+                      value={exCh}
+                      onChange={(v) => setExCh(v as Channel)}
+                      options={[
+                        { value: 'both', label: t('crm.tasks.chBoth', 'Mail + WhatsApp') },
+                        { value: 'mail', label: t('crm.tasks.chMail', 'Nur Mail') },
+                        { value: 'whatsapp', label: t('crm.tasks.chWa', 'Nur WhatsApp') },
+                      ]}
+                      className="w-full"
+                    />
                     <button onClick={addExternalEdit} className="whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium text-white" style={{ backgroundColor: '#0f172a' }}>{t('crm.tasks.addPerson', '+ Person')}</button>
                   </div>
                 </div>
@@ -629,13 +653,13 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
                   placeholder={t('crm.tasks.subTitlePh', 'Was soll zugearbeitet werden?')}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 <div className="flex gap-2">
-                  <select value={subWho} onChange={e => setSubWho(e.target.value)}
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
-                    <option value="">{t('crm.tasks.subWho', 'Wer arbeitet zu?')}</option>
-                    {staff.filter(sf => sf.id !== myId).map(sf => (
-                      <option key={sf.id} value={sf.id}>{sf.full_name || sf.email}</option>
-                    ))}
-                  </select>
+                  <CustomSelect
+                    value={subWho}
+                    onChange={(v) => setSubWho(v)}
+                    options={staff.filter(sf => sf.id !== myId).map(sf => ({ value: sf.id, label: sf.full_name || sf.email }))}
+                    placeholder={t('crm.tasks.subWho', 'Wer arbeitet zu?')}
+                    className="flex-1"
+                  />
                   <input type="date" value={subDue} onChange={e => setSubDue(e.target.value)}
                     className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>

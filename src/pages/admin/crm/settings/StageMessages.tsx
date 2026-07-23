@@ -6,6 +6,7 @@ import { DEAL_PHASES, PHASE_ICONS } from '../../../../lib/crmTypes'
 import type { AutomationRule, EmailTemplate, DealPhase } from '../../../../lib/crmTypes'
 import RecipientPicker from '../../../../components/crm/RecipientPicker'
 import WaImageField from '../../../../components/crm/WaImageField'
+import { CustomSelect } from '../../../../components/CustomSelect'
 
 // ── Stages = „Neuer Lead" + alle Pipeline-Phasen ────────────────────────────────
 // Die event_types entsprechen exakt dem, was die schedule-message Engine als
@@ -266,26 +267,41 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>{t('crm.stageEditor.channel', 'Kanal')}</label>
-              <select className={inputCls} value={channel} onChange={e => setChannel(e.target.value as Channel)}>
-                <option value="whatsapp">{t('crm.stageEditor.chWhatsapp', '📱 WhatsApp')}</option>
-                <option value="email">{t('crm.stageEditor.chEmail', '📧 E-Mail')}</option>
-                <option value="both">{t('crm.stageEditor.chBoth', '📧 + 📱 Beides')}</option>
-              </select>
+              <CustomSelect
+                className="w-full"
+                value={channel}
+                onChange={(v) => setChannel(v as Channel)}
+                options={[
+                  { value: 'whatsapp', label: t('crm.stageEditor.chWhatsapp', '📱 WhatsApp') },
+                  { value: 'email', label: t('crm.stageEditor.chEmail', '📧 E-Mail') },
+                  { value: 'both', label: t('crm.stageEditor.chBoth', '📧 + 📱 Beides') },
+                ]}
+              />
             </div>
             <div>
               <label className={labelCls}>{t('crm.stageEditor.timing', 'Timing')}</label>
-              <select className={`${inputCls} mb-2`} value={timingType} onChange={e => setTimingType(e.target.value)}>
-                <option value="after_event">{t('crm.stageEditor.afterEvent', 'Nach Stage-Wechsel')}</option>
-                <option value="before_appointment">{t('crm.stageEditor.beforeAppt', 'Vor dem Termin')}</option>
-              </select>
+              <CustomSelect
+                className="w-full mb-2"
+                value={timingType}
+                onChange={(v) => setTimingType(v)}
+                options={[
+                  { value: 'after_event', label: t('crm.stageEditor.afterEvent', 'Nach Stage-Wechsel') },
+                  { value: 'before_appointment', label: t('crm.stageEditor.beforeAppt', 'Vor dem Termin') },
+                ]}
+              />
               <div className="flex gap-2">
                 <input type="number" min={0} className={`${inputCls} w-24`}
                   value={delayValue} onChange={e => setDelayValue(Number(e.target.value))} />
-                <select className={inputCls} value={delayUnit} onChange={e => setDelayUnit(e.target.value as DelayUnit)}>
-                  <option value="minutes">{t('crm.stageEditor.minutes', 'Minuten')}</option>
-                  <option value="hours">{t('crm.stageEditor.hours', 'Stunden')}</option>
-                  <option value="days">{t('crm.stageEditor.days', 'Tage')}</option>
-                </select>
+                <CustomSelect
+                  className="w-full"
+                  value={delayUnit}
+                  onChange={(v) => setDelayUnit(v as DelayUnit)}
+                  options={[
+                    { value: 'minutes', label: t('crm.stageEditor.minutes', 'Minuten') },
+                    { value: 'hours', label: t('crm.stageEditor.hours', 'Stunden') },
+                    { value: 'days', label: t('crm.stageEditor.days', 'Tage') },
+                  ]}
+                />
               </div>
               <p className="text-xs text-gray-400 mt-1">
                 {timingType === 'before_appointment'
@@ -306,13 +322,18 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
           {/* Bedingung (Calendly-Termin) */}
           <div>
             <label className={labelCls}>{t('crm.stageEditor.condition', 'Bedingung (Calendly-Termin)')}</label>
-            <select className={inputCls} value={apptCond} onChange={e => setApptCond(e.target.value)}>
-              <option value="none">{t('crm.stageEditor.condNone', 'Immer senden')}</option>
-              <option value="no_appointment">{t('crm.stageEditor.condNo', 'Nur wenn KEIN Termin gebucht')}</option>
-              <option value="has_appointment">{t('crm.stageEditor.condHas', 'Nur wenn ein Termin existiert')}</option>
-              <option value="has_zoom">{t('crm.stageEditor.condZoom', 'Nur bei Zoom-Termin (mit Link)')}</option>
-              <option value="no_zoom">{t('crm.stageEditor.condPhone', 'Nur bei Telefon-Termin (ohne Zoom)')}</option>
-            </select>
+            <CustomSelect
+              className="w-full"
+              value={apptCond}
+              onChange={(v) => setApptCond(v)}
+              options={[
+                { value: 'none', label: t('crm.stageEditor.condNone', 'Immer senden') },
+                { value: 'no_appointment', label: t('crm.stageEditor.condNo', 'Nur wenn KEIN Termin gebucht') },
+                { value: 'has_appointment', label: t('crm.stageEditor.condHas', 'Nur wenn ein Termin existiert') },
+                { value: 'has_zoom', label: t('crm.stageEditor.condZoom', 'Nur bei Zoom-Termin (mit Link)') },
+                { value: 'no_zoom', label: t('crm.stageEditor.condPhone', 'Nur bei Telefon-Termin (ohne Zoom)') },
+              ]}
+            />
             <p className="text-xs text-gray-400 mt-1">{t('crm.stageEditor.condHint', 'Wird direkt vor dem Versand geprüft (ersetzt n8n-Logik).')}</p>
           </div>
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
+import { CustomSelect } from '../../components/CustomSelect'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 
@@ -153,15 +154,16 @@ function InvoiceModal({ properties, onClose, onSuccess }: InvoiceModalProps) {
             <label className="block text-xs font-medium text-gray-500 font-body mb-1">
               {t('dashboard.verwalter.invoiceModal.property')} <span className="text-red-400">*</span>
             </label>
-            <select value={form.property_id} onChange={e => set('property_id', e.target.value)}
-                    className={inputCls} required>
-              <option value="">{t('documents.selectProperty')}</option>
-              {properties.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.project_name}{p.unit_number ? ` (${p.unit_number})` : ''}
-                </option>
-              ))}
-            </select>
+            <CustomSelect
+              value={form.property_id}
+              onChange={(v) => set('property_id', v)}
+              options={properties.map(p => ({
+                value: p.id,
+                label: `${p.project_name}${p.unit_number ? ` (${p.unit_number})` : ''}`,
+              }))}
+              placeholder={t('documents.selectProperty')}
+              className="w-full"
+            />
           </div>
 
           {/* Title */}

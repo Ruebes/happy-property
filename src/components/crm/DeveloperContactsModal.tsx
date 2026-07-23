@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { Developer, DeveloperContact } from '../../lib/crmTypes'
+import { CustomSelect } from '../CustomSelect'
 
 // Ansprechpartner-Verwaltung pro Developer: anlegen / bearbeiten / löschen +
 // Direkt-Compose per Mail (mailto) und WhatsApp (wa.me). Es wird NICHTS
@@ -282,12 +283,15 @@ export default function DeveloperContactsModal({
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     {t('crm.devContacts.language', 'Kontaktsprache')}
                   </label>
-                  <select value={form.language}
-                    onChange={e => setForm(f => ({ ...f, language: e.target.value as 'de' | 'en' }))}
-                    className={inputCls}>
-                    <option value="de">{t('crm.devContacts.langDe', 'Deutsch')}</option>
-                    <option value="en">{t('crm.devContacts.langEn', 'Englisch')}</option>
-                  </select>
+                  <CustomSelect
+                    value={form.language}
+                    onChange={(v) => setForm(f => ({ ...f, language: v as 'de' | 'en' }))}
+                    options={[
+                      { value: 'de', label: t('crm.devContacts.langDe', 'Deutsch') },
+                      { value: 'en', label: t('crm.devContacts.langEn', 'Englisch') },
+                    ]}
+                    className="w-full"
+                  />
                   <p className="mt-1 text-[11px] text-gray-400">
                     {t('crm.devContacts.langHint', 'Automatische Mails & WhatsApp an diesen Kontakt in dieser Sprache.')}
                   </p>

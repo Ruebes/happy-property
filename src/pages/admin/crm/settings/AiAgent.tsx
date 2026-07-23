@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
+import { CustomSelect } from '../../../../components/CustomSelect'
 import { supabase } from '../../../../lib/supabase'
 
 // ── KI-Antwort-Agent: Einstellungen ─────────────────────────────────────────────
@@ -399,11 +400,14 @@ export default function AiAgent() {
 
           {/* Manuell hinzufügen */}
           <div className="flex flex-col sm:flex-row gap-2">
-            <select value={newKind} onChange={e => setNewKind(e.target.value as 'deck' | 'mail')}
-              className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white shrink-0">
-              <option value="mail">{t('crm.aiAgent.kindMail', '✉️ Mails')}</option>
-              <option value="deck">{t('crm.aiAgent.kindDeck', '📑 Decks')}</option>
-            </select>
+            <CustomSelect
+              value={newKind}
+              onChange={(v) => setNewKind(v as 'deck' | 'mail')}
+              options={[
+                { value: 'mail', label: t('crm.aiAgent.kindMail', '✉️ Mails') },
+                { value: 'deck', label: t('crm.aiAgent.kindDeck', '📑 Decks') },
+              ]}
+              className="shrink-0" />
             <input value={newRule} onChange={e => setNewRule(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') void addRule() }}
               placeholder={t('crm.aiAgent.rulePlaceholder', 'z.B. Immer mit dem stärksten Argument beginnen, kurze Sätze, keine Floskeln')}

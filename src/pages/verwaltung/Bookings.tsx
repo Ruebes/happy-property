@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
+import { CustomSelect } from '../../components/CustomSelect'
 import { supabase } from '../../lib/supabase'
 
 interface GuestBooking {
@@ -344,11 +345,15 @@ export default function VerwalterBookings() {
                     </div>
                     <div className="mt-3">
                       <Label>{t('users.form.language')}</Label>
-                      <select className={inputCls} value={form.language}
-                              onChange={e => setF('language', e.target.value)}>
-                        <option value="de">🇩🇪 Deutsch</option>
-                        <option value="en">🇬🇧 English</option>
-                      </select>
+                      <CustomSelect
+                        className="w-full"
+                        value={form.language}
+                        onChange={v => setF('language', v)}
+                        options={[
+                          { value: 'de', label: '🇩🇪 Deutsch' },
+                          { value: 'en', label: '🇬🇧 English' },
+                        ]}
+                      />
                     </div>
                   </Section>
 
@@ -365,15 +370,16 @@ export default function VerwalterBookings() {
                 <>
                   <Section title={t('properties.title')}>
                     <Label required>{t('properties.title')}</Label>
-                    <select className={inputCls} value={form.property_id}
-                            onChange={e => setF('property_id', e.target.value)}>
-                      <option value="">{t('documents.selectProperty')}</option>
-                      {properties.map(p => (
-                        <option key={p.id} value={p.id}>
-                          {p.project_name}{p.unit_number ? ` #${p.unit_number}` : ''}
-                        </option>
-                      ))}
-                    </select>
+                    <CustomSelect
+                      className="w-full"
+                      value={form.property_id}
+                      onChange={v => setF('property_id', v)}
+                      placeholder={t('documents.selectProperty')}
+                      options={properties.map(p => ({
+                        value: p.id,
+                        label: `${p.project_name}${p.unit_number ? ` #${p.unit_number}` : ''}`,
+                      }))}
+                    />
                   </Section>
 
                   <Section title={t('guest.booking.period')}>

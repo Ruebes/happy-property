@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
+import { CustomSelect } from '../../../components/CustomSelect'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import type { EmailTemplate } from '../../../lib/crmTypes'
@@ -298,26 +299,24 @@ export default function Templates() {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.category')}</label>
-                    <select
+                    <CustomSelect
                       value={form.category}
-                      onChange={e => setForm(f => ({ ...f, category: e.target.value as Category }))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-                    >
-                      {CATEGORIES.map(c => (
-                        <option key={c} value={c}>{t(`crm.template.categories.${c}`)}</option>
-                      ))}
-                    </select>
+                      onChange={(v) => setForm(f => ({ ...f, category: v as Category }))}
+                      options={CATEGORIES.map(c => ({ value: c, label: t(`crm.template.categories.${c}`) }))}
+                      className="w-full"
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.template.language')}</label>
-                    <select
+                    <CustomSelect
                       value={form.language}
-                      onChange={e => setForm(f => ({ ...f, language: e.target.value as Language }))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-                    >
-                      <option value="de">{t('templates.languageGerman', 'Deutsch')}</option>
-                      <option value="en">{t('templates.languageEnglish', 'English')}</option>
-                    </select>
+                      onChange={(v) => setForm(f => ({ ...f, language: v as Language }))}
+                      options={[
+                        { value: 'de', label: t('templates.languageGerman', 'Deutsch') },
+                        { value: 'en', label: t('templates.languageEnglish', 'English') },
+                      ]}
+                      className="w-full"
+                    />
                   </div>
                 </div>
 

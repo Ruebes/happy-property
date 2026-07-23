@@ -507,10 +507,12 @@ function DealModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => v
         {selected && (
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">{t('crm.deal.startPhase', 'Start-Phase')}</label>
-            <select value={phase} onChange={e => setPhase(e.target.value as DealPhase)}
-              className="w-full border rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300">
-              {DEAL_PHASES.map(p => <option key={p} value={p}>{PHASE_ICONS[p]} {t(`crm.phases.${p}`, p)}</option>)}
-            </select>
+            <CustomSelect
+              value={phase}
+              onChange={(v) => setPhase(v as DealPhase)}
+              className="w-full border rounded-lg text-sm bg-white"
+              options={DEAL_PHASES.map(p => ({ value: p, label: `${PHASE_ICONS[p]} ${t(`crm.phases.${p}`, p)}` }))}
+            />
           </div>
         )}
 

@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import FunnelIcon, { OptionVisual } from '../../../components/FunnelIcon'
+import { CustomSelect } from '../../../components/CustomSelect'
 import {
   loadFunnelConfig, normalizeFunnelConfig, FUNNEL_ICONS, FUNNEL_HERO_DEFAULT,
   buildFunnelLinkUrl, type FunnelConfig, type FunnelOption, type FunnelLink,
@@ -66,21 +67,20 @@ function OptionRow({ opt, showVisual, onChange, onRemove }: OptionRowProps) {
         className="flex-1 min-w-[160px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 bg-white" />
       {showVisual && (
         <>
-          <select
+          <CustomSelect
             value={opt.image_url ? '__image' : opt.icon ? `icon:${opt.icon}` : opt.emoji ? '__emoji' : ''}
-            onChange={e => {
-              const v = e.target.value
+            onChange={(v) => {
               if (v.startsWith('icon:')) onChange({ ...opt, icon: v.slice(5), emoji: undefined, image_url: undefined })
               else if (v === '__emoji') onChange({ ...opt, icon: undefined, image_url: undefined, emoji: opt.emoji || '🏠' })
               else if (v === '__image') fileRef.current?.click()
               else onChange({ ...opt, icon: undefined, emoji: undefined, image_url: undefined })
             }}
-            className="border border-gray-200 rounded-lg px-2 py-2 text-sm bg-white">
-            <option value="">{t('crm.funnelEditor.visualNone', 'Ohne Bild')}</option>
-            {FUNNEL_ICONS.map(i => <option key={i} value={`icon:${i}`}>{t('crm.funnelEditor.icon', 'Piktogramm')}: {i}</option>)}
-            <option value="__emoji">{t('crm.funnelEditor.emoji', 'Emoji')}</option>
-            <option value="__image">{uploading ? t('crm.funnelEditor.uploading', 'Lädt hoch…') : t('crm.funnelEditor.ownImage', 'Eigenes Bild…')}</option>
-          </select>
+            options={[
+              { value: '', label: t('crm.funnelEditor.visualNone', 'Ohne Bild') },
+              ...FUNNEL_ICONS.map(i => ({ value: `icon:${i}`, label: `${t('crm.funnelEditor.icon', 'Piktogramm')}: ${i}` })),
+              { value: '__emoji', label: t('crm.funnelEditor.emoji', 'Emoji') },
+              { value: '__image', label: uploading ? t('crm.funnelEditor.uploading', 'Lädt hoch…') : t('crm.funnelEditor.ownImage', 'Eigenes Bild…') },
+            ]} />
           {opt.emoji !== undefined && !opt.icon && !opt.image_url && (
             <input value={opt.emoji} onChange={e => onChange({ ...opt, emoji: e.target.value.slice(0, 4) })}
               className="w-14 border border-gray-200 rounded-lg px-2 py-2 text-lg text-center bg-white" />
@@ -711,20 +711,15 @@ export default function FunnelEditor() {
                           </div>
                           <div>
                             <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormSource', 'Quelle (Badge in der Kachel)')}</label>
-                            <select value={editForm.source} onChange={e => setEditForm(f => ({ ...f, source: e.target.value }))}
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                              <optgroup label={t('crm.funnelEditor.sourceGroupChannels', 'Kanäle') as string}>
-                                {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
-                                  <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
-                                ))}
-                              </optgroup>
-                              {cfg.sources.length > 0 && (
-                                <optgroup label={t('crm.funnelEditor.sourceGroupMine', 'Meine Quellen') as string}>
-                                  {cfg.sources.map(s => <option key={s.key} value={s.key}>🔗 {s.label}</option>)}
-                                </optgroup>
-                              )}
-                              <option value="custom">{t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …')}</option>
-                            </select>
+                            <CustomSelect value={editForm.source} onChange={(v) => setEditForm(f => ({ ...f, source: v }))}
+                              className="w-full"
+                              options={[
+                                ...Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => ({
+                                  value: k, label: `${CHANNEL_BADGES[k].icon} ${CHANNEL_BADGES[k].label}`,
+                                })),
+                                ...cfg.sources.map(s => ({ value: s.key, label: `🔗 ${s.label}` })),
+                                { value: 'custom', label: t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …') },
+                              ]} />
                             {editForm.source === 'custom' && (
                               <input value={editForm.sourceCustom} onChange={e => setEditForm(f => ({ ...f, sourceCustom: e.target.value }))}
                                 placeholder={t('crm.funnelEditor.linkSourceNewPh', 'Name der neuen Quelle, z. B. Steuerberater') as string}
@@ -733,31 +728,34 @@ export default function FunnelEditor() {
                           </div>
                           <div>
                             <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkDest', 'Wohin führt der Link?')}</label>
-                            <select value={editForm.dest} onChange={e => setEditForm(f => ({ ...f, dest: e.target.value }))}
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                              <option value="fragebogen">{t('crm.funnelEditor.destFragebogen', '📋 Zum Fragebogen')}</option>
-                              <option value="kalender">{t('crm.funnelEditor.destKalender', '📅 Direkt zum Kalender')}</option>
-                            </select>
+                            <CustomSelect value={editForm.dest} onChange={(v) => setEditForm(f => ({ ...f, dest: v }))}
+                              className="w-full"
+                              options={[
+                                { value: 'fragebogen', label: t('crm.funnelEditor.destFragebogen', '📋 Zum Fragebogen') },
+                                { value: 'kalender', label: t('crm.funnelEditor.destKalender', '📅 Direkt zum Kalender') },
+                              ]} />
                           </div>
                           <div>
                             {editForm.dest === 'fragebogen' ? (
                               <>
                                 <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkWhichForm', 'Welcher Fragebogen?')}</label>
-                                <select value={editForm.questionnaire} onChange={e => setEditForm(f => ({ ...f, questionnaire: e.target.value }))}
-                                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                                  <option value="standard">{t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen')}</option>
-                                  {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
-                                  <option value="none">{t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)')}</option>
-                                </select>
+                                <CustomSelect value={editForm.questionnaire} onChange={(v) => setEditForm(f => ({ ...f, questionnaire: v }))}
+                                  className="w-full"
+                                  options={[
+                                    { value: 'standard', label: t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen') },
+                                    ...cfg.questionnaires.map(x => ({ value: x.slug, label: x.name })),
+                                    { value: 'none', label: t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)') },
+                                  ]} />
                               </>
                             ) : (
                               <>
                                 <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkContactMode', 'Kontaktdaten')}</label>
-                                <select value={editForm.calMode} onChange={e => setEditForm(f => ({ ...f, calMode: e.target.value }))}
-                                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                                  <option value="buchen">{t('crm.funnelEditor.calWithContact', 'Mit Kontaktabfrage (öffentlicher Link)')}</option>
-                                  <option value="direkt">{t('crm.funnelEditor.calNoContact', 'Ohne Kontaktabfrage (nur bekannte Empfänger)')}</option>
-                                </select>
+                                <CustomSelect value={editForm.calMode} onChange={(v) => setEditForm(f => ({ ...f, calMode: v }))}
+                                  className="w-full"
+                                  options={[
+                                    { value: 'buchen', label: t('crm.funnelEditor.calWithContact', 'Mit Kontaktabfrage (öffentlicher Link)') },
+                                    { value: 'direkt', label: t('crm.funnelEditor.calNoContact', 'Ohne Kontaktabfrage (nur bekannte Empfänger)') },
+                                  ]} />
                               </>
                             )}
                           </div>
@@ -795,20 +793,15 @@ export default function FunnelEditor() {
               {/* Quelle */}
               <div>
                 <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkFormSource', 'Quelle (Badge in der Kachel)')}</label>
-                <select value={linkForm.source} onChange={e => setLinkForm(f => ({ ...f, source: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                  <optgroup label={t('crm.funnelEditor.sourceGroupChannels', 'Kanäle') as string}>
-                    {Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => (
-                      <option key={k} value={k}>{CHANNEL_BADGES[k].icon} {CHANNEL_BADGES[k].label}</option>
-                    ))}
-                  </optgroup>
-                  {cfg.sources.length > 0 && (
-                    <optgroup label={t('crm.funnelEditor.sourceGroupMine', 'Meine Quellen') as string}>
-                      {cfg.sources.map(s => <option key={s.key} value={s.key}>🔗 {s.label}</option>)}
-                    </optgroup>
-                  )}
-                  <option value="custom">{t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …')}</option>
-                </select>
+                <CustomSelect value={linkForm.source} onChange={(v) => setLinkForm(f => ({ ...f, source: v }))}
+                  className="w-full"
+                  options={[
+                    ...Object.keys(CHANNEL_BADGES).filter(k => k !== 'newsletter').map(k => ({
+                      value: k, label: `${CHANNEL_BADGES[k].icon} ${CHANNEL_BADGES[k].label}`,
+                    })),
+                    ...cfg.sources.map(s => ({ value: s.key, label: `🔗 ${s.label}` })),
+                    { value: 'custom', label: t('crm.funnelEditor.linkSourceNew', '➕ Neue Quelle …') },
+                  ]} />
                 {linkForm.source === 'custom' && (
                   <input value={linkForm.sourceCustom} onChange={e => setLinkForm(f => ({ ...f, sourceCustom: e.target.value }))}
                     placeholder={t('crm.funnelEditor.linkSourceNewPh', 'Name der neuen Quelle, z. B. Steuerberater') as string}
@@ -818,32 +811,35 @@ export default function FunnelEditor() {
               {/* Ziel: Fragebogen vs. Kalender */}
               <div>
                 <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkDest', 'Wohin führt der Link?')}</label>
-                <select value={linkForm.dest} onChange={e => setLinkForm(f => ({ ...f, dest: e.target.value }))}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                  <option value="fragebogen">{t('crm.funnelEditor.destFragebogen', '📋 Zum Fragebogen')}</option>
-                  <option value="kalender">{t('crm.funnelEditor.destKalender', '📅 Direkt zum Kalender')}</option>
-                </select>
+                <CustomSelect value={linkForm.dest} onChange={(v) => setLinkForm(f => ({ ...f, dest: v }))}
+                  className="w-full"
+                  options={[
+                    { value: 'fragebogen', label: t('crm.funnelEditor.destFragebogen', '📋 Zum Fragebogen') },
+                    { value: 'kalender', label: t('crm.funnelEditor.destKalender', '📅 Direkt zum Kalender') },
+                  ]} />
               </div>
               {/* Zweite Ebene */}
               <div>
                 {linkForm.dest === 'fragebogen' ? (
                   <>
                     <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkWhichForm', 'Welcher Fragebogen?')}</label>
-                    <select value={linkForm.questionnaire} onChange={e => setLinkForm(f => ({ ...f, questionnaire: e.target.value }))}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                      <option value="standard">{t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen')}</option>
-                      {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
-                      <option value="none">{t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)')}</option>
-                    </select>
+                    <CustomSelect value={linkForm.questionnaire} onChange={(v) => setLinkForm(f => ({ ...f, questionnaire: v }))}
+                      className="w-full"
+                      options={[
+                        { value: 'standard', label: t('crm.funnelEditor.qnStandard', 'Standard-Fragebogen') },
+                        ...cfg.questionnaires.map(x => ({ value: x.slug, label: x.name })),
+                        { value: 'none', label: t('crm.funnelEditor.linkNone', 'Nur Termin (ohne Fragebogen)') },
+                      ]} />
                   </>
                 ) : (
                   <>
                     <label className="block text-[11px] font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.linkContactMode', 'Kontaktdaten')}</label>
-                    <select value={linkForm.calMode} onChange={e => setLinkForm(f => ({ ...f, calMode: e.target.value }))}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                      <option value="buchen">{t('crm.funnelEditor.calWithContact', 'Mit Kontaktabfrage (öffentlicher Link)')}</option>
-                      <option value="direkt">{t('crm.funnelEditor.calNoContact', 'Ohne Kontaktabfrage (nur bekannte Empfänger)')}</option>
-                    </select>
+                    <CustomSelect value={linkForm.calMode} onChange={(v) => setLinkForm(f => ({ ...f, calMode: v }))}
+                      className="w-full"
+                      options={[
+                        { value: 'buchen', label: t('crm.funnelEditor.calWithContact', 'Mit Kontaktabfrage (öffentlicher Link)') },
+                        { value: 'direkt', label: t('crm.funnelEditor.calNoContact', 'Ohne Kontaktabfrage (nur bekannte Empfänger)') },
+                      ]} />
                   </>
                 )}
               </div>
@@ -902,11 +898,12 @@ export default function FunnelEditor() {
 
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.funnelEditor.qnCopyFrom', 'Fragen übernehmen aus')}</label>
-                  <select value={qnDraft.from} onChange={e => setQnDraft({ ...qnDraft, from: e.target.value, picked: [] })}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-                    <option value="">{t('crm.funnelEditor.qnDefault', 'Standard')}</option>
-                    {cfg.questionnaires.map(x => <option key={x.slug} value={x.slug}>{x.name}</option>)}
-                  </select>
+                  <CustomSelect value={qnDraft.from} onChange={(v) => setQnDraft({ ...qnDraft, from: v, picked: [] })}
+                    className="w-full"
+                    options={[
+                      { value: '', label: t('crm.funnelEditor.qnDefault', 'Standard') },
+                      ...cfg.questionnaires.map(x => ({ value: x.slug, label: x.name })),
+                    ]} />
                 </div>
 
                 <div>

@@ -1202,12 +1202,15 @@ export default function Objekte() {
 
               <div>
                 <Label>{t('profile.language')}</Label>
-                <select className={inputCls} style={focusRing()}
+                <CustomSelect
+                  className={inputCls} style={focusRing()}
                   value={ownerModal.language}
-                  onChange={e => setOwnerModal(m => ({ ...m, language: e.target.value as 'de' | 'en' }))}>
-                  <option value="de">{t('objekte.languageGerman', 'Deutsch')}</option>
-                  <option value="en">English</option>
-                </select>
+                  onChange={v => setOwnerModal(m => ({ ...m, language: v as 'de' | 'en' }))}
+                  options={[
+                    { value: 'de', label: t('objekte.languageGerman', 'Deutsch') },
+                    { value: 'en', label: 'English' },
+                  ]}
+                />
               </div>
 
               <div>

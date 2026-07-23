@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
+import { CustomSelect } from '../../../components/CustomSelect'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
@@ -453,15 +454,16 @@ export default function Newsletter() {
               {t('crm.newsletter.manageLists', 'Listen verwalten')}
             </a>
           </div>
-          <select
+          <CustomSelect
             value={listMode}
-            onChange={e => { const v = e.target.value as 'all' | 'include' | 'exclude'; setListMode(v); if (v === 'all') setListIds([]) }}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:border-orange-400"
-          >
-            <option value="all">{t('crm.newsletter.modeAll', 'Alle — Kunden und alle Listen (Standard)')}</option>
-            <option value="include">{t('crm.newsletter.modeInclude', 'Nur bestimmte Listen (plus Kunden)')}</option>
-            <option value="exclude">{t('crm.newsletter.modeExclude', 'Alle außer bestimmten Listen')}</option>
-          </select>
+            onChange={(v) => { const mode = v as 'all' | 'include' | 'exclude'; setListMode(mode); if (mode === 'all') setListIds([]) }}
+            options={[
+              { value: 'all', label: t('crm.newsletter.modeAll', 'Alle — Kunden und alle Listen (Standard)') },
+              { value: 'include', label: t('crm.newsletter.modeInclude', 'Nur bestimmte Listen (plus Kunden)') },
+              { value: 'exclude', label: t('crm.newsletter.modeExclude', 'Alle außer bestimmten Listen') },
+            ]}
+            className="w-full"
+          />
 
           {listMode !== 'all' && (
             <div className="mt-3 space-y-1.5">

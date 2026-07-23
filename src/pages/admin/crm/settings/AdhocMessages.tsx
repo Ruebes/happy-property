@@ -4,6 +4,7 @@ import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import type { CrmAdhocMessage, AdhocChannel, AdhocStatus } from '../../../../lib/crmTypes'
 import RecipientPicker from '../../../../components/crm/RecipientPicker'
+import { CustomSelect } from '../../../../components/CustomSelect'
 
 // ── Sonstige / Ad-hoc Nachrichten ──────────────────────────────────────────────
 // Einmalige WhatsApp/E-Mail-Nachrichten, NICHT an eine Pipeline-Phase gebunden.
@@ -129,10 +130,15 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>{t('crm.adhoc.channel', 'Kanal')}</label>
-              <select className={inputCls} value={channel} onChange={e => setChannel(e.target.value as AdhocChannel)}>
-                <option value="whatsapp">{t('crm.adhoc.chWhatsapp', '📱 WhatsApp')}</option>
-                <option value="email">{t('crm.adhoc.chEmail', '📧 E-Mail')}</option>
-              </select>
+              <CustomSelect
+                className="w-full"
+                value={channel}
+                onChange={(v) => setChannel(v as AdhocChannel)}
+                options={[
+                  { value: 'whatsapp', label: t('crm.adhoc.chWhatsapp', '📱 WhatsApp') },
+                  { value: 'email', label: t('crm.adhoc.chEmail', '📧 E-Mail') },
+                ]}
+              />
             </div>
             <div>
               <label className={labelCls}>{t('crm.adhoc.scheduledAt', 'Sendezeitpunkt')}</label>
@@ -214,11 +220,16 @@ function AdhocModal({ msg, onClose, onSaved }: AdhocModalProps) {
           {/* Status */}
           <div className="border-t border-gray-100 pt-4">
             <label className={labelCls}>{t('crm.adhoc.status', 'Status')}</label>
-            <select className={inputCls} value={status} onChange={e => setStatus(e.target.value as AdhocStatus)}>
-              <option value="draft">{t('crm.adhoc.stDraft', '📝 Entwurf')}</option>
-              <option value="scheduled">{t('crm.adhoc.stScheduled', '⏳ Geplant (geht raus, sobald Versand live ist)')}</option>
-              <option value="cancelled">{t('crm.adhoc.stCancelled', '🚫 Abgebrochen')}</option>
-            </select>
+            <CustomSelect
+              className="w-full"
+              value={status}
+              onChange={(v) => setStatus(v as AdhocStatus)}
+              options={[
+                { value: 'draft', label: t('crm.adhoc.stDraft', '📝 Entwurf') },
+                { value: 'scheduled', label: t('crm.adhoc.stScheduled', '⏳ Geplant (geht raus, sobald Versand live ist)') },
+                { value: 'cancelled', label: t('crm.adhoc.stCancelled', '🚫 Abgebrochen') },
+              ]}
+            />
           </div>
 
           {error && <p className="text-sm text-red-600">{error}</p>}

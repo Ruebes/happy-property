@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CustomSelect } from '../CustomSelect'
 import { supabase } from '../../lib/supabase'
 import type { BusinessContact, DeveloperContact } from '../../lib/crmTypes'
 
@@ -76,20 +77,19 @@ export default function RecipientPicker({ value, onChange, channel = 'both' }: P
       </label>
 
       {!isClient && (
-        <select
+        <CustomSelect
           value={value}
-          onChange={e => onChange(e.target.value)}
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 bg-white"
-        >
-          {options.length === 0 && (
-            <option value="">{t('crm.recipient.noContacts', '– keine Kontakte angelegt –')}</option>
-          )}
-          {/* aktuell gewählter Kontakt, falls durch Kanalfilter nicht in der Liste */}
-          {value && !options.some(o => o.value === value) && (
-            <option value={value}>{t('crm.recipient.selected', 'Gewählter Kontakt')}</option>
-          )}
-          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+          onChange={(v) => onChange(v)}
+          options={[
+            // aktuell gewählter Kontakt, falls durch Kanalfilter nicht in der Liste
+            ...(value && !options.some(o => o.value === value)
+              ? [{ value, label: t('crm.recipient.selected', 'Gewählter Kontakt') }]
+              : []),
+            ...options,
+          ]}
+          placeholder={t('crm.recipient.noContacts', '– keine Kontakte angelegt –')}
+          className="w-full"
+        />
       )}
     </div>
   )

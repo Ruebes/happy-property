@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
+import { CustomSelect } from '../../../../components/CustomSelect'
 import { supabase } from '../../../../lib/supabase'
 import type { AutomationRule, ScheduledMessage } from '../../../../lib/crmTypes'
 
@@ -190,13 +191,15 @@ function RuleModal({ rule, onClose, onSaved }: RuleModalProps) {
           {/* Auslöser */}
           <div>
             <label className={labelCls}>{t('automationRules.triggerLabel', 'Auslöser *')}</label>
-            <select className={inputCls} value={eventType} onChange={e => setEventType(e.target.value)}>
-              {EVENT_TYPES.map(et => (
-                <option key={et.value} value={et.value}>
-                  {et.icon} {t(`automationRules.${et.labelKey}`, et.labelDefault)}
-                </option>
-              ))}
-            </select>
+            <CustomSelect
+              className="w-full"
+              value={eventType}
+              onChange={(v) => setEventType(v)}
+              options={EVENT_TYPES.map(et => ({
+                value: et.value,
+                label: `${et.icon} ${t(`automationRules.${et.labelKey}`, et.labelDefault)}`,
+              }))}
+            />
           </div>
 
           {/* Verzögerung */}
@@ -210,11 +213,16 @@ function RuleModal({ rule, onClose, onSaved }: RuleModalProps) {
                 value={delayValue}
                 onChange={e => setDelayValue(Number(e.target.value))}
               />
-              <select className={inputCls} value={delayUnit} onChange={e => setDelayUnit(e.target.value as 'minutes'|'hours'|'days')}>
-                <option value="minutes">{t('automationRules.unitMinutes', 'Minuten')}</option>
-                <option value="hours">{t('automationRules.unitHours', 'Stunden')}</option>
-                <option value="days">{t('automationRules.unitDays', 'Tage')}</option>
-              </select>
+              <CustomSelect
+                className="w-full"
+                value={delayUnit}
+                onChange={(v) => setDelayUnit(v as 'minutes'|'hours'|'days')}
+                options={[
+                  { value: 'minutes', label: t('automationRules.unitMinutes', 'Minuten') },
+                  { value: 'hours',   label: t('automationRules.unitHours', 'Stunden') },
+                  { value: 'days',    label: t('automationRules.unitDays', 'Tage') },
+                ]}
+              />
             </div>
             <p className="text-xs text-gray-400 mt-1">
               {t('automationRules.delaySummary', '= {{delay}} nach dem Ereignis', { delay: delayLabel(resolvedDelay(), t) })}
@@ -245,12 +253,16 @@ function RuleModal({ rule, onClose, onSaved }: RuleModalProps) {
           {(messageType === 'email' || messageType === 'both') && (
             <div>
               <label className={labelCls}>{t('automationRules.emailTemplateLabel', 'E-Mail-Template *')}</label>
-              <select className={inputCls} value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
-                <option value="">{t('automationRules.selectTemplatePlaceholder', '– Template wählen –')}</option>
-                {emailTpls.map(tpl => (
-                  <option key={tpl.id} value={tpl.id}>{tpl.name} ({tpl.category})</option>
-                ))}
-              </select>
+              <CustomSelect
+                className="w-full"
+                value={emailTemplateId}
+                onChange={(v) => setEmailTemplateId(v)}
+                placeholder={t('automationRules.selectTemplatePlaceholder', '– Template wählen –')}
+                options={emailTpls.map(tpl => ({
+                  value: tpl.id,
+                  label: `${tpl.name} (${tpl.category})`,
+                }))}
+              />
             </div>
           )}
 
@@ -258,12 +270,16 @@ function RuleModal({ rule, onClose, onSaved }: RuleModalProps) {
           {(messageType === 'whatsapp' || messageType === 'both') && (
             <div>
               <label className={labelCls}>{t('automationRules.whatsappTemplateLabel', 'WhatsApp-Template *')}</label>
-              <select className={inputCls} value={waEventType} onChange={e => setWaEventType(e.target.value)}>
-                <option value="">{t('automationRules.selectTemplatePlaceholder', '– Template wählen –')}</option>
-                {waTpls.map(tpl => (
-                  <option key={tpl.event_type} value={tpl.event_type}>{tpl.name} ({tpl.event_type})</option>
-                ))}
-              </select>
+              <CustomSelect
+                className="w-full"
+                value={waEventType}
+                onChange={(v) => setWaEventType(v)}
+                placeholder={t('automationRules.selectTemplatePlaceholder', '– Template wählen –')}
+                options={waTpls.map(tpl => ({
+                  value: tpl.event_type,
+                  label: `${tpl.name} (${tpl.event_type})`,
+                }))}
+              />
             </div>
           )}
 

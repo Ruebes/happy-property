@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
+import { CustomSelect } from '../../../../components/CustomSelect'
 import { supabase } from '../../../../lib/supabase'
 import { useAuth, PERMISSION_AREAS, type PermissionArea } from '../../../../lib/auth'
 import type { BusinessContact, DeveloperContact } from '../../../../lib/crmTypes'
@@ -241,10 +242,15 @@ function ContactModal({ contact, onClose, onSaved }: ContactModalProps) {
 
           <div>
             <label className={labelCls}>{t('crm.contacts.language', 'Kontaktsprache')}</label>
-            <select className={inputCls} value={language} onChange={e => setLanguage(e.target.value as 'de' | 'en')}>
-              <option value="de">{t('crm.contacts.langDe', 'Deutsch')}</option>
-              <option value="en">{t('crm.contacts.langEn', 'Englisch')}</option>
-            </select>
+            <CustomSelect
+              className="w-full"
+              value={language}
+              onChange={(v) => setLanguage(v as 'de' | 'en')}
+              options={[
+                { value: 'de', label: t('crm.contacts.langDe', 'Deutsch') },
+                { value: 'en', label: t('crm.contacts.langEn', 'Englisch') },
+              ]}
+            />
             <p className="mt-1 text-xs text-gray-500">
               {t('crm.contacts.langHint', 'Automatische Mails & WhatsApp an diesen Kontakt kommen in dieser Sprache an.')}
             </p>

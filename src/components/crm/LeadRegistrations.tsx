@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { CustomSelect } from '../CustomSelect'
 
 // ── Registrierungen ──────────────────────────────────────────────────────────
 // Bei welchen Developern ist der Kunde registriert (Provisionsschutz). Wird
@@ -103,14 +104,13 @@ export default function LeadRegistrations({ leadId }: { leadId: string }) {
           )}
 
           <div className="flex items-center gap-2">
-            <select
+            <CustomSelect
               value={selected}
-              onChange={e => setSelected(e.target.value)}
-              className="border rounded-lg px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-300"
-            >
-              <option value="">{t('crm.registrations.pick', 'Developer wählen…')}</option>
-              {available.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
+              onChange={(v) => setSelected(v)}
+              options={available.map(d => ({ value: d, label: d }))}
+              placeholder={t('crm.registrations.pick', 'Developer wählen…')}
+              className="min-w-[12rem]"
+            />
             <button
               onClick={() => void add()}
               disabled={!selected || busy}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import GuestLayout from '../../components/GuestLayout'
+import { CustomSelect } from '../../components/CustomSelect'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
 
@@ -114,10 +115,15 @@ export default function FeriengastProfil() {
                 <label className="block text-xs font-medium text-gray-500 font-body mb-1">
                   {t('users.form.language')}
                 </label>
-                <select className={inputCls} value={language} onChange={e => setLanguage(e.target.value)}>
-                  <option value="de">🇩🇪 Deutsch</option>
-                  <option value="en">🇬🇧 English</option>
-                </select>
+                <CustomSelect
+                  className="w-full"
+                  value={language}
+                  onChange={(v) => setLanguage(v)}
+                  options={[
+                    { value: 'de', label: '🇩🇪 Deutsch' },
+                    { value: 'en', label: '🇬🇧 English' },
+                  ]}
+                />
               </div>
             </div>
             <div>
