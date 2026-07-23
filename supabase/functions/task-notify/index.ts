@@ -12,6 +12,7 @@
 // Deploy: supabase functions deploy task-notify --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { lotteBossBild } from '../_shared/lotte.ts'
+import { translateOutbound } from '../_shared/translate.ts'
 
 // Lotte tritt gegenüber dem Team als Chefin auf, die Aufgaben verteilt.
 const LOTTE_FROM = 'Lotte · Happy Property'
@@ -28,11 +29,78 @@ const esc = (s: string) => s.replace(/</g, '&lt;')
 interface Assignee {
   id: string; task_id: string; profile_id: string | null
   ext_name: string | null; ext_email: string | null; ext_phone: string | null
+  ext_lang: string | null
   channel: string; token: string; last_reminded_at: string | null
 }
 interface Task { id: string; title: string; description: string | null; due_date: string | null; status: string; archived: boolean }
+interface LinkedContact { name: string; role: string | null; phone: string | null; email: string | null }
 
-function mailHtml(first: string, intro: string, task: Task, link: string, bossImg: string) {
+// Telefonnummer aus dem Feld auf internationale Ziffern bringen (für wa.me/tel).
+// Achtung: Nummern im CRM tragen teils unsichtbare Unicode-Richtungszeichen
+// (U+202A/202C, geschützte Leerzeichen) — die müssen zuerst raus.
+const BIDI = /[\u202a-\u202e\u2066-\u2069\u200e\u200f\u00a0]/g   // unsichtbare Richtungs-/Sonderzeichen
+function waDigits(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  let d = raw.replace(BIDI, '').replace(/[^\d+]/g, '')
+  if (d.startsWith('+'))       d = d.slice(1)
+  else if (d.startsWith('00')) d = d.slice(2)
+  else if (d.startsWith('0'))  d = '49' + d.slice(1)
+  d = d.replace(/\D/g, '')
+  return d.length >= 8 ? d : null
+}
+// Nummer nur säubern (sichtbar bleiben lassen), ohne Formatumbau.
+function cleanPhone(raw: string | null | undefined): string {
+  return (raw ?? '').replace(BIDI, ' ').replace(/\s+/g, ' ').trim()
+}
+
+// Verknüpfte Kontakte (crm_task_leads → leads) laden. Sie werden dem Zuständigen
+// mitgeschickt, damit ein Geschäftspartner ohne System-Zugang direkt weiß, an wen
+// er sich wenden muss (z.B. „Unterlagen besorgen bei …").
+async function loadLinkedContacts(supabase: SupabaseClient, taskId: string): Promise<LinkedContact[]> {
+  const { data } = await supabase.from('crm_task_leads')
+    .select('lead:leads(first_name, last_name, email, phone, whatsapp)')
+    .eq('task_id', taskId)
+  const out: LinkedContact[] = []
+  // deno-lint-ignore no-explicit-any
+  for (const r of (data ?? []) as any[]) {
+    const l = r.lead
+    if (!l) continue
+    const name = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim()
+    out.push({ name: name || l.email || 'Kontakt', role: null, phone: l.whatsapp || l.phone || null, email: l.email ?? null })
+  }
+  return out
+}
+
+function contactBlockWa(contacts: LinkedContact[]): string {
+  if (!contacts.length) return ''
+  const blocks = contacts.map(c => {
+    const parts = [`👤 ${c.name}${c.role ? ` (${c.role})` : ''}`]
+    const disp = cleanPhone(c.phone)
+    const d = waDigits(c.phone)
+    if (disp) parts.push(`📞 ${disp}`)
+    if (d)    parts.push(`💬 https://wa.me/${d}`)
+    if (c.email) parts.push(`✉️ ${c.email}`)
+    return parts.join('\n')
+  })
+  return `\n\n📇 Kontakt:\n${blocks.join('\n\n')}`
+}
+
+function contactBlockHtml(contacts: LinkedContact[]): string {
+  if (!contacts.length) return ''
+  const items = contacts.map(c => {
+    const disp = cleanPhone(c.phone)
+    const d = waDigits(c.phone)
+    return `<div style="margin:8px 0;">
+      <strong style="color:#111827;">${esc(c.name)}</strong>${c.role ? ` <span style="color:#6b7280;">(${esc(c.role)})</span>` : ''}<br>
+      ${disp ? `<span style="color:#374151;">📞 ${esc(disp)}</span>${d ? ` · <a href="https://wa.me/${d}" style="color:#ff795d;">WhatsApp</a>` : ''}<br>` : ''}
+      ${c.email ? `<span style="color:#374151;">✉️ <a href="mailto:${esc(c.email)}" style="color:#ff795d;">${esc(c.email)}</a></span>` : ''}
+    </div>`
+  }).join('')
+  return `<div style="background:#f8fafc;border-radius:14px;padding:12px 16px;margin:12px 0;">
+    <p style="font-size:13px;color:#6b7280;margin:0 0 4px;">📇 Kontakt</p>${items}</div>`
+}
+
+function mailHtml(first: string, intro: string, task: Task, link: string, bossImg: string, contacts: LinkedContact[]) {
   const due = task.due_date ? new Date(task.due_date).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
   return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
     <div style="text-align:center;margin-bottom:6px;">
@@ -54,8 +122,8 @@ function mailHtml(first: string, intro: string, task: Task, link: string, bossIm
   </div>`
 }
 
-function waText(intro: string, task: Task, link: string) {
-  return `${intro}\n\n*${task.title}*${task.description ? `\n${task.description}` : ''}\n\nÖffnen & erledigen:\n${link}\n\nLiebe Grüße\nLotte 🐾\n(Du kannst auch einfach hier antworten.)`
+function waText(intro: string, task: Task, link: string, contacts: LinkedContact[]) {
+  return `${intro}\n\n*${task.title}*${task.description ? `\n${task.description}` : ''}${contactBlockWa(contacts)}\n\nÖffnen & erledigen:\n${link}\n\nLiebe Grüße\nLotte 🐾\n(Du kannst auch einfach hier antworten.)`
 }
 
 // Eine Aufgabe an einen Zuständigen zustellen. Lotte vergibt sie als Chefin —
@@ -67,38 +135,55 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   const link = `${PUBLIC_BASE}/t/${a.token}`
   const introMail = kind === 'dispatch' ? 'ich bin Lotte und verteile die Aufgaben im Team. Hier ist eine für dich:' : 'kurze Erinnerung von mir — ist diese Aufgabe schon erledigt?'
   const introWa   = kind === 'dispatch' ? '🐾 Hallo, hier ist Lotte. Ich hab eine Aufgabe für dich:' : '🐾 Lotte hier — kurze Erinnerung: ist diese Aufgabe schon erledigt?'
-  const subject   = `${kind === 'dispatch' ? 'Neue Aufgabe' : 'Erinnerung'}: ${task.title} [#${a.token}]`
+  const subjectDe = `${kind === 'dispatch' ? 'Neue Aufgabe' : 'Erinnerung'}: ${task.title}`
 
-  // Empfänger + Kanäle bestimmen
-  let email: string | null = null, phone: string | null = null, name = ''
+  // Empfänger + Kanäle + Sprache bestimmen. Interne: profiles.language.
+  // Externe (Geschäftspartner ohne System-Zugang): assignee.ext_lang.
+  let email: string | null = null, phone: string | null = null, name = '', lang = 'de'
   let wantMail = false, wantWa = false
   if (a.profile_id) {
-    const { data: p } = await supabase.from('profiles').select('full_name, email, phone').eq('id', a.profile_id).single()
+    const { data: p } = await supabase.from('profiles').select('full_name, email, phone, language').eq('id', a.profile_id).single()
     name = p?.full_name ?? ''; email = p?.email ?? null; phone = (p?.phone ?? '').trim() || null
+    lang = p?.language === 'en' ? 'en' : 'de'
     // Interne Zuständige: Mail IMMER, WhatsApp ZUSÄTZLICH wenn eine Nummer da ist.
     wantMail = !!email
     wantWa   = !!phone
   } else {
     name = a.ext_name ?? ''; email = a.ext_email; phone = a.ext_phone
+    lang = a.ext_lang === 'en' ? 'en' : 'de'
     wantMail = (a.channel === 'mail' || a.channel === 'both') && !!email
     wantWa   = (a.channel === 'whatsapp' || a.channel === 'both') && !!phone
   }
   const first = (name || '').split(' ')[0] || name
   const bossImg = await lotteBossBild(supabase)
+  // Verknüpfte Kontakte (z.B. „Unterlagen besorgen bei …") mitschicken.
+  const contacts = await loadLinkedContacts(supabase, task.id)
+
+  // Texte auf Deutsch bauen, dann in die Empfängersprache übersetzen. translateOutbound
+  // bewahrt HTML/URLs/Telefonnummern/E-Mails/Eigennamen (Lotte, Happy Property) und gibt
+  // bei lang==='de' unverändert zurück — deutsche Empfänger kosten keinen KI-Aufruf.
+  const tr = await translateOutbound({
+    subject:  subjectDe,
+    body:     wantMail ? mailHtml(first, introMail, task, link, bossImg, contacts) : null,
+    whatsapp: wantWa   ? waText(introWa, task, link, contacts) : null,
+  }, lang)
+  // Token bleibt IMMER unübersetzt und geht erst nach der Übersetzung in den Betreff
+  // (send-email/imap nutzen [#token] zum Zuordnen von Antworten).
+  const subject = `${tr.subject ?? subjectDe} [#${a.token}]`
 
   if (wantMail && email) {
-    await supabase.functions.invoke('send-email', { body: { to: email, subject, from_name: LOTTE_FROM, html: mailHtml(first, introMail, task, link, bossImg) } })
+    await supabase.functions.invoke('send-email', { body: { to: email, subject, from_name: LOTTE_FROM, html: tr.body ?? mailHtml(first, introMail, task, link, bossImg, contacts), lang } })
       .catch((e: unknown) => console.warn('[task-notify] mail:', e))
   }
   if (wantWa && phone) {
     await supabase.functions.invoke('send-whatsapp', { body: {
-      event_type: `task_${kind}`, override_text: waText(introWa, task, link),
+      event_type: `task_${kind}`, override_text: tr.whatsapp ?? waText(introWa, task, link, contacts),
       lead_data: { lead_name: name || 'Empfänger', lead_phone: phone },
       persona_image: bossImg,   // Lotte als Chefin
     } }).catch((e: unknown) => console.warn('[task-notify] whatsapp:', e))
   }
   await supabase.from('crm_task_assignees').update({ last_reminded_at: new Date().toISOString() }).eq('id', a.id)
-  return { assignee: a.id, mail: wantMail, whatsapp: wantWa }
+  return { assignee: a.id, mail: wantMail, whatsapp: wantWa, lang, contacts: contacts.length }
 }
 
 // ── Fertigmeldung einer Teilaufgabe an den Aufgabengeber ────────────────────

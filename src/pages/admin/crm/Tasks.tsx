@@ -23,8 +23,8 @@ interface Task {
 interface TaskMessage { id: string; task_id: string; sender_id: string | null; sender_label: string | null; recipient_id: string; body: string; read_at: string | null; created_at: string }
 interface Staff { id: string; full_name: string; email: string; role: string }
 // Kontaktvorschlag (Lead oder Geschäftskontakt) für externe Zuständige / Kundenlink
-interface Contact { key: string; id: string; kind: 'lead' | 'biz'; name: string; email: string | null; phone: string | null }
-interface ExtAssignee { name: string; email: string; phone: string; channel: Channel }
+interface Contact { key: string; id: string; kind: 'lead' | 'biz'; name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
+interface ExtAssignee { name: string; email: string; phone: string; channel: Channel; lang: 'de' | 'en' }
 interface Assignee { id: string; profile_id: string | null; ext_name: string | null; ext_email: string | null; ext_phone: string | null; channel: string; accepted_at: string | null }
 interface LinkedLead { lead_id: string; name: string; email: string | null; phone: string | null }
 
@@ -75,32 +75,32 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
   useEffect(() => {
     (async () => {
       const [le, bz] = await Promise.all([
-        supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp').limit(1000),
-        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp').limit(1000),
+        supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language').limit(1000),
+        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp, language').limit(1000),
       ])
       const list: Contact[] = []
       for (const l of (le.data ?? []) as Record<string, string | null>[])
-        list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone })
+        list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone, lang: l.language === 'en' ? 'en' : 'de' })
       for (const b of (bz.data ?? []) as Record<string, string | null>[])
-        list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone })
+        list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de' })
       setContacts(list.filter(c => c.name))
     })()
   }, [])
 
   // Externe-Add-Formular
-  const [exName, setExName] = useState(''); const [exEmail, setExEmail] = useState(''); const [exPhone, setExPhone] = useState(''); const [exCh, setExCh] = useState<Channel>('both')
+  const [exName, setExName] = useState(''); const [exEmail, setExEmail] = useState(''); const [exPhone, setExPhone] = useState(''); const [exCh, setExCh] = useState<Channel>('both'); const [exLang, setExLang] = useState<'de' | 'en'>('de')
   const [custQuery, setCustQuery] = useState('')
 
   const toggleInternal = (id: string) => setInternalIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const prefillExternal = (key: string) => {
     const c = contacts.find(x => x.key === key); if (!c) return
-    setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? '')
+    setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? ''); setExLang(c.lang)
   }
   const addExternal = () => {
     if (!exName.trim()) return
     if (!exEmail.trim() && !exPhone.trim()) { setErr(t('crm.tasks.extContactReq', 'Externe brauchen E-Mail oder Telefon.')); return }
-    setExternals(prev => [...prev, { name: exName.trim(), email: exEmail.trim(), phone: exPhone.trim(), channel: exCh }])
-    setExName(''); setExEmail(''); setExPhone(''); setExCh('both'); setErr('')
+    setExternals(prev => [...prev, { name: exName.trim(), email: exEmail.trim(), phone: exPhone.trim(), channel: exCh, lang: exLang }])
+    setExName(''); setExEmail(''); setExPhone(''); setExCh('both'); setExLang('de'); setErr('')
   }
   const custMatches = custQuery.trim().length >= 2
     ? contacts.filter(c => c.kind === 'lead' && c.name.toLowerCase().includes(custQuery.toLowerCase()) && !customers.some(x => x.lead_id === c.id)).slice(0, 6)
@@ -125,7 +125,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       const taskId = created.id
       const rows = [
         ...internalIds.map(pid => ({ task_id: taskId, profile_id: pid, channel: 'system' })),
-        ...externals.map(e => ({ task_id: taskId, ext_name: e.name, ext_email: e.email || null, ext_phone: e.phone || null, channel: e.channel })),
+        ...externals.map(e => ({ task_id: taskId, ext_name: e.name, ext_email: e.email || null, ext_phone: e.phone || null, channel: e.channel, ext_lang: e.lang })),
       ]
       if (rows.length) { const r = await supabase.from('crm_task_assignees').insert(rows); if (r.error) throw r.error }
       if (customers.length) await supabase.from('crm_task_leads').insert(customers.map(c => ({ task_id: taskId, lead_id: c.lead_id })))
@@ -181,7 +181,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
               <div className="space-y-1.5 mb-2">
                 {externals.map((e, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 bg-gray-50 border border-gray-100 rounded-lg px-3 py-1.5">
-                    <span className="text-xs text-gray-700 truncate">{e.name} · {e.email || e.phone} · <span className="text-gray-400">{chLabel(e.channel)}</span></span>
+                    <span className="text-xs text-gray-700 truncate">{e.name} · {e.email || e.phone} · <span className="text-gray-400">{chLabel(e.channel)} · {e.lang.toUpperCase()}</span></span>
                     <button type="button" onClick={() => setExternals(prev => prev.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500 text-xs shrink-0">✕</button>
                   </div>
                 ))}
@@ -204,6 +204,10 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
                   <option value="both">{t('crm.tasks.chBoth', 'Mail + WhatsApp')}</option>
                   <option value="mail">{t('crm.tasks.chMail', 'Nur Mail')}</option>
                   <option value="whatsapp">{t('crm.tasks.chWa', 'Nur WhatsApp')}</option>
+                </select>
+                <select value={exLang} onChange={e => setExLang(e.target.value as 'de' | 'en')} className={input + ' bg-white'} title={t('crm.tasks.extLangHint', 'Sprache der Nachricht an diese Person')}>
+                  <option value="de">🇩🇪 DE</option>
+                  <option value="en">🇬🇧 EN</option>
                 </select>
                 <button type="button" onClick={addExternal} className="whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium text-white" style={{ backgroundColor: '#0f172a' }}>
                   {t('crm.tasks.addPerson', '+ Person')}
@@ -385,12 +389,12 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     setETitle(task.title); setEDesc(task.description ?? ''); setEditing(true)
     if (contacts.length === 0) {
       const [le, bz] = await Promise.all([
-        supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp').limit(1000),
-        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp').limit(1000),
+        supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language').limit(1000),
+        supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp, language').limit(1000),
       ])
       const list: Contact[] = []
-      for (const l of (le.data ?? []) as Record<string, string | null>[]) list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone })
-      for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone })
+      for (const l of (le.data ?? []) as Record<string, string | null>[]) list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone, lang: l.language === 'en' ? 'en' : 'de' })
+      for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de' })
       setContacts(list.filter(c => c.name))
     }
   }
