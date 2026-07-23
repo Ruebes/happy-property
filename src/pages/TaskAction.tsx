@@ -6,28 +6,37 @@ import { supabase } from '../lib/supabase'
 // ── Öffentliche Aufgaben-Seite (per Token, kein Login) ───────────────────────
 // Aufgerufen über den Link aus Erinnerungs-Mail/WhatsApp. Der/die Zuständige kann
 // die Aufgabe annehmen, als erledigt markieren und eine Bemerkung hinterlassen.
-interface Info { title: string; description: string | null; statusLabel: string; assignee: string; accepted: boolean; done: boolean; status: string }
+interface Info { title: string; description: string | null; statusLabel: string; assignee: string; accepted: boolean; done: boolean; status: string; lang?: string }
 
 const CORAL = '#ff795d'
 
 export default function TaskAction() {
-  const { t } = useTranslation()
+  const { t: tHook, i18n } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [info, setInfo] = useState<Info | null>(null)
+  const [lang, setLang] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState('')
   const [flash, setFlash] = useState('')
 
+  // Diese öffentliche Seite rendert in der Sprache des EMPFÄNGERS (ext_lang aus
+  // task-action), nicht in der Browsersprache dessen, der den Link öffnet. Wir
+  // binden dazu einen fixen Übersetzer, statt i18n.changeLanguage global umzustellen
+  // — sonst würde die App-Sprache eines eingeloggten Nutzers mit umspringen.
+  const t = lang ? i18n.getFixedT(lang) : tHook
+
   const load = useCallback(async () => {
     setLoading(true); setErr('')
     try {
       const { data, error } = await supabase.functions.invoke('task-action', { body: { token, action: 'info' } })
-      if (error || !data || data.error) { setErr(t('taskAction.invalidLink', 'Dieser Link ist ungültig oder abgelaufen.')); return }
-      setInfo(data as Info)
-    } catch { setErr(t('taskAction.somethingWrong', 'Etwas ist schiefgelaufen.')) } finally { setLoading(false) }
-  }, [token])
+      if (error || !data || data.error) { setErr(tHook('taskAction.invalidLink', 'Dieser Link ist ungültig oder abgelaufen.')); return }
+      const d = data as Info
+      setLang(d.lang === 'en' ? 'en' : 'de')
+      setInfo(d)
+    } catch { setErr(tHook('taskAction.somethingWrong', 'Etwas ist schiefgelaufen.')) } finally { setLoading(false) }
+  }, [token, tHook])
   useEffect(() => { load() }, [load])
 
   const act = async (action: 'accept' | 'done' | 'note') => {
@@ -57,7 +66,7 @@ export default function TaskAction() {
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-semibold px-2 py-0.5 rounded-full text-white"
                   style={{ backgroundColor: info.status === 'erledigt' ? '#10b981' : info.status === 'in_arbeit' ? '#f59e0b' : '#94a3b8' }}>
-                  {info.statusLabel}
+                  {t(`taskAction.status.${info.status}`, info.statusLabel)}
                 </span>
               </div>
               <h1 className="text-xl font-bold text-gray-900">{info.title}</h1>

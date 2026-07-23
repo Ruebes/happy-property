@@ -4310,7 +4310,12 @@
     "markDoneBtn": "🏁 Mark as done",
     "noteLabel": "Comment / question (optional)",
     "notePlaceholder": "Short message to Happy Property …",
-    "sendNote": "Send comment"
+    "sendNote": "Send comment",
+    "status": {
+      "offen": "Open",
+      "in_arbeit": "In progress",
+      "erledigt": "Done"
+    }
   },
   "numberStepper": {
     "decrease": "decrease",

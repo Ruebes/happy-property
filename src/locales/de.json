@@ -4310,7 +4310,12 @@
     "markDoneBtn": "🏁 Als erledigt markieren",
     "noteLabel": "Bemerkung / Rückfrage (optional)",
     "notePlaceholder": "Kurze Nachricht an Happy Property …",
-    "sendNote": "Bemerkung senden"
+    "sendNote": "Bemerkung senden",
+    "status": {
+      "offen": "Offen",
+      "in_arbeit": "In Arbeit",
+      "erledigt": "Erledigt"
+    }
   },
   "numberStepper": {
     "decrease": "weniger",

@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     // Assignee + Aufgabe über Token laden
     const { data: asg, error: aErr } = await supabase
       .from('crm_task_assignees')
-      .select('id, task_id, profile_id, ext_name, accepted_at')
+      .select('id, task_id, profile_id, ext_name, ext_lang, accepted_at')
       .eq('token', token).maybeSingle()
     if (aErr) throw aErr
     if (!asg) return json({ error: 'ungültiger Link' }, 404)
@@ -39,11 +39,15 @@ Deno.serve(async (req) => {
       .eq('id', asg.task_id).single()
     if (tErr || !task) return json({ error: 'Aufgabe nicht gefunden' }, 404)
 
-    // Absender-Label für Bemerkungen
+    // Absender-Label + Empfängersprache. Die Link-Seite MUSS in der Sprache
+    // rendern, in der Lotte die Aufgabe gestellt hat (ext_lang bzw. profiles.language)
+    // — nicht in der Browsersprache dessen, der den Link öffnet.
     let label = asg.ext_name || 'Extern'
+    let lang = asg.ext_lang === 'en' ? 'en' : 'de'
     if (asg.profile_id) {
-      const { data: p } = await supabase.from('profiles').select('full_name').eq('id', asg.profile_id).single()
+      const { data: p } = await supabase.from('profiles').select('full_name, language').eq('id', asg.profile_id).single()
       label = p?.full_name || label
+      lang = p?.language === 'en' ? 'en' : 'de'
     }
 
     const nowIso = new Date().toISOString()
@@ -53,7 +57,7 @@ Deno.serve(async (req) => {
     if (!action || action === 'info') {
       return json({
         ok: true, title: task.title, description: task.description,
-        status: task.status, statusLabel: statusLabel(task.status),
+        status: task.status, statusLabel: statusLabel(task.status), lang,
         assignee: label, accepted: !!asg.accepted_at, done: task.status === 'erledigt',
       })
     }

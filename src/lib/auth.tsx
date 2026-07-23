@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
+import i18n from './i18n'
 
 // ── Profil-Cache ──────────────────────────────────────────────────────────────
 // Speichert das zuletzt geladene Profil im localStorage, damit beim Reload
@@ -208,6 +209,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return null
       }
       const p = data as Profile
+      // Portal-Sprache folgt dem Profil: wer im Profil Englisch hinterlegt hat,
+      // bekommt die GESAMTE Oberfläche auf Englisch — unabhängig von der
+      // Browsersprache. Das Profil ist damit die einzige Wahrheit (Login-Mails,
+      // WhatsApp und UI ziehen alle daran). Kein Supabase-Call → im async-Kontext
+      // von fetchProfile unkritisch (nicht im synchronen Auth-Callback).
+      if ((p.language === 'en' || p.language === 'de') && i18n.language !== p.language) void i18n.changeLanguage(p.language)
       return { ...p, permissions: p.permissions ?? {} }
     } catch {
       // fetch timed out (AbortError) oder Netzwerkfehler → einmal retry
