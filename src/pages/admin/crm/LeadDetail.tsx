@@ -2926,7 +2926,7 @@ export default function LeadDetail() {
                         )}
                         {deal.developer && (
                           <div className="flex gap-2">
-                            <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.developer', 'Entwickler')}</dt>
+                            <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.developerField', 'Entwickler')}</dt>
                             <dd className="text-gray-900">{deal.developer}</dd>
                           </div>
                         )}
@@ -3429,7 +3429,7 @@ export default function LeadDetail() {
                     </div>
                     {composeObjInfo.developer && (
                       <div className="flex gap-2">
-                        <span className="w-24 text-gray-400 shrink-0">{t('crm.developer', 'Entwickler')}</span>
+                        <span className="w-24 text-gray-400 shrink-0">{t('crm.developerField', 'Entwickler')}</span>
                         <span className="text-gray-700">{composeObjInfo.developer}</span>
                       </div>
                     )}
