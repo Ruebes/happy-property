@@ -1297,6 +1297,18 @@
     }
   },
   "crm": {
+    "action": {
+      "messages": "Messages",
+      "forwardContact": "Send contact",
+      "note": "Create note",
+      "task": "Create task",
+      "appt": "Create appointment",
+      "deck": "Create sales deck",
+      "calc": "Create invoice",
+      "driveOpen": "Open Drive",
+      "driveCreate": "Create Drive",
+      "driveCreating": "Creating…"
+    },
     "title": "CRM",
     "nav": {
       "dashboard": "Dashboard",

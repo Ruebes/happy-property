@@ -1297,6 +1297,18 @@
     }
   },
   "crm": {
+    "action": {
+      "messages": "Nachrichten",
+      "forwardContact": "Kontakt versenden",
+      "note": "Notiz erstellen",
+      "task": "Aufgabe erstellen",
+      "appt": "Termin erstellen",
+      "deck": "Sales Deck erstellen",
+      "calc": "Rechnung erstellen",
+      "driveOpen": "Drive öffnen",
+      "driveCreate": "Drive erstellen",
+      "driveCreating": "Erstelle…"
+    },
     "title": "CRM",
     "nav": {
       "dashboard": "Dashboard",

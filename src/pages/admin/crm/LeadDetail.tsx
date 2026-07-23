@@ -17,6 +17,7 @@ import RechnerWizard from '../../../components/crm/RechnerWizard'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
 import { sendWhatsApp } from '../../../lib/whatsapp'
+import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 
@@ -29,19 +30,6 @@ const ACTIVITY_ICONS: Record<string, string> = {
   note: '📝',
   meeting: '🤝',
   task: '✅',
-}
-
-// WhatsApp „Click to chat": Nummer auf internationales Format bringen (ohne + / ohne
-// führende 0, DE-Default 49) und wa.me-Link bilden — öffnet WhatsApp Desktop/Web/iPhone
-// mit dem Chat des Kontakts. Was Sven dort sendet, synct TimelinesAI zurück ins CRM.
-function waLink(raw: string | null | undefined): string | null {
-  if (!raw) return null
-  let d = raw.replace(/[^\d+]/g, '')
-  if (d.startsWith('+'))       d = d.slice(1)
-  else if (d.startsWith('00')) d = d.slice(2)
-  else if (d.startsWith('0'))  d = '49' + d.slice(1)
-  d = d.replace(/\D/g, '')
-  return d.length >= 8 ? `https://wa.me/${d}` : null
 }
 
 // KI-Antwort: Badge-Farben je Status (Label kommt aus i18n: crm.ai.st_<status>)
@@ -65,6 +53,7 @@ export default function LeadDetail() {
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
   const [showWizard, setShowWizard] = useState(false)
   const [showRechner, setShowRechner] = useState(false)
+  const [showForward, setShowForward] = useState(false)   // „Kontakt versenden"-Modal
 
   // ── Google-Drive-Kundenordner anlegen / öffnen ───────────────────────────────
   const [driveBusy, setDriveBusy] = useState(false)
@@ -2115,8 +2104,8 @@ export default function LeadDetail() {
             {/* ── Direkt-Aktionen (große Felder) ────────────────────── */}
             <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {([
-                { key: 'mail', icon: '📧', label: t('crm.action.mail', 'Mail senden'),         cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100',  on: () => { setComposeChannel('email'); setComposeTo('client'); goTab('emails') } },
-                { key: 'wa',   icon: '📱', label: t('crm.action.whatsapp', 'WhatsApp öffnen'),  cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => { const link = waLink(lead.whatsapp || lead.phone); if (link) window.open(link, '_blank', 'noopener'); else showToast(t('crm.compose.errNoPhone', '❌ Dieser Kontakt hat keine WhatsApp-/Telefonnummer')); } },
+                { key: 'msg',  icon: '💬', label: t('crm.action.messages', 'Nachrichten'),        cls: 'bg-green-50 text-green-700 hover:bg-green-100',     on: () => navigate('/admin/crm/inbox?lead=' + lead.id) },
+                { key: 'fwd',  icon: '📇', label: t('crm.action.forwardContact', 'Kontakt versenden'), cls: 'bg-orange-50 text-orange-700 hover:bg-orange-100', on: () => setShowForward(true) },
                 { key: 'note', icon: '📝', label: t('crm.action.note', 'Notiz erstellen'),      cls: 'bg-slate-100 text-slate-700 hover:bg-slate-200',   on: () => goTab('activities') },
                 { key: 'task', icon: '✅', label: t('crm.action.task', 'Aufgabe erstellen'),    cls: 'bg-blue-50 text-blue-700 hover:bg-blue-100',       on: () => goTab('tasks') },
                 { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },
@@ -4225,6 +4214,15 @@ export default function LeadDetail() {
           lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
           onClose={() => setShowRechner(false)}
           onDone={(msg) => { setShowRechner(false); showToast(msg) }}
+        />
+      )}
+
+      {showForward && lead && (
+        <LeadQuickSend
+          lead={lead}
+          mode="forward"
+          onClose={() => setShowForward(false)}
+          onSent={(msg) => { setShowForward(false); showToast(msg); void fetchAll(true) }}
         />
       )}
 

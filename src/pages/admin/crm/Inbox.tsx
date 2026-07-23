@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
@@ -49,6 +49,9 @@ const fileToB64 = (f: File): Promise<string> => new Promise((res, rej) => {
 export default function Inbox() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const leadParam = searchParams.get('lead')   // Deep-Link aus dem Kunden: direkt auf den öffnen
+  const injectedRef = useRef<string | null>(null)
   const { profile } = useAuth()
   const [convos, setConvos] = useState<Convo[]>([])
   const [loading, setLoading] = useState(true)
@@ -128,6 +131,28 @@ export default function Inbox() {
   }, [convos])
 
   useEffect(() => { if (selected) void markRead(selected) }, [selected, markRead])
+
+  // Deep-Link aus dem Kunden-Detail: direkt auf diesen Kontakt springen. Hat er schon
+  // Nachrichten, ist er in der Liste. Hat er noch keine, laden wir ihn als leere
+  // Konversation, damit man von hier aus die erste Nachricht schreiben kann.
+  useEffect(() => {
+    if (!leadParam || loading) return
+    if (convos.some(c => c.lead_id === leadParam)) { setSelected(leadParam); return }
+    if (injectedRef.current === leadParam) return
+    injectedRef.current = leadParam
+    void (async () => {
+      const { data } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadParam).maybeSingle()
+      const l = data as { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null } | null
+      if (!l) return
+      const empty: Convo = {
+        lead_id: leadParam, name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || t('crm.inbox.unknown', 'Unbekannt'),
+        email: l.email, phone: l.phone, whatsapp: l.whatsapp,
+        msgs: [], lastAt: new Date().toISOString(), lastDir: 'outbound', channels: new Set(), unread: 0,
+      }
+      setConvos(cs => cs.some(c => c.lead_id === leadParam) ? cs : [empty, ...cs])
+      setSelected(leadParam)
+    })()
+  }, [leadParam, loading, convos, t])
 
   const filtered = useMemo(() => convos.filter(c => {
     if (channel !== 'all' && !c.channels.has(channel)) return false
