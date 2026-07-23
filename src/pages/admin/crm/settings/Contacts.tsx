@@ -5,6 +5,7 @@ import { CustomSelect } from '../../../../components/CustomSelect'
 import { supabase } from '../../../../lib/supabase'
 import { useAuth, PERMISSION_AREAS, type PermissionArea } from '../../../../lib/auth'
 import type { BusinessContact, DeveloperContact } from '../../../../lib/crmTypes'
+import GrantAccessModal from '../../../../components/crm/GrantAccessModal'
 
 // ── Mitarbeiter-Verwaltung (nur Admin) ──────────────────────────────────────────
 // Interne Angestellte mit einzeln zuschaltbaren Rechten (Bereiche). Anlegen schickt
@@ -285,6 +286,8 @@ export default function Contacts() {
   const [devContacts, setDevContacts] = useState<(DeveloperContact & { developer_name: string | null })[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<{ contact: BusinessContact | null } | null>(null)
+  const [granting, setGranting] = useState<BusinessContact | null>(null)   // Systemzugang erteilen
+  const [staffKey, setStaffKey] = useState(0)   // erhöhen → StaffSection lädt neu
   const [toast,   setToast]   = useState('')
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3000) }
@@ -387,6 +390,13 @@ export default function Contacts() {
                       className="text-sm text-gray-500 hover:text-gray-800 font-medium">
                       {t('common.edit', 'Bearbeiten')}
                     </button>
+                    {profile?.role === 'admin' && (
+                      <button onClick={() => setGranting(c)}
+                        className="text-sm font-medium" style={{ color: '#ff795d' }}
+                        title={t('crm.contacts.grantAccessHint', 'Diesem Kontakt Systemzugang als Mitarbeiter geben')}>
+                        {t('crm.contacts.grantAccess', 'Mitarbeiter')}
+                      </button>
+                    )}
                     <button onClick={() => deleteItem(c)}
                       className="text-sm text-red-500 hover:text-red-700 font-medium">
                       {t('common.delete', 'Löschen')}
@@ -437,7 +447,7 @@ export default function Contacts() {
         )}
 
         {/* Mitarbeiter-Verwaltung — nur Admin darf Rechte vergeben */}
-        {profile?.role === 'admin' && <StaffSection />}
+        {profile?.role === 'admin' && <StaffSection key={staffKey} />}
       </div>
 
       {editing && (
@@ -445,6 +455,14 @@ export default function Contacts() {
           contact={editing.contact}
           onClose={() => setEditing(null)}
           onSaved={(m) => { setEditing(null); showToast(m); fetchAll() }}
+        />
+      )}
+
+      {granting && (
+        <GrantAccessModal
+          contact={granting}
+          onClose={() => setGranting(null)}
+          onGranted={(m) => { setGranting(null); showToast(m); setStaffKey(k => k + 1) }}
         />
       )}
     </DashboardLayout>

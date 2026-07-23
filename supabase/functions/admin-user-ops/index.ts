@@ -147,6 +147,8 @@ Deno.serve(async (req: Request) => {
         email, full_name, role = 'eigentuemer', language = 'de',
         phone, address_street, address_zip, address_city, address_country,
         iban, bic, bank_account_holder,
+        permissions,           // optional: Mitarbeiter-Rechte (jsonb) direkt mitsetzen
+        send_access_email,     // optional: Zugangs-Mail (Login + Passwort) verschicken
       } = body
 
       if (!email || !full_name) {
@@ -200,11 +202,20 @@ Deno.serve(async (req: Request) => {
         bic:                 bic                 || null,
         bank_account_holder: bank_account_holder || null,
         is_active:           true,
+        // Mitarbeiter-Rechte nur setzen, wenn ausdrücklich übergeben — sonst würde ein
+        // Re-Invite (upsert) bestehende Rechte auf {} zurücksetzen.
+        ...(permissions && typeof permissions === 'object' ? { permissions } : {}),
       }, { onConflict: 'id' })
 
       if (profileErr) throw new Error(profileErr.message)
 
-      return json({ success: true, userId, password })
+      // Zugangs-Mail (Login + Passwort) nur auf ausdrücklichen Wunsch — die
+      // Eigentümer-/Feriengast-Anlage hat eigene Willkommens-Mails und darf hier
+      // NICHT zusätzlich eine generische Zugangs-Mail auslösen.
+      let emailed = false
+      if (send_access_email) emailed = await sendAccessEmail(full_name, email, password)
+
+      return json({ success: true, userId, password, emailed })
     }
 
     // ── DELETE USER ─────────────────────────────────────────────────────────────

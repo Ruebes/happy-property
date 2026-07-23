@@ -1708,7 +1708,9 @@
       "language": "Kontaktsprache",
       "langDe": "Deutsch",
       "langEn": "Englisch",
-      "langHint": "Automatische Mails & WhatsApp an diesen Kontakt kommen in dieser Sprache an."
+      "langHint": "Automatische Mails & WhatsApp an diesen Kontakt kommen in dieser Sprache an.",
+      "grantAccess": "Mitarbeiter",
+      "grantAccessHint": "Diesem Kontakt Systemzugang als Mitarbeiter geben"
     },
     "recipient": {
       "label": "Empfänger",
@@ -3621,7 +3623,28 @@
       "preview": "👁 Vorschau",
       "waText": "WhatsApp-Text"
     },
-    "developerField": "Entwickler"
+    "developerField": "Entwickler",
+    "grant": {
+      "title": "Systemzugang für {{name}}",
+      "thisContact": "diesen Kontakt",
+      "hint": "Der Kontakt wird als Mitarbeiter angelegt und bekommt eine Zugangs-Mail. Wähle die Bereiche, die er sehen darf.",
+      "errNoEmail": "Dieser Kontakt hat keine E-Mail — für einen Zugang nötig.",
+      "grant": "Zugang erteilen",
+      "granting": "Erteile…",
+      "doneMailed": "✓ Zugang erteilt — Zugangs-Mail an {{name}} versendet",
+      "doneNoMail": "✓ Zugang erteilt für {{name}} (Zugangs-Mail konnte nicht versendet werden — Passwort ggf. manuell zurücksetzen)"
+    },
+    "perm": {
+      "pipeline": "Pipeline & Leads",
+      "funnel": "Funnel & Newsletter",
+      "decks": "Sales-Decks erstellen",
+      "invoices": "Rechnungen",
+      "contacts": "Kontakte",
+      "werbung": "Werbemanager (alle Kanäle)",
+      "werbung_meta": "Werbemanager: nur Meta",
+      "werbung_youtube": "Werbemanager: nur YouTube",
+      "werbung_google": "Werbemanager: nur Google"
+    }
   },
   "docs": {
     "title": "Workflow Dokumente",

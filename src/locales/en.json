@@ -1708,7 +1708,9 @@
       "language": "Contact language",
       "langDe": "German",
       "langEn": "English",
-      "langHint": "Automated emails & WhatsApp to this contact arrive in this language."
+      "langHint": "Automated emails & WhatsApp to this contact arrive in this language.",
+      "grantAccess": "Grant access",
+      "grantAccessHint": "Give this contact staff access to the system"
     },
     "recipient": {
       "label": "Recipient",
@@ -3621,7 +3623,28 @@
       "preview": "👁 Preview",
       "waText": "WhatsApp text"
     },
-    "developerField": "Developer"
+    "developerField": "Developer",
+    "grant": {
+      "title": "System access for {{name}}",
+      "thisContact": "this contact",
+      "hint": "The contact is created as a staff member and receives an access email. Choose the areas they may see.",
+      "errNoEmail": "This contact has no email — required for access.",
+      "grant": "Grant access",
+      "granting": "Granting…",
+      "doneMailed": "✓ Access granted — access email sent to {{name}}",
+      "doneNoMail": "✓ Access granted for {{name}} (access email could not be sent — reset the password manually if needed)"
+    },
+    "perm": {
+      "pipeline": "Pipeline & leads",
+      "funnel": "Funnel & newsletter",
+      "decks": "Create sales decks",
+      "invoices": "Invoices",
+      "contacts": "Contacts",
+      "werbung": "Ad manager (all channels)",
+      "werbung_meta": "Ad manager: Meta only",
+      "werbung_youtube": "Ad manager: YouTube only",
+      "werbung_google": "Ad manager: Google only"
+    }
   },
   "docs": {
     "title": "Workflow Documents",
