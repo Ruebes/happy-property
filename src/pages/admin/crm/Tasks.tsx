@@ -65,7 +65,9 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [dueDate, setDueDate] = useState('')
-  const [internalIds, setInternalIds] = useState<string[]>([myId])
+  // Niemand vorausgewählt — eine Aufgabe kann rein an eine externe Person gehen,
+  // ein Teammitglied ist NICHT zwingend (Sven: „muss nicht zwingend jemand aus dem Team sein").
+  const [internalIds, setInternalIds] = useState<string[]>([])
   const [externals, setExternals] = useState<ExtAssignee[]>([])
   const [customers, setCustomers] = useState<LinkedLead[]>([])
   const [saving, setSaving] = useState(false)
@@ -112,7 +114,13 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
 
   const save = async () => {
     if (!title.trim()) { setErr(t('crm.tasks.titleRequired', 'Bitte einen Titel angeben.')); return }
-    if (internalIds.length === 0 && externals.length === 0) { setErr(t('crm.tasks.assigneeReq', 'Bitte mindestens eine zuständige Person.')); return }
+    // Eine getippte externe Person (Name + Mail/Nummer), die noch NICHT mit „+ Person"
+    // bestätigt wurde, trotzdem übernehmen — man soll einfach Name + Nummer eingeben können.
+    const pendingExternal = exName.trim() && (exEmail.trim() || exPhone.trim())
+      ? [{ name: exName.trim(), email: exEmail.trim(), phone: exPhone.trim(), channel: exCh, lang: exLang }]
+      : []
+    const allExternals = [...externals, ...pendingExternal]
+    if (internalIds.length === 0 && allExternals.length === 0) { setErr(t('crm.tasks.assigneeReq', 'Bitte mindestens eine zuständige Person — intern oder extern (Name + Nummer reicht).')); return }
     setSaving(true); setErr('')
     try {
       const firstInternal = internalIds[0] ?? null
@@ -126,7 +134,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       const taskId = created.id
       const rows = [
         ...internalIds.map(pid => ({ task_id: taskId, profile_id: pid, channel: 'system' })),
-        ...externals.map(e => ({ task_id: taskId, ext_name: e.name, ext_email: e.email || null, ext_phone: e.phone || null, channel: e.channel, ext_lang: e.lang })),
+        ...allExternals.map(e => ({ task_id: taskId, ext_name: e.name, ext_email: e.email || null, ext_phone: e.phone || null, channel: e.channel, ext_lang: e.lang })),
       ]
       if (rows.length) { const r = await supabase.from('crm_task_assignees').insert(rows); if (r.error) throw r.error }
       if (customers.length) await supabase.from('crm_task_leads').insert(customers.map(c => ({ task_id: taskId, lead_id: c.lead_id })))
@@ -178,6 +186,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
           {/* Externe Zuständige */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.externalAssignees', 'Externe Personen (per Mail/WhatsApp)')}</label>
+            <p className="text-xs text-gray-400 mb-1.5">{t('crm.tasks.externalHint', 'Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht.')}</p>
             {externals.length > 0 && (
               <div className="space-y-1.5 mb-2">
                 {externals.map((e, i) => (

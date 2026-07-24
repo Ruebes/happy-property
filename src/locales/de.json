@@ -1386,7 +1386,7 @@
       "internalAssignees": "Mitarbeiter",
       "externalAssignees": "Externe Personen (per Mail/WhatsApp)",
       "extContactReq": "Externe brauchen E-Mail oder Telefon.",
-      "assigneeReq": "Bitte mindestens eine zuständige Person.",
+      "assigneeReq": "Bitte mindestens eine zuständige Person — intern oder extern (Name + Nummer reicht).",
       "pickContact": "— aus Kontakten wählen (optional) —",
       "extName": "Name",
       "extEmail": "E-Mail",
@@ -1419,7 +1419,8 @@
       "externName": "Extern",
       "contactFallback": "Kontakt",
       "customerFallback": "Kunde",
-      "extLangHint": "Sprache der Nachricht an diese Person"
+      "extLangHint": "Sprache der Nachricht an diese Person",
+      "externalHint": "Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht."
     },
     "home": {
       "hello": "Hallo",
