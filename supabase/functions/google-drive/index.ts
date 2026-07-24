@@ -256,7 +256,7 @@ Deno.serve(async (req) => {
     )
 
     const body = await req.json() as {
-      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file' | 'import_images' | 'import_file'
+      action:           'create_folder' | 'share_folder' | 'ensure_root' | 'create_deal_folder' | 'list_files' | 'download_file' | 'import_images' | 'import_file' | 'sa_email'
       folder_name?:     string
       parent_folder_id?: string
       file_id?:         string
@@ -267,6 +267,16 @@ Deno.serve(async (req) => {
       share_with?:      string | string[]   // eine oder mehrere E-Mails
       role?:            'reader' | 'writer'
       deal_id?:         string              // für create_deal_folder
+    }
+
+    // ── sa_email (Diagnose) ─────────────────────────────────────────────────────
+    // Gibt die Service-Account-Adresse zurück, mit der Drive-Ordner geteilt werden
+    // müssen (kein Token nötig, nichts Sensibles).
+    if (body.action === 'sa_email') {
+      const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+      const email = raw ? (JSON.parse(raw) as { client_email?: string }).client_email ?? null : null
+      return new Response(JSON.stringify({ ok: true, client_email: email }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // Lese-Aktionen über Service-Account (dauerhaft); Schreib-Aktionen über OAuth.
