@@ -197,12 +197,12 @@ Deno.serve(async (req) => {
             greet: (n: string) => `Hi ${n},`, confirmed: 'your appointment with Sven is confirmed:',
             gcalBtn: 'Add to Google Calendar', icsNote: 'The calendar file (.ics) for Apple/Outlook is attached to this email. See you soon!',
             zoomLinkLbl: 'Zoom link', mailSubj: (s: string, d: string) => `Appointment confirmation: ${s} on ${d}`,
-            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Your appointment with Sven is confirmed:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nSee you soon!\nLotte · Happy Property 🐾` }
+            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Your appointment with Sven is confirmed:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nSee you soon!\nLotte · Sven's personal assistant 🐾` }
         : { onsite: 'Vor Ort', zoom: 'Zoom-Videocall', wa: 'WhatsApp-Anruf', with: 'Mit', kind: 'Art',
             greet: (n: string) => `Hallo ${n},`, confirmed: 'dein Termin mit Sven ist bestätigt:',
             gcalBtn: 'Zum Google Kalender hinzufügen', icsNote: 'Die Kalender-Datei (.ics) für Apple/Outlook hängt an dieser Mail. Bis bald!',
             zoomLinkLbl: 'Zoom-Link', mailSubj: (s: string, d: string) => `Terminbestätigung: ${s} am ${d}`,
-            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Dein Termin mit Sven ist bestätigt:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nBis bald!\nLotte · Happy Property 🐾` }
+            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Dein Termin mit Sven ist bestätigt:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nBis bald!\nLotte · persönliche Assistentin von Sven 🐾` }
       const typeLabel = type === 'onsite' ? `${T.onsite}${address ? ` · ${address}` : ''}` : type === 'zoom' ? T.zoom : T.wa
       const desc = `Gebucht über Sven360.\n${T.with}: ${name}${email ? ` · ${email}` : ''}${phone ? ` · ${phone}` : ''}\n${T.kind}: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
 
@@ -237,7 +237,7 @@ Deno.serve(async (req) => {
         const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
           <div style="text-align:center;margin-bottom:6px;">
             <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
-            <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · Happy Property 🐾</p>
+            <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">${lang === 'en' ? "Lotte · Sven's personal assistant 🐾" : 'Lotte · persönliche Assistentin von Sven 🐾'}</p>
           </div>
           <p>${T.greet(first)}</p><p>${T.confirmed}</p>
           <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
           <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">${T.gcalBtn}</a></p>
           <p style="font-size:13px;color:#6b7280;">${T.icsNote}</p></div>`
         const ics = buildIcs({ uid: appt?.id ?? crypto.randomUUID(), title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
-        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, from_name: 'Lotte · Happy Property', lang, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
+        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
       }
       // Bestätigung per WhatsApp
       if (phone) {
