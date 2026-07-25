@@ -197,12 +197,12 @@ Deno.serve(async (req) => {
             greet: (n: string) => `Hi ${n},`, confirmed: 'your appointment with Sven is confirmed:',
             gcalBtn: 'Add to Google Calendar', icsNote: 'The calendar file (.ics) for Apple/Outlook is attached to this email. See you soon!',
             zoomLinkLbl: 'Zoom link', mailSubj: (s: string, d: string) => `Appointment confirmation: ${s} on ${d}`,
-            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Your appointment with Sven is confirmed:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nSee you soon!\nLotte · Sven's personal assistant 🐾` }
+            waMsg: (n: string, s: string, ds: string, tl: string, z: string | null) => `Hi ${n} 🐾\n\nthis is Lotte, Sven's personal assistant — your appointment with Sven is confirmed:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nSee you soon!\nLotte 🐾` }
         : { onsite: 'Vor Ort', zoom: 'Zoom-Videocall', wa: 'WhatsApp-Anruf', with: 'Mit', kind: 'Art',
             greet: (n: string) => `Hallo ${n},`, confirmed: 'dein Termin mit Sven ist bestätigt:',
             gcalBtn: 'Zum Google Kalender hinzufügen', icsNote: 'Die Kalender-Datei (.ics) für Apple/Outlook hängt an dieser Mail. Bis bald!',
             zoomLinkLbl: 'Zoom-Link', mailSubj: (s: string, d: string) => `Terminbestätigung: ${s} am ${d}`,
-            waMsg: (s: string, ds: string, tl: string, z: string | null) => `✅ Dein Termin mit Sven ist bestätigt:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nBis bald!\nLotte · persönliche Assistentin von Sven 🐾` }
+            waMsg: (n: string, s: string, ds: string, tl: string, z: string | null) => `Hallo ${n} 🐾\n\nhier ist Lotte, die persönliche Assistentin von Sven — dein Termin mit Sven ist bestätigt:\n\n*${s}*\n📅 ${ds}\n📍 ${tl}${z ? `\n🔗 ${z}` : ''}\n\nBis bald!\nLotte 🐾` }
       const typeLabel = type === 'onsite' ? `${T.onsite}${address ? ` · ${address}` : ''}` : type === 'zoom' ? T.zoom : T.wa
       const desc = `Gebucht über Sven360.\n${T.with}: ${name}${email ? ` · ${email}` : ''}${phone ? ` · ${phone}` : ''}\n${T.kind}: ${typeLabel}${zoomLink ? `\nZoom: ${zoomLink}` : ''}`
 
@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
       }
       // Bestätigung per WhatsApp
       if (phone) {
-        const wa = T.waMsg(subject, dateStr, typeLabel, zoomLink)
+        const wa = T.waMsg(first, subject, dateStr, typeLabel, zoomLink)
         await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: wa, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteBild() } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
       }
       return json({ ok: true, appointment: appt?.id, dateStr, typeLabel, zoomLink })
