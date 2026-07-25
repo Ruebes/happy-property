@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
+import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
 
 // ── Posteingang ───────────────────────────────────────────────────────────────
 // EIN Ort für die echte Kundenkommunikation: Mail UND WhatsApp, ein- und
@@ -39,12 +40,6 @@ interface Convo {
 type ChannelFilter = 'all' | 'whatsapp' | 'email'
 const ATTACH_BUCKET = 'crm-project-images'
 
-const fileToB64 = (f: File): Promise<string> => new Promise((res, rej) => {
-  const r = new FileReader()
-  r.onload = () => res(String(r.result).split(',')[1] ?? '')
-  r.onerror = rej
-  r.readAsDataURL(f)
-})
 
 export default function Inbox() {
   const { t } = useTranslation()
@@ -61,11 +56,10 @@ export default function Inbox() {
   const [search, setSearch] = useState('')
   const [reply, setReply] = useState('')
   const [replyChannel, setReplyChannel] = useState<'whatsapp' | 'email'>('whatsapp')
-  const [attach, setAttach] = useState<File | null>(null)
+  const mailAttach = useMailAttachments()   // mehrere Dateien je Nachricht
   const [sending, setSending] = useState(false)
   const [toast, setToast] = useState('')
   const threadRef = useRef<HTMLDivElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
@@ -173,42 +167,51 @@ export default function Inbox() {
     if (lastCh === 'email' && current.email) setReplyChannel('email')
     else if (current.whatsapp || current.phone) setReplyChannel('whatsapp')
     else if (current.email) setReplyChannel('email')
-    setReply(''); setAttach(null)
+    setReply(''); mailAttach.reset()
   }, [current])
 
   useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight }, [current, sending])
 
   const sendReply = async () => {
-    if (!current || (!reply.trim() && !attach)) return
+    if (!current || (!reply.trim() && mailAttach.files.length === 0)) return
     const text = reply.trim()
+    const files = mailAttach.files
     setSending(true)
     try {
       if (replyChannel === 'whatsapp') {
         const phone = current.whatsapp || current.phone
         if (!phone) { showToast(t('crm.inbox.noPhone', 'Kein WhatsApp-/Telefonkontakt hinterlegt')); return }
-        // Anhang bei WhatsApp: in den Bucket laden, URL an send-whatsapp geben.
-        // Grosse Bilder verkleinert send-whatsapp selbst auf unter 2 MB.
-        let file_url: string | undefined, file_name: string | undefined
-        if (attach) {
-          const ext = (attach.name.split('.').pop() || 'bin').toLowerCase()
-          const path = `whatsapp/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-          const up = await supabase.storage.from(ATTACH_BUCKET).upload(path, attach, { cacheControl: '3600', upsert: false })
-          if (up.error) throw up.error
-          file_url = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
-          file_name = attach.name
+        // WhatsApp trägt EIN Medium pro Nachricht: Text (+ erste Datei) als erste
+        // Nachricht, jede weitere Datei als eigene Folge-Nachricht. Grosse Bilder
+        // verkleinert send-whatsapp selbst auf unter 2 MB.
+        let anyAttachFailed = false
+        for (let i = 0; i < Math.max(1, files.length); i++) {
+          const f = files[i]
+          let file_url: string | undefined, file_name: string | undefined
+          if (f) {
+            const ext = (f.name.split('.').pop() || 'bin').toLowerCase()
+            const path = `whatsapp/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+            const up = await supabase.storage.from(ATTACH_BUCKET).upload(path, f, { cacheControl: '3600', upsert: false })
+            if (up.error) throw up.error
+            file_url = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
+            file_name = f.name
+          }
+          const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: {
+            event_type: 'no_show', override_text: i === 0 ? (text || ' ') : ' ',
+            lead_data: { lead_name: current.name, lead_phone: phone },
+            ...(file_url ? { file_url, file_name } : {}),
+            ...(i > 0 ? { allow_duplicate: true } : {}),   // Folge-Dateien: gleicher Leer-Text nicht deduppen
+          } })
+          if (error) throw error
+          const r = data as { success?: boolean; attached?: boolean } | null
+          if (!r?.success) throw new Error('WhatsApp')
+          if (f && r.attached === false) anyAttachFailed = true
         }
-        const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: {
-          event_type: 'no_show', override_text: text || ' ',
-          lead_data: { lead_name: current.name, lead_phone: phone },
-          ...(file_url ? { file_url, file_name } : {}),
-        } })
-        if (error) throw error
-        const r = data as { success?: boolean; attached?: boolean; attach_error?: string } | null
-        if (!r?.success) throw new Error('WhatsApp')
-        if (attach && r.attached === false) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: r.attach_error ?? '' }))
+        if (anyAttachFailed) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: '' }))
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'whatsapp', direction: 'outbound',
-          subject: `WhatsApp → ${current.name}`, content: `${text}${attach ? `\n📎 ${attach.name}` : ''}`.slice(0, 2000),
+          subject: `WhatsApp → ${current.name}`,
+          content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 2000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       } else {
@@ -218,17 +221,17 @@ export default function Inbox() {
         const html = text
           ? `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151;white-space:pre-wrap">${text.replace(/</g, '&lt;')}</div>`
           : `<div style="font-family:Arial,sans-serif;font-size:15px;color:#374151">${t('crm.inbox.seeAttachment', 'Siehe Anhang.')}</div>`
-        const attachments = attach ? [{ filename: attach.name, content_base64: await fileToB64(attach), content_type: attach.type || 'application/octet-stream' }] : undefined
+        const attachments = await mailAttach.toAttachments()
         const { data, error } = await supabase.functions.invoke('send-email', { body: { to: current.email, subject, html, lead_id: null, ...(attachments ? { attachments } : {}) } })
         if (error) throw error
         if ((data as { success?: boolean } | null)?.success === false) throw new Error((data as { error?: string }).error || 'E-Mail')
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'email', direction: 'outbound',
-          subject, content: `${text}${attach ? `\n📎 ${attach.name}` : ''}`.slice(0, 2000),
+          subject, content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 2000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       }
-      setReply(''); setAttach(null)
+      setReply(''); mailAttach.reset()
       showToast(t('crm.inbox.sent', 'Gesendet ✓'))
       await fetchAll()
     } catch (err) {
@@ -359,23 +362,14 @@ export default function Inbox() {
                         )
                       })}
                       <div className="ml-auto" />
-                      <button onClick={() => fileRef.current?.click()} disabled={sending}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
-                        title={t('crm.inbox.attach', 'Datei anhängen') ?? ''}>
-                        📎 {t('crm.inbox.attach', 'Anhang')}
-                      </button>
-                      <input ref={fileRef} type="file" className="hidden"
-                        onChange={e => { const f = e.target.files?.[0]; if (f) setAttach(f); if (fileRef.current) fileRef.current.value = '' }} />
                     </div>
-                    {attach && (
-                      <div className="flex items-center gap-2 mb-2 text-xs bg-gray-50 border border-gray-200 rounded-lg px-2.5 py-1.5">
-                        <span className="truncate">📎 {attach.name} · {Math.round(attach.size / 1024)} KB</span>
-                        {replyChannel === 'whatsapp' && attach.size > 2_000_000 && !attach.type.startsWith('image/') && (
-                          <span className="text-amber-600 shrink-0">{t('crm.inbox.tooBigForWa', 'zu groß für WhatsApp')}</span>
-                        )}
-                        <button onClick={() => setAttach(null)} className="ml-auto text-gray-400 hover:text-red-500 shrink-0">✕</button>
-                      </div>
-                    )}
+                    <div className="mb-2">
+                      <MailAttachmentField
+                        files={mailAttach.files}
+                        onAdd={list => { if (mailAttach.add(list) === 'too-big') showToast(t('crm.quick.attachTooBig', 'Anhänge zusammen zu groß (max. 8 MB).')) }}
+                        onRemove={mailAttach.remove}
+                      />
+                    </div>
                     <div className="flex items-end gap-2">
                       <textarea value={reply} onChange={e => setReply(e.target.value)}
                         onKeyDown={e => {
@@ -384,7 +378,7 @@ export default function Inbox() {
                         }}
                         rows={2} placeholder={t('crm.inbox.replyPlaceholder', 'Antwort schreiben … (Enter sendet, ⌘/Strg+Enter = Zeilenumbruch)')}
                         className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-orange-200" />
-                      <button onClick={() => void sendReply()} disabled={sending || (!reply.trim() && !attach)}
+                      <button onClick={() => void sendReply()} disabled={sending || (!reply.trim() && mailAttach.files.length === 0)}
                         className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50 shrink-0" style={{ backgroundColor: '#ff795d' }}>
                         {sending ? t('common.saving', 'sendet …') : t('crm.inbox.send', 'Senden')}
                       </button>
