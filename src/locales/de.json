@@ -1350,7 +1350,8 @@
       "newsletter": "Newsletter",
       "tasks": "Aufgaben",
       "home": "Start",
-      "ads": "Werbemanager"
+      "ads": "Werbemanager",
+      "bookingLinks": "Buchungslinks"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -3645,6 +3646,40 @@
       "werbung_meta": "Werbemanager: nur Meta",
       "werbung_youtube": "Werbemanager: nur YouTube",
       "werbung_google": "Werbemanager: nur Google"
+    },
+    "booking": {
+      "title": "Persönliche Buchungslinks",
+      "subtitle": "Pro Person ein Link auf deinen Kalender — mit Foto und vorausgefüllten Kontaktdaten. Bestätigung per Mail (von Lotte) und WhatsApp, Erinnerungen wie üblich.",
+      "new": "+ Neuer Link",
+      "empty": "Noch keine Buchungslinks angelegt.",
+      "copy": "Kopieren",
+      "copied": "✓ Link kopiert",
+      "copyErr": "Kopieren nicht möglich",
+      "deleteConfirm": "Diesen Buchungslink löschen?",
+      "deleted": "Buchungslink gelöscht",
+      "newTitle": "Neuer Buchungslink",
+      "editTitle": "Buchungslink bearbeiten",
+      "choosePhoto": "Foto wählen",
+      "uploading": "Lädt…",
+      "uploadErr": "Foto-Upload fehlgeschlagen",
+      "photoHint": "Wird oben auf der Buchungsseite gezeigt.",
+      "name": "Name",
+      "email": "E-Mail",
+      "phone": "Telefon",
+      "subject": "Betreff (optional, vorbelegt)",
+      "subjectPh": "z.B. Kennenlernen",
+      "lang": "Sprache",
+      "focus": "Bildausschnitt",
+      "focusTop": "Gesicht oben",
+      "focusMid": "Mitte",
+      "focusBottom": "unten",
+      "internal": "Interne Person (keine Kunden-Automatik)",
+      "internalBadge": "intern",
+      "errName": "Bitte einen Namen angeben.",
+      "errContact": "E-Mail oder Telefon nötig.",
+      "created": "✓ Buchungslink angelegt",
+      "updated": "✓ Buchungslink aktualisiert",
+      "saving": "Speichere…"
     }
   },
   "docs": {

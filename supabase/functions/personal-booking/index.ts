@@ -11,6 +11,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { isInternalContact } from '../_shared/internalContact.ts'
 import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
+import { lotteBild } from '../_shared/lotte.ts'   // Office-Bild von Lotte für die Bestätigungsmail
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -234,6 +235,10 @@ Deno.serve(async (req) => {
       // Bestätigung per E-Mail (+ .ics)
       if (email) {
         const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+          <div style="text-align:center;margin-bottom:6px;">
+            <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
+            <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · Happy Property 🐾</p>
+          </div>
           <p>${T.greet(first)}</p><p>${T.confirmed}</p>
           <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
             <p style="font-size:16px;font-weight:600;margin:0 0 6px;color:#111827;">${subject}</p>
@@ -244,7 +249,7 @@ Deno.serve(async (req) => {
           <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">${T.gcalBtn}</a></p>
           <p style="font-size:13px;color:#6b7280;">${T.icsNote}</p></div>`
         const ics = buildIcs({ uid: appt?.id ?? crypto.randomUUID(), title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
-        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
+        await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, from_name: 'Lotte · Happy Property', lang, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
       }
       // Bestätigung per WhatsApp
       if (phone) {

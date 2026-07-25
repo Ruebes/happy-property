@@ -1350,7 +1350,8 @@
       "newsletter": "Newsletter",
       "tasks": "Tasks",
       "home": "Home",
-      "ads": "Ads Manager"
+      "ads": "Ads Manager",
+      "bookingLinks": "Booking links"
     },
     "tasks": {
       "title": "Tasks",
@@ -3645,6 +3646,40 @@
       "werbung_meta": "Ad manager: Meta only",
       "werbung_youtube": "Ad manager: YouTube only",
       "werbung_google": "Ad manager: Google only"
+    },
+    "booking": {
+      "title": "Personal booking links",
+      "subtitle": "One link per person to your calendar — with photo and pre-filled contact details. Confirmation by email (from Lotte) and WhatsApp, reminders as usual.",
+      "new": "+ New link",
+      "empty": "No booking links yet.",
+      "copy": "Copy",
+      "copied": "✓ Link copied",
+      "copyErr": "Could not copy",
+      "deleteConfirm": "Delete this booking link?",
+      "deleted": "Booking link deleted",
+      "newTitle": "New booking link",
+      "editTitle": "Edit booking link",
+      "choosePhoto": "Choose photo",
+      "uploading": "Uploading…",
+      "uploadErr": "Photo upload failed",
+      "photoHint": "Shown at the top of the booking page.",
+      "name": "Name",
+      "email": "Email",
+      "phone": "Phone",
+      "subject": "Subject (optional, pre-filled)",
+      "subjectPh": "e.g. Intro call",
+      "lang": "Language",
+      "focus": "Image crop",
+      "focusTop": "Face at top",
+      "focusMid": "Center",
+      "focusBottom": "Bottom",
+      "internal": "Internal person (no customer automation)",
+      "internalBadge": "internal",
+      "errName": "Please enter a name.",
+      "errContact": "Email or phone required.",
+      "created": "✓ Booking link created",
+      "updated": "✓ Booking link updated",
+      "saving": "Saving…"
     }
   },
   "docs": {
