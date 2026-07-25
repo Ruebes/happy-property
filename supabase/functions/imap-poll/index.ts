@@ -125,16 +125,91 @@ function imapSince(daysBack: number): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}-${mon}-${d.getUTCFullYear()}`
 }
 
+// Lead per Absenderadresse finden — primäre email ODER alt_emails (case-insensitiv,
+// googlemail→gmail normalisiert). Ersetzt die alte RPC, die NUR die Primär-Mail prüfte
+// (Rainer schrieb von rainer.wallmeyer@…, sein Lead trägt rw@… → fiel durch).
+// deno-lint-ignore no-explicit-any
+async function findLead(supabase: any, rawAddr: string): Promise<string | null> {
+  const norm = (x: string | null | undefined) => (x ?? '').toLowerCase().trim().replace('googlemail.com', 'gmail.com')
+  const e = norm(rawAddr)
+  if (!e.includes('@')) return null
+  const { data } = await supabase.from('leads')
+    .select('id, email, alt_emails, created_at')
+    .or(`email.ilike.${e},alt_emails.cs.{${e}}`)
+    .order('created_at', { ascending: false }).limit(10)
+  for (const l of (data ?? []) as Array<{ id: string; email: string | null; alt_emails: string[] | null }>) {
+    if (norm(l.email) === e) return l.id
+    if ((l.alt_emails ?? []).some(a => norm(a) === e)) return l.id
+  }
+  return null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const imap = new Imap()
+  const reqBody = await req.json().catch(() => ({} as Record<string, unknown>))
+  const mode = (reqBody.mode as string) || 'poll'
   const result = { scanned: 0, tasks: 0, leads: 0, skipped: 0, errors: [] as string[] }
   try {
     await imap.connect()
     const li = await imap.login(Deno.env.get('IMAP_USER') ?? '', Deno.env.get('IMAP_PASS') ?? '')
     if (!/OK/m.test(li)) return json({ error: 'IMAP-Login fehlgeschlagen' }, 500)
-    await imap.cmd('SELECT INBOX')
+    const sel = await imap.cmd('SELECT INBOX')
+
+    // ── Diagnose: welches Postfach, wie viele Mails, letzte Absender/Betreffe ──
+    // Kein Import — nur zum Prüfen, ob IMAP_USER wirklich info@ ist und was drin liegt.
+    if (mode === 'diagnose') {
+      const exists = Number(sel.match(/\*\s+(\d+)\s+EXISTS/i)?.[1] ?? 0)
+      const sr = await imap.cmd(`UID SEARCH SINCE ${imapSince(90)}`)
+      const dUids = (sr.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+        .sort((a, b) => Number(b) - Number(a)).slice(0, 25)
+      const recent: Array<{ uid: string; from: string; subject: string; date: string }> = []
+      for (const uid of dUids) {
+        const f = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])`)
+        recent.push({ uid, from: fromAddress(f), subject: decodeMimeWords(header(f, 'Subject')).slice(0, 90), date: header(f, 'Date') })
+      }
+      await imap.logout()
+      return json({ ok: true, mailbox: (Deno.env.get('IMAP_USER') ?? '').trim(), total_in_inbox: exists, since90d: dUids.length, recent })
+    }
+
+    // ── Backfill: Backlog importieren. Weiteres Zeitfenster, IGNORIERT die
+    // task_mail_processed-Sperre (die „verbrennt" übersprungene Mails), dedupt aber
+    // gegen bereits vorhandene Activities (lead_id + Betreff) → keine Doubletten.
+    // Task-Token-Mails bleiben dem normalen Poll überlassen.
+    if (mode === 'backfill') {
+      const days = Math.min(400, Number(reqBody.days) || 60)
+      const limit = Math.min(400, Number(reqBody.limit) || 250)
+      const own = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
+      const sr = await imap.cmd(`UID SEARCH SINCE ${imapSince(days)}`)
+      const bUids = (sr.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+        .sort((a, b) => Number(b) - Number(a)).slice(0, limit)
+      const bf = { scanned: bUids.length, imported: 0, dup: 0, nolead: 0, own: 0, token: 0 }
+      const detail: Array<{ from: string; subject: string }> = []
+      for (const uid of bUids) {
+        try {
+          const fetched = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[])`)
+          const subj = decodeMimeWords(header(fetched, 'Subject'))
+          if (/\[#[a-f0-9]{8,20}\]/i.test(subj)) { bf.token++; continue }
+          const addr = fromAddress(fetched)
+          if (!addr || addr === own || /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr)) { bf.own++; continue }
+          const leadId = await findLead(supabase, addr)
+          if (!leadId) { bf.nolead++; continue }
+          const activitySubject = subj ? `Antwort: ${subj.slice(0, 160)}` : 'E-Mail erhalten'
+          const { data: exists } = await supabase.from('activities').select('id')
+            .eq('lead_id', leadId).eq('type', 'email').eq('direction', 'inbound').eq('subject', activitySubject).limit(1)
+          if (exists && exists.length) { bf.dup++; continue }
+          const bodyText = (extractPlain(fetched) || '(leere Nachricht)').slice(0, 4000)
+          await supabase.from('activities').insert({
+            lead_id: leadId, type: 'email', direction: 'inbound',
+            subject: activitySubject, content: bodyText, completed_at: new Date().toISOString(), auto: false,
+          })
+          bf.imported++; detail.push({ from: addr, subject: subj.slice(0, 60) })
+        } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
+      }
+      await imap.logout()
+      return json({ ok: true, mode: 'backfill', ...bf, detail })
+    }
 
     // Token-Mails (Aufgaben-Antworten) UND alle jüngeren Mails (Kunden-Antworten).
     // Zwei Suchen, per Set entdoppelt. SINCE begrenzt die zweite auf die letzten Tage,
@@ -184,8 +259,7 @@ Deno.serve(async (req) => {
         // „Kundenantwort" fehlverbucht (ein Test-Lead trug info@happy-property.com).
         const own = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
         if (addr === own || /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr)) { result.skipped++; continue }
-        const { data: leadRow } = await supabase.rpc('find_lead_by_email', { p_email: addr })
-        const leadId = (leadRow as Array<{ id: string }> | null)?.[0]?.id
+        const leadId = await findLead(supabase, addr)
         if (!leadId) { result.skipped++; continue }   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
         const bodyText = (extractPlain(fetched) || '(leere Nachricht)').slice(0, 4000)
         await supabase.from('activities').insert({
