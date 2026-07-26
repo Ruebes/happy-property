@@ -5,6 +5,7 @@ import { CustomSelect } from '../../../components/CustomSelect'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import UnitPickerModal from '../../../components/crm/UnitPickerModal'
+import DeckChat from '../../../components/crm/DeckChat'
 import { NumberStepper } from '../../../components/NumberStepper'
 import { DEFAULT_PARAMS, type CalcParams } from '../../../lib/rechner'
 import type { CrmProjectUnit, DeckAssetsCache } from '../../../lib/crmTypes'
@@ -119,6 +120,7 @@ export default function Newsletter() {
   const [listIds, setListIds] = useState<string[]>([])
   const [busyKey, setBusyKey] = useState<string>('')      // welcher Button arbeitet gerade
   const [toast, setToast] = useState('')
+  const [deckChatToken, setDeckChatToken] = useState<string | null>(null)   // Master-Deck per Chat verfeinern
   const [status, setStatus] = useState<{ status: string; total: number; done: number; error?: string | null } | null>(null)
   const [startAt, setStartAt] = useState('')   // '' = sofort; sonst datetime-local
   const [progress, setProgress] = useState<Record<string, { sent: number; pending: number; next_at: string | null }>>({})
@@ -556,6 +558,7 @@ export default function Newsletter() {
                     {busyKey === `deck${i}` ? t('crm.newsletter.deckWorking', 'Deck wird erstellt (~90 s)…') : p.master_deck_token ? t('crm.newsletter.redeck', '📖 Master-Deck neu erstellen') : t('crm.newsletter.deck', '📖 Master-Deck erstellen')}
                   </button>
                   {p.master_deck_token && <a href={`/deck/${p.master_deck_token}`} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: '#ff795d' }}>{t('crm.newsletter.view', 'ansehen')}</a>}
+                  {p.master_deck_token && <button onClick={() => setDeckChatToken(p.master_deck_token)} className="text-xs underline" style={{ color: '#ff795d' }}>✏️ {t('crm.newsletter.editDeck', 'per Chat anpassen')}</button>}
                 </div>
               </div>
             ))}
@@ -774,6 +777,7 @@ export default function Newsletter() {
           </div>
         )}
         {toast && <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg">{toast}</div>}
+        {deckChatToken && <DeckChat token={deckChatToken} onClose={() => setDeckChatToken(null)} />}
       </div>
     </DashboardLayout>
   )

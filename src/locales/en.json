@@ -3193,7 +3193,8 @@
       "preparing": "Creating decks & scheduling emails…",
       "sendingNow": "Scheduled — sending in staggered batches.",
       "pickerFor": "Newsletter campaign",
-      "pickerConfirm": "Apply"
+      "pickerConfirm": "Apply",
+      "editDeck": "edit via chat"
     },
     "quick": {
       "attach": "Attach files",

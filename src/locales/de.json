@@ -3193,7 +3193,8 @@
       "preparing": "Decks werden erstellt & Mails geplant…",
       "sendingNow": "Geplant — Versand läuft gestaffelt.",
       "pickerFor": "Newsletter-Kampagne",
-      "pickerConfirm": "Übernehmen"
+      "pickerConfirm": "Übernehmen",
+      "editDeck": "per Chat anpassen"
     },
     "quick": {
       "attach": "Dateien anhängen",
