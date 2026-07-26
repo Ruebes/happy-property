@@ -3408,7 +3408,18 @@
       "syncedN": "{{n}} neue Adressen übernommen.",
       "syncedPartly": "{{n}} neue Adressen. {{f}} Liste(n) mit Fehler: {{msg}}",
       "ariaActive": "aktiv",
-      "ariaInactive": "inaktiv"
+      "ariaInactive": "inaktiv",
+      "newList": "Eigene Liste anlegen",
+      "newListPh": "z. B. Rendite-Rechner Leads",
+      "add": "+ Liste",
+      "created": "Liste „{{n}}\" angelegt.",
+      "createErr": "Liste konnte nicht angelegt werden (Name schon vergeben?).",
+      "linkCopied": "Anmelde-Link kopiert: {{u}}",
+      "actions": "Automation & Anmeldung",
+      "automation": "Automation",
+      "automationTip": "Mail-/WhatsApp-Automation für diese Liste",
+      "link": "Anmelde-Link",
+      "linkTip": "Öffentlichen Anmelde-Link kopieren"
     },
     "inbox": {
       "title": "Posteingang",
@@ -3680,6 +3691,31 @@
       "created": "✓ Buchungslink angelegt",
       "updated": "✓ Buchungslink aktualisiert",
       "saving": "Speichere…"
+    },
+    "seq": {
+      "title": "Automation",
+      "forList": "Liste",
+      "enrolled": "{{n}} eingeschrieben",
+      "name": "Name der Automation",
+      "activeLabel": "Aktiv",
+      "hint": "Diese Nachrichten gehen automatisch raus, sobald jemand seine Anmeldung bestätigt. Platzhalter {{vorname}} wird durch den Vornamen ersetzt.",
+      "step": "Schritt",
+      "after": "Nach",
+      "channel": "Kanal",
+      "immediate": "0 = sofort nach der Bestätigung",
+      "email": "E-Mail",
+      "whatsapp": "WhatsApp",
+      "both": "E-Mail + WhatsApp",
+      "minutes": "Minuten",
+      "hours": "Stunden",
+      "days": "Tage",
+      "subject": "Betreff der E-Mail",
+      "emailBody": "Text der E-Mail … (HTML erlaubt)",
+      "waText": "WhatsApp-Text …",
+      "waImage": "Bild-URL (optional)",
+      "addStep": "Schritt hinzufügen",
+      "loadErr": "Konnte die Automation nicht laden.",
+      "saveErr": "Speichern fehlgeschlagen."
     }
   },
   "docs": {

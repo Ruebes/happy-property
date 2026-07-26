@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
+import SequenceEditor from '../../../../components/crm/SequenceEditor'
 
 // ── Empfängerlisten ─────────────────────────────────────────────────────────────
 // Die Adressen aus Klaviyo (Webinar-Anmeldungen, Leadmagneten, Newsletter) liegen
@@ -29,8 +30,32 @@ export default function NewsletterLists() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState('')
+  const [seqFor, setSeqFor] = useState<{ id: string; name: string } | null>(null)
+  const [newName, setNewName] = useState('')
+  const [creating, setCreating] = useState(false)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 5000) }
+
+  const createList = async () => {
+    const name = newName.trim()
+    if (!name) return
+    setCreating(true)
+    try {
+      const { error } = await supabase.from('newsletter_lists').insert({ name, source: 'manual', active: true })
+      if (error) throw error
+      setNewName(''); await fetchAll()
+      showToast(t('crm.lists.created', 'Liste „{{n}}" angelegt.', { n: name }))
+    } catch (err) {
+      console.error('[NewsletterLists] createList:', err)
+      showToast(t('crm.lists.createErr', 'Liste konnte nicht angelegt werden (Name schon vergeben?).'))
+    } finally { setCreating(false) }
+  }
+
+  const copySignupLink = async (name: string) => {
+    const url = `${window.location.origin}/anmelden?list=${encodeURIComponent(name)}&phone=1`
+    try { await navigator.clipboard.writeText(url); showToast(t('crm.lists.linkCopied', 'Anmelde-Link kopiert: {{u}}', { u: url })) }
+    catch { showToast(url) }
+  }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
@@ -111,6 +136,19 @@ export default function NewsletterLists() {
           </div>
         </div>
 
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-end gap-2 flex-wrap">
+          <div className="flex-1 min-w-[220px]">
+            <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.lists.newList', 'Eigene Liste anlegen')}</label>
+            <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void createList() }}
+              placeholder={t('crm.lists.newListPh', 'z. B. Rendite-Rechner Leads')}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400" />
+          </div>
+          <button onClick={() => void createList()} disabled={creating || !newName.trim()}
+            className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+            {creating ? t('common.saving', 'lädt …') : t('crm.lists.add', '+ Liste')}
+          </button>
+        </div>
+
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
         ) : rows.length === 0 ? (
@@ -126,7 +164,7 @@ export default function NewsletterLists() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {[t('crm.lists.name', 'Liste'), t('crm.lists.count', 'Adressen'), t('crm.lists.lastSync', 'Zuletzt geholt'), t('crm.lists.active', 'Für Newsletter')].map(c => (
+                    {[t('crm.lists.name', 'Liste'), t('crm.lists.count', 'Adressen'), t('crm.lists.lastSync', 'Zuletzt geholt'), t('crm.lists.active', 'Für Newsletter'), t('crm.lists.actions', 'Automation & Anmeldung')].map(c => (
                       <th key={c} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{c}</th>
                     ))}
                   </tr>
@@ -148,6 +186,18 @@ export default function NewsletterLists() {
                           <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-all ${r.active ? 'left-5' : 'left-0.5'}`} />
                         </button>
                       </td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1.5">
+                          <button onClick={() => setSeqFor({ id: r.id, name: r.name })}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50" title={t('crm.lists.automationTip', 'Mail-/WhatsApp-Automation für diese Liste')}>
+                            ⚙️ {t('crm.lists.automation', 'Automation')}
+                          </button>
+                          <button onClick={() => void copySignupLink(r.name)}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50" title={t('crm.lists.linkTip', 'Öffentlichen Anmelde-Link kopieren')}>
+                            🔗 {t('crm.lists.link', 'Anmelde-Link')}
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -159,6 +209,7 @@ export default function NewsletterLists() {
           </>
         )}
       </div>
+      {seqFor && <SequenceEditor listId={seqFor.id} listName={seqFor.name} onClose={() => setSeqFor(null)} />}
     </DashboardLayout>
   )
 }

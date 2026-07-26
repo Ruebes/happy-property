@@ -106,11 +106,14 @@ async function resolveSubscriber(
   subscriberId: string,
 ): Promise<{ email: string | null; phone: string | null; language: string }> {
   const { data } = await supabase.from('newsletter_subscribers')
-    .select('email, optout_at').eq('id', subscriberId).maybeSingle()
-  const s = data as { email: string | null; optout_at: string | null } | null
+    .select('email, phone, optout_at, properties').eq('id', subscriberId).maybeSingle()
+  const s = data as { email: string | null; phone: string | null; optout_at: string | null; properties: Record<string, unknown> | null } | null
   // Abmeldung nach dem Einplanen: hier nochmal pruefen, sonst geht die Mail raus.
   if (!s || s.optout_at) return { email: null, phone: null, language: 'de' }
-  return { email: s.email, phone: null, language: 'de' }
+  // Sprache aus properties (Anmelde-Strecke schreibt sie dort), sonst DE.
+  const lang = s.properties?.lang === 'en' ? 'en' : 'de'
+  // Telefon ermöglicht Listen-WhatsApp (früher hart null → WhatsApp an Abonnenten blockiert).
+  return { email: s.email, phone: s.phone ?? null, language: lang }
 }
 
 // ── Empfänger auflösen ────────────────────────────────────────────────────────

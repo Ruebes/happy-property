@@ -19,6 +19,7 @@ const Rechnung = lazy(() => import('./pages/Rechnung'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
+const Anmelden = lazy(() => import('./pages/Anmelden'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
 const Zusage = lazy(() => import('./pages/Zusage'))
@@ -115,6 +116,7 @@ export default function App() {
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />
+            <Route path="/anmelden" element={<Anmelden />} />
             <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
             {/* Öffentliche Newsletter-Abmeldung (per Token, kein Login) */}
             <Route path="/abmelden" element={<Abmelden />} />

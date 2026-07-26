@@ -3408,7 +3408,18 @@
       "syncedN": "{{n}} new addresses imported.",
       "syncedPartly": "{{n}} new addresses. {{f}} list(s) failed: {{msg}}",
       "ariaActive": "active",
-      "ariaInactive": "inactive"
+      "ariaInactive": "inactive",
+      "newList": "Create your own list",
+      "newListPh": "e.g. Yield-Calculator leads",
+      "add": "+ List",
+      "created": "List “{{n}}” created.",
+      "createErr": "Could not create list (name already taken?).",
+      "linkCopied": "Sign-up link copied: {{u}}",
+      "actions": "Automation & sign-up",
+      "automation": "Automation",
+      "automationTip": "Email/WhatsApp automation for this list",
+      "link": "Sign-up link",
+      "linkTip": "Copy the public sign-up link"
     },
     "inbox": {
       "title": "Inbox",
@@ -3680,6 +3691,31 @@
       "created": "✓ Booking link created",
       "updated": "✓ Booking link updated",
       "saving": "Saving…"
+    },
+    "seq": {
+      "title": "Automation",
+      "forList": "List",
+      "enrolled": "{{n}} enrolled",
+      "name": "Automation name",
+      "activeLabel": "Active",
+      "hint": "These messages go out automatically as soon as someone confirms their sign-up. The placeholder {{vorname}} is replaced with the first name.",
+      "step": "Step",
+      "after": "After",
+      "channel": "Channel",
+      "immediate": "0 = immediately after confirmation",
+      "email": "Email",
+      "whatsapp": "WhatsApp",
+      "both": "Email + WhatsApp",
+      "minutes": "minutes",
+      "hours": "hours",
+      "days": "days",
+      "subject": "Email subject",
+      "emailBody": "Email text … (HTML allowed)",
+      "waText": "WhatsApp text …",
+      "waImage": "Image URL (optional)",
+      "addStep": "Add step",
+      "loadErr": "Could not load the automation.",
+      "saveErr": "Saving failed."
     }
   },
   "docs": {
