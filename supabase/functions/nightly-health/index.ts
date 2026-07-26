@@ -166,6 +166,9 @@ const checkEmptyPortals: Check = {
       .select('id, full_name, email').eq('role', 'eigentuemer').eq('is_active', true)
     const out: Finding[] = []
     for (const o of (owners ?? []) as Array<Record<string, unknown>>) {
+      // Test-Konten (Name/E-Mail enthält „test") sind kein echter Fehler → überspringen.
+      const label = `${o.full_name ?? ''} ${o.email ?? ''}`.toLowerCase()
+      if (/\btest\b|test tester|@example\./.test(label)) continue
       const { count } = await sb.from('properties')
         .select('id', { count: 'exact', head: true }).eq('owner_id', o.id as string)
       if ((count ?? 0) > 0) continue
@@ -369,19 +372,23 @@ const CHECKS: Check[] = [
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────
-function buildReport(fixed: Finding[], open: Finding[], datum: string): { subject: string; html: string } {
+function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: boolean): { subject: string; html: string } {
   const li = (f: Finding) => `
     <tr><td style="padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#374151;">
       <strong style="color:#111827;">${f.entity_label || ''}</strong><br>
       ${f.what_plain}
       ${f.fix_plain ? `<br><span style="color:#6b7280;">→ ${f.fix_plain}</span>` : ''}
     </td></tr>`
-  const subject = open.length
-    ? `Systemcheck ${datum}: ${fixed.length} automatisch behoben, ${open.length} zur Ansicht`
-    : `Systemcheck ${datum}: alles in Ordnung${fixed.length ? ` (${fixed.length} automatisch behoben)` : ''}`
+  const total = fixed.length + open.length
+  const subject = dryRun
+    ? (total ? `Systemcheck ${datum}: ${total} Dinge gefunden (Beobachtungsmodus)` : `Systemcheck ${datum}: alles in Ordnung`)
+    : open.length
+      ? `Systemcheck ${datum}: ${fixed.length} automatisch behoben, ${open.length} zur Ansicht`
+      : `Systemcheck ${datum}: alles in Ordnung${fixed.length ? ` (${fixed.length} automatisch behoben)` : ''}`
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1f2937;">
     <p style="font-size:15px;">Guten Morgen Sven,</p>
     <p style="font-size:15px;">hier der nächtliche Systemcheck (Daten, Verlinkungen, Automatiken und hängende Vorgänge) vom ${datum}.</p>
+    ${dryRun ? `<p style="font-size:13px;color:#6b7280;background:#f3f4f6;border-radius:10px;padding:10px 12px;">ℹ️ Ich laufe noch im <strong>Beobachtungsmodus</strong>: Ich verändere nichts von allein, sondern zeige dir nur, was mir auffällt. Sobald du mir grünes Licht gibst, behebe ich die eindeutigen Dinge selbst.</p>` : ''}
     ${fixed.length ? `
       <h3 style="font-size:16px;color:#111827;margin:24px 0 8px;">✅ Das habe ich selbst repariert (${fixed.length})</h3>
       <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Nur Dinge, bei denen es genau eine richtige Antwort gibt. Alles ist protokolliert und umkehrbar.</p>
@@ -405,7 +412,9 @@ Deno.serve(async (req) => {
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const body = await req.json().catch(() => ({})) as { dry_run?: boolean; notify?: boolean }
-  const dryRun = body.dry_run !== false ? body.dry_run === true : false
+  // Sicherheits-Default: Beobachtungsmodus. Nur ein EXPLIZITES dry_run:false schärft
+  // die Auto-Fixes scharf (Svens Go). Fehlt das Flag, wird NICHTS verändert.
+  const dryRun = body.dry_run !== false
   const notify = body.notify !== false
 
   const { data: run } = await sb.from('health_runs').insert({}).select('id').single()
@@ -437,9 +446,11 @@ Deno.serve(async (req) => {
     }).eq('id', runId)
   }
 
-  if (notify && !dryRun) {
+  // Morgenmail geht IMMER raus (auch im Beobachtungsmodus) — Sven will jeden Morgen
+  // sehen, was gefunden wurde. Im dry_run steht alles unter „ansehen", nichts verändert.
+  if (notify) {
     const datum = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: 'long', year: 'numeric' })
-    const { subject, html } = buildReport(fixed, open, datum)
+    const { subject, html } = buildReport(fixed, open, datum, dryRun)
     await sb.functions.invoke('send-email', {
       body: { to: Deno.env.get('HEALTH_REPORT_TO') ?? 'sven@happy-property.com', subject, html },
     }).catch((e: unknown) => console.warn('[nightly-health] Mail:', e))
