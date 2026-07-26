@@ -18,25 +18,24 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
-const SYSTEM = `Du bist ein hochpräziser Redakteur für ein bestehendes Sales-Deck (geordnete Block-Liste) von Happy Property Cyprus. Du führst die ANWEISUNG des Nutzers aus und gibst über das Tool emit_deck die KOMPLETTE Block-Liste zurück.
+const SYSTEM = `Du bist ein hochpräziser Redakteur für ein bestehendes Sales-Deck (geordnete, INDIZIERTE Block-Liste, Index ab 0) von Happy Property Cyprus. Du führst die ANWEISUNG des Nutzers aus und gibst über das Tool emit_edits NUR die ÄNDERUNGEN zurück — NIEMALS das ganze Deck.
 
-OBERSTES PRINZIP — CHIRURGISCH ARBEITEN (das ist die wichtigste Regel):
-- Ändere AUSSCHLIESSLICH das, was die Anweisung ausdrücklich verlangt. Jeder andere Block und jedes nicht betroffene Feld wird 1:1 UNVERÄNDERT zurückgegeben — Wort für Wort, gleiche Zeichensetzung, gleiche Reihenfolge, gleiche Bilder.
-- „Verbessere", glätte, straffe oder formuliere NICHTS um, was nicht ausdrücklich beanstandet wurde. Kein eigenmächtiges Umschreiben, kein „schöner machen". Wenn unklar ist, ob etwas gemeint ist: NICHT anfassen.
-- Betrifft die Anweisung nur einen Block oder ein Feld, bleibt der komplette Rest des Decks exakt identisch (byte-genau). Der Nutzer erwartet, dass sich NUR das Angesprochene ändert.
-- Erfinde keine neuen Aussagen — keine Historie („schon immer", „wie besprochen" nur wenn wahr), keine Zahlen, keine Zusagen, die nicht in der Anweisung oder im bestehenden Deck stehen.
+OBERSTES PRINZIP — NUR DAS GEÄNDERTE AUSGEBEN (wichtigste Regel):
+- Gib in \`edits\` NUR die Blöcke zurück, die sich durch die Anweisung TATSÄCHLICH ändern — je mit ihrem \`index\` (Position im aktuellen Deck) und dem KOMPLETTEN neuen Block-Objekt. Alle anderen Blöcke übernimmt das System automatisch 1:1 unverändert — du darfst sie NICHT ausgeben.
+- An einem geänderten Block änderst du AUSSCHLIESSLICH die Felder, die die Anweisung verlangt; alle übrigen Felder dieses Blocks übernimmst du WORTGLEICH aus dem aktuellen Block (gleiche Bilder, gleiche URLs, gleiche Zeichensetzung).
+- „Verbessere"/glätte/straffe/formuliere NICHTS um, was nicht ausdrücklich beanstandet wurde. Im Zweifel: den Block NICHT in \`edits\` aufnehmen. Wenn die Anweisung nichts Konkretes ändert, gib leere \`edits\` zurück.
+- Strukturänderungen NUR wenn verlangt: \`remove\` = Indizes zu löschender Blöcke; \`insertAfter\` = neue Blöcke nach einem Index; \`append\` = neue Blöcke am Ende.
+- \`summary\`: EIN kurzer Satz, was du geändert hast (für die Anzeige an den Nutzer).
+- Erfinde keine neuen Aussagen — keine Historie, keine Zahlen, keine Zusagen, die nicht in der Anweisung oder im bestehenden Deck stehen.
 
-Wenn die Anweisung eine UMFORMULIERUNG/Kürzung verlangt: bearbeite NUR den genannten Teil, im vorhandenen Ton (Sven, du-Form, sachlich, hochwertig; keine Werbe-Floskeln, keine erfundene Nähe zum Kunden).
-
-WAHRHEIT & KONSISTENZ (immer, auch ungefragt beibehalten):
+WAHRHEIT & KONSISTENZ (immer beibehalten):
 - Keine garantierten Renditen/Mieten; keine erfundenen Käufer-Schutz- oder Zahlungs-Narrative.
 - Steuer nur sachlich: DBA-Anrechnungsmethode; 5 % degressive AfA für EU-Immobilien senkt das in Deutschland zu versteuernde Vermietungsergebnis. NIEMALS behaupten, Zyperns niedrigere Steuersätze seien der Vorteil.
 - Preis und Fließtext müssen konsistent bleiben (ist ein Möbelpaket im Preis, muss es auch im Text stehen — und umgekehrt).
 
 Technik:
-- Block-Typen + Felder beibehalten: cover/letter/unit/facts/columns/feature/gallery/benefits/inventory/floorplan/payment/cta/video. Beginne mit cover, dann letter; ende mit cta.
-- Der video-Block (Drohnen-/Meerblick-Video) trägt embedUrl ODER videoUrl (+ optional poster/caption) — diese Felder IMMER unverändert übernehmen, nie leeren oder erfinden. Text/Überschrift darfst du umformulieren; die URL nicht.
-- Bilder NUR aus der Liste VERFÜGBARE BILDER setzen (Feld image bzw. items[].image = eine dieser URLs). Keine erfundenen URLs. Der Lage/facts-Block: image = das Kartenbild (map), mapUrl = der Google-Maps-Link.
+- Bilder/Videos NUR aus der Liste VERFÜGBARE BILDER oder aus den bereits im Deck vorhandenen URLs. Erfinde NIEMALS eine URL — das System bricht sonst hart ab. embedUrl/videoUrl/poster/mapUrl unverändert lassen, außer die Anweisung verlangt ausdrücklich einen Tausch (dann eine erlaubte URL).
+- Block-Typen beibehalten (cover/letter/unit/facts/columns/feature/gallery/benefits/inventory/floorplan/payment/cta/video/marina).
 - KRITISCH: in ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze 'einfache' oder keine.
 - Beachte die GELERNTEN VORGABEN immer.`
 
@@ -80,7 +79,7 @@ Deno.serve(async (req: Request) => {
 
     // Die eigentliche KI-Arbeit (langsam, ~16k Tokens) — als Closure, damit sie
     // wahlweise synchron oder im Hintergrund (waitUntil) laufen kann.
-    const runRefine = async (): Promise<{ blocks?: number; error?: string }> => {
+    const runRefine = async (): Promise<{ blocks?: number; summary?: string; error?: string }> => {
       try {
         const blocks = (deck.content?.blocks) ?? deck.content ?? []
         // Verfügbare Bilder aus den Projekt-Assets (für Bild-Tausch)
@@ -104,7 +103,7 @@ Deno.serve(async (req: Request) => {
         const userMsg = [
           `GELERNTE VORGABEN (immer beachten):`, rulesTxt, ``,
           `VERFÜGBARE BILDER (nur diese URLs für Bilder verwenden):`, assetsTxt, ``,
-          `AKTUELLES DECK (Block-Liste als JSON):`, JSON.stringify(blocks), ``,
+          `AKTUELLES DECK (indizierte Block-Liste als JSON, Index = Position ab 0):`, JSON.stringify(blocks), ``,
           `ANWEISUNG DES NUTZERS:`, instruction!.trim(),
         ].join('\n')
 
@@ -113,41 +112,59 @@ Deno.serve(async (req: Request) => {
           headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
           body: JSON.stringify({
             model: 'claude-opus-4-8', max_tokens: 16000, system: SYSTEM,
-            tools: [{ name: 'emit_deck', description: 'Gibt die komplette, geänderte Block-Liste zurück.', input_schema: { type: 'object', properties: { blocks: { type: 'array', items: BLOCK_ITEM } }, required: ['blocks'] } }],
-            tool_choice: { type: 'tool', name: 'emit_deck' },
+            tools: [{ name: 'emit_edits', description: 'Gibt NUR die geänderten Blöcke (mit Index) + optionale Struktur-Operationen zurück. Unveränderte Blöcke NICHT ausgeben.', input_schema: { type: 'object', properties: {
+              edits: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
+              remove: { type: 'array', items: { type: 'integer' } },
+              insertAfter: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
+              append: { type: 'array', items: BLOCK_ITEM },
+              summary: { type: 'string' },
+            }, required: [] } }],
+            tool_choice: { type: 'tool', name: 'emit_edits' },
             messages: [{ role: 'user', content: userMsg }],
           }),
         })
-        const data = await res.json() as { content?: Array<{ type: string; input?: { blocks?: unknown[] } }>; error?: { message?: string } }
+        type Blk = Record<string, unknown>
+        const data = await res.json() as { content?: Array<{ type: string; input?: unknown }>; error?: { message?: string } }
         if (data.error) throw new Error(`Claude: ${data.error.message}`)
-        const tool = (data.content ?? []).find(c => c.type === 'tool_use')
-        const newBlocks = tool?.input?.blocks
-        if (!Array.isArray(newBlocks) || !newBlocks.length || !newBlocks.every(b => b && typeof (b as { type?: string }).type === 'string')) {
-          throw new Error('KI lieferte keine gültige Block-Liste')
+        const patch = (data.content ?? []).find(c => c.type === 'tool_use')?.input as {
+          edits?: Array<{ index: number; block: Blk }>; remove?: number[]
+          insertAfter?: Array<{ index: number; block: Blk }>; append?: Blk[]; summary?: string
+        } | undefined
+        if (!patch) throw new Error('KI lieferte keine Änderungen')
+        const edits = patch.edits ?? [], insAfter = patch.insertAfter ?? [], append = patch.append ?? [], remove = patch.remove ?? []
+        if (!edits.length && !insAfter.length && !append.length && !remove.length) {
+          throw new Error('Keine Änderung erkannt — bitte die Anweisung präziser formulieren.')
         }
-        // Marina-Standard (Sven 2026-07): Der Deck-Chat darf die Marina-Sektion nicht
-        // verlieren. War sie im alten Deck und fehlt in den neuen Blöcken, wird sie aus
-        // dem alten Content übernommen — außer die Anweisung dreht sich selbst um die Marina.
+        // Jeder neu/geänderte Block braucht einen type-String.
+        const changed = [...edits.map(e => e.block), ...insAfter.map(x => x.block), ...append]
+        if (!changed.every(b => b && typeof (b as { type?: string }).type === 'string')) throw new Error('KI lieferte einen ungültigen Block')
+        // VERIFIKATION: keine erfundenen URLs. Jede URL in einem geänderten Block muss
+        // schon im alten Deck oder in den Projekt-Assets vorkommen — sonst harter Abbruch.
+        const urlRe = /https?:\/\/[^\s"'<>)\]]+/g
+        const allowed = new Set<string>([...(JSON.stringify(blocks).match(urlRe) ?? []), ...(assetsTxt.match(urlRe) ?? [])])
+        for (const b of changed) for (const u of (JSON.stringify(b).match(urlRe) ?? [])) {
+          if (!allowed.has(u)) throw new Error(`KI hat eine unbekannte Bild-/Video-URL verwendet (abgebrochen): ${u.slice(0, 90)}`)
+        }
+        // MERGE: unbeteiligte Blöcke bleiben BYTE-IDENTISCH (aus dem alten Content).
+        const oldBlocks = blocks as Blk[]
+        const removeSet = new Set(remove.filter(Number.isInteger))
+        const editMap = new Map<number, Blk>(); for (const e of edits) if (Number.isInteger(e.index)) editMap.set(e.index, e.block)
+        const insMap = new Map<number, Blk[]>(); for (const ia of insAfter) { if (!Number.isInteger(ia.index)) continue; const a = insMap.get(ia.index) ?? []; a.push(ia.block); insMap.set(ia.index, a) }
+        const newBlocks: Blk[] = []
+        for (let i = 0; i < oldBlocks.length; i++) {
+          if (removeSet.has(i)) continue
+          newBlocks.push(editMap.has(i) ? editMap.get(i)! : oldBlocks[i])
+          if (insMap.has(i)) newBlocks.push(...insMap.get(i)!)
+        }
+        for (const b of append) newBlocks.push(b)
+        if (!newBlocks.length) throw new Error('Ergebnis wäre leer — abgebrochen')
+        // Marina-Sicherheitsnetz: falls die Marina-Sektion versehentlich entfernt wurde
+        // (nur bei Struktur-Ops möglich) und die Anweisung nicht um die Marina geht → zurückholen.
         if (!/marina/i.test(instruction!)) {
-          type Blk = Record<string, unknown>
-          const nb = newBlocks as Blk[]
-          const oldBlocks = ((deck.content as { blocks?: Blk[] })?.blocks ?? [])
-          const isMarinaFeature = (b: Blk) => b.type !== 'marina' &&
-            /paphos-marina|marina/i.test(String(b.kicker ?? '') + ' ' + String(b.headline ?? ''))
-          const anchor = () => {
-            const mf = nb.findIndex(isMarinaFeature)
-            if (mf >= 0) return mf + 1
-            const fi = nb.findIndex(b => b.type === 'facts')
-            return fi >= 0 ? fi + 1 : Math.max(nb.length - 1, 0)
-          }
-          if (!nb.some(isMarinaFeature)) {
-            const oldFeat = oldBlocks.find(isMarinaFeature)
-            if (oldFeat) nb.splice(anchor(), 0, oldFeat)
-          }
-          if (!nb.some(b => b.type === 'marina')) {
-            const oldSchema = oldBlocks.find(b => b.type === 'marina')
-            if (oldSchema) nb.splice(anchor(), 0, oldSchema)
-          }
+          const isMarinaFeature = (b: Blk) => b.type !== 'marina' && /paphos-marina|marina/i.test(String(b.kicker ?? '') + ' ' + String(b.headline ?? ''))
+          const anchor = () => { const fi = newBlocks.findIndex(b => b.type === 'facts'); return fi >= 0 ? fi + 1 : Math.max(newBlocks.length - 1, 0) }
+          if (!newBlocks.some(isMarinaFeature)) { const f = oldBlocks.find(isMarinaFeature); if (f) newBlocks.splice(anchor(), 0, f) }
+          if (!newBlocks.some(b => b.type === 'marina')) { const s = oldBlocks.find(b => b.type === 'marina'); if (s) newBlocks.splice(anchor(), 0, s) }
         }
         // Fertig: Content tauschen, revision hochzählen (Farbwechsel im CRM), refining aus.
         await supabase.from('sales_decks').update({
@@ -165,7 +182,7 @@ Deno.serve(async (req: Request) => {
             rule: instruction!.trim(),
           })
         }
-        return { blocks: newBlocks.length }
+        return { blocks: newBlocks.length, summary: patch.summary }
       } catch (e) {
         // Fehler festhalten + refining lösen, damit das CRM den Spinner beendet + Fehler zeigt.
         await supabase.from('sales_decks').update({ refining: false, refine_error: (e as Error).message }).eq('token', token)
@@ -184,7 +201,7 @@ Deno.serve(async (req: Request) => {
     // ── Synchron (Fallback/kurze Calls) ──
     const out = await runRefine()
     if (out.error) return json({ error: out.error }, 502)
-    return json({ ok: true, blocks: out.blocks, learned: !!learn })
+    return json({ ok: true, blocks: out.blocks, summary: out.summary, learned: !!learn })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }
