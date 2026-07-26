@@ -2128,7 +2128,8 @@
         "refineBusy": "KI passt an…",
         "refineApply": "Anwenden",
         "refineUndo": "Rückgängig",
-        "refineLearn": "Für alle Decks merken"
+        "refineLearn": "Für alle Decks merken",
+        "refineChat": "Deck per Chat anpassen"
       },
       "saveTimeout": "Timeout – Verbindung zu langsam. Bitte erneut versuchen.",
       "unknownError": "Unbekannter Fehler",
@@ -4551,16 +4552,18 @@
   },
   "deckChat": {
     "title": "Deck anpassen",
-    "instructions": "Sag der KI in eigenen Worten, was geändert werden soll — z.B. „Titelbild gegen das Pool-Bild tauschen\", „Einleitung kürzer und persönlicher\", „Zahlungsplan weiter nach oben\", „den Absatz zur 5-Jahres-Garantie betonen\". Der Link bleibt gleich.",
-    "inputPlaceholder": "Was soll am Deck geändert werden?",
-    "rememberForAll": "Für alle künftigen Decks merken",
-    "backgroundHint": "Läuft im Hintergrund — du kannst direkt das nächste Deck prüfen. Sobald fertig, wechselt die Farbe des Deck-Buttons in der Angebots-Liste.",
-    "openDeck": "Deck öffnen",
-    "undo": "Rückgängig",
-    "starting": "Wird gestartet…",
-    "apply": "Anwenden",
+    "openDeck": "Deck in neuem Tab öffnen",
+    "greeting": "Was soll ich am Deck ändern? Schreib’s mir einfach — z.B. „Titelbild gegen das Pool-Bild tauschen\", „Einleitung kürzer und persönlicher\" oder „Zahlungsplan weiter nach oben\". Der Link bleibt gleich.",
+    "thinking": "denkt nach",
+    "failed": "Das hat nicht geklappt: {{e}}",
+    "doneGeneric": "Erledigt ✓ Ich habe das Deck angepasst.",
+    "timeout": "Zeitüberschreitung — bitte im Deck nachsehen.",
     "error": "Fehler",
-    "undoSuccess": "Rückgängig gemacht — Deck-Link neu laden zum Ansehen."
+    "undoSuccess": "↶ Letzte Änderung rückgängig gemacht.",
+    "undo": "Letzte Änderung rückgängig",
+    "inputPlaceholder": "Nachricht schreiben … (Enter zum Senden)",
+    "send": "Senden",
+    "rememberForAll": "Für alle künftigen Decks dieses Projekts merken"
   },
   "postausgang": {
     "calcLoadFail": "Berechnung konnte nicht geladen werden",

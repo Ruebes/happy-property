@@ -170,6 +170,8 @@ Deno.serve(async (req: Request) => {
         await supabase.from('sales_decks').update({
           prev_content: deck.content, content: { blocks: newBlocks },
           revision: ((deck.revision as number) ?? 0) + 1, refining: false, refine_error: null,
+          // Natürlichsprachige Antwort für das Chat-Fenster (was wurde geändert).
+          refine_summary: patch.summary ?? null,
         }).eq('token', token)
         if (learn && instruction!.trim()) {
           // Korrektur auf das PROJEKT dieses Decks scopen — eine Deck-Chat-Korrektur betrifft
@@ -192,7 +194,8 @@ Deno.serve(async (req: Request) => {
 
     // ── Hintergrund: sofort antworten, Arbeit detached ──
     if (background) {
-      await supabase.from('sales_decks').update({ refining: true, refine_error: null }).eq('token', token)
+      // refine_summary vor dem Lauf leeren, damit der Chat nicht die vorige Antwort liest.
+      await supabase.from('sales_decks').update({ refining: true, refine_error: null, refine_summary: null }).eq('token', token)
       if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(runRefine())
       else void runRefine()
       return json({ ok: true, background: true })

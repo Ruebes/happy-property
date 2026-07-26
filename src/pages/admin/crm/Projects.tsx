@@ -9,6 +9,7 @@ import { CustomSelect } from '../../../components/CustomSelect'
 import { NumberStepper } from '../../../components/NumberStepper'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 import UnitImagesUploader from '../../../components/crm/UnitImagesUploader'
+import DeckChat from '../../../components/crm/DeckChat'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -190,10 +191,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
   // ── Generisches Projekt-Deck erzeugen (neutral, für Zoom) ─────────────────────
   const [deckBusy, setDeckBusy] = useState(false)
   const [deckMsg, setDeckMsg]   = useState<{ ok: boolean; text: string; token?: string } | null>(null)
-  const [refineInput, setRefineInput] = useState('')
-  const [refineBusy,  setRefineBusy]  = useState(false)
-  const [refineLearn, setRefineLearn] = useState(false)
-  const [refineMsg,   setRefineMsg]   = useState<{ ok: boolean; text: string } | null>(null)
+  const [deckChatToken, setDeckChatToken] = useState<string | null>(null)
   const runGenericDeck = async () => {
     if (!project?.id) return
     setDeckBusy(true)
@@ -232,45 +230,6 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     }
   }
 
-  // Deck-Feinschliff: Freitext-Anweisung an die KI (Token bleibt stabil) bzw. Undo
-  const runRefine = async (undo = false) => {
-    const token = deckMsg?.token ?? project?.deck_token
-    if (!token || refineBusy) return
-    if (!undo && !refineInput.trim()) return
-    setRefineBusy(true); setRefineMsg(null)
-    try {
-      if (undo) {
-        const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, action: 'undo' } })
-        if (error) throw new Error(error.message)
-        const d = data as { error?: string }
-        if (d?.error) throw new Error(d.error)
-        setRefineMsg({ ok: true, text: t('crm.project.deck.refineUndone', 'Letzte Änderung rückgängig gemacht.') })
-      } else {
-        // Hintergrund-Lauf (sonst Edge-Timeout „Failed to send a request") → auf Fertig pollen.
-        const learnedNow = refineLearn
-        const { data, error } = await supabase.functions.invoke('refine-deck', { body: { token, instruction: refineInput.trim(), learn: refineLearn, background: true } })
-        if (error) throw new Error(error.message)
-        const d = data as { error?: string }
-        if (d?.error) throw new Error(d.error)
-        setRefineInput('')
-        setRefineMsg({ ok: true, text: '⏳ ' + t('crm.project.deck.refineRunning', 'Wird im Hintergrund angepasst…') })
-        for (let i = 0; i < 45; i++) {
-          await new Promise(r => setTimeout(r, 4000))
-          const { data: row } = await supabase.from('sales_decks').select('refining, refine_error').eq('token', token).maybeSingle()
-          const r2 = row as { refining?: boolean; refine_error?: string | null } | null
-          if (!r2 || r2.refining === false) {
-            if (r2?.refine_error) throw new Error(r2.refine_error)
-            setRefineMsg({ ok: true, text: t('crm.project.deck.refineDone', '✅ Deck angepasst — Deck neu öffnen zum Prüfen.') + (learnedNow ? ' (gemerkt für alle Decks)' : '') })
-            break
-          }
-        }
-      }
-    } catch (e) {
-      setRefineMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.genericError', 'Fehler') })
-    } finally {
-      setRefineBusy(false)
-    }
-  }
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const up = (k: keyof ProjectForm, v: string) => setForm(prev => ({ ...prev, [k]: v }))
@@ -803,31 +762,14 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                       <p className={`text-xs mt-2 rounded-lg px-3 py-2 ${deckMsg.ok ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>{deckMsg.text}</p>
                     )}
 
-                    {/* Deck-Feinschliff (KI) — nur wenn ein Deck existiert */}
+                    {/* Deck-Feinschliff per Chat — nur wenn ein Deck existiert */}
                     {(deckMsg?.token || project.deck_token) && (
                       <div className="mt-3 border-t border-gray-100 pt-3">
-                        <label className="block text-xs font-semibold text-gray-700 mb-1">💬 {t('crm.project.deck.refineTitle', 'Deck-Feinschliff (KI)')}</label>
-                        <p className="text-[11px] text-gray-400 mb-1.5">{t('crm.project.deck.refineHint', 'Sag, was geändert werden soll — z.B. „Karte als eigene Kachel", „Titelbild aufs Pool-Foto", „Einleitung kürzer".')}</p>
-                        <textarea rows={2} value={refineInput} onChange={e => setRefineInput(e.target.value)} disabled={refineBusy}
-                          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 resize-y disabled:opacity-50"
-                          placeholder={t('crm.project.deck.refinePh', 'Änderung beschreiben…')} />
-                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                          <button type="button" onClick={() => runRefine(false)} disabled={refineBusy || !refineInput.trim()}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-                            {refineBusy ? t('crm.project.deck.refineBusy', 'KI passt an…') : t('crm.project.deck.refineApply', 'Anwenden')}
-                          </button>
-                          <button type="button" onClick={() => runRefine(true)} disabled={refineBusy}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40">
-                            ↩ {t('crm.project.deck.refineUndo', 'Rückgängig')}
-                          </button>
-                          <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-                            <input type="checkbox" checked={refineLearn} onChange={e => setRefineLearn(e.target.checked)} className="w-3.5 h-3.5 accent-orange-500" />
-                            {t('crm.project.deck.refineLearn', 'Für alle Decks merken')}
-                          </label>
-                        </div>
-                        {refineMsg && (
-                          <p className={`text-xs mt-2 rounded-lg px-3 py-2 ${refineMsg.ok ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>{refineMsg.text}</p>
-                        )}
+                        <button type="button" onClick={() => setDeckChatToken(deckMsg?.token ?? project.deck_token ?? null)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-white" style={{ backgroundColor: '#ff795d' }}>
+                          💬 {t('crm.project.deck.refineChat', 'Deck per Chat anpassen')}
+                        </button>
+                        <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.project.deck.refineHint', 'Sag, was geändert werden soll — z.B. „Karte als eigene Kachel", „Titelbild aufs Pool-Foto", „Einleitung kürzer".')}</p>
                       </div>
                     )}
                   </div>
@@ -883,6 +825,9 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           </div>
         </div>
       </div>
+      {deckChatToken && (
+        <DeckChat token={deckChatToken} onClose={() => setDeckChatToken(null)} />
+      )}
     </div>
   )
 }

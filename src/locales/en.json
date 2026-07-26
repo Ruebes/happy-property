@@ -2128,7 +2128,8 @@
         "refineBusy": "AI is adjusting…",
         "refineApply": "Apply",
         "refineUndo": "Undo",
-        "refineLearn": "Remember for all decks"
+        "refineLearn": "Remember for all decks",
+        "refineChat": "Edit deck via chat"
       },
       "saveTimeout": "Timeout – connection too slow. Please try again.",
       "unknownError": "Unknown error",
@@ -4551,16 +4552,18 @@
   },
   "deckChat": {
     "title": "Edit deck",
-    "instructions": "Tell the AI in your own words what should change — e.g. \"swap the cover photo for the pool photo\", \"make the intro shorter and more personal\", \"move the payment plan further up\", \"emphasize the paragraph on the 5-year guarantee\". The link stays the same.",
-    "inputPlaceholder": "What should change on the deck?",
-    "rememberForAll": "Remember for all future decks",
-    "backgroundHint": "Runs in the background — you can review the next deck right away. Once done, the deck button changes color in the offer list.",
-    "openDeck": "Open deck",
-    "undo": "Undo",
-    "starting": "Starting…",
-    "apply": "Apply",
+    "openDeck": "Open deck in new tab",
+    "greeting": "What should I change on the deck? Just tell me — e.g. “swap the cover for the pool photo”, “make the intro shorter and more personal” or “move the payment plan further up”. The link stays the same.",
+    "thinking": "thinking",
+    "failed": "That didn’t work: {{e}}",
+    "doneGeneric": "Done ✓ I’ve updated the deck.",
+    "timeout": "Timed out — please check the deck.",
     "error": "Error",
-    "undoSuccess": "Undone — reload the deck link to see the change."
+    "undoSuccess": "↶ Reverted the last change.",
+    "undo": "Undo last change",
+    "inputPlaceholder": "Write a message … (Enter to send)",
+    "send": "Send",
+    "rememberForAll": "Remember for all future decks of this project"
   },
   "postausgang": {
     "calcLoadFail": "Failed to load calculation",
