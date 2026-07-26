@@ -223,9 +223,149 @@ const checkStuckMessages: Check = {
   },
 }
 
+// ── Prüfung 7: Automatik verweist auf eine gelöschte/inaktive Vorlage ───────
+// Verlinkungs-Check: eine aktive Regel ohne existierende Vorlage sendet still nichts.
+const checkBrokenAutomationLinks: Check = {
+  key: 'automatik_vorlage_fehlt',
+  title: 'Automatik verweist auf eine fehlende Vorlage',
+  run: async (sb) => {
+    const { data: rules } = await sb.from('automation_rules')
+      .select('id, name, message_type, email_template_id, whatsapp_event_type').eq('is_active', true)
+    const out: Finding[] = []
+    for (const r of (rules ?? []) as Array<Record<string, unknown>>) {
+      const mt = String(r.message_type ?? '')
+      if ((mt === 'email' || mt === 'both') && r.email_template_id) {
+        const { data: tpl } = await sb.from('email_templates').select('id').eq('id', r.email_template_id as string).maybeSingle()
+        if (!tpl) out.push({
+          check_key: 'automatik_vorlage_fehlt', severity: 'hoch', entity_kind: 'automatik', entity_id: String(r.id), entity_label: String(r.name ?? ''),
+          what_plain: `Die Automatik „${r.name}" soll eine E-Mail verschicken, aber die hinterlegte Mail-Vorlage gibt es nicht mehr — die Mail geht dadurch nicht raus.`,
+          action: 'proposed', fix_plain: 'Im Nachrichten-Editor eine gültige Vorlage zuweisen, dann läuft die Automatik wieder.',
+        })
+      }
+      if ((mt === 'whatsapp' || mt === 'both') && r.whatsapp_event_type) {
+        const { data: tpl } = await sb.from('whatsapp_templates').select('id').eq('event_type', r.whatsapp_event_type as string).eq('active', true).maybeSingle()
+        if (!tpl) out.push({
+          check_key: 'automatik_vorlage_fehlt', severity: 'hoch', entity_kind: 'automatik', entity_id: String(r.id), entity_label: String(r.name ?? ''),
+          what_plain: `Die Automatik „${r.name}" soll eine WhatsApp verschicken, aber die passende WhatsApp-Vorlage fehlt oder ist ausgeschaltet — die Nachricht geht nicht raus.`,
+          action: 'proposed', fix_plain: 'Die passende WhatsApp-Vorlage anlegen bzw. aktivieren.',
+        })
+      }
+    }
+    return out
+  },
+}
+
+// ── Prüfung 8: Persönlicher Buchungslink zeigt ins Leere ────────────────────
+const checkBookingInviteTargets: Check = {
+  key: 'buchungslink_ziel_fehlt',
+  title: 'Persönlicher Buchungslink zeigt ins Leere',
+  run: async (sb) => {
+    const { data: inv } = await sb.from('booking_invites').select('token, guest_name, slug')
+    const out: Finding[] = []
+    for (const i of (inv ?? []) as Array<Record<string, unknown>>) {
+      const { data: link } = await sb.from('personal_booking_links').select('slug, active').eq('slug', i.slug as string).maybeSingle()
+      if (link && (link as { active?: boolean }).active) continue
+      out.push({
+        check_key: 'buchungslink_ziel_fehlt', severity: 'mittel', entity_kind: 'buchungslink', entity_id: String(i.token), entity_label: String(i.guest_name ?? i.token),
+        what_plain: `Der persönliche Buchungslink für ${i.guest_name ?? i.token} zeigt auf den Kalender „${i.slug}" — den gibt es nicht (mehr) oder er ist deaktiviert. Wer den Link öffnet, kann nicht buchen.`,
+        action: 'proposed', fix_plain: `Den Kalender „${i.slug}" wieder aktivieren oder den Link auf einen gültigen umstellen.`,
+      })
+    }
+    return out
+  },
+}
+
+// ── Prüfung 9: Abgemeldeter Kontakt hat noch geplante Nachrichten ───────────
+// AUTO-FIX: geplante Nachrichten an Abgemeldete stoppen (rechtlich + korrekt, umkehrbar).
+const checkOptoutStillScheduled: Check = {
+  key: 'abgemeldet_aber_geplant',
+  title: 'Abgemeldeter Kontakt hat noch geplante Nachrichten',
+  run: async (sb, dryRun) => {
+    const { data: outs } = await sb.from('communication_optouts').select('lead_id')
+    const ids = [...new Set(((outs ?? []) as Array<{ lead_id?: string }>).map(o => o.lead_id).filter(Boolean))] as string[]
+    const out: Finding[] = []
+    for (const lid of ids) {
+      const { data: pend } = await sb.from('scheduled_messages').select('id').eq('lead_id', lid).eq('status', 'pending')
+      const n = (pend ?? []).length
+      if (!n) continue
+      const { data: lead } = await sb.from('leads').select('first_name, last_name').eq('id', lid).maybeSingle()
+      const l = lead as { first_name?: string; last_name?: string } | null
+      const nm = l ? `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || lid.slice(0, 8) : lid.slice(0, 8)
+      if (!dryRun) await sb.from('scheduled_messages').update({ status: 'cancelled', error_message: 'Kontakt abgemeldet — Nachtcheck hat gestoppt' }).eq('lead_id', lid).eq('status', 'pending')
+      out.push({
+        check_key: 'abgemeldet_aber_geplant', severity: 'hoch', entity_kind: 'lead', entity_id: lid, entity_label: nm,
+        what_plain: `${nm} hat sich abgemeldet, es waren aber noch ${n} Nachricht(en) geplant — die hätten trotz Abmeldung rausgehen können.`,
+        action: dryRun ? 'proposed' : 'auto_fixed',
+        fix_plain: dryRun ? `Die ${n} geplante(n) Nachricht(en) würden gestoppt.` : `Die ${n} geplante(n) Nachricht(en) wurden gestoppt — der Kontakt bekommt nichts mehr.`,
+      })
+    }
+    return out
+  },
+}
+
+// ── Prüfung 10: Lead ohne jede Kontaktmöglichkeit ──────────────────────────
+const checkLeadsNoContact: Check = {
+  key: 'lead_ohne_kontakt',
+  title: 'Lead ohne jede Kontaktmöglichkeit',
+  run: async (sb) => {
+    const { data: leads } = await sb.from('leads').select('id, first_name, last_name, email').is('phone', null).is('whatsapp', null).limit(50)
+    const out: Finding[] = []
+    for (const l of (leads ?? []) as Array<Record<string, unknown>>) {
+      if (String(l.email ?? '').trim()) continue
+      const nm = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || String(l.id).slice(0, 8)
+      out.push({
+        check_key: 'lead_ohne_kontakt', severity: 'niedrig', entity_kind: 'lead', entity_id: String(l.id), entity_label: nm,
+        what_plain: `Der Lead ${nm} hat weder E-Mail noch Telefon/WhatsApp — er kann von uns gar nicht erreicht werden.`,
+        action: 'proposed', fix_plain: 'Kontaktdaten nachtragen oder den Lead archivieren.',
+      })
+    }
+    return out
+  },
+}
+
+// ── Prüfung 11: Deck-Bearbeitung hängt fest ────────────────────────────────
+// AUTO-FIX: hängenden refining-Zustand lösen (Edge-Abbruch ließ den Spinner ewig drehen).
+const checkStuckRefining: Check = {
+  key: 'deck_haengt_im_refine',
+  title: 'Deck-Bearbeitung hängt fest',
+  run: async (sb, dryRun) => {
+    const grenze = new Date(Date.now() - 30 * 60e3).toISOString()
+    const { data: decks } = await sb.from('sales_decks').select('token, recipient_name, updated_at').eq('refining', true).lt('updated_at', grenze).limit(20)
+    const out: Finding[] = []
+    for (const d of (decks ?? []) as Array<Record<string, unknown>>) {
+      if (!dryRun) await sb.from('sales_decks').update({ refining: false, refine_error: 'Nachtcheck: hängende Bearbeitung gelöst' }).eq('token', d.token as string)
+      out.push({
+        check_key: 'deck_haengt_im_refine', severity: 'mittel', entity_kind: 'deck', entity_id: String(d.token), entity_label: String(d.recipient_name ?? d.token),
+        what_plain: `Eine Deck-Bearbeitung für ${d.recipient_name ?? 'ein Deck'} hängt seit über 30 Minuten (der Bearbeiten-Spinner drehte endlos).`,
+        action: dryRun ? 'proposed' : 'auto_fixed',
+        fix_plain: dryRun ? 'Der hängende Zustand würde gelöst.' : 'Der hängende Zustand wurde gelöst — du kannst das Deck wieder bearbeiten.',
+      })
+    }
+    return out
+  },
+}
+
+// ── Prüfung 12: Zu viele globale Deck-Chat-Regeln (Poison-Akkumulation) ─────
+const checkDeckRuleBloat: Check = {
+  key: 'deck_regeln_zu_viele',
+  title: 'Zu viele globale Deck-Chat-Regeln',
+  run: async (sb) => {
+    const { count } = await sb.from('deck_ai_rules').select('id', { count: 'exact', head: true }).eq('scope', 'global').eq('active', true).eq('kind', 'deck')
+    const n = count ?? 0
+    if (n <= 25) return []
+    return [{
+      check_key: 'deck_regeln_zu_viele', severity: 'mittel', entity_kind: 'system', entity_label: 'Deck-Chat-Regeln',
+      what_plain: `Es haben sich ${n} globale Regeln für den Deck-Chat angesammelt. Zu viele (teils widersprüchliche) Regeln fließen in JEDES neue Deck ein und können Fehler verursachen.`,
+      action: 'proposed', fix_plain: 'Die Regel-Liste einmal durchsehen und veraltete/widersprüchliche entfernen — dann werden neue Decks wieder sauberer.',
+    }]
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
+  checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
+  checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────
@@ -241,7 +381,7 @@ function buildReport(fixed: Finding[], open: Finding[], datum: string): { subjec
     : `Systemcheck ${datum}: alles in Ordnung${fixed.length ? ` (${fixed.length} automatisch behoben)` : ''}`
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:0 auto;color:#1f2937;">
     <p style="font-size:15px;">Guten Morgen Sven,</p>
-    <p style="font-size:15px;">hier der nächtliche Systemcheck vom ${datum}.</p>
+    <p style="font-size:15px;">hier der nächtliche Systemcheck (Daten, Verlinkungen, Automatiken und hängende Vorgänge) vom ${datum}.</p>
     ${fixed.length ? `
       <h3 style="font-size:16px;color:#111827;margin:24px 0 8px;">✅ Das habe ich selbst repariert (${fixed.length})</h3>
       <p style="font-size:13px;color:#6b7280;margin:0 0 8px;">Nur Dinge, bei denen es genau eine richtige Antwort gibt. Alles ist protokolliert und umkehrbar.</p>
