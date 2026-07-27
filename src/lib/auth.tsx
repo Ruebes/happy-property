@@ -42,7 +42,7 @@ export type PermissionArea = 'pipeline' | 'funnel' | 'decks' | 'invoices' | 'con
   | 'werbung' | 'werbung_meta' | 'werbung_youtube' | 'werbung_google'
 export const PERMISSION_AREAS: { key: PermissionArea; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline & Leads' },
-  { key: 'funnel',   label: 'Funnel & Newsletter' },
+  { key: 'funnel',   label: 'Funnel, Newsletter & Empfängerlisten' },
   { key: 'decks',    label: 'Sales-Decks erstellen' },
   { key: 'invoices', label: 'Rechnungen' },
   { key: 'contacts', label: 'Kontakte' },

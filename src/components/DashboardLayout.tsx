@@ -122,7 +122,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
   ]
 
   // CRM-Einzel-Links oben: nur die täglichen Arbeits-Seiten (Sven) —
-  // alles andere wandert ins „Mehr"-Dropdown.
+  // alles andere (inkl. selbstgebaute Tools: Empfängerlisten, Buchungslinks …)
+  // wandert ins „Tools"-Dropdown.
   const crmTopItems = [
     { to: '/admin/crm/pipeline',      key: 'crm.nav.pipeline'   },
     { to: '/admin/crm/leads',         key: 'crm.nav.leads'      },
@@ -140,6 +141,8 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },
     { to: '/admin/crm/funnel-editor', key: 'crm.nav.funnelEditor' },
     { to: '/admin/crm/newsletter',    key: 'crm.nav.newsletter'   },
+    { to: '/admin/crm/settings/lists', key: 'crm.nav.lists'       },
+    { to: '/admin/crm/settings/booking-links', key: 'crm.nav.bookingLinks' },
   ]
 
   // Rolle 'funnel' (Legacy-Mitarbeiter): sieht NUR den Termin-Funnel.
@@ -163,6 +166,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/funnel',         key: 'crm.nav.funnel',      perm: 'funnel'   },
     { to: '/admin/crm/funnel-editor',  key: 'crm.nav.funnelEditor',perm: 'funnel'   },
     { to: '/admin/crm/newsletter',     key: 'crm.nav.newsletter',  perm: 'funnel'   },
+    { to: '/admin/crm/settings/lists', key: 'crm.nav.lists',       perm: 'funnel'   },
     { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
     { to: '/admin/crm/ads',            key: 'crm.nav.ads',         perm: 'werbung'  },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
@@ -183,7 +187,6 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },
     { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
     { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
-    { to: '/admin/crm/settings/booking-links', key: 'crm.nav.bookingLinks' },
     { to: '/admin/crm/settings/invoices',    key: 'crm.nav.invoiceSettings' },
     { to: '/admin/crm/settings',             key: 'crm.nav.developers'  },
   ]
@@ -288,7 +291,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
                     </Link>
                   ))}
 
-                  {/* Mehr (aufklappbar): Dashboard, Projekte, Rechnungen, Statistiken, Funnel */}
+                  {/* Tools (aufklappbar): Dashboard, Projekte, Rechnungen, Statistiken, Funnel, Newsletter, Empfängerlisten, Buchungslinks … */}
                   <div className="relative" ref={moreRef}>
                     <button
                       onClick={() => setMoreOpen(prev => !prev)}
@@ -300,7 +303,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
                       }`}
                       style={crmMoreItems.some(i => isActive(i.to)) ? { backgroundColor: '#ff795d' } : undefined}
                     >
-                      {t('crm.nav.more', 'Mehr')}
+                      {t('crm.nav.more', 'Tools')}
                       <svg
                         className={`w-3 h-3 mt-0.5 transition-transform duration-200 ${moreOpen ? 'rotate-180' : ''}`}
                         fill="none" stroke="currentColor" viewBox="0 0 24 24"

@@ -151,6 +151,7 @@ export default function App() {
               <Route path="/admin/crm/funnel"            element={<FunnelStats />} />
               <Route path="/admin/crm/funnel-editor"     element={<FunnelEditor />} />
               <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
+              <Route path="/admin/crm/settings/lists"    element={<CrmNewsletterLists />} />
             </Route>
 
             {/* ── CRM-Einstellungen (nur Admin/Verwalter) ── */}
@@ -176,7 +177,6 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="contacts" />}>
               <Route path="/admin/crm/settings/contacts"    element={<CrmContacts />} />
               <Route path="/admin/crm/settings/booking-links" element={<CrmBookingLinks />} />
-              <Route path="/admin/crm/settings/lists"       element={<CrmNewsletterLists />} />
             </Route>
 
             {/* ── Rechnungen (Recht 'invoices') ── */}

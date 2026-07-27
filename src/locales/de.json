@@ -1345,13 +1345,14 @@
       "calendar": "Kalender",
       "statistics": "Statistiken",
       "funnel": "Termin-Funnel",
-      "more": "Mehr",
+      "more": "Tools",
       "funnelEditor": "Funnel-Editor",
       "newsletter": "Newsletter",
       "tasks": "Aufgaben",
       "home": "Start",
       "ads": "Werbemanager",
-      "bookingLinks": "Buchungslinks"
+      "bookingLinks": "Buchungslinks",
+      "lists": "Empfängerlisten"
     },
     "tasks": {
       "title": "Aufgaben",
