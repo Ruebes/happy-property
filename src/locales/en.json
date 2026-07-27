@@ -3363,7 +3363,14 @@
       "tgNoAudiences": "No custom audiences in this ad account.",
       "tgPlacements": "Placements",
       "tgAutoPlacement": "Automatic — Meta distributes across all placements.",
-      "tgAdvantage": "Advantage+ audience (Meta may deliver beyond your selection)"
+      "tgAdvantage": "Advantage+ audience (Meta may deliver beyond your selection)",
+      "colStatus": "Status",
+      "stActive": "Active",
+      "stOffline": "Offline",
+      "stReview": "In review",
+      "stRejected": "Rejected",
+      "stDraft": "Draft",
+      "stArchived": "Archived"
     },
     "studio": {
       "title": "Ad studio (AI)",

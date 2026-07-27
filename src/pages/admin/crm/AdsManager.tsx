@@ -219,6 +219,19 @@ const META_LABELS: Record<string, string> = {
 }
 const metaLabel = (v: unknown): string => (v == null ? '–' : META_LABELS[String(v)] ?? String(v))
 
+// Status-Badge je Anzeige — Meta-Status auf Svens Kategorien (Aktiv / Offline /
+// Entwurf …) abbilden. Rückgabe: i18n-Key (k) + Fallback (d) + Tailwind-Klassen.
+const AD_STATUS_BADGE = (status: string | null | undefined): { k: string; d: string; cls: string } => {
+  const s = (status ?? '').toUpperCase()
+  if (s === 'ACTIVE') return { k: 'crm.ads.stActive', d: 'Aktiv', cls: 'bg-green-100 text-green-700' }
+  if (['PAUSED', 'CAMPAIGN_PAUSED', 'ADSET_PAUSED'].includes(s)) return { k: 'crm.ads.stOffline', d: 'Offline', cls: 'bg-gray-200 text-gray-600' }
+  if (['IN_PROCESS', 'PENDING_REVIEW', 'PENDING_BILLING_INFO'].includes(s)) return { k: 'crm.ads.stReview', d: 'In Prüfung', cls: 'bg-amber-100 text-amber-700' }
+  if (['DISAPPROVED', 'WITH_ISSUES'].includes(s)) return { k: 'crm.ads.stRejected', d: 'Abgelehnt', cls: 'bg-red-100 text-red-700' }
+  if (['DRAFT', 'PREAPPROVED'].includes(s)) return { k: 'crm.ads.stDraft', d: 'Entwurf', cls: 'bg-blue-100 text-blue-700' }
+  if (s === 'ARCHIVED') return { k: 'crm.ads.stArchived', d: 'Archiviert', cls: 'bg-gray-100 text-gray-500' }
+  return { k: '', d: s || '–', cls: 'bg-gray-100 text-gray-500' }
+}
+
 // Geldfelder kommen von Meta in Cent, werden aber in Dollar bearbeitet.
 const MONEY_FIELDS = new Set(['daily_budget', 'lifetime_budget', 'spend_cap', 'bid_amount'])
 const TIME_FIELDS  = new Set(['start_time', 'stop_time', 'end_time'])
@@ -1118,6 +1131,7 @@ export default function AdsManager() {
                   <thead>
                     <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-gray-100">
                       <th className="px-4 py-2 font-semibold">{t('crm.ads.colName', 'Kampagne / Anzeige')}</th>
+                      <th className="px-2 py-2 font-semibold">{t('crm.ads.colStatus', 'Status')}</th>
                       <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.kpiSpend', 'Ausgaben')}</th>
                       <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colImpressions', 'Impressionen')}</th>
                       <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colFrequency', 'Frequenz')}</th>
@@ -1155,6 +1169,18 @@ export default function AdsManager() {
                                 </button>
                               </span>
                             </td>
+                            <td className="px-2 py-2.5 whitespace-nowrap">
+                              {(() => {
+                                const act = adsOfCampaign.filter(ad => (ad.status ?? '').toUpperCase() === 'ACTIVE').length
+                                const off = adsOfCampaign.length - act
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    {act > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">{act} {t('crm.ads.stActive', 'Aktiv')}</span>}
+                                    {off > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">{off} {t('crm.ads.stOffline', 'Offline')}</span>}
+                                  </span>
+                                )
+                              })()}
+                            </td>
                             <td className="px-2 py-2.5 text-right tabular-nums font-semibold">{eur(a.spendEur)}</td>
                             <td className="px-2 py-2.5 text-right tabular-nums">{int(a.impressions)}</td>
                             <td className="px-2 py-2.5 text-right tabular-nums">{a.reach > 0 ? (a.impressions / a.reach).toLocaleString(locale, { maximumFractionDigits: 1 }) : '–'}</td>
@@ -1185,8 +1211,12 @@ export default function AdsManager() {
                                       className="px-1.5 py-0.5 rounded border border-gray-200 text-[11px] text-gray-500 hover:border-blue-400 hover:text-blue-600 shrink-0">
                                       👁 {t('crm.ads.previewBtn', 'Vorschau')}
                                     </button>
-                                    {ad.status !== 'ACTIVE' && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-500">{t('crm.ads.paused', 'pausiert')}</span>}
                                   </span>
+                                </td>
+                                <td className="px-2 py-2 whitespace-nowrap">
+                                  {(() => { const b = AD_STATUS_BADGE(ad.status); return (
+                                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${b.cls}`}>{b.k ? t(b.k, b.d) : b.d}</span>
+                                  ) })()}
                                 </td>
                                 <td className="px-2 py-2 text-right tabular-nums">{eur(x.spendEur)}</td>
                                 <td className="px-2 py-2 text-right tabular-nums">{int(x.impressions)}</td>
@@ -1226,7 +1256,7 @@ export default function AdsManager() {
                       )
                     })}
                     {campaignsSorted.length === 0 && (
-                      <tr><td colSpan={14} className="px-4 py-10 text-center text-gray-400">{t('crm.ads.empty', 'Keine Werbedaten im gewählten Zeitraum.')}</td></tr>
+                      <tr><td colSpan={15} className="px-4 py-10 text-center text-gray-400">{t('crm.ads.empty', 'Keine Werbedaten im gewählten Zeitraum.')}</td></tr>
                     )}
                   </tbody>
                 </table>

@@ -3363,7 +3363,14 @@
       "tgNoAudiences": "Keine eigenen Zielgruppen im Werbekonto vorhanden.",
       "tgPlacements": "Platzierungen",
       "tgAutoPlacement": "Automatisch — Meta verteilt auf alle Platzierungen.",
-      "tgAdvantage": "Advantage+ Zielgruppe (Meta darf über die Auswahl hinaus ausspielen)"
+      "tgAdvantage": "Advantage+ Zielgruppe (Meta darf über die Auswahl hinaus ausspielen)",
+      "colStatus": "Status",
+      "stActive": "Aktiv",
+      "stOffline": "Offline",
+      "stReview": "In Prüfung",
+      "stRejected": "Abgelehnt",
+      "stDraft": "Entwurf",
+      "stArchived": "Archiviert"
     },
     "studio": {
       "title": "Anzeigen-Studio (KI)",
