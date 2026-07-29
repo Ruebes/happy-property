@@ -3425,11 +3425,14 @@
       "created": "List “{{n}}” created.",
       "createErr": "Could not create list (name already taken?).",
       "linkCopied": "Sign-up link copied: {{u}}",
-      "actions": "Automation & sign-up",
+      "actions": "Actions",
       "automation": "Automation",
       "automationTip": "Email/WhatsApp automation for this list",
       "link": "Sign-up link",
-      "linkTip": "Copy the public sign-up link"
+      "linkTip": "Copy the public sign-up link",
+      "rowTip": "Click to view & edit all entries",
+      "viewTip": "View & edit all entries",
+      "view": "Entries"
     },
     "inbox": {
       "title": "Inbox",
@@ -3726,6 +3729,30 @@
       "addStep": "Add step",
       "loadErr": "Could not load the automation.",
       "saveErr": "Saving failed."
+    },
+    "subs": {
+      "loadErr": "Could not load the entries.",
+      "stOptout": "Unsubscribed",
+      "stConfirmed": "Confirmed",
+      "stPending": "Pending",
+      "count": "{{n}} entries",
+      "capped": "(first 1000)",
+      "search": "Search (name, email, phone) …",
+      "badEmail": "Please enter a valid email.",
+      "saveErr": "Saving failed (email already taken?).",
+      "removeConfirm": "Remove “{{n}}” from this list?",
+      "removeErr": "Removal failed.",
+      "empty": "This list has no entries yet.",
+      "noMatch": "No match.",
+      "name": "Name",
+      "email": "Email",
+      "phone": "Phone",
+      "status": "Status",
+      "added": "Added",
+      "actions": "Action",
+      "first": "First name",
+      "last": "Last name",
+      "remove": "Remove from list"
     }
   },
   "docs": {

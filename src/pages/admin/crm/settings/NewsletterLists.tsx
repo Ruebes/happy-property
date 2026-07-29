@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../../components/DashboardLayout'
 import { supabase } from '../../../../lib/supabase'
 import SequenceEditor from '../../../../components/crm/SequenceEditor'
+import SubscribersModal from '../../../../components/crm/SubscribersModal'
 
 // ── Empfängerlisten ─────────────────────────────────────────────────────────────
 // Die Adressen aus Klaviyo (Webinar-Anmeldungen, Leadmagneten, Newsletter) liegen
@@ -31,6 +32,7 @@ export default function NewsletterLists() {
   const [busy, setBusy] = useState<string | null>(null)
   const [toast, setToast] = useState('')
   const [seqFor, setSeqFor] = useState<{ id: string; name: string } | null>(null)
+  const [viewList, setViewList] = useState<{ id: string; name: string } | null>(null)
   const [newName, setNewName] = useState('')
   const [creating, setCreating] = useState(false)
 
@@ -171,7 +173,9 @@ export default function NewsletterLists() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {rows.map(r => (
-                    <tr key={r.id} className="hover:bg-gray-50">
+                    <tr key={r.id} onClick={() => setViewList({ id: r.id, name: r.name })}
+                      className="hover:bg-orange-50/50 cursor-pointer transition-colors"
+                      title={t('crm.lists.rowTip', 'Anklicken, um alle Einträge zu sehen & zu bearbeiten')}>
                       <td className="px-4 py-3 font-medium text-gray-900">
                         {r.name}
                         {r.source === 'klaviyo' && <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Klaviyo</span>}
@@ -179,7 +183,7 @@ export default function NewsletterLists() {
                       <td className="px-4 py-3 text-gray-600">{r.anzahl.toLocaleString('de-DE')}</td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{d2(r.synced_at)}</td>
                       <td className="px-4 py-3">
-                        <button onClick={() => void toggle(r)}
+                        <button onClick={e => { e.stopPropagation(); void toggle(r) }}
                           className={`w-11 h-6 rounded-full relative transition-colors ${r.active ? '' : 'bg-gray-200'}`}
                           style={r.active ? { backgroundColor: '#ff795d' } : undefined}
                           aria-label={r.active ? t('crm.lists.ariaActive', 'aktiv') : t('crm.lists.ariaInactive', 'inaktiv')}>
@@ -188,11 +192,15 @@ export default function NewsletterLists() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex gap-1.5">
-                          <button onClick={() => setSeqFor({ id: r.id, name: r.name })}
+                          <button onClick={e => { e.stopPropagation(); setViewList({ id: r.id, name: r.name }) }}
+                            className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50" title={t('crm.lists.viewTip', 'Alle Einträge ansehen & bearbeiten')}>
+                            👥 {t('crm.lists.view', 'Einträge')}
+                          </button>
+                          <button onClick={e => { e.stopPropagation(); setSeqFor({ id: r.id, name: r.name }) }}
                             className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50" title={t('crm.lists.automationTip', 'Mail-/WhatsApp-Automation für diese Liste')}>
                             ⚙️ {t('crm.lists.automation', 'Automation')}
                           </button>
-                          <button onClick={() => void copySignupLink(r.name)}
+                          <button onClick={e => { e.stopPropagation(); void copySignupLink(r.name) }}
                             className="px-2.5 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50" title={t('crm.lists.linkTip', 'Öffentlichen Anmelde-Link kopieren')}>
                             🔗 {t('crm.lists.link', 'Anmelde-Link')}
                           </button>
@@ -210,6 +218,7 @@ export default function NewsletterLists() {
         )}
       </div>
       {seqFor && <SequenceEditor listId={seqFor.id} listName={seqFor.name} onClose={() => setSeqFor(null)} />}
+      {viewList && <SubscribersModal listId={viewList.id} listName={viewList.name} onClose={() => setViewList(null)} onChanged={() => void fetchAll()} />}
     </DashboardLayout>
   )
 }

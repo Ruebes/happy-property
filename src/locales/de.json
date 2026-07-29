@@ -3425,11 +3425,14 @@
       "created": "Liste „{{n}}\" angelegt.",
       "createErr": "Liste konnte nicht angelegt werden (Name schon vergeben?).",
       "linkCopied": "Anmelde-Link kopiert: {{u}}",
-      "actions": "Automation & Anmeldung",
+      "actions": "Aktionen",
       "automation": "Automation",
       "automationTip": "Mail-/WhatsApp-Automation für diese Liste",
       "link": "Anmelde-Link",
-      "linkTip": "Öffentlichen Anmelde-Link kopieren"
+      "linkTip": "Öffentlichen Anmelde-Link kopieren",
+      "rowTip": "Anklicken, um alle Einträge zu sehen & zu bearbeiten",
+      "viewTip": "Alle Einträge ansehen & bearbeiten",
+      "view": "Einträge"
     },
     "inbox": {
       "title": "Posteingang",
@@ -3726,6 +3729,30 @@
       "addStep": "Schritt hinzufügen",
       "loadErr": "Konnte die Automation nicht laden.",
       "saveErr": "Speichern fehlgeschlagen."
+    },
+    "subs": {
+      "loadErr": "Konnte die Einträge nicht laden.",
+      "stOptout": "Abgemeldet",
+      "stConfirmed": "Bestätigt",
+      "stPending": "Ausstehend",
+      "count": "{{n}} Einträge",
+      "capped": "(erste 1000)",
+      "search": "Suchen (Name, E-Mail, Telefon) …",
+      "badEmail": "Bitte eine gültige E-Mail angeben.",
+      "saveErr": "Speichern fehlgeschlagen (E-Mail vielleicht schon vergeben?).",
+      "removeConfirm": "„{{n}}\" aus dieser Liste entfernen?",
+      "removeErr": "Entfernen fehlgeschlagen.",
+      "empty": "Diese Liste hat noch keine Einträge.",
+      "noMatch": "Kein Treffer.",
+      "name": "Name",
+      "email": "E-Mail",
+      "phone": "Telefon",
+      "status": "Status",
+      "added": "Hinzugefügt",
+      "actions": "Aktion",
+      "first": "Vorname",
+      "last": "Nachname",
+      "remove": "Aus Liste entfernen"
     }
   },
   "docs": {
