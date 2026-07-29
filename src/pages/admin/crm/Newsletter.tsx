@@ -8,6 +8,7 @@ import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import DeckChat from '../../../components/crm/DeckChat'
 import { NumberStepper } from '../../../components/NumberStepper'
 import { DEFAULT_PARAMS, type CalcParams } from '../../../lib/rechner'
+import { htmlToText, htmlToWhatsapp } from '../../../lib/htmlDerive'
 import type { CrmProjectUnit, DeckAssetsCache } from '../../../lib/crmTypes'
 
 // ── Newsletter-Kampagne (individuell, KEINE Massenmail) ──────────────────────
@@ -125,6 +126,9 @@ export default function Newsletter() {
   const [startAt, setStartAt] = useState('')   // '' = sofort; sonst datetime-local
   const [progress, setProgress] = useState<Record<string, { sent: number; pending: number; next_at: string | null }>>({})
   const [pastCampaigns, setPastCampaigns] = useState<Array<{ id: string; title: string; status: string; recipients_total: number; recipients_done: number; created_at: string }>>([])
+  // Inhalts-Modus: 'structured' = aus Objekten bauen; 'html' = eigenes HTML einfügen.
+  const [contentMode, setContentMode] = useState<'structured' | 'html'>('structured')
+  const [htmlBody, setHtmlBody] = useState('')
 
   const showToastMsg = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
@@ -175,6 +179,8 @@ export default function Newsletter() {
       })),
       list_mode: listMode,
       list_ids: listIds,
+      content_mode: contentMode,
+      html_body: contentMode === 'html' ? htmlBody : null,
       created_by: profile?.id ?? null,
       updated_at: new Date().toISOString(),
     }
@@ -188,7 +194,7 @@ export default function Newsletter() {
     const id = (data as { id: string }).id
     setCampaignId(id)
     return id
-  }, [campaignId, title, subject, intro, outro, props, profile])
+  }, [campaignId, title, subject, intro, outro, props, listMode, listIds, contentMode, htmlBody, profile])
 
   // Wohnung aus dem Picker in einen Projekt-Slot einsortieren
   const addUnit = (unit: CrmProjectUnit, project: { id: string; name: string }) => {
@@ -225,7 +231,8 @@ export default function Newsletter() {
     } finally { setBusyKey('') }
   }
 
-  const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null)
+  const [preview, setPreview] = useState<{ subject: string; html: string; whatsapp?: string } | null>(null)
+  const [previewTab, setPreviewTab] = useState<'html' | 'text' | 'whatsapp'>('html')
   const showPreview = async () => {
     setBusyKey('preview')
     try {
@@ -234,18 +241,35 @@ export default function Newsletter() {
       if (!id) return
       const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'preview', campaign_id: id } })
       if (error) throw new Error(error.message)
-      const d = data as { ok?: boolean; subject?: string; html?: string } | null
+      const d = data as { ok?: boolean; subject?: string; html?: string; whatsapp?: string } | null
       if (!d?.ok || !d.html) throw new Error('keine Vorschau')
-      setPreview({ subject: d.subject ?? '', html: d.html })
+      setPreviewTab('html')
+      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp })
     } catch (err) {
       console.error('[Newsletter] preview:', err)
       showToastMsg(`❌ ${t('crm.newsletter.previewError', 'Vorschau fehlgeschlagen')}`)
     } finally { setBusyKey('') }
   }
 
+  // Einen (auch bereits versendeten) Newsletter ansehen — HTML/Text/WhatsApp.
+  const viewCampaign = async (id: string) => {
+    setBusyKey(`view${id}`)
+    try {
+      const { data, error } = await supabase.functions.invoke('newsletter-campaign', { body: { action: 'preview', campaign_id: id } })
+      if (error) throw new Error(error.message)
+      const d = data as { ok?: boolean; subject?: string; html?: string; whatsapp?: string } | null
+      if (!d?.ok || !d.html) throw new Error('keine Vorschau')
+      setPreviewTab('html')
+      setPreview({ subject: d.subject ?? '', html: d.html, whatsapp: d.whatsapp })
+    } catch (err) {
+      console.error('[Newsletter] viewCampaign:', err)
+      showToastMsg(`❌ ${t('crm.newsletter.previewError', 'Vorschau fehlgeschlagen')}`)
+    } finally { setBusyKey('') }
+  }
+
   const resetWizard = () => {
     setCampaignId(null); setTitle(''); setSubject(''); setIntro(''); setOutro('')
-    setProps([]); setStatus(null)
+    setProps([]); setStatus(null); setContentMode('structured'); setHtmlBody('')
   }
 
   // Gespeicherten Entwurf zurück in den Wizard laden
@@ -254,10 +278,13 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.from('newsletter_campaigns').select('*').eq('id', id).single()
       if (error) throw error
-      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown }
+      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown; content_mode?: string; html_body?: string | null; list_mode?: string; list_ids?: string[] }
       setCampaignId(c.id)
       setTitle(c.title ?? ''); setSubject(c.subject ?? '')
       setIntro(c.intro_text ?? ''); setOutro(c.outro_text ?? '')
+      setContentMode(c.content_mode === 'html' ? 'html' : 'structured'); setHtmlBody(c.html_body ?? '')
+      if (c.list_mode === 'include' || c.list_mode === 'exclude') { setListMode(c.list_mode); setListIds(Array.isArray(c.list_ids) ? c.list_ids : []) }
+      else { setListMode('all'); setListIds([]) }
       const raw = Array.isArray(c.properties) ? c.properties as Array<Partial<WizProperty> & { units?: WizUnit[] }> : []
       setProps(raw.filter(x => x && x.project_id).map(x => ({
         project_id: x.project_id as string, project_name: x.project_name ?? '',
@@ -448,6 +475,20 @@ export default function Newsletter() {
           </p>
         </div>
 
+        {/* ── Inhalts-Modus: aus Objekten bauen ODER eigenes HTML ── */}
+        <div className={`${card} flex flex-wrap gap-2`}>
+          {([
+            { m: 'structured', icon: '📦', label: t('crm.newsletter.modeStructured', 'Aus Objekten bauen') },
+            { m: 'html', icon: '</>', label: t('crm.newsletter.modeHtml', 'Eigenes HTML') },
+          ] as const).map(o => (
+            <button key={o.m} onClick={() => setContentMode(o.m)}
+              className={`px-4 py-2 rounded-xl text-sm font-medium border transition-colors ${contentMode === o.m ? 'text-white border-transparent' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+              style={contentMode === o.m ? { backgroundColor: '#ff795d' } : undefined}>
+              {o.icon} {o.label}
+            </button>
+          ))}
+        </div>
+
         {/* ── Empfängerlisten ── */}
         <div className={card}>
           <div className="flex items-center justify-between mb-2">
@@ -488,7 +529,8 @@ export default function Newsletter() {
           </p>
         </div>
 
-        {/* ── 1 · Objekte ── */}
+        {/* ── 1 · Objekte (nur im Objekt-Modus) ── */}
+        {contentMode === 'structured' && (
         <div className={card}>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-gray-700">{t('crm.newsletter.s1', '1 · Objekte')}</h2>
@@ -564,10 +606,11 @@ export default function Newsletter() {
             ))}
           </div>
         </div>
+        )}
 
         {/* ── 2 · Mail ── */}
         <div className={card}>
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.newsletter.s2', '2 · Deine Mail')}</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-3">{contentMode === 'html' ? t('crm.newsletter.s2html', '2 · Dein HTML') : t('crm.newsletter.s2', '2 · Deine Mail')}</h2>
           <div className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.internalTitle', 'Interner Kampagnen-Name')}</label>
@@ -577,6 +620,7 @@ export default function Newsletter() {
               <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.subject', 'Betreff')} <span className="text-gray-400 font-normal">({'{{vorname}}'} {t('crm.newsletter.possible', 'möglich')})</span></label>
               <input value={subject} onChange={e => setSubject(e.target.value)} className={input} placeholder="Drei Gelegenheiten in Zypern — mit geschenktem Möbelpaket" />
             </div>
+            {contentMode === 'structured' && <>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.intro', 'Einleitung (nach „Hallo Vorname,")')}</label>
               <textarea value={intro} onChange={e => setIntro(e.target.value)} rows={4} className={input} />
@@ -586,6 +630,19 @@ export default function Newsletter() {
               <textarea value={outro} onChange={e => setOutro(e.target.value)} rows={3} className={input} placeholder={t('crm.newsletter.outroPh', 'z. B. eine persönliche Anmerkung — kann auch leer bleiben')} />
               <p className="mt-1 text-[11px] text-gray-400">{t('crm.newsletter.outroHint', 'Der Abschluss wird automatisch ergänzt: Einladung zum Gespräch + „Termin aussuchen"-Button (direkt zum Kalender, ohne Fragebogen) + „Liebe Grüße, Sven".')}</p>
             </div>
+            </>}
+
+            {contentMode === 'html' && (
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 mb-1">{t('crm.newsletter.htmlLabel', 'HTML-Inhalt der Mail')} <span className="text-gray-400 font-normal">({'{{vorname}}'} {t('crm.newsletter.possible', 'möglich')})</span></label>
+              <textarea value={htmlBody} onChange={e => setHtmlBody(e.target.value)} rows={14}
+                className={`${input} font-mono text-xs`} spellCheck={false}
+                placeholder={'<html>\n  <body>\n    <h1>Hallo {{vorname}} 👋</h1>\n    <p>...</p>\n  </body>\n</html>'} />
+              <p className="mt-1 text-[11px] text-gray-400">
+                {t('crm.newsletter.htmlHint', 'Wird als HTML-Mail verschickt; für Empfänger ohne HTML entsteht automatisch eine Text-Version. Aus dem HTML wird zusätzlich eine WhatsApp-Version gebaut. Ein Abmelde-Link wird automatisch ergänzt, falls keiner enthalten ist. Schau dir alles vorher über „Vorschau" an.')}
+              </p>
+            </div>
+            )}
           </div>
         </div>
 
@@ -596,10 +653,10 @@ export default function Newsletter() {
             <button onClick={() => void saveDraft()} disabled={busyKey === 'save'} className={btnSec}>
               {busyKey === 'save' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.saveDraft', '💾 Entwurf speichern')}
             </button>
-            {(campaignId || title || subject || props.length > 0) && (
+            {(campaignId || title || subject || props.length > 0 || htmlBody) && (
               <button onClick={resetWizard} className={btnSec}>{t('crm.newsletter.new', '🆕 Neue Kampagne')}</button>
             )}
-            <button onClick={() => void showPreview()} disabled={busyKey === 'preview' || props.length === 0} className={btnSec}>
+            <button onClick={() => void showPreview()} disabled={busyKey === 'preview' || (contentMode === 'html' ? !htmlBody.trim() : props.length === 0)} className={btnSec}>
               {busyKey === 'preview' ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.preview', '👁 Vorschau')}
             </button>
             <button onClick={() => void sendTest()} disabled={busyKey === 'test' || !subject.trim()} className={btnSec}>
@@ -614,13 +671,13 @@ export default function Newsletter() {
               {!startAt && <span className="text-gray-400">{t('crm.newsletter.startNowLabel', '(leer = sofort)')}</span>}
             </label>
             <button onClick={() => void launch()}
-              disabled={busyKey === 'launch' || !subject.trim() || props.length === 0 || props.some(p => !p.master_deck_token)}
+              disabled={busyKey === 'launch' || !subject.trim() || (contentMode === 'html' ? !htmlBody.trim() : (props.length === 0 || props.some(p => !p.master_deck_token)))}
               className="px-5 py-2 rounded-lg text-sm font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
               {startAt
                 ? t('crm.newsletter.launchAt', '🗓 Versand planen ({{n}} Empfänger)', { n: audience ?? '…' })
                 : t('crm.newsletter.launch', '🚀 Kampagne starten ({{n}} Empfänger)', { n: audience ?? '…' })}
             </button>
-            {props.some(p => !p.master_deck_token) && props.length > 0 && (
+            {contentMode === 'structured' && props.some(p => !p.master_deck_token) && props.length > 0 && (
               <span className="text-xs text-gray-400">{t('crm.newsletter.needDecks', 'Erst alle Master-Decks erstellen.')}</span>
             )}
           </div>
@@ -663,6 +720,9 @@ export default function Newsletter() {
                       })()}
                     </span>
                     <span className="ml-auto flex items-center gap-2">
+                      <button onClick={e => { e.stopPropagation(); void viewCampaign(c.id) }} disabled={busyKey === `view${c.id}`} className={btnSec}>
+                        {busyKey === `view${c.id}` ? t('crm.newsletter.working', 'Einen Moment…') : t('crm.newsletter.viewNl', '👁 Ansehen')}
+                      </button>
                       {c.status === 'draft' ? (
                         <>
                           <button onClick={() => void loadCampaign(c.id)} disabled={busyKey === `load${c.id}`} className={btnSec}>
@@ -772,7 +832,32 @@ export default function Newsletter() {
                 </div>
                 <button onClick={() => setPreview(null)} className="text-gray-400 hover:text-gray-700 text-xl shrink-0 ml-3">✕</button>
               </div>
-              <iframe title="Mail-Vorschau" sandbox="" srcDoc={preview.html} className="w-full flex-1 min-h-[60vh] bg-white" />
+              {/* Tabs: so kommt es als HTML-Mail, als Text-Fallback und als WhatsApp an */}
+              <div className="flex gap-1 px-4 pt-3 border-b border-gray-100">
+                {([
+                  { k: 'html', label: `📧 ${t('crm.newsletter.tabHtml', 'HTML-Mail')}` },
+                  { k: 'text', label: `📄 ${t('crm.newsletter.tabText', 'Text-Version')}` },
+                  { k: 'whatsapp', label: `💬 ${t('crm.newsletter.tabWa', 'WhatsApp')}` },
+                ] as const).map(tb => (
+                  <button key={tb.k} onClick={() => setPreviewTab(tb.k)}
+                    className={`px-3 py-1.5 rounded-t-lg text-xs font-medium ${previewTab === tb.k ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:bg-gray-50'}`}>
+                    {tb.label}
+                  </button>
+                ))}
+              </div>
+              {previewTab === 'html' && (
+                <iframe title="Mail-Vorschau" sandbox="" srcDoc={preview.html} className="w-full flex-1 min-h-[60vh] bg-white" />
+              )}
+              {previewTab === 'text' && (
+                <pre className="w-full flex-1 min-h-[60vh] overflow-auto bg-gray-50 p-5 text-sm text-gray-800 whitespace-pre-wrap font-sans">{htmlToText(preview.html) || t('crm.newsletter.emptyText', '(kein Text)')}</pre>
+              )}
+              {previewTab === 'whatsapp' && (
+                <div className="w-full flex-1 min-h-[60vh] overflow-auto bg-[#e5ddd5] p-5">
+                  <div className="max-w-md ml-auto bg-[#dcf8c6] rounded-2xl rounded-tr-sm px-4 py-3 text-sm text-gray-800 whitespace-pre-wrap shadow-sm">
+                    {(preview.whatsapp || htmlToWhatsapp(preview.html)).split('{{vorname}}').join('Vorname') || t('crm.newsletter.emptyWa', '(keine WhatsApp-Version)')}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

@@ -3195,7 +3195,18 @@
       "sendingNow": "Geplant — Versand läuft gestaffelt.",
       "pickerFor": "Newsletter-Kampagne",
       "pickerConfirm": "Übernehmen",
-      "editDeck": "per Chat anpassen"
+      "editDeck": "per Chat anpassen",
+      "modeStructured": "Aus Objekten bauen",
+      "modeHtml": "Eigenes HTML",
+      "s2html": "2 · Dein HTML",
+      "htmlLabel": "HTML-Inhalt der Mail",
+      "htmlHint": "Wird als HTML-Mail verschickt; für Empfänger ohne HTML entsteht automatisch eine Text-Version. Aus dem HTML wird zusätzlich eine WhatsApp-Version gebaut. Ein Abmelde-Link wird automatisch ergänzt, falls keiner enthalten ist. Schau dir alles vorher über „Vorschau\" an.",
+      "tabHtml": "HTML-Mail",
+      "tabText": "Text-Version",
+      "tabWa": "WhatsApp",
+      "emptyText": "(kein Text)",
+      "emptyWa": "(keine WhatsApp-Version)",
+      "viewNl": "👁 Ansehen"
     },
     "quick": {
       "attach": "Dateien anhängen",

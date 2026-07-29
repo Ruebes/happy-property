@@ -18,6 +18,21 @@
 // Deployment: supabase functions deploy newsletter-campaign --no-verify-jwt
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
+
+// ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
+// Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
+// send-email via htmlToText), WhatsApp-Version via htmlToWhatsapp. Personalisierung
+// über {{vorname}}. Fehlt ein Abmelde-Link, hängen wir aus DSGVO-Gründen einen an.
+const personalize = (s: string | null | undefined, first: string) => String(s ?? '').split('{{vorname}}').join(first)
+function customEmailHtml(rawHtml: string, first: string): string {
+  let html = personalize(rawHtml, first)
+  if (!/abmelden|unsubscribe|abbestellen/i.test(html)) {
+    const footer = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9a9aa3;text-align:center;padding:22px 20px;">Du möchtest keine E-Mails mehr von uns erhalten? <a href="mailto:info@happy-property.com?subject=Newsletter%20abmelden" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a>.</div>`
+    html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${footer}</body>`) : `${html}${footer}`
+  }
+  return html
+}
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -411,6 +426,10 @@ Deno.serve(async (req: Request) => {
     // ── Test-Mail (Master-Links, sofort, an Sven) ────────────────────────────
     // ── Vorschau: exakt das HTML, das auch versendet wird (ohne Versand) ─────
     if (body.action === 'preview') {
+      if (camp.content_mode === 'html') {
+        const raw = String(camp.html_body ?? '')
+        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname'), whatsapp: htmlToWhatsapp(personalize(raw, 'Vorname')) })
+      }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
@@ -491,6 +510,12 @@ Deno.serve(async (req: Request) => {
 
     if (body.action === 'test_mail') {
       const to = (body.to ?? 'sven@happy-property.com').trim()
+      if (camp.content_mode === 'html') {
+        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven')
+        const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${personalize(camp.subject, 'Sven')}`, html } })
+        if (se) return json({ error: `Testversand: ${se.message}` }, 502)
+        return json({ ok: true })
+      }
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
@@ -505,6 +530,52 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'launch') {
       if (camp.status !== 'draft') return json({ error: `Kampagne ist bereits ${camp.status}` }, 409)
       if (!camp.subject?.trim()) return json({ error: 'Betreff fehlt' }, 400)
+
+      // ── Eigenes-HTML-Modus: keine Deck-Klone, HTML + WhatsApp direkt planen ──
+      if (camp.content_mode === 'html') {
+        if (!camp.html_body?.trim()) return json({ error: 'Es ist kein HTML eingegeben.' }, 400)
+        const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[])
+        if (!audience.length) return json({ error: 'Zielgruppe ist leer' }, 400)
+        await sb.from('newsletter_campaigns').update({ status: 'launching', recipients_total: audience.length, recipients_done: 0, updated_at: new Date().toISOString() }).eq('id', camp.id)
+        const raw = String(camp.html_body)
+        const job = (async () => {
+          try {
+            const startAt = body.start_at ? new Date(body.start_at) : null
+            const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
+            let slot = clampToWindow(new Date(base))
+            let done = 0, skipped = 0
+            for (const lead of audience) {
+              try {
+                const first = firstNameOf(lead)
+                const hatMail = !!lead.email, hatTel = !!lead.phone
+                const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
+                const { error: se } = await sb.from('scheduled_messages').insert({
+                  lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
+                  type: typ, event_type: 'newsletter', campaign_id: camp.id,
+                  status: 'pending', scheduled_at: slot.toISOString(),
+                  email_subject: hatMail ? personalize(camp.subject, first) : null,
+                  email_body: hatMail ? customEmailHtml(raw, first) : null,
+                  whatsapp_text: hatTel ? htmlToWhatsapp(personalize(raw, first)) : null,
+                  recipient: 'client', appointment_condition: 'none',
+                })
+                if (se) { skipped++; console.error(`[newsletter-html] ${lead.email}:`, se.message); continue }
+                slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
+                done++
+                if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
+              } catch (leadErr) { skipped++; console.error('[newsletter-html] Empfänger übersprungen:', leadErr) }
+            }
+            await sb.from('newsletter_campaigns').update({ status: 'sending', recipients_done: done, updated_at: new Date().toISOString(), launch_error: skipped > 0 ? `${skipped} Empfänger übersprungen (Details im Log)` : null }).eq('id', camp.id)
+            console.log(`[newsletter-html] Kampagne ${camp.id}: ${done} geplant, ${skipped} übersprungen`)
+          } catch (e) {
+            console.error('[newsletter-html] Launch-Fehler:', e)
+            await sb.from('newsletter_campaigns').update({ status: 'draft', launch_error: (e as Error).message }).eq('id', camp.id)
+          }
+        })()
+        const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+        if (er?.waitUntil) er.waitUntil(job); else await job
+        return json({ ok: true, total: audience.length, background: true })
+      }
+
       if (!properties.length || properties.some(p => !p.master_deck_token)) return json({ error: 'Master-Decks fehlen' }, 400)
 
       const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[])

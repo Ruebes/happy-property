@@ -3195,7 +3195,18 @@
       "sendingNow": "Scheduled — sending in staggered batches.",
       "pickerFor": "Newsletter campaign",
       "pickerConfirm": "Apply",
-      "editDeck": "edit via chat"
+      "editDeck": "edit via chat",
+      "modeStructured": "Build from properties",
+      "modeHtml": "Custom HTML",
+      "s2html": "2 · Your HTML",
+      "htmlLabel": "HTML content of the email",
+      "htmlHint": "Sent as an HTML email; recipients without HTML automatically get a text version. A WhatsApp version is also derived from the HTML. An unsubscribe link is added automatically if none is present. Check everything first via “Preview”.",
+      "tabHtml": "HTML email",
+      "tabText": "Text version",
+      "tabWa": "WhatsApp",
+      "emptyText": "(no text)",
+      "emptyWa": "(no WhatsApp version)",
+      "viewNl": "👁 View"
     },
     "quick": {
       "attach": "Attach files",
