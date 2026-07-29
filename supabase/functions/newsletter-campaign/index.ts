@@ -85,6 +85,36 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 // über Supabase-Transform verkleinert + feste width/height (Apple-Mail-Gotcha),
 // p{margin:0}. Der Plaintext-Fallback entsteht zentral via htmlToText (send-email/
 // process-scheduled-messages) — Links bleiben dort als URLs erhalten.
+// WhatsApp-Fassung desselben Newsletters. Kein HTML, keine Bildkarten — nur der
+// Einleitungstext, ein Link je Projekt und der Termin-Link. Absichtlich kurz:
+// eine Nachricht, die man im Chat scrollen muss, liest niemand.
+function buildWhatsappText(c: {
+  intro_text: string; properties: CampaignProperty[]
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string }): string {
+  const utmQs = `utm_source=newsletter&utm_medium=whatsapp${opts?.campaignId ? `&utm_campaign=${opts.campaignId}` : ''}`
+  const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
+  const terminUrl = firstTok ? `${SITE}/termin?direkt=1&d=${firstTok}&${utmQs}` : `${SITE}/termin?${utmQs}`
+
+  // Der Einleitungstext ist Klartext mit Absätzen; nur Länge begrenzen.
+  let intro = String(c.intro_text ?? '').replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean).join('\n\n')
+  if (intro.length > 700) intro = intro.slice(0, 697).trimEnd() + '…'
+
+  const links = c.properties.map(p => {
+    const tok = deckTokens[p.project_id]
+    if (!tok) return ''
+    const label = `${p.project_name}${p.unit_numbers.length ? ` · ${p.unit_numbers.join(' & ')}` : ''}`
+    return `*${label}*\n${SITE}/deck/${tok}`
+  }).filter(Boolean).join('\n\n')
+
+  return [
+    firstName ? `Hallo ${firstName},` : 'Hallo,',
+    intro,
+    links,
+    `Lieber direkt sprechen? Termin buchen: ${terminUrl}`,
+    'Keine Nachrichten mehr? Antworte einfach mit STOPP.',
+  ].filter(Boolean).join('\n\n')
+}
+
 function buildEmailHtml(c: {
   subject?: string; intro_text: string; outro_text: string; properties: CampaignProperty[]
 }, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined>; bookingToken?: string }): string {
@@ -236,7 +266,7 @@ async function loadProjectImages(sb: SupabaseClient, projectIds: string[]): Prom
 // 'exclude' = alle ausser den gewaehlten.
 async function loadListAudience(
   sb: SupabaseClient, mode: string, ids: string[],
-): Promise<Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string }>> {
+): Promise<Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }>> {
   // Nur freigegebene Listen: frisch aus Klaviyo geholte sind inaktiv, bis Sven sie
   // freischaltet — sonst ginge eine neue Liste beim naechsten Versand ungefragt mit.
   const { data: lists } = await sb.from('newsletter_lists').select('id').eq('active', true)
@@ -249,13 +279,18 @@ async function loadListAudience(
   const subIds = [...new Set(((members ?? []) as Array<{ subscriber_id: string }>).map(m => m.subscriber_id))]
   if (!subIds.length) return []
 
-  const out: Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string }> = []
+  const out: Array<{ subscriber_id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }> = []
   // In Bloecken laden: .in() mit tausenden IDs sprengt sonst die URL-Laenge.
   for (let i = 0; i < subIds.length; i += 200) {
     const { data: subs } = await sb.from('newsletter_subscribers')
-      .select('id, email, first_name, last_name').in('id', subIds.slice(i, i + 200)).is('optout_at', null)
-    for (const s of ((subs ?? []) as Array<{ id: string; email: string | null; first_name: string | null; last_name: string | null }>)) {
-      if (s.email && s.email.includes('@')) out.push({ subscriber_id: s.id, first_name: s.first_name, last_name: s.last_name, email: s.email })
+      .select('id, email, first_name, last_name, phone').in('id', subIds.slice(i, i + 200)).is('optout_at', null)
+    for (const s of ((subs ?? []) as Array<{ id: string; email: string | null; first_name: string | null; last_name: string | null; phone: string | null }>)) {
+      const mail = s.email && s.email.includes('@') ? s.email : ''
+      const tel = (s.phone ?? '').trim()
+      // Wer sich nur mit Handynummer angemeldet hat, gehoert genauso zur Zielgruppe —
+      // er bekommt den Newsletter dann per WhatsApp statt per Mail.
+      if (!mail && !tel) continue
+      out.push({ subscriber_id: s.id, first_name: s.first_name, last_name: s.last_name, email: mail, phone: tel || null })
     }
   }
   return out
@@ -296,13 +331,15 @@ Deno.serve(async (req: Request) => {
       const leads = await loadAudience(sb)
       const subs = await loadListAudience(sb, mode, ids)
       const seen = new Set(leads.map(l => l.email.trim().toLowerCase()))
-      const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string }> =
-        leads.map(l => ({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email }))
+      const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string; phone: string | null }> =
+        leads.map(l => ({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email, phone: null }))
       for (const s of subs) {
+        // Ohne E-Mail gibt es nichts zu entdoppeln (reine WhatsApp-Abonnenten) —
+        // die kommen immer dazu.
         const key = s.email.trim().toLowerCase()
-        if (seen.has(key)) continue
-        seen.add(key)
-        merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: s.email })
+        if (key && seen.has(key)) continue
+        if (key) seen.add(key)
+        merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: s.email, phone: s.phone })
       }
       return merged
     }
@@ -522,11 +559,19 @@ Deno.serve(async (req: Request) => {
               }
               const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
               const subject = String(camp.subject).split('{{vorname}}').join(first)
+              // Kanal nach dem, was der Empfänger hinterlassen hat: Mail, WhatsApp
+              // oder beides. Leads haben hier keine Nummer und bleiben bei E-Mail.
+              const hatMail = !!lead.email
+              const hatTel = !!lead.phone
+              const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
+              const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id) }) : null
+              const waBild = hatTel ? properties.map(p => projectImages[p.project_id]).find(Boolean) ?? null : null
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
-                type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+                type: typ, event_type: 'newsletter', campaign_id: camp.id,
                 status: 'pending', scheduled_at: slot.toISOString(),
-                email_subject: subject, email_body: html,
+                email_subject: hatMail ? subject : null, email_body: hatMail ? html : null,
+                whatsapp_text: waText, whatsapp_image_url: waBild,
                 recipient: 'client', appointment_condition: 'none',
               })
               if (se) { skipped++; console.error(`[newsletter] Mail-Planung ${lead.email}:`, se.message); continue }

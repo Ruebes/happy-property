@@ -3,10 +3,14 @@
 // sie DSGVO-konform per Double-Opt-In in newsletter_subscribers + newsletter_list_members.
 //
 // Aktionen:
-//   POST { email, first_name?, last_name?, phone?, list, source?, lang? }
-//        → Abonnent anlegen/finden, Bestätigungs-Mail (DOI) verschicken.
+//   POST { email?, phone?, contact?, first_name?, last_name?, list, source?, lang? }
+//        → Abonnent anlegen/finden, Bestätigung (DOI) verschicken.
 //          Bereits bestätigte (z.B. Klaviyo-Import) werden ohne DOI direkt zur Liste
 //          hinzugefügt.
+//          `contact` ist das EINE Feld der Landingpage: enthält es ein "@", ist es eine
+//          E-Mail (→ Bestätigungsmail), sonst eine Telefonnummer (→ Bestätigung per
+//          WhatsApp). Damit entscheidet der Abonnent selbst, auf welchem Kanal er den
+//          Newsletter bekommt — ohne ihn nach einem Kanal zu fragen.
 //   GET  ?confirm=<token>  → Bestätigung, Liste zuordnen, Danke-Seite (HTML).
 //
 // Double-Opt-In-Status liegt in newsletter_subscribers.properties (jsonb):
@@ -24,9 +28,40 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
-const html = (b: string, s = 200) => new Response(b, { status: s, headers: { ...CORS, 'Content-Type': 'text/html; charset=utf-8' } })
-const esc = (s: string) => s.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!))
 const normEmail = (e: string) => e.trim().toLowerCase().replace('googlemail.com', 'gmail.com')
+
+// Wohin es nach dem Bestätigungsklick geht. Jede Anmeldestrecke kann ihre eigene
+// Danke-Seite mitgeben (`confirm_redirect`), sonst landet man hier.
+const DEFAULT_REDIRECT = 'https://steuervorteil-zypern-immobilien.com/danke-fuer-deine-anmeldung/'
+// Nur eigene Domains — sonst wäre die öffentliche Funktion eine Weiterleitung
+// auf beliebige fremde Seiten (offener Redirect, klassisches Phishing-Werkzeug).
+const ERLAUBTE_HOSTS = ['steuervorteil-zypern-immobilien.com', 'happy-property.com', 'happy-property.de']
+function erlaubtesZiel(url: string | undefined): string {
+  if (!url) return DEFAULT_REDIRECT
+  try {
+    const u = new URL(url)
+    const ok = u.protocol === 'https:' && ERLAUBTE_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h))
+    return ok ? u.toString() : DEFAULT_REDIRECT
+  } catch { return DEFAULT_REDIRECT }
+}
+// Weiterleitung mit Ergebnis-Merker, den die Danke-Seite ausliest.
+function zurueck(ziel: string, status: 'ja' | 'abgelaufen'): Response {
+  const u = new URL(ziel)
+  u.searchParams.set('bestaetigt', status)
+  return new Response(null, { status: 302, headers: { ...CORS, Location: u.toString() } })
+}
+
+// Telefonnummer auf E.164 bringen. Zielgruppe ist deutschsprachig, deshalb ist
+// die Vorwahl für "0…" Deutschland; wer aus AT/CH/CY kommt, tippt ohnehin +43/+41/+357.
+function normPhone(raw: string): string {
+  let s = String(raw ?? '').replace(/[^\d+]/g, '')
+  if (s.startsWith('00')) s = '+' + s.slice(2)
+  else if (s.startsWith('0')) s = '+49' + s.slice(1)
+  else if (!s.startsWith('+')) s = '+' + s
+  return s
+}
+// Sieht der Wert nach einer anrufbaren Nummer aus? (Landesvorwahl + 6–14 Ziffern)
+const looksLikePhone = (s: string) => /^\+\d{8,15}$/.test(normPhone(s))
 
 // Liste per Name finden oder anlegen (Sven kann ein Formular auf jeden Listennamen zeigen).
 async function resolveList(sb: SupabaseClient, name: string): Promise<{ id: string; name: string } | null> {
@@ -83,17 +118,6 @@ async function enrollInListSequences(sb: SupabaseClient, subscriberId: string, l
   } catch (e) { console.warn('[subscriber-optin] enrollInListSequences:', e) }
 }
 
-function pageShell(title: string, body: string): string {
-  return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>${esc(title)}</title></head>
-    <body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:linear-gradient(160deg,#fff5f2,#faf7f4);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
-      <div style="max-width:440px;width:100%;background:#fff;border-radius:24px;box-shadow:0 10px 40px rgba(0,0,0,.08);padding:36px 28px;text-align:center;color:#1f2937;">
-        ${body}
-        <p style="margin-top:24px;font-size:12px;color:#9ca3af;">Happy Property Cyprus</p>
-      </div>
-    </body></html>`
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -101,14 +125,20 @@ Deno.serve(async (req) => {
 
   try {
     // ── GET: Bestätigung (Double-Opt-In) ──────────────────────────────────────
+    // Wir liefern hier bewusst KEIN eigenes HTML mehr aus: Supabase schickt
+    // Edge-Function-Antworten mit `content-type: text/plain` + `nosniff` (Schutz
+    // davor, dass jemand Phishing-Seiten auf *.supabase.co hostet). Der Browser
+    // zeigte den Quelltext deshalb als Text an, inklusive kaputter Umlaute.
+    // Stattdessen: zurück auf die eigene Website.
     if (req.method === 'GET') {
       const token = new URL(req.url).searchParams.get('confirm') ?? ''
-      if (!token) return html(pageShell('Ungültiger Link', `<p style="font-size:16px;">Dieser Bestätigungslink ist ungültig.</p>`), 400)
+      if (!token) return zurueck(DEFAULT_REDIRECT, 'abgelaufen')
       const { data: sub } = await sb.from('newsletter_subscribers').select('id, first_name, properties').eq('properties->>doi_token', token).maybeSingle()
       const s = sub as { id: string; first_name: string | null; properties: Record<string, unknown> | null } | null
-      if (!s) return html(pageShell('Link abgelaufen', `<div style="font-size:40px">⏳</div><p style="font-size:16px;">Dieser Bestätigungslink ist ungültig oder wurde schon benutzt.</p>`))
+      if (!s) return zurueck(DEFAULT_REDIRECT, 'abgelaufen')
       const props = { ...(s.properties ?? {}) }
       const listId = props.doi_pending_list as string | undefined
+      const ziel = erlaubtesZiel(props.doi_redirect as string | undefined)
       delete props.doi_token; delete props.doi_pending_list
       props.doi_confirmed = true; props.doi_confirmed_at = new Date().toISOString()
       await sb.from('newsletter_subscribers').update({ properties: props, optout_at: null }).eq('id', s.id)
@@ -116,62 +146,104 @@ Deno.serve(async (req) => {
         await sb.from('newsletter_list_members').upsert({ list_id: listId, subscriber_id: s.id }, { onConflict: 'list_id,subscriber_id' })
         await enrollInListSequences(sb, s.id, listId)
       }
-      const first = (s.first_name ?? '').trim()
-      return html(pageShell('Anmeldung bestätigt', `
-        <div style="font-size:44px">✅</div>
-        <h1 style="font-size:22px;margin:12px 0 6px;color:#111827;">${first ? `Danke, ${esc(first)}!` : 'Danke!'}</h1>
-        <p style="font-size:16px;color:#374151;">Deine Anmeldung ist bestätigt. Du hörst bald von uns. 🐾</p>`))
+      return zurueck(ziel, 'ja')
     }
 
     // ── POST: Anmeldung (schickt Double-Opt-In-Mail) ─────────────────────────
     const body = await req.json().catch(() => ({})) as {
-      email?: string; first_name?: string; last_name?: string; phone?: string; list?: string; source?: string; lang?: string
+      email?: string; first_name?: string; last_name?: string; phone?: string; contact?: string
+      list?: string; source?: string; lang?: string; confirm_redirect?: string
     }
-    const email = normEmail(String(body.email ?? ''))
-    if (!email.includes('@')) return json({ error: 'Bitte eine gültige E-Mail angeben.' }, 400)
+
+    // E-Mail und Telefon sind BEIDE optional, aber eins von beiden ist Pflicht.
+    // Wer beides angibt, abonniert bewusst auf beiden Kanälen.
+    // "contact" bleibt als Einzelfeld erlaubt (ältere Formulare) und wird anhand
+    // des "@" der passenden Seite zugeordnet.
+    const raw = String(body.contact ?? '').trim()
+    let email = normEmail(String(body.email ?? (raw.includes('@') ? raw : '')))
+    let phone = String(body.phone ?? '').trim()
+    if (!phone && raw && !raw.includes('@')) phone = raw
+    if (phone) {
+      if (!looksLikePhone(phone)) return json({ error: 'Bitte eine gültige Handynummer angeben.' }, 400)
+      phone = normPhone(phone)
+    }
+    if (email && !email.includes('@')) email = ''
+    if (!email && !phone) return json({ error: 'Bitte eine E-Mail-Adresse oder Handynummer angeben.' }, 400)
+    // Kanal = worüber der Abonnent den Newsletter bekommt.
+    const channel: 'email' | 'whatsapp' | 'both' = email && phone ? 'both' : email ? 'email' : 'whatsapp'
     if (!body.list?.trim()) return json({ error: 'list fehlt' }, 400)
     const lang = body.lang === 'en' ? 'en' : 'de'
 
     const list = await resolveList(sb, body.list)
     if (!list) return json({ error: 'Liste konnte nicht ermittelt werden' }, 500)
 
-    // Abonnent finden oder anlegen
-    const { data: existing } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id').ilike('email', email).maybeSingle()
-    const ex = existing as { id: string; properties: Record<string, unknown> | null; optout_at: string | null; klaviyo_id: string | null } | null
+    // Abonnent finden oder anlegen — per E-Mail, sonst per Telefonnummer.
+    // Achtung: phone ist NICHT unique (Klaviyo-Import enthält Dubletten), deshalb
+    // die älteste Übereinstimmung nehmen statt maybeSingle() über alle Treffer.
+    let ex: { id: string; properties: Record<string, unknown> | null; optout_at: string | null; klaviyo_id: string | null } | null = null
+    if (email) {
+      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id').ilike('email', email).maybeSingle()
+      ex = data as typeof ex
+    } else {
+      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id')
+        .eq('phone', phone).order('created_at', { ascending: true }).limit(1)
+      ex = ((data as Array<NonNullable<typeof ex>> | null) ?? [])[0] ?? null
+    }
     const alreadyConfirmed = !!(ex && (ex.properties?.doi_confirmed === true || ex.klaviyo_id))
 
     // Schon bestätigt (DOI früher ODER aus Klaviyo importiert) → direkt zur Liste, keine neue DOI-Mail.
     if (ex && alreadyConfirmed && !ex.optout_at) {
       await sb.from('newsletter_list_members').upsert({ list_id: list.id, subscriber_id: ex.id }, { onConflict: 'list_id,subscriber_id' })
       await enrollInListSequences(sb, ex.id, list.id)
-      return json({ ok: true, already_confirmed: true, added: true })
+      return json({ ok: true, already_confirmed: true, added: true, channel })
     }
 
-    // Neu oder unbestätigt → DOI-Token setzen + Bestätigungsmail
+    // Neu oder unbestätigt → DOI-Token setzen + Bestätigung auf dem gewählten Kanal
     const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '').slice(0, 8)
     let subId = ex?.id
-    const baseProps = { ...(ex?.properties ?? {}), lang, doi_token: token, doi_pending_list: list.id, doi_confirmed: false }
+    const baseProps = {
+      ...(ex?.properties ?? {}), lang, channel,
+      doi_token: token, doi_pending_list: list.id, doi_confirmed: false,
+      doi_redirect: erlaubtesZiel(body.confirm_redirect),
+    }
     if (ex) {
       await sb.from('newsletter_subscribers').update({
         first_name: body.first_name?.trim() || undefined, last_name: body.last_name?.trim() || undefined,
-        phone: body.phone?.trim() || undefined, properties: baseProps,
+        phone: phone || undefined, properties: baseProps,
       }).eq('id', ex.id)
     } else {
-      const { data: created } = await sb.from('newsletter_subscribers').insert({
-        email, first_name: body.first_name?.trim() || null, last_name: body.last_name?.trim() || null,
-        phone: body.phone?.trim() || null, source: body.source?.trim() || 'signup',
+      const { data: created, error: insErr } = await sb.from('newsletter_subscribers').insert({
+        email: email || null, first_name: body.first_name?.trim() || null, last_name: body.last_name?.trim() || null,
+        phone: phone || null, source: body.source?.trim() || 'signup',
         properties: baseProps,
       }).select('id').single()
+      if (insErr) console.error('[subscriber-optin] insert:', insErr.message)
       subId = (created as { id: string } | null)?.id
     }
     if (!subId) return json({ error: 'Abonnent konnte nicht angelegt werden' }, 500)
 
-    // Double-Opt-In-Mail (von Lotte, mit Office-Bild)
     const confirmUrl = `${base}/functions/v1/subscriber-optin?confirm=${token}`
     const first = (body.first_name ?? '').trim()
+
+    // ── Kanal WhatsApp: Bestätigung als Nachricht statt als Mail ──────────────
+    if (channel === 'whatsapp') {
+      const waText = lang === 'en'
+        ? `${first ? `Hi ${first}! ` : 'Hi! '}Thanks for signing up for the Happy Property newsletter 🇨🇾\n\nOne last step — please confirm here:\n${confirmUrl}\n\nDidn't request this? Just ignore this message.`
+        : `${first ? `Hallo ${first}! ` : 'Hallo! '}Danke für deine Anmeldung zum Happy-Property-Newsletter 🇨🇾\n\nEin letzter Schritt — bitte bestätige hier:\n${confirmUrl}\n\nDu warst das nicht? Dann ignoriere diese Nachricht einfach.`
+      const { error: waErr } = await sb.functions.invoke('send-whatsapp', { body: {
+        event_type: 'scheduled', override_text: waText, auto: true,
+        lead_data: { lead_name: first || 'Newsletter-Abonnent', lead_phone: phone },
+        persona_image: lotteBild(),
+      } })
+      if (waErr) console.warn('[subscriber-optin] DOI-WhatsApp:', waErr)
+      return json({ ok: true, pending: true, list: list.name, channel })
+    }
+
+    // Wer E-Mail UND Handy angegeben hat, bestätigt beide Kanäle mit demselben Klick —
+    // deshalb sagt der Text dann "Anmeldung" statt "E-Mail-Adresse".
     const T = lang === 'en'
-      ? { subj: 'Please confirm your registration', greet: first ? `Hi ${first},` : 'Hi,', intro: 'thanks for signing up! Please confirm your email address with one click:', btn: 'Confirm registration', foot: 'If you didn’t request this, just ignore this email.' }
-      : { subj: 'Bitte bestätige deine Anmeldung', greet: first ? `Hallo ${first},` : 'Hallo,', intro: 'danke für deine Anmeldung! Bitte bestätige deine E-Mail-Adresse mit einem Klick:', btn: 'Anmeldung bestätigen', foot: 'Falls du das nicht warst, ignoriere diese Mail einfach.' }
+      ? { subj: 'Please confirm your registration', greet: first ? `Hi ${first},` : 'Hi,', intro: channel === 'both' ? 'thanks for signing up! You will receive the newsletter by email and on WhatsApp. Please confirm with one click:' : 'thanks for signing up! Please confirm your email address with one click:', btn: 'Confirm registration', foot: 'If you didn’t request this, just ignore this email.' }
+      : { subj: 'Bitte bestätige deine Anmeldung', greet: first ? `Hallo ${first},` : 'Hallo,', intro: channel === 'both' ? 'danke für deine Anmeldung! Du bekommst den Newsletter per E-Mail und per WhatsApp. Bitte bestätige das einmal mit einem Klick:' : 'danke für deine Anmeldung! Bitte bestätige deine E-Mail-Adresse mit einem Klick:', btn: 'Anmeldung bestätigen', foot: 'Falls du das nicht warst, ignoriere diese Mail einfach.' }
     const mailHtml = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
       <div style="text-align:center;margin-bottom:6px;">
         <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
@@ -187,7 +259,7 @@ Deno.serve(async (req) => {
       to: email, subject: T.subj, html: mailHtml, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, auto: true,
     } }).catch((e: unknown) => console.warn('[subscriber-optin] DOI-Mail:', e))
 
-    return json({ ok: true, pending: true, list: list.name })
+    return json({ ok: true, pending: true, list: list.name, channel })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[subscriber-optin]', msg)

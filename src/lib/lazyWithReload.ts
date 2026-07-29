@@ -13,12 +13,34 @@ import { lazy, type ComponentType, type LazyExoticComponent } from 'react'
 
 const RELOAD_FLAG = 'hp_chunk_reloaded'
 
+// Service-Worker (PWA) + alle Caches löschen, DANN neu laden. Nötig, weil ein
+// simpler reload() sonst wieder die ALTE, vom Service-Worker gecachte index.html
+// samt toter Chunks bekommt → Endlos-Hänger, den selbst „harter Reload" (v.a. in
+// Safari) nicht bricht. Session (localStorage) bleibt bewusst erhalten — nur der
+// Code-Cache wird geleert, der Nutzer bleibt eingeloggt.
+async function purgeAndReload(): Promise<void> {
+  try {
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map(r => r.unregister()))
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys()
+      await Promise.all(keys.map(k => caches.delete(k)))
+    }
+  } catch { /* im Zweifel trotzdem neu laden */ }
+  // Cache-Buster in der URL erzwingt frische index.html vom Netz.
+  const u = new URL(window.location.href)
+  u.searchParams.set('v', String(Date.now()))
+  window.location.replace(u.toString())
+}
+
 function reloadOnce(): boolean {
   try {
     if (sessionStorage.getItem(RELOAD_FLAG)) return false   // schon einmal versucht → nicht erneut
     sessionStorage.setItem(RELOAD_FLAG, String(Date.now()))
   } catch { /* sessionStorage evtl. blockiert → trotzdem einmal versuchen */ }
-  window.location.reload()
+  void purgeAndReload()
   return true
 }
 
