@@ -6,9 +6,12 @@ interface Props {
   allowedRoles?: string[]
   // Zusätzlich zur Rolle: Mitarbeiter brauchen dieses Recht (Admin/Verwalter immer frei).
   permission?: PermissionArea
+  // Alternativ: Mitarbeiter braucht IRGENDEINES dieser Rechte (z.B. Leads über
+  // 'pipeline' ODER 'contacts' erreichbar).
+  anyPermission?: PermissionArea[]
 }
 
-export default function ProtectedRoute({ allowedRoles, permission }: Props) {
+export default function ProtectedRoute({ allowedRoles, permission, anyPermission }: Props) {
   const { user, profile, loading } = useAuth()
 
   // Lokaler Spinner-Timeout: max. 12 s warten, dann Entscheidung erzwingen.
@@ -46,6 +49,11 @@ export default function ProtectedRoute({ allowedRoles, permission }: Props) {
   // Mitarbeiter ohne das nötige Bereichs-Recht → zurück auf ihre erlaubte Startseite
   // (nicht ausloggen — sie dürfen ja andere Bereiche sehen).
   if (permission && profile && profile.role === 'mitarbeiter' && !hasPerm(profile, permission)) {
+    return <Navigate to={landingFor(profile)} replace />
+  }
+
+  // ODER-Recht: reicht IRGENDEINES der genannten Rechte.
+  if (anyPermission && profile && profile.role === 'mitarbeiter' && !anyPermission.some(p => hasPerm(profile, p))) {
     return <Navigate to={landingFor(profile)} replace />
   }
 

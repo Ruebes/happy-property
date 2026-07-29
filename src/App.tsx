@@ -179,6 +179,12 @@ export default function App() {
               <Route path="/admin/crm/settings/booking-links" element={<CrmBookingLinks />} />
             </Route>
 
+            {/* ── Leads / Kundenkontakte: über 'pipeline' ODER 'contacts' erreichbar ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} anyPermission={['pipeline', 'contacts']} />}>
+              <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
+              <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetailRoute />} />
+            </Route>
+
             {/* ── Rechnungen (Recht 'invoices') ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="invoices" />}>
               <Route path="/admin/crm/invoices"             element={<CrmInvoices />} />
@@ -195,8 +201,6 @@ export default function App() {
               <Route path="/admin/crm"             element={<CrmDashboard />} />
               <Route path="/admin/crm/pipeline"    element={<CrmPipeline />} />
               <Route path="/admin/crm/dashboard"   element={<CrmDashboard />} />
-              <Route path="/admin/crm/leads"       element={<CrmAllLeads />} />
-              <Route path="/admin/crm/leads/:id"   element={<CrmLeadDetailRoute />} />
               <Route path="/admin/crm/archived"    element={<CrmArchived />} />
               <Route path="/admin/crm/projects"       element={<CrmProjects />} />
               <Route path="/admin/crm/projects/:id"  element={<CrmProjectDetailRoute />} />

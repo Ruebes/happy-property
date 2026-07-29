@@ -155,10 +155,12 @@ export default function DashboardLayout({ children, basePath }: Props) {
   // Rolle 'mitarbeiter': flache, nach freigeschalteten Rechten gefilterte CRM-Nav —
   // „schön übersichtlich, nur was sie brauchen". Admin/Verwalter haben ihre eigene Nav.
   const isStaff = profile?.role === 'mitarbeiter'
-  const staffNavItemsAll: { to: string; key: string; perm: PermissionArea }[] = [
+  // perm = einzelnes Recht; anyPerm = eines von mehreren reicht (z.B. Leads über
+  // 'pipeline' ODER 'contacts', damit „Kontakte" auch alle Kundenkontakte umfasst).
+  const staffNavItemsAll: { to: string; key: string; perm?: PermissionArea; anyPerm?: PermissionArea[] }[] = [
     { to: '/admin/crm',                key: 'crm.nav.dashboard',   perm: 'pipeline' },
     { to: '/admin/crm/pipeline',       key: 'crm.nav.pipeline',    perm: 'pipeline' },
-    { to: '/admin/crm/leads',          key: 'crm.nav.leads',       perm: 'pipeline' },
+    { to: '/admin/crm/leads',          key: 'crm.nav.leads',       anyPerm: ['pipeline', 'contacts'] },
     { to: '/admin/crm/inbox',          key: 'crm.nav.inbox',       perm: 'pipeline' },
     { to: '/admin/crm/postausgang',    key: 'crm.nav.outbox',      perm: 'pipeline' },
     { to: '/admin/crm/calendar',       key: 'crm.nav.calendar',    perm: 'pipeline' },
@@ -171,12 +173,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/ads',            key: 'crm.nav.ads',         perm: 'werbung'  },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
   ]
+  const staffCanSee = (i: { perm?: PermissionArea; anyPerm?: PermissionArea[] }) =>
+    i.anyPerm ? i.anyPerm.some(p => hasPerm(profile, p)) : !!i.perm && hasPerm(profile, i.perm)
   // Startseite + Aufgaben stehen JEDEM Mitarbeiter offen (kein Bereichs-Recht),
   // davor die rechte-gefilterten Bereiche.
   const staffNavItems: { to: string; key: string }[] = [
     { to: '/admin/crm/home',  key: 'crm.nav.home'  },
     { to: '/admin/crm/tasks', key: 'crm.nav.tasks' },
-    ...staffNavItemsAll.filter(i => hasPerm(profile, i.perm)).map(({ to, key }) => ({ to, key })),
+    ...staffNavItemsAll.filter(staffCanSee).map(({ to, key }) => ({ to, key })),
   ]
 
   // CRM Settings-Untermenü-Einträge
