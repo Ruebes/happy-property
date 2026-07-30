@@ -1353,7 +1353,8 @@
       "ads": "Werbemanager",
       "bookingLinks": "Buchungslinks",
       "lists": "Empfängerlisten",
-      "social": "Social Media"
+      "social": "Social Media",
+      "connectors": "Connectoren"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -3803,12 +3804,12 @@
       "newPost": "Neuer Post",
       "postText": "Post-Text",
       "image": "Bild",
-      "imageMake": "🎨 Bild erstellen",
+      "imageMake": "🎨 KI-Bild erstellen",
       "imageRedo": "🎨 Neues Bild erstellen",
       "imageWorking": "Bild wird erstellt (~30 s)…",
-      "noImage": "Noch kein Bild. Instagram braucht eins.",
+      "noImage": "Noch kein Bild. Instagram braucht mindestens eins.",
       "platforms": "Plattformen",
-      "schedule": "Geplant für (optional)",
+      "schedule": "Geplant für",
       "scheduleHint": "Nur zur Planung im Kalender — veröffentlicht wird per Klick auf „Jetzt posten\".",
       "saved": "Gespeichert",
       "publish": "Jetzt posten",
@@ -3826,7 +3827,35 @@
         "geplant": "Geplant",
         "gepostet": "Gepostet",
         "fehlgeschlagen": "Fehlgeschlagen"
-      }
+      },
+      "project": "Projekt (aus dem Portal)",
+      "noProject": "kein Projekt",
+      "unit": "Einzelne Wohnung (optional)",
+      "wholeProject": "ganzes Projekt",
+      "images": "Bilder",
+      "fromProject": "Aus dem Projekt wählen",
+      "cover": "Titel",
+      "format": "Format (FB & Insta)",
+      "formatSingle": "🖼 Einzelpost",
+      "formatCarousel": "🎠 Karussell (2–10 Bilder)",
+      "carouselNeed": "Karussell braucht mindestens 2 Bilder.",
+      "scheduleHintAuto": "Mit Datum + Speichern landet der Post in der Warteschlange: Die Automatik veröffentlicht EINEN fälligen Post pro Tag (vormittags) auf die gewählten Plattformen.",
+      "savedQueue": "in der Tages-Warteschlange",
+      "queueInfo": "{{n}} in der Tages-Warteschlange",
+      "manageTopics": "Kategorien",
+      "newTopicPh": "Neue Kategorie, z. B. „Kundenstimmen\"",
+      "addTopic": "Hinzufügen",
+      "topicDeleteConfirm": "Kategorie „{{l}}\" löschen? Bestehende Posts bleiben erhalten."
+    },
+    "conn": {
+      "title": "Connectoren",
+      "subtitle": "Alle Anbindungen des Systems — Status, Test und Pflege.",
+      "testAll": "🔄 Alle testen",
+      "testing": "Testet…",
+      "change": "Ändern",
+      "tokenPh": "Neuen Token einfügen …",
+      "saved": "✓ Gespeichert — Verbindung wird getestet…",
+      "hint": "Schlüssel werden nur auf dem Server geprüft und nie im Browser angezeigt. Anbindungen ohne „Ändern\"-Knopf pflegst du über mich (Claude) oder die Supabase-Secrets."
     }
   },
   "docs": {

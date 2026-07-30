@@ -71,6 +71,31 @@ async function projectContext(sb: SupabaseClient): Promise<string> {
   }).join('\n')
 }
 
+// Bild via OpenAI erzeugen, in ad-creatives/social hochladen, an image_urls anhängen.
+// Wird von der image-Aktion UND vom Chat-Tool make_image genutzt.
+async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
+  const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
+  if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
+  const res = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1024', quality: 'medium', n: 1 }),
+  })
+  const d = await res.json()
+  if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
+  const b64 = d?.data?.[0]?.b64_json as string | undefined
+  if (!b64) throw new Error('OpenAI lieferte kein Bild.')
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const path = `social/${postId}-${Date.now()}.png`
+  const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+  if (upErr) throw new Error(`Upload: ${upErr.message}`)
+  const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+  const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
+  const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
+  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+  return url
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -87,6 +112,22 @@ Deno.serve(async (req) => {
       const { data: hist } = await sb.from('social_post_messages').select('role, content').eq('post_id', body.post_id).order('created_at').limit(30)
       const projects = await projectContext(sb)
 
+      // Gewähltes Projekt / gewählte Wohnung: echte Portal-Daten in den Kontext.
+      let focus = ''
+      if (p.project_id) {
+        const { data: pr } = await sb.from('crm_projects').select('name, location, status, deck_assets').eq('id', p.project_id).maybeSingle()
+        const prj = pr as { name: string; location: string | null; status: string | null; deck_assets: { facts?: string } | null } | null
+        if (prj) {
+          focus = `\nDIESER POST STELLT VOR: Projekt „${prj.name}" (${prj.location ?? 'Zypern'}${prj.status ? `, ${prj.status}` : ''}).`
+          if (prj.deck_assets?.facts) focus += `\nProjekt-Fakten (echte Daten aus dem Portal, NUR diese verwenden):\n${String(prj.deck_assets.facts).slice(0, 2500)}`
+        }
+        if (p.unit_id) {
+          const { data: un } = await sb.from('crm_project_units').select('unit_number, price_net, bedrooms, size_sqm, floor').eq('id', p.unit_id).maybeSingle()
+          const u = un as { unit_number: string; price_net: number | null; bedrooms: number | null; size_sqm: number | null; floor: string | null } | null
+          if (u) focus += `\nKonkret Wohnung ${u.unit_number}: ${u.bedrooms ?? '?'} Schlafzimmer, ${u.size_sqm ?? '?'} m²${u.floor ? `, Etage ${u.floor}` : ''}${u.price_net ? `, ${u.price_net.toLocaleString('de-DE')} € netto` : ''}.`
+        }
+      }
+
       const system = `${BRAND}
 
 Du bist der Social-Media-Redakteur im Happy-Property-CRM. Sven (oder ein Mitarbeiter)
@@ -95,8 +136,9 @@ bespricht mit dir EINEN Post. Aktueller Stand:
 - Plattformen: ${(p.platforms as string[] ?? []).join(', ')}
 - Aktueller Text: ${p.content ? `"""${p.content}"""` : '(noch leer)'}
 ${p.news_source ? `- News-Bezug: ${p.news_source}` : ''}
+${focus}
 
-Projekte (echte Daten, NUR diese verwenden):
+Alle Projekte im Überblick (echte Daten, NUR diese verwenden):
 ${projects}
 
 Regeln:
@@ -122,10 +164,18 @@ Regeln:
           },
           required: ['content'],
         },
+      }, {
+        name: 'make_image',
+        description: 'Erzeugt SOFORT ein neues Bild zum Post (OpenAI). Nutzen, wenn der Nutzer ein Bild will oder Änderungen am Bild wünscht — der Prompt muss zum aktuellen Post-Text passen.',
+        input_schema: {
+          type: 'object',
+          properties: { prompt: { type: 'string', description: 'Englischer Bild-Prompt, passend zum Post-Text, ohne Text/Wasserzeichen im Bild' } },
+          required: ['prompt'],
+        },
       }]
       const resp = await claude(anthropicKey, { system, messages, tools })
-      const blocks = (resp.content ?? []) as Array<{ type: string; text?: string; name?: string; input?: { content?: string; image_prompt?: string } }>
-      const reply = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
+      const blocks = (resp.content ?? []) as Array<{ type: string; text?: string; name?: string; input?: { content?: string; image_prompt?: string; prompt?: string } }>
+      let reply = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
       const toolUse = blocks.find(b => b.type === 'tool_use' && b.name === 'set_post')
       let newContent: string | null = null
       if (toolUse?.input?.content) {
@@ -134,50 +184,49 @@ Regeln:
         if (toolUse.input.image_prompt) patch.image_prompt = toolUse.input.image_prompt
         await sb.from('social_posts').update(patch).eq('id', body.post_id)
       }
+      // Bild-Wunsch aus dem Chat: make_image → sofort generieren, passend zum Text.
+      let newImageUrl: string | null = null
+      const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image')
+      if (imgTool?.input?.prompt) {
+        try {
+          newImageUrl = await generatePostImage(sb, body.post_id, imgTool.input.prompt)
+          reply = reply ? `${reply}\n\n🎨 Neues Bild ist fertig.` : '🎨 Neues Bild ist fertig — passend zum Text.'
+        } catch (e) { reply = `${reply}\n\n❌ Bild fehlgeschlagen: ${(e as Error).message}`.trim() }
+      }
       // Verlauf speichern
       await sb.from('social_post_messages').insert([
         { post_id: body.post_id, role: 'user', content: body.message.trim() },
         { post_id: body.post_id, role: 'assistant', content: reply || (newContent ? 'Post aktualisiert ✓' : '…') },
       ])
-      return json({ ok: true, reply: reply || (newContent ? 'Ich habe den Post-Text aktualisiert. ✓' : ''), content: newContent, image_prompt: toolUse?.input?.image_prompt ?? null })
+      return json({ ok: true, reply: reply || (newContent ? 'Ich habe den Post-Text aktualisiert. ✓' : ''), content: newContent, image_url: newImageUrl, image_prompt: toolUse?.input?.image_prompt ?? null })
     }
 
     // ── Bild via OpenAI (gpt-image-1) → ad-creatives/social/… ─────────────────
     if (body.action === 'image') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
-      const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
-      if (!openaiKey) return json({ error: 'OPENAI_API_KEY fehlt in den Secrets.' }, 500)
-      const { data: post } = await sb.from('social_posts').select('image_prompt, topic, content').eq('id', body.post_id).maybeSingle()
-      const p = post as { image_prompt: string | null; topic: string; content: string | null } | null
+      const { data: post } = await sb.from('social_posts').select('image_prompt, content').eq('id', body.post_id).maybeSingle()
+      const p = post as { image_prompt: string | null; content: string | null } | null
       const prompt = (body.prompt ?? p?.image_prompt ?? '').trim()
-        || `Photorealistic lifestyle image for a social media post about premium new-build real estate investment in Cyprus (Paphos), Mediterranean light, modern architecture, no text, no watermarks.`
-      const res = await fetch('https://api.openai.com/v1/images/generations', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1024', quality: 'medium', n: 1 }),
-      })
-      const d = await res.json()
-      if (!res.ok) return json({ error: `OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}` }, 502)
-      const b64 = d?.data?.[0]?.b64_json as string | undefined
-      if (!b64) return json({ error: 'OpenAI lieferte kein Bild.' }, 502)
-      const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-      const path = `social/${body.post_id}-${Date.now()}.png`
-      const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
-      if (upErr) return json({ error: `Upload: ${upErr.message}` }, 500)
-      const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
-      await sb.from('social_posts').update({ image_url: url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', body.post_id)
-      return json({ ok: true, image_url: url, prompt })
+        || `Photorealistic lifestyle image matching this social media post about premium new-build real estate investment in Cyprus (Paphos): "${(p?.content ?? '').slice(0, 300)}". Mediterranean light, modern architecture, no text, no watermarks.`
+      try {
+        const url = await generatePostImage(sb, body.post_id, prompt)
+        return json({ ok: true, image_url: url, prompt })
+      } catch (e) { return json({ error: (e as Error).message }, 502) }
     }
 
     // ── News-Recherche → Aufgabe für Sven ─────────────────────────────────────
     if (body.action === 'news_scan') {
       const system = `${BRAND}
 
-Du recherchierst AKTUELLE Nachrichten (letzte ~14 Tage) rund um Immobilien, die sich
-für Social-Media-Posts von Happy Property eignen. Zwei Blickwinkel:
-1) Zypern: Immobilienmarkt, Preise, Tourismus, Infrastruktur, Steuern, Paphos/Limassol.
-2) Deutschland: Regulierung/Steuern/Mietrecht (z.B. Mieterschutzgesetze, Mietendeckel,
-   Grunderwerbsteuer) — als Kontrast-Aufhänger („freier Markt Zypern vs. DE-Gängelung").
+Du recherchierst AKTUELLE Nachrichten (letzte ~14 Tage), die sich für Social-Media-
+Posts von Happy Property eignen. Zwei Blickwinkel:
+1) ZYPERN — besonders RECHTLICHES & PRAKTISCHES für Investoren UND Auswanderer:
+   Gesetzes-/Steueränderungen (MwSt, Non-Dom, IP-Box, Rente), Aufenthalts-/Visa-Regeln,
+   Title-Deeds-Reformen, Kaufprozess, dazu Markt/Preise/Infrastruktur (Paphos/Limassol).
+2) DEUTSCHLAND — alles, was sich MEDIAL AUSSCHLACHTEN lässt: Mietrecht/Mieterschutz,
+   Mietendeckel, Enteignungsdebatten, Steuererhöhungen, Grundsteuer-Chaos, Heizungsgesetz,
+   Wirtschafts-/Standortfrust — als Kontrast-Aufhänger („echte Rendite & freier Markt in
+   Zypern statt Gängelung in DE").
 Suche gezielt, wähle die 3 besten Fundstücke und liefere je: Schlagzeile, 1-Satz-Kern,
 Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       const resp = await claude(anthropicKey, {
@@ -203,14 +252,38 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       return json({ ok: true, task_id: taskId, findings: text })
     }
 
+    // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──
+    if (body.action === 'auto_publish') {
+      const today = new Date().toISOString().slice(0, 10)
+      // Heute schon gepostet? → „einen am Tag" respektieren.
+      const { data: doneToday } = await sb.from('social_posts').select('id').gte('posted_at', `${today}T00:00:00Z`).limit(1)
+      if (doneToday && doneToday.length) return json({ ok: true, skipped: 'Heute wurde bereits gepostet.' })
+      // Ältester fälliger geplanter Post (scheduled_for bis Tagesende)
+      const { data: due } = await sb.from('social_posts').select('id')
+        .eq('status', 'geplant').lte('scheduled_for', `${today}T23:59:59Z`)
+        .order('scheduled_for', { ascending: true }).limit(1)
+      const next = (due as { id: string }[] | null)?.[0]
+      if (!next) return json({ ok: true, skipped: 'Kein fälliger geplanter Post.' })
+      body.post_id = next.id
+      body.action = 'publish'   // unten normal veröffentlichen
+    }
+
     // ── Veröffentlichen ───────────────────────────────────────────────────────
     if (body.action === 'publish') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       const { data: post } = await sb.from('social_posts').select('*').eq('id', body.post_id).maybeSingle()
-      const p = post as { content: string | null; image_url: string | null; platforms: string[]; status: string } | null
+      const p0 = post as { content: string | null; image_url: string | null; image_urls: string[] | null; format: string | null; platforms: string[]; status: string } | null
+      // Bilderliste: image_urls (Mehrfach) mit image_url als Fallback; Karussell nur mit >= 2.
+      const imgs = (Array.isArray(p0?.image_urls) ? p0!.image_urls! : []).filter(Boolean)
+      if (p0 && !imgs.length && p0.image_url) imgs.push(p0.image_url)
+      const isCarousel = (p0?.format === 'carousel') && imgs.length >= 2
+      const p = p0 ? { ...p0, image_url: imgs[0] ?? p0.image_url } : null
       if (!p?.content?.trim()) return json({ error: 'Der Post hat noch keinen Text.' }, 400)
       const metaToken = Deno.env.get('META_ACCESS_TOKEN') ?? ''
-      const liToken = Deno.env.get('LINKEDIN_ACCESS_TOKEN') ?? ''
+      // LinkedIn-Token: zuerst die im CRM gepflegte Ablage (Einstellungen →
+      // Connectoren), sonst Env-Secret.
+      const { data: liRow } = await sb.from('connector_secrets').select('value').eq('key', 'LINKEDIN_ACCESS_TOKEN').maybeSingle()
+      const liToken = (liRow as { value: string } | null)?.value ?? Deno.env.get('LINKEDIN_ACCESS_TOKEN') ?? ''
       const results: Record<string, { ok: boolean; id?: string; error?: string }> = {}
 
       // Facebook-Seite + IG-Account einmal ermitteln
@@ -228,28 +301,55 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
           if (p.platforms.includes('instagram')) results.instagram = { ok: false, error: msg }
         }
       }
-      // Facebook: Foto-Post (mit Bild) oder Text-Post
+      // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
       if (p.platforms.includes('facebook') && pageId && !results.facebook) {
         try {
-          const url = p.image_url
-            ? `https://graph.facebook.com/v21.0/${pageId}/photos`
-            : `https://graph.facebook.com/v21.0/${pageId}/feed`
-          const params = new URLSearchParams(p.image_url
-            ? { url: p.image_url, caption: p.content, access_token: pageToken }
-            : { message: p.content, access_token: pageToken })
-          const r = await fetch(url, { method: 'POST', body: params }).then(x => x.json())
-          if (r.error) throw new Error(r.error.message)
-          results.facebook = { ok: true, id: r.post_id ?? r.id }
+          if (isCarousel) {
+            // Fotos unveröffentlicht hochladen → als attached_media an einen Feed-Post hängen
+            const mediaIds: string[] = []
+            for (const u of imgs.slice(0, 10)) {
+              const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/photos`, { method: 'POST', body: new URLSearchParams({ url: u, published: 'false', access_token: pageToken }) }).then(x => x.json())
+              if (r.error) throw new Error(r.error.message)
+              mediaIds.push(r.id)
+            }
+            const params = new URLSearchParams({ message: p.content, access_token: pageToken })
+            mediaIds.forEach((id, i) => params.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })))
+            const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, { method: 'POST', body: params }).then(x => x.json())
+            if (r.error) throw new Error(r.error.message)
+            results.facebook = { ok: true, id: r.id }
+          } else {
+            const url = p.image_url ? `https://graph.facebook.com/v21.0/${pageId}/photos` : `https://graph.facebook.com/v21.0/${pageId}/feed`
+            const params = new URLSearchParams(p.image_url
+              ? { url: p.image_url, caption: p.content, access_token: pageToken }
+              : { message: p.content, access_token: pageToken })
+            const r = await fetch(url, { method: 'POST', body: params }).then(x => x.json())
+            if (r.error) throw new Error(r.error.message)
+            results.facebook = { ok: true, id: r.post_id ?? r.id }
+          }
         } catch (e) { results.facebook = { ok: false, error: (e as Error).message } }
       }
-      // Instagram: braucht ein Bild (Container → publish)
+      // Instagram: Einzelbild oder Karussell (Kind-Container → CAROUSEL → publish)
       if (p.platforms.includes('instagram') && !results.instagram) {
         try {
           if (!igId) throw new Error('Kein Instagram-Business-Konto mit der Seite verknüpft.')
-          if (!p.image_url) throw new Error('Instagram braucht ein Bild — erst „Bild erstellen".')
-          const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: p.image_url, caption: p.content, access_token: pageToken }) }).then(x => x.json())
-          if (c.error) throw new Error(c.error.message)
-          const pub = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: c.id, access_token: pageToken }) }).then(x => x.json())
+          if (!p.image_url) throw new Error('Instagram braucht mindestens ein Bild.')
+          let creationId: string
+          if (isCarousel) {
+            const children: string[] = []
+            for (const u of imgs.slice(0, 10)) {
+              const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: u, is_carousel_item: 'true', access_token: pageToken }) }).then(x => x.json())
+              if (c.error) throw new Error(c.error.message)
+              children.push(c.id)
+            }
+            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'CAROUSEL', children: children.join(','), caption: p.content, access_token: pageToken }) }).then(x => x.json())
+            if (c.error) throw new Error(c.error.message)
+            creationId = c.id
+          } else {
+            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: p.image_url, caption: p.content, access_token: pageToken }) }).then(x => x.json())
+            if (c.error) throw new Error(c.error.message)
+            creationId = c.id
+          }
+          const pub = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: creationId, access_token: pageToken }) }).then(x => x.json())
           if (pub.error) throw new Error(pub.error.message)
           results.instagram = { ok: true, id: pub.id }
         } catch (e) { results.instagram = { ok: false, error: (e as Error).message } }

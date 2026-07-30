@@ -1353,7 +1353,8 @@
       "ads": "Ads Manager",
       "bookingLinks": "Booking links",
       "lists": "Recipient lists",
-      "social": "Social media"
+      "social": "Social media",
+      "connectors": "Connectors"
     },
     "tasks": {
       "title": "Tasks",
@@ -3803,12 +3804,12 @@
       "newPost": "New post",
       "postText": "Post text",
       "image": "Image",
-      "imageMake": "🎨 Create image",
+      "imageMake": "🎨 Create AI image",
       "imageRedo": "🎨 Create new image",
       "imageWorking": "Creating image (~30 s)…",
-      "noImage": "No image yet. Instagram needs one.",
+      "noImage": "No image yet. Instagram needs at least one.",
       "platforms": "Platforms",
-      "schedule": "Scheduled for (optional)",
+      "schedule": "Scheduled for",
       "scheduleHint": "For planning only — publishing happens via “Post now”.",
       "saved": "Saved",
       "publish": "Post now",
@@ -3826,7 +3827,35 @@
         "geplant": "Scheduled",
         "gepostet": "Posted",
         "fehlgeschlagen": "Failed"
-      }
+      },
+      "project": "Project (from the portal)",
+      "noProject": "no project",
+      "unit": "Single unit (optional)",
+      "wholeProject": "whole project",
+      "images": "Images",
+      "fromProject": "Pick from project",
+      "cover": "Cover",
+      "format": "Format (FB & Insta)",
+      "formatSingle": "🖼 Single post",
+      "formatCarousel": "🎠 Carousel (2–10 images)",
+      "carouselNeed": "A carousel needs at least 2 images.",
+      "scheduleHintAuto": "With a date + save, the post joins the queue: the automation publishes ONE due post per day (morning) to the selected platforms.",
+      "savedQueue": "in the daily queue",
+      "queueInfo": "{{n}} in the daily queue",
+      "manageTopics": "Categories",
+      "newTopicPh": "New category, e.g. “Testimonials”",
+      "addTopic": "Add",
+      "topicDeleteConfirm": "Delete category “{{l}}”? Existing posts are kept."
+    },
+    "conn": {
+      "title": "Connectors",
+      "subtitle": "All system integrations — status, test and maintenance.",
+      "testAll": "🔄 Test all",
+      "testing": "Testing…",
+      "change": "Change",
+      "tokenPh": "Paste new token …",
+      "saved": "✓ Saved — testing connection…",
+      "hint": "Keys are only checked on the server and never shown in the browser. Integrations without a “Change” button are maintained via Claude or the Supabase secrets."
     }
   },
   "docs": {

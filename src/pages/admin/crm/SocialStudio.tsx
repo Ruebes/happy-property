@@ -6,27 +6,26 @@ import { useAuth } from '../../../lib/auth'
 import { CustomSelect } from '../../../components/CustomSelect'
 
 // ── Social Media Studio ───────────────────────────────────────────────────────
-// Organische Posts für Facebook/Instagram/LinkedIn: Posting-Plan je Thema
-// (Objekt vorstellen, Wissenswertes, Lottes Weisheit der Woche, Aktuelles/News),
-// hochwertiges Chatfenster (social-agent: bestes Claude-Modell + Firmenwissen),
-// Bilder via OpenAI, News-Recherche legt Fundstücke als Aufgabe auf die Startseite.
+// Organische Posts für Facebook/Instagram/LinkedIn. Kategorien kommen aus
+// social_topics (frei erweiter-/löschbar). „Immobilie vorstellen" zieht Projekt
+// ODER einzelne Wohnung samt Bildern direkt aus dem Portal (deck_assets).
+// Format Einzelpost/Karussell (FB+IG; LinkedIn folgt mit der Anbindung).
+// Vorausplanung: Status „geplant" + Datum → der Auto-Cron postet EINEN fälligen
+// Post pro Tag (08:00 UTC) auf die gewählten Plattformen.
 
+interface Topic { key: string; label: string; icon: string; sort: number }
 interface SocialPost {
   id: string; topic: string; title: string | null; content: string | null
-  platforms: string[]; image_url: string | null; status: string
-  scheduled_for: string | null; news_source: string | null
+  platforms: string[]; image_url: string | null; image_urls: string[] | null
+  format: string; status: string; scheduled_for: string | null
+  project_id: string | null; unit_id: string | null; news_source: string | null
   post_results: Record<string, { ok: boolean; id?: string; error?: string }> | null
   created_at: string
 }
 interface ChatMsg { role: 'user' | 'assistant'; content: string }
+interface ProjectOpt { id: string; name: string; deck_assets: { renders?: string[]; gallery?: string[] } | null }
+interface UnitOpt { id: string; unit_number: string; price_net: number | null }
 
-const TOPICS = [
-  { key: 'objekt', icon: '🏠', de: 'Immobilie vorstellen' },
-  { key: 'wissen', icon: '💡', de: 'Wissenswertes' },
-  { key: 'weisheit', icon: '🐾', de: 'Weisheit der Woche (Lotte)' },
-  { key: 'news', icon: '📰', de: 'Aktuelles' },
-  { key: 'sonstiges', icon: '✏️', de: 'Sonstiges' },
-]
 const PLATFORMS = [
   { key: 'facebook', label: 'Facebook' },
   { key: 'instagram', label: 'Instagram' },
@@ -40,12 +39,20 @@ const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
 }
 
 // ── Editor + Chat ────────────────────────────────────────────────────────────
-function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: () => void; onChanged: () => void }) {
+function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; topics: Topic[]; projects: ProjectOpt[]; onClose: () => void }) {
   const { t } = useTranslation()
   const [content, setContent] = useState(post.content ?? '')
   const [platforms, setPlatforms] = useState<string[]>(post.platforms)
   const [scheduled, setScheduled] = useState(post.scheduled_for ? post.scheduled_for.slice(0, 16) : '')
-  const [imageUrl, setImageUrl] = useState(post.image_url)
+  const [images, setImages] = useState<string[]>(() => {
+    const arr = Array.isArray(post.image_urls) ? post.image_urls.filter(Boolean) : []
+    return arr.length ? arr : (post.image_url ? [post.image_url] : [])
+  })
+  const [format, setFormat] = useState(post.format === 'carousel' ? 'carousel' : 'single')
+  const [projectId, setProjectId] = useState(post.project_id ?? '')
+  const [unitId, setUnitId] = useState(post.unit_id ?? '')
+  const [units, setUnits] = useState<UnitOpt[]>([])
+  const [showGallery, setShowGallery] = useState(false)
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState<'' | 'chat' | 'image' | 'save' | 'publish'>('')
@@ -57,6 +64,17 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
       .then(({ data }) => setMsgs(((data ?? []) as ChatMsg[])))
   }, [post.id])
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs, busy])
+  // Wohnungen des gewählten Projekts nachladen
+  useEffect(() => {
+    if (!projectId) { setUnits([]); return }
+    void supabase.from('crm_project_units').select('id, unit_number, price_net').eq('project_id', projectId).order('unit_number')
+      .then(({ data }) => setUnits(((data ?? []) as UnitOpt[])))
+  }, [projectId])
+
+  // Projekt/Wohnung sofort speichern — der Chat (Edge) liest sie aus der DB.
+  const persistFocus = async (pid: string, uid: string) => {
+    await supabase.from('social_posts').update({ project_id: pid || null, unit_id: uid || null, updated_at: new Date().toISOString() }).eq('id', post.id)
+  }
 
   const send = async () => {
     const text = input.trim()
@@ -65,10 +83,11 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
     setMsgs(m => [...m, { role: 'user', content: text }])
     try {
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'chat', post_id: post.id, message: text } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; reply?: string; content?: string | null }
+      const d = (data ?? {}) as { ok?: boolean; error?: string; reply?: string; content?: string | null; image_url?: string | null }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
       setMsgs(m => [...m, { role: 'assistant', content: d.reply || 'Post aktualisiert ✓' }])
       if (d.content) setContent(d.content)
+      if (d.image_url) setImages(im => [...im, d.image_url!])
     } catch (e) {
       console.error('[SocialStudio] chat:', e)
       setMsgs(m => [...m, { role: 'assistant', content: `❌ ${t('crm.social.chatErr', 'Das hat nicht geklappt — bitte nochmal.')}` }])
@@ -82,24 +101,25 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'image', post_id: post.id } })
       const d = (data ?? {}) as { ok?: boolean; error?: string; image_url?: string }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      setImageUrl(d.image_url ?? null)
+      if (d.image_url) setImages(im => [...im, d.image_url!])
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Bild fehlgeschlagen'}`)
     } finally { setBusy('') }
   }
 
-  const save = async (statusOverride?: string) => {
+  const save = async (silent = false) => {
     setBusy('save')
     try {
       const { error } = await supabase.from('social_posts').update({
-        content: content || null, platforms,
+        content: content || null, platforms, format,
+        project_id: projectId || null, unit_id: unitId || null,
+        image_urls: images, image_url: images[0] ?? null,
         scheduled_for: scheduled ? new Date(scheduled).toISOString() : null,
-        status: statusOverride ?? (scheduled ? 'geplant' : post.status === 'gepostet' ? 'gepostet' : 'entwurf'),
+        status: post.status === 'gepostet' ? 'gepostet' : (scheduled ? 'geplant' : 'entwurf'),
         updated_at: new Date().toISOString(),
       }).eq('id', post.id)
       if (error) throw error
-      onChanged()
-      if (!statusOverride) setNote(`✓ ${t('crm.social.saved', 'Gespeichert')}`)
+      if (!silent) setNote(`✓ ${t('crm.social.saved', 'Gespeichert')}${scheduled ? ` — ${t('crm.social.savedQueue', 'in der Tages-Warteschlange')}` : ''}`)
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`)
     } finally { setBusy('') }
@@ -109,29 +129,30 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
     if (!window.confirm(t('crm.social.publishConfirm', 'Diesen Post JETZT öffentlich auf {{p}} veröffentlichen?', { p: platforms.join(' + ') }) as string)) return
     setBusy('publish'); setNote('')
     try {
-      await save('') // aktuellen Stand sichern (Status unangetastet)
+      await save(true)
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'publish', post_id: post.id } })
       const d = (data ?? {}) as { ok?: boolean; error?: string; results?: Record<string, { ok: boolean; error?: string }> }
       if (error && !d.results) throw new Error(d.error || error.message)
       const parts = Object.entries(d.results ?? {}).map(([k, v]) => `${k}: ${v.ok ? '✓' : `❌ ${v.error}`}`)
       setNote(parts.join('  ·  ') || (d.error ?? 'Keine Plattform-Antwort'))
-      onChanged()
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Veröffentlichen fehlgeschlagen'}`)
     } finally { setBusy('') }
   }
 
-  const topic = TOPICS.find(x => x.key === post.topic)
+  const topic = topics.find(x => x.key === post.topic)
+  const selProject = projects.find(x => x.id === projectId)
+  const galleryImgs = [...(selProject?.deck_assets?.renders ?? []), ...(selProject?.deck_assets?.gallery ?? [])].slice(0, 24)
   const inp = 'w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400'
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl flex flex-col md:flex-row overflow-hidden" style={{ height: 'min(88vh, 760px)' }} onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl flex flex-col md:flex-row overflow-hidden" style={{ height: 'min(90vh, 800px)' }} onClick={e => e.stopPropagation()}>
 
         {/* Chat (links) */}
         <div className="md:w-1/2 flex flex-col border-r border-gray-100 min-h-0">
-          <div className="px-5 py-3 border-b border-gray-100 shrink-0 flex items-center justify-between">
-            <p className="font-semibold text-gray-900 text-sm">💬 {t('crm.social.chatTitle', 'Post-Chat')} <span className="text-gray-400 font-normal">· {topic?.icon} {topic ? t(`crm.social.topic.${topic.key}`, topic.de) : ''}</span></p>
+          <div className="px-5 py-3 border-b border-gray-100 shrink-0">
+            <p className="font-semibold text-gray-900 text-sm">💬 {t('crm.social.chatTitle', 'Post-Chat')} <span className="text-gray-400 font-normal">· {topic ? `${topic.icon} ${topic.label}` : ''}</span></p>
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-gray-50/60 min-h-0">
             {msgs.length === 0 && (
@@ -164,42 +185,107 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
         {/* Post (rechts) */}
         <div className="md:w-1/2 flex flex-col min-h-0">
           <div className="px-5 py-3 border-b border-gray-100 shrink-0 flex items-center justify-between">
-            <p className="font-semibold text-gray-900 text-sm">{post.title || t('crm.social.newPost', 'Neuer Post')}</p>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100">✕</button>
+            <p className="font-semibold text-gray-900 text-sm truncate">{post.title || t('crm.social.newPost', 'Neuer Post')}</p>
+            <button onClick={onClose} className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100 shrink-0">✕</button>
           </div>
           <div className="flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
+
+            {/* Projekt / Wohnung aus dem Portal */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.project', 'Projekt (aus dem Portal)')}</label>
+                <CustomSelect value={projectId}
+                  onChange={v => { setProjectId(v); setUnitId(''); void persistFocus(v, '') }}
+                  options={[{ value: '', label: `— ${t('crm.social.noProject', 'kein Projekt')} —` }, ...projects.map(p => ({ value: p.id, label: p.name }))]} />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.unit', 'Einzelne Wohnung (optional)')}</label>
+                <CustomSelect value={unitId} disabled={!projectId}
+                  onChange={v => { setUnitId(v); void persistFocus(projectId, v) }}
+                  options={[{ value: '', label: `— ${t('crm.social.wholeProject', 'ganzes Projekt')} —` }, ...units.map(u => ({ value: u.id, label: `${u.unit_number}${u.price_net ? ` · ${u.price_net.toLocaleString('de-DE')} €` : ''}` }))]} />
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.postText', 'Post-Text')}</label>
-              <textarea value={content} onChange={e => setContent(e.target.value)} rows={10} className={`${inp} leading-relaxed`} />
+              <textarea value={content} onChange={e => setContent(e.target.value)} rows={9} className={`${inp} leading-relaxed`} />
             </div>
+
+            {/* Bilder: generieren + aus dem Projekt wählen, Mehrfach für Karussell */}
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <label className="text-xs font-medium text-gray-500">{t('crm.social.image', 'Bild')}</label>
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <label className="text-xs font-medium text-gray-500">{t('crm.social.images', 'Bilder')} ({images.length})</label>
                 <button onClick={() => void genImage()} disabled={busy === 'image'}
                   className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
-                  {busy === 'image' ? t('crm.social.imageWorking', 'Bild wird erstellt (~30 s)…') : imageUrl ? t('crm.social.imageRedo', '🎨 Neues Bild erstellen') : t('crm.social.imageMake', '🎨 Bild erstellen')}
+                  {busy === 'image' ? t('crm.social.imageWorking', 'Bild wird erstellt (~30 s)…') : t('crm.social.imageMake', '🎨 KI-Bild erstellen')}
                 </button>
+                {galleryImgs.length > 0 && (
+                  <button onClick={() => setShowGallery(g => !g)}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50">
+                    🖼 {t('crm.social.fromProject', 'Aus dem Projekt wählen')} {showGallery ? '▴' : '▾'}
+                  </button>
+                )}
               </div>
-              {imageUrl ? <img src={imageUrl} alt="" className="rounded-xl w-full max-w-xs border border-gray-100" /> : <p className="text-xs text-gray-400">{t('crm.social.noImage', 'Noch kein Bild. Instagram braucht eins.')}</p>}
+              {images.length > 0 && (
+                <div className="flex gap-2 flex-wrap mb-2">
+                  {images.map((u, i) => (
+                    <div key={u + i} className="relative">
+                      <img src={u} alt="" className="w-20 h-20 rounded-xl object-cover border border-gray-100" loading="lazy" />
+                      {i === 0 && <span className="absolute bottom-0.5 left-0.5 text-[9px] bg-black/60 text-white px-1 rounded">{t('crm.social.cover', 'Titel')}</span>}
+                      <button onClick={() => setImages(im => im.filter((_, x) => x !== i))}
+                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-white border border-gray-200 text-gray-500 text-xs hover:text-red-600">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showGallery && (
+                <div className="grid grid-cols-4 gap-1.5 p-2 bg-gray-50 rounded-xl max-h-52 overflow-y-auto">
+                  {galleryImgs.map(u => {
+                    const on = images.includes(u)
+                    return (
+                      <button key={u} onClick={() => setImages(im => on ? im.filter(x => x !== u) : [...im, u])}
+                        className={`relative rounded-lg overflow-hidden border-2 ${on ? 'border-orange-500' : 'border-transparent'}`}>
+                        <img src={u} alt="" className="w-full h-16 object-cover" loading="lazy" />
+                        {on && <span className="absolute top-0.5 right-0.5 text-xs bg-orange-500 text-white rounded-full w-4 h-4 flex items-center justify-center">✓</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {images.length === 0 && <p className="text-xs text-gray-400">{t('crm.social.noImage', 'Noch kein Bild. Instagram braucht mindestens eins.')}</p>}
             </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.platforms', 'Plattformen')}</label>
-              <div className="flex gap-2 flex-wrap">
-                {PLATFORMS.map(pl => (
-                  <label key={pl.key} className={`px-3 py-1.5 rounded-xl text-sm border cursor-pointer ${platforms.includes(pl.key) ? 'text-white border-transparent' : 'border-gray-200 text-gray-600'}`}
-                    style={platforms.includes(pl.key) ? { backgroundColor: '#1a2332' } : undefined}>
-                    <input type="checkbox" className="hidden" checked={platforms.includes(pl.key)}
-                      onChange={e => setPlatforms(p => e.target.checked ? [...p, pl.key] : p.filter(x => x !== pl.key))} />
-                    {pl.label}
-                  </label>
-                ))}
+
+            {/* Format + Plattformen */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.format', 'Format (FB & Insta)')}</label>
+                <CustomSelect value={format} onChange={setFormat} options={[
+                  { value: 'single', label: t('crm.social.formatSingle', '🖼 Einzelpost') },
+                  { value: 'carousel', label: t('crm.social.formatCarousel', '🎠 Karussell (2–10 Bilder)') },
+                ]} />
+                {format === 'carousel' && images.length < 2 && <p className="text-[11px] text-amber-600 mt-1">{t('crm.social.carouselNeed', 'Karussell braucht mindestens 2 Bilder.')}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.platforms', 'Plattformen')}</label>
+                <div className="flex gap-1.5 flex-wrap">
+                  {PLATFORMS.map(pl => (
+                    <label key={pl.key} className={`px-2.5 py-1.5 rounded-xl text-xs border cursor-pointer ${platforms.includes(pl.key) ? 'text-white border-transparent' : 'border-gray-200 text-gray-600'}`}
+                      style={platforms.includes(pl.key) ? { backgroundColor: '#1a2332' } : undefined}>
+                      <input type="checkbox" className="hidden" checked={platforms.includes(pl.key)}
+                        onChange={e => setPlatforms(p => e.target.checked ? [...p, pl.key] : p.filter(x => x !== pl.key))} />
+                      {pl.label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
+
             <div>
-              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.schedule', 'Geplant für (optional)')}</label>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.schedule', 'Geplant für')}</label>
               <input type="datetime-local" value={scheduled} onChange={e => setScheduled(e.target.value)} className={inp} />
-              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHint', 'Nur zur Planung im Kalender — veröffentlicht wird per Klick auf „Jetzt posten".')}</p>
+              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHintAuto', 'Mit Datum + Speichern landet der Post in der Warteschlange: Die Automatik veröffentlicht EINEN fälligen Post pro Tag (vormittags) auf die gewählten Plattformen.')}</p>
             </div>
+
             {post.post_results && (
               <div className="text-xs text-gray-500 space-y-0.5">
                 {Object.entries(post.post_results).map(([k, v]) => (
@@ -213,7 +299,7 @@ function PostEditor({ post, onClose, onChanged }: { post: SocialPost; onClose: (
             <button onClick={() => void save()} disabled={!!busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? t('common.saving', 'Speichert…') : `💾 ${t('common.save', 'Speichern')}`}
             </button>
-            <button onClick={() => void publish()} disabled={!!busy || !content.trim() || platforms.length === 0}
+            <button onClick={() => void publish()} disabled={!!busy || !content.trim() || platforms.length === 0 || (format === 'carousel' && images.length < 2)}
               className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
               {busy === 'publish' ? t('crm.social.publishing', 'Wird veröffentlicht…') : `🚀 ${t('crm.social.publish', 'Jetzt posten')}`}
             </button>
@@ -229,22 +315,33 @@ export default function SocialStudio() {
   const { t } = useTranslation()
   const { profile } = useAuth()
   const [posts, setPosts] = useState<SocialPost[]>([])
+  const [topics, setTopics] = useState<Topic[]>([])
+  const [projects, setProjects] = useState<ProjectOpt[]>([])
   const [loading, setLoading] = useState(true)
   const [openPost, setOpenPost] = useState<SocialPost | null>(null)
-  const [newTopic, setNewTopic] = useState('weisheit')
+  const [newTopic, setNewTopic] = useState('')
   const [busyKey, setBusyKey] = useState('')
   const [toast, setToast] = useState('')
+  const [manageTopics, setManageTopics] = useState(false)
+  const [newTopicLabel, setNewTopicLabel] = useState('')
+  const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(100)
-      if (error) throw error
-      setPosts((data as unknown as SocialPost[]) ?? [])
+      const [{ data: ps }, { data: ts }, { data: prs }] = await Promise.all([
+        supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('social_topics').select('*').order('sort'),
+        supabase.from('crm_projects').select('id, name, deck_assets').order('name'),
+      ])
+      setPosts((ps as unknown as SocialPost[]) ?? [])
+      const tps = (ts as unknown as Topic[]) ?? []
+      setTopics(tps)
+      setNewTopic(cur => cur || tps[0]?.key || '')
+      setProjects((prs as unknown as ProjectOpt[]) ?? [])
     } catch (err) {
       console.error('[SocialStudio] fetchAll:', err)
-      setPosts([])
     } finally { setLoading(false) }
   }, [])
   useEffect(() => { void fetchAll() }, [fetchAll])
@@ -252,9 +349,9 @@ export default function SocialStudio() {
   const createPost = async () => {
     setBusyKey('new')
     try {
-      const tp = TOPICS.find(x => x.key === newTopic)
+      const tp = topics.find(x => x.key === newTopic)
       const { data, error } = await supabase.from('social_posts').insert({
-        topic: newTopic, title: `${tp?.icon ?? ''} ${tp ? t(`crm.social.topic.${tp.key}`, tp.de) : ''} · ${new Date().toLocaleDateString('de-DE')}`,
+        topic: newTopic, title: `${tp?.icon ?? ''} ${tp?.label ?? ''} · ${new Date().toLocaleDateString('de-DE')}`,
         platforms: newTopic === 'weisheit' ? ['facebook', 'instagram'] : ['facebook', 'instagram', 'linkedin'],
         created_by: profile?.id ?? null,
       }).select('*').single()
@@ -265,6 +362,23 @@ export default function SocialStudio() {
       console.error('[SocialStudio] createPost:', err)
       showToast('❌ Post konnte nicht angelegt werden')
     } finally { setBusyKey('') }
+  }
+
+  const addTopic = async () => {
+    const label = newTopicLabel.trim()
+    if (!label) return
+    const key = label.toLowerCase().replace(/[äöüß]/g, c => ({ 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' }[c] ?? c)).replace(/[^a-z0-9]+/g, '_').slice(0, 30)
+    const { error } = await supabase.from('social_topics').insert({ key, label, icon: newTopicIcon.trim() || '✨', sort: 90 })
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setNewTopicLabel('')
+    void fetchAll()
+  }
+
+  const deleteTopic = async (tp: Topic) => {
+    if (!window.confirm(t('crm.social.topicDeleteConfirm', 'Kategorie „{{l}}" löschen? Bestehende Posts bleiben erhalten.', { l: tp.label }) as string)) return
+    const { error } = await supabase.from('social_topics').delete().eq('key', tp.key)
+    if (error) { showToast(`❌ ${error.message}`); return }
+    void fetchAll()
   }
 
   const runNewsScan = async () => {
@@ -287,6 +401,7 @@ export default function SocialStudio() {
   }
 
   const d2 = (s: string | null) => s ? new Date(s).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null
+  const queued = posts.filter(p => p.status === 'geplant').length
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -295,7 +410,10 @@ export default function SocialStudio() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{t('crm.social.title', 'Social Media')}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">{t('crm.social.subtitle', 'Organische Posts für Facebook, Instagram & LinkedIn — mit KI-Chat, Bildern und News-Recherche.')}</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {t('crm.social.subtitle', 'Organische Posts für Facebook, Instagram & LinkedIn — mit KI-Chat, Bildern und News-Recherche.')}
+              {queued > 0 && <> · <b>{t('crm.social.queueInfo', '{{n}} in der Tages-Warteschlange', { n: queued })}</b></>}
+            </p>
           </div>
           <button onClick={() => void runNewsScan()} disabled={busyKey === 'news'}
             className="px-3 py-1.5 rounded-xl text-sm font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
@@ -303,16 +421,44 @@ export default function SocialStudio() {
           </button>
         </div>
 
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex items-end gap-2 flex-wrap">
-          <div className="min-w-[240px]">
-            <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.newPostTopic', 'Neuen Post starten')}</label>
-            <CustomSelect value={newTopic} onChange={setNewTopic}
-              options={TOPICS.map(x => ({ value: x.key, label: `${x.icon} ${t(`crm.social.topic.${x.key}`, x.de)}` }))} />
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+          <div className="flex items-end gap-2 flex-wrap">
+            <div className="min-w-[240px]">
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.newPostTopic', 'Neuen Post starten')}</label>
+              <CustomSelect value={newTopic} onChange={setNewTopic}
+                options={topics.map(x => ({ value: x.key, label: `${x.icon} ${x.label}` }))} />
+            </div>
+            <button onClick={() => void createPost()} disabled={busyKey === 'new' || !newTopic}
+              className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
+              {busyKey === 'new' ? t('common.saving', 'lädt …') : t('crm.social.newPostBtn', '+ Post')}
+            </button>
+            <button onClick={() => setManageTopics(m => !m)} className="px-3 py-2 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50">
+              ⚙️ {t('crm.social.manageTopics', 'Kategorien')} {manageTopics ? '▴' : '▾'}
+            </button>
           </div>
-          <button onClick={() => void createPost()} disabled={busyKey === 'new'}
-            className="px-4 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
-            {busyKey === 'new' ? t('common.saving', 'lädt …') : t('crm.social.newPostBtn', '+ Post')}
-          </button>
+          {manageTopics && (
+            <div className="border-t border-gray-100 pt-3 space-y-2">
+              <div className="flex gap-1.5 flex-wrap">
+                {topics.map(tp => (
+                  <span key={tp.key} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-sm text-gray-700">
+                    {tp.icon} {tp.label}
+                    <button onClick={() => void deleteTopic(tp)} className="text-gray-400 hover:text-red-600">×</button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex items-end gap-2 flex-wrap">
+                <input value={newTopicIcon} onChange={e => setNewTopicIcon(e.target.value)} maxLength={4}
+                  className="w-14 rounded-xl border border-gray-200 px-2 py-2 text-sm text-center" title="Emoji" />
+                <input value={newTopicLabel} onChange={e => setNewTopicLabel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void addTopic() }}
+                  placeholder={t('crm.social.newTopicPh', 'Neue Kategorie, z. B. „Kundenstimmen"')}
+                  className="flex-1 min-w-[200px] rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+                <button onClick={() => void addTopic()} disabled={!newTopicLabel.trim()}
+                  className="px-3 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                  + {t('crm.social.addTopic', 'Hinzufügen')}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -322,8 +468,9 @@ export default function SocialStudio() {
         ) : (
           <div className="grid sm:grid-cols-2 gap-3">
             {posts.map(p => {
-              const tp = TOPICS.find(x => x.key === p.topic)
+              const tp = topics.find(x => x.key === p.topic)
               const st = STATUS_BADGE[p.status] ?? STATUS_BADGE.entwurf
+              const nImgs = (Array.isArray(p.image_urls) && p.image_urls.length) || (p.image_url ? 1 : 0)
               return (
                 <div key={p.id} onClick={() => setOpenPost(p)}
                   className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:border-orange-200 transition-colors">
@@ -334,9 +481,9 @@ export default function SocialStudio() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${st.cls}`}>{t(`crm.social.status.${p.status}`, st.de)}</span>
-                        <span className="text-[11px] text-gray-400">{p.platforms.join(' · ')}</span>
+                        <span className="text-[11px] text-gray-400">{p.platforms.join(' · ')}{p.format === 'carousel' ? ` · 🎠 ${nImgs}` : ''}</span>
                       </div>
-                      <p className="text-sm font-medium text-gray-800 mt-1 truncate">{p.title ?? tp?.de}</p>
+                      <p className="text-sm font-medium text-gray-800 mt-1 truncate">{p.title ?? tp?.label}</p>
                       <p className="text-xs text-gray-500 truncate">{(p.content ?? '').replace(/\s+/g, ' ').slice(0, 80) || t('crm.social.noText', '(noch kein Text)')}</p>
                       {p.scheduled_for && <p className="text-[11px] text-gray-400 mt-0.5">🗓 {d2(p.scheduled_for)}</p>}
                     </div>
@@ -350,7 +497,7 @@ export default function SocialStudio() {
           </div>
         )}
       </div>
-      {openPost && <PostEditor post={openPost} onClose={() => { setOpenPost(null); void fetchAll() }} onChanged={() => void fetchAll()} />}
+      {openPost && <PostEditor post={openPost} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
     </DashboardLayout>
   )
 }

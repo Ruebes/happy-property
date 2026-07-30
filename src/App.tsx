@@ -73,6 +73,7 @@ const CrmDocuments          = lazy(() => import('./pages/admin/crm/settings/Docu
 const CrmContacts           = lazy(() => import('./pages/admin/crm/settings/Contacts'))
 const CrmBookingLinks       = lazy(() => import('./pages/admin/crm/settings/BookingLinks'))
 const CrmNewsletterLists   = lazy(() => import('./pages/admin/crm/settings/NewsletterLists'))
+const CrmConnectors        = lazy(() => import('./pages/admin/crm/settings/Connectors'))
 const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
 const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
@@ -181,6 +182,7 @@ export default function App() {
               <Route path="/admin/crm/settings/whatsapp"    element={<CrmWhatsappTemplates />} />
               <Route path="/admin/crm/settings/automation"  element={<CrmAutomationRules />} />
               <Route path="/admin/crm/settings/documents"   element={<CrmDocuments />} />
+              <Route path="/admin/crm/settings/connectors"  element={<CrmConnectors />} />
               <Route path="/admin/properties/:id"           element={<PropertyDetailRoute />} />
               <Route path="/verwaltung/bookings"            element={<VerwalterBookings />} />
               <Route path="/verwalter/properties/:id"       element={<PropertyDetailRoute />} />
