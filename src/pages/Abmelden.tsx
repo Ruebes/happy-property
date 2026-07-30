@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 
-// ── Newsletter-Abmeldung (/abmelden?d=<persönlicher Deck-Token>) ─────────────
+// ── Newsletter-Abmeldung ─────────────────────────────────────────────────────
 // One-Click: Beim Öffnen wird die Abmeldung direkt ausgeführt (Standard bei
 // Newsletter-Abmeldelinks — keine weitere Hürde). Setzt NUR das Newsletter-
-// Opt-out am Lead; Termin-/Kundenkommunikation läuft normal weiter.
+// Opt-out; Termin-/Kundenkommunikation läuft normal weiter.
+// Drei Link-Formen: ?d=<Deck-Token> (Objekt-Newsletter, Lead) · ?l=<Lead-ID> und
+// ?s=<Abonnent-ID> (HTML-Newsletter, direkt).
 
 const CREAM = '#FAF6EC'
 const NAVY = '#1a2332'
@@ -17,12 +19,15 @@ export default function Abmelden() {
   useEffect(() => {
     if (ran.current) return   // StrictMode-Doppelmount: nur einmal ausführen
     ran.current = true
-    const token = (new URLSearchParams(window.location.search).get('d') ?? '').trim()
-    if (!token) { setState('invalid'); return }
+    const p = new URLSearchParams(window.location.search)
+    const token = (p.get('d') ?? '').trim()
+    const lead = (p.get('l') ?? '').trim()
+    const subscriber = (p.get('s') ?? '').trim()
+    if (!token && !lead && !subscriber) { setState('invalid'); return }
     void (async () => {
       try {
         const { data, error } = await supabase.functions.invoke('newsletter-campaign', {
-          body: { action: 'unsubscribe', deck_token: token },
+          body: { action: 'unsubscribe', deck_token: token || undefined, lead: lead || undefined, subscriber: subscriber || undefined },
         })
         if (error || !(data as { ok?: boolean } | null)?.ok) throw new Error('failed')
         setState('done')

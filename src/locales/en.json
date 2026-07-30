@@ -3200,7 +3200,7 @@
       "modeHtml": "Custom HTML",
       "s2html": "2 · Your HTML",
       "htmlLabel": "HTML content of the email",
-      "htmlHint": "Sent as an HTML email; recipients without HTML automatically get a text version. A WhatsApp version is also derived from the HTML. An unsubscribe link is added automatically if none is present. Check everything first via “Preview”.",
+      "htmlHint": "Sent as an HTML email; recipients without HTML automatically get a text version. A WhatsApp version is also derived from the HTML. A one-click unsubscribe link is appended automatically — or place {{abmelden}} where you want it. Check everything first via “Preview”.",
       "tabHtml": "HTML email",
       "tabText": "Text version",
       "tabWa": "WhatsApp",

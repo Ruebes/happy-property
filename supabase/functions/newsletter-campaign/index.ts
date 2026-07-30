@@ -25,14 +25,19 @@ import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 // send-email via htmlToText), WhatsApp-Version via htmlToWhatsapp. Personalisierung
 // über {{vorname}}. Fehlt ein Abmelde-Link, hängen wir aus DSGVO-Gründen einen an.
 const personalize = (s: string | null | undefined, first: string) => String(s ?? '').split('{{vorname}}').join(first)
-function customEmailHtml(rawHtml: string, first: string): string {
-  let html = personalize(rawHtml, first)
+// unsubUrl = Ein-Klick-Abmeldelink des Empfängers (/abmelden?l=<lead> bzw. ?s=<sub>).
+// {{abmelden}} im HTML wird dadurch ersetzt; fehlt ein Abmelde-Link ganz, hängen
+// wir aus DSGVO-Gründen einen an.
+function customEmailHtml(rawHtml: string, first: string, unsubUrl: string): string {
+  let html = personalize(rawHtml, first).split('{{abmelden}}').join(unsubUrl)
   if (!/abmelden|unsubscribe|abbestellen/i.test(html)) {
-    const footer = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9a9aa3;text-align:center;padding:22px 20px;">Du möchtest keine E-Mails mehr von uns erhalten? <a href="mailto:info@happy-property.com?subject=Newsletter%20abmelden" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a>.</div>`
+    const footer = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9a9aa3;text-align:center;padding:22px 20px;">Du möchtest keine E-Mails mehr von uns erhalten? <a href="${unsubUrl}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a>.</div>`
     html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${footer}</body>`) : `${html}${footer}`
   }
   return html
 }
+const unsubUrlFor = (lead: { lead_id?: string | null; subscriber_id?: string | null }): string =>
+  lead.lead_id ? `${SITE}/abmelden?l=${lead.lead_id}` : lead.subscriber_id ? `${SITE}/abmelden?s=${lead.subscriber_id}` : `${SITE}/abmelden`
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -333,6 +338,7 @@ Deno.serve(async (req: Request) => {
       action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'rebuild_pending'
       lead_id?: string
       deck_token?: string
+      lead?: string; subscriber?: string
       campaign_id?: string; to?: string; start_at?: string
       list_mode?: string; list_ids?: string[]
       project_name?: string; bullets?: string
@@ -390,26 +396,41 @@ Deno.serve(async (req: Request) => {
     // läuft weiter (dafür gibt es communication_optouts).
     if (body.action === 'unsubscribe') {
       const tok = (body.deck_token ?? '').trim()
-      if (!tok) return json({ error: 'token fehlt' }, 400)
-      const { data: deck } = await sb.from('sales_decks').select('lead_id').eq('token', tok).maybeSingle()
-      const leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
-      if (!leadId) return json({ error: 'not_found' }, 404)
-      const { error: ue } = await sb.from('leads').update({ newsletter_optout_at: new Date().toISOString() }).eq('id', leadId)
-      if (ue) return json({ error: ue.message }, 500)
-      // Noch nicht versendete Newsletter-Mails (auch geplante Kampagnen) stoppen
-      const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
-        .eq('lead_id', leadId).eq('event_type', 'newsletter').eq('status', 'pending')
-      if (ce) console.warn('[newsletter] optout cancel:', ce.message)
-      try {
-        await sb.from('activities').insert({
-          lead_id: leadId, type: 'note', direction: 'inbound',
-          subject: 'Newsletter abbestellt',
-          content: 'Der Kontakt hat sich über den Abmelde-Link im Newsletter von künftigen Aussendungen abgemeldet.',
-          completed_at: new Date().toISOString(),
-        })
-      } catch (e) { console.warn('[newsletter] optout activity:', e) }
-      console.log(`[newsletter] Abmeldung: Lead ${leadId}`)
-      return json({ ok: true })
+      const subId = (body.subscriber ?? '').trim()
+      // Lead: direkt per ?l=<id> (HTML-Newsletter) ODER per Deck-Token (Objekt-Newsletter).
+      let leadId = (body.lead ?? '').trim() || null
+      if (!leadId && tok) {
+        const { data: deck } = await sb.from('sales_decks').select('lead_id').eq('token', tok).maybeSingle()
+        leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      }
+      if (leadId) {
+        const { error: ue } = await sb.from('leads').update({ newsletter_optout_at: new Date().toISOString() }).eq('id', leadId)
+        if (ue) return json({ error: ue.message }, 500)
+        const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
+          .eq('lead_id', leadId).eq('event_type', 'newsletter').eq('status', 'pending')
+        if (ce) console.warn('[newsletter] optout cancel:', ce.message)
+        try {
+          await sb.from('activities').insert({
+            lead_id: leadId, type: 'note', direction: 'inbound',
+            subject: 'Newsletter abbestellt',
+            content: 'Der Kontakt hat sich über den Abmelde-Link im Newsletter von künftigen Aussendungen abgemeldet.',
+            completed_at: new Date().toISOString(),
+          })
+        } catch (e) { console.warn('[newsletter] optout activity:', e) }
+        console.log(`[newsletter] Abmeldung: Lead ${leadId}`)
+        return json({ ok: true })
+      }
+      // Abonnent (Empfängerliste): ?s=<subscriber_id>
+      if (subId) {
+        const { error: ue } = await sb.from('newsletter_subscribers').update({ optout_at: new Date().toISOString() }).eq('id', subId)
+        if (ue) return json({ error: ue.message }, 500)
+        const { error: ce } = await sb.from('scheduled_messages').update({ status: 'cancelled' })
+          .eq('subscriber_id', subId).eq('event_type', 'newsletter').eq('status', 'pending')
+        if (ce) console.warn('[newsletter] optout cancel (sub):', ce.message)
+        console.log(`[newsletter] Abmeldung: Abonnent ${subId}`)
+        return json({ ok: true })
+      }
+      return json({ error: 'token fehlt' }, 400)
     }
 
     // Ab hier: Kampagne nötig
@@ -428,7 +449,7 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'preview') {
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
-        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname'), whatsapp: htmlToWhatsapp(personalize(raw, 'Vorname')) })
+        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`), whatsapp: htmlToWhatsapp(personalize(raw, 'Vorname')) })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
@@ -511,7 +532,7 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'test_mail') {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       if (camp.content_mode === 'html') {
-        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven')
+        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven', `${SITE}/abmelden`)
         const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${personalize(camp.subject, 'Sven')}`, html } })
         if (se) return json({ error: `Testversand: ${se.message}` }, 502)
         return json({ ok: true })
@@ -554,7 +575,7 @@ Deno.serve(async (req: Request) => {
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
                   status: 'pending', scheduled_at: slot.toISOString(),
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
-                  email_body: hatMail ? customEmailHtml(raw, first) : null,
+                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead)) : null,
                   whatsapp_text: hatTel ? htmlToWhatsapp(personalize(raw, first)) : null,
                   recipient: 'client', appointment_condition: 'none',
                 })
