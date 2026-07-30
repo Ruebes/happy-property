@@ -3772,6 +3772,16 @@
       "mine": "Von mir",
       "client": "Vom Kunden",
       "auto": "Automatisch"
+    },
+    "viaWhatsapp": "per WhatsApp",
+    "viaEmail": "per E-Mail",
+    "taskSavedNotified": "Aufgabe erstellt & Lotte benachrichtigt",
+    "taskBizHint": "Der Geschäftskontakt erhält die Aufgabe von Lotte — automatisch in seiner hinterlegten Sprache.",
+    "taskStaffHint": "Das Teammitglied bekommt die Aufgabe im System (und als Nachricht von Lotte).",
+    "taskSt": {
+      "open": "Gestellt",
+      "wip": "In Arbeit",
+      "done": "Erledigt"
     }
   },
   "docs": {

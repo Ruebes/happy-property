@@ -23,6 +23,11 @@ import { CustomSelect } from '../../../components/CustomSelect'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
+// Aufgaben-Tab: echte crm_tasks (mit dem Aufgaben-System verknüpft) statt der
+// alten activities(type='task'). Zuweisung an Team ODER Geschäftskontakt.
+interface LeadTaskRow { id: string; title: string; description: string | null; due_date: string | null; status: string; assignee_label: string }
+interface BizContactRow { id: string; name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
+
 const ACTIVITY_ICONS: Record<string, string> = {
   call: '📞',
   email: '📧',
@@ -76,7 +81,8 @@ export default function LeadDetail() {
   }
   const [deal, setDeal] = useState<Deal | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
-  const [tasks, setTasks] = useState<Activity[]>([])
+  const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
+  const [bizContacts, setBizContacts] = useState<BizContactRow[]>([])
   const [templates, setTemplates] = useState<EmailTemplate[]>([])
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
   const [dealProjects, setDealProjects] = useState<DealProject[]>([])
@@ -366,6 +372,47 @@ export default function LeadDetail() {
   }
 
   // ── Data fetching ───────────────────────────────────────────────
+  // Geschäftskontakte (für Aufgaben-Zuweisung) — einmal laden.
+  const loadBizContacts = useCallback(async () => {
+    const { data } = await supabase.from('crm_business_contacts')
+      .select('id, first_name, last_name, company, email, phone, whatsapp, language').order('first_name')
+    const rows = (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null }>
+    setBizContacts(rows.map(b => ({
+      id: b.id,
+      name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || b.email || 'Kontakt',
+      email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de',
+    })))
+  }, [])
+
+  // Echte crm_tasks, die mit DIESEM Lead verknüpft sind (crm_task_leads).
+  const loadLeadTasks = useCallback(async () => {
+    if (!id) return
+    const { data: links } = await supabase.from('crm_task_leads').select('task_id').eq('lead_id', id)
+    const ids = ((links ?? []) as { task_id: string }[]).map(l => l.task_id)
+    if (!ids.length) { setLeadTasks([]); return }
+    const [{ data: tks }, { data: asg }] = await Promise.all([
+      supabase.from('crm_tasks').select('id, title, description, due_date, status, created_at').in('id', ids).eq('archived', false).order('created_at', { ascending: false }),
+      supabase.from('crm_task_assignees').select('task_id, profile_id, ext_name').in('task_id', ids),
+    ])
+    const asgRows = (asg ?? []) as Array<{ task_id: string; profile_id: string | null; ext_name: string | null }>
+    const profIds = [...new Set(asgRows.map(a => a.profile_id).filter((x): x is string => !!x))]
+    const profMap = new Map<string, string>()
+    if (profIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, full_name').in('id', profIds)
+      ;((profs ?? []) as Array<{ id: string; full_name: string }>).forEach(p => profMap.set(p.id, p.full_name))
+    }
+    const byTask = new Map<string, string[]>()
+    asgRows.forEach(a => {
+      const label = a.profile_id ? (profMap.get(a.profile_id) ?? 'Team') : (a.ext_name ?? 'Extern')
+      const arr = byTask.get(a.task_id) ?? []; arr.push(label); byTask.set(a.task_id, arr)
+    })
+    const tkRows = (tks ?? []) as Array<{ id: string; title: string; description: string | null; due_date: string | null; status: string }>
+    setLeadTasks(tkRows.map(tk => ({
+      id: tk.id, title: tk.title, description: tk.description, due_date: tk.due_date, status: tk.status,
+      assignee_label: (byTask.get(tk.id) ?? []).join(', '),
+    })))
+  }, [id])
+
   const fetchAll = useCallback(async (silent = false) => {
     if (!id) return
     if (!silent) setLoading(true)
@@ -374,7 +421,6 @@ export default function LeadDetail() {
         { data: leadData },
         { data: dealData },
         { data: actData },
-        { data: taskData },
         { data: tplData },
         { data: staffData },
       ] = await Promise.all([
@@ -398,14 +444,6 @@ export default function LeadDetail() {
           .not('type', 'eq', 'task')
           .order('created_at', { ascending: false })
           .limit(100),
-        supabase
-          .from('activities')
-          .select('*, creator:profiles!activities_created_by_fkey(full_name)')
-          .eq('lead_id', id)
-          .eq('type', 'task')
-          .is('completed_at', null)
-          .order('scheduled_at', { ascending: true })
-          .limit(100),
         supabase.from('email_templates').select('*').order('name'),
         supabase
           .from('profiles')
@@ -418,7 +456,7 @@ export default function LeadDetail() {
       const dealResult = dealData as unknown as Deal | null
       setDeal(dealResult)
       setActivities((actData ?? []) as unknown as Activity[])
-      setTasks((taskData ?? []) as unknown as Activity[])
+      void loadLeadTasks()
       setTemplates((tplData ?? []) as unknown as EmailTemplate[])
       setStaff((staffData ?? []) as { id: string; full_name: string }[])
 
@@ -500,7 +538,8 @@ export default function LeadDetail() {
 
   useEffect(() => {
     fetchAll()
-  }, [fetchAll])
+    void loadBizContacts()
+  }, [fetchAll, loadBizContacts])
 
   // ── pickedUnit aus deal.unit_id wiederherstellen (nach Reload / Navigation) ──
   // Läuft nur wenn deal.unit_id sich ändert. dealProjectsRef statt State-Dep
@@ -829,24 +868,45 @@ export default function LeadDetail() {
     }
   }
 
-  // ── Task ────────────────────────────────────────────────────────
+  // ── Task (echtes crm_tasks-System) ──────────────────────────────
+  // Legt eine echte Aufgabe an, weist sie einem Teammitglied ODER einem
+  // Geschäftskontakt zu, verknüpft sie mit diesem Lead und stößt task-notify an
+  // → der/die Zuständige bekommt sie von Lotte in seiner/ihrer Profilsprache.
   const handleSaveTask = async () => {
     if (!taskForm.subject.trim()) return
     setSavingTask(true)
     try {
-      await supabase.from('activities').insert({
-        lead_id: id,
-        deal_id: deal?.id ?? null,
-        type: 'task',
-        direction: 'outbound',
-        subject: taskForm.subject,
-        content: taskForm.content || null,
-        scheduled_at: taskForm.scheduled_at || null,
+      const { data: created, error } = await supabase.from('crm_tasks').insert({
+        title: taskForm.subject.trim(),
+        description: taskForm.content.trim() || null,
+        due_date: taskForm.scheduled_at || null,
         created_by: profile?.id ?? null,
-      })
+        status: 'offen',
+      }).select('id').single()
+      if (error) throw error
+      const taskId = (created as { id: string }).id
+
+      // Zuständige/n als assignee-Zeile (Team intern ODER Geschäftskontakt extern)
+      const a = taskForm.assigned_to
+      if (a.startsWith('staff:')) {
+        await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
+      } else if (a.startsWith('biz:')) {
+        const b = bizContacts.find(x => x.id === a.slice(4))
+        if (b) {
+          await supabase.from('crm_task_assignees').insert({
+            task_id: taskId, ext_name: b.name, ext_email: b.email || null, ext_phone: b.phone || null,
+            channel: b.phone ? 'whatsapp' : 'email', ext_lang: b.lang,
+          })
+        }
+      }
+      // Mit diesem Lead verknüpfen (erscheint dann in seinem Aufgaben-Tab)
+      if (id) await supabase.from('crm_task_leads').insert({ task_id: taskId, lead_id: id })
+      // Lotte benachrichtigt die/den Zuständige/n in ihrer/seiner Sprache
+      if (a) supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[LeadDetail] task-notify:', e))
+
       setTaskForm({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
-      await fetchAll(true)
-      showToast(t('crm.taskSaved', 'Aufgabe gespeichert'))
+      await loadLeadTasks()
+      showToast(a ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveTask:', err)
       showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
@@ -857,8 +917,8 @@ export default function LeadDetail() {
 
   const handleCompleteTask = async (taskId: string) => {
     try {
-      await supabase.from('activities').update({ completed_at: new Date().toISOString() }).eq('id', taskId)
-      await fetchAll(true)
+      await supabase.from('crm_tasks').update({ status: 'erledigt', completed_at: new Date().toISOString(), completed_by: profile?.id ?? null }).eq('id', taskId)
+      await loadLeadTasks()
       showToast(t('crm.taskCompleted', 'Aufgabe erledigt'))
     } catch (err) {
       console.error('[LeadDetail] completeTask:', err)
@@ -1941,11 +2001,6 @@ export default function LeadDetail() {
 
   // ── Helpers ─────────────────────────────────────────────────────
   const initials = lead ? `${lead.first_name[0] ?? ''}${lead.last_name[0] ?? ''}`.toUpperCase() : ''
-
-  const isOverdue = (act: Activity) => {
-    if (!act.scheduled_at) return false
-    return new Date(act.scheduled_at) < new Date()
-  }
 
   const formatDate = (iso: string | null) => {
     if (!iso) return '—'
@@ -3058,31 +3113,32 @@ export default function LeadDetail() {
                   })()}
 
                   {/* Open tasks */}
-                  {tasks.length > 0 && (
+                  {(() => {
+                    const openTasks = leadTasks.filter(tk => tk.status !== 'erledigt')
+                    if (!openTasks.length) return null
+                    return (
                     <div>
                       <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                        {t('crm.openTasks', 'Offene Aufgaben')} ({tasks.length})
+                        {t('crm.openTasks', 'Offene Aufgaben')} ({openTasks.length})
                       </h3>
                       <ul className="space-y-2">
-                        {tasks.slice(0, 3).map((task) => (
-                          <li
-                            key={task.id}
-                            className={`text-sm px-3 py-2 rounded-lg border ${
-                              isOverdue(task) ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'
-                            }`}
-                          >
-                            <div className="font-medium text-gray-800">{task.subject}</div>
-                            {task.scheduled_at && (
-                              <div className={`text-xs mt-0.5 ${isOverdue(task) ? 'text-red-500' : 'text-gray-400'}`}>
-                                {formatDate(task.scheduled_at)}
-                                {isOverdue(task) && ` — ${t('leadDetail.overdueSuffix', 'Überfällig')}`}
+                        {openTasks.slice(0, 3).map((task) => {
+                          const overdue = !!task.due_date && task.due_date < new Date().toISOString()
+                          return (
+                          <li key={task.id} className={`text-sm px-3 py-2 rounded-lg border ${overdue ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'}`}>
+                            <div className="font-medium text-gray-800">{task.title}</div>
+                            {task.due_date && (
+                              <div className={`text-xs mt-0.5 ${overdue ? 'text-red-500' : 'text-gray-400'}`}>
+                                {formatDate(task.due_date)}{overdue && ` — ${t('leadDetail.overdueSuffix', 'Überfällig')}`}
                               </div>
                             )}
                           </li>
-                        ))}
+                          )
+                        })}
                       </ul>
                     </div>
-                  )}
+                    )
+                  })()}
                 </div>
               </div>
             )}
@@ -3559,49 +3615,40 @@ export default function LeadDetail() {
             {/* ── Tab: Aufgaben ─────────────────────────────────── */}
             {activeTab === 'tasks' && (
               <div className="p-6">
-                {/* Task list */}
-                {tasks.length === 0 ? (
+                {/* Task list (echte crm_tasks) */}
+                {leadTasks.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-6">
                     {t('crm.noTasks', 'Keine offenen Aufgaben')}
                   </p>
                 ) : (
                   <ul className="space-y-3 mb-6">
-                    {tasks.map((task) => (
-                      <li
-                        key={task.id}
-                        className={`flex items-start justify-between gap-3 px-4 py-3 rounded-xl border ${
-                          isOverdue(task) ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'
-                        }`}
-                      >
+                    {leadTasks.map((task) => {
+                      const overdue = !!task.due_date && task.status !== 'erledigt' && task.due_date < new Date().toISOString()
+                      const stBadge = task.status === 'erledigt' ? { l: t('crm.taskSt.done', 'Erledigt'), c: 'bg-green-100 text-green-700' }
+                        : task.status === 'in_arbeit' ? { l: t('crm.taskSt.wip', 'In Arbeit'), c: 'bg-amber-100 text-amber-700' }
+                        : { l: t('crm.taskSt.open', 'Gestellt'), c: 'bg-gray-100 text-gray-600' }
+                      return (
+                      <li key={task.id}
+                        className={`flex items-start justify-between gap-3 px-4 py-3 rounded-xl border ${overdue ? 'border-red-200 bg-red-50' : 'border-gray-100 bg-gray-50'}`}>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-medium text-gray-800 text-sm">{task.subject}</span>
-                            {isOverdue(task) && (
-                              <span className="px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-600 font-medium">
-                                {t('crm.overdue', 'Überfällig')}
-                              </span>
-                            )}
+                            <span className="font-medium text-gray-800 text-sm">{task.title}</span>
+                            <span className={`px-1.5 py-0.5 text-[10px] rounded-full font-medium ${stBadge.c}`}>{stBadge.l}</span>
+                            {overdue && <span className="px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-600 font-medium">{t('crm.overdue', 'Überfällig')}</span>}
                           </div>
-                          {task.content && (
-                            <p className="text-xs text-gray-500 mt-0.5">{task.content}</p>
-                          )}
-                          {task.scheduled_at && (
-                            <p className={`text-xs mt-0.5 ${isOverdue(task) ? 'text-red-500' : 'text-gray-400'}`}>
-                              {formatDate(task.scheduled_at)}
-                            </p>
-                          )}
-                          {task.creator && (
-                            <p className="text-xs text-gray-400 mt-0.5">— {task.creator.full_name}</p>
-                          )}
+                          {task.description && <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>}
+                          {task.due_date && <p className={`text-xs mt-0.5 ${overdue ? 'text-red-500' : 'text-gray-400'}`}>{formatDate(task.due_date)}</p>}
+                          {task.assignee_label && <p className="text-xs text-gray-400 mt-0.5">👤 {task.assignee_label}</p>}
                         </div>
-                        <button
-                          onClick={() => handleCompleteTask(task.id)}
-                          className="flex-shrink-0 px-3 py-1.5 text-xs rounded-lg bg-green-50 text-green-600 hover:bg-green-100 font-medium"
-                        >
-                          {t('crm.markDone', 'Als erledigt ✓')}
-                        </button>
+                        {task.status !== 'erledigt' && (
+                          <button onClick={() => handleCompleteTask(task.id)}
+                            className="flex-shrink-0 px-3 py-1.5 text-xs rounded-lg bg-green-50 text-green-600 hover:bg-green-100 font-medium">
+                            {t('crm.markDone', 'Als erledigt ✓')}
+                          </button>
+                        )}
                       </li>
-                    ))}
+                      )
+                    })}
                   </ul>
                 )}
 
@@ -3640,11 +3687,19 @@ export default function LeadDetail() {
                         className="w-full border border-gray-200 rounded-lg text-sm"
                         options={[
                           { value: '', label: `— ${t('crm.nobody', 'Niemand')} —` },
-                          ...staff.map(s => ({ value: s.id, label: s.full_name })),
+                          ...staff.map(s => ({ value: `staff:${s.id}`, label: `👥 ${s.full_name}` })),
+                          ...bizContacts.map(b => ({ value: `biz:${b.id}`, label: `📇 ${b.name}${b.lang === 'en' ? ' · EN' : ''}`, hint: b.phone ? t('crm.viaWhatsapp', 'per WhatsApp') : b.email ? t('crm.viaEmail', 'per E-Mail') : undefined })),
                         ]}
                       />
                     </div>
                   </div>
+                  {taskForm.assigned_to && (
+                    <p className="text-[11px] text-gray-400">
+                      {taskForm.assigned_to.startsWith('biz:')
+                        ? t('crm.taskBizHint', 'Der Geschäftskontakt erhält die Aufgabe von Lotte — automatisch in seiner hinterlegten Sprache.')
+                        : t('crm.taskStaffHint', 'Das Teammitglied bekommt die Aufgabe im System (und als Nachricht von Lotte).')}
+                    </p>
+                  )}
                   <button
                     onClick={handleSaveTask}
                     disabled={savingTask || !taskForm.subject.trim()}
