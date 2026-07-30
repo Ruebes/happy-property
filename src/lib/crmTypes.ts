@@ -101,6 +101,7 @@ export interface Activity {
   completed_at: string | null
   created_by:   string | null
   created_at:   string
+  auto?:        boolean          // true = automatischer Sytem-Send (Lotte-Erinnerung, Terminbestätigung)
   creator?:     { full_name: string } | null
 }
 

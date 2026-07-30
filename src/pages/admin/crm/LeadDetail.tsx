@@ -122,6 +122,7 @@ export default function LeadDetail() {
 
   // UI state
   const [activeTab, setActiveTab] = useState<TabId>('overview')
+  const [actFilter, setActFilter] = useState<'all' | 'mine' | 'client' | 'auto'>('all')
   const tabsRef = useRef<HTMLDivElement | null>(null)
   // Tab wechseln UND hinscrollen — sonst wechselt der Tab unsichtbar weit unten
   // (Direkt-Aktions-Kacheln „Mail/WhatsApp/Notiz/Aufgabe" wirkten dadurch tot).
@@ -2622,7 +2623,7 @@ export default function LeadDetail() {
                 { id: 'appointments', label: t('crm.tab.appointments',  `📅 Termine${appointments.length ? ` (${appointments.length})` : ''}`) },
                 { id: 'activities',   label: t('crm.tab.activities',    'Aktivitäten') },
                 { id: 'ai',           label: `🤖 ${t('crm.tab.ai',      'KI-Antwort')}` },
-                { id: 'emails',       label: t('crm.tab.emails',        'E-Mails') },
+                { id: 'emails',       label: `💬 ${t('crm.tab.messages', 'Nachrichten')}` },
                 { id: 'tasks',        label: t('crm.tab.tasks',         'Aufgaben') },
                 { id: 'documents',    label: t('crm.tab.documents',     'Dokumente') },
                 {
@@ -3127,16 +3128,35 @@ export default function LeadDetail() {
               </div>
             )}
 
-            {activeTab === 'activities' && (
+            {activeTab === 'activities' && (() => {
+              const shown = activities.filter(a =>
+                actFilter === 'all' ? true
+                : actFilter === 'mine' ? a.direction === 'outbound' && !a.auto
+                : actFilter === 'client' ? a.direction === 'inbound'
+                : a.auto === true)
+              return (
               <div className="p-6">
+                {/* Filter */}
+                <div className="flex gap-1.5 mb-4 flex-wrap">
+                  {([
+                    ['all', t('crm.actFilter.all', 'Alle')],
+                    ['mine', t('crm.actFilter.mine', 'Von mir')],
+                    ['client', t('crm.actFilter.client', 'Vom Kunden')],
+                    ['auto', t('crm.actFilter.auto', 'Automatisch')],
+                  ] as const).map(([k, lbl]) => (
+                    <button key={k} onClick={() => setActFilter(k)}
+                      className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${actFilter === k ? 'text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                      style={actFilter === k ? { backgroundColor: '#ff795d' } : undefined}>{lbl}</button>
+                  ))}
+                </div>
                 {/* Timeline */}
-                {activities.length === 0 ? (
+                {shown.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-8">
-                    {t('crm.noActivities', 'Noch keine Aktivitäten')}
+                    {activities.length === 0 ? t('crm.noActivities', 'Noch keine Aktivitäten') : t('crm.noActivitiesFilter', 'Keine Aktivitäten in diesem Filter.')}
                   </p>
                 ) : (
                   <ol className="relative border-l border-gray-200 space-y-6 mb-8">
-                    {activities.map((act) => (
+                    {shown.map((act) => (
                       <li key={act.id} className="ml-4">
                         <div className="absolute -left-2 mt-1 w-4 h-4 rounded-full bg-white border-2 border-orange-300 flex items-center justify-center text-xs">
                           {ACTIVITY_ICONS[act.type] ?? '📌'}
@@ -3228,7 +3248,7 @@ export default function LeadDetail() {
                   </button>
                 </div>
               </div>
-            )}
+              ) })()}
 
             {/* ── Tab: KI-Antwort (nur Entwurf — sendet NICHTS) ─── */}
             {activeTab === 'ai' && (

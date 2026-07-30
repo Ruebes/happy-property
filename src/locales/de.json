@@ -2387,7 +2387,8 @@
       "scheduled": "Geplant",
       "portal": "Portal",
       "wohnung": "Wohnung",
-      "notes": "Notizen"
+      "notes": "Notizen",
+      "messages": "Nachrichten"
     },
     "ai": {
       "safety": "Die KI erstellt nur Entwürfe. Es wird nichts automatisch gesendet. Du prüfst, korrigierst und gibst frei – kopierst den Text und schickst ihn wie gewohnt. Aus deinen Freigaben und Korrekturen lernt das System.",
@@ -3764,6 +3765,13 @@
       "first": "Vorname",
       "last": "Nachname",
       "remove": "Aus Liste entfernen"
+    },
+    "noActivitiesFilter": "Keine Aktivitäten in diesem Filter.",
+    "actFilter": {
+      "all": "Alle",
+      "mine": "Von mir",
+      "client": "Vom Kunden",
+      "auto": "Automatisch"
     }
   },
   "docs": {

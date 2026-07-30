@@ -66,27 +66,40 @@ Deno.serve(async (req) => {
       || viaApi
       || (payload.message?.sender?.phone && acctPhone && payload.message.sender.phone === acctPhone)
     if (isOutbound) {
-      // Sven tippt SELBST im Chat (nicht der Bot / nicht die CRM-API: origin 'Public API')
-      // und fängt mit einem Termin an → der Bot übernimmt die Terminlogistik. Kunde = Chat-
-      // Nummer (Empfänger). engage entscheidet remote vs. Vor-Ort (Vor-Ort macht Sven selbst).
+      // Sven tippt SELBST im Chat (nicht der Bot / nicht die CRM-API: origin 'Public API').
+      // Zwei Dinge: (1) die Nachricht in den Verlauf/Posteingang schreiben, damit Sven auch
+      // SEINE eigenen Antworten sieht; (2) wenn er mit einem Termin anfängt, übernimmt der
+      // Bot die Terminlogistik. CRM-API-Echos (viaApi) sind bereits über send-whatsapp
+      // geloggt → NICHT doppeln.
       const outText = payload.message?.text ?? payload.message?.body
       const custPhone = payload.chat?.phone ?? payload.contact?.phone
-      if (!viaApi && outText && custPhone && APPT_HINT.test(outText)) {
+      if (!viaApi && outText && custPhone) {
         const digits = String(custPhone).replace(/\D/g, '')
         if (digits.length >= 7) {
           try {
             const { data: rows } = await supabase.rpc('find_leads_by_phone_suffix', { suffix: digits.slice(-8) })
             const lead = ((rows ?? []) as { id: string }[])[0]
             if (lead) {
-              const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'engage', lead_id: lead.id, text: outText }),
-              }).then(r => r.text()).catch(e => console.error('[timelines-webhook] engage (Sven-outbound):', e))
-              const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
-              if (er) er.waitUntil(p); else await p
+              // (1) ausgehende Nachricht loggen (manuell → auto:false → erscheint im Posteingang)
+              const { error: le } = await supabase.from('activities').insert({
+                lead_id: lead.id, type: 'whatsapp', direction: 'outbound', auto: false,
+                subject: 'WhatsApp gesendet', content: outText,
+                completed_at: new Date().toISOString(),
+                whatsapp_message_id: uid ? String(uid) : null,
+              })
+              if (le) console.warn('[timelines-webhook] outbound-log:', le.message)
+              // (2) Termin-Bot, wenn Sven mit einem Termin anfängt
+              if (APPT_HINT.test(outText)) {
+                const p = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'engage', lead_id: lead.id, text: outText }),
+                }).then(r => r.text()).catch(e => console.error('[timelines-webhook] engage (Sven-outbound):', e))
+                const er = (globalThis as { EdgeRuntime?: { waitUntil: (p: Promise<unknown>) => void } }).EdgeRuntime
+                if (er) er.waitUntil(p); else await p
+              }
             }
-          } catch (e) { console.warn('[timelines-webhook] Sven-outbound engage:', e) }
+          } catch (e) { console.warn('[timelines-webhook] Sven-outbound:', e) }
         }
       }
       return new Response('OK (outbound)', { headers: corsHeaders })

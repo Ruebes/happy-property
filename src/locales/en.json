@@ -2387,7 +2387,8 @@
       "scheduled": "Scheduled",
       "portal": "Portal",
       "wohnung": "Apartment",
-      "notes": "Notes"
+      "notes": "Notes",
+      "messages": "Messages"
     },
     "ai": {
       "safety": "The AI only creates drafts. Nothing is sent automatically. You review, correct and approve – then copy the text and send it as usual. The system learns from your approvals and corrections.",
@@ -3764,6 +3765,13 @@
       "first": "First name",
       "last": "Last name",
       "remove": "Remove from list"
+    },
+    "noActivitiesFilter": "No activities in this filter.",
+    "actFilter": {
+      "all": "All",
+      "mine": "From me",
+      "client": "From customer",
+      "auto": "Automatic"
     }
   },
   "docs": {
