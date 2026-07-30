@@ -1352,7 +1352,8 @@
       "home": "Home",
       "ads": "Ads Manager",
       "bookingLinks": "Booking links",
-      "lists": "Recipient lists"
+      "lists": "Recipient lists",
+      "social": "Social media"
     },
     "tasks": {
       "title": "Tasks",
@@ -3782,6 +3783,50 @@
       "open": "Open",
       "wip": "In progress",
       "done": "Done"
+    },
+    "social": {
+      "title": "Social media",
+      "subtitle": "Organic posts for Facebook, Instagram & LinkedIn — with AI chat, images and news research.",
+      "newsBtn": "📰 Research news now",
+      "newsWorking": "Researching (~1 min)…",
+      "newsDone": "📰 Research done — the findings are on your start page as a task.",
+      "newPostTopic": "Start a new post",
+      "newPostBtn": "+ Post",
+      "empty": "No posts yet — start your first one above.",
+      "noText": "(no text yet)",
+      "deleteConfirm": "Delete this post draft?",
+      "chatTitle": "Post chat",
+      "chatEmpty": "Tell me what it should be about — I write the post and you see it on the right instantly.",
+      "chatPh": "Message … (Enter to send)",
+      "send": "Send",
+      "chatErr": "That didn’t work — please try again.",
+      "newPost": "New post",
+      "postText": "Post text",
+      "image": "Image",
+      "imageMake": "🎨 Create image",
+      "imageRedo": "🎨 Create new image",
+      "imageWorking": "Creating image (~30 s)…",
+      "noImage": "No image yet. Instagram needs one.",
+      "platforms": "Platforms",
+      "schedule": "Scheduled for (optional)",
+      "scheduleHint": "For planning only — publishing happens via “Post now”.",
+      "saved": "Saved",
+      "publish": "Post now",
+      "publishing": "Publishing…",
+      "publishConfirm": "Publish this post publicly on {{p}} NOW?",
+      "topic": {
+        "objekt": "Feature a property",
+        "wissen": "Good to know",
+        "weisheit": "Wisdom of the week (Lotte)",
+        "news": "Current news",
+        "sonstiges": "Other"
+      },
+      "status": {
+        "entwurf": "Draft",
+        "geplant": "Scheduled",
+        "gepostet": "Posted",
+        "fehlgeschlagen": "Failed"
+      }
     }
   },
   "docs": {

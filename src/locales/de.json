@@ -1352,7 +1352,8 @@
       "home": "Start",
       "ads": "Werbemanager",
       "bookingLinks": "Buchungslinks",
-      "lists": "Empfängerlisten"
+      "lists": "Empfängerlisten",
+      "social": "Social Media"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -3782,6 +3783,50 @@
       "open": "Gestellt",
       "wip": "In Arbeit",
       "done": "Erledigt"
+    },
+    "social": {
+      "title": "Social Media",
+      "subtitle": "Organische Posts für Facebook, Instagram & LinkedIn — mit KI-Chat, Bildern und News-Recherche.",
+      "newsBtn": "📰 News jetzt recherchieren",
+      "newsWorking": "Recherchiert (~1 Min)…",
+      "newsDone": "📰 Recherche fertig — die Fundstücke liegen als Aufgabe auf deiner Startseite.",
+      "newPostTopic": "Neuen Post starten",
+      "newPostBtn": "+ Post",
+      "empty": "Noch keine Posts — starte oben deinen ersten.",
+      "noText": "(noch kein Text)",
+      "deleteConfirm": "Diesen Post-Entwurf löschen?",
+      "chatTitle": "Post-Chat",
+      "chatEmpty": "Sag mir, worum es gehen soll — ich texte den Post und du siehst ihn rechts sofort.",
+      "chatPh": "Nachricht … (Enter zum Senden)",
+      "send": "Senden",
+      "chatErr": "Das hat nicht geklappt — bitte nochmal.",
+      "newPost": "Neuer Post",
+      "postText": "Post-Text",
+      "image": "Bild",
+      "imageMake": "🎨 Bild erstellen",
+      "imageRedo": "🎨 Neues Bild erstellen",
+      "imageWorking": "Bild wird erstellt (~30 s)…",
+      "noImage": "Noch kein Bild. Instagram braucht eins.",
+      "platforms": "Plattformen",
+      "schedule": "Geplant für (optional)",
+      "scheduleHint": "Nur zur Planung im Kalender — veröffentlicht wird per Klick auf „Jetzt posten\".",
+      "saved": "Gespeichert",
+      "publish": "Jetzt posten",
+      "publishing": "Wird veröffentlicht…",
+      "publishConfirm": "Diesen Post JETZT öffentlich auf {{p}} veröffentlichen?",
+      "topic": {
+        "objekt": "Immobilie vorstellen",
+        "wissen": "Wissenswertes",
+        "weisheit": "Weisheit der Woche (Lotte)",
+        "news": "Aktuelles",
+        "sonstiges": "Sonstiges"
+      },
+      "status": {
+        "entwurf": "Entwurf",
+        "geplant": "Geplant",
+        "gepostet": "Gepostet",
+        "fehlgeschlagen": "Fehlgeschlagen"
+      }
     }
   },
   "docs": {

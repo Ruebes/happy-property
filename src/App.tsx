@@ -36,6 +36,7 @@ const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const Anmelden = lazy(() => import('./pages/Anmelden'))
 const PartnerReview = lazy(() => import('./pages/PartnerReview'))
+const SocialStudio = lazy(() => import('./pages/admin/crm/SocialStudio'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
 const Zusage = lazy(() => import('./pages/Zusage'))
@@ -169,6 +170,7 @@ export default function App() {
               <Route path="/admin/crm/funnel-editor"     element={<FunnelEditor />} />
               <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
               <Route path="/admin/crm/settings/lists"    element={<CrmNewsletterLists />} />
+              <Route path="/admin/crm/social"            element={<SocialStudio />} />
             </Route>
 
             {/* ── CRM-Einstellungen (nur Admin/Verwalter) ── */}
