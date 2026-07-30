@@ -44,6 +44,15 @@ function reloadOnce(): boolean {
   return true
 }
 
+// Für den Router-Catch-all: Eine UNBEKANNTE Route kann bedeuten, dass der Nutzer
+// eine ALTE, vom Service-Worker gecachte App-Version hat, die eine NEUE Seite
+// (z.B. /partner/…) schlicht noch nicht kennt. Dann nicht zum Login schicken,
+// sondern einmalig Cache leeren + frisch laden — kennt auch die neue Version die
+// Route nicht, ist sie wirklich falsch (Rückgabe false → Aufrufer zeigt Login).
+export function recoverUnknownRoute(): boolean {
+  return reloadOnce()
+}
+
 export function lazyWithReload<T extends ComponentType<object>>(
   factory: () => Promise<{ default: T }>,
 ): LazyExoticComponent<T> {

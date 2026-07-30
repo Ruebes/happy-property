@@ -1,6 +1,21 @@
 import { Suspense } from 'react'
-import { lazyWithReload as lazy } from './lib/lazyWithReload'
+import { lazyWithReload as lazy, recoverUnknownRoute } from './lib/lazyWithReload'
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
+
+// Catch-all: Eine unbekannte Route heißt oft nur, dass der Browser eine ALTE,
+// vom Service-Worker gecachte App-Version hat, die eine NEUE Seite noch nicht
+// kennt (z.B. /partner/…) — dann Cache leeren + frisch laden statt zum Login
+// zu schicken. Erst wenn auch die frische Version die Route nicht kennt → Login.
+function UnknownRoute() {
+  if (recoverUnknownRoute()) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500" />
+      </div>
+    )
+  }
+  return <Navigate to="/login" replace />
+}
 import { AuthProvider } from './lib/auth'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -241,8 +256,8 @@ export default function App() {
               <Route path="/feriengast/profil"     element={<FeriengastProfil />} />
             </Route>
 
-            {/* ── Fallback ── */}
-            <Route path="*" element={<Navigate to="/login" replace />} />
+            {/* ── Fallback: erst Cache-Recovery versuchen, dann Login ── */}
+            <Route path="*" element={<UnknownRoute />} />
 
           </Routes>
         </Suspense>
