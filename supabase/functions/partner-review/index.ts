@@ -30,7 +30,16 @@ async function resolveToken(sb: SupabaseClient, token: string) {
   const { data: c } = await sb.from('crm_business_contacts').select('first_name, last_name').eq('id', t.contact_id).maybeSingle()
   const cc = c as { first_name: string | null; last_name: string | null } | null
   const partnerName = `${cc?.first_name ?? ''} ${cc?.last_name ?? ''}`.trim() || 'Partner'
-  return { ...t, partnerName }
+  // Peers: andere aktive Partner DERSELBEN Phase (Burkhard ↔ Ioulia teilen sich
+  // den Pool „Kontakt übergeben"). Wer zuerst antwortet, dessen Antwort gilt.
+  const { data: peerToks } = await sb.from('partner_review_tokens')
+    .select('contact_id, contact:crm_business_contacts(first_name, last_name)')
+    .eq('phase', t.phase).eq('active', true).neq('contact_id', t.contact_id)
+  const peers = ((peerToks ?? []) as Array<{ contact_id: string; contact: { first_name: string | null; last_name: string | null } | null }>).map(p => ({
+    contact_id: p.contact_id,
+    name: `${p.contact?.first_name ?? ''} ${p.contact?.last_name ?? ''}`.trim() || 'Partner',
+  }))
+  return { ...t, partnerName, peers }
 }
 
 Deno.serve(async (req) => {
@@ -46,17 +55,33 @@ Deno.serve(async (req) => {
       const { data: deals } = await sb.from('deals').select('lead_id').eq('phase', tok.phase)
       const leadIds = [...new Set(((deals ?? []) as { lead_id: string | null }[]).map(d => d.lead_id).filter((x): x is string => !!x))]
       if (!leadIds.length) return json({ ok: true, label: tok.label, partner: tok.partnerName, leads: [] })
+      // Antworten des GANZEN Teams dieser Phase laden (eigene + Peers) — wer zuerst
+      // geantwortet hat, dessen Antwort gilt; der andere sieht sie nur noch.
+      const poolIds = [tok.contact_id, ...tok.peers.map(p => p.contact_id)]
+      const peerName = new Map(tok.peers.map(p => [p.contact_id, p.name]))
       const [{ data: leads }, { data: reviews }] = await Promise.all([
         sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp').in('id', leadIds),
-        sb.from('partner_reviews').select('lead_id, status, next_contact_at, note').in('lead_id', leadIds).eq('contact_id', tok.contact_id),
+        sb.from('partner_reviews').select('lead_id, contact_id, status, next_contact_at, note, updated_at')
+          .in('lead_id', leadIds).in('contact_id', poolIds).order('updated_at', { ascending: true }),
       ])
-      const rev = new Map(((reviews ?? []) as Array<{ lead_id: string; status: string | null; next_contact_at: string | null; note: string | null }>).map(r => [r.lead_id, r]))
-      const out = ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null }>).map(l => ({
-        lead_id: l.id,
-        name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Kontakt'),
-        email: l.email, phone: l.whatsapp || l.phone,
-        review: rev.get(l.id) ?? null,
-      }))
+      // Erste (älteste) Antwort je Lead gewinnt.
+      const rev = new Map<string, { contact_id: string; status: string | null; next_contact_at: string | null; note: string | null }>()
+      for (const r of (reviews ?? []) as Array<{ lead_id: string; contact_id: string; status: string | null; next_contact_at: string | null; note: string | null }>) {
+        if (!rev.has(r.lead_id)) rev.set(r.lead_id, r)
+      }
+      const out = ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null }>).map(l => {
+        const r = rev.get(l.id) ?? null
+        return {
+          lead_id: l.id,
+          name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Kontakt'),
+          email: l.email, phone: l.whatsapp || l.phone,
+          review: r ? {
+            status: r.status, next_contact_at: r.next_contact_at, note: r.note,
+            mine: r.contact_id === tok.contact_id,
+            by: r.contact_id === tok.contact_id ? tok.partnerName : (peerName.get(r.contact_id) ?? 'Partner'),
+          } : null,
+        }
+      })
       out.sort((a, b) => a.name.localeCompare(b.name))
       return json({ ok: true, label: tok.label, partner: tok.partnerName, leads: out })
     }
@@ -68,6 +93,19 @@ Deno.serve(async (req) => {
       if (!leadId || !STATUS.has(status)) return json({ error: 'Ungültige Eingabe.' }, 400)
       const nextAt = status === 'nicht_erreicht' && body.next_contact_at ? new Date(body.next_contact_at).toISOString() : null
       const note = (body.note ?? '').trim().slice(0, 2000) || null
+
+      // Zuerst-gewinnt: Hat ein Peer (z.B. Burkhard vor Ioulia) diesen Lead schon
+      // beantwortet, gilt dessen Antwort — der Zweite bekommt einen Hinweis.
+      if (tok.peers.length) {
+        const { data: peerRev } = await sb.from('partner_reviews')
+          .select('contact_id, status')
+          .eq('lead_id', leadId).in('contact_id', tok.peers.map(p => p.contact_id)).limit(1)
+        const pr = (peerRev as Array<{ contact_id: string; status: string | null }> | null)?.[0]
+        if (pr) {
+          const byName = tok.peers.find(p => p.contact_id === pr.contact_id)?.name ?? 'Partner'
+          return json({ error: 'already_reviewed', by: byName, status: pr.status }, 409)
+        }
+      }
 
       const { error: ue } = await sb.from('partner_reviews').upsert({
         lead_id: leadId, contact_id: tok.contact_id, status, next_contact_at: nextAt, note, updated_at: new Date().toISOString(),

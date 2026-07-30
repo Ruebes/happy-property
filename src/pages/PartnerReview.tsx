@@ -19,7 +19,12 @@ interface PLead {
   name: string
   email: string | null
   phone: string | null
-  review: { status: string | null; next_contact_at: string | null; note: string | null } | null
+  // mine=false → ein anderer Partner (by) hat zuerst geantwortet: Karte ist gesperrt.
+  review: { status: string | null; next_contact_at: string | null; note: string | null; mine?: boolean; by?: string } | null
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  in_bearbeitung: 'In Bearbeitung', nicht_qualifiziert: 'Nicht qualifiziert', nicht_erreicht: 'Noch nicht erreicht',
 }
 
 const STATUS_OPTS = [
@@ -28,7 +33,7 @@ const STATUS_OPTS = [
   { key: 'nicht_erreicht', label: 'Noch nicht erreicht', cls: 'bg-amber-50 text-amber-700 border-amber-200', active: 'bg-amber-500 text-white border-amber-500' },
 ]
 
-function LeadCard({ lead, token, onSaved }: { lead: PLead; token: string; onSaved: (leadId: string, review: PLead['review']) => void }) {
+function LeadCard({ lead, token, onSaved, onConflict }: { lead: PLead; token: string; onSaved: (leadId: string, review: PLead['review']) => void; onConflict: () => void }) {
   const [status, setStatus] = useState<string>(lead.review?.status ?? '')
   const [nextAt, setNextAt] = useState<string>(lead.review?.next_contact_at ? lead.review.next_contact_at.slice(0, 10) : '')
   const [note, setNote] = useState<string>(lead.review?.note ?? '')
@@ -47,14 +52,42 @@ function LeadCard({ lead, token, onSaved }: { lead: PLead; token: string; onSave
       const { data, error } = await supabase.functions.invoke('partner-review', {
         body: { action: 'save', token, lead_id: lead.lead_id, status, next_contact_at: status === 'nicht_erreicht' && nextAt ? nextAt : undefined, note: note || undefined },
       })
-      const d = (data ?? {}) as { ok?: boolean; error?: string }
+      const d = (data ?? {}) as { ok?: boolean; error?: string; by?: string }
+      // Zuerst-gewinnt: jemand anderes war schneller → Liste neu laden, Karte sperrt sich.
+      if (d.error === 'already_reviewed' || (error && error.message?.includes('409'))) {
+        setErr(`${d.by ?? 'Dein Kollege'} hat diesen Kontakt gerade schon beantwortet — Liste wird aktualisiert.`)
+        setTimeout(onConflict, 1500)
+        return
+      }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      onSaved(lead.lead_id, { status, next_contact_at: status === 'nicht_erreicht' && nextAt ? `${nextAt}T00:00:00Z` : null, note: note || null })
+      onSaved(lead.lead_id, { status, next_contact_at: status === 'nicht_erreicht' && nextAt ? `${nextAt}T00:00:00Z` : null, note: note || null, mine: true })
       setSaved(true); setTimeout(() => setSaved(false), 2500)
     } catch (e) {
       console.error('[PartnerReview] save:', e)
       setErr('Speichern fehlgeschlagen — bitte nochmal versuchen.')
     } finally { setBusy(false) }
+  }
+
+  // Ein anderer Partner war zuerst → nur noch anzeigen, nicht mehr ändern.
+  if (lead.review && lead.review.mine === false) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 opacity-80">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <p className="font-semibold text-gray-900">{lead.name}</p>
+            <p className="text-sm text-gray-500 mt-0.5">
+              {lead.email}{lead.email && lead.phone && ' · '}{lead.phone}
+            </p>
+          </div>
+          <span className="text-[11px] px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">✓ von {lead.review.by ?? 'Partner'} beantwortet</span>
+        </div>
+        <p className="text-sm text-gray-700 mt-3">
+          <b>{STATUS_LABEL[lead.review.status ?? ''] ?? lead.review.status}</b>
+          {lead.review.next_contact_at && <> · nächste Kontaktaufnahme {new Date(lead.review.next_contact_at).toLocaleDateString('de-DE')}</>}
+        </p>
+        {lead.review.note && <p className="text-sm text-gray-500 mt-1">„{lead.review.note}"</p>}
+      </div>
+    )
   }
 
   return (
@@ -168,7 +201,7 @@ export default function PartnerReview() {
             </div>
           ) : (
             <div className="space-y-4">
-              {leads.map(l => <LeadCard key={l.lead_id} lead={l} token={token} onSaved={onSaved} />)}
+              {leads.map(l => <LeadCard key={l.lead_id} lead={l} token={token} onSaved={onSaved} onConflict={() => void load()} />)}
             </div>
           )
         )}
