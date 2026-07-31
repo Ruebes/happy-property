@@ -375,6 +375,10 @@ export default function AppointmentModal({
     }, 400)
   }
   function selectPlace(pl: { name: string; display: string; lat: number; lon: number }) {
+    // Nachlaufende Suche stoppen — sonst öffnet der letzte Debounce die Liste
+    // gleich wieder und die Auswahl wirkt „nicht übernommen".
+    if (placeDebounceRef.current) clearTimeout(placeDebounceRef.current)
+    placeSeqRef.current++
     // Kein doppeltes erstes Segment, wenn name aus display abgeleitet wurde
     const dupe = pl.display && pl.display.split(',')[0].trim() === pl.name.trim()
     setLocation(pl.display && !dupe ? `${pl.name}, ${pl.display}` : (pl.display || pl.name))
@@ -758,8 +762,8 @@ export default function AppointmentModal({
           try {
             const whereText = apptType === 'zoom' && effZoomLink
               ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\n${t('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword}` : ''}`
-              : apptType === 'inperson' && (effLocation || effLocationUrl)
-                ? `\n📍 ${effLocation}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
+              : apptType === 'inperson'
+                ? `\n🤝 ${t('crm.appt.waInperson', 'Wir treffen uns vor Ort')}${effLocation ? `: ${effLocation}` : ''}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
                 : apptType === 'whatsapp'
                   ? (tgt.leadId
                       ? `\n📞 ${t('crm.appt.waCallReminderWa', 'Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.')}`

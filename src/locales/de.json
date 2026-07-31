@@ -2641,7 +2641,8 @@
       "waSaveToCalendar": "Termin in deinen Kalender speichern:",
       "waSignoff": "Bis bald!\nSven · Happy Property",
       "mailSubjectEdit": "Terminänderung",
-      "mailSubjectNew": "Terminbestätigung"
+      "mailSubjectNew": "Terminbestätigung",
+      "waInperson": "Wir treffen uns vor Ort"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

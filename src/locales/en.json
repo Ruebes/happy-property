@@ -2641,7 +2641,8 @@
       "waSaveToCalendar": "Save the appointment to your calendar:",
       "waSignoff": "See you soon!\nSven · Happy Property",
       "mailSubjectEdit": "Appointment change",
-      "mailSubjectNew": "Appointment confirmation"
+      "mailSubjectNew": "Appointment confirmation",
+      "waInperson": "We meet in person"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
