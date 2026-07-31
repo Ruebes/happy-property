@@ -141,6 +141,10 @@ Deno.serve(async (req) => {
       const { data: hist } = await sb.from('social_post_messages').select('role, content').eq('post_id', body.post_id).order('created_at').limit(30)
       const projects = await projectContext(sb)
 
+      // Vorhandene Bilder (nummeriert) — Basis für „bearbeite Bild 2"-Wünsche.
+      const imgList = Array.isArray(p.image_urls) ? (p.image_urls as string[]) : []
+      const imgCtx = imgList.length ? `\nVorhandene Bilder am Post (für edit_image per Nummer):\n${imgList.map((u, i) => `${i + 1}. ${u}`).join('\n')}` : ''
+
       // Gewähltes Projekt / gewählte Wohnung: echte Portal-Daten in den Kontext.
       let focus = ''
       if (p.project_id) {
@@ -180,9 +184,6 @@ Regeln:
   bzw. passend zum Thema, OHNE Text im Bild.
 - Erfinde keine Zahlen/Fakten. Bei Objekt-Posts nur die Projektdaten oben.`
 
-      // Vorhandene Bilder (nummeriert) — Basis für „bearbeite Bild 2"-Wünsche.
-      const imgList = Array.isArray(p.image_urls) ? (p.image_urls as string[]) : []
-      const imgCtx = imgList.length ? `\nVorhandene Bilder am Post (für edit_image per Nummer):\n${imgList.map((u, i) => `${i + 1}. ${u}`).join('\n')}` : ''
       const messages = [
         ...((hist ?? []) as Array<{ role: string; content: string }>).map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: body.message.trim() },
