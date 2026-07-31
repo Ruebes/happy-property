@@ -252,6 +252,29 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       return json({ ok: true, task_id: taskId, findings: text })
     }
 
+    // ── LinkedIn-Token-Wächter (Cron täglich): Aufgabe NUR wenn ein hinterlegter
+    // Token abgelaufen/ungültig ist — mit direktem Erneuerungs-Link. ──
+    if (body.action === 'linkedin_watchdog') {
+      const { data: row } = await sb.from('connector_secrets').select('value').eq('key', 'LINKEDIN_ACCESS_TOKEN').maybeSingle()
+      const tok = (row as { value: string } | null)?.value ?? ''
+      if (!tok) return json({ ok: true, skipped: 'Kein Token hinterlegt (nie verbunden).' })
+      const me = await fetch('https://api.linkedin.com/v2/userinfo', { headers: { Authorization: `Bearer ${tok}` } }).then(r => r.ok).catch(() => false)
+      if (me) return json({ ok: true, valid: true })
+      // Abgelaufen → EINE offene Aufgabe (keine Duplikate)
+      const { data: dup } = await sb.from('crm_tasks').select('id').ilike('title', '%LinkedIn-Token%').neq('status', 'erledigt').eq('archived', false).limit(1)
+      if (dup && dup.length) return json({ ok: true, valid: false, skipped: 'Aufgabe existiert schon.' })
+      const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+      const adminId = (admin as { id: string } | null)?.id ?? null
+      const { data: task } = await sb.from('crm_tasks').insert({
+        title: '🔗 LinkedIn-Token abgelaufen — in 2 Minuten erneuern',
+        description: 'Der LinkedIn-Zugang ist abgelaufen (hält ~60 Tage). So erneuerst du ihn:\n\n1. Token-Generator öffnen: https://www.linkedin.com/developers/tools/oauth (App „Happy Property" wählen → Create token)\n2. Häkchen: w_member_social + openid + profile → Request access token → mit deinem Profil bestätigen → Token kopieren\n3. Einfügen unter: https://portal.happy-property.com/admin/crm/settings/connectors (LinkedIn → ✏️ Ändern → Speichern)\n\nDanach ist der Haken wieder grün und LinkedIn-Posts laufen weiter.',
+        created_by: adminId, status: 'offen',
+      }).select('id').single()
+      const taskId = (task as { id: string } | null)?.id
+      if (taskId && adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+      return json({ ok: true, valid: false, task_id: taskId })
+    }
+
     // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──
     if (body.action === 'auto_publish') {
       const today = new Date().toISOString().slice(0, 10)
