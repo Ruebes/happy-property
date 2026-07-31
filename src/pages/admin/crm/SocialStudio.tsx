@@ -90,7 +90,8 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
       if (d.image_url) setImages(im => [...im, d.image_url!])
     } catch (e) {
       console.error('[SocialStudio] chat:', e)
-      setMsgs(m => [...m, { role: 'assistant', content: `❌ ${t('crm.social.chatErr', 'Das hat nicht geklappt — bitte nochmal.')}` }])
+      const msg = e instanceof Error ? e.message : String(e)
+      setMsgs(m => [...m, { role: 'assistant', content: `❌ ${t('crm.social.chatErr', 'Das hat nicht geklappt')}: ${msg}` }])
     } finally { setBusy('') }
   }
 

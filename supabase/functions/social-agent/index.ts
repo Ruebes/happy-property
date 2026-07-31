@@ -51,8 +51,8 @@ async function claude(apiKey: string, opts: { system: string; messages: Array<{ 
     const d = await res.json()
     if (res.ok) return d as Record<string, unknown>
     lastErr = JSON.stringify(d).slice(0, 300)
-    // Modell existiert (noch) nicht → nächstes probieren; andere Fehler → abbrechen
-    if (!/model|not_found/i.test(lastErr)) break
+    // Nächstes Modell probieren bei: unbekanntem Modell, Überlastung, Rate-Limit
+    if (!/model|not_found|overloaded|rate.?limit|529|429/i.test(lastErr) && res.status < 500) break
   }
   throw new Error(`Claude: ${lastErr}`)
 }
@@ -69,6 +69,35 @@ async function projectContext(sb: SupabaseClient): Promise<string> {
     const max = pu.length ? Math.max(...pu.map(u => u.price_net!)) : null
     return `- ${p.name} (${p.location ?? 'Zypern'}, ${p.status ?? ''})${min ? ` ab ${Math.round(min / 1000)}k€${max && max !== min ? ` bis ${Math.round(max / 1000)}k€` : ''} netto` : ''}`
   }).join('\n')
+}
+
+// Bestehendes Bild per KI BEARBEITEN (z.B. spielende Kinder ergänzen): Quelle laden
+// → OpenAI images/edits (gpt-image-1) → Ergebnis hochladen + an image_urls anhängen.
+async function editPostImage(sb: SupabaseClient, postId: string, sourceUrl: string, prompt: string): Promise<string> {
+  const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
+  if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt.')
+  const src = await fetch(sourceUrl)
+  if (!src.ok) throw new Error('Quellbild nicht ladbar.')
+  const blob = await src.blob()
+  const fd = new FormData()
+  fd.append('model', 'gpt-image-1')
+  fd.append('image', new File([blob], 'source.png', { type: blob.type || 'image/png' }))
+  fd.append('prompt', prompt)
+  fd.append('size', '1024x1024')
+  const res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${openaiKey}` }, body: fd })
+  const d = await res.json()
+  if (!res.ok) throw new Error(`OpenAI edit: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
+  const b64 = d?.data?.[0]?.b64_json as string | undefined
+  if (!b64) throw new Error('OpenAI lieferte kein Bild.')
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const path = `social/${postId}-edit-${Date.now()}.png`
+  const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+  if (upErr) throw new Error(`Upload: ${upErr.message}`)
+  const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+  const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
+  const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
+  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, updated_at: new Date().toISOString() }).eq('id', postId)
+  return url
 }
 
 // Bild via OpenAI erzeugen, in ad-creatives/social hochladen, an image_urls anhängen.
@@ -141,6 +170,8 @@ ${focus}
 Alle Projekte im Überblick (echte Daten, NUR diese verwenden):
 ${projects}
 
+${imgCtx}
+
 Regeln:
 - Wenn du einen Post-Text erstellst oder änderst, rufe IMMER das Tool set_post auf
   (kompletter neuer Text). Antworte zusätzlich kurz im Chat, was du gemacht hast.
@@ -149,6 +180,9 @@ Regeln:
   bzw. passend zum Thema, OHNE Text im Bild.
 - Erfinde keine Zahlen/Fakten. Bei Objekt-Posts nur die Projektdaten oben.`
 
+      // Vorhandene Bilder (nummeriert) — Basis für „bearbeite Bild 2"-Wünsche.
+      const imgList = Array.isArray(p.image_urls) ? (p.image_urls as string[]) : []
+      const imgCtx = imgList.length ? `\nVorhandene Bilder am Post (für edit_image per Nummer):\n${imgList.map((u, i) => `${i + 1}. ${u}`).join('\n')}` : ''
       const messages = [
         ...((hist ?? []) as Array<{ role: string; content: string }>).map(m => ({ role: m.role, content: m.content })),
         { role: 'user', content: body.message.trim() },
@@ -172,6 +206,17 @@ Regeln:
           properties: { prompt: { type: 'string', description: 'Englischer Bild-Prompt, passend zum Post-Text, ohne Text/Wasserzeichen im Bild' } },
           required: ['prompt'],
         },
+      }, {
+        name: 'edit_image',
+        description: 'BEARBEITET ein vorhandenes Bild des Posts per KI (z.B. spielende Kinder vor dem Haus ergänzen, Himmel ändern). image_number = Nummer aus der Bilderliste.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            image_number: { type: 'integer', description: 'Nummer des zu bearbeitenden Bilds (1-basiert)' },
+            prompt: { type: 'string', description: 'Englische Bearbeitungs-Anweisung (was ergänzt/geändert wird), fotorealistisch, ohne Text im Bild' },
+          },
+          required: ['image_number', 'prompt'],
+        },
       }]
       const resp = await claude(anthropicKey, { system, messages, tools })
       const blocks = (resp.content ?? []) as Array<{ type: string; text?: string; name?: string; input?: { content?: string; image_prompt?: string; prompt?: string } }>
@@ -186,8 +231,18 @@ Regeln:
       }
       // Bild-Wunsch aus dem Chat: make_image → sofort generieren, passend zum Text.
       let newImageUrl: string | null = null
+      const editTool = blocks.find(b => b.type === 'tool_use' && b.name === 'edit_image') as { input?: { image_number?: number; prompt?: string } } | undefined
+      if (editTool?.input?.prompt && editTool.input.image_number) {
+        const srcUrl = imgList[editTool.input.image_number - 1]
+        if (srcUrl) {
+          try {
+            newImageUrl = await editPostImage(sb, body.post_id, srcUrl, editTool.input.prompt)
+            reply = reply ? `${reply}\n\n🎨 Bearbeitetes Bild ist fertig.` : '🎨 Bearbeitetes Bild ist fertig — als neues Bild angehängt (Original bleibt).'
+          } catch (e) { reply = `${reply}\n\n❌ Bild-Bearbeitung fehlgeschlagen: ${(e as Error).message}`.trim() }
+        } else { reply = `${reply}\n\n❌ Bild ${editTool.input.image_number} gibt es nicht.`.trim() }
+      }
       const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image')
-      if (imgTool?.input?.prompt) {
+      if (!newImageUrl && imgTool?.input?.prompt) {
         try {
           newImageUrl = await generatePostImage(sb, body.post_id, imgTool.input.prompt)
           reply = reply ? `${reply}\n\n🎨 Neues Bild ist fertig.` : '🎨 Neues Bild ist fertig — passend zum Text.'
