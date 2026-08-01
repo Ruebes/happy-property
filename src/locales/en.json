@@ -3846,7 +3846,14 @@
       "manageTopics": "Categories",
       "newTopicPh": "New category, e.g. “Testimonials”",
       "addTopic": "Add",
-      "topicDeleteConfirm": "Delete category “{{l}}”? Existing posts are kept."
+      "topicDeleteConfirm": "Delete category “{{l}}”? Existing posts are kept.",
+      "viewPlan": "📅 Editorial plan",
+      "viewList": "📋 Posts",
+      "planAdd": "Create a post for this day",
+      "legendPlanned": "scheduled",
+      "legendPosted": "posted",
+      "legendNewsletter": "Newsletter",
+      "planHint": "Click an entry to open it · “+” on a day creates a post for that day."
     },
     "conn": {
       "title": "Connectors",

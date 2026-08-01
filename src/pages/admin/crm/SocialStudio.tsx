@@ -311,6 +311,90 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
   )
 }
 
+// ── Redaktionsplan: Monatskalender über Social-Posts + Newsletter ───────────
+interface NlEntry { id: string; title: string; status: string; date: string | null }
+
+function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }: {
+  posts: SocialPost[]; newsletters: NlEntry[]; topics: Topic[]
+  onOpenPost: (p: SocialPost) => void; onCreateForDay: (day: Date) => void
+}) {
+  const { t } = useTranslation()
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+
+  // Kalender-Gitter: Montag-basiert, 6 Wochen
+  const first = new Date(month)
+  const offset = (first.getDay() + 6) % 7
+  const start = new Date(first); start.setDate(first.getDate() - offset)
+  const days: Date[] = Array.from({ length: 42 }, (_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d })
+  const sameDay = (a: Date, iso: string | null) => {
+    if (!iso) return false
+    const b = new Date(iso)
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  }
+  const monthLabel = month.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+  const wd = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
+  const platIcon = (pl: string[]) => pl.map(x => x === 'facebook' ? 'f' : x === 'instagram' ? '◎' : 'in').join('·')
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+      <div className="flex items-center justify-between mb-3">
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100">‹</button>
+        <p className="font-semibold text-gray-900 capitalize">{monthLabel}</p>
+        <button onClick={() => setMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))} className="w-8 h-8 rounded-lg text-gray-500 hover:bg-gray-100">›</button>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-gray-400 mb-1">
+        {wd.map(d => <div key={d}>{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7 gap-1">
+        {days.map((d, i) => {
+          const inMonth = d.getMonth() === month.getMonth()
+          const isToday = d.getTime() === today.getTime()
+          const dayPosts = posts.filter(pp => sameDay(d, pp.scheduled_for) || (pp.status === 'gepostet' && !pp.scheduled_for && sameDay(d, pp.created_at)))
+          const dayNls = newsletters.filter(n => sameDay(d, n.date))
+          return (
+            <div key={i} className={`group min-h-[84px] rounded-lg border p-1 text-left align-top ${inMonth ? 'border-gray-100 bg-white' : 'border-transparent bg-gray-50/60'} ${isToday ? 'ring-2 ring-orange-300' : ''}`}>
+              <div className="flex items-center justify-between">
+                <span className={`text-[11px] ${inMonth ? 'text-gray-500' : 'text-gray-300'} ${isToday ? 'font-bold text-orange-600' : ''}`}>{d.getDate()}</span>
+                <button onClick={() => onCreateForDay(d)} title={t('crm.social.planAdd', 'Post für diesen Tag anlegen')}
+                  className="opacity-0 group-hover:opacity-100 w-5 h-5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 text-sm leading-none">+</button>
+              </div>
+              <div className="space-y-0.5 mt-0.5">
+                {dayPosts.map(pp => {
+                  const tp = topics.find(x => x.key === pp.topic)
+                  const cls = pp.status === 'gepostet' ? 'bg-green-50 text-green-800 border-green-100'
+                    : pp.status === 'fehlgeschlagen' ? 'bg-red-50 text-red-700 border-red-100'
+                    : 'bg-blue-50 text-blue-800 border-blue-100'
+                  return (
+                    <button key={pp.id} onClick={() => onOpenPost(pp)}
+                      className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border truncate ${cls}`}
+                      title={`${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
+                      {tp?.icon ?? '✏️'} {platIcon(pp.platforms)} {(pp.title ?? pp.content ?? '').replace(/^[^A-Za-zÄÖÜäöü0-9]+/, '').slice(0, 18)}
+                    </button>
+                  )
+                })}
+                {dayNls.map(n => (
+                  <a key={n.id} href="/admin/crm/newsletter"
+                    className={`block text-[10px] leading-tight px-1 py-0.5 rounded border truncate ${n.status === 'draft' ? 'bg-gray-50 text-gray-600 border-gray-100' : 'bg-purple-50 text-purple-800 border-purple-100'}`}
+                    title={`Newsletter: ${n.title}`}>
+                    ✉️ {n.title.slice(0, 18)}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex gap-3 mt-3 text-[11px] text-gray-500 flex-wrap">
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-100 border border-blue-200 mr-1" />{t('crm.social.legendPlanned', 'geplant')}</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200 mr-1" />{t('crm.social.legendPosted', 'gepostet')}</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-purple-100 border border-purple-200 mr-1" />{t('crm.social.legendNewsletter', 'Newsletter')}</span>
+        <span className="text-gray-400">{t('crm.social.planHint', 'Klick auf einen Eintrag öffnet ihn · „+" am Tag legt einen Post für diesen Tag an.')}</span>
+      </div>
+    </div>
+  )
+}
+
 // ── Seite ────────────────────────────────────────────────────────────────────
 export default function SocialStudio() {
   const { t } = useTranslation()
@@ -324,6 +408,8 @@ export default function SocialStudio() {
   const [busyKey, setBusyKey] = useState('')
   const [toast, setToast] = useState('')
   const [manageTopics, setManageTopics] = useState(false)
+  const [view, setView] = useState<'plan' | 'list'>('plan')
+  const [newsletters, setNewsletters] = useState<NlEntry[]>([])
   const [newTopicLabel, setNewTopicLabel] = useState('')
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
@@ -341,6 +427,19 @@ export default function SocialStudio() {
       setTopics(tps)
       setNewTopic(cur => cur || tps[0]?.key || '')
       setProjects((prs as unknown as ProjectOpt[]) ?? [])
+      // Newsletter für den Redaktionsplan: Datum = frühester (geplanter) Versand.
+      const { data: camps } = await supabase.from('newsletter_campaigns').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(20)
+      const cs = (camps as unknown as Array<{ id: string; title: string; status: string; created_at: string }>) ?? []
+      let nl: NlEntry[] = cs.map(c => ({ id: c.id, title: c.title, status: c.status, date: c.status === 'draft' ? null : c.created_at }))
+      if (cs.length) {
+        const { data: sm } = await supabase.from('scheduled_messages').select('campaign_id, scheduled_at').in('campaign_id', cs.map(c => c.id)).order('scheduled_at', { ascending: true }).limit(1000)
+        const firstByCamp = new Map<string, string>()
+        for (const m of (sm as Array<{ campaign_id: string; scheduled_at: string }> | null) ?? []) {
+          if (m.campaign_id && !firstByCamp.has(m.campaign_id)) firstByCamp.set(m.campaign_id, m.scheduled_at)
+        }
+        nl = nl.map(n => ({ ...n, date: firstByCamp.get(n.id) ?? n.date }))
+      }
+      setNewsletters(nl.filter(n => n.date))
     } catch (err) {
       console.error('[SocialStudio] fetchAll:', err)
     } finally { setLoading(false) }
@@ -382,6 +481,23 @@ export default function SocialStudio() {
     void fetchAll()
   }
 
+  // Redaktionsplan: „+" am Tag → Post direkt für diesen Tag (10:00) anlegen.
+  const createForDay = async (day: Date) => {
+    try {
+      const tp = topics[0]
+      const when = new Date(day); when.setHours(10, 0, 0, 0)
+      const { data, error } = await supabase.from('social_posts').insert({
+        topic: tp?.key ?? 'sonstiges',
+        title: `${tp?.icon ?? ''} ${tp?.label ?? ''} · ${day.toLocaleDateString('de-DE')}`,
+        platforms: ['facebook', 'instagram'], status: 'geplant', scheduled_for: when.toISOString(),
+        created_by: profile?.id ?? null,
+      }).select('*').single()
+      if (error) throw error
+      await fetchAll()
+      setOpenPost(data as unknown as SocialPost)
+    } catch (err) { console.error('[SocialStudio] createForDay:', err); showToast('❌ Konnte den Post nicht anlegen') }
+  }
+
   const runNewsScan = async () => {
     setBusyKey('news')
     try {
@@ -415,6 +531,12 @@ export default function SocialStudio() {
               {t('crm.social.subtitle', 'Organische Posts für Facebook, Instagram & LinkedIn — mit KI-Chat, Bildern und News-Recherche.')}
               {queued > 0 && <> · <b>{t('crm.social.queueInfo', '{{n}} in der Tages-Warteschlange', { n: queued })}</b></>}
             </p>
+          </div>
+          <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+            {([['plan', t('crm.social.viewPlan', '📅 Redaktionsplan')], ['list', t('crm.social.viewList', '📋 Posts')]] as const).map(([k, lbl]) => (
+              <button key={k} onClick={() => setView(k)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium ${view === k ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{lbl}</button>
+            ))}
           </div>
           <button onClick={() => void runNewsScan()} disabled={busyKey === 'news'}
             className="px-3 py-1.5 rounded-xl text-sm font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
@@ -462,9 +584,14 @@ export default function SocialStudio() {
           )}
         </div>
 
+        {!loading && view === 'plan' && (
+          <PlanCalendar posts={posts} newsletters={newsletters} topics={topics}
+            onOpenPost={p => setOpenPost(p)} onCreateForDay={d => void createForDay(d)} />
+        )}
+
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
-        ) : posts.length === 0 ? (
+        ) : view === 'plan' ? null : posts.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-sm text-gray-500">{t('crm.social.empty', 'Noch keine Posts — starte oben deinen ersten.')}</div>
         ) : (
           <div className="grid sm:grid-cols-2 gap-3">

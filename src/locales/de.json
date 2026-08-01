@@ -3846,7 +3846,14 @@
       "manageTopics": "Kategorien",
       "newTopicPh": "Neue Kategorie, z. B. „Kundenstimmen\"",
       "addTopic": "Hinzufügen",
-      "topicDeleteConfirm": "Kategorie „{{l}}\" löschen? Bestehende Posts bleiben erhalten."
+      "topicDeleteConfirm": "Kategorie „{{l}}\" löschen? Bestehende Posts bleiben erhalten.",
+      "viewPlan": "📅 Redaktionsplan",
+      "viewList": "📋 Posts",
+      "planAdd": "Post für diesen Tag anlegen",
+      "legendPlanned": "geplant",
+      "legendPosted": "gepostet",
+      "legendNewsletter": "Newsletter",
+      "planHint": "Klick auf einen Eintrag öffnet ihn · „+\" am Tag legt einen Post für diesen Tag an."
     },
     "conn": {
       "title": "Connectoren",
