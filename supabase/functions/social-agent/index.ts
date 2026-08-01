@@ -19,6 +19,8 @@
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 
+declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -40,13 +42,13 @@ aber seriös in den Zahlen. Emojis sparsam und gezielt. Keine erfundenen Fakten/
 „Weisheit der Woche" postet Lotte (Svens Hündin & Büro-Chefin 🐾): humorvoll,
 tierisch-weise, mit Immobilien-Dreh, Absender Lotte.`
 
-async function claude(apiKey: string, opts: { system: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown[]; max_tokens?: number }): Promise<Record<string, unknown>> {
+async function claude(apiKey: string, opts: { system: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown[]; tool_choice?: unknown; max_tokens?: number }): Promise<Record<string, unknown>> {
   let lastErr = ''
   for (const model of MODELS) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, max_tokens: opts.max_tokens ?? 2048, system: opts.system, messages: opts.messages, ...(opts.tools ? { tools: opts.tools } : {}) }),
+      body: JSON.stringify({ model, max_tokens: opts.max_tokens ?? 2048, system: opts.system, messages: opts.messages, ...(opts.tools ? { tools: opts.tools } : {}), ...(opts.tool_choice ? { tool_choice: opts.tool_choice } : {}) }),
     })
     const d = await res.json()
     if (res.ok) return d as Record<string, unknown>
@@ -294,18 +296,116 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       const blocks = (resp.content ?? []) as Array<{ type: string; text?: string }>
       const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
       if (!text) return json({ error: 'Recherche lieferte kein Ergebnis.' }, 502)
-      // Aufgabe für Sven (Startseite „Meine Aufgaben")
-      const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
-      const adminId = (admin as { id: string } | null)?.id ?? null
-      const { data: task, error: te } = await sb.from('crm_tasks').insert({
-        title: `📰 Social-Media: ${new Date().toLocaleDateString('de-DE')} — 3 News-Fundstücke mit Post-Ideen`,
-        description: `${text.slice(0, 3800)}\n\n→ Post daraus machen: Tools → Social Media → „Neuer Post" (Thema: Aktuelles).`,
-        created_by: adminId, status: 'offen',
-      }).select('id').single()
-      if (te) return json({ error: te.message }, 500)
-      const taskId = (task as { id: string }).id
-      if (adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
-      return json({ ok: true, task_id: taskId, findings: text })
+      // Fundstücke strukturieren → Ideensammlung (social_ideas) statt Aufgabe/Mail
+      const ideasTool = {
+        name: 'save_ideas', description: 'Speichert die Fundstücke als Ideen.',
+        input_schema: { type: 'object', properties: { ideas: { type: 'array', items: { type: 'object', properties: {
+          headline: { type: 'string' }, core: { type: 'string', description: '1-Satz-Kern' },
+          url: { type: 'string' }, post_idea: { type: 'string', description: 'konkrete Post-Idee im Happy-Property-Ton' },
+        }, required: ['headline', 'core', 'post_idea'] } } }, required: ['ideas'] },
+      }
+      const structured = await claude(anthropicKey, {
+        system: 'Du überträgst Recherche-Fundstücke 1:1 in save_ideas — nichts erfinden, nichts weglassen.',
+        messages: [{ role: 'user', content: `Übertrage diese Fundstücke in save_ideas:\n\n${text}` }],
+        tools: [ideasTool], tool_choice: { type: 'tool', name: 'save_ideas' }, max_tokens: 3000,
+      })
+      const tuIdeas = ((structured.content ?? []) as Array<{ type: string; name?: string; input?: { ideas?: Array<{ headline?: string; core?: string; url?: string; post_idea?: string }> } }>).find(b => b.type === 'tool_use' && b.name === 'save_ideas')
+      const list = (tuIdeas?.input?.ideas ?? []).filter(i => i.headline)
+      if (!list.length) return json({ error: 'Fundstücke konnten nicht strukturiert werden.' }, 502)
+      const rows = list.map(i => ({ headline: i.headline!.slice(0, 300), core: (i.core ?? '').slice(0, 600), source_url: i.url || null, angle: (i.post_idea ?? '').slice(0, 800) }))
+      const { error: ie } = await sb.from('social_ideas').insert(rows)
+      if (ie) return json({ error: ie.message }, 500)
+      return json({ ok: true, ideas: rows.length })
+    }
+
+    // ── Idee verwenden: Captions je Plattform + Bilder + optional Newsletter ──
+    if (body.action === 'use_idea') {
+      const ideaId = String(body.idea_id ?? '')
+      const sel = Array.isArray(body.platforms) ? (body.platforms as string[]).filter(p => ['facebook', 'instagram', 'linkedin'].includes(p)) : []
+      const wantNewsletter = body.newsletter === true
+      const wantMeta = sel.includes('facebook') || sel.includes('instagram')
+      const wantLi = sel.includes('linkedin')
+      const format = body.format === 'carousel' ? 'carousel' : 'single'
+      const imgCount = format === 'carousel' ? Math.max(2, Math.min(10, Number(body.image_count) || 3)) : 1
+      if (!ideaId || (!wantMeta && !wantLi && !wantNewsletter)) return json({ error: 'Bitte Idee und mindestens ein Ziel wählen.' }, 400)
+      const { data: ideaRow } = await sb.from('social_ideas').select('*').eq('id', ideaId).maybeSingle()
+      if (!ideaRow) return json({ error: 'Idee nicht gefunden.' }, 404)
+      const idea = ideaRow as { headline: string; core: string; source_url: string | null; angle: string }
+
+      const outTool = {
+        name: 'set_outputs', description: 'Liefert die fertigen Texte für alle gewünschten Ziele.',
+        input_schema: { type: 'object', properties: {
+          meta_caption: { type: 'string', description: 'Caption für Facebook + Instagram' },
+          linkedin_caption: { type: 'string', description: 'Caption für LinkedIn' },
+          newsletter_subject: { type: 'string', description: 'Betreff für den Newsletter' },
+          newsletter_html: { type: 'string', description: 'Ausführlicher Newsletter als HTML' },
+          image_prompt: { type: 'string', description: 'Englischer Bild-Prompt, fotorealistisch, OHNE Text im Bild' },
+        }, required: ['image_prompt'] },
+      }
+      const wants: string[] = []
+      if (wantMeta) wants.push('- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.')
+      if (wantLi) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
+      if (wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
+      const resp2 = await claude(anthropicKey, {
+        system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
+        messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
+        tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
+      })
+      const tu = ((resp2.content ?? []) as Array<{ type: string; name?: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use' && b.name === 'set_outputs')
+      if (!tu?.input) return json({ error: 'Texterstellung lieferte kein Ergebnis.' }, 502)
+      const out = tu.input
+
+      const postIds: string[] = []
+      let metaPostId = ''
+      if (wantMeta && out.meta_caption) {
+        const { data: p1, error: e1 } = await sb.from('social_posts').insert({
+          topic: 'news', title: `📰 ${idea.headline}`.slice(0, 200), content: out.meta_caption,
+          platforms: sel.filter(p => p !== 'linkedin'), format, status: 'entwurf', news_source: idea.source_url,
+        }).select('id').single()
+        if (e1) return json({ error: e1.message }, 500)
+        metaPostId = (p1 as { id: string }).id; postIds.push(metaPostId)
+      }
+      let liPostId = ''
+      if (wantLi && out.linkedin_caption) {
+        // LinkedIn: kein Karussell — bekommt das erste Bild
+        const { data: p2, error: e2 } = await sb.from('social_posts').insert({
+          topic: 'news', title: `📰 in · ${idea.headline}`.slice(0, 200), content: out.linkedin_caption,
+          platforms: ['linkedin'], format: 'single', status: 'entwurf', news_source: idea.source_url,
+        }).select('id').single()
+        if (e2) return json({ error: e2.message }, 500)
+        liPostId = (p2 as { id: string }).id; postIds.push(liPostId)
+      }
+      let campaignId = ''
+      if (wantNewsletter && out.newsletter_html) {
+        const { data: c, error: e3 } = await sb.from('newsletter_campaigns').insert({
+          title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
+          content_mode: 'html', html_body: out.newsletter_html, status: 'draft',
+        }).select('id').single()
+        if (e3) return json({ error: e3.message }, 500)
+        campaignId = (c as { id: string }).id
+      }
+      await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: postIds }).eq('id', ideaId)
+
+      // Bilder im Hintergrund: erst an den Meta-Post, dann dieselben an LinkedIn kopieren
+      const primary = metaPostId || liPostId
+      const imagesPending = primary ? imgCount : 0
+      if (primary) {
+        const job = (async () => {
+          try {
+            for (let i = 1; i <= imgCount; i++) {
+              const vary = imgCount > 1 ? ` — image ${i} of ${imgCount} of a carousel: vary subject, angle and lighting, keep one consistent photorealistic style.` : ''
+              await generatePostImage(sb, primary, `${out.image_prompt}${vary}`)
+            }
+            if (liPostId && metaPostId) {
+              const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', metaPostId).maybeSingle()
+              const urls = ((cur as { image_urls?: string[] } | null)?.image_urls ?? [])
+              if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: new Date().toISOString() }).eq('id', liPostId)
+            }
+          } catch (e) { console.error('[social-agent] use_idea Bilder:', e) }
+        })()
+        if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job)
+      }
+      return json({ ok: true, post_ids: postIds, campaign_id: campaignId || null, images_pending: imagesPending })
     }
 
     // ── LinkedIn-Token-Wächter (Cron täglich): Aufgabe NUR wenn ein hinterlegter
@@ -333,16 +433,25 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
 
     // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──
     if (body.action === 'auto_publish') {
-      const today = new Date().toISOString().slice(0, 10)
-      // Heute schon gepostet? → „einen am Tag" respektieren.
-      const { data: doneToday } = await sb.from('social_posts').select('id').gte('posted_at', `${today}T00:00:00Z`).limit(1)
-      if (doneToday && doneToday.length) return json({ ok: true, skipped: 'Heute wurde bereits gepostet.' })
-      // Ältester fälliger geplanter Post (scheduled_for bis Tagesende)
-      const { data: due } = await sb.from('social_posts').select('id')
-        .eq('status', 'geplant').lte('scheduled_for', `${today}T23:59:59Z`)
-        .order('scheduled_for', { ascending: true }).limit(1)
-      const next = (due as { id: string }[] | null)?.[0]
-      if (!next) return json({ ok: true, skipped: 'Kein fälliger geplanter Post.' })
+      // Halbstündlicher Cron: postet zur GEPLANTEN Uhrzeit (fällig = Zeit erreicht).
+      // Frequenz-Wächter je Kanal: FB/Insta max. 1 Post/Tag, LinkedIn max. 1 Post/Tag.
+      const nowIso = new Date().toISOString()
+      const today = nowIso.slice(0, 10)
+      const { data: due } = await sb.from('social_posts').select('id, platforms')
+        .eq('status', 'geplant').lte('scheduled_for', nowIso)
+        .order('scheduled_for', { ascending: true }).limit(10)
+      const dueList = (due as { id: string; platforms: string[] }[] | null) ?? []
+      if (!dueList.length) return json({ ok: true, skipped: 'Kein fälliger freigegebener Post.' })
+      const { data: doneToday } = await sb.from('social_posts').select('platforms').gte('posted_at', `${today}T00:00:00Z`)
+      const posted = (doneToday as { platforms: string[] }[] | null) ?? []
+      const metaDone = posted.some(p => (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram'))
+      const liDone = posted.some(p => (p.platforms ?? []).includes('linkedin'))
+      const next = dueList.find(p => {
+        const isMeta = (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram')
+        const isLi = (p.platforms ?? []).includes('linkedin')
+        return !(isMeta && metaDone) && !(isLi && liDone)
+      })
+      if (!next) return json({ ok: true, skipped: 'Tageslimit erreicht (max. 1 Post/Tag je Kanal).' })
       body.post_id = next.id
       body.action = 'publish'   // unten normal veröffentlichen
     }

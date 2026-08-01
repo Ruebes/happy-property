@@ -38,8 +38,46 @@ const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
   fehlgeschlagen: { de: 'Fehlgeschlagen', cls: 'bg-red-100 text-red-700' },
 }
 
+interface Idea { id: string; headline: string; core: string; source_url: string | null; angle: string; status: string; created_at: string }
+
+// ── Plan-Vorschlag: sinnvolle Frequenz + beste Uhrzeit je Kanal ──────────────
+// FB/Insta: max. 1 Post/Tag (beste Zeit Mo–Fr 18:30, Sa/So 12:30).
+// LinkedIn: nur Di–Do 08:30, max. 3 Posts/Woche, max. 1/Tag.
+// Kombi Meta+LinkedIn: Di–Do 12:00 (Mittag funktioniert auf beiden Kanälen).
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const toLocalInput = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+function suggestSlot(platforms: string[], posts: SocialPost[], excludeId?: string): { when: Date; isMeta: boolean; isLi: boolean } {
+  const isMeta = platforms.some(x => x === 'facebook' || x === 'instagram')
+  const isLi = platforms.includes('linkedin')
+  const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  const taken = posts.filter(x => x.id !== excludeId && x.scheduled_for && x.status !== 'fehlgeschlagen')
+  const now = new Date()
+  for (let off = 0; off < 60; off++) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + off)
+    const wd = d.getDay()
+    let h = 18, mi = 30
+    if (isLi && isMeta) { if (wd < 2 || wd > 4) continue; h = 12; mi = 0 }
+    else if (isLi) { if (wd < 2 || wd > 4) continue; h = 8; mi = 30 }
+    else if (wd === 0 || wd === 6) { h = 12; mi = 30 }
+    const when = new Date(d); when.setHours(h, mi, 0, 0)
+    if (when.getTime() < now.getTime() + 60 * 60000) continue
+    const dayPosts = taken.filter(x => sameDay(new Date(x.scheduled_for!), when))
+    if (isMeta && dayPosts.some(x => x.platforms.some(y => y === 'facebook' || y === 'instagram'))) continue
+    if (isLi) {
+      if (dayPosts.some(x => x.platforms.includes('linkedin'))) continue
+      const monday = new Date(d); monday.setDate(d.getDate() - ((wd + 6) % 7)); monday.setHours(0, 0, 0, 0)
+      const sunday = new Date(monday); sunday.setDate(monday.getDate() + 7)
+      const liWeek = taken.filter(x => x.platforms.includes('linkedin') && new Date(x.scheduled_for!) >= monday && new Date(x.scheduled_for!) < sunday)
+      if (liWeek.length >= 3) continue
+    }
+    return { when, isMeta, isLi }
+  }
+  const fb = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 18, 30)
+  return { when: fb, isMeta, isLi }
+}
+
 // ── Editor + Chat ────────────────────────────────────────────────────────────
-function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; topics: Topic[]; projects: ProjectOpt[]; onClose: () => void }) {
+function PostEditor({ post, topics, projects, allPosts, onClose }: { post: SocialPost; topics: Topic[]; projects: ProjectOpt[]; allPosts: SocialPost[]; onClose: () => void }) {
   const { t } = useTranslation()
   const [content, setContent] = useState(post.content ?? '')
   const [platforms, setPlatforms] = useState<string[]>(post.platforms)
@@ -50,6 +88,8 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
   })
   const [format, setFormat] = useState(post.format === 'carousel' ? 'carousel' : 'single')
   const [approved, setApproved] = useState(post.status === 'geplant')
+  const [suggestion, setSuggestion] = useState('')
+  const autoSug = useRef(false)
   const [projectId, setProjectId] = useState(post.project_id ?? '')
   const [unitId, setUnitId] = useState(post.unit_id ?? '')
   const [units, setUnits] = useState<UnitOpt[]>([])
@@ -65,6 +105,18 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
       .then(({ data }) => setMsgs(((data ?? []) as ChatMsg[])))
   }, [post.id])
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' }) }, [msgs, busy])
+  // Plan-Vorschlag: bei Posts ohne Datum Tag+Uhrzeit nach Kanal-Regeln vorbelegen
+  // (reagiert auf Plattform-Wechsel, solange das Datum nicht manuell geändert wurde)
+  useEffect(() => {
+    if (post.scheduled_for || post.status === 'gepostet') return
+    if (scheduled && !autoSug.current) return
+    const r = suggestSlot(platforms, allPosts, post.id)
+    setScheduled(toLocalInput(r.when)); autoSug.current = true
+    setSuggestion(r.isMeta && r.isLi ? t('crm.social.sugBoth', 'Kombi FB/Insta + LinkedIn: Di–Do 12:00, je Kanal max. 1 Post/Tag')
+      : r.isMeta ? t('crm.social.sugMeta', 'FB/Insta: max. 1 Post/Tag — beste Zeit Mo–Fr 18:30, Wochenende 12:30')
+      : r.isLi ? t('crm.social.sugLi', 'LinkedIn: Di–Do 08:30, max. 3 Posts/Woche') : '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [platforms])
   // Wohnungen des gewählten Projekts nachladen
   useEffect(() => {
     if (!projectId) { setUnits([]); return }
@@ -301,7 +353,8 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
 
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.schedule', 'Geplant für')}</label>
-              <input type="datetime-local" value={scheduled} onChange={e => setScheduled(e.target.value)} className={inp} />
+              <input type="datetime-local" value={scheduled} onChange={e => { setScheduled(e.target.value); autoSug.current = false; setSuggestion('') }} className={inp} />
+              {suggestion && <p className="text-[11px] text-emerald-600 mt-1">💡 {t('crm.social.suggested', 'Vorschlag vom System (anpassbar)')}: {suggestion}</p>}
               <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHintAuto', 'Mit Datum + Speichern landet der Post in der Warteschlange: Die Automatik veröffentlicht EINEN fälligen Post pro Tag (vormittags) auf die gewählten Plattformen.')}</p>
             </div>
 
@@ -323,6 +376,83 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
               {busy === 'publish' ? t('crm.social.publishing', 'Wird veröffentlicht…') : `🚀 ${t('crm.social.publish', 'Jetzt posten')}`}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Idee verwenden: Ziele + Format + Bildanzahl → Edge use_idea ─────────────
+function UseIdeaModal({ idea, onClose, onDone }: { idea: Idea; onClose: () => void; onDone: (msg: string) => void }) {
+  const { t } = useTranslation()
+  const [plats, setPlats] = useState<string[]>(['facebook', 'instagram'])
+  const [nl, setNl] = useState(false)
+  const [format, setFormat] = useState<'single' | 'carousel'>('single')
+  const [count, setCount] = useState(3)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const toggle = (k: string) => setPlats(p => p.includes(k) ? p.filter(x => x !== k) : [...p, k])
+  const social = plats.length > 0
+  const create = async () => {
+    if (!social && !nl) { setErr(t('crm.social.ideaNeedTarget', 'Bitte mindestens ein Ziel wählen.')); return }
+    setBusy(true); setErr('')
+    try {
+      const { data, error } = await supabase.functions.invoke('social-agent', {
+        body: { action: 'use_idea', idea_id: idea.id, platforms: plats, newsletter: nl, format, image_count: count },
+      })
+      const d = (data ?? {}) as { ok?: boolean; error?: string; post_ids?: string[]; campaign_id?: string | null; images_pending?: number }
+      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
+      const parts: string[] = []
+      if (d.post_ids?.length) parts.push(`${d.post_ids.length} ${t('crm.social.ideaPostsMade', 'Post-Entwurf/Entwürfe')}`)
+      if (d.campaign_id) parts.push(t('crm.social.ideaNlMade', 'Newsletter-Entwurf'))
+      const img = d.images_pending ? ` — ${d.images_pending} ${t('crm.social.ideaImgsBg', 'Bild(er) entstehen im Hintergrund')}` : ''
+      onDone(`✓ ${parts.join(' + ')}${img}`)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setBusy(false) }
+  }
+  const pill = (on: boolean) => `px-3 py-1.5 rounded-lg text-sm font-medium border ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200'}`
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
+        <div>
+          <p className="font-semibold text-gray-900">💡 {t('crm.social.ideaUseTitle', 'Idee verwenden')}</p>
+          <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{idea.headline}</p>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaTargets', 'Wohin damit?')}</p>
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={() => toggle('facebook')} className={pill(plats.includes('facebook'))}>Facebook</button>
+            <button onClick={() => toggle('instagram')} className={pill(plats.includes('instagram'))}>Instagram</button>
+            <button onClick={() => toggle('linkedin')} className={pill(plats.includes('linkedin'))}>LinkedIn</button>
+            <button onClick={() => setNl(v => !v)} className={pill(nl)}>✉️ Newsletter</button>
+          </div>
+        </div>
+        {social && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaImages', 'Bildmaterial')}</p>
+            <div className="flex gap-1.5 items-center flex-wrap">
+              <button onClick={() => setFormat('single')} className={pill(format === 'single')}>🖼 {t('crm.social.single', 'Einzelbild')}</button>
+              <button onClick={() => setFormat('carousel')} className={pill(format === 'carousel')}>🎠 {t('crm.social.carousel', 'Karussell')}</button>
+              {format === 'carousel' && (
+                <span className="inline-flex items-center gap-1 ml-1">
+                  <button onClick={() => setCount(c => Math.max(2, c - 1))} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-600">−</button>
+                  <span className="text-sm font-semibold w-8 text-center">{count}</span>
+                  <button onClick={() => setCount(c => Math.min(10, c + 1))} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-600">+</button>
+                  <span className="text-xs text-gray-400 ml-1">{t('crm.social.ideaImgCount', 'Bilder')}</span>
+                </span>
+              )}
+            </div>
+            {format === 'carousel' && plats.includes('linkedin') && (
+              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.ideaLiHint', 'Karussell gilt für FB/Insta — LinkedIn erhält das erste Bild als Einzelpost.')}</p>
+            )}
+          </div>
+        )}
+        <p className="text-[11px] text-gray-400">{t('crm.social.ideaFlowHint', 'Es entstehen Entwürfe: Caption je Plattform (Newsletter ausführlich), Bilder werden im Hintergrund erstellt. Freigeben & Termin wie gewohnt im Post.')}</p>
+        {err && <p className="text-sm text-red-600">❌ {err}</p>}
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-600">{t('common.cancel', 'Abbrechen')}</button>
+          <button onClick={() => void create()} disabled={busy} className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
+            {busy ? t('crm.social.ideaCreating', 'Texte werden erstellt… (~20 s)') : `✨ ${t('crm.social.ideaCreate', 'Erstellen')}`}
+          </button>
         </div>
       </div>
     </div>
@@ -446,6 +576,9 @@ export default function SocialStudio() {
   const [manageTopics, setManageTopics] = useState(false)
   const [view, setView] = useState<'plan' | 'list'>('plan')
   const [newsletters, setNewsletters] = useState<NlEntry[]>([])
+  const [ideas, setIdeas] = useState<Idea[]>([])
+  const [ideasOpen, setIdeasOpen] = useState(true)
+  const [useIdea, setUseIdea] = useState<Idea | null>(null)
   const [newTopicLabel, setNewTopicLabel] = useState('')
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
@@ -476,6 +609,8 @@ export default function SocialStudio() {
         nl = nl.map(n => ({ ...n, date: firstByCamp.get(n.id) ?? n.date }))
       }
       setNewsletters(nl.filter(n => n.date))
+      const { data: id2 } = await supabase.from('social_ideas').select('*').order('created_at', { ascending: false }).limit(50)
+      setIdeas((id2 as unknown as Idea[]) ?? [])
     } catch (err) {
       console.error('[SocialStudio] fetchAll:', err)
     } finally { setLoading(false) }
@@ -521,7 +656,9 @@ export default function SocialStudio() {
   const createForDay = async (day: Date) => {
     try {
       const tp = topics[0]
-      const when = new Date(day); when.setHours(10, 0, 0, 0)
+      const wd = day.getDay()
+      const when = new Date(day)
+      if (wd === 0 || wd === 6) when.setHours(12, 30, 0, 0); else when.setHours(18, 30, 0, 0)
       const { data, error } = await supabase.from('social_posts').insert({
         topic: tp?.key ?? 'sonstiges',
         title: `${tp?.icon ?? ''} ${tp?.label ?? ''} · ${day.toLocaleDateString('de-DE')}`,
@@ -534,13 +671,21 @@ export default function SocialStudio() {
     } catch (err) { console.error('[SocialStudio] createForDay:', err); showToast('❌ Konnte den Post nicht anlegen') }
   }
 
+  const deleteIdea = async (i: Idea) => {
+    if (!window.confirm(t('crm.social.ideaDelConfirm', 'Diese Idee löschen?') as string)) return
+    const { error } = await supabase.from('social_ideas').delete().eq('id', i.id)
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setIdeas(arr => arr.filter(x => x.id !== i.id))
+  }
+
   const runNewsScan = async () => {
     setBusyKey('news')
     try {
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'news_scan' } })
       const d = (data ?? {}) as { ok?: boolean; error?: string }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      showToast(t('crm.social.newsDone', '📰 Recherche fertig — die Fundstücke liegen als Aufgabe auf deiner Startseite.'))
+      showToast(t('crm.social.newsDone', '💡 Recherche fertig — die Fundstücke liegen unten in der Ideensammlung.'))
+      void fetchAll()
     } catch (e) {
       showToast(`❌ ${e instanceof Error ? e.message : 'Recherche fehlgeschlagen'}`)
     } finally { setBusyKey('') }
@@ -620,6 +765,41 @@ export default function SocialStudio() {
           )}
         </div>
 
+        {!loading && ideas.length > 0 && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
+            <button onClick={() => setIdeasOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3">
+              <p className="font-semibold text-gray-900">💡 {t('crm.social.ideas', 'Ideensammlung')}
+                <span className="ml-2 text-sm font-normal text-gray-400">{ideas.filter(i => i.status === 'neu').length} {t('crm.social.ideasNew', 'neu')}</span>
+              </p>
+              <span className="text-gray-400">{ideasOpen ? '▾' : '▸'}</span>
+            </button>
+            {ideasOpen && (
+              <div className="px-4 pb-4 space-y-2">
+                {ideas.map(i => (
+                  <div key={i.id} className={`border rounded-xl p-3 ${i.status === 'verwendet' ? 'border-gray-100 opacity-60' : 'border-gray-200'}`}>
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-900">{i.headline}
+                          {i.status === 'verwendet' && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ {t('crm.social.ideaUsed', 'verwendet')}</span>}
+                        </p>
+                        {i.core && <p className="text-xs text-gray-600 mt-0.5">{i.core}</p>}
+                        {i.angle && <p className="text-xs text-gray-400 italic mt-0.5">💬 {i.angle}</p>}
+                        <p className="text-[11px] text-gray-400 mt-1">{new Date(i.created_at).toLocaleDateString('de-DE')}
+                          {i.source_url && <> · <a href={i.source_url} target="_blank" rel="noreferrer" className="underline">{t('crm.social.ideaSource', 'Quelle')} ↗</a></>}
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <button onClick={() => setUseIdea(i)} className="text-xs px-3 py-1.5 rounded-lg text-white font-medium" style={{ backgroundColor: '#ff795d' }}>▶ {t('crm.social.ideaUse', 'Verwenden')}</button>
+                        <button onClick={() => void deleteIdea(i)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">🗑</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {!loading && view === 'plan' && (
           <PlanCalendar posts={posts} newsletters={newsletters} topics={topics}
             onOpenPost={p => setOpenPost(p)} onCreateForDay={d => void createForDay(d)} />
@@ -661,7 +841,9 @@ export default function SocialStudio() {
           </div>
         )}
       </div>
-      {openPost && <PostEditor post={openPost} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
+      {useIdea && <UseIdeaModal idea={useIdea} onClose={() => setUseIdea(null)}
+        onDone={msg => { setUseIdea(null); showToast(msg); void fetchAll() }} />}
+      {openPost && <PostEditor post={openPost} allPosts={posts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
     </DashboardLayout>
   )
 }
