@@ -2,8 +2,8 @@
 // Wer den Link hat, sieht Svens freie Zeiten und bucht selbst: Betreff + Dauer +
 // Art (Vor Ort mit Adress-Autocomplete / WhatsApp / Zoom) + Kontaktdaten → Termin
 // im Google-Kalender + CRM, Bestätigung per Mail (mit .ics) und WhatsApp.
-// Fenster Mo–So 8–21 (Berlin); Bot-Zeiten (Mo–Fr 11–19, Sa/So 17–20) bevorzugt,
-// andere als „ungern" markiert. Belegte Zeiten (Google + CRM) sind raus.
+// Fenster: rund um die Uhr (0–24, Berlin) — Svens Vorgabe „24h buchbar, alles offen";
+// Bot-Zeiten (Mo–Fr 11–19, Sa/So 17–20) bevorzugt, ALLE anderen als „ungern" markiert. Belegte Zeiten (Google + CRM) sind raus.
 //
 // Actions: config | slots | places | book
 // Secrets: SUPABASE_URL, SERVICE_ROLE_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_API_KEY, ZOOM_*
@@ -17,7 +17,7 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 const TZ = 'Europe/Berlin'
 const CALENDAR_ID = 'primary-fallback'
-const DAY_START = 8, DAY_END = 21, STEP = 30   // Fenster + Slot-Raster (Min)
+const DAY_START = 0, DAY_END = 24, STEP = 30   // 24h offen + Slot-Raster (Min)
 const MIN_LEAD_MIN = 30, DAYS_AHEAD = 30
 
 // ── Zeit/Berlin ──────────────────────────────────────────────────────────────

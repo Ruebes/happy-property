@@ -110,6 +110,7 @@ export default function BookingPage() {
 
   // Adress-Autocomplete (debounced)
   const tRef = useRef<number | undefined>(undefined)
+  const timesRef = useRef<HTMLDivElement>(null)
   const onAddr = (v: string) => {
     setAddress(v); window.clearTimeout(tRef.current)
     if (v.trim().length < 3) { setSuggests([]); return }
@@ -139,6 +140,15 @@ export default function BookingPage() {
 
   const input = 'w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400'
   const day = days[dayIdx]
+
+  // 24h-Liste startet um 00:00 — beim Öffnen eines Tages direkt zu den
+  // bevorzugten Zeiten scrollen, Nachtzeiten bleiben oben erreichbar.
+  useEffect(() => {
+    const c = timesRef.current
+    if (!c) return
+    const first = c.querySelector<HTMLButtonElement>('button[data-pref="1"]')
+    c.scrollTop = first ? Math.max(0, first.offsetTop - c.offsetTop) : 0
+  }, [dayIdx, days])
   const pageStyle = image
     // Abdunkelung bewusst moderat (.28/.42 statt vorher .62/.72): Der dunkle Schleier
     // soll nur den Kartenrand absetzen. Bei kontrastarmen Motiven — etwa einem weich
@@ -263,11 +273,11 @@ export default function BookingPage() {
                       style={i === dayIdx ? { backgroundColor: '#0f172a' } : undefined}>{dayLabel(d.date)}</button>
                   ))}
                 </div>
-                <div className="grid grid-cols-3 gap-1.5 mt-2.5 max-h-52 overflow-y-auto">
+                <div ref={timesRef} className="relative grid grid-cols-3 gap-1.5 mt-2.5 max-h-52 overflow-y-auto">
                   {day?.times.map(t => {
                     const sel = pick === t.iso
                     return (
-                      <button key={t.iso} onClick={() => setPick(t.iso)} title={t.preferred ? '' : T.hint}
+                      <button key={t.iso} data-pref={t.preferred ? '1' : '0'} onClick={() => setPick(t.iso)} title={t.preferred ? '' : T.hint}
                         className="text-sm py-2 rounded-lg border relative"
                         style={sel ? { backgroundColor: CORAL, color: '#fff', borderColor: 'transparent' }
                           : t.preferred ? { backgroundColor: '#fff', color: '#374151', borderColor: '#e5e7eb' }
