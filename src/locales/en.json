@@ -3825,7 +3825,7 @@
       },
       "status": {
         "entwurf": "Draft",
-        "geplant": "Scheduled",
+        "geplant": "Approved",
         "gepostet": "Posted",
         "fehlgeschlagen": "Failed"
       },
@@ -3853,7 +3853,16 @@
       "legendPlanned": "scheduled",
       "legendPosted": "posted",
       "legendNewsletter": "Newsletter",
-      "planHint": "Click an entry to open it · “+” on a day creates a post for that day."
+      "planHint": "Click an entry to open it · “+” on a day creates a post for that day.",
+      "approval": "Approval",
+      "statusDraft": "Draft",
+      "statusApproved": "Approved",
+      "approveHint": "Only approved posts are published automatically — drafts stay on the editorial plan but are not posted.",
+      "savedDraft": "draft, will NOT be posted automatically",
+      "planApprovedFull": "Approved — will be posted as is",
+      "legendDraft": "draft — not posted",
+      "legendApproved": "approved — will be posted",
+      "legendPlatforms": "f = Facebook · IG = Instagram · in = LinkedIn · NL = Newsletter"
     },
     "conn": {
       "title": "Connectors",

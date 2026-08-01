@@ -33,7 +33,7 @@ const PLATFORMS = [
 ]
 const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
   entwurf: { de: 'Entwurf', cls: 'bg-gray-100 text-gray-600' },
-  geplant: { de: 'Geplant', cls: 'bg-blue-100 text-blue-700' },
+  geplant: { de: 'Freigegeben', cls: 'bg-blue-100 text-blue-700' },
   gepostet: { de: 'Gepostet', cls: 'bg-green-100 text-green-700' },
   fehlgeschlagen: { de: 'Fehlgeschlagen', cls: 'bg-red-100 text-red-700' },
 }
@@ -49,6 +49,7 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
     return arr.length ? arr : (post.image_url ? [post.image_url] : [])
   })
   const [format, setFormat] = useState(post.format === 'carousel' ? 'carousel' : 'single')
+  const [approved, setApproved] = useState(post.status === 'geplant')
   const [projectId, setProjectId] = useState(post.project_id ?? '')
   const [unitId, setUnitId] = useState(post.unit_id ?? '')
   const [units, setUnits] = useState<UnitOpt[]>([])
@@ -116,11 +117,11 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
         project_id: projectId || null, unit_id: unitId || null,
         image_urls: images, image_url: images[0] ?? null,
         scheduled_for: scheduled ? new Date(scheduled).toISOString() : null,
-        status: post.status === 'gepostet' ? 'gepostet' : (scheduled ? 'geplant' : 'entwurf'),
+        status: post.status === 'gepostet' ? 'gepostet' : (approved ? 'geplant' : 'entwurf'),
         updated_at: new Date().toISOString(),
       }).eq('id', post.id)
       if (error) throw error
-      if (!silent) setNote(`✓ ${t('crm.social.saved', 'Gespeichert')}${scheduled ? ` — ${t('crm.social.savedQueue', 'in der Tages-Warteschlange')}` : ''}`)
+      if (!silent) setNote(`✓ ${t('crm.social.saved', 'Gespeichert')}${approved && scheduled ? ` — ${t('crm.social.savedQueue', 'in der Tages-Warteschlange')}` : !approved ? ` — ${t('crm.social.savedDraft', 'Entwurf, wird NICHT automatisch gepostet')}` : ''}`)
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`)
     } finally { setBusy('') }
@@ -281,6 +282,23 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
               </div>
             </div>
 
+            {post.status !== 'gepostet' && (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.approval', 'Freigabe')}</label>
+                <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+                  <button onClick={() => setApproved(false)}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium ${!approved ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>
+                    📝 {t('crm.social.statusDraft', 'Entwurf')}
+                  </button>
+                  <button onClick={() => setApproved(true)}
+                    className={`flex-1 px-3 py-1.5 rounded-lg text-sm font-medium ${approved ? 'bg-white shadow-sm text-green-700' : 'text-gray-500'}`}>
+                    ✅ {t('crm.social.statusApproved', 'Freigegeben')}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.approveHint', 'Nur freigegebene Posts gehen automatisch raus — Entwürfe bleiben im Redaktionsplan stehen, werden aber nicht gepostet.')}</p>
+              </div>
+            )}
+
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.schedule', 'Geplant für')}</label>
               <input type="datetime-local" value={scheduled} onChange={e => setScheduled(e.target.value)} className={inp} />
@@ -314,6 +332,13 @@ function PostEditor({ post, topics, projects, onClose }: { post: SocialPost; top
 // ── Redaktionsplan: Monatskalender über Social-Posts + Newsletter ───────────
 interface NlEntry { id: string; title: string; status: string; date: string | null }
 
+// Plattform-Chips in Markenfarben (Redaktionsplan)
+const PLAT_CHIP: Record<string, { txt: string; cls: string }> = {
+  facebook: { txt: 'f', cls: 'bg-[#1877F2] text-white' },
+  instagram: { txt: 'IG', cls: 'bg-[#E1306C] text-white' },
+  linkedin: { txt: 'in', cls: 'bg-[#0A66C2] text-white' },
+}
+
 function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }: {
   posts: SocialPost[]; newsletters: NlEntry[]; topics: Topic[]
   onOpenPost: (p: SocialPost) => void; onCreateForDay: (day: Date) => void
@@ -334,7 +359,6 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
   }
   const monthLabel = month.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
   const wd = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
-  const platIcon = (pl: string[]) => pl.map(x => x === 'facebook' ? 'f' : x === 'instagram' ? '◎' : 'in').join('·')
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
@@ -362,22 +386,32 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
               <div className="space-y-0.5 mt-0.5">
                 {dayPosts.map(pp => {
                   const tp = topics.find(x => x.key === pp.topic)
-                  const cls = pp.status === 'gepostet' ? 'bg-green-50 text-green-800 border-green-100'
-                    : pp.status === 'fehlgeschlagen' ? 'bg-red-50 text-red-700 border-red-100'
-                    : 'bg-blue-50 text-blue-800 border-blue-100'
+                  const isDraft = pp.status === 'entwurf'
+                  const cls = pp.status === 'gepostet' ? 'bg-green-50 text-green-800 border-green-200'
+                    : pp.status === 'fehlgeschlagen' ? 'bg-red-50 text-red-700 border-red-200'
+                    : isDraft ? 'bg-gray-50 text-gray-500 border-dashed border-gray-300'
+                    : 'bg-blue-50 text-blue-800 border-blue-200'
+                  const stLabel = pp.status === 'gepostet' ? t('crm.social.status.gepostet', 'Gepostet')
+                    : pp.status === 'fehlgeschlagen' ? t('crm.social.status.fehlgeschlagen', 'Fehlgeschlagen')
+                    : isDraft ? t('crm.social.status.entwurf', 'Entwurf') : t('crm.social.planApprovedFull', 'Freigegeben — wird so gepostet')
                   return (
                     <button key={pp.id} onClick={() => onOpenPost(pp)}
-                      className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border truncate ${cls}`}
-                      title={`${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
-                      {tp?.icon ?? '✏️'} {platIcon(pp.platforms)} {(pp.title ?? pp.content ?? '').replace(/^[^A-Za-zÄÖÜäöü0-9]+/, '').slice(0, 18)}
+                      className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 ${cls}`}
+                      title={`${stLabel} · ${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
+                      <span className="shrink-0">{isDraft ? '📝' : pp.status === 'gepostet' ? '✓' : '✅'}</span>
+                      {pp.platforms.map(pl => PLAT_CHIP[pl] ? (
+                        <span key={pl} className={`shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] ${PLAT_CHIP[pl].cls}`}>{PLAT_CHIP[pl].txt}</span>
+                      ) : null)}
+                      <span className="truncate">{(pp.title ?? pp.content ?? '').replace(/^[^A-Za-zÄÖÜäöü0-9]+/, '').slice(0, 24)}</span>
                     </button>
                   )
                 })}
                 {dayNls.map(n => (
-                  <a key={n.id} href="/admin/crm/newsletter"
-                    className={`block text-[10px] leading-tight px-1 py-0.5 rounded border truncate ${n.status === 'draft' ? 'bg-gray-50 text-gray-600 border-gray-100' : 'bg-purple-50 text-purple-800 border-purple-100'}`}
-                    title={`Newsletter: ${n.title}`}>
-                    ✉️ {n.title.slice(0, 18)}
+                  <a key={n.id} href={`/admin/crm/newsletter?edit=${n.id}`}
+                    className="w-full text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 bg-purple-50 text-purple-800 border-purple-200"
+                    title={`Newsletter · ${n.title}`}>
+                    <span className="shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] bg-purple-600 text-white">NL</span>
+                    <span className="truncate">{n.title}</span>
                   </a>
                 ))}
               </div>
@@ -386,9 +420,11 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
         })}
       </div>
       <div className="flex gap-3 mt-3 text-[11px] text-gray-500 flex-wrap">
-        <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-100 border border-blue-200 mr-1" />{t('crm.social.legendPlanned', 'geplant')}</span>
+        <span>📝 <span className="inline-block w-2.5 h-2.5 rounded-sm bg-gray-50 border border-dashed border-gray-300 mr-1" />{t('crm.social.legendDraft', 'Entwurf — wird nicht gepostet')}</span>
+        <span>✅ <span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-100 border border-blue-200 mr-1" />{t('crm.social.legendApproved', 'freigegeben — wird so gepostet')}</span>
         <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200 mr-1" />{t('crm.social.legendPosted', 'gepostet')}</span>
         <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-purple-100 border border-purple-200 mr-1" />{t('crm.social.legendNewsletter', 'Newsletter')}</span>
+        <span className="text-gray-400">{t('crm.social.legendPlatforms', 'f = Facebook · IG = Instagram · in = LinkedIn · NL = Newsletter')}</span>
         <span className="text-gray-400">{t('crm.social.planHint', 'Klick auf einen Eintrag öffnet ihn · „+" am Tag legt einen Post für diesen Tag an.')}</span>
       </div>
     </div>
@@ -489,7 +525,7 @@ export default function SocialStudio() {
       const { data, error } = await supabase.from('social_posts').insert({
         topic: tp?.key ?? 'sonstiges',
         title: `${tp?.icon ?? ''} ${tp?.label ?? ''} · ${day.toLocaleDateString('de-DE')}`,
-        platforms: ['facebook', 'instagram'], status: 'geplant', scheduled_for: when.toISOString(),
+        platforms: ['facebook', 'instagram'], status: 'entwurf', scheduled_for: when.toISOString(),
         created_by: profile?.id ?? null,
       }).select('*').single()
       if (error) throw error

@@ -3825,7 +3825,7 @@
       },
       "status": {
         "entwurf": "Entwurf",
-        "geplant": "Geplant",
+        "geplant": "Freigegeben",
         "gepostet": "Gepostet",
         "fehlgeschlagen": "Fehlgeschlagen"
       },
@@ -3853,7 +3853,16 @@
       "legendPlanned": "geplant",
       "legendPosted": "gepostet",
       "legendNewsletter": "Newsletter",
-      "planHint": "Klick auf einen Eintrag öffnet ihn · „+\" am Tag legt einen Post für diesen Tag an."
+      "planHint": "Klick auf einen Eintrag öffnet ihn · „+\" am Tag legt einen Post für diesen Tag an.",
+      "approval": "Freigabe",
+      "statusDraft": "Entwurf",
+      "statusApproved": "Freigegeben",
+      "approveHint": "Nur freigegebene Posts gehen automatisch raus — Entwürfe bleiben im Redaktionsplan stehen, werden aber nicht gepostet.",
+      "savedDraft": "Entwurf, wird NICHT automatisch gepostet",
+      "planApprovedFull": "Freigegeben — wird so gepostet",
+      "legendDraft": "Entwurf — wird nicht gepostet",
+      "legendApproved": "freigegeben — wird so gepostet",
+      "legendPlatforms": "f = Facebook · IG = Instagram · in = LinkedIn · NL = Newsletter"
     },
     "conn": {
       "title": "Connectoren",

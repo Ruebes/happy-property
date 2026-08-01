@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -307,6 +308,14 @@ export default function Newsletter() {
     if (campaignId === id) resetWizard()
     void fetchPast()
   }
+
+  // Deep-Link aus dem Redaktionsplan: ?edit=<id> lädt die Kampagne direkt in den Editor
+  const [searchParams] = useSearchParams()
+  const deepLinked = useRef(false)
+  useEffect(() => {
+    const id = searchParams.get('edit')
+    if (id && !deepLinked.current) { deepLinked.current = true; void loadCampaign(id) }
+  }, [searchParams])
 
   // Öffnungs-Auswertung (Archiv): Mail-Öffnungen + Deck-Ansichten je Empfänger
   interface EngRow { lead_id: string; name: string | null; email: string | null; mail_opened: string | null; decks: Array<{ project: string; views: number; last_view: string }>; last_view: string | null }
