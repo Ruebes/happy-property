@@ -137,6 +137,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/projects',      key: 'crm.nav.projects'     },
     { to: '/admin/crm/invoices',      key: 'crm.nav.invoices'     },
     { to: '/admin/crm/owner-content', key: 'crm.nav.ownerContent' },
+    { to: '/admin/crm/finance',       key: 'crm.nav.finance'      },
     { to: '/admin/crm/ads',           key: 'crm.nav.ads'          },
     { to: '/admin/crm/statistics',    key: 'crm.nav.statistics'   },
     { to: '/admin/crm/funnel',        key: 'crm.nav.funnel'       },

@@ -1374,7 +1374,8 @@
       "lists": "Empfängerlisten",
       "social": "Social Media",
       "connectors": "Connectoren",
-      "ownerContent": "📢 Eigentümer-Inhalte"
+      "ownerContent": "📢 Eigentümer-Inhalte",
+      "finance": "📒 Buchhaltung"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -3963,6 +3964,31 @@
       "toUnitDocs": " + in die Wohnungs-Dokumente gelegt",
       "searchPh": "Kunde suchen (Name oder E-Mail) …",
       "delConfirm": "Diese Developer-Mail (inkl. gespeicherter Anhänge) löschen?"
+    },
+    "fin": {
+      "title": "Buchhaltung",
+      "subtitle": "Revolut-Konto · tägliche Synchronisierung · Rechnungen aus info@ landen automatisch hier",
+      "sync": "Sync",
+      "ai": "KI-Kategorien",
+      "aiDone": "{{n}} Buchungen kategorisiert",
+      "syncDone": "{{n}} neue Buchungen",
+      "paidMatched": "Rechnung(en) als bezahlt erkannt",
+      "tabTx": "Transaktionen",
+      "tabPay": "Ausgangskorb",
+      "tabReport": "Auswertung",
+      "allMonths": "Alle Monate",
+      "allCats": "Alle Kategorien",
+      "pick": "— wählen —",
+      "bySrcKi": "KI-Vorschlag",
+      "noPay": "Keine offenen Rechnungen — Partner-Rechnungen an info@ landen automatisch hier.",
+      "due": "fällig",
+      "markPaid": "Bezahlt",
+      "ignore": "Ignorieren",
+      "month": "Monat",
+      "in": "Einnahmen",
+      "out": "Ausgaben",
+      "net": "Saldo",
+      "topCats": "Größte Ausgaben-Kategorien"
     }
   },
   "docs": {

@@ -409,6 +409,67 @@ Regeln:
       } catch (e) { return json({ error: (e as Error).message }, 500) }
     }
 
+    // ── YouTube-Sonntagsvideo → Wochen-Posts (So 11:30 CY per Cron) ──────────
+    // Neuestes Video vom Kanal holen, Thumbnail sichern, Meta- + LinkedIn-Post
+    // texten und OHNE Freigabe für Montag einplanen (Meta 18:30 CY, LinkedIn
+    // 08:30 CY). Idempotent über news_source = Video-URL.
+    if (body.action === 'youtube_post') {
+      const CHANNEL = 'UC7SGGkCGeiY8XQZGvdyNr9A'
+      const feed = await (await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL}`)).text()
+      const entry = feed.split('<entry>')[1] ?? ''
+      const vid = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]
+      const title = (entry.match(/<title>([^<]+)<\/title>/)?.[1] ?? '').trim()
+      const desc = (entry.match(/<media:description>([\s\S]*?)<\/media:description>/)?.[1] ?? '').trim().slice(0, 1500)
+      if (!vid) return json({ error: 'Kein Video im Feed gefunden' }, 502)
+      const videoUrl = `https://www.youtube.com/watch?v=${vid}`
+      const { data: dup } = await sb.from('social_posts').select('id').eq('news_source', videoUrl).limit(1)
+      if (dup && dup.length) return json({ success: true, skipped: 'Video bereits verarbeitet', video: videoUrl })
+
+      // Thumbnail sichern (maxres, sonst hq)
+      let thumbUrl: string | null = null
+      for (const q of ['maxresdefault', 'hqdefault']) {
+        const r = await fetch(`https://i.ytimg.com/vi/${vid}/${q}.jpg`)
+        if (r.ok) {
+          const bytes = new Uint8Array(await r.arrayBuffer())
+          const path = `social/yt-${vid}.jpg`
+          const { error } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/jpeg', upsert: true })
+          if (!error) thumbUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+          break
+        }
+      }
+
+      const resp = await claude(anthropicKey, {
+        system: `${BRAND}\n\nDu textest die Wochen-Posts zum neuen YouTube-Video. Der Video-Link MUSS im Text stehen. Rufe GENAU EINMAL set_outputs auf.`,
+        messages: [{ role: 'user', content: `NEUES VIDEO\nTitel: ${title}\nLink: ${videoUrl}\nBeschreibung: ${desc}\n\nERSTELLE:\n- meta_caption: locker & neugierig machend für FB+Instagram, Hook in Zeile 1, kurze Absätze, Video-Link im Text, 3-5 Hashtags, Hinweis "Link auch in der Bio".\n- linkedin_caption: professioneller für LinkedIn — was lernt man im Video, für wen ist es relevant, persönliche Note (Ich-Perspektive Sven), Video-Link, genau 3 Hashtags.` }],
+        tools: [{ name: 'set_outputs', description: 'Fertige Texte.', input_schema: { type: 'object', properties: { meta_caption: { type: 'string' }, linkedin_caption: { type: 'string' } }, required: ['meta_caption', 'linkedin_caption'] } }],
+        tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 2500,
+      })
+      const out = (((resp.content ?? []) as Array<{ type: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use')?.input ?? {}) as { meta_caption?: string; linkedin_caption?: string }
+      if (!out.meta_caption || !out.linkedin_caption) return json({ error: 'Texterstellung fehlgeschlagen' }, 502)
+
+      // Nächsten Montag in Zypern-Zeit berechnen (UTC-Offset via Intl)
+      const cyOffsetMin = (d: Date) => {
+        const m: Record<string, string> = {}
+        for (const pt of new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Nicosia', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(d)) m[pt.type] = pt.value
+        return (Date.UTC(+m.year, +m.month - 1, +m.day, +m.hour === 24 ? 0 : +m.hour, +m.minute, +m.second) - d.getTime()) / 60000
+      }
+      const now = new Date()
+      const cyNow = new Date(now.getTime() + cyOffsetMin(now) * 60000)
+      const daysToMon = ((8 - cyNow.getUTCDay()) % 7) || 7
+      const monday = new Date(Date.UTC(cyNow.getUTCFullYear(), cyNow.getUTCMonth(), cyNow.getUTCDate() + daysToMon))
+      const atCy = (h: number, mi: number) => {
+        const guess = new Date(Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate(), h, mi))
+        return new Date(guess.getTime() - cyOffsetMin(guess) * 60000).toISOString()
+      }
+      await sb.from('social_topics').upsert({ key: 'youtube', label: 'YouTube-Video', icon: '🎬', sort: 90 }, { onConflict: 'key', ignoreDuplicates: true })
+      const base = { topic: 'youtube', news_source: videoUrl, format: 'single', status: 'geplant', image_url: thumbUrl, image_urls: thumbUrl ? [thumbUrl] : [] }
+      const { data: p1, error: e1 } = await sb.from('social_posts').insert({ ...base, title: `🎬 ${title}`.slice(0, 200), content: out.meta_caption, platforms: ['facebook', 'instagram'], scheduled_for: atCy(18, 30) }).select('id').single()
+      if (e1) return json({ error: e1.message }, 500)
+      const { data: p2, error: e2 } = await sb.from('social_posts').insert({ ...base, title: `🎬 in · ${title}`.slice(0, 200), content: out.linkedin_caption, platforms: ['linkedin'], scheduled_for: atCy(8, 30) }).select('id').single()
+      if (e2) return json({ error: e2.message }, 500)
+      return json({ success: true, video: videoUrl, title, thumb: thumbUrl, meta_post: (p1 as { id: string }).id, linkedin_post: (p2 as { id: string }).id, meta_at: atCy(18, 30), linkedin_at: atCy(8, 30) })
+    }
+
     // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
     if (body.action === 'persona_check') {
       try {

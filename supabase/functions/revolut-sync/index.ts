@@ -21,7 +21,7 @@
 //
 // Deployment: supabase functions deploy revolut-sync --no-verify-jwt
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -108,10 +108,59 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
   </div>`
 }
 
+// ── Kontobewegungen → fin_transactions (Buchhaltung) ─────────────────────────
+// Idempotent über revolut_id (leg-genau); Kategorien aus fin_rules (Substring
+// auf Gegenpartei+Verwendungszweck), Eingänge ohne Regel = kundenzahlung.
+// Danach: offene Ausgangskorb-Posten gegen neue Abbuchungen matchen.
+async function syncTransactions(supabase: SupabaseClient, accessToken: string, days: number) {
+  const from = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10)
+  const r = await fetch(`${API}/transactions?from=${from}&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!r.ok) throw new Error(`Revolut transactions ${r.status}: ${(await r.text()).slice(0, 200)}`)
+  const txs = await r.json() as RevolutTx[]
+  const { data: rulesRaw } = await supabase.from('fin_rules').select('match, category')
+  const rules = (rulesRaw ?? []) as { match: string; category: string }[]
+  let imported = 0
+  for (const t of txs) {
+    if (t.state !== 'completed') continue
+    const legs = (t.legs ?? []) as Array<{ leg_id?: string; amount: number; currency: string; description?: string; counterparty?: { name?: string } }>
+    for (let i = 0; i < legs.length; i++) {
+      const l = legs[i]
+      const rid = l.leg_id ?? `${t.id}-${i}`
+      const counterparty = (l.counterparty?.name ?? l.description ?? '').slice(0, 200)
+      const reference = ((t as { reference?: string }).reference ?? l.description ?? '').slice(0, 300)
+      const hay = `${counterparty} ${reference}`.toLowerCase()
+      const rule = rules.find(x => hay.includes(x.match.toLowerCase()))
+      const cat = rule ? rule.category : (l.amount > 0 ? 'kundenzahlung' : null)
+      const { data: ins, error } = await supabase.from('fin_transactions').upsert({
+        revolut_id: rid, booked_at: (t as { completed_at?: string }).completed_at ?? t.created_at,
+        amount: l.amount, currency: l.currency, counterparty, reference,
+        ...(cat ? { category: cat, category_source: 'regel' } : {}),
+      }, { onConflict: 'revolut_id', ignoreDuplicates: true }).select('id')
+      if (error) console.warn('[revolut-sync] tx upsert:', error.message)
+      else if (ins && ins.length) imported++
+    }
+  }
+  const { data: openP } = await supabase.from('fin_payables').select('id, amount, doc_url, doc_name').eq('status', 'offen').not('amount', 'is', null)
+  let payablesMatched = 0
+  for (const p of ((openP ?? []) as Array<{ id: string; amount: number; doc_url: string | null; doc_name: string | null }>)) {
+    const { data: cand } = await supabase.from('fin_transactions').select('id').lt('amount', 0)
+      .gte('amount', -(p.amount * 1.005)).lte('amount', -(p.amount * 0.995)).is('doc_url', null)
+      .order('booked_at', { ascending: false }).limit(1)
+    const tx = cand?.[0] as { id: string } | undefined
+    if (!tx) continue
+    await supabase.from('fin_payables').update({ status: 'bezahlt', paid_at: new Date().toISOString(), matched_tx: tx.id }).eq('id', p.id)
+    if (p.doc_url) await supabase.from('fin_transactions').update({ doc_url: p.doc_url, doc_name: p.doc_name }).eq('id', tx.id)
+    payablesMatched++
+  }
+  return { scanned: txs.length, imported, payables_matched: payablesMatched }
+}
+
+const FIN_CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero', 'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges']
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; code?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; code?: string; days?: number; partner_mail_id?: string }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     if (!Deno.env.get('REVOLUT_CLIENT_ID') || !Deno.env.get('REVOLUT_PRIVATE_KEY')) {
@@ -133,6 +182,87 @@ Deno.serve(async (req: Request) => {
       return json({ success: true })
     }
 
+    // ── KI-Kategorisierung offener Transaktionen ─────────────────────────────
+    if (body.action === 'categorize_ai') {
+      const { data: unc } = await supabase.from('fin_transactions').select('id, counterparty, reference, amount')
+        .is('category', null).order('booked_at', { ascending: false }).limit(40)
+      const list = (unc ?? []) as Array<{ id: string; counterparty: string; reference: string; amount: number }>
+      if (!list.length) return json({ success: true, categorized: 0 })
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY') ?? '', 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 2000,
+          system: `Kategorisiere Banktransaktionen einer Zypern-Immobilienvermittlung (sveru ltd / Happy Property). Erlaubte Kategorien: ${FIN_CATS.join(', ')}. Positive Beträge sind Eingänge. Rufe set_categories mit ALLEN Einträgen auf.`,
+          messages: [{ role: 'user', content: JSON.stringify(list) }],
+          tools: [{ name: 'set_categories', input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, category: { type: 'string', enum: FIN_CATS } }, required: ['id', 'category'] } } }, required: ['items'] } }],
+          tool_choice: { type: 'tool', name: 'set_categories' } }),
+      })
+      const d = await resp.json()
+      const tu = ((d.content ?? []) as Array<{ type: string; input?: { items?: Array<{ id: string; category: string }> } }>).find(b => b.type === 'tool_use')
+      let n = 0
+      for (const it of (tu?.input?.items ?? [])) {
+        if (FIN_CATS.includes(it.category)) { await supabase.from('fin_transactions').update({ category: it.category, category_source: 'ki' }).eq('id', it.id).is('category', null); n++ }
+      }
+      return json({ success: true, categorized: n })
+    }
+
+    // ── Eingehende Partner-Rechnung analysieren (aus imap-poll) ──────────────
+    // Empfänger enthält sven/sveru → Rechnung FÜR SVEN: passende Abbuchung
+    // (Kreditkarte) → Beleg dranhängen, sonst Ausgangskorb. Andernfalls → für
+    // einen Kunden (bleibt in den Developer-Mails zum Zuordnen).
+    if (body.action === 'fin_analyze') {
+      const { data: pmRow } = await supabase.from('partner_mails').select('id, subject, body, from_addr, attachments').eq('id', body.partner_mail_id ?? '').maybeSingle()
+      if (!pmRow) return json({ error: 'Mail nicht gefunden' }, 404)
+      const m = pmRow as { id: string; subject: string; body: string; from_addr: string; attachments: Array<{ name: string; url: string }> }
+      const pdf = (m.attachments ?? []).find(a => /\.pdf$/i.test(a.name)) ?? null
+      const content: unknown[] = []
+      if (pdf) {
+        try {
+          const fb = await (await fetch(pdf.url)).arrayBuffer()
+          if (fb.byteLength < 4_500_000) {
+            let bin = ''; const u8 = new Uint8Array(fb)
+            for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode(...u8.subarray(i, i + 8192))
+            content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) } })
+          }
+        } catch (e) { console.warn('[revolut-sync] PDF laden:', e) }
+      }
+      content.push({ type: 'text', text: `E-Mail von ${m.from_addr}\nBetreff: ${m.subject}\n\n${m.body.slice(0, 2000)}\n\nAnalysiere die Rechnung (PDF falls angehängt) und rufe set_invoice auf.` })
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY') ?? '', 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1000,
+          system: 'Du analysierst eingehende Rechnungen für Happy Property (Inhaber Sven Rüprich, Firma sveru ltd, Zypern). Bestimme Rechnungsempfänger, Aussteller, Brutto-Betrag, Währung, Fälligkeit und ob die Rechnung laut Dokument bereits bezahlt ist (paid, receipt, Kreditkartenbeleg).',
+          messages: [{ role: 'user', content }],
+          tools: [{ name: 'set_invoice', input_schema: { type: 'object', properties: {
+            recipient: { type: 'string' }, vendor: { type: 'string' }, amount: { type: 'number' }, currency: { type: 'string' },
+            due_date: { type: 'string', description: 'YYYY-MM-DD oder leer' }, already_paid: { type: 'boolean' }, title: { type: 'string' },
+          }, required: ['recipient', 'vendor'] } }],
+          tool_choice: { type: 'tool', name: 'set_invoice' } }),
+      })
+      const d = await resp.json()
+      const inv = (((d.content ?? []) as Array<{ type: string; input?: Record<string, unknown> }>).find(b => b.type === 'tool_use')?.input ?? {}) as { recipient?: string; vendor?: string; amount?: number; currency?: string; due_date?: string; already_paid?: boolean; title?: string }
+      const forSven = /sven|sveru/i.test(inv.recipient ?? '')
+      await supabase.from('partner_mails').update({ fin_class: forSven ? 'sven' : 'kunde', fin_vendor: inv.vendor ?? null, fin_amount: inv.amount ?? null }).eq('id', m.id)
+      if (!forSven) return json({ success: true, fin_class: 'kunde' })
+      let txId: string | null = null
+      if (inv.amount && inv.amount > 0) {
+        const { data: cand } = await supabase.from('fin_transactions').select('id').lt('amount', 0)
+          .gte('amount', -(inv.amount * 1.005)).lte('amount', -(inv.amount * 0.995)).is('doc_url', null)
+          .order('booked_at', { ascending: false }).limit(1)
+        txId = (cand?.[0] as { id: string } | undefined)?.id ?? null
+      }
+      if (txId) {
+        await supabase.from('fin_transactions').update({ doc_url: pdf?.url ?? null, doc_name: (pdf?.name ?? m.subject).slice(0, 200), partner_mail_id: m.id }).eq('id', txId)
+        return json({ success: true, fin_class: 'sven', matched_tx: txId })
+      }
+      await supabase.from('fin_payables').insert({
+        partner_mail_id: m.id, vendor: (inv.vendor ?? m.from_addr).slice(0, 200), title: ((inv.title ?? m.subject) || 'Rechnung').slice(0, 200),
+        amount: inv.amount ?? null, currency: (inv.currency ?? 'EUR').slice(0, 3).toUpperCase(),
+        due_at: /^\d{4}-\d{2}-\d{2}$/.test(inv.due_date ?? '') ? inv.due_date : null,
+        doc_url: pdf?.url ?? null, doc_name: pdf?.name ?? null,
+        status: inv.already_paid ? 'bezahlt' : 'offen',
+      })
+      return json({ success: true, fin_class: 'sven', payable: true })
+    }
+
     // ── Täglicher Sync ────────────────────────────────────────────────────────
     const { data: tokRow } = await supabase.from('integration_secrets')
       .select('value').eq('key', 'revolut_refresh_token').maybeSingle()
@@ -141,6 +271,16 @@ Deno.serve(async (req: Request) => {
 
     const tok = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
     const accessToken = tok.access_token as string
+
+    // ── Kontobewegungen einlesen (manuell/Backfill) ───────────────────────────
+    if (body.action === 'tx_sync' || body.action === 'tx_backfill') {
+      const days = body.action === 'tx_backfill' ? Math.min(730, Number(body.days) || 365) : Math.min(60, Number(body.days) || 14)
+      const r = await syncTransactions(supabase, accessToken, days)
+      return json({ success: true, days, ...r })
+    }
+    // Täglicher Lauf: erst Kontobewegungen (3 Tage), dann Rechnungsabgleich
+    try { console.log('[revolut-sync] tx:', JSON.stringify(await syncTransactions(supabase, accessToken, 3))) }
+    catch (e) { console.warn('[revolut-sync] tx-sync:', e) }
 
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase

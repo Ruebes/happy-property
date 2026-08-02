@@ -1374,7 +1374,8 @@
       "lists": "Recipient lists",
       "social": "Social media",
       "connectors": "Connectors",
-      "ownerContent": "📢 Owner content"
+      "ownerContent": "📢 Owner content",
+      "finance": "📒 Accounting"
     },
     "tasks": {
       "title": "Tasks",
@@ -3963,6 +3964,31 @@
       "toUnitDocs": " + filed into the unit documents",
       "searchPh": "Search client (name or email)…",
       "delConfirm": "Delete this developer mail (incl. stored attachments)?"
+    },
+    "fin": {
+      "title": "Accounting",
+      "subtitle": "Revolut account · daily sync · invoices sent to info@ land here automatically",
+      "sync": "Sync",
+      "ai": "AI categories",
+      "aiDone": "{{n}} transactions categorized",
+      "syncDone": "{{n}} new transactions",
+      "paidMatched": "invoice(s) detected as paid",
+      "tabTx": "Transactions",
+      "tabPay": "Payables",
+      "tabReport": "Report",
+      "allMonths": "All months",
+      "allCats": "All categories",
+      "pick": "— pick —",
+      "bySrcKi": "AI suggestion",
+      "noPay": "No open bills — partner invoices sent to info@ land here automatically.",
+      "due": "due",
+      "markPaid": "Paid",
+      "ignore": "Ignore",
+      "month": "Month",
+      "in": "Income",
+      "out": "Expenses",
+      "net": "Net",
+      "topCats": "Largest expense categories"
     }
   },
   "docs": {

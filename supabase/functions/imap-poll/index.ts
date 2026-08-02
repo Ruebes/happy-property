@@ -136,6 +136,11 @@ async function devDomains(supabase: SupabaseClient): Promise<Map<string, string 
     const d = (c.email ?? '').split('@')[1]?.toLowerCase().trim()
     if (d && !FREEMAIL.includes(d)) map.set(d, c.developer_id)
   }
+  const { data: biz } = await supabase.from('crm_business_contacts').select('email')
+  for (const c of ((biz ?? []) as { email: string | null }[])) {
+    const d = (c.email ?? '').split('@')[1]?.toLowerCase().trim()
+    if (d && !FREEMAIL.includes(d) && !map.has(d)) map.set(d, null)
+  }
   const { data: extra } = await supabase.from('crm_settings').select('value').eq('key', 'developer_mail_domains').maybeSingle()
   for (const d of (((extra as { value?: string } | null)?.value ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean))) {
     if (!map.has(d)) map.set(d, null)
@@ -176,10 +181,18 @@ async function storeDevMail(supabase: SupabaseClient, uid: string, raw: string, 
       stored.push({ name: atts[i].name, url: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/mail-attachments/${path}`, path })
     } catch (e) { console.warn('[imap-poll] Anhang:', e) }
   }
-  await supabase.from('partner_mails').insert({
+  const { data: insRow } = await supabase.from('partner_mails').insert({
     uid, from_addr: addr, from_domain: addr.split('@')[1]?.toLowerCase() ?? '', developer_id: devId,
     subject: subject.slice(0, 300), body: (extractPlain(raw) || '').slice(0, 4000), attachments: stored,
-  })
+  }).select('id').single()
+  // Buchhaltung: Rechnung analysieren (für Sven → Beleg/Ausgangskorb; sonst Kunde)
+  const newId = (insRow as { id: string } | null)?.id
+  if (newId) {
+    supabase.functions.invoke('revolut-sync', {
+      body: { action: 'fin_analyze', partner_mail_id: newId },
+      headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+    }).catch((e) => console.warn('[imap-poll] fin_analyze:', e))
+  }
   return true
 }
 
@@ -346,7 +359,10 @@ Deno.serve(async (req) => {
           // Developer-Mail? Absender-Domain gegen die Bauträger-Kontakte prüfen.
           const dom = addr.split('@')[1]?.toLowerCase() ?? ''
           if (!devCache) devCache = await devDomains(supabase)
-          if (dom && devCache.has(dom)) {
+          // Rechnung erkennbar? Domain der Geschäftspartner/Bauträger ODER
+          // Rechnungs-Stichwort + Datei-Anhang.
+          const looksInvoice = /rechnung|invoice|receipt|zahlungsbest|payment confirmation|beleg/i.test(`${subject}`) && /filename=/i.test(fetched)
+          if (dom && (devCache.has(dom) || looksInvoice)) {
             if (await storeDevMail(supabase, uid, fetched, addr, subject, devCache.get(dom) ?? null)) result.tasks += 0, (result as unknown as { dev?: number }).dev = ((result as unknown as { dev?: number }).dev ?? 0) + 1
             continue
           }
