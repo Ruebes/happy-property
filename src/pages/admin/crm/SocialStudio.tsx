@@ -40,6 +40,19 @@ const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
 
 interface Idea { id: string; headline: string; core: string; source_url: string | null; angle: string; status: string; created_at: string }
 
+// Hübscher Bildanzahl-Wähler (Chips statt Stepper)
+function CountPicker({ value, onChange, min = 2, max = 10 }: { value: number; onChange: (n: number) => void; min?: number; max?: number }) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-gray-100 rounded-xl p-1 flex-wrap">
+      {Array.from({ length: max - min + 1 }, (_, i) => min + i).map(n => (
+        <button key={n} onClick={() => onChange(n)}
+          className={`w-8 h-8 rounded-lg text-sm font-semibold transition-all ${n === value ? 'text-white shadow-sm scale-105' : 'text-gray-500 hover:bg-white/70'}`}
+          style={n === value ? { backgroundColor: '#ff795d' } : undefined}>{n}</button>
+      ))}
+    </div>
+  )
+}
+
 // ── Plan-Vorschlag: sinnvolle Frequenz + beste Uhrzeit je Kanal ──────────────
 // FB/Insta: max. 1 Post/Tag (beste Zeit Mo–Fr 18:30, Sa/So 12:30).
 // LinkedIn: nur Di–Do 08:30, max. 3 Posts/Woche, max. 1/Tag.
@@ -182,6 +195,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     return arr.length ? arr : (post.image_url ? [post.image_url] : [])
   })
   const [format, setFormat] = useState(post.format === 'carousel' ? 'carousel' : 'single')
+  const [imgTarget, setImgTarget] = useState(() => Math.min(10, Math.max(2, (Array.isArray(post.image_urls) ? post.image_urls.length : 0) || 3)))
   const [approved, setApproved] = useState(post.status === 'geplant')
   const [suggestion, setSuggestion] = useState('')
   const autoSug = useRef(false)
@@ -189,14 +203,14 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
   const pollRef = useRef<number | null>(null)
   useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current) }, [])
   // Hintergrund-Bilder: DB pollen, bis ein neues Bild in image_urls auftaucht
-  const pollImages = (fromCount: number) => {
+  const pollImages = (fromCount: number, target?: number) => {
     if (pollRef.current) window.clearInterval(pollRef.current)
     let tries = 0
     pollRef.current = window.setInterval(() => {
       tries++
       void supabase.from('social_posts').select('image_urls').eq('id', post.id).maybeSingle().then(({ data }) => {
         const urls = Array.isArray((data as { image_urls?: string[] } | null)?.image_urls) ? (data as { image_urls: string[] }).image_urls : []
-        if (urls.length > fromCount) {
+        if (urls.length >= (target ?? fromCount + 1)) {
           if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null }
           setImages(urls); setNote(`🎨 ${t('crm.social.imgReady', 'Neues Bild ist da.')}`)
         } else if (tries > 40) {
@@ -269,11 +283,19 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     if (busy) return
     setBusy('image'); setNote('')
     try {
-      const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'image', post_id: post.id } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; image_url?: string; pending?: boolean }
-      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      if (d.pending) { setNote(`🎨 ${t('crm.social.imgPending', 'Bild wird erstellt — es erscheint gleich in der Bilderliste…')}`); pollImages(images.length) }
-      else if (d.image_url) setImages(im => [...im, d.image_url!])
+      const missing = format === 'carousel' ? Math.max(1, imgTarget - images.length) : 1
+      let anyPending = false
+      for (let i = 0; i < missing; i++) {
+        const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'image', post_id: post.id } })
+        const d = (data ?? {}) as { ok?: boolean; error?: string; image_url?: string; pending?: boolean }
+        if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
+        if (d.pending) anyPending = true
+        else if (d.image_url) setImages(im => [...im, d.image_url!])
+      }
+      if (anyPending) {
+        setNote(`🎨 ${missing > 1 ? t('crm.social.imgsPending', '{{n}} Bilder werden erstellt — sie erscheinen nacheinander in der Liste…', { n: missing }) : t('crm.social.imgPending', 'Bild wird erstellt — es erscheint gleich in der Bilderliste…')}`)
+        pollImages(images.length, images.length + missing)
+      }
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Bild fehlgeschlagen'}`)
     } finally { setBusy('') }
@@ -389,7 +411,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
                 <label className="text-xs font-medium text-gray-500">{t('crm.social.images', 'Bilder')} ({images.length})</label>
                 <button onClick={() => void genImage()} disabled={busy === 'image'}
                   className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
-                  {busy === 'image' ? t('crm.social.imageWorking', 'Bild wird erstellt (~30 s)…') : t('crm.social.imageMake', '🎨 KI-Bild erstellen')}
+                  {busy === 'image' ? t('crm.social.imageWorking', 'Bild wird erstellt (~30 s)…') : format === 'carousel' && images.length < imgTarget ? t('crm.social.imageMakeN', '🎨 KI-Bilder erstellen ({{n}} fehlen)', { n: imgTarget - images.length }) : t('crm.social.imageMake', '🎨 KI-Bild erstellen')}
                 </button>
                 {galleryImgs.length > 0 && (
                   <button onClick={() => setShowGallery(g => !g)}
@@ -435,6 +457,13 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
                   { value: 'single', label: t('crm.social.formatSingle', '🖼 Einzelpost') },
                   { value: 'carousel', label: t('crm.social.formatCarousel', '🎠 Karussell (2–10 Bilder)') },
                 ]} />
+                {format === 'carousel' && (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-gray-500 mb-1.5">🎠 {t('crm.social.imgTarget', 'Wie viele Bilder soll das Karussell haben?')}</p>
+                    <CountPicker value={imgTarget} onChange={setImgTarget} />
+                    <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.imgTargetHint', '„KI-Bild erstellen" füllt automatisch bis zur gewählten Anzahl auf.')}</p>
+                  </div>
+                )}
                 {format === 'carousel' && images.length < 2 && <p className="text-[11px] text-amber-600 mt-1">{t('crm.social.carouselNeed', 'Karussell braucht mindestens 2 Bilder.')}</p>}
               </div>
               <div>
@@ -554,15 +583,14 @@ function UseIdeaModal({ idea, onClose, onDone }: { idea: Idea; onClose: () => vo
             <div className="flex gap-1.5 items-center flex-wrap">
               <button onClick={() => setFormat('single')} className={pill(format === 'single')}>🖼 {t('crm.social.single', 'Einzelbild')}</button>
               <button onClick={() => setFormat('carousel')} className={pill(format === 'carousel')}>🎠 {t('crm.social.carousel', 'Karussell')}</button>
-              {format === 'carousel' && (
-                <span className="inline-flex items-center gap-1 ml-1">
-                  <button onClick={() => setCount(c => Math.max(2, c - 1))} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-600">−</button>
-                  <span className="text-sm font-semibold w-8 text-center">{count}</span>
-                  <button onClick={() => setCount(c => Math.min(10, c + 1))} className="w-7 h-7 rounded-lg border border-gray-200 text-gray-600">+</button>
-                  <span className="text-xs text-gray-400 ml-1">{t('crm.social.ideaImgCount', 'Bilder')}</span>
-                </span>
-              )}
+
             </div>
+            {format === 'carousel' && (
+              <div className="mt-2">
+                <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaImgCount', 'Bilder')}:</p>
+                <CountPicker value={count} onChange={setCount} />
+              </div>
+            )}
             {format === 'carousel' && plats.includes('linkedin') && (
               <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.ideaLiHint', 'Karussell gilt für FB/Insta — LinkedIn erhält das erste Bild als Einzelpost.')}</p>
             )}

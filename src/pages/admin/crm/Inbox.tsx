@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import DevMails from '../../../components/crm/DevMails'
 import { useAuth } from '../../../lib/auth'
 import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
 
@@ -250,6 +251,7 @@ export default function Inbox() {
 
   return (
     <DashboardLayout basePath="/admin/crm">
+      <DevMails />
       {toast && <div className="fixed bottom-6 right-6 z-50 bg-gray-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg">{toast}</div>}
       <div className="p-4 md:p-6">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-4">

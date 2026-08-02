@@ -282,7 +282,26 @@
       "construction": "Under construction"
     },
     "loadError": "Your properties could not be loaded right now.",
-    "showMore": "+ {{n}} more"
+    "showMore": "+ {{n}} more",
+    "news": {
+      "title": "News & documents",
+      "subtitle": "Videos and documents from Sven — e.g. to forward to your tax advisor.",
+      "new": "NEW",
+      "open": "Open"
+    },
+    "bug": {
+      "title": "Report a problem",
+      "hint": "What isn't working? Screenshots help a lot.",
+      "ph": "Briefly describe what happened…",
+      "needText": "Please describe the problem briefly.",
+      "files": "image(s) selected",
+      "send": "Report",
+      "sending": "Sending…",
+      "sent": "Thank you! Your report reached Sven — you will be notified as soon as it is done. 🐾",
+      "cardTitle": "Something not working?",
+      "cardSub": "Let us know — with a screenshot if possible. We will take care of it and get back to you once fixed.",
+      "cardBtn": "Report a problem"
+    }
   },
   "stats": {
     "users": "Users",
@@ -1354,7 +1373,8 @@
       "bookingLinks": "Booking links",
       "lists": "Recipient lists",
       "social": "Social media",
-      "connectors": "Connectors"
+      "connectors": "Connectors",
+      "ownerContent": "📢 Owner content"
     },
     "tasks": {
       "title": "Tasks",
@@ -1424,7 +1444,10 @@
       "contactFallback": "Contact",
       "customerFallback": "Customer",
       "extLangHint": "Language of the message to this person",
-      "externalHint": "No team member needed — a name + number (or email) is enough."
+      "externalHint": "No team member needed — a name + number (or email) is enough.",
+      "attach": "Attach screenshots/images (optional)",
+      "attachSel": "{{n}} image(s) selected — uploaded downscaled",
+      "attachHint": "Attachments are deleted from the server automatically on Sunday archiving."
     },
     "home": {
       "hello": "Hello",
@@ -3897,7 +3920,11 @@
       "prevComment": "Comment",
       "prevShare": "Share",
       "prevNoImage": "No image on this post yet",
-      "prevHint": "Mock-up — the platform may render details differently. Text truncation as in the feed; LinkedIn shows the first image for carousels."
+      "prevHint": "Mock-up — the platform may render details differently. Text truncation as in the feed; LinkedIn shows the first image for carousels.",
+      "imgTarget": "How many images should the carousel have?",
+      "imgTargetHint": "\"Create AI image\" fills up to the chosen count automatically.",
+      "imageMakeN": "🎨 Create AI images ({{n}} missing)",
+      "imgsPending": "{{n}} images are being created — they will appear in the list one by one…"
     },
     "conn": {
       "title": "Connectors",
@@ -3908,6 +3935,34 @@
       "tokenPh": "Paste new token …",
       "saved": "✓ Saved — testing connection…",
       "hint": "Keys are only checked on the server and never shown in the browser. Integrations without a “Change” button are maintained via Claude or the Supabase secrets."
+    },
+    "ownerContent": {
+      "title": "Owner content",
+      "subtitle": "Videos & documents for the owner portal — for everyone or one specific apartment. Lotte notifies the owners.",
+      "titlePh": "Title, e.g. \"How your rental income is taxed in Cyprus\"",
+      "allOwners": "ALL owners",
+      "notifyToggle": "Have Lotte notify the owners right away (mail + WhatsApp)",
+      "upload": "Upload",
+      "uploading": "Uploading…",
+      "uploaded": "Uploaded",
+      "notified": "{{n}} owner(s) notified",
+      "notifyFail": "Notification failed",
+      "notifyConfirm": "Lotte will now notify {{s}} via mail + WhatsApp. Continue?",
+      "notifyBtn": "Notify",
+      "notifiedBadge": "notified",
+      "delConfirm": "Delete \"{{t}}\" for the owners?",
+      "empty": "Nothing uploaded yet.",
+      "oneUnit": "one apartment"
+    },
+    "devmails": {
+      "title": "Developer mails",
+      "new": "new",
+      "assign": "Assign to client",
+      "assigned": "Assigned to",
+      "assignedBadge": "assigned",
+      "toUnitDocs": " + filed into the unit documents",
+      "searchPh": "Search client (name or email)…",
+      "delConfirm": "Delete this developer mail (incl. stored attachments)?"
     }
   },
   "docs": {

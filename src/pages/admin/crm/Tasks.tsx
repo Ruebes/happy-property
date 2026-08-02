@@ -60,10 +60,36 @@ function notifyIfSubtaskDone(tk: Task, status: TaskStatus) {
 }
 
 // ── Aufgabe anlegen ──────────────────────────────────────────────────────────
+// ── Bild-Anhänge: Screenshots client-seitig verkleinern (Speicher schonen) ──
+// Beim Sonntags-Archiv löscht tasks-maintenance die Dateien wieder vom Server.
+async function shrinkImage(file: File, maxDim = 1600): Promise<Blob> {
+  try {
+    const bmp = await createImageBitmap(file)
+    const scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height))
+    const w = Math.round(bmp.width * scale), h = Math.round(bmp.height * scale)
+    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0, w, h)
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/jpeg', 0.82))
+    return blob ?? file
+  } catch { return file }
+}
+async function uploadTaskImages(taskId: string, files: File[]): Promise<void> {
+  for (let i = 0; i < files.length; i++) {
+    const small = await shrinkImage(files[i])
+    const path = `${taskId}/${Date.now()}-${i}.jpg`
+    const { error } = await supabase.storage.from('task-attachments').upload(path, small, { contentType: 'image/jpeg' })
+    if (error) { console.warn('[Tasks] Anhang-Upload:', error.message); continue }
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`
+    await supabase.from('crm_task_attachments').insert({ task_id: taskId, name: files[i].name, url, storage_path: path })
+  }
+}
+interface TaskAtt { id: string; name: string; url: string; storage_path: string }
+
 function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId: string; onClose: () => void; onCreated: (m: string) => void }) {
   const { t } = useTranslation()
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [imgFiles, setImgFiles] = useState<File[]>([])
   const [dueDate, setDueDate] = useState('')
   // Niemand vorausgewählt — eine Aufgabe kann rein an eine externe Person gehen,
   // ein Teammitglied ist NICHT zwingend (Sven: „muss nicht zwingend jemand aus dem Team sein").
@@ -138,6 +164,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       ]
       if (rows.length) { const r = await supabase.from('crm_task_assignees').insert(rows); if (r.error) throw r.error }
       if (customers.length) await supabase.from('crm_task_leads').insert(customers.map(c => ({ task_id: taskId, lead_id: c.lead_id })))
+      if (imgFiles.length) await uploadTaskImages(taskId, imgFiles)
       // Zustellung (Mail/WhatsApp an Externe, Mail an Interne) im Hintergrund
       supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[Tasks] dispatch:', e))
       onCreated(t('crm.tasks.created', 'Aufgabe angelegt'))
@@ -164,6 +191,11 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.descLabel', 'Beschreibung')}</label>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} className={input} placeholder={t('crm.tasks.descPh', 'Details zur Aufgabe …')} />
+            <div className="mt-2">
+              <input type="file" accept="image/*" multiple onChange={e => setImgFiles(Array.from(e.target.files ?? []))}
+                className="text-sm text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:cursor-pointer" />
+              <p className="text-[11px] text-gray-400 mt-1">📎 {imgFiles.length ? t('crm.tasks.attachSel', '{{n}} Bild(er) ausgewählt — werden verkleinert hochgeladen', { n: imgFiles.length }) : t('crm.tasks.attach', 'Screenshots/Bilder anhängen (optional)')}</p>
+            </div>
           </div>
 
           {/* Interne Zuständige (Mehrfach) */}
@@ -412,6 +444,18 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   const [exName, setExName] = useState(''); const [exEmail, setExEmail] = useState(''); const [exPhone, setExPhone] = useState(''); const [exCh, setExCh] = useState<Channel>('both')
   const [custQuery, setCustQuery] = useState('')
   const inputCls = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400'
+  const [atts, setAtts] = useState<TaskAtt[]>([])
+  const loadAtts = useCallback(async () => {
+    const { data } = await supabase.from('crm_task_attachments').select('id, name, url, storage_path').eq('task_id', task.id).order('created_at')
+    setAtts((data as TaskAtt[]) ?? [])
+  }, [task.id])
+  useEffect(() => { void loadAtts() }, [loadAtts])
+  const addImages = async (files: File[]) => { await uploadTaskImages(task.id, files); await loadAtts() }
+  const delAtt = async (a: TaskAtt) => {
+    await supabase.storage.from('task-attachments').remove([a.storage_path]).catch(() => null)
+    await supabase.from('crm_task_attachments').delete().eq('id', a.id)
+    setAtts(x => x.filter(y => y.id !== a.id))
+  }
 
   const startEdit = async () => {
     setETitle(task.title); setEDesc(task.description ?? ''); setEditing(true)
@@ -480,6 +524,20 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
           ) : task.description ? (
             <p className="text-sm text-gray-700 whitespace-pre-wrap">{task.description}</p>
           ) : null}
+
+          {/* 📎 Bild-Anhänge — beim Sonntags-Archiv automatisch vom Server gelöscht */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {atts.map(a => (
+              <div key={a.id} className="relative group">
+                <a href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name} className="w-16 h-16 rounded-lg object-cover border border-gray-200" loading="lazy" /></a>
+                <button onClick={() => void delAtt(a)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-900/80 text-white text-[10px] opacity-0 group-hover:opacity-100">✕</button>
+              </div>
+            ))}
+            <label className="w-16 h-16 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer hover:border-orange-300 hover:text-orange-500 text-xl" title={t('crm.tasks.attach', 'Screenshots/Bilder anhängen (optional)') as string}>
+              +<input type="file" accept="image/*" multiple className="hidden" onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) void addImages(f); e.target.value = '' }} />
+            </label>
+            {atts.length > 0 && <p className="basis-full text-[10px] text-gray-400">{t('crm.tasks.attachHint', 'Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht.')}</p>}
+          </div>
 
           {editing ? (
             <div className="space-y-3">

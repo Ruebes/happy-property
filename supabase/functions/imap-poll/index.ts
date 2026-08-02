@@ -125,6 +125,64 @@ function imapSince(daysBack: number): string {
   return `${String(d.getUTCDate()).padStart(2, '0')}-${mon}-${d.getUTCFullYear()}`
 }
 
+// ── Developer-Mails: Domains der Bauträger-Kontakte + optionale Extra-Liste ──
+// (crm_settings key developer_mail_domains, kommagetrennt). Freemail-Domains
+// zählen nie als Developer-Domain.
+const FREEMAIL = ['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'gmx.de', 'gmx.net', 'web.de', 'icloud.com', 't-online.de']
+async function devDomains(supabase: SupabaseClient): Promise<Map<string, string | null>> {
+  const map = new Map<string, string | null>()
+  const { data } = await supabase.from('crm_developer_contacts').select('email, developer_id')
+  for (const c of ((data ?? []) as { email: string | null; developer_id: string | null }[])) {
+    const d = (c.email ?? '').split('@')[1]?.toLowerCase().trim()
+    if (d && !FREEMAIL.includes(d)) map.set(d, c.developer_id)
+  }
+  const { data: extra } = await supabase.from('crm_settings').select('value').eq('key', 'developer_mail_domains').maybeSingle()
+  for (const d of (((extra as { value?: string } | null)?.value ?? '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean))) {
+    if (!map.has(d)) map.set(d, null)
+  }
+  return map
+}
+// MIME-Anhänge (base64 + filename) flach aus dem Roh-Text ziehen.
+function extractAttachments(raw: string): Array<{ name: string; b64: string; mime: string }> {
+  const out: Array<{ name: string; b64: string; mime: string }> = []
+  const parts = raw.split(/\r?\n--[^\r\n]+\r?\n/)
+  for (const p of parts.slice(1)) {
+    const headEnd = p.search(/\r?\n\r?\n/); if (headEnd < 0) continue
+    const head = p.slice(0, headEnd)
+    if (!/content-transfer-encoding:\s*base64/i.test(head)) continue
+    const fn = head.match(/filename\*?="?([^";\r\n]+)"?/i)?.[1] || head.match(/name="?([^";\r\n]+)"?/i)?.[1]
+    if (!fn) continue
+    const mime = (head.match(/content-type:\s*([^;\r\n]+)/i)?.[1] || 'application/octet-stream').trim()
+    const body = p.slice(headEnd).replace(/[^A-Za-z0-9+/=]/g, '')
+    if (body.length < 100) continue
+    out.push({ name: decodeMimeWords(fn), b64: body, mime })
+    if (out.length >= 8) break
+  }
+  return out
+}
+async function storeDevMail(supabase: SupabaseClient, uid: string, raw: string, addr: string, subject: string, devId: string | null): Promise<boolean> {
+  const { data: dup } = await supabase.from('partner_mails').select('id').eq('uid', uid).maybeSingle()
+  if (dup) return false
+  const atts = extractAttachments(raw)
+  const stored: Array<{ name: string; url: string; path: string }> = []
+  for (let i = 0; i < atts.length; i++) {
+    try {
+      const bytes = Uint8Array.from(atob(atts[i].b64), c => c.charCodeAt(0))
+      if (bytes.length > 15_000_000) continue
+      const safe = atts[i].name.replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80)
+      const path = `${uid}-${i}-${safe}`
+      const { error } = await supabase.storage.from('mail-attachments').upload(path, bytes, { contentType: atts[i].mime, upsert: true })
+      if (error) { console.warn('[imap-poll] Anhang-Upload:', error.message); continue }
+      stored.push({ name: atts[i].name, url: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/mail-attachments/${path}`, path })
+    } catch (e) { console.warn('[imap-poll] Anhang:', e) }
+  }
+  await supabase.from('partner_mails').insert({
+    uid, from_addr: addr, from_domain: addr.split('@')[1]?.toLowerCase() ?? '', developer_id: devId,
+    subject: subject.slice(0, 300), body: (extractPlain(raw) || '').slice(0, 4000), attachments: stored,
+  })
+  return true
+}
+
 // Lead per Absenderadresse finden — primäre email ODER alt_emails (case-insensitiv,
 // googlemail→gmail normalisiert). Ersetzt die alte RPC, die NUR die Primär-Mail prüfte
 // (Rainer schrieb von rainer.wallmeyer@…, sein Lead trägt rw@… → fiel durch).
@@ -211,6 +269,29 @@ Deno.serve(async (req) => {
       return json({ ok: true, mode: 'backfill', ...bf, detail })
     }
 
+    // ── Devscan: NUR Developer-Mails der letzten N Tage einsammeln (idempotent
+    // über partner_mails.uid — ignoriert die task_mail_processed-Sperre).
+    if (mode === 'devscan') {
+      const days = Math.min(120, Number(reqBody.days) || 30)
+      const devs = await devDomains(supabase)
+      const sr = await imap.cmd(`UID SEARCH SINCE ${imapSince(days)}`)
+      const dUids = (sr.match(/\* SEARCH([0-9 ]*)/i)?.[1] || '').trim().split(/\s+/).filter(Boolean)
+        .sort((a, b) => Number(b) - Number(a)).slice(0, 200)
+      const ds = { scanned: dUids.length, dev: 0, domains: Array.from(devs.keys()) }
+      for (const uid of dUids) {
+        try {
+          const fetched = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[])`)
+          const addr = fromAddress(fetched)
+          if (!addr) continue
+          const dom = addr.split('@')[1]?.toLowerCase() ?? ''
+          if (!devs.has(dom)) continue
+          if (await storeDevMail(supabase, uid, fetched, addr, decodeMimeWords(header(fetched, 'Subject')), devs.get(dom) ?? null)) ds.dev++
+        } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
+      }
+      await imap.logout()
+      return json({ ok: true, mode: 'devscan', ...ds })
+    }
+
     // Token-Mails (Aufgaben-Antworten) UND alle jüngeren Mails (Kunden-Antworten).
     // Zwei Suchen, per Set entdoppelt. SINCE begrenzt die zweite auf die letzten Tage,
     // damit nicht das ganze Postfach gescannt wird; task_mail_processed hält den Rest.
@@ -222,6 +303,7 @@ Deno.serve(async (req) => {
       .slice(0, MAX_PER_RUN)
     result.scanned = uids.length
 
+    let devCache: Map<string, string | null> | null = null
     for (const uid of uids) {
       try {
         const { data: seen } = await supabase.from('task_mail_processed').select('uid').eq('uid', uid).maybeSingle()
@@ -260,7 +342,16 @@ Deno.serve(async (req) => {
         const own = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
         if (addr === own || /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr)) { result.skipped++; continue }
         const leadId = await findLead(supabase, addr)
-        if (!leadId) { result.skipped++; continue }   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
+        if (!leadId) {
+          // Developer-Mail? Absender-Domain gegen die Bauträger-Kontakte prüfen.
+          const dom = addr.split('@')[1]?.toLowerCase() ?? ''
+          if (!devCache) devCache = await devDomains(supabase)
+          if (dom && devCache.has(dom)) {
+            if (await storeDevMail(supabase, uid, fetched, addr, subject, devCache.get(dom) ?? null)) result.tasks += 0, (result as unknown as { dev?: number }).dev = ((result as unknown as { dev?: number }).dev ?? 0) + 1
+            continue
+          }
+          result.skipped++; continue   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
+        }
         const bodyText = (extractPlain(fetched) || '(leere Nachricht)').slice(0, 4000)
         await supabase.from('activities').insert({
           lead_id:      leadId,

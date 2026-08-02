@@ -207,6 +207,16 @@ Deno.serve(async (req: Request) => {
     await supabase.functions.invoke('task-notify', { body: { mode: 'subtask_sweep' } })
   } catch (e) { console.warn('[process-scheduled] Teilaufgaben-Fertigmeldung:', e) }
 
+  // ── Bug-Meldungen aus dem Eigentümerportal: erledigt → Melder informieren ──
+  // owner-content riegelt selbst per bug_done_notified_at (CAS) ab.
+  try {
+    const { data: bugs } = await supabase.from('crm_tasks').select('id')
+      .eq('source', 'bug_report').eq('status', 'erledigt').is('bug_done_notified_at', null).limit(10)
+    for (const b of ((bugs ?? []) as { id: string }[])) {
+      await supabase.functions.invoke('owner-content', { body: { action: 'bug_done', task_id: b.id } })
+    }
+  } catch (e) { console.warn('[process-scheduled] Bug-Fertigmeldung:', e) }
+
   // ── Aufgaben-Archivierung: erledigte Aufgaben werden SONNTAGS archiviert ─────
   // Erledigte Aufgaben bleiben die Woche über sichtbar und wandern erst am Sonntag
   // (Europe/Berlin) aus dem Board. Idempotent, läuft im 5-Min-Cron.
@@ -219,7 +229,7 @@ Deno.serve(async (req: Request) => {
       const { data: withOpen } = await supabase.from('crm_tasks')
         .select('parent_task_id').not('parent_task_id', 'is', null).neq('status', 'erledigt')
       const blocked = [...new Set(((withOpen ?? []) as { parent_task_id: string }[]).map(r => r.parent_task_id))]
-      let qy = supabase.from('crm_tasks').update({ archived: true }).eq('status', 'erledigt').eq('archived', false)
+      let qy = supabase.from('crm_tasks').update({ archived: true, archived_at: new Date().toISOString() }).eq('status', 'erledigt').eq('archived', false)
       if (blocked.length) qy = qy.not('id', 'in', `(${blocked.join(',')})`)
       await qy
     }

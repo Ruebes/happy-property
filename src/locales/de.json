@@ -282,7 +282,26 @@
       "construction": "Im Bau"
     },
     "loadError": "Deine Objekte konnten gerade nicht geladen werden.",
-    "showMore": "+ {{n}} weitere anzeigen"
+    "showMore": "+ {{n}} weitere anzeigen",
+    "news": {
+      "title": "Neuigkeiten & Dokumente",
+      "subtitle": "Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.",
+      "new": "NEU",
+      "open": "Öffnen"
+    },
+    "bug": {
+      "title": "Problem melden",
+      "hint": "Was funktioniert nicht? Screenshots helfen uns sehr.",
+      "ph": "Beschreibe kurz, was passiert ist …",
+      "needText": "Bitte beschreibe kurz das Problem.",
+      "files": "Bild(er) ausgewählt",
+      "send": "Melden",
+      "sending": "Sendet…",
+      "sent": "Danke! Deine Meldung ist bei Sven gelandet — du bekommst Bescheid, sobald sie erledigt ist. 🐾",
+      "cardTitle": "Etwas funktioniert nicht?",
+      "cardSub": "Sag uns Bescheid — mit Screenshot, wenn möglich. Wir kümmern uns und melden uns, sobald es behoben ist.",
+      "cardBtn": "Problem melden"
+    }
   },
   "stats": {
     "users": "Benutzer",
@@ -1354,7 +1373,8 @@
       "bookingLinks": "Buchungslinks",
       "lists": "Empfängerlisten",
       "social": "Social Media",
-      "connectors": "Connectoren"
+      "connectors": "Connectoren",
+      "ownerContent": "📢 Eigentümer-Inhalte"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -1424,7 +1444,10 @@
       "contactFallback": "Kontakt",
       "customerFallback": "Kunde",
       "extLangHint": "Sprache der Nachricht an diese Person",
-      "externalHint": "Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht."
+      "externalHint": "Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht.",
+      "attach": "Screenshots/Bilder anhängen (optional)",
+      "attachSel": "{{n}} Bild(er) ausgewählt — werden verkleinert hochgeladen",
+      "attachHint": "Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht."
     },
     "home": {
       "hello": "Hallo",
@@ -3897,7 +3920,11 @@
       "prevComment": "Kommentieren",
       "prevShare": "Teilen",
       "prevNoImage": "Noch kein Bild am Post",
-      "prevHint": "Nachbildung — die Plattform kann Details anders darstellen. Textkürzung wie im Feed; LinkedIn zeigt bei Karussells das erste Bild."
+      "prevHint": "Nachbildung — die Plattform kann Details anders darstellen. Textkürzung wie im Feed; LinkedIn zeigt bei Karussells das erste Bild.",
+      "imgTarget": "Wie viele Bilder soll das Karussell haben?",
+      "imgTargetHint": "„KI-Bild erstellen\" füllt automatisch bis zur gewählten Anzahl auf.",
+      "imageMakeN": "🎨 KI-Bilder erstellen ({{n}} fehlen)",
+      "imgsPending": "{{n}} Bilder werden erstellt — sie erscheinen nacheinander in der Liste…"
     },
     "conn": {
       "title": "Connectoren",
@@ -3908,6 +3935,34 @@
       "tokenPh": "Neuen Token einfügen …",
       "saved": "✓ Gespeichert — Verbindung wird getestet…",
       "hint": "Schlüssel werden nur auf dem Server geprüft und nie im Browser angezeigt. Anbindungen ohne „Ändern\"-Knopf pflegst du über mich (Claude) oder die Supabase-Secrets."
+    },
+    "ownerContent": {
+      "title": "Eigentümer-Inhalte",
+      "subtitle": "Videos & Dokumente fürs Eigentümerportal — für alle oder gezielt für eine Wohnung. Lotte sagt den Eigentümern Bescheid.",
+      "titlePh": "Titel, z.B. „So werden deine Mieteinnahmen auf Zypern versteuert\"",
+      "allOwners": "ALLE Eigentümer",
+      "notifyToggle": "Eigentümer sofort von Lotte benachrichtigen lassen (Mail + WhatsApp)",
+      "upload": "Hochladen",
+      "uploading": "Lädt hoch…",
+      "uploaded": "Hochgeladen",
+      "notified": "{{n}} Eigentümer benachrichtigt",
+      "notifyFail": "Benachrichtigung fehlgeschlagen",
+      "notifyConfirm": "Lotte benachrichtigt jetzt {{s}} per Mail + WhatsApp. Fortfahren?",
+      "notifyBtn": "Benachrichtigen",
+      "notifiedBadge": "benachrichtigt",
+      "delConfirm": "„{{t}}\" für die Eigentümer löschen?",
+      "empty": "Noch nichts hochgeladen.",
+      "oneUnit": "eine Wohnung"
+    },
+    "devmails": {
+      "title": "Developer-Mails",
+      "new": "neu",
+      "assign": "Kunde zuordnen",
+      "assigned": "Zugeordnet zu",
+      "assignedBadge": "zugeordnet",
+      "toUnitDocs": " + in die Wohnungs-Dokumente gelegt",
+      "searchPh": "Kunde suchen (Name oder E-Mail) …",
+      "delConfirm": "Diese Developer-Mail (inkl. gespeicherter Anhänge) löschen?"
     }
   },
   "docs": {
