@@ -173,30 +173,43 @@ async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: 
   if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
   const cfg = await personaCfg(sb)
   const token = await driveToken()
-  const fd = new FormData()
-  fd.append('model', 'gpt-image-1'); fd.append('size', '1024x1024'); fd.append('quality', 'medium'); fd.append('n', '1')
-  const parts: string[] = []
-  let idx = 0
+  // Referenzen einsammeln, mit Persona-Label — Bild-Nummern vermeiden wir im
+  // Prompt bewusst: einzelne Dateien können unten wieder rausfliegen.
+  const files: Array<{ file: File; who: 'lotte' | 'sven' }> = []
   if (include.includes('lotte') && cfg.lotte_folder) {
-    // Erst Svens Original-Ordner; solange der nicht für den SA freigegeben ist,
-    // greift automatisch die Referenz-Kopie (lotte_fallback_folder).
     let refs = await driveImages(token, cfg.lotte_folder, 0, 3)
     if (!refs.length && cfg.lotte_fallback_folder) refs = await driveImages(token, cfg.lotte_fallback_folder, 0, 3)
-    for (const f of refs) { const b = await driveDownload(token, f.id); fd.append('image[]', new File([b], f.name || `lotte-${idx}.jpg`, { type: b.type || 'image/jpeg' })); idx++ }
-    if (idx) parts.push(`Reference photos 1-${idx} show Lotte, a real dog (Sven's dog and office boss at Happy Property). Lotte must look EXACTLY like in these reference photos.`)
+    for (const f of refs) { const b = await driveDownload(token, f.id); files.push({ file: new File([b], f.name || 'lotte.jpg', { type: b.type || 'image/jpeg' }), who: 'lotte' }) }
   }
-  const lotteCount = idx
   if (include.includes('sven') && cfg.sven_folder) {
     const refs = await driveImages(token, cfg.sven_folder, cfg.sven_min_bytes ?? 500000, 2)
-    for (const f of refs) { const b = await driveDownload(token, f.id); fd.append('image[]', new File([b], f.name || `sven-${idx}.jpg`, { type: b.type || 'image/jpeg' })); idx++ }
-    if (idx > lotteCount) parts.push(`Reference photos ${lotteCount + 1}-${idx} show Sven Rüprich (real person, founder of Happy Property). Sven must look EXACTLY like in these reference photos.`)
+    for (const f of refs) { const b = await driveDownload(token, f.id); files.push({ file: new File([b], f.name || 'sven.jpg', { type: b.type || 'image/jpeg' }), who: 'sven' }) }
   }
-  if (!idx) return await generatePostImage(sb, postId, prompt)
-  fd.append('prompt', `${parts.join(' ')} Create a NEW photorealistic image: ${prompt}. Keep the likeness of the referenced dog/person absolutely true to the reference photos. Natural light, no text, no watermarks.`)
-  const res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${openaiKey}` }, body: fd })
-  const d = await res.json()
-  if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
-  const b64 = d?.data?.[0]?.b64_json as string | undefined
+  if (!files.length) return await generatePostImage(sb, postId, prompt)
+  // OpenAI images/edits — lehnt OpenAI eine einzelne Referenz ab („Invalid image
+  // file or mode for image N", z.B. iPhone-JPEGs), fliegt genau die raus und wir
+  // versuchen es erneut, solange Referenzen übrig sind.
+  let b64: string | undefined
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const parts: string[] = []
+    if (files.some(f => f.who === 'lotte')) parts.push("The attached DOG photos show Lotte, a real dog (Sven's dog and office boss at Happy Property). Lotte must match these reference photos EXACTLY — same breed, same coat color, same face.")
+    if (files.some(f => f.who === 'sven')) parts.push('The attached photos of a MAN show Sven Rüprich (real person, founder of Happy Property). Sven must match these reference photos EXACTLY — same face, same build.')
+    const fd = new FormData()
+    fd.append('model', 'gpt-image-1'); fd.append('size', '1024x1024'); fd.append('quality', 'medium'); fd.append('n', '1')
+    for (const f of files) fd.append('image[]', f.file)
+    fd.append('prompt', `${parts.join(' ')} Create a NEW photorealistic image: ${prompt}. Keep the likeness of the referenced dog/person absolutely true to the reference photos. Natural light, no text, no watermarks.`)
+    const res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${openaiKey}` }, body: fd })
+    const d = await res.json()
+    if (res.ok) { b64 = d?.data?.[0]?.b64_json as string | undefined; break }
+    const msg = JSON.stringify(d?.error ?? d)
+    const m = msg.match(/image (\d+)/i)
+    if (m && files.length > 1) {
+      const bad = Math.min(files.length - 1, parseInt(m[1], 10) - 1)
+      console.warn(`[social-agent] Referenz ${files[bad].file.name} von OpenAI abgelehnt — fliegt raus, neuer Versuch.`)
+      files.splice(bad, 1); continue
+    }
+    throw new Error(`OpenAI: ${msg.slice(0, 200)}`)
+  }
   if (!b64) throw new Error('OpenAI lieferte kein Bild.')
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
   const path = `social/${postId}-persona-${Date.now()}.png`
@@ -381,6 +394,14 @@ Regeln:
       if (typeof EdgeRuntime !== 'undefined') { EdgeRuntime.waitUntil(job()); return json({ ok: true, pending: true, prompt }) }
       await job()
       return json({ ok: true, pending: false, prompt })
+    }
+
+    // ── Persona-Testlauf (Debug): synchron, liefert URL oder ECHTEN Fehler ───
+    if (body.action === 'persona_test') {
+      try {
+        const url = await generatePersonaImage(sb, String(body.post_id ?? ''), String(body.prompt ?? 'sitting relaxed on a Mediterranean terrace in Cyprus, sea view'), Array.isArray(body.include) ? (body.include as string[]) : ['lotte'])
+        return json({ ok: true, url })
+      } catch (e) { return json({ error: (e as Error).message }, 500) }
     }
 
     // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
