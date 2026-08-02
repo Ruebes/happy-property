@@ -18,6 +18,7 @@
 //          LINKEDIN_ACCESS_TOKEN? (optional), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
+import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -225,6 +226,22 @@ async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: 
   const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
   await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
   return url
+}
+
+// 16:9-Thumbnail → 1080×1350-Insta-Rahmen: Bild ungeschnitten mittig, Hintergrund
+// = stark abgedunkelter Durchschnittsfarbton des Bilds. Fällt bei Fehlern sauber
+// auf das Original zurück.
+async function igFrame(jpgBytes: Uint8Array): Promise<Uint8Array | null> {
+  try {
+    const src = await Image.decode(jpgBytes)
+    const avg = src.averageColor()
+    const [r, g, b] = Image.colorToRGBA(avg)
+    const bg = new Image(1080, 1350)
+    bg.fill(Image.rgbToColor(Math.round(r * 0.28), Math.round(g * 0.28), Math.round(b * 0.28)))
+    const scaled = src.resize(1080, Image.RESIZE_AUTO)
+    bg.composite(scaled, 0, Math.round((1350 - scaled.height) / 2))
+    return await bg.encodeJPEG(88)
+  } catch (e) { console.warn('[social-agent] igFrame:', e); return null }
 }
 
 Deno.serve(async (req) => {
@@ -443,6 +460,7 @@ Regeln:
 
       // Thumbnail sichern (maxres, sonst hq)
       let thumbUrl: string | null = null
+      let igUrl: string | null = null
       for (const q of ['maxresdefault', 'hqdefault']) {
         const r = await fetch(`https://i.ytimg.com/vi/${vid}/${q}.jpg`)
         if (r.ok) {
@@ -450,6 +468,13 @@ Regeln:
           const path = `social/yt-${vid}.jpg`
           const { error } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/jpeg', upsert: true })
           if (!error) thumbUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+          // Insta-Rahmen (4:5) für FB/IG — 16:9-Original bleibt für LinkedIn
+          const framed = await igFrame(bytes)
+          if (framed) {
+            const p2 = `social/yt-${vid}-ig.jpg`
+            const { error: e2 } = await sb.storage.from('ad-creatives').upload(p2, framed, { contentType: 'image/jpeg', upsert: true })
+            if (!e2) igUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${p2}`
+          }
           break
         }
       }
@@ -478,12 +503,29 @@ Regeln:
         return new Date(guess.getTime() - cyOffsetMin(guess) * 60000).toISOString()
       }
       await sb.from('social_topics').upsert({ key: 'youtube', label: 'YouTube-Video', icon: '🎬', sort: 90 }, { onConflict: 'key', ignoreDuplicates: true })
+      const metaImg = igUrl ?? thumbUrl
       const base = { topic: 'youtube', news_source: videoUrl, format: 'single', status: 'geplant', image_url: thumbUrl, image_urls: thumbUrl ? [thumbUrl] : [] }
-      const { data: p1, error: e1 } = await sb.from('social_posts').insert({ ...base, title: `🎬 ${title}`.slice(0, 200), content: out.meta_caption, platforms: ['facebook', 'instagram'], scheduled_for: atCy(18, 30) }).select('id').single()
+      const { data: p1, error: e1 } = await sb.from('social_posts').insert({ ...base, image_url: metaImg, image_urls: metaImg ? [metaImg] : [], title: `🎬 ${title}`.slice(0, 200), content: out.meta_caption, platforms: ['facebook', 'instagram'], scheduled_for: atCy(18, 30) }).select('id').single()
       if (e1) return json({ error: e1.message }, 500)
       const { data: p2, error: e2 } = await sb.from('social_posts').insert({ ...base, title: `🎬 in · ${title}`.slice(0, 200), content: out.linkedin_caption, platforms: ['linkedin'], scheduled_for: atCy(8, 30) }).select('id').single()
       if (e2) return json({ error: e2.message }, 500)
       return json({ success: true, video: videoUrl, title, thumb: thumbUrl, meta_post: (p1 as { id: string }).id, linkedin_post: (p2 as { id: string }).id, meta_at: atCy(18, 30), linkedin_at: atCy(8, 30) })
+    }
+
+    // ── Insta-Rahmen für bestehenden Post nachziehen ─────────────────────────
+    if (body.action === 'ig_frame') {
+      const { data: pr } = await sb.from('social_posts').select('id, image_url').eq('id', String(body.post_id ?? '')).maybeSingle()
+      const post = pr as { id: string; image_url: string | null } | null
+      if (!post?.image_url) return json({ error: 'Post/Bild nicht gefunden' }, 404)
+      const bytes = new Uint8Array(await (await fetch(post.image_url)).arrayBuffer())
+      const framed = await igFrame(bytes)
+      if (!framed) return json({ error: 'Rahmen fehlgeschlagen' }, 500)
+      const path = `social/igframe-${post.id}-${Date.now()}.jpg`
+      const { error } = await sb.storage.from('ad-creatives').upload(path, framed, { contentType: 'image/jpeg', upsert: true })
+      if (error) return json({ error: error.message }, 500)
+      const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+      await sb.from('social_posts').update({ image_url: url, image_urls: [url], updated_at: new Date().toISOString() }).eq('id', post.id)
+      return json({ success: true, url })
     }
 
     // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
