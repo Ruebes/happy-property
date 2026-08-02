@@ -674,6 +674,7 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       const imgs = (Array.isArray(p0?.image_urls) ? p0!.image_urls! : []).filter(Boolean)
       if (p0 && !imgs.length && p0.image_url) imgs.push(p0.image_url)
       const isCarousel = (p0?.format === 'carousel') && imgs.length >= 2
+      const videoUrl = ((p0 as { video_url?: string | null } | null)?.video_url ?? '').trim()
       const p = p0 ? { ...p0, image_url: imgs[0] ?? p0.image_url } : null
       if (!p?.content?.trim()) return json({ error: 'Der Post hat noch keinen Text.' }, 400)
       const metaToken = Deno.env.get('META_ACCESS_TOKEN') ?? ''
@@ -701,7 +702,12 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
       if (p.platforms.includes('facebook') && pageId && !results.facebook) {
         try {
-          if (isCarousel) {
+          if (videoUrl) {
+            // Video/Reel: Facebook nimmt eine öffentliche Datei-URL direkt an
+            const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/videos`, { method: 'POST', body: new URLSearchParams({ file_url: videoUrl, description: p.content, access_token: pageToken }) }).then(x => x.json())
+            if (r.error) throw new Error(r.error.message)
+            results.facebook = { ok: true, id: r.id }
+          } else if (isCarousel) {
             // Fotos unveröffentlicht hochladen → als attached_media an einen Feed-Post hängen
             const mediaIds: string[] = []
             for (const u of imgs.slice(0, 10)) {
@@ -729,6 +735,24 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       if (p.platforms.includes('instagram') && !results.instagram) {
         try {
           if (!igId) throw new Error('Kein Instagram-Business-Konto mit der Seite verknüpft.')
+          if (videoUrl) {
+            // Instagram-REEL: Container anlegen → Verarbeitung abwarten → publish
+            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'REELS', video_url: videoUrl, caption: p.content, share_to_feed: 'true', access_token: pageToken }) }).then(x => x.json())
+            if (c.error) throw new Error(c.error.message)
+            let stat = ''
+            for (let i = 0; i < 12; i++) {
+              await new Promise(res => setTimeout(res, 10000))
+              const st = await fetch(`https://graph.facebook.com/v21.0/${c.id}?fields=status_code&access_token=${pageToken}`).then(x => x.json())
+              stat = st.status_code ?? ''
+              if (stat === 'FINISHED' || stat === 'ERROR') break
+            }
+            if (stat === 'ERROR') throw new Error('Instagram konnte das Video nicht verarbeiten (Format/Länge prüfen: MP4, 9:16, max. 15 Min).')
+            if (stat !== 'FINISHED') throw new Error('Video-Verarbeitung dauert noch — bitte in 1–2 Minuten erneut „Jetzt posten" klicken.')
+            const pubV = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: c.id, access_token: pageToken }) }).then(x => x.json())
+            if (pubV.error) throw new Error(pubV.error.message)
+            results.instagram = { ok: true, id: pubV.id }
+            throw { __done: true }
+          }
           if (!p.image_url) throw new Error('Instagram braucht mindestens ein Bild.')
           let creationId: string
           if (isCarousel) {
@@ -749,11 +773,13 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
           const pub = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: creationId, access_token: pageToken }) }).then(x => x.json())
           if (pub.error) throw new Error(pub.error.message)
           results.instagram = { ok: true, id: pub.id }
-        } catch (e) { results.instagram = { ok: false, error: (e as Error).message } }
+        } catch (e) { if (!(e as { __done?: boolean }).__done) results.instagram = { ok: false, error: (e as Error).message } }
       }
       // LinkedIn (optional — Token muss Sven einmalig hinterlegen)
       if (p.platforms.includes('linkedin')) {
-        if (!liToken) {
+        if (videoUrl) {
+          results.linkedin = { ok: false, error: 'Video/Reel auf LinkedIn noch nicht angebunden — bitte dort manuell posten.' }
+        } else if (!liToken) {
           results.linkedin = { ok: false, error: 'LINKEDIN_ACCESS_TOKEN fehlt — LinkedIn ist noch nicht verbunden.' }
         } else {
           try {

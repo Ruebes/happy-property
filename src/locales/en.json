@@ -3925,7 +3925,12 @@
       "imgTarget": "How many images should the carousel have?",
       "imgTargetHint": "\"Create AI image\" fills up to the chosen count automatically.",
       "imageMakeN": "🎨 Create AI images ({{n}} missing)",
-      "imgsPending": "{{n}} images are being created — they will appear in the list one by one…"
+      "imgsPending": "{{n}} images are being created — they will appear in the list one by one…",
+      "video": "Video / reel (FB + Insta)",
+      "videoRemove": "Remove video",
+      "videoUploading": "Uploading video…",
+      "videoUpload": "Upload video (MP4, ideally 9:16)",
+      "videoHint": "With a video, Facebook gets a video post and Instagram a REEL — images are then ignored. LinkedIn: please post videos manually."
     },
     "conn": {
       "title": "Connectors",

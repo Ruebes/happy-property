@@ -3925,7 +3925,12 @@
       "imgTarget": "Wie viele Bilder soll das Karussell haben?",
       "imgTargetHint": "„KI-Bild erstellen\" füllt automatisch bis zur gewählten Anzahl auf.",
       "imageMakeN": "🎨 KI-Bilder erstellen ({{n}} fehlen)",
-      "imgsPending": "{{n}} Bilder werden erstellt — sie erscheinen nacheinander in der Liste…"
+      "imgsPending": "{{n}} Bilder werden erstellt — sie erscheinen nacheinander in der Liste…",
+      "video": "Video / Reel (FB + Insta)",
+      "videoRemove": "Video entfernen",
+      "videoUploading": "Video lädt hoch…",
+      "videoUpload": "Video hochladen (MP4, ideal 9:16)",
+      "videoHint": "Mit Video wird auf Facebook ein Video-Post und auf Instagram ein REEL veröffentlicht — Bilder werden dann ignoriert. LinkedIn: Video bitte manuell."
     },
     "conn": {
       "title": "Connectoren",

@@ -16,7 +16,7 @@ import { CustomSelect } from '../../../components/CustomSelect'
 interface Topic { key: string; label: string; icon: string; sort: number }
 interface SocialPost {
   id: string; topic: string; title: string | null; content: string | null
-  platforms: string[]; image_url: string | null; image_urls: string[] | null
+  platforms: string[]; image_url: string | null; image_urls: string[] | null; video_url: string | null
   format: string; status: string; scheduled_for: string | null
   project_id: string | null; unit_id: string | null; news_source: string | null
   post_results: Record<string, { ok: boolean; id?: string; error?: string }> | null
@@ -226,7 +226,8 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
   const [showGallery, setShowGallery] = useState(false)
   const [msgs, setMsgs] = useState<ChatMsg[]>([])
   const [input, setInput] = useState('')
-  const [busy, setBusy] = useState<'' | 'chat' | 'image' | 'save' | 'publish'>('')
+  const [busy, setBusy] = useState<'' | 'chat' | 'image' | 'save' | 'publish' | 'video'>('')
+  const [videoUrl, setVideoUrl] = useState<string | null>(post.video_url ?? null)
   const [note, setNote] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -309,6 +310,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
         project_id: projectId || null, unit_id: unitId || null,
         image_urls: images, image_url: images[0] ?? null,
         scheduled_for: scheduled ? new Date(scheduled).toISOString() : null,
+        video_url: videoUrl,
         status: post.status === 'gepostet' ? 'gepostet' : (approved ? 'geplant' : 'entwurf'),
         updated_at: new Date().toISOString(),
       }).eq('id', post.id)
@@ -503,6 +505,37 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
               <input type="datetime-local" value={scheduled} onChange={e => { setScheduled(e.target.value); autoSug.current = false; setSuggestion('') }} className={inp} />
               {suggestion && <p className="text-[11px] text-emerald-600 mt-1">💡 {t('crm.social.suggested', 'Vorschlag vom System (anpassbar)')}: {suggestion}</p>}
               <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHintAuto', 'Mit Datum + Speichern landet der Post in der Warteschlange: Die Automatik veröffentlicht EINEN fälligen Post pro Tag (vormittags) auf die gewählten Plattformen.')}</p>
+            </div>
+
+            {/* 🎥 Video/Reel: FB-Video + Instagram-Reel (LinkedIn: manuell) */}
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">🎥 {t('crm.social.video', 'Video / Reel (FB + Insta)')}</label>
+              {videoUrl ? (
+                <div className="space-y-1.5">
+                  <video controls preload="metadata" src={videoUrl} className="w-full max-h-64 rounded-xl bg-black" />
+                  <button onClick={() => { setVideoUrl(null); void supabase.from('social_posts').update({ video_url: null }).eq('id', post.id) }}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:text-red-600">🗑 {t('crm.social.videoRemove', 'Video entfernen')}</button>
+                </div>
+              ) : (
+                <label className={`inline-flex items-center gap-2 text-sm px-3 py-2 rounded-xl border border-dashed border-gray-300 text-gray-500 cursor-pointer hover:border-orange-300 hover:text-orange-600 ${busy === 'video' ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {busy === 'video' ? t('crm.social.videoUploading', 'Video lädt hoch…') : `⬆️ ${t('crm.social.videoUpload', 'Video hochladen (MP4, ideal 9:16)')}`}
+                  <input type="file" accept="video/mp4,video/quicktime" className="hidden" onChange={e => {
+                    const f = e.target.files?.[0]; e.target.value = ''
+                    if (!f) return
+                    if (f.size > 200 * 1024 * 1024) { setNote('❌ Video größer als 200 MB'); return }
+                    setBusy('video')
+                    const ext = f.name.split('.').pop() ?? 'mp4'
+                    const path = `social/video-${post.id}-${Date.now()}.${ext}`
+                    void supabase.storage.from('ad-creatives').upload(path, f, { contentType: f.type || 'video/mp4' }).then(async ({ error }) => {
+                      if (error) { setNote(`❌ ${error.message}`); setBusy(''); return }
+                      const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/ad-creatives/${path}`
+                      await supabase.from('social_posts').update({ video_url: url }).eq('id', post.id)
+                      setVideoUrl(url); setBusy('')
+                    })
+                  }} />
+                </label>
+              )}
+              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.videoHint', 'Mit Video wird auf Facebook ein Video-Post und auf Instagram ein REEL veröffentlicht — Bilder werden dann ignoriert. LinkedIn: Video bitte manuell.')}</p>
             </div>
 
             {post.post_results && (

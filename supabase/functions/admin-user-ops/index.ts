@@ -132,14 +132,17 @@ Deno.serve(async (req: Request) => {
     // Feriengast-Einladung darf zusätzlich ein Verwalter auslösen (Buchungs-Flow).
     const authHeader = req.headers.get('Authorization') ?? ''
     const jwt = authHeader.replace(/^Bearer\s+/i, '')
-    const caller = jwt
-      ? (await createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
-      : null
-    if (!caller) return json({ error: 'Nicht autorisiert' }, 401)
-    const { data: callerProfile } = await admin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
-    const callerRole = (callerProfile as { role?: string } | null)?.role ?? ''
-    const allowed = callerRole === 'admin' || (action === 'invite_feriengast' && callerRole === 'verwalter')
-    if (!allowed) return json({ error: 'Keine Berechtigung für diese Aktion' }, 403)
+    // Interner Aufruf mit Service-Role-Key ist erlaubt (Automationen).
+    if (jwt !== serviceRoleKey) {
+      const caller = jwt
+        ? (await createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
+        : null
+      if (!caller) return json({ error: 'Nicht autorisiert' }, 401)
+      const { data: callerProfile } = await admin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
+      const callerRole = (callerProfile as { role?: string } | null)?.role ?? ''
+      const allowed = callerRole === 'admin' || (action === 'invite_feriengast' && callerRole === 'verwalter')
+      if (!allowed) return json({ error: 'Keine Berechtigung für diese Aktion' }, 403)
+    }
 
     // ── CREATE ──────────────────────────────────────────────────────────────────
     if (action === 'create') {
