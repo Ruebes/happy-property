@@ -3884,7 +3884,20 @@
       "suggested": "System suggestion (adjustable)",
       "sugMeta": "FB/Insta: max. 1 post/day — best time Mon–Fri 6:30 pm, weekends 12:30 pm",
       "sugLi": "LinkedIn: Tue–Thu 8:30 am, max. 3 posts/week",
-      "sugBoth": "Combo FB/Insta + LinkedIn: Tue–Thu 12:00, max. 1 post/day per channel"
+      "sugBoth": "Combo FB/Insta + LinkedIn: Tue–Thu 12:00, max. 1 post/day per channel",
+      "imgReady": "New image is in.",
+      "imgTimeout": "The image did not arrive — please try again.",
+      "imgPending": "Image is being created — it will appear in the image list shortly…",
+      "preview": "Preview",
+      "prevMore": "more",
+      "prevMobile": "Mobile",
+      "prevDesktop": "Desktop",
+      "prevNow": "Just now",
+      "prevLike": "Like",
+      "prevComment": "Comment",
+      "prevShare": "Share",
+      "prevNoImage": "No image on this post yet",
+      "prevHint": "Mock-up — the platform may render details differently. Text truncation as in the feed; LinkedIn shows the first image for carousels."
     },
     "conn": {
       "title": "Connectors",

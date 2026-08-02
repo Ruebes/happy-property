@@ -3884,7 +3884,20 @@
       "suggested": "Vorschlag vom System (anpassbar)",
       "sugMeta": "FB/Insta: max. 1 Post/Tag — beste Zeit Mo–Fr 18:30, Wochenende 12:30",
       "sugLi": "LinkedIn: Di–Do 08:30, max. 3 Posts/Woche",
-      "sugBoth": "Kombi FB/Insta + LinkedIn: Di–Do 12:00, je Kanal max. 1 Post/Tag"
+      "sugBoth": "Kombi FB/Insta + LinkedIn: Di–Do 12:00, je Kanal max. 1 Post/Tag",
+      "imgReady": "Neues Bild ist da.",
+      "imgTimeout": "Das Bild kam nicht an — bitte noch einmal versuchen.",
+      "imgPending": "Bild wird erstellt — es erscheint gleich in der Bilderliste…",
+      "preview": "Vorschau",
+      "prevMore": "mehr",
+      "prevMobile": "Mobil",
+      "prevDesktop": "Desktop",
+      "prevNow": "Gerade eben",
+      "prevLike": "Gefällt mir",
+      "prevComment": "Kommentieren",
+      "prevShare": "Teilen",
+      "prevNoImage": "Noch kein Bild am Post",
+      "prevHint": "Nachbildung — die Plattform kann Details anders darstellen. Textkürzung wie im Feed; LinkedIn zeigt bei Karussells das erste Bild."
     },
     "conn": {
       "title": "Connectoren",

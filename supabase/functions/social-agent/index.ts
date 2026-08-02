@@ -40,7 +40,11 @@ Kanäle: Facebook „Immobilien in Zypern", Instagram @happy_property_cyprus, Li
 Ton: locker, direkt, DU-Form, deutsch, gern mit Haltung und einem Augenzwinkern —
 aber seriös in den Zahlen. Emojis sparsam und gezielt. Keine erfundenen Fakten/Zahlen.
 „Weisheit der Woche" postet Lotte (Svens Hündin & Büro-Chefin 🐾): humorvoll,
-tierisch-weise, mit Immobilien-Dreh, Absender Lotte.`
+tierisch-weise, mit Immobilien-Dreh, Absender Lotte.
+Bild-Personas: Lotte und Sven können fotorealistisch ECHT ins Bild (Referenzfotos
+aus dem Drive sorgen für Ähnlichkeit) — beim Tool make_image include:['lotte'] und/oder
+['sven'] setzen, wenn es zum Post passt oder gewünscht wird. Bei Lottes „Weisheit der
+Woche" gehört Lotte selbst ins Bild (include:['lotte']).`
 
 async function claude(apiKey: string, opts: { system: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown[]; tool_choice?: unknown; max_tokens?: number }): Promise<Record<string, unknown>> {
   let lastErr = ''
@@ -118,6 +122,84 @@ async function generatePostImage(sb: SupabaseClient, postId: string, prompt: str
   if (!b64) throw new Error('OpenAI lieferte kein Bild.')
   const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
   const path = `social/${postId}-${Date.now()}.png`
+  const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+  if (upErr) throw new Error(`Upload: ${upErr.message}`)
+  const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+  const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
+  const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
+  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+  return url
+}
+
+// ── Lotte/Sven-Referenzen: LIVE aus Google Drive (Service-Account) ──────────
+// Ordner stehen in crm_settings key social_persona_refs (JSON):
+//   {"lotte_folder":"…","sven_folder":"…","sven_min_bytes":500000}
+// Neue Fotos im Drive-Ordner „Lotte Original" wirken damit sofort — kein Sync nötig.
+function pb64url(bytes: Uint8Array): string { let x = ''; for (const b of bytes) x += String.fromCharCode(b); return btoa(x).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
+async function driveToken(): Promise<string> {
+  const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON'); if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON fehlt')
+  const sa = JSON.parse(raw) as { client_email: string; private_key: string }
+  const pem = sa.private_key.replace(/-----BEGIN PRIVATE KEY-----/, '').replace(/-----END PRIVATE KEY-----/, '').replace(/\\n/g, '').replace(/\s+/g, '')
+  const key = await crypto.subtle.importKey('pkcs8', Uint8Array.from(atob(pem), c => c.charCodeAt(0)).buffer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
+  const now = Math.floor(Date.now() / 1000)
+  const enc = (o: unknown) => pb64url(new TextEncoder().encode(JSON.stringify(o)))
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
+  const r = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${pb64url(new Uint8Array(sig))}` }) })
+  const d = await r.json() as { access_token?: string }
+  if (!d.access_token) throw new Error('Drive-SA-Token fehlgeschlagen')
+  return d.access_token
+}
+interface PersonaCfg { lotte_folder?: string; lotte_fallback_folder?: string; sven_folder?: string; sven_min_bytes?: number }
+async function personaCfg(sb: SupabaseClient): Promise<PersonaCfg> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_persona_refs').maybeSingle()
+  try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as PersonaCfg } catch { return {} }
+}
+async function driveImages(token: string, folderId: string, minBytes = 0, max = 3): Promise<Array<{ id: string; name: string }>> {
+  const q = encodeURIComponent(`'${folderId}' in parents and mimeType contains 'image/' and trashed = false`)
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,size)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=25`, { headers: { Authorization: `Bearer ${token}` } })
+  const d = await r.json() as { files?: Array<{ id: string; name: string; size?: string }> }
+  return (d.files ?? []).filter(f => Number(f.size ?? 0) >= minBytes).slice(0, max)
+}
+async function driveDownload(token: string, fileId: string): Promise<Blob> {
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!r.ok) throw new Error(`Drive-Download ${fileId}: ${r.status}`)
+  return await r.blob()
+}
+// Persona-Bild: echte Referenzfotos (Lotte/Sven) + Szene → OpenAI images/edits.
+// Ohne verfügbare Referenzen fällt es sauber auf die normale Generierung zurück.
+async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: string, include: string[]): Promise<string> {
+  const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
+  if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
+  const cfg = await personaCfg(sb)
+  const token = await driveToken()
+  const fd = new FormData()
+  fd.append('model', 'gpt-image-1'); fd.append('size', '1024x1024'); fd.append('quality', 'medium'); fd.append('n', '1')
+  const parts: string[] = []
+  let idx = 0
+  if (include.includes('lotte') && cfg.lotte_folder) {
+    // Erst Svens Original-Ordner; solange der nicht für den SA freigegeben ist,
+    // greift automatisch die Referenz-Kopie (lotte_fallback_folder).
+    let refs = await driveImages(token, cfg.lotte_folder, 0, 3)
+    if (!refs.length && cfg.lotte_fallback_folder) refs = await driveImages(token, cfg.lotte_fallback_folder, 0, 3)
+    for (const f of refs) { const b = await driveDownload(token, f.id); fd.append('image[]', new File([b], f.name || `lotte-${idx}.jpg`, { type: b.type || 'image/jpeg' })); idx++ }
+    if (idx) parts.push(`Reference photos 1-${idx} show Lotte, a real dog (Sven's dog and office boss at Happy Property). Lotte must look EXACTLY like in these reference photos.`)
+  }
+  const lotteCount = idx
+  if (include.includes('sven') && cfg.sven_folder) {
+    const refs = await driveImages(token, cfg.sven_folder, cfg.sven_min_bytes ?? 500000, 2)
+    for (const f of refs) { const b = await driveDownload(token, f.id); fd.append('image[]', new File([b], f.name || `sven-${idx}.jpg`, { type: b.type || 'image/jpeg' })); idx++ }
+    if (idx > lotteCount) parts.push(`Reference photos ${lotteCount + 1}-${idx} show Sven Rüprich (real person, founder of Happy Property). Sven must look EXACTLY like in these reference photos.`)
+  }
+  if (!idx) return await generatePostImage(sb, postId, prompt)
+  fd.append('prompt', `${parts.join(' ')} Create a NEW photorealistic image: ${prompt}. Keep the likeness of the referenced dog/person absolutely true to the reference photos. Natural light, no text, no watermarks.`)
+  const res = await fetch('https://api.openai.com/v1/images/edits', { method: 'POST', headers: { Authorization: `Bearer ${openaiKey}` }, body: fd })
+  const d = await res.json()
+  if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
+  const b64 = d?.data?.[0]?.b64_json as string | undefined
+  if (!b64) throw new Error('OpenAI lieferte kein Bild.')
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  const path = `social/${postId}-persona-${Date.now()}.png`
   const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
   if (upErr) throw new Error(`Upload: ${upErr.message}`)
   const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
@@ -206,7 +288,10 @@ Regeln:
         description: 'Erzeugt SOFORT ein neues Bild zum Post (OpenAI). Nutzen, wenn der Nutzer ein Bild will oder Änderungen am Bild wünscht — der Prompt muss zum aktuellen Post-Text passen.',
         input_schema: {
           type: 'object',
-          properties: { prompt: { type: 'string', description: 'Englischer Bild-Prompt, passend zum Post-Text, ohne Text/Wasserzeichen im Bild' } },
+          properties: {
+            prompt: { type: 'string', description: 'Englischer Bild-Prompt, passend zum Post-Text, ohne Text/Wasserzeichen im Bild' },
+            include: { type: 'array', items: { type: 'string', enum: ['lotte', 'sven'] }, description: 'Echte Personas einbeziehen: lotte (Svens Hündin, echtes Aussehen) und/oder sven (Sven Rüprich, echtes Aussehen)' },
+          },
           required: ['prompt'],
         },
       }, {
@@ -244,31 +329,68 @@ Regeln:
           } catch (e) { reply = `${reply}\n\n❌ Bild-Bearbeitung fehlgeschlagen: ${(e as Error).message}`.trim() }
         } else { reply = `${reply}\n\n❌ Bild ${editTool.input.image_number} gibt es nicht.`.trim() }
       }
-      const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image')
+      const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image') as { input?: { prompt?: string; include?: string[] } } | undefined
+      let imagePending = false
       if (!newImageUrl && imgTool?.input?.prompt) {
-        try {
-          newImageUrl = await generatePostImage(sb, body.post_id, imgTool.input.prompt)
-          reply = reply ? `${reply}\n\n🎨 Neues Bild ist fertig.` : '🎨 Neues Bild ist fertig — passend zum Text.'
-        } catch (e) { reply = `${reply}\n\n❌ Bild fehlgeschlagen: ${(e as Error).message}`.trim() }
+        const inc = Array.isArray(imgTool.input.include) ? imgTool.input.include.filter(x => x === 'lotte' || x === 'sven') : []
+        const mkPrompt = imgTool.input.prompt
+        const job = async () => {
+          try {
+            if (inc.length) await generatePersonaImage(sb, body.post_id, mkPrompt, inc)
+            else await generatePostImage(sb, body.post_id, mkPrompt)
+          } catch (e) {
+            console.error('[social-agent] chat image bg:', e)
+            if (inc.length) { try { await generatePostImage(sb, body.post_id, mkPrompt) } catch (e2) { console.error('[social-agent] chat image fallback:', e2) } }
+          }
+        }
+        if (typeof EdgeRuntime !== 'undefined') {
+          EdgeRuntime.waitUntil(job()); imagePending = true
+          const withWho = inc.length ? ` (mit ${inc.map(x => x === 'lotte' ? 'Lotte' : 'Sven').join(' + ')}, nach echten Referenzfotos)` : ''
+          reply = reply ? `${reply}\n\n🎨 Bild wird erstellt${withWho} — es erscheint gleich in der Bilderliste.` : `🎨 Bild wird erstellt${withWho} — es erscheint gleich in der Bilderliste.`
+        } else { await job() }
       }
       // Verlauf speichern
       await sb.from('social_post_messages').insert([
         { post_id: body.post_id, role: 'user', content: body.message.trim() },
         { post_id: body.post_id, role: 'assistant', content: reply || (newContent ? 'Post aktualisiert ✓' : '…') },
       ])
-      return json({ ok: true, reply: reply || (newContent ? 'Ich habe den Post-Text aktualisiert. ✓' : ''), content: newContent, image_url: newImageUrl, image_prompt: toolUse?.input?.image_prompt ?? null })
+      return json({ ok: true, reply: reply || (newContent ? 'Ich habe den Post-Text aktualisiert. ✓' : ''), content: newContent, image_url: newImageUrl, image_pending: imagePending, image_prompt: toolUse?.input?.image_prompt ?? null })
     }
 
     // ── Bild via OpenAI (gpt-image-1) → ad-creatives/social/… ─────────────────
     if (body.action === 'image') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
-      const { data: post } = await sb.from('social_posts').select('image_prompt, content').eq('id', body.post_id).maybeSingle()
-      const p = post as { image_prompt: string | null; content: string | null } | null
+      const { data: post } = await sb.from('social_posts').select('image_prompt, content, topic').eq('id', body.post_id).maybeSingle()
+      const p = post as { image_prompt: string | null; content: string | null; topic: string | null } | null
       const prompt = (body.prompt ?? p?.image_prompt ?? '').trim()
         || `Photorealistic lifestyle image matching this social media post about premium new-build real estate investment in Cyprus (Paphos): "${(p?.content ?? '').slice(0, 300)}". Mediterranean light, modern architecture, no text, no watermarks.`
+      // Im HINTERGRUND generieren: Persona-Bilder (Drive-Referenzen + OpenAI edits)
+      // dauern zu lange für einen synchronen Klick — der Button bekäme sonst
+      // einen Gateway-Abbruch („Failed to send a request to the Edge Function").
+      const inc = p?.topic === 'weisheit' ? ['lotte'] : []
+      const job = async () => {
+        try {
+          if (inc.length) await generatePersonaImage(sb, body.post_id, prompt, inc)
+          else await generatePostImage(sb, body.post_id, prompt)
+        } catch (e) {
+          console.error('[social-agent] image bg:', e)
+          // Sicherheitsnetz: Persona fehlgeschlagen → normales Bild versuchen
+          if (inc.length) { try { await generatePostImage(sb, body.post_id, prompt) } catch (e2) { console.error('[social-agent] image fallback:', e2) } }
+        }
+      }
+      if (typeof EdgeRuntime !== 'undefined') { EdgeRuntime.waitUntil(job()); return json({ ok: true, pending: true, prompt }) }
+      await job()
+      return json({ ok: true, pending: false, prompt })
+    }
+
+    // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
+    if (body.action === 'persona_check') {
       try {
-        const url = await generatePostImage(sb, body.post_id, prompt)
-        return json({ ok: true, image_url: url, prompt })
+        const cfg = await personaCfg(sb); const token = await driveToken()
+        let lotte = cfg.lotte_folder ? await driveImages(token, cfg.lotte_folder, 0, 10) : []
+        if (!lotte.length && cfg.lotte_fallback_folder) lotte = await driveImages(token, cfg.lotte_fallback_folder, 0, 10)
+        const sven = cfg.sven_folder ? await driveImages(token, cfg.sven_folder, cfg.sven_min_bytes ?? 500000, 10) : []
+        return json({ ok: true, lotte: lotte.map(f => f.name), sven: sven.map(f => f.name) })
       } catch (e) { return json({ error: (e as Error).message }, 502) }
     }
 

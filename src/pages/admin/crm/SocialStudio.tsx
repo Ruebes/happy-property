@@ -76,6 +76,101 @@ function suggestSlot(platforms: string[], posts: SocialPost[], excludeId?: strin
   return { when: fb, isMeta, isLi }
 }
 
+// ── Plattform-Vorschau: FB / Instagram / LinkedIn, Desktop + Mobil ───────────
+// Nachgebaute Feed-Karten (keine echten Plattform-Assets): Textkürzung wie auf
+// der Plattform (FB ~280 / IG ~125 / LinkedIn ~210 Zeichen + „mehr"), Karussell
+// mit Pfeilen/Punkten (LinkedIn zeigt nur das erste Bild).
+function PostPreview({ content, images, format, platforms, onClose }: { content: string; images: string[]; format: string; platforms: string[]; onClose: () => void }) {
+  const { t } = useTranslation()
+  const available = ['facebook', 'instagram', 'linkedin'].filter(x => platforms.includes(x))
+  const tabs = available.length ? available : ['facebook', 'instagram', 'linkedin']
+  const [tab, setTab] = useState(tabs[0])
+  const [mobile, setMobile] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+  const [slide, setSlide] = useState(0)
+  const isCar = format === 'carousel' && images.length >= 2 && tab !== 'linkedin'
+  const img = images[isCar ? slide : 0]
+  const width = mobile ? 375 : 552
+  const limit = tab === 'instagram' ? 125 : tab === 'linkedin' ? 210 : 280
+  const cut = !expanded && content.length > limit
+  const shown = cut ? `${content.slice(0, limit).trimEnd()}… ` : content
+  const more = <button onClick={() => setExpanded(true)} className="text-gray-400 hover:underline">{t('crm.social.prevMore', 'mehr')}</button>
+  const Avatar = ({ letter }: { letter: string }) => (
+    <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shrink-0" style={{ backgroundColor: '#ff795d' }}>{letter}</div>
+  )
+  const Carousel = ({ square }: { square?: boolean }) => img ? (
+    <div className={`relative bg-gray-100 ${square ? 'aspect-square' : ''}`}>
+      <img src={img} alt="" className={`w-full ${square ? 'h-full object-cover' : 'max-h-[420px] object-cover'}`} />
+      {isCar && (<>
+        {slide > 0 && <button onClick={() => setSlide(x => x - 1)} className="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 shadow text-gray-700">‹</button>}
+        {slide < images.length - 1 && <button onClick={() => setSlide(x => x + 1)} className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 shadow text-gray-700">›</button>}
+        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+          {images.map((_, i) => <span key={i} className={`w-1.5 h-1.5 rounded-full ${i === slide ? 'bg-white' : 'bg-white/50'}`} />)}
+        </div>
+        <span className="absolute top-2 right-2 text-[11px] bg-black/60 text-white rounded-full px-2 py-0.5">{slide + 1}/{images.length}</span>
+      </>)}
+    </div>
+  ) : <div className="bg-gray-100 text-gray-400 text-sm text-center py-16">{t('crm.social.prevNoImage', 'Noch kein Bild am Post')}</div>
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-gray-50 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between gap-2 p-3 border-b border-gray-200 flex-wrap">
+          <div className="flex gap-1 bg-gray-200/70 rounded-xl p-1">
+            {tabs.map(k => (
+              <button key={k} onClick={() => { setTab(k); setSlide(0); setExpanded(false) }}
+                className={`px-3 py-1 rounded-lg text-sm font-medium capitalize ${tab === k ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{k === 'linkedin' ? 'LinkedIn' : k === 'facebook' ? 'Facebook' : 'Instagram'}</button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="flex gap-1 bg-gray-200/70 rounded-xl p-1">
+              <button onClick={() => setMobile(true)} className={`px-3 py-1 rounded-lg text-sm ${mobile ? 'bg-white shadow-sm' : 'text-gray-500'}`}>📱 {t('crm.social.prevMobile', 'Mobil')}</button>
+              <button onClick={() => setMobile(false)} className={`px-3 py-1 rounded-lg text-sm ${!mobile ? 'bg-white shadow-sm' : 'text-gray-500'}`}>🖥 {t('crm.social.prevDesktop', 'Desktop')}</button>
+            </div>
+            <button onClick={onClose} className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200">✕</button>
+          </div>
+        </div>
+        <div className="overflow-auto p-6 flex justify-center">
+          <div style={{ width }} className={`bg-white shadow-md overflow-hidden shrink-0 ${mobile ? 'rounded-none border-x border-gray-200' : 'rounded-xl border border-gray-200'}`}>
+            {tab === 'facebook' && (<>
+              <div className="flex items-center gap-2.5 p-3">
+                <Avatar letter="H" />
+                <div className="leading-tight"><p className="text-[15px] font-semibold text-gray-900">Immobilien in Zypern</p><p className="text-xs text-gray-500">{t('crm.social.prevNow', 'Gerade eben')} · 🌍</p></div>
+              </div>
+              <p className="px-3 pb-3 text-[15px] text-gray-900 whitespace-pre-wrap">{shown}{cut && more}</p>
+              <Carousel />
+              <div className="flex justify-around text-sm text-gray-500 border-t border-gray-100 py-2 px-3">
+                <span>👍 {t('crm.social.prevLike', 'Gefällt mir')}</span><span>💬 {t('crm.social.prevComment', 'Kommentieren')}</span><span>↗ {t('crm.social.prevShare', 'Teilen')}</span>
+              </div>
+            </>)}
+            {tab === 'instagram' && (<>
+              <div className="flex items-center gap-2.5 p-3">
+                <Avatar letter="H" />
+                <p className="text-sm font-semibold text-gray-900">happy_property_cyprus</p>
+                <span className="ml-auto text-gray-400">···</span>
+              </div>
+              <Carousel square />
+              <div className="flex gap-4 px-3 pt-3 text-xl text-gray-800"><span>♡</span><span>💬</span><span>➤</span><span className="ml-auto">🔖</span></div>
+              <p className="px-3 py-2 text-sm text-gray-900 whitespace-pre-wrap"><span className="font-semibold">happy_property_cyprus</span> {shown}{cut && more}</p>
+            </>)}
+            {tab === 'linkedin' && (<>
+              <div className="flex items-center gap-2.5 p-3">
+                <Avatar letter="S" />
+                <div className="leading-tight"><p className="text-sm font-semibold text-gray-900">Sven Rüprich</p><p className="text-xs text-gray-500">Happy Property Cyprus · {t('crm.social.prevNow', 'Gerade eben')}</p></div>
+              </div>
+              <p className="px-3 pb-3 text-sm text-gray-900 whitespace-pre-wrap">{shown}{cut && more}</p>
+              <Carousel />
+              <div className="flex justify-around text-sm text-gray-500 border-t border-gray-100 py-2 px-3">
+                <span>👍 {t('crm.social.prevLike', 'Gefällt mir')}</span><span>💬 {t('crm.social.prevComment', 'Kommentieren')}</span><span>🔁 {t('crm.social.prevShare', 'Teilen')}</span>
+              </div>
+            </>)}
+          </div>
+        </div>
+        <p className="text-[11px] text-gray-400 text-center pb-3">{t('crm.social.prevHint', 'Nachbildung — die Plattform kann Details anders darstellen. IG/FB ~Textkürzung wie im Feed; LinkedIn zeigt bei Karussells das erste Bild.')}</p>
+      </div>
+    </div>
+  )
+}
+
 // ── Editor + Chat ────────────────────────────────────────────────────────────
 function PostEditor({ post, topics, projects, allPosts, onClose }: { post: SocialPost; topics: Topic[]; projects: ProjectOpt[]; allPosts: SocialPost[]; onClose: () => void }) {
   const { t } = useTranslation()
@@ -90,6 +185,27 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
   const [approved, setApproved] = useState(post.status === 'geplant')
   const [suggestion, setSuggestion] = useState('')
   const autoSug = useRef(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const pollRef = useRef<number | null>(null)
+  useEffect(() => () => { if (pollRef.current) window.clearInterval(pollRef.current) }, [])
+  // Hintergrund-Bilder: DB pollen, bis ein neues Bild in image_urls auftaucht
+  const pollImages = (fromCount: number) => {
+    if (pollRef.current) window.clearInterval(pollRef.current)
+    let tries = 0
+    pollRef.current = window.setInterval(() => {
+      tries++
+      void supabase.from('social_posts').select('image_urls').eq('id', post.id).maybeSingle().then(({ data }) => {
+        const urls = Array.isArray((data as { image_urls?: string[] } | null)?.image_urls) ? (data as { image_urls: string[] }).image_urls : []
+        if (urls.length > fromCount) {
+          if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null }
+          setImages(urls); setNote(`🎨 ${t('crm.social.imgReady', 'Neues Bild ist da.')}`)
+        } else if (tries > 40) {
+          if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null }
+          setNote(`❌ ${t('crm.social.imgTimeout', 'Das Bild kam nicht an — bitte noch einmal versuchen.')}`)
+        }
+      })
+    }, 5000)
+  }
   const [projectId, setProjectId] = useState(post.project_id ?? '')
   const [unitId, setUnitId] = useState(post.unit_id ?? '')
   const [units, setUnits] = useState<UnitOpt[]>([])
@@ -136,11 +252,12 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     setMsgs(m => [...m, { role: 'user', content: text }])
     try {
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'chat', post_id: post.id, message: text } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; reply?: string; content?: string | null; image_url?: string | null }
+      const d = (data ?? {}) as { ok?: boolean; error?: string; reply?: string; content?: string | null; image_url?: string | null; image_pending?: boolean }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
       setMsgs(m => [...m, { role: 'assistant', content: d.reply || 'Post aktualisiert ✓' }])
       if (d.content) setContent(d.content)
       if (d.image_url) setImages(im => [...im, d.image_url!])
+      if (d.image_pending) pollImages(images.length)
     } catch (e) {
       console.error('[SocialStudio] chat:', e)
       const msg = e instanceof Error ? e.message : String(e)
@@ -153,9 +270,10 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     setBusy('image'); setNote('')
     try {
       const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'image', post_id: post.id } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; image_url?: string }
+      const d = (data ?? {}) as { ok?: boolean; error?: string; image_url?: string; pending?: boolean }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      if (d.image_url) setImages(im => [...im, d.image_url!])
+      if (d.pending) { setNote(`🎨 ${t('crm.social.imgPending', 'Bild wird erstellt — es erscheint gleich in der Bilderliste…')}`); pollImages(images.length) }
+      else if (d.image_url) setImages(im => [...im, d.image_url!])
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Bild fehlgeschlagen'}`)
     } finally { setBusy('') }
@@ -368,6 +486,9 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
             {note && <p className="text-sm rounded-lg px-3 py-2 bg-gray-50 text-gray-700 whitespace-pre-wrap">{note}</p>}
           </div>
           <div className="p-4 border-t border-gray-100 shrink-0 flex items-center gap-2 flex-wrap">
+            <button onClick={() => setShowPreview(true)} disabled={!content.trim()} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              👁 {t('crm.social.preview', 'Vorschau')}
+            </button>
             <button onClick={() => void save()} disabled={!!busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? t('common.saving', 'Speichert…') : `💾 ${t('common.save', 'Speichern')}`}
             </button>
@@ -376,6 +497,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
               {busy === 'publish' ? t('crm.social.publishing', 'Wird veröffentlicht…') : `🚀 ${t('crm.social.publish', 'Jetzt posten')}`}
             </button>
           </div>
+          {showPreview && <PostPreview content={content} images={images} format={format} platforms={platforms} onClose={() => setShowPreview(false)} />}
         </div>
       </div>
     </div>
