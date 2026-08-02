@@ -416,11 +416,27 @@ Regeln:
     if (body.action === 'youtube_post') {
       const CHANNEL = 'UC7SGGkCGeiY8XQZGvdyNr9A'
       const feed = await (await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL}`)).text()
-      const entry = feed.split('<entry>')[1] ?? ''
-      const vid = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]
-      const title = (entry.match(/<title>([^<]+)<\/title>/)?.[1] ?? '').trim()
-      const desc = (entry.match(/<media:description>([\s\S]*?)<\/media:description>/)?.[1] ?? '').trim().slice(0, 1500)
-      if (!vid) return json({ error: 'Kein Video im Feed gefunden' }, 502)
+      // Neuestes ECHTES Video suchen — Shorts aussortieren (Svens Vorgabe):
+      // /shorts/<id> antwortet für Shorts mit 200, echte Videos leiten auf /watch um.
+      let vid = '', title = '', desc = ''
+      for (const entry of feed.split('<entry>').slice(1, 9)) {
+        const v = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]
+        if (!v) continue
+        // GOTCHA: ohne Consent-Cookie leitet YouTube aus Rechenzentren ALLES auf die
+        // Consent-Seite um — der Redirect-Test wird dann wertlos. Cookie + doppelte
+        // Absicherung über die Videolänge (<4 Min = Short/Clip → überspringen).
+        const ytHdr = { Cookie: 'CONSENT=YES+cb; SOCS=CAI', 'User-Agent': 'Mozilla/5.0' }
+        const head = await fetch(`https://www.youtube.com/shorts/${v}`, { redirect: 'manual', headers: ytHdr })
+        if (head.status === 200) continue   // Short → überspringen
+        const watchHtml = await (await fetch(`https://www.youtube.com/watch?v=${v}`, { headers: ytHdr })).text()
+        const secs = Number(watchHtml.match(/"lengthSeconds":"(\d+)"/)?.[1] ?? 0)
+        if (secs > 0 && secs < 240) continue   // zu kurz → auch überspringen
+        vid = v
+        title = (entry.match(/<title>([^<]+)<\/title>/)?.[1] ?? '').trim()
+        desc = (entry.match(/<media:description>([\s\S]*?)<\/media:description>/)?.[1] ?? '').trim().slice(0, 1500)
+        break
+      }
+      if (!vid) return json({ error: 'Kein echtes Video (ohne Shorts) im Feed gefunden' }, 502)
       const videoUrl = `https://www.youtube.com/watch?v=${vid}`
       const { data: dup } = await sb.from('social_posts').select('id').eq('news_source', videoUrl).limit(1)
       if (dup && dup.length) return json({ success: true, skipped: 'Video bereits verarbeitet', video: videoUrl })
