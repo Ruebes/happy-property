@@ -785,12 +785,29 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
           try {
             const me = await fetch('https://api.linkedin.com/v2/userinfo', { headers: { Authorization: `Bearer ${liToken}` } }).then(x => x.json())
             const author = `urn:li:person:${me.sub}`
+            // Bild mitgeben: Asset registrieren → Binärdaten hochladen → im Post referenzieren
+            let liMedia: { status: string; media: string } | null = null
+            if (p.image_url) {
+              try {
+                const reg = await fetch('https://api.linkedin.com/v2/assets?action=registerUpload', {
+                  method: 'POST', headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+                  body: JSON.stringify({ registerUploadRequest: { recipes: ['urn:li:digitalmediaRecipe:feedshare-image'], owner: author, serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }] } }),
+                }).then(x => x.json())
+                const upUrl = reg?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl
+                const asset = reg?.value?.asset
+                if (upUrl && asset) {
+                  const imgBytes = await (await fetch(p.image_url)).arrayBuffer()
+                  const pu = await fetch(upUrl, { method: 'PUT', headers: { Authorization: `Bearer ${liToken}` }, body: imgBytes })
+                  if (pu.ok) liMedia = { status: 'READY', media: asset }
+                }
+              } catch (e) { console.warn('[social-agent] LinkedIn-Bild:', e) }
+            }
             const r = await fetch('https://api.linkedin.com/v2/ugcPosts', {
               method: 'POST',
               headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
               body: JSON.stringify({
                 author, lifecycleState: 'PUBLISHED',
-                specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: p.content }, shareMediaCategory: 'NONE' } },
+                specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: p.content }, shareMediaCategory: liMedia ? 'IMAGE' : 'NONE', ...(liMedia ? { media: [liMedia] } : {}) } },
                 visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
               }),
             })

@@ -712,6 +712,7 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
                       className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 ${cls}`}
                       title={`${stLabel} · ${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
                       <span className="shrink-0">{isDraft ? '📝' : pp.status === 'gepostet' ? '✓' : '✅'}</span>
+                      {pp.image_url && <img src={pp.image_url} alt="" loading="lazy" className="w-4 h-4 rounded-sm object-cover shrink-0" />}
                       {pp.platforms.map(pl => PLAT_CHIP[pl] ? (
                         <span key={pl} className={`shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] ${PLAT_CHIP[pl].cls}`}>{PLAT_CHIP[pl].txt}</span>
                       ) : null)}
