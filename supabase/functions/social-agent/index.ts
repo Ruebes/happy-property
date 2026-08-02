@@ -231,15 +231,49 @@ async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: 
 // 16:9-Thumbnail → 1080×1350-Insta-Rahmen: Bild ungeschnitten mittig, Hintergrund
 // = stark abgedunkelter Durchschnittsfarbton des Bilds. Fällt bei Fehlern sauber
 // auf das Original zurück.
+// 16:9-Thumbnail → 1080×1350-Insta-Format OHNE Balken: gpt-image-1 verlängert
+// die Szenerie nach oben/unten (KI-Hintergrund), das ORIGINAL bleibt pixelgenau
+// mittig (Gesicht/Titel unverfälscht). Fallback: weicher Farbverlauf.
+// 16:9-Thumbnail → 1080×1350-Insta-Format via ECHTEM Outpainting: Original fest
+// mittig auf transparentem 1024×1536-Canvas, gpt-image-1 füllt NUR die leeren
+// Flächen (Alpha = Maske) — danach Original nochmal exakt drüber (pixelgenau,
+// gleiche Geometrie → keine Doppelungen). Fallback: weicher Farbverlauf.
+// 16:9-Thumbnail → 1080×1350-Insta-Format: Hintergrund = unscharfe, abgedunkelte
+// Cover-Version des Bilds selbst (bilinear aus stark verkleinerter Quelle = Blur),
+// Original pixelgenau mittig. Deterministisch — kein KI-Risiko, keine Balken.
+function bilinearCover(srcSmall: Image, W: number, H: number, dim: number): Image {
+  const targetAR = W / H
+  let cw = srcSmall.width, ch = srcSmall.height
+  if (cw / ch > targetAR) cw = Math.max(2, Math.round(ch * targetAR))
+  else ch = Math.max(2, Math.round(cw / targetAR))
+  const c = srcSmall.clone().crop(Math.round((srcSmall.width - cw) / 2), Math.round((srcSmall.height - ch) / 2), cw, ch)
+  const out = new Image(W, H)
+  for (let y = 0; y < H; y++) {
+    const gy = (y / (H - 1)) * (ch - 1), yA = Math.floor(gy), fy = gy - yA, yB = Math.min(ch - 1, yA + 1)
+    for (let x = 0; x < W; x++) {
+      const gx = (x / (W - 1)) * (cw - 1), xA = Math.floor(gx), fx = gx - xA, xB = Math.min(cw - 1, xA + 1)
+      const [r00, g00, b00] = Image.colorToRGBA(c.getPixelAt(xA + 1, yA + 1))
+      const [r10, g10, b10] = Image.colorToRGBA(c.getPixelAt(xB + 1, yA + 1))
+      const [r01, g01, b01] = Image.colorToRGBA(c.getPixelAt(xA + 1, yB + 1))
+      const [r11, g11, b11] = Image.colorToRGBA(c.getPixelAt(xB + 1, yB + 1))
+      const r = (r00 * (1 - fx) + r10 * fx) * (1 - fy) + (r01 * (1 - fx) + r11 * fx) * fy
+      const g = (g00 * (1 - fx) + g10 * fx) * (1 - fy) + (g01 * (1 - fx) + g11 * fx) * fy
+      const b = (b00 * (1 - fx) + b10 * fx) * (1 - fy) + (b01 * (1 - fx) + b11 * fx) * fy
+      out.setPixelAt(x + 1, y + 1, Image.rgbToColor(Math.round(r * dim), Math.round(g * dim), Math.round(b * dim)))
+    }
+  }
+  return out
+}
 async function igFrame(jpgBytes: Uint8Array): Promise<Uint8Array | null> {
   try {
     const src = await Image.decode(jpgBytes)
-    const avg = src.averageColor()
-    const [r, g, b] = Image.colorToRGBA(avg)
-    const bg = new Image(1080, 1350)
-    bg.fill(Image.rgbToColor(Math.round(r * 0.28), Math.round(g * 0.28), Math.round(b * 0.28)))
-    const scaled = src.resize(1080, Image.RESIZE_AUTO)
-    bg.composite(scaled, 0, Math.round((1350 - scaled.height) / 2))
+    // Blur-Hintergrund: winzige Quelle (48px) bilinear auf halbe Zielgröße,
+    // dann ×2 — schnell und butterweich.
+    const tiny = src.clone().resize(20, Image.RESIZE_AUTO)
+    const bgHalf = bilinearCover(tiny, 540, 675, 0.5)
+    const bg = bgHalf.resize(1080, 1350)
+    const thumb = src.resize(1080, Image.RESIZE_AUTO)
+    bg.composite(thumb, 0, Math.round((1350 - thumb.height) / 2))
     return await bg.encodeJPEG(88)
   } catch (e) { console.warn('[social-agent] igFrame:', e); return null }
 }
