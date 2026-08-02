@@ -142,8 +142,8 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
             <button onClick={onClose} className="w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-200">✕</button>
           </div>
         </div>
-        <div className="overflow-auto p-6 flex justify-center">
-          <div style={{ width }} className={`bg-white shadow-md overflow-hidden shrink-0 ${mobile ? 'rounded-none border-x border-gray-200' : 'rounded-xl border border-gray-200'}`}>
+        <div className="flex-1 min-h-0 overflow-y-auto p-6">
+          <div style={{ width }} className={`mx-auto bg-white shadow-md overflow-hidden ${mobile ? 'rounded-none border-x border-gray-200' : 'rounded-xl border border-gray-200'}`}>
             {tab === 'facebook' && (<>
               <div className="flex items-center gap-2.5 p-3">
                 <Avatar letter="H" />

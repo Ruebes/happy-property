@@ -217,6 +217,75 @@ Deno.serve(async (req: Request) => {
     }
   } catch (e) { console.warn('[process-scheduled] Bug-Fertigmeldung:', e) }
 
+  // ── Pipeline „Immobilienauswahl" → Portal-Zugang von Lotte (nur NEUE Wechsel) ─
+  // FLOW_START schützt die 22 Bestands-Deals vor einem Massen-Versand; Marker
+  // leads.portal_invited_at (CAS) verhindert Doppel-Einladungen.
+  try {
+    const FLOW_START = '2026-08-02T05:00:00Z'
+    const PORTAL = 'https://portal.happy-property.com'
+    const { data: cand } = await supabase.from('deals')
+      .select('id, phase_changed_at, lead:leads!inner(id, first_name, last_name, email, phone, language, portal_invited_at)')
+      .eq('phase', 'immobilienauswahl').gte('phase_changed_at', FLOW_START).limit(20)
+    for (const dd of ((cand ?? []) as Array<{ lead: { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; language: string | null; portal_invited_at: string | null } | null }>)) {
+      const l = dd.lead
+      if (!l?.email || l.portal_invited_at) continue
+      const { data: claimed } = await supabase.from('leads').update({ portal_invited_at: new Date().toISOString() })
+        .eq('id', l.id).is('portal_invited_at', null).select('id')
+      if (!claimed || !claimed.length) continue
+      const { data: existing } = await supabase.from('profiles').select('id').ilike('email', l.email).limit(1)
+      if (existing && existing.length) { console.log('[process-scheduled] Portal-Zugang existiert schon:', l.email); continue }
+      const fullName = [l.first_name, l.last_name].filter(Boolean).join(' ') || 'Kunde'
+      const { data: acc, error: accErr } = await supabase.functions.invoke('create-eigentuemer-access', {
+        body: { email: l.email, full_name: fullName, suppress_mail: true },
+        // functions.invoke setzt hier KEINEN eigenen Authorization-Header —
+        // der Guard drüben erwartet den Service-Role-Key explizit.
+        headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+      })
+      const a = (acc ?? {}) as { success?: boolean; password?: string; error?: string }
+      if (accErr || a.error || !a.success || !a.password) {
+        console.warn('[process-scheduled] Portal-Zugang fehlgeschlagen:', l.email, a.error ?? accErr?.message)
+        await supabase.from('leads').update({ portal_invited_at: null }).eq('id', l.id)
+        continue
+      }
+      const de_ = l.language !== 'en'
+      const first = (l.first_name ?? '').trim() || (de_ ? 'Hallo' : 'Hi')
+      const feats = de_
+        ? '<li>🏠 alle deine Immobilien an einem Ort verwalten</li><li>🏗 den Baufortschritt live verfolgen</li><li>📈 deine Renditen einsehen</li><li>📄 Unterlagen für deinen Steuerberater herunterladen</li><li>💬 direkter Draht zu unserer Verwaltung</li>'
+        : '<li>🏠 manage all your properties in one place</li><li>🏗 follow the construction progress</li><li>📈 view your returns</li><li>📄 download documents for your tax advisor</li><li>💬 direct line to our property management</li>'
+      const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+        <div style="text-align:center;margin-bottom:6px;">
+          <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
+          <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
+        </div>
+        <p>${de_ ? `Hallo ${first},` : `Hi ${first},`}</p>
+        <p>${de_ ? 'schön, dass es bei dir losgeht! 🎉 Hier ist dein persönlicher Zugang zum <b>Happy Property Portal</b> — deinem Zuhause für alles rund um deine Immobilie auf Zypern:' : 'great that things are moving! 🎉 Here is your personal access to the <b>Happy Property Portal</b> — your home for everything around your property in Cyprus:'}</p>
+        <ul style="line-height:1.9;padding-left:18px;">${feats}</ul>
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:14px 16px;margin:16px 0;">
+          <p style="margin:0;font-size:14px;"><b>${de_ ? 'Deine Zugangsdaten' : 'Your login'}</b><br/>E-Mail: ${l.email}<br/>${de_ ? 'Passwort' : 'Password'}: <b>${a.password}</b></p>
+          <p style="margin:6px 0 0;font-size:12px;color:#6b7280;">${de_ ? 'Beim ersten Login legst du dein eigenes Passwort fest.' : 'You will set your own password on first login.'}</p>
+        </div>
+        <p style="text-align:center;margin:24px 0;">
+          <a href="${PORTAL}/login" style="background:#ff795d;color:#fff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;display:inline-block;">${de_ ? 'Zum Portal →' : 'Open portal →'}</a>
+        </p>
+        <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
+      </div>`
+      await supabase.functions.invoke('send-email', { body: {
+        to: l.email, subject: de_ ? '🔑 Dein Zugang zum Happy Property Portal' : '🔑 Your access to the Happy Property portal',
+        html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en', lead_id: l.id,
+      } }).catch(e => console.warn('[process-scheduled] Portal-Mail:', e))
+      if (l.phone) {
+        const waText = de_
+          ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property! Dein persönlicher Zugang zum *Happy Property Portal* ist bereit 🎉\n\nDort verwaltest du künftig deine Immobilien, verfolgst den Baufortschritt, siehst deine Renditen, lädst Unterlagen für den Steuerberater herunter und erreichst direkt unsere Verwaltung.\n\nDeine Zugangsdaten kommen gerade separat per E-Mail. 📬\n\n${PORTAL}/login\n\nLiebe Grüße, Lotte`
+          : `Hi ${first} 🐾\n\nLotte from Happy Property here! Your personal access to the *Happy Property portal* is ready 🎉\n\nManage your properties, follow the construction progress, view your returns, download documents for your tax advisor and reach our property management directly.\n\nYour login details are arriving by email right now. 📬\n\n${PORTAL}/login\n\nBest, Lotte`
+        await supabase.functions.invoke('send-whatsapp', { body: {
+          event_type: 'portal_zugang', override_text: waText,
+          lead_data: { lead_name: first, lead_phone: l.phone }, persona_image: lotteBild(),
+        } }).catch(e => console.warn('[process-scheduled] Portal-WA:', e))
+      }
+      console.log('[process-scheduled] Portal-Zugang angelegt + Lotte-Einladung:', l.email)
+    }
+  } catch (e) { console.warn('[process-scheduled] Portal-Invite:', e) }
+
   // ── Aufgaben-Archivierung: erledigte Aufgaben werden SONNTAGS archiviert ─────
   // Erledigte Aufgaben bleiben die Woche über sichtbar und wandern erst am Sonntag
   // (Europe/Berlin) aus dem Board. Idempotent, läuft im 5-Min-Cron.

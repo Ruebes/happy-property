@@ -114,7 +114,12 @@ async function generatePostImage(sb: SupabaseClient, postId: string, prompt: str
   const res = await fetch('https://api.openai.com/v1/images/generations', {
     method: 'POST',
     headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'gpt-image-1', prompt, size: '1024x1024', quality: 'medium', n: 1 }),
+    body: JSON.stringify({
+      model: 'gpt-image-1',
+      // Foto-Stil hart erzwingen — sonst driftet gpt-image-1 gern in Illustration/Comic.
+      prompt: `Professional photograph: ${prompt}. Shot on a full-frame camera, 35mm lens, natural lighting, realistic textures and materials, subtle depth of field, true-to-life colors. Strictly photorealistic — NO cartoon, NO illustration, NO 3D render, NO painting, no text, no watermark.`,
+      size: '1024x1024', quality: 'high', n: 1,
+    }),
   })
   const d = await res.json()
   if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)

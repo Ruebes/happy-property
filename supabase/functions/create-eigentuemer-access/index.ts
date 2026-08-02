@@ -201,11 +201,12 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { email: rawEmail, full_name, custom_subject, custom_message } = await req.json() as {
+    const { email: rawEmail, full_name, custom_subject, custom_message, suppress_mail } = await req.json() as {
       email:           string
       full_name:       string
       custom_subject?: string   // optionaler Betreff (aus Template)
       custom_message?: string   // optionaler E-Mail-Text mit Platzhaltern
+      suppress_mail?:  boolean  // intern (Pipeline-Automatik): Aufrufer verschickt Lottes Mail selbst
     }
     // E-Mail konsequent normalisieren — sonst führen " Foo@X.de" vs. "foo@x.de" zu
     // profiles↔auth-Mismatch und „Nutzer nicht gefunden".
@@ -226,15 +227,19 @@ Deno.serve(async (req: Request) => {
       const guardUrl  = Deno.env.get('SUPABASE_URL')!
       const authHeader = req.headers.get('Authorization') ?? ''
       const jwt = authHeader.replace(/^Bearer\s+/i, '')
-      const caller = jwt
-        ? (await createClient(guardUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
-        : null
       const respHdr = { ...CORS, 'Content-Type': 'application/json' }
-      if (!caller) return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: respHdr })
-      const guardAdmin = createClient(guardUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-      const { data: cProf } = await guardAdmin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
-      if ((cProf as { role?: string } | null)?.role !== 'admin') {
-        return new Response(JSON.stringify({ error: 'Keine Berechtigung' }), { status: 403, headers: respHdr })
+      // Interner Aufruf (andere Edge Function mit Service-Role-Key) ist erlaubt —
+      // z.B. die Pipeline-Automatik „Immobilienauswahl → Portal-Zugang".
+      if (jwt !== Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) {
+        const caller = jwt
+          ? (await createClient(guardUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
+          : null
+        if (!caller) { console.warn(`[create-eigentuemer-access] Guard: kein Caller — jwt=${jwt.slice(0, 16)}… len=${jwt.length}, svc=${(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '').slice(0, 16)}…`); return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: respHdr }) }
+        const guardAdmin = createClient(guardUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+        const { data: cProf } = await guardAdmin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
+        if ((cProf as { role?: string } | null)?.role !== 'admin') {
+          return new Response(JSON.stringify({ error: 'Keine Berechtigung' }), { status: 403, headers: respHdr })
+        }
       }
     }
 
@@ -415,7 +420,7 @@ Deno.serve(async (req: Request) => {
     // ausgesperrt ohne Zugangsdaten. Stattdessen `emailed`-Flag + Passwort zurückgeben,
     // damit der Admin die Daten im UI sieht und gezielt handeln kann.
     let emailed = false
-    if (smtpUser && smtpPass) {
+    if (!suppress_mail && smtpUser && smtpPass) {
       const client = new SMTPClient({
         connection: {
           hostname: 'smtp.ionos.de',
