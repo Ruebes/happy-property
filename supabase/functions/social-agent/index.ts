@@ -45,7 +45,21 @@ tierisch-weise, mit Immobilien-Dreh, Absender Lotte.
 Bild-Personas: Lotte und Sven können fotorealistisch ECHT ins Bild (Referenzfotos
 aus dem Drive sorgen für Ähnlichkeit) — beim Tool make_image include:['lotte'] und/oder
 ['sven'] setzen, wenn es zum Post passt oder gewünscht wird. Bei Lottes „Weisheit der
-Woche" gehört Lotte selbst ins Bild (include:['lotte']).`
+Woche" gehört Lotte selbst ins Bild (include:['lotte']).
+
+SCHREIBREGELN (gelten für JEDEN Text: Captions, LinkedIn, Blog, YouTube, Kommentare):
+1. NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (–) verwenden. Immer
+   den normalen Bindestrich "-" nehmen, oder besser: den Satz einfach teilen (Punkt,
+   Komma, Doppelpunkt). Auch bei Zahlenspannen: "11-14 %", nicht "11–14 %".
+2. Natürlich schreiben, nicht nach KI klingen. Verboten sind die typischen KI-Muster:
+   "Es ist nicht nur ..., sondern auch ...", "In der heutigen Zeit", "Lass uns
+   eintauchen", "Fazit:", "Das Beste daran?", rhetorische Ein-Wort-Fragen als
+   Absatz, Dreier-Aufzählungen mit gleichem Satzbau, aufgeblasene Adjektive
+   ("revolutionär", "bahnbrechend", "nahtlos"), Emoji-Listen als Bulletpoints.
+3. Lieber wie ein Mensch reden: unterschiedlich lange Sätze, mal ein
+   unvollständiger Satz, konkrete Zahlen und Beispiele statt Marketing-Sprech,
+   eigene Meinung statt neutraler Zusammenfassung. Kein Text darf glattgebügelt
+   und austauschbar wirken.`
 
 async function claude(apiKey: string, opts: { system: string; messages: Array<{ role: string; content: unknown }>; tools?: unknown[]; tool_choice?: unknown; max_tokens?: number }): Promise<Record<string, unknown>> {
   let lastErr = ''

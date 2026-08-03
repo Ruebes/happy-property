@@ -82,34 +82,55 @@ async function resolveList(sb: SupabaseClient, name: string): Promise<{ id: stri
 // Schritte in scheduled_messages einplanen (der bestehende Scheduler versendet sie,
 // resolveSubscriber liefert E-Mail + Telefon). Idempotent über sequence_enrollments.
 async function enrollInListSequences(sb: SupabaseClient, subscriberId: string, listId: string): Promise<void> {
+  // FLOW-BUILDER: Schritte bilden einen Baum — Delay-Blöcke addieren Zeit,
+  // Splits (Wenn/Dann: E-Mail geöffnet?) verzweigen in Ja/Nein-Äste. Beide Äste
+  // werden VORAUSGEPLANT; die Bedingung wird beim VERSAND geprüft (seq_condition
+  // in process-scheduled-messages) — nur der zutreffende Ast feuert wirklich.
   try {
     const { data: seqs } = await sb.from('list_sequences').select('id').eq('list_id', listId).eq('active', true)
     const sequences = (seqs as { id: string }[] | null) ?? []
     if (!sequences.length) return
-    // Abonnent für Personalisierung ({{vorname}}) einmal laden.
     const { data: subRow } = await sb.from('newsletter_subscribers').select('first_name').eq('id', subscriberId).maybeSingle()
     const first = ((subRow as { first_name: string | null } | null)?.first_name ?? '').trim()
-    const fill = (s: string | null | undefined) => (s ?? '')
-      .replace(/\{\{\s*(vorname|first_name|name)\s*\}\}/gi, first || (/* neutral */ ''))
+    const fill = (x: string | null | undefined) => (x ?? '')
+      .replace(/\{\{\s*(vorname|first_name|name)\s*\}\}/gi, first || '')
     const now = Date.now()
     for (const seq of sequences) {
-      // schon eingeschrieben? (unique verhindert Doppelversand)
       const { data: existing } = await sb.from('sequence_enrollments').select('id').eq('sequence_id', seq.id).eq('subscriber_id', subscriberId).maybeSingle()
       if (existing) continue
       const { error: enErr } = await sb.from('sequence_enrollments').insert({ sequence_id: seq.id, subscriber_id: subscriberId })
       if (enErr) { console.warn('[subscriber-optin] enroll:', enErr.message); continue }
-      const { data: steps } = await sb.from('sequence_steps').select('*').eq('sequence_id', seq.id).eq('active', true).order('step_order', { ascending: true })
-      const rows = ((steps as Record<string, unknown>[] | null) ?? []).map(st => ({
-        subscriber_id: subscriberId,
-        type: String(st.channel ?? 'email'),
-        event_type: 'newsletter',
-        status: 'pending',
-        scheduled_at: new Date(now + Number(st.delay_minutes ?? 0) * 60_000).toISOString(),
-        email_subject: fill(st.email_subject as string),
-        email_body: fill(st.email_body as string),
-        whatsapp_text: fill(st.whatsapp_text as string),
-        whatsapp_image_url: (st.whatsapp_image_url as string) || null,
-      }))
+      const { data: stepsRaw } = await sb.from('sequence_steps').select('*').eq('sequence_id', seq.id).eq('active', true).order('step_order', { ascending: true })
+      const all = (stepsRaw as Array<Record<string, unknown>> | null) ?? []
+      const rows: Array<Record<string, unknown>> = []
+      const kids = (pid: string, br: string) => all.filter(x => x.parent_split_id === pid && x.branch === br)
+      const walk = (list: Array<Record<string, unknown>>, startMin: number, cond: Record<string, unknown> | null) => {
+        let tMin = startMin
+        for (const st of list) {
+          const type = String(st.step_type ?? st.channel ?? 'email')
+          if (type === 'delay') { tMin += Number(st.delay_minutes ?? 0); continue }
+          if (type === 'split') {
+            const wait = (Number(st.split_wait_hours ?? 24)) * 60
+            walk(kids(String(st.id), 'yes'), tMin + wait, { kind: 'email_opened' })
+            walk(kids(String(st.id), 'no'),  tMin + wait, { kind: 'email_opened', negate: true })
+            break // Split beendet die Ebene (Editor erzwingt das auch)
+          }
+          tMin += Number(st.delay_minutes ?? 0)
+          if (type === 'list_update') {
+            rows.push({ subscriber_id: subscriberId, type: 'list_update', event_type: 'newsletter', status: 'pending',
+              scheduled_at: new Date(now + tMin * 60_000).toISOString(),
+              seq_list_op: String(st.list_op ?? 'add'), seq_list_target: st.list_target ?? null,
+              ...(cond ? { seq_condition: cond } : {}) })
+            continue
+          }
+          rows.push({ subscriber_id: subscriberId, type, event_type: 'newsletter', status: 'pending',
+            scheduled_at: new Date(now + tMin * 60_000).toISOString(),
+            email_subject: fill(st.email_subject as string), email_body: fill(st.email_body as string),
+            whatsapp_text: fill(st.whatsapp_text as string), whatsapp_image_url: (st.whatsapp_image_url as string) || null,
+            ...(cond ? { seq_condition: cond } : {}) })
+        }
+      }
+      walk(all.filter(x => !x.parent_split_id), 0, null)
       if (rows.length) {
         const { error: schErr } = await sb.from('scheduled_messages').insert(rows)
         if (schErr) console.warn('[subscriber-optin] schedule steps:', schErr.message)
@@ -131,6 +152,14 @@ Deno.serve(async (req) => {
     // zeigte den Quelltext deshalb als Text an, inklusive kaputter Umlaute.
     // Stattdessen: zurück auf die eigene Website.
     if (req.method === 'GET') {
+      // Öffnungs-Pixel für Sequenz-Mails an Abonnenten (Split „E-Mail geöffnet?")
+      const openSub = new URL(req.url).searchParams.get('open') ?? ''
+      if (openSub) {
+        try { await sb.from('engagement_events').insert({ type: 'email_open', subscriber_id: openSub, label: 'sequence' }) }
+        catch (e) { console.warn('[subscriber-optin] open-pixel:', e) }
+        const gif = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
+        return new Response(gif, { headers: { ...CORS, 'Content-Type': 'image/gif', 'Cache-Control': 'no-store' } })
+      }
       const token = new URL(req.url).searchParams.get('confirm') ?? ''
       if (!token) return zurueck(DEFAULT_REDIRECT, 'abgelaufen')
       const { data: sub } = await sb.from('newsletter_subscribers').select('id, first_name, email, phone, properties').eq('properties->>doi_token', token).maybeSingle()
@@ -160,19 +189,19 @@ Deno.serve(async (req) => {
           const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
             <div style="text-align:center;margin-bottom:6px;">
               <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
-              <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
+              <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"}</p>
             </div>
             <p>${hallo}</p>
             <p>${de_
-              ? 'schön, dass du dabei bist! Ich bin <b>Lotte</b>, die Assistentin von Sven bei Happy Property — die mit den vier Pfoten. 🐾'
-              : "great to have you on board! I'm <b>Lotte</b>, Sven's assistant at Happy Property — the one with four paws. 🐾"}</p>
+              ? 'schön, dass du dabei bist! Ich bin <b>Lotte</b>, die Assistentin von Sven bei Happy Property - die mit den vier Pfoten.'
+              : "great to have you on board! I'm <b>Lotte</b>, Sven's assistant at Happy Property - the one with four paws."}</p>
             <p>${de_
-              ? 'Kurz zu uns: <b>Happy Property</b> begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern — von der Auswahl über den Kauf bis zur Vermietung, alles aus einer Hand und direkt vor Ort in Paphos.'
-              : '<b>Happy Property</b> guides investors through new-build property investments in Cyprus — from selection to purchase to letting, all from one hand, right here in Paphos.'}</p>
+              ? 'Kurz zu uns: <b>Happy Property</b> begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern - von der Auswahl über den Kauf bis zur Vermietung, alles aus einer Hand und direkt vor Ort in Paphos.'
+              : '<b>Happy Property</b> guides investors through new-build property investments in Cyprus - from selection to purchase to letting, all from one hand, right here in Paphos.'}</p>
             <p>${de_
-              ? 'Und ein Versprechen: Von uns bekommst du <b>nur nützliche, tagesaktuelle Inhalte</b> rund um Immobilien auf Zypern — und, falls für dich spannend, zum Auswandern nach Zypern. Kein Spam, kein Blabla.'
-              : 'One promise: we only send <b>useful, up-to-date content</b> about property in Cyprus — and, if relevant for you, about relocating to Cyprus. No spam.'}</p>
-            <p>${de_ ? 'Fragen? Antworte einfach auf diese Mail — ich gebe es direkt an Sven weiter.' : 'Questions? Just reply to this email — I will pass it straight to Sven.'}</p>
+              ? 'Und ein Versprechen: Von uns bekommst du <b>nur nützliche, tagesaktuelle Inhalte</b> rund um Immobilien auf Zypern - und, falls für dich spannend, zum Auswandern nach Zypern. Kein Spam, kein Blabla.'
+              : 'One promise: we only send <b>useful, up-to-date content</b> about property in Cyprus - and, if relevant for you, about relocating to Cyprus. No spam.'}</p>
+            <p>${de_ ? 'Fragen? Antworte einfach auf diese Mail - ich gebe es direkt an Sven weiter.' : 'Questions? Just reply to this email - I will pass it straight to Sven.'}</p>
             <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
             <p style="text-align:center;margin:22px 0 0;">
               <a href="${IMPRESSUM}" style="color:#6b7280;text-decoration:underline;font-size:12px;margin:0 10px;">${de_ ? 'Impressum' : 'Imprint'}</a>
@@ -180,14 +209,14 @@ Deno.serve(async (req) => {
             </p>
           </div>`
           sb.functions.invoke('send-email', { body: {
-            to: s.email, subject: de_ ? '🐾 Willkommen bei Happy Property!' : '🐾 Welcome to Happy Property!',
+            to: s.email, subject: de_ ? 'Willkommen bei Happy Property!' : 'Welcome to Happy Property!',
             html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en',
           } }).catch((e) => console.warn('[subscriber-optin] Willkommensmail:', e))
         }
         if (s.phone) {
           const waText = de_
-            ? `${hallo.replace(',', '')} 🐾\n\nich bin Lotte, die Assistentin von Sven bei Happy Property — schön, dass du dabei bist!\n\nKurz zu uns: Happy Property begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern — von der Auswahl bis zur Vermietung, alles aus einer Hand, direkt vor Ort in Paphos.\n\nVersprochen: Von uns bekommst du nur nützliche, tagesaktuelle Infos zu Immobilien auf Zypern und zum Auswandern — kein Spam.\n\nImpressum: ${IMPRESSUM}\nKeine Nachrichten mehr? Antworte einfach ABMELDEN.\n\nLiebe Grüße, Lotte 🐾`
-            : `${hallo.replace(',', '')} 🐾\n\nI'm Lotte, Sven's assistant at Happy Property — great to have you on board!\n\nHappy Property guides investors through new-build property investments in Cyprus — from selection to letting, all from one hand, right here in Paphos.\n\nPromise: only useful, up-to-date content about property in Cyprus and relocating — no spam.\n\nImprint: ${IMPRESSUM}\nNo more messages? Just reply STOP.\n\nBest, Lotte 🐾`
+            ? `${hallo.replace(',', '')}\n\nich bin Lotte, die Assistentin von Sven bei Happy Property - schön, dass du dabei bist!\n\nKurz zu uns: Happy Property begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern - von der Auswahl bis zur Vermietung, alles aus einer Hand, direkt vor Ort in Paphos.\n\nVersprochen: Von uns bekommst du nur nützliche, tagesaktuelle Infos zu Immobilien auf Zypern und zum Auswandern - kein Spam.\n\nImpressum: ${IMPRESSUM}\nKeine Nachrichten mehr? Antworte einfach ABMELDEN.\n\nLiebe Grüße, Lotte 🐾`
+            : `${hallo.replace(',', '')}\n\nI'm Lotte, Sven's assistant at Happy Property - great to have you on board!\n\nHappy Property guides investors through new-build property investments in Cyprus - from selection to letting, all from one hand, right here in Paphos.\n\nPromise: only useful, up-to-date content about property in Cyprus and relocating - no spam.\n\nImprint: ${IMPRESSUM}\nNo more messages? Just reply STOP.\n\nBest, Lotte 🐾`
           sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'newsletter_welcome', override_text: waText,
             lead_data: { lead_name: first || 'Abonnent', lead_phone: s.phone },
