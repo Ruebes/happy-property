@@ -18,7 +18,7 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
 // Im CRM änderbare Tokens (Ablage in connector_secrets, Env als Fallback).
-const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN'])
+const EDITABLE = new Set(['LINKEDIN_ACCESS_TOKEN', 'META_ACCESS_TOKEN'])
 
 async function secretOf(sb: SupabaseClient, key: string): Promise<string> {
   const { data } = await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()

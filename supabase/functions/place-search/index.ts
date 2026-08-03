@@ -14,6 +14,35 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
+// Google Maps OHNE API-Key: /maps/search/<q> mit echtem iPhone-UA folgen —
+// bei eindeutigem Treffer landet man auf /maps/place/<NAME>/@lat,lng (gleicher
+// Trick wie resolve-maps-link; generische UAs bekommen Googles /sorry-CAPTCHA).
+async function scrapeMaps(q: string): Promise<{ name: string; display: string; lat: number; lon: number; maps_url: string } | null> {
+  // Googles KEYLESS Embed-Endpunkt ist server-gerendert und löst freie Suchen
+  // in echte Orte auf (Name, Adresse, Koordinaten) — derselbe Index wie die
+  // Kartenvorschau, ganz ohne aktivierte Places-API.
+  const hasRegion = /zypern|cyprus|paphos|pafos|limassol|nicosia|larnaca|deutschland|germany/i.test(q)
+  const q2 = hasRegion ? q : `${q}, Cyprus`
+  try {
+    const r = await fetch(`https://www.google.com/maps/embed?origin=mfe&pb=!1m2!2m1!1s${encodeURIComponent(q2)}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+        Cookie: 'CONSENT=YES+cb; SOCS=CAI',
+      },
+    })
+    if (!r.ok) return null
+    const html = await r.text()
+    const m = html.match(/\["0x[0-9a-f]+:0x[0-9a-f]+","((?:[^"\\]|\\.)*)",\[(-?\d+\.\d+),(-?\d+\.\d+)\]/)
+    if (!m) return null
+    const display = JSON.parse(`"${m[1]}"`) as string
+    const name = display.split(',')[0].trim()
+    return {
+      name, display, lat: Number(m[2]), lon: Number(m[3]),
+      maps_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(display)}`,
+    }
+  } catch (e) { console.warn('[place-search] embed-scrape:', e); return null }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
@@ -58,6 +87,7 @@ Deno.serve(async (req) => {
     const r = await fetch(url, hdrs)
     if (!r.ok) return json({ error: `Suche fehlgeschlagen (${r.status})` }, 502)
     const d = await r.json() as { features?: Array<{ properties?: Record<string, string>; geometry?: { coordinates?: [number, number] } }> }
+    const scraped = await scrapeMaps(query)
     const results = (d.features ?? []).map(f => {
       const p = f.properties ?? {}
       const [lon, lat] = f.geometry?.coordinates ?? [0, 0]
@@ -65,7 +95,8 @@ Deno.serve(async (req) => {
         .filter(Boolean).join(', ')
       return { name: p.name || display.split(',')[0] || '', display, lat, lon }
     }).filter(x => x.name && x.lat && x.lon)
-    return json({ ok: true, results })
+    const merged = scraped ? [scraped, ...results.filter((r: { name: string }) => r.name.toLowerCase() !== scraped.name.toLowerCase())] : results
+    return json({ ok: true, results: merged })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.error('[place-search]', msg)

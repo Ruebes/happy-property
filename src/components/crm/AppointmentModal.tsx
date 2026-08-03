@@ -374,7 +374,7 @@ export default function AppointmentModal({
       } finally { if (seq === placeSeqRef.current) setPlaceLoading(false) }
     }, 400)
   }
-  function selectPlace(pl: { name: string; display: string; lat: number; lon: number }) {
+  function selectPlace(pl: { name: string; display: string; lat: number; lon: number; maps_url?: string }) {
     // Nachlaufende Suche stoppen — sonst öffnet der letzte Debounce die Liste
     // gleich wieder und die Auswahl wirkt „nicht übernommen".
     if (placeDebounceRef.current) clearTimeout(placeDebounceRef.current)
@@ -383,7 +383,7 @@ export default function AppointmentModal({
     const dupe = pl.display && pl.display.split(',')[0].trim() === pl.name.trim()
     setLocation(pl.display && !dupe ? `${pl.name}, ${pl.display}` : (pl.display || pl.name))
     // Google-Link mit Name + Koordinaten — landet exakt am richtigen Pin
-    setLocationUrl(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pl.name} ${pl.lat},${pl.lon}`)}`)
+    setLocationUrl(pl.maps_url ?? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${pl.name} ${pl.lat},${pl.lon}`)}`)
     setPlaceResults([])
   }
 

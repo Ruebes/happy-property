@@ -152,9 +152,9 @@ Deno.serve(async (req: Request) => {
     // echten Beratungstermin liegt, {{termin_datum}}/{{zoom_link}}/{{termin_link}} in
     // einer Kundennachricht ueberschreiben.
     const { data: nextAppt } = await supabase.from('crm_appointments')
-      .select('start_time, zoom_link, manage_token').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
+      .select('start_time, zoom_link, manage_token, type, location, location_url').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
-      .select('zoom_link, start_time, manage_token').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
+      .select('zoom_link, start_time, manage_token, type, location, location_url').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
     const zoomLink  = ((nextAppt as { zoom_link?: string } | null)?.zoom_link) || ((lastAppt as { zoom_link?: string } | null)?.zoom_link) || ''
     // Öffentlicher „Termin verwalten"-Link (verschieben/absagen ohne Login)
@@ -165,14 +165,19 @@ Deno.serve(async (req: Request) => {
     // Tag + volles Datum + Uhrzeit + Zeitzonen-Kürzel (MEZ/MESZ). Fällt auf den letzten
     // Termin zurück (apptStart ist nur der ZUKÜNFTIGE — für before_appointment-Timing).
     const apptDisplayStart = apptStart ?? (lastAppt as { start_time?: string } | null)?.start_time ?? null
+    // Vor-Ort-Termine: Der Kunde ist VOR ORT auf Zypern → Ortszeit statt deutscher Zeit.
+    const apptRef = (nextAppt ?? lastAppt) as { type?: string | null; location?: string | null; location_url?: string | null } | null
+    const isInperson = apptRef?.type === 'inperson'
+    const terminOrt = isInperson ? (apptRef?.location ?? '') : ''
+    const terminOrtLink = isInperson ? (apptRef?.location_url ?? '') : ''
     const terminDatum = apptDisplayStart ? (() => {
-      const d = new Date(apptDisplayStart), TZ = 'Europe/Berlin'
+      const d = new Date(apptDisplayStart), TZ = isInperson ? 'Asia/Nicosia' : 'Europe/Berlin'
       const day  = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: TZ }).format(d)
       const date = new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: TZ }).format(d)
       const time = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: TZ }).format(d)
       const tz   = new Intl.DateTimeFormat('de-DE', { timeZoneName: 'short', hour: '2-digit', timeZone: TZ })
         .formatToParts(d).find(p => p.type === 'timeZoneName')?.value || 'MEZ'
-      return `${day}, ${date} um ${time} Uhr (${tz})`
+      return isInperson ? `${day}, ${date} um ${time} Uhr` : `${day}, ${date} um ${time} Uhr (${tz})`
     })() : ''
 
     const basePlaceholders: Record<string, string> = {
@@ -196,6 +201,8 @@ Deno.serve(async (req: Request) => {
       termin_datum: terminDatum,   // Tag + Datum + Uhrzeit in deutscher Zeit (MEZ/MESZ)
       termin:       terminDatum,   // Alias
       termin_link:  terminLink,    // öffentlicher Verwalten-Link (verschieben/absagen)
+      termin_ort:      terminOrt,      // Vor-Ort-Termine: Adresse/Name des Treffpunkts
+      termin_ort_link: terminOrtLink,  // Google-Maps-Link zum Treffpunkt
       objekt:       objektName,
       projekt:      objektName,
       unit:         unitNumber,

@@ -511,15 +511,19 @@ Deno.serve(async (req: Request) => {
       const cond = msg.appointment_condition
       if (cond && cond !== 'none') {
         const { data: appt } = await supabase.from('crm_appointments')
-          .select('zoom_link').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+          .select('zoom_link, type').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
           .order('start_time', { ascending: true }).limit(1).maybeSingle()
         const hasAppt = !!appt
         const hasZoom = !!(appt as { zoom_link?: string } | null)?.zoom_link
+        // Vor-Ort-Termine dürfen NIE in die Telefon-Erinnerung („ich rufe dich an")
+        // laufen — dafür gibt es eigene is_inperson-Regeln.
+        const isInperson = (appt as { type?: string } | null)?.type === 'inperson'
         const shouldSend =
           cond === 'has_appointment' ? hasAppt :
           cond === 'no_appointment'  ? !hasAppt :
           cond === 'has_zoom'        ? (hasAppt && hasZoom) :
-          cond === 'no_zoom'         ? (hasAppt && !hasZoom) : true
+          cond === 'is_inperson'     ? (hasAppt && isInperson) :
+          cond === 'no_zoom'         ? (hasAppt && !hasZoom && !isInperson) : true
         if (!shouldSend) {
           await supabase.from('scheduled_messages')
             .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Bedingung ${msg.appointment_condition} nicht erfüllt` })
@@ -558,20 +562,21 @@ Deno.serve(async (req: Request) => {
             if (msg.event_type === 'termin_gebucht') {
               try {
                 const { data: ap } = await supabase.from('crm_appointments')
-                  .select('id, title, start_time, end_time, zoom_link')
+                  .select('id, title, start_time, end_time, zoom_link, type, location, location_url')
                   .eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
                   .order('start_time', { ascending: true }).limit(1).maybeSingle()
-                const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null } | null
+                const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null; type: string | null; location: string | null; location_url: string | null } | null
                 if (a) {
                   const isZoom = !!a.zoom_link
+                  const isVorOrt = a.type === 'inperson'
                   const ics = buildIcs({
                     uid:         a.id,
                     title:       a.title || 'Beratungsgespräch mit Sven – Happy Property',
                     startIso:    new Date(a.start_time).toISOString(),
                     endIso:      new Date(a.end_time).toISOString(),
-                    description: `Beratungsgespräch mit Sven · Happy Property${isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,
-                    location:    isZoom ? (a.zoom_link as string) : 'WhatsApp / Telefon',
-                    url:         isZoom ? (a.zoom_link as string) : undefined,
+                    description: `Beratungsgespräch mit Sven · Happy Property${isVorOrt ? `\nWir treffen uns vor Ort${a.location ? `: ${a.location}` : ''}${a.location_url ? `\n${a.location_url}` : ''}` : isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,
+                    location:    isVorOrt ? (a.location || 'Vor Ort') : isZoom ? (a.zoom_link as string) : 'WhatsApp / Telefon',
+                    url:         isVorOrt ? (a.location_url ?? undefined) : isZoom ? (a.zoom_link as string) : undefined,
                   })
                   attachments = [{ filename: 'termin.ics', content: toB64(ics), contentType: 'text/calendar; method=PUBLISH; charset=UTF-8' }]
                 }

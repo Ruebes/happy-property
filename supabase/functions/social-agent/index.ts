@@ -562,6 +562,16 @@ Regeln:
       return json({ success: true, url })
     }
 
+    // ── Meta-Token-Scopes prüfen (Debug für Publishing-Berechtigungen) ───────
+    if (body.action === 'meta_scopes') {
+      const { data: mtRow } = await sb.from('connector_secrets').select('value').eq('key', 'META_ACCESS_TOKEN').maybeSingle()
+      const tok = (mtRow as { value: string } | null)?.value ?? Deno.env.get('META_ACCESS_TOKEN') ?? ''
+      if (!tok) return json({ error: 'Kein META_ACCESS_TOKEN' }, 400)
+      const d = await fetch(`https://graph.facebook.com/v21.0/debug_token?input_token=${encodeURIComponent(tok)}&access_token=${encodeURIComponent(tok)}`).then(x => x.json())
+      const perms = await fetch(`https://graph.facebook.com/v21.0/me/permissions?access_token=${encodeURIComponent(tok)}`).then(x => x.json())
+      return json({ ok: true, debug: d?.data ?? d, permissions: perms?.data ?? perms })
+    }
+
     // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
     if (body.action === 'persona_check') {
       try {
@@ -769,7 +779,9 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       const videoUrl = ((p0 as { video_url?: string | null } | null)?.video_url ?? '').trim()
       const p = p0 ? { ...p0, image_url: imgs[0] ?? p0.image_url } : null
       if (!p?.content?.trim()) return json({ error: 'Der Post hat noch keinen Text.' }, 400)
-      const metaToken = Deno.env.get('META_ACCESS_TOKEN') ?? ''
+      // META-Token: zuerst die im CRM gepflegte Ablage (Einstellungen → Connectoren)
+      const { data: mtRow } = await sb.from('connector_secrets').select('value').eq('key', 'META_ACCESS_TOKEN').maybeSingle()
+      const metaToken = (mtRow as { value: string } | null)?.value ?? Deno.env.get('META_ACCESS_TOKEN') ?? ''
       // LinkedIn-Token: zuerst die im CRM gepflegte Ablage (Einstellungen →
       // Connectoren), sonst Env-Secret.
       const { data: liRow } = await sb.from('connector_secrets').select('value').eq('key', 'LINKEDIN_ACCESS_TOKEN').maybeSingle()
