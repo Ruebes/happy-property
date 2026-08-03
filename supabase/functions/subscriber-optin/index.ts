@@ -133,18 +133,67 @@ Deno.serve(async (req) => {
     if (req.method === 'GET') {
       const token = new URL(req.url).searchParams.get('confirm') ?? ''
       if (!token) return zurueck(DEFAULT_REDIRECT, 'abgelaufen')
-      const { data: sub } = await sb.from('newsletter_subscribers').select('id, first_name, properties').eq('properties->>doi_token', token).maybeSingle()
-      const s = sub as { id: string; first_name: string | null; properties: Record<string, unknown> | null } | null
+      const { data: sub } = await sb.from('newsletter_subscribers').select('id, first_name, email, phone, properties').eq('properties->>doi_token', token).maybeSingle()
+      const s = sub as { id: string; first_name: string | null; email: string | null; phone: string | null; properties: Record<string, unknown> | null } | null
       if (!s) return zurueck(DEFAULT_REDIRECT, 'abgelaufen')
       const props = { ...(s.properties ?? {}) }
       const listId = props.doi_pending_list as string | undefined
       const ziel = erlaubtesZiel(props.doi_redirect as string | undefined)
       delete props.doi_token; delete props.doi_pending_list
       props.doi_confirmed = true; props.doi_confirmed_at = new Date().toISOString()
+      // Willkommensnachricht nur EINMAL (Doppelklicks auf den Bestätigungslink)
+      const sendWelcome = !props.welcome_sent_at
+      if (sendWelcome) props.welcome_sent_at = new Date().toISOString()
       await sb.from('newsletter_subscribers').update({ properties: props, optout_at: null }).eq('id', s.id)
       if (listId) {
         await sb.from('newsletter_list_members').upsert({ list_id: listId, subscriber_id: s.id }, { onConflict: 'list_id,subscriber_id' })
         await enrollInListSequences(sb, s.id, listId)
+      }
+      // ── Lottes Willkommensgruß — Mail und/oder WhatsApp, je nach Eintrag ────
+      if (sendWelcome) {
+        const de_ = (props.lang as string | undefined) !== 'en'
+        const first = (s.first_name ?? '').trim()
+        const hallo = de_ ? (first ? `Hallo ${first},` : 'Hallo,') : (first ? `Hi ${first},` : 'Hi,')
+        const IMPRESSUM = 'https://www.happy-property.de/impressum/'
+        const abmelden = `https://portal.happy-property.com/abmelden?s=${s.id}`
+        if (s.email) {
+          const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+            <div style="text-align:center;margin-bottom:6px;">
+              <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
+              <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
+            </div>
+            <p>${hallo}</p>
+            <p>${de_
+              ? 'schön, dass du dabei bist! Ich bin <b>Lotte</b>, die Assistentin von Sven bei Happy Property — die mit den vier Pfoten. 🐾'
+              : "great to have you on board! I'm <b>Lotte</b>, Sven's assistant at Happy Property — the one with four paws. 🐾"}</p>
+            <p>${de_
+              ? 'Kurz zu uns: <b>Happy Property</b> begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern — von der Auswahl über den Kauf bis zur Vermietung, alles aus einer Hand und direkt vor Ort in Paphos.'
+              : '<b>Happy Property</b> guides investors through new-build property investments in Cyprus — from selection to purchase to letting, all from one hand, right here in Paphos.'}</p>
+            <p>${de_
+              ? 'Und ein Versprechen: Von uns bekommst du <b>nur nützliche, tagesaktuelle Inhalte</b> rund um Immobilien auf Zypern — und, falls für dich spannend, zum Auswandern nach Zypern. Kein Spam, kein Blabla.'
+              : 'One promise: we only send <b>useful, up-to-date content</b> about property in Cyprus — and, if relevant for you, about relocating to Cyprus. No spam.'}</p>
+            <p>${de_ ? 'Fragen? Antworte einfach auf diese Mail — ich gebe es direkt an Sven weiter.' : 'Questions? Just reply to this email — I will pass it straight to Sven.'}</p>
+            <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
+            <p style="text-align:center;margin:22px 0 0;">
+              <a href="${IMPRESSUM}" style="color:#6b7280;text-decoration:underline;font-size:12px;margin:0 10px;">${de_ ? 'Impressum' : 'Imprint'}</a>
+              <a href="${abmelden}" style="color:#6b7280;text-decoration:underline;font-size:12px;margin:0 10px;">${de_ ? 'Abmelden' : 'Unsubscribe'}</a>
+            </p>
+          </div>`
+          sb.functions.invoke('send-email', { body: {
+            to: s.email, subject: de_ ? '🐾 Willkommen bei Happy Property!' : '🐾 Welcome to Happy Property!',
+            html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en',
+          } }).catch((e) => console.warn('[subscriber-optin] Willkommensmail:', e))
+        }
+        if (s.phone) {
+          const waText = de_
+            ? `${hallo.replace(',', '')} 🐾\n\nich bin Lotte, die Assistentin von Sven bei Happy Property — schön, dass du dabei bist!\n\nKurz zu uns: Happy Property begleitet deutschsprachige Anleger bei Neubau-Immobilien auf Zypern — von der Auswahl bis zur Vermietung, alles aus einer Hand, direkt vor Ort in Paphos.\n\nVersprochen: Von uns bekommst du nur nützliche, tagesaktuelle Infos zu Immobilien auf Zypern und zum Auswandern — kein Spam.\n\nImpressum: ${IMPRESSUM}\nKeine Nachrichten mehr? Antworte einfach ABMELDEN.\n\nLiebe Grüße, Lotte 🐾`
+            : `${hallo.replace(',', '')} 🐾\n\nI'm Lotte, Sven's assistant at Happy Property — great to have you on board!\n\nHappy Property guides investors through new-build property investments in Cyprus — from selection to letting, all from one hand, right here in Paphos.\n\nPromise: only useful, up-to-date content about property in Cyprus and relocating — no spam.\n\nImprint: ${IMPRESSUM}\nNo more messages? Just reply STOP.\n\nBest, Lotte 🐾`
+          sb.functions.invoke('send-whatsapp', { body: {
+            event_type: 'newsletter_welcome', override_text: waText,
+            lead_data: { lead_name: first || 'Abonnent', lead_phone: s.phone },
+            persona_image: lotteBild(),
+          } }).catch((e) => console.warn('[subscriber-optin] Willkommens-WhatsApp:', e))
+        }
       }
       return zurueck(ziel, 'ja')
     }
