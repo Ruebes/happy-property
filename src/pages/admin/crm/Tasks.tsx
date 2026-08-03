@@ -103,15 +103,20 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
   const [contacts, setContacts] = useState<Contact[]>([])
   useEffect(() => {
     (async () => {
-      const [le, bz] = await Promise.all([
+      const [le, bz, dv] = await Promise.all([
         supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language').limit(1000),
         supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp, language').limit(1000),
+        supabase.from('crm_developer_contacts').select('id, name, email, phone, whatsapp, language, developer:crm_developers(name)').limit(1000),
       ])
       const list: Contact[] = []
       for (const l of (le.data ?? []) as Record<string, string | null>[])
         list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone, lang: l.language === 'en' ? 'en' : 'de' })
       for (const b of (bz.data ?? []) as Record<string, string | null>[])
         list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de' })
+      // Developer-Ansprechpartner (z.B. Valery/Mito) sind auch zuweisbar —
+      // gleiche externe Zustellung (ext_*), Sprache aus dem Kontakt.
+      for (const d of (dv.data ?? []) as unknown as Array<Record<string, string | null> & { developer?: { name?: string | null } | null }>)
+        list.push({ key: `biz:dev-${d.id}`, id: String(d.id), kind: 'biz', name: `${d.name ?? ''}${d.developer?.name ? ` (${d.developer.name})` : ''}`.trim() || (d.email ?? 'Developer'), email: d.email, phone: d.whatsapp || d.phone, lang: d.language === 'en' ? 'en' : 'de' })
       setContacts(list.filter(c => c.name))
     })()
   }, [])
@@ -460,13 +465,15 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   const startEdit = async () => {
     setETitle(task.title); setEDesc(task.description ?? ''); setEditing(true)
     if (contacts.length === 0) {
-      const [le, bz] = await Promise.all([
+      const [le, bz, dv] = await Promise.all([
         supabase.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language').limit(1000),
         supabase.from('crm_business_contacts').select('id, first_name, last_name, company, email, phone, whatsapp, language').limit(1000),
+        supabase.from('crm_developer_contacts').select('id, name, email, phone, whatsapp, language, developer:crm_developers(name)').limit(1000),
       ])
       const list: Contact[] = []
       for (const l of (le.data ?? []) as Record<string, string | null>[]) list.push({ key: `lead:${l.id}`, id: l.id!, kind: 'lead', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || (l.email ?? 'Lead'), email: l.email, phone: l.whatsapp || l.phone, lang: l.language === 'en' ? 'en' : 'de' })
       for (const b of (bz.data ?? []) as Record<string, string | null>[]) list.push({ key: `biz:${b.id}`, id: b.id!, kind: 'biz', name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || (b.email ?? t('crm.tasks.contactFallback', 'Kontakt')), email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de' })
+      for (const d of (dv.data ?? []) as unknown as Array<Record<string, string | null> & { developer?: { name?: string | null } | null }>) list.push({ key: `biz:dev-${d.id}`, id: String(d.id), kind: 'biz', name: `${d.name ?? ''}${d.developer?.name ? ` (${d.developer.name})` : ''}`.trim() || (d.email ?? 'Developer'), email: d.email, phone: d.whatsapp || d.phone, lang: d.language === 'en' ? 'en' : 'de' })
       setContacts(list.filter(c => c.name))
     }
   }
