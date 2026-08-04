@@ -533,6 +533,45 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // ── Flow-Builder: Wenn/Dann-Bedingung (E-Mail geöffnet?) zur SENDEZEIT ──
+      const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean } | null }).seq_condition
+      if (seqCond?.kind === 'email_opened') {
+        let opened = false
+        if (msg.subscriber_id) {
+          const { data: ev } = await supabase.from('engagement_events').select('id').eq('subscriber_id', msg.subscriber_id).eq('type', 'email_open').limit(1)
+          opened = !!(ev && ev.length)
+        } else if (msg.lead_id) {
+          const { data: ev } = await supabase.from('engagement_events').select('id').eq('lead_id', msg.lead_id).eq('type', 'email_open').limit(1)
+          opened = !!(ev && ev.length)
+        }
+        const ok = seqCond.negate ? !opened : opened
+        if (!ok) {
+          await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Flow-Bedingung nicht erfüllt (email_opened${seqCond.negate ? '=nein' : '=ja'})` }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'skipped:flow_condition' })
+          continue
+        }
+      }
+
+      // ── Flow-Builder: Empfängerlisten-Update (kein Versand) ─────────────────
+      if (msg.type === 'list_update') {
+        const mu = msg as { seq_list_op?: string | null; seq_list_target?: string | null }
+        try {
+          if (mu.seq_list_target && msg.subscriber_id) {
+            if (mu.seq_list_op === 'remove') {
+              await supabase.from('newsletter_list_members').delete().eq('list_id', mu.seq_list_target).eq('subscriber_id', msg.subscriber_id)
+            } else {
+              await supabase.from('newsletter_list_members').upsert({ list_id: mu.seq_list_target, subscriber_id: msg.subscriber_id }, { onConflict: 'list_id,subscriber_id' })
+            }
+          }
+          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'list_update' })
+        } catch (e) {
+          await supabase.from('scheduled_messages').update({ status: 'failed', error_message: String(e).slice(0, 300) }).eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'list_update:failed' })
+        }
+        continue
+      }
+
       // Empfänger auflösen: Abonnent (Newsletter-Liste) hat Vorrang, sonst
       // 'client' = Lead bzw. fixer Kontakt (bc:/dc:).
       const rcpt = msg.subscriber_id
@@ -582,10 +621,14 @@ Deno.serve(async (req: Request) => {
                 }
               } catch (icsErr) { console.warn('[process-scheduled] ICS-Anhang fehlgeschlagen:', icsErr) }
             }
+            // Abonnenten-Mails: Öffnungs-Pixel für den Flow-Split „E-Mail geöffnet?"
+            const htmlOut = (emailBody ?? msg.email_body) + (msg.subscriber_id
+              ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/subscriber-optin?open=${msg.subscriber_id}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
+              : '')
             await sendEmail({
               to:       rcpt.email,
               subject:  emailSubject ?? msg.email_subject,
-              html:     emailBody ?? msg.email_body,
+              html:     htmlOut,
               smtpUser, smtpPass,
               attachments,
             })

@@ -7,7 +7,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['logo.jpg', 'favicon.svg'],
+      includeAssets: ['logo.jpg', 'favicon.png', 'apple-touch-icon.png', 'pwa-192.png', 'pwa-512.png'],
       manifest: {
         name: 'Happy Property',
         short_name: 'Happy Property',
@@ -20,19 +20,19 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: '/logo.jpg',
+            src: '/pwa-192.png',
             sizes: '192x192',
-            type: 'image/jpeg',
+            type: 'image/png',
           },
           {
-            src: '/logo.jpg',
+            src: '/pwa-512.png',
             sizes: '512x512',
-            type: 'image/jpeg',
+            type: 'image/png',
           },
           {
-            src: '/logo.jpg',
+            src: '/pwa-512.png',
             sizes: '512x512',
-            type: 'image/jpeg',
+            type: 'image/png',
             purpose: 'any maskable',
           },
         ],

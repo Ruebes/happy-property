@@ -1,47 +1,254 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 
-// ── Automations-Editor je Empfängerliste ────────────────────────────────────
-// Definiert die Mail-/WhatsApp-Sequenz, die ein Abonnent NACH der Bestätigung
-// (Double-Opt-In) automatisch durchläuft. Beim Bestätigen schreibt die Edge
-// subscriber-optin die Schritte als scheduled_messages ein — der bestehende
-// Scheduler (process-scheduled-messages) versendet sie zeitversetzt.
-//
-// Datenmodell: list_sequences (1 pro Liste) → sequence_steps (geordnet).
-// delay_minutes = Verzögerung ab Bestätigung. Platzhalter {{vorname}} erlaubt.
+// ── Flow-Builder je Empfängerliste ──────────────────────────────────────────
+// Baut den Automations-Flow, den ein Abonnent nach der Bestätigung (Double-
+// Opt-In) durchläuft. Bausteine: Wartezeit, E-Mail, WhatsApp, Listen-Update,
+// Wenn/Dann-Verzweigung (E-Mail geöffnet?). Gespeichert wird ein Baum in
+// sequence_steps (parent_split_id + branch); subscriber-optin plant daraus
+// scheduled_messages vor, process-scheduled-messages prüft die Split-
+// Bedingung erst zur Sendezeit (seq_condition) — nur der zutreffende Ast
+// wird wirklich versendet.
 
 type Unit = 'min' | 'std' | 'tag'
-interface StepForm {
-  id?: string
+type Kind = 'delay' | 'msg' | 'list_update' | 'split'
+
+interface Block {
+  key: string
+  kind: Kind
+  // Wartezeit
   delayValue: number
   delayUnit: Unit
+  // Nachricht
   channel: 'email' | 'whatsapp' | 'both'
   email_subject: string
   email_body: string
   whatsapp_text: string
   whatsapp_image_url: string
+  // Listen-Update
+  listOp: 'add' | 'remove'
+  listTarget: string
+  // Split
+  waitValue: number
+  waitUnit: 'std' | 'tag'
+  yes: Block[]
+  no: Block[]
 }
 
+const newKey = () => (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`)
 const minutesToDelay = (m: number): { delayValue: number; delayUnit: Unit } =>
   m > 0 && m % 1440 === 0 ? { delayValue: m / 1440, delayUnit: 'tag' }
   : m > 0 && m % 60 === 0 ? { delayValue: m / 60, delayUnit: 'std' }
   : { delayValue: m, delayUnit: 'min' }
 const delayToMinutes = (v: number, u: Unit) => Math.max(0, Math.round(v)) * (u === 'tag' ? 1440 : u === 'std' ? 60 : 1)
 
-const emptyStep = (): StepForm => ({
-  delayValue: 0, delayUnit: 'min', channel: 'email',
-  email_subject: '', email_body: '', whatsapp_text: '', whatsapp_image_url: '',
+const emptyBlock = (kind: Kind): Block => ({
+  key: newKey(), kind,
+  delayValue: 1, delayUnit: 'tag',
+  channel: 'email', email_subject: '', email_body: '', whatsapp_text: '', whatsapp_image_url: '',
+  listOp: 'add', listTarget: '',
+  waitValue: 1, waitUnit: 'tag', yes: [], no: [],
 })
 
+// ── Baum-Helfer (immutable) ─────────────────────────────────────────────────
+const mapTree = (blocks: Block[], fn: (b: Block) => Block): Block[] =>
+  blocks.map(b => fn(b.kind === 'split' ? { ...b, yes: mapTree(b.yes, fn), no: mapTree(b.no, fn) } : b))
+const patchBlock = (blocks: Block[], key: string, patch: Partial<Block>): Block[] =>
+  mapTree(blocks, b => b.key === key ? { ...b, ...patch } : b)
+const removeBlock = (blocks: Block[], key: string): Block[] =>
+  blocks.filter(b => b.key !== key).map(b => b.kind === 'split' ? { ...b, yes: removeBlock(b.yes, key), no: removeBlock(b.no, key) } : b)
+const moveBlock = (blocks: Block[], key: string, dir: -1 | 1): Block[] => {
+  const i = blocks.findIndex(b => b.key === key)
+  if (i >= 0) {
+    const j = i + dir
+    if (j < 0 || j >= blocks.length) return blocks
+    const n = [...blocks];[n[i], n[j]] = [n[j], n[i]]
+    return n
+  }
+  return blocks.map(b => b.kind === 'split' ? { ...b, yes: moveBlock(b.yes, key, dir), no: moveBlock(b.no, key, dir) } : b)
+}
+// anhängen: parentKey=null → Wurzel-Ebene, sonst in den Ja/Nein-Ast des Splits
+const appendBlock = (blocks: Block[], parentKey: string | null, branch: 'yes' | 'no' | null, blk: Block): Block[] => {
+  if (!parentKey) return [...blocks, blk]
+  return blocks.map(b => {
+    if (b.kind !== 'split') return b
+    if (b.key === parentKey && branch) return { ...b, [branch]: [...b[branch], blk] }
+    return { ...b, yes: appendBlock(b.yes, parentKey, branch, blk), no: appendBlock(b.no, parentKey, branch, blk) }
+  })
+}
+
+// ── Baustein-Menü ───────────────────────────────────────────────────────────
+interface AddMenuProps { t: TFunction; depth: number; onAdd: (kind: Kind) => void }
+function AddMenu({ t, depth, onAdd }: AddMenuProps) {
+  const [open, setOpen] = useState(false)
+  const items: Array<{ kind: Kind; icon: string; label: string }> = [
+    { kind: 'delay', icon: '⏱', label: t('crm.flow.addDelay', 'Wartezeit') },
+    { kind: 'msg', icon: '✉️', label: t('crm.flow.addMsg', 'E-Mail / WhatsApp') },
+    { kind: 'list_update', icon: '📋', label: t('crm.flow.addList', 'Listen-Update') },
+    ...(depth < 2 ? [{ kind: 'split' as Kind, icon: '🔀', label: t('crm.flow.addSplit', 'Wenn/Dann') }] : []),
+  ]
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="w-full py-2 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-orange-300 hover:text-orange-600">
+        + {t('crm.flow.addBlock', 'Baustein hinzufügen')}
+      </button>
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-2 justify-center py-1">
+      {items.map(it => (
+        <button key={it.kind} onClick={() => { onAdd(it.kind); setOpen(false) }}
+          className="px-3 py-1.5 rounded-full border border-gray-200 text-xs font-medium text-gray-700 hover:border-orange-300 hover:bg-orange-50">
+          {it.icon} {it.label}
+        </button>
+      ))}
+      <button onClick={() => setOpen(false)} className="px-2.5 py-1.5 rounded-full text-xs text-gray-400 hover:bg-gray-100">✕</button>
+    </div>
+  )
+}
+
+// ── Ebene (Wurzel oder Split-Ast), rekursiv ─────────────────────────────────
+interface LevelProps {
+  t: TFunction
+  blocks: Block[]
+  depth: number
+  lists: Array<{ value: string; label: string }>
+  onPatch: (key: string, patch: Partial<Block>) => void
+  onRemove: (key: string) => void
+  onMove: (key: string, dir: -1 | 1) => void
+  onAdd: (parentKey: string | null, branch: 'yes' | 'no' | null, kind: Kind) => void
+  parentKey: string | null
+  branch: 'yes' | 'no' | null
+}
+function Level(props: LevelProps) {
+  const { t, blocks, depth, lists, onPatch, onRemove, onMove, onAdd, parentKey, branch } = props
+  const inp = 'w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400 bg-white'
+  const UNITS = [
+    { value: 'min', label: t('crm.seq.minutes', 'Minuten') },
+    { value: 'std', label: t('crm.seq.hours', 'Stunden') },
+    { value: 'tag', label: t('crm.seq.days', 'Tage') },
+  ]
+  const CHANNELS = [
+    { value: 'email', label: t('crm.seq.email', 'E-Mail') },
+    { value: 'whatsapp', label: t('crm.seq.whatsapp', 'WhatsApp') },
+    { value: 'both', label: t('crm.seq.both', 'E-Mail + WhatsApp') },
+  ]
+  const LIST_OPS = [
+    { value: 'add', label: t('crm.flow.listAdd', 'Hinzufügen zu') },
+    { value: 'remove', label: t('crm.flow.listRemove', 'Entfernen aus') },
+  ]
+  const endsWithSplit = blocks.length > 0 && blocks[blocks.length - 1].kind === 'split'
+  const ctl = (b: Block, i: number) => (
+    <div className="flex items-center gap-1">
+      <button onClick={() => onMove(b.key, -1)} disabled={i === 0} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↑</button>
+      <button onClick={() => onMove(b.key, 1)} disabled={i === blocks.length - 1} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↓</button>
+      <button onClick={() => onRemove(b.key)} className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">🗑</button>
+    </div>
+  )
+  return (
+    <div className="space-y-1.5">
+      {blocks.map((b, i) => (
+        <div key={b.key}>
+          {i > 0 && <div className="flex justify-center text-gray-300 text-xs leading-none pb-1.5">↓</div>}
+
+          {b.kind === 'delay' && (
+            <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-amber-800">⏱ {t('crm.flow.delay', 'Wartezeit')}</span>
+                {ctl(b, i)}
+              </div>
+              <div className="grid grid-cols-2 gap-3 max-w-xs">
+                <NumberStepper value={b.delayValue} min={1} onChange={v => onPatch(b.key, { delayValue: v })} />
+                <CustomSelect value={b.delayUnit} onChange={v => onPatch(b.key, { delayUnit: v as Unit })} options={UNITS} />
+              </div>
+            </div>
+          )}
+
+          {b.kind === 'msg' && (
+            <div className="border border-gray-200 bg-white rounded-xl p-3 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-800">{b.channel === 'whatsapp' ? '💬' : '✉️'} {t('crm.flow.message', 'Nachricht')}</span>
+                {ctl(b, i)}
+              </div>
+              <div className="max-w-[220px]">
+                <CustomSelect value={b.channel} onChange={v => onPatch(b.key, { channel: v as Block['channel'] })} options={CHANNELS} />
+              </div>
+              {b.channel !== 'whatsapp' && (
+                <div className="space-y-2">
+                  <input className={inp} placeholder={t('crm.seq.subject', 'Betreff der E-Mail')} value={b.email_subject} onChange={e => onPatch(b.key, { email_subject: e.target.value })} />
+                  <textarea className={`${inp} min-h-[100px]`} placeholder={t('crm.seq.emailBody', 'Text der E-Mail … (HTML erlaubt)')} value={b.email_body} onChange={e => onPatch(b.key, { email_body: e.target.value })} />
+                </div>
+              )}
+              {b.channel !== 'email' && (
+                <div className="space-y-2">
+                  <textarea className={`${inp} min-h-[70px]`} placeholder={t('crm.seq.waText', 'WhatsApp-Text …')} value={b.whatsapp_text} onChange={e => onPatch(b.key, { whatsapp_text: e.target.value })} />
+                  <input className={inp} placeholder={t('crm.seq.waImage', 'Bild-URL (optional)')} value={b.whatsapp_image_url} onChange={e => onPatch(b.key, { whatsapp_image_url: e.target.value })} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {b.kind === 'list_update' && (
+            <div className="border border-sky-200 bg-sky-50/60 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-sky-800">📋 {t('crm.flow.listUpdate', 'Empfängerlisten-Update')}</span>
+                {ctl(b, i)}
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <CustomSelect value={b.listOp} onChange={v => onPatch(b.key, { listOp: v as Block['listOp'] })} options={LIST_OPS} />
+                <CustomSelect value={b.listTarget} onChange={v => onPatch(b.key, { listTarget: v })}
+                  options={[{ value: '', label: t('crm.flow.pickList', 'Liste wählen …') }, ...lists]} />
+              </div>
+            </div>
+          )}
+
+          {b.kind === 'split' && (
+            <div className="border border-violet-200 bg-violet-50/40 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-violet-800">🔀 {t('crm.flow.split', 'Wenn/Dann: E-Mail geöffnet?')}</span>
+                {ctl(b, i)}
+              </div>
+              <div className="flex items-center gap-2 mb-3 text-xs text-gray-600">
+                <span>{t('crm.flow.checkAfter', 'Prüfen nach')}</span>
+                <div className="w-24"><NumberStepper value={b.waitValue} min={1} onChange={v => onPatch(b.key, { waitValue: v })} /></div>
+                <div className="w-32"><CustomSelect value={b.waitUnit} onChange={v => onPatch(b.key, { waitUnit: v as Block['waitUnit'] })} options={UNITS.filter(u => u.value !== 'min')} /></div>
+              </div>
+              <div className="grid lg:grid-cols-2 gap-3">
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-2.5">
+                  <p className="text-xs font-semibold text-emerald-700 mb-2">✓ {t('crm.flow.yesBranch', 'Ja - hat eine E-Mail geöffnet')}</p>
+                  <Level {...props} blocks={b.yes} depth={depth + 1} parentKey={b.key} branch="yes" />
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-2.5">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">✗ {t('crm.flow.noBranch', 'Nein - nichts geöffnet')}</p>
+                  <Level {...props} blocks={b.no} depth={depth + 1} parentKey={b.key} branch="no" />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+      {endsWithSplit ? (
+        <p className="text-[11px] text-gray-400 text-center pt-1">{t('crm.flow.afterSplit', 'Nach einer Verzweigung geht es nur in den Ästen weiter.')}</p>
+      ) : (
+        <AddMenu t={t} depth={depth} onAdd={kind => onAdd(parentKey, branch, kind)} />
+      )}
+    </div>
+  )
+}
+
+// ── Editor ──────────────────────────────────────────────────────────────────
 export default function SequenceEditor({ listId, listName, onClose }: { listId: string; listName: string; onClose: () => void }) {
   const { t } = useTranslation()
   const [seqId, setSeqId] = useState<string | null>(null)
   const [seqName, setSeqName] = useState('Automation')
   const [seqActive, setSeqActive] = useState(true)
-  const [steps, setSteps] = useState<StepForm[]>([])
+  const [blocks, setBlocks] = useState<Block[]>([])
+  const [lists, setLists] = useState<Array<{ value: string; label: string }>>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [enrolled, setEnrolled] = useState<number>(0)
@@ -50,6 +257,8 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      const { data: nl } = await supabase.from('newsletter_lists').select('id, name').order('name')
+      setLists(((nl as Array<{ id: string; name: string }> | null) ?? []).map(l => ({ value: l.id, label: l.name })))
       const { data: seqs } = await supabase.from('list_sequences')
         .select('id, name, active').eq('list_id', listId).order('created_at').limit(1)
       const seq = (seqs as { id: string; name: string; active: boolean }[] | null)?.[0]
@@ -57,34 +266,40 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
         setSeqId(seq.id); setSeqName(seq.name); setSeqActive(seq.active)
         const { data: st } = await supabase.from('sequence_steps')
           .select('*').eq('sequence_id', seq.id).order('step_order')
-        setSteps(((st as Record<string, unknown>[] | null) ?? []).map(s => ({
-          id: s.id as string,
-          ...minutesToDelay(Number(s.delay_minutes ?? 0)),
-          channel: (s.channel as StepForm['channel']) ?? 'email',
-          email_subject: (s.email_subject as string) ?? '',
-          email_body: (s.email_body as string) ?? '',
-          whatsapp_text: (s.whatsapp_text as string) ?? '',
-          whatsapp_image_url: (s.whatsapp_image_url as string) ?? '',
-        })))
+        const rows = (st as Array<Record<string, unknown>> | null) ?? []
+        const toBlock = (r: Record<string, unknown>): Block => {
+          const type = String(r.step_type ?? r.channel ?? 'email')
+          const b = emptyBlock(type === 'delay' ? 'delay' : type === 'split' ? 'split' : type === 'list_update' ? 'list_update' : 'msg')
+          b.key = String(r.id)
+          if (b.kind === 'delay') Object.assign(b, minutesToDelay(Number(r.delay_minutes ?? 0)))
+          if (b.kind === 'msg') {
+            b.channel = (type === 'both' ? 'both' : type === 'whatsapp' ? 'whatsapp' : 'email')
+            b.email_subject = (r.email_subject as string) ?? ''
+            b.email_body = (r.email_body as string) ?? ''
+            b.whatsapp_text = (r.whatsapp_text as string) ?? ''
+            b.whatsapp_image_url = (r.whatsapp_image_url as string) ?? ''
+          }
+          if (b.kind === 'list_update') { b.listOp = (r.list_op === 'remove' ? 'remove' : 'add'); b.listTarget = (r.list_target as string) ?? '' }
+          if (b.kind === 'split') {
+            const h = Number(r.split_wait_hours ?? 24)
+            if (h % 24 === 0) { b.waitValue = h / 24; b.waitUnit = 'tag' } else { b.waitValue = h; b.waitUnit = 'std' }
+            b.yes = rows.filter(x => x.parent_split_id === r.id && x.branch === 'yes').map(toBlock)
+            b.no = rows.filter(x => x.parent_split_id === r.id && x.branch === 'no').map(toBlock)
+          }
+          return b
+        }
+        setBlocks(rows.filter(r => !r.parent_split_id).map(toBlock))
         const { count } = await supabase.from('sequence_enrollments')
           .select('id', { count: 'exact', head: true }).eq('sequence_id', seq.id)
         setEnrolled(count ?? 0)
       } else {
-        setSeqId(null); setSeqName('Automation'); setSeqActive(true); setSteps([emptyStep()]); setEnrolled(0)
+        setSeqId(null); setSeqName('Automation'); setSeqActive(true); setBlocks([emptyBlock('msg')]); setEnrolled(0)
       }
     } catch (e) {
       console.error('[SequenceEditor] load:', e); setErr(t('crm.seq.loadErr', 'Konnte die Automation nicht laden.'))
     } finally { setLoading(false) }
   }, [listId, t])
   useEffect(() => { void load() }, [load])
-
-  const setStep = (i: number, patch: Partial<StepForm>) => setSteps(s => s.map((x, idx) => idx === i ? { ...x, ...patch } : x))
-  const addStep = () => setSteps(s => [...s, emptyStep()])
-  const removeStep = (i: number) => setSteps(s => s.filter((_, idx) => idx !== i))
-  const move = (i: number, dir: -1 | 1) => setSteps(s => {
-    const j = i + dir; if (j < 0 || j >= s.length) return s
-    const n = [...s];[n[i], n[j]] = [n[j], n[i]]; return n
-  })
 
   const save = async () => {
     setErr(''); setSaving(true)
@@ -100,18 +315,38 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
         if (error) throw error
         id = (data as { id: string }).id; setSeqId(id)
       }
-      const rows = steps
-        .filter(s => (s.channel === 'email' ? s.email_body.trim() : s.whatsapp_text.trim()))
-        .map((s, idx) => ({
-          sequence_id: id, step_order: idx + 1, delay_minutes: delayToMinutes(s.delayValue, s.delayUnit),
-          channel: s.channel, active: true,
-          email_subject: s.channel !== 'whatsapp' ? s.email_subject.trim() || null : null,
-          email_body: s.channel !== 'whatsapp' ? s.email_body.trim() || null : null,
-          whatsapp_text: s.channel !== 'email' ? s.whatsapp_text.trim() || null : null,
-          whatsapp_image_url: s.channel !== 'email' ? (s.whatsapp_image_url.trim() || null) : null,
-        }))
-      if (rows.length) {
-        const { error } = await supabase.from('sequence_steps').insert(rows)
+      // Baum → flache Zeilen. Splits brauchen echte IDs für parent_split_id,
+      // daher vergeben wir die UUIDs clientseitig.
+      const flat: Array<Record<string, unknown>> = []
+      let ord = 0
+      const emit = (list: Block[], parentId: string | null, br: 'yes' | 'no' | null) => {
+        for (const b of list) {
+          const rowId = newKey()
+          const base = { id: rowId, sequence_id: id, step_order: ++ord, active: true, parent_split_id: parentId, branch: br }
+          if (b.kind === 'delay') {
+            flat.push({ ...base, step_type: 'delay', channel: 'email', delay_minutes: delayToMinutes(b.delayValue, b.delayUnit) })
+          } else if (b.kind === 'split') {
+            flat.push({ ...base, step_type: 'split', channel: 'email', delay_minutes: 0, split_wait_hours: Math.max(1, Math.round(b.waitValue)) * (b.waitUnit === 'tag' ? 24 : 1) })
+            emit(b.yes, rowId, 'yes'); emit(b.no, rowId, 'no')
+          } else if (b.kind === 'list_update') {
+            if (!b.listTarget) { ord--; continue }
+            flat.push({ ...base, step_type: 'list_update', channel: 'email', delay_minutes: 0, list_op: b.listOp, list_target: b.listTarget })
+          } else {
+            const hasContent = b.channel === 'whatsapp' ? b.whatsapp_text.trim() : b.channel === 'email' ? b.email_body.trim() : (b.email_body.trim() || b.whatsapp_text.trim())
+            if (!hasContent) { ord--; continue }
+            flat.push({
+              ...base, step_type: b.channel, channel: b.channel, delay_minutes: 0,
+              email_subject: b.channel !== 'whatsapp' ? b.email_subject.trim() || null : null,
+              email_body: b.channel !== 'whatsapp' ? b.email_body.trim() || null : null,
+              whatsapp_text: b.channel !== 'email' ? b.whatsapp_text.trim() || null : null,
+              whatsapp_image_url: b.channel !== 'email' ? (b.whatsapp_image_url.trim() || null) : null,
+            })
+          }
+        }
+      }
+      emit(blocks, null, null)
+      if (flat.length) {
+        const { error } = await supabase.from('sequence_steps').insert(flat)
         if (error) throw error
       }
       onClose()
@@ -120,24 +355,14 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
     } finally { setSaving(false) }
   }
 
-  const CHANNELS = [
-    { value: 'email', label: t('crm.seq.email', 'E-Mail') },
-    { value: 'whatsapp', label: t('crm.seq.whatsapp', 'WhatsApp') },
-    { value: 'both', label: t('crm.seq.both', 'E-Mail + WhatsApp') },
-  ]
-  const UNITS = [
-    { value: 'min', label: t('crm.seq.minutes', 'Minuten') },
-    { value: 'std', label: t('crm.seq.hours', 'Stunden') },
-    { value: 'tag', label: t('crm.seq.days', 'Tage') },
-  ]
   const inp = 'w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-100 focus:border-orange-400'
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/40 flex items-start justify-center overflow-y-auto p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl my-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">{t('crm.seq.title', 'Automation')}</h2>
+            <h2 className="text-lg font-bold text-gray-900">{t('crm.flow.title', 'Flow-Builder')}</h2>
             <p className="text-xs text-gray-500 mt-0.5">{t('crm.seq.forList', 'Liste')}: <span className="font-medium">{listName}</span>
               {enrolled > 0 && <> · {t('crm.seq.enrolled', '{{n}} eingeschrieben', { n: enrolled })}</>}</p>
           </div>
@@ -164,56 +389,16 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
             </div>
 
             <p className="text-xs text-gray-500">
-              {t('crm.seq.hint', 'Diese Nachrichten gehen automatisch raus, sobald jemand seine Anmeldung bestätigt. Platzhalter {{vorname}} wird durch den Vornamen ersetzt.')}
+              {t('crm.flow.hint', 'Der Flow startet, sobald jemand seine Anmeldung bestätigt. Bausteine: Wartezeit, Nachricht, Listen-Update und Wenn/Dann (prüft, ob der Kontakt bis dahin eine deiner E-Mails geöffnet hat). Platzhalter {{vorname}} wird ersetzt.', { vorname: '{{vorname}}' })}
             </p>
 
-            {steps.map((s, i) => (
-              <div key={i} className="border border-gray-200 rounded-xl p-4 space-y-3 relative">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-gray-800">{t('crm.seq.step', 'Schritt')} {i + 1}</span>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => move(i, -1)} disabled={i === 0} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↑</button>
-                    <button onClick={() => move(i, 1)} disabled={i === steps.length - 1} className="w-7 h-7 rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-30">↓</button>
-                    <button onClick={() => removeStep(i)} className="w-7 h-7 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50">🗑</button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.seq.after', 'Nach')}</label>
-                    <NumberStepper value={s.delayValue} min={0} onChange={v => setStep(i, { delayValue: v })} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">&nbsp;</label>
-                    <CustomSelect value={s.delayUnit} onChange={v => setStep(i, { delayUnit: v as Unit })} options={UNITS} />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.seq.channel', 'Kanal')}</label>
-                    <CustomSelect value={s.channel} onChange={v => setStep(i, { channel: v as StepForm['channel'] })} options={CHANNELS} />
-                  </div>
-                </div>
-                {i === 0 && s.delayValue === 0 && (
-                  <p className="text-[11px] text-gray-400">{t('crm.seq.immediate', '0 = sofort nach der Bestätigung')}</p>
-                )}
-
-                {s.channel !== 'whatsapp' && (
-                  <div className="space-y-2">
-                    <input className={inp} placeholder={t('crm.seq.subject', 'Betreff der E-Mail')} value={s.email_subject} onChange={e => setStep(i, { email_subject: e.target.value })} />
-                    <textarea className={`${inp} min-h-[110px]`} placeholder={t('crm.seq.emailBody', 'Text der E-Mail … (HTML erlaubt)')} value={s.email_body} onChange={e => setStep(i, { email_body: e.target.value })} />
-                  </div>
-                )}
-                {s.channel !== 'email' && (
-                  <div className="space-y-2">
-                    <textarea className={`${inp} min-h-[80px]`} placeholder={t('crm.seq.waText', 'WhatsApp-Text …')} value={s.whatsapp_text} onChange={e => setStep(i, { whatsapp_text: e.target.value })} />
-                    <input className={inp} placeholder={t('crm.seq.waImage', 'Bild-URL (optional)')} value={s.whatsapp_image_url} onChange={e => setStep(i, { whatsapp_image_url: e.target.value })} />
-                  </div>
-                )}
-              </div>
-            ))}
-
-            <button onClick={addStep} className="w-full py-2.5 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-orange-300 hover:text-orange-600">
-              + {t('crm.seq.addStep', 'Schritt hinzufügen')}
-            </button>
+            <Level
+              t={t} blocks={blocks} depth={0} lists={lists} parentKey={null} branch={null}
+              onPatch={(key, patch) => setBlocks(bl => patchBlock(bl, key, patch))}
+              onRemove={key => setBlocks(bl => removeBlock(bl, key))}
+              onMove={(key, dir) => setBlocks(bl => moveBlock(bl, key, dir))}
+              onAdd={(parentKey, branch, kind) => setBlocks(bl => appendBlock(bl, parentKey, branch, emptyBlock(kind)))}
+            />
 
             {err && <p className="text-sm text-red-600">{err}</p>}
 
