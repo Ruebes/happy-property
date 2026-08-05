@@ -242,7 +242,7 @@ function Level(props: LevelProps) {
 }
 
 // ── Editor ──────────────────────────────────────────────────────────────────
-export default function SequenceEditor({ listId, listName, onClose }: { listId: string; listName: string; onClose: () => void }) {
+export default function SequenceEditor({ listId, listName, sequenceId, onClose }: { listId: string; listName: string; sequenceId?: string; onClose: () => void }) {
   const { t } = useTranslation()
   const [seqId, setSeqId] = useState<string | null>(null)
   const [seqName, setSeqName] = useState('Automation')
@@ -259,8 +259,11 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
     try {
       const { data: nl } = await supabase.from('newsletter_lists').select('id, name').order('name')
       setLists(((nl as Array<{ id: string; name: string }> | null) ?? []).map(l => ({ value: l.id, label: l.name })))
-      const { data: seqs } = await supabase.from('list_sequences')
-        .select('id, name, active').eq('list_id', listId).order('created_at').limit(1)
+      // Direkt per Workflow-ID (Funnel → Workflows) oder legacy: erste Sequenz der Liste
+      const q = supabase.from('list_sequences').select('id, name, active')
+      const { data: seqs } = sequenceId
+        ? await q.eq('id', sequenceId).limit(1)
+        : await q.eq('list_id', listId).order('created_at').limit(1)
       const seq = (seqs as { id: string; name: string; active: boolean }[] | null)?.[0]
       if (seq) {
         setSeqId(seq.id); setSeqName(seq.name); setSeqActive(seq.active)
@@ -298,7 +301,7 @@ export default function SequenceEditor({ listId, listName, onClose }: { listId: 
     } catch (e) {
       console.error('[SequenceEditor] load:', e); setErr(t('crm.seq.loadErr', 'Konnte die Automation nicht laden.'))
     } finally { setLoading(false) }
-  }, [listId, t])
+  }, [listId, sequenceId, t])
   useEffect(() => { void load() }, [load])
 
   const save = async () => {

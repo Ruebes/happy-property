@@ -82,6 +82,7 @@ const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
+const Workflows             = lazy(() => import('./pages/admin/crm/Workflows'))
 const AdsManager            = lazy(() => import('./pages/admin/crm/AdsManager'))
 const Newsletter            = lazy(() => import('./pages/admin/crm/Newsletter'))
 const CrmTasks              = lazy(() => import('./pages/admin/crm/Tasks'))
@@ -171,6 +172,7 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter', 'funnel']} permission="funnel" />}>
               <Route path="/admin/crm/funnel"            element={<FunnelStats />} />
               <Route path="/admin/crm/funnel-editor"     element={<FunnelEditor />} />
+              <Route path="/admin/crm/workflows"         element={<Workflows />} />
               <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
               <Route path="/admin/crm/settings/lists"    element={<CrmNewsletterLists />} />
               <Route path="/admin/crm/social"            element={<SocialStudio />} />
