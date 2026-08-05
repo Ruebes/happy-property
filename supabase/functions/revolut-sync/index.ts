@@ -88,7 +88,11 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
   return `
   <div style="background:#FAF6EC;padding:32px 16px;font-family:Montserrat,Arial,sans-serif">
     <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:16px;padding:36px 32px">
-      <img src="${BRAND_LOGO}" alt="Happy Property" style="height:34px;margin-bottom:24px" />
+      <img src="${BRAND_LOGO}" alt="Happy Property" style="height:34px;margin-bottom:20px" />
+      <div style="text-align:center;margin:0 0 18px;">
+        <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-kasse.jpg" alt="Lotte" width="240" style="width:240px;max-width:100%;border-radius:14px;" />
+        <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · persönliche Assistentin von Sven 🐾</p>
+      </div>
       <div style="font-size:15px;color:#1b1b22;line-height:1.65">
         <p style="margin:0 0 14px">${greet}</p>
         <p style="margin:0 0 20px">vielen Dank — deine Zahlung ist bei uns eingegangen. Die Rechnung ist damit vollständig beglichen.</p>
@@ -102,7 +106,7 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
         </table>
       </div>
       ${publicUrl ? `<p style="font-size:13px;color:#6b7280;margin:0 0 20px">Rechnung online ansehen: <a href="${publicUrl}" style="color:#ff795d">${publicUrl}</a></p>` : ''}
-      <p style="font-size:15px;color:#1b1b22;margin:0">Beste Grüße<br/>Happy Property</p>
+      <p style="font-size:15px;color:#1b1b22;margin:0">Liebe Grüße<br/>Lotte 🐾<br/><span style="color:#6b7280;font-size:12px">Happy Property</span></p>
     </div>
     <p style="max-width:560px;margin:14px auto 0;font-size:11px;color:#9ca3af;text-align:center">sveru ltd · Tepeleniou 13, Tepelenio Court, 8010 Paphos · Diese Bestätigung wurde automatisch erstellt.</p>
   </div>`
@@ -376,6 +380,7 @@ Deno.serve(async (req: Request) => {
             to: payerEmail, lead_id: inv.lead_id, deal_id: inv.deal_id,
             subject: `Zahlungseingang bestätigt — Rechnung ${inv.invoice_number}`,
             html: paymentConfirmationHtml(inv, tx.created_at),
+            from_name: 'Lotte · Happy Property',
           } })
           console.log(`[revolut-sync] Zahlungsbestätigung an ${payerEmail} gesendet`)
         } catch (e) { console.warn('[revolut-sync] Zahlungsbestätigung fehlgeschlagen:', e) }

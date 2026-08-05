@@ -203,18 +203,24 @@ Deno.serve(async (req) => {
       if (to) {
         const b64 = base64FromBytes(pdfBytes)
         const greet = customerSnap.contact_name ? `Hallo ${customerSnap.contact_name},` : 'Guten Tag,'
+        const LOTTE_MONEY = `${SUPABASE_URL}/storage/v1/object/public/Assets/wa/lotte-money.jpg`
         const html = `<div style="font-family:Montserrat,Arial,sans-serif;color:#1b1b22;font-size:14px;line-height:1.6">
+          <div style="text-align:center;margin-bottom:14px;">
+            <img src="${LOTTE_MONEY}" alt="Lotte" width="260" style="width:260px;max-width:100%;border-radius:14px;" />
+            <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · persönliche Assistentin von Sven 🐾</p>
+          </div>
           <p>${greet}</p>
-          <p>anbei die Rechnung <strong>${invoiceNumber}</strong> über <strong>${eur(total_gross)}</strong>.</p>
+          <p>anbei bekommst du unsere Rechnung <strong>${invoiceNumber}</strong> über <strong>${eur(total_gross)}</strong>.</p>
           <p>Zahlbar bis <strong>${dDate(dueStr)}</strong> per Überweisung (Verwendungszweck: ${invoiceNumber}).</p>
           <p>Online ansehen: <a href="${publicUrl}" style="color:#ff795d">${publicUrl}</a></p>
-          <p>Beste Grüße<br/>${settings.brand_name}</p>
+          <p>Liebe Grüße<br/>Lotte 🐾<br/><span style="color:#6b7280;font-size:12px">${settings.brand_name}</span></p>
         </div>`
         const r = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to, subject: `Rechnung ${invoiceNumber} — ${settings.brand_name}`, html,
+            from_name: 'Lotte · Happy Property',
             lead_id: body.lead_id ?? null, deal_id: body.deal_id ?? null,
             attachment: { filename: `${invoiceNumber}.pdf`, content_base64: b64, content_type: 'application/pdf' },
           }),

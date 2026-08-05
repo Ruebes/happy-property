@@ -4,6 +4,7 @@
  * tippbar (auch mit Komma), optionaler Suffix (€, %, J). Coral-Akzent, 2026-Look.
  */
 
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 interface Props {
@@ -27,7 +28,15 @@ export function NumberStepper({ value, onChange, step = 1, min, max, suffix, cla
     if (max != null && v > max) return max
     return v
   }
-  const bump = (dir: number) => onChange(clamp(round((Number.isFinite(value) ? value : 0) + dir * step)))
+  // Beim Tippen bleibt der Rohtext erhalten (Draft), sonst frisst das
+  // kontrollierte Feld das Komma sofort wieder ("1234," → "1234").
+  const [draft, setDraft] = useState<string | null>(null)
+  // Deutsch UND international: "1.234,56" → 1234.56, "1234.56" bleibt 1234.56
+  const parseDe = (t: string) => {
+    const c = t.trim().replace(/\s/g, '')
+    return parseFloat(c.includes(',') ? c.replace(/\./g, '').replace(',', '.') : c)
+  }
+  const bump = (dir: number) => { setDraft(null); onChange(clamp(round((Number.isFinite(value) ? value : 0) + dir * step))) }
 
   const btn = 'px-3.5 flex items-center justify-center text-xl font-medium text-gray-400 ' +
     'hover:text-orange-600 hover:bg-orange-50 active:bg-orange-100 transition-colors select-none'
@@ -39,13 +48,15 @@ export function NumberStepper({ value, onChange, step = 1, min, max, suffix, cla
         <input
           type="text"
           inputMode="decimal"
-          value={Number.isFinite(value) ? String(value) : ''}
+          value={draft ?? (Number.isFinite(value) ? String(value).replace('.', ',') : '')}
           onChange={e => {
-            const raw = e.target.value.replace(',', '.').trim()
-            if (raw === '' || raw === '-') { onChange(0); return }
-            const v = parseFloat(raw)
+            const txt = e.target.value
+            setDraft(txt)
+            if (txt.trim() === '' || txt.trim() === '-') { onChange(0); return }
+            const v = parseDe(txt)
             if (!Number.isNaN(v)) onChange(clamp(v))
           }}
+          onBlur={() => setDraft(null)}
           className={`w-full h-full text-center text-[15px] font-semibold text-gray-800 bg-transparent focus:outline-none tabular-nums ${suffix ? 'pr-6' : ''}`}
         />
         {suffix && <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-medium text-gray-400 pointer-events-none">{suffix}</span>}

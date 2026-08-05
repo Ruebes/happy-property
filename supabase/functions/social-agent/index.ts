@@ -586,6 +586,22 @@ Regeln:
       return json({ ok: true, debug: d?.data ?? d, permissions: perms?.data ?? perms })
     }
 
+    // ── Drive-Bild in den Assets-Bucket kopieren (z.B. Lotte-Personas) ───────
+    if (body.action === 'import_drive_asset') {
+      const b = body as unknown as { file_id?: string; dest?: string }
+      if (!b.file_id || !b.dest) return json({ error: 'file_id und dest erforderlich' }, 400)
+      try {
+        const token = await driveToken()
+        const blob = await driveDownload(token, b.file_id)
+        const bytes = new Uint8Array(await blob.arrayBuffer())
+        const ct = b.dest.endsWith('.png') ? 'image/png' : 'image/jpeg'
+        const { error: upErr } = await sb.storage.from('Assets').upload(b.dest, bytes, { contentType: ct, upsert: true })
+        if (upErr) return json({ error: upErr.message }, 500)
+        const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/${b.dest}`
+        return json({ ok: true, url, bytes: bytes.length })
+      } catch (e) { return json({ error: (e as Error).message }, 502) }
+    }
+
     // ── Referenz-Check (Debug): welche Lotte/Sven-Fotos sieht der Agent? ─────
     if (body.action === 'persona_check') {
       try {
