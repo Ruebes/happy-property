@@ -458,7 +458,8 @@ Deno.serve(async (req: Request) => {
       const zipUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/fin-receipts/${zipPath}`
       const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1f2937;font-size:14px;line-height:1.6">
         <p>Dear Georgios,</p>
-        <p>please find attached the bookkeeping export for <b>sveru ltd</b> for the period <b>${from}</b> to <b>${to}</b>.</p>
+        ${typeof body.note === 'string' && body.note ? `<p>${body.note}</p>` : ''}
+        <p>Please find attached the bookkeeping export for <b>sveru ltd</b> for the period <b>${from}</b> to <b>${to}</b>.</p>
         <ul>
           <li>${rows.length} bank transactions (CSV attached)</li>
           <li>${recCount} receipts</li>
