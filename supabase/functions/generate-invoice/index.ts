@@ -228,6 +228,27 @@ Deno.serve(async (req) => {
         sent = r.ok
         if (r.ok) await supabase.from('crm_invoices').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', inv.id)
       }
+      // ── Zusätzlich IMMER WhatsApp von Lotte (Svens Vorgabe 5.8.26), wenn der
+      // Rechnungs-Empfänger eine Nummer hat (invoice_customers.whatsapp).
+      const waPhone = String(customer.whatsapp ?? '').trim()
+      if (waPhone) {
+        const waText = `Hallo ${customerSnap.contact_name || ''} 🐾\n\n`
+          + `hier ist Lotte - ich habe dir gerade unsere Rechnung ${invoiceNumber} über ${eur(total_gross)} per Mail geschickt.\n\n`
+          + `Du kannst sie auch direkt hier ansehen:\n${publicUrl}\n\n`
+          + `Zahlbar bis ${dDate(dueStr)} (Verwendungszweck: ${invoiceNumber}).\n\nLiebe Grüße, Lotte 🐾`
+        try {
+          await fetch(`${SUPABASE_URL}/functions/v1/send-whatsapp`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              event_type: 'invoice_sent', override_text: waText,
+              lead_data: { lead_name: customerSnap.contact_name || 'Partner', lead_phone: waPhone },
+              persona_image: `${SUPABASE_URL}/storage/v1/object/public/Assets/wa/lotte-money.jpg`,
+            }),
+          })
+          console.log(`[generate-invoice] Rechnungs-WhatsApp an ${waPhone} gesendet`)
+        } catch (e) { console.warn('[generate-invoice] Rechnungs-WhatsApp fehlgeschlagen:', e) }
+      }
     }
 
     return json({ ok: true, invoice_id: inv.id, invoice_number: invoiceNumber, token: inv.token, public_url: publicUrl, pdf_url: pdfUrl, subtotal_net, vat_amount, total_gross, vat_rate: eff.rate, sent })
