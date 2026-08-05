@@ -116,11 +116,20 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
 // Idempotent über revolut_id (leg-genau); Kategorien aus fin_rules (Substring
 // auf Gegenpartei+Verwendungszweck), Eingänge ohne Regel = kundenzahlung.
 // Danach: offene Ausgangskorb-Posten gegen neue Abbuchungen matchen.
-async function syncTransactions(supabase: SupabaseClient, accessToken: string, days: number) {
-  const from = new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10)
-  const r = await fetch(`${API}/transactions?from=${from}&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
-  if (!r.ok) throw new Error(`Revolut transactions ${r.status}: ${(await r.text()).slice(0, 200)}`)
-  const txs = await r.json() as RevolutTx[]
+async function syncTransactions(supabase: SupabaseClient, accessToken: string, days: number, fromOverride?: string) {
+  const from = fromOverride ?? new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10)
+  // Pagination: liefert die API 1000 Stück, rückwärts weiterblättern (to=ältestes Datum)
+  let txs: RevolutTx[] = []
+  let to: string | null = null
+  for (let page = 0; page < 6; page++) {
+    const url = `${API}/transactions?from=${from}&count=1000${to ? `&to=${to}` : ''}`
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+    if (!r.ok) throw new Error(`Revolut transactions ${r.status}: ${(await r.text()).slice(0, 200)}`)
+    const batch = await r.json() as RevolutTx[]
+    txs = txs.concat(batch)
+    if (batch.length < 1000) break
+    to = (batch[batch.length - 1] as { created_at: string }).created_at
+  }
   const { data: rulesRaw } = await supabase.from('fin_rules').select('match, category')
   const rules = (rulesRaw ?? []) as { match: string; category: string }[]
   let imported = 0
@@ -276,11 +285,195 @@ Deno.serve(async (req: Request) => {
     const tok = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
     const accessToken = tok.access_token as string
 
+    // ── Debug-Probe: Was liefert die API zu Belegen/Anhängen? ────────────────
+    if (body.action === 'probe') {
+      const out: Record<string, unknown> = {}
+      const from = new Date(Date.now() - 60 * 86400e3).toISOString().slice(0, 10)
+      const txr = await fetch(`${API}/transactions?from=${from}&count=20`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const txs = await txr.json() as Array<Record<string, unknown>>
+      const card = txs.find(t => t.type === 'card_payment') ?? txs[0]
+      out.list_keys = card ? Object.keys(card) : []
+      if (card) {
+        const det = await fetch(`${API}/transaction/${card.id}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+        const d = await det.json() as Record<string, unknown>
+        out.detail_keys = Object.keys(d)
+        out.detail_sample = JSON.stringify(d).slice(0, 600)
+        for (const ep of [`/transaction/${card.id}/attachments`, `/expenses?from=${from}&count=5`, `/expenses`]) {
+          const r2 = await fetch(`${API}${ep}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+          out[`ep ${ep.slice(0, 40)}`] = `${r2.status} ${(await r2.text()).slice(0, 300)}`
+        }
+      }
+      return json(out)
+    }
+    if (body.action === 'probe2') {
+      const r = await fetch(`${API}/expenses?from=2024-01-01&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const exps = await r.json() as Array<Record<string, unknown>>
+      const withRec = exps.filter(e => Array.isArray(e.receipt_ids) && (e.receipt_ids as string[]).length)
+      const out: Record<string, unknown> = { total: exps.length, with_receipts: withRec.length, keys: exps[0] ? Object.keys(exps[0]) : [], sample: JSON.stringify(withRec[0] ?? exps[0]).slice(0, 500) }
+      const e0 = withRec[0]
+      if (e0) {
+        const rid = (e0.receipt_ids as string[])[0]
+        for (const ep of [`/expenses/${e0.id}/receipts/${rid}/content`, `/receipts/${rid}/content`, `/expenses/${e0.id}/receipt/${rid}`]) {
+          const rr = await fetch(`${API}${ep}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+          out[`ep ${ep.slice(-30)}`] = `${rr.status} ct=${rr.headers.get('content-type')} len=${(await rr.arrayBuffer()).byteLength}`
+        }
+      }
+      return json(out)
+    }
+
+    if (body.action === 'probe4') {
+      const r = await fetch(`${API}/expenses?from=2024-01-01&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const exps = await r.json() as Array<Record<string, unknown>>
+      const e0 = exps.find(e => Array.isArray(e.receipt_ids) && (e.receipt_ids as string[]).length)!
+      const rid = (e0.receipt_ids as string[])[0]
+      const eps = [
+        `/expenses/${e0.id}/receipts/${rid}/content`,
+        `/expense/${e0.id}/receipts/${rid}/content`,
+        `/receipts/${rid}/content`,
+        `/expenses/${e0.id}/receipts/${rid}`,
+        `/expenses/${e0.id}/receipts`,
+      ]
+      const out: Record<string, unknown> = {}
+      for (let i = 0; i < eps.length; i++) {
+        const rr = await fetch(`${API}${eps[i]}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+        const buf = await rr.arrayBuffer()
+        out[`${i}: ${eps[i].slice(0, 26)}`] = `${rr.status} ct=${rr.headers.get('content-type')} len=${buf.byteLength} head=${new TextDecoder().decode(buf.slice(0, 100)).replace(/[^\x20-\x7e]/g, '.')}`
+      }
+      return json(out)
+    }
+    if (body.action === 'probe3') {
+      const r = await fetch(`${API}/expenses?from=2024-01-01&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const exps = await r.json() as Array<Record<string, unknown>>
+      const e0 = exps.find(e => Array.isArray(e.receipt_ids) && (e.receipt_ids as string[]).length)!
+      const rid = (e0.receipt_ids as string[])[0]
+      const out: Record<string, unknown> = { expense: e0.id }
+      for (const ep of [`/expense/${e0.id}`, `/expense/${e0.id}/receipts/${rid}/content`, `/expense/${e0.id}/receipt/${rid}/content`, `/expenses/${e0.id}`]) {
+        const rr = await fetch(`${API}${ep}`, { headers: { Authorization: `Bearer ${accessToken}` } })
+        const buf = await rr.arrayBuffer()
+        out[`ep ${ep.slice(-34)}`] = `${rr.status} ct=${rr.headers.get('content-type')} len=${buf.byteLength} head=${new TextDecoder().decode(buf.slice(0, 120)).replace(/[^\x20-\x7e]/g, '.')}`
+      }
+      return json(out)
+    }
+
     // ── Kontobewegungen einlesen (manuell/Backfill) ───────────────────────────
     if (body.action === 'tx_sync' || body.action === 'tx_backfill') {
-      const days = body.action === 'tx_backfill' ? Math.min(730, Number(body.days) || 365) : Math.min(60, Number(body.days) || 14)
-      const r = await syncTransactions(supabase, accessToken, days)
-      return json({ success: true, days, ...r })
+      const days = body.action === 'tx_backfill' ? Math.min(1200, Number(body.days) || 365) : Math.min(60, Number(body.days) || 14)
+      const fromOverride = body.action === 'tx_backfill' && typeof body.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.from) ? body.from : undefined
+      const r = await syncTransactions(supabase, accessToken, days, fromOverride)
+      return json({ success: true, days, from: fromOverride ?? null, ...r })
+    }
+
+    // ── Revolut-Belege (Expenses-App) den Buchungen zuordnen ─────────────────
+    // GET /expenses liefert je Ausgabe receipt_ids + transaction_id; der Beleg
+    // selbst kommt von /expenses/{id}/receipts/{rid}/content (PDF/Bild).
+    // fin_transactions ist LEG-genau → Mapping tx.id→leg_ids über /transactions.
+    if (body.action === 'receipts_sync') {
+      const from = typeof body.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.from) ? body.from : '2024-01-01'
+      const er = await fetch(`${API}/expenses?from=${from}&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      if (!er.ok) throw new Error(`Revolut expenses ${er.status}`)
+      const exps = await er.json() as Array<{ id: string; receipt_ids?: string[]; transaction_id?: string; merchant?: { name?: string }; description?: string; expense_date?: string }>
+      const withRec = exps.filter(e => (e.receipt_ids ?? []).length && e.transaction_id)
+      // tx.id → leg_ids
+      const tr = await fetch(`${API}/transactions?from=${from}&count=1000`, { headers: { Authorization: `Bearer ${accessToken}` } })
+      const txs = await tr.json() as Array<{ id: string; legs?: Array<{ leg_id?: string }> }>
+      const legMap = new Map<string, string[]>()
+      for (const t of txs) legMap.set(t.id, (t.legs ?? []).map((l, i) => l.leg_id ?? `${t.id}-${i}`))
+      let attached = 0, skipped = 0, failed = 0
+      for (const e of withRec) {
+        const legIds = legMap.get(e.transaction_id!) ?? [e.transaction_id!]
+        const { data: rows } = await supabase.from('fin_transactions').select('id, doc_url').in('revolut_id', legIds)
+        const row = ((rows ?? []) as Array<{ id: string; doc_url: string | null }>).find(x => !x.doc_url)
+        if (!row) { skipped++; continue }
+        const rid = (e.receipt_ids as string[])[0]
+        try {
+          const rr = await fetch(`${API}/expenses/${e.id}/receipts/${rid}/content`, { headers: { Authorization: `Bearer ${accessToken}` } })
+          if (!rr.ok) { failed++; continue }
+          const ct = rr.headers.get('content-type') ?? 'application/pdf'
+          const ext = ct.includes('pdf') ? 'pdf' : ct.includes('png') ? 'png' : 'jpg'
+          const bytes = new Uint8Array(await rr.arrayBuffer())
+          const path = `revolut/${e.id}.${ext}`
+          const { error: upErr } = await supabase.storage.from('fin-receipts').upload(path, bytes, { contentType: ct, upsert: true })
+          if (upErr) { failed++; continue }
+          const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/fin-receipts/${path}`
+          const name = `Beleg ${(e.merchant?.name ?? e.description ?? 'Revolut').slice(0, 80)}.${ext}`
+          await supabase.from('fin_transactions').update({ doc_url: url, doc_name: name }).eq('id', row.id)
+          attached++
+        } catch { failed++ }
+      }
+      return json({ success: true, expenses: exps.length, with_receipts: withRec.length, attached, skipped_has_doc_or_no_tx: skipped, failed })
+    }
+
+    // ── Steuerberater-Export: CSV + alle Belege als ZIP + Mail ───────────────
+    if (body.action === 'tax_export') {
+      const from = typeof body.from === 'string' ? body.from : '2024-01-01'
+      const to = typeof body.to === 'string' ? body.to : new Date().toISOString().slice(0, 10)
+      let email = typeof body.email === 'string' && body.email.includes('@') ? body.email : ''
+      if (!email) {
+        const { data: stb } = await supabase.from('crm_business_contacts').select('email').ilike('role', '%steuerberater%').limit(1).maybeSingle()
+        email = ((stb as { email?: string } | null)?.email ?? '').trim()
+      }
+      if (!email) return json({ error: 'Kein Steuerberater-Kontakt mit E-Mail gefunden' }, 400)
+      const { zipSync, strToU8 } = await import('https://esm.sh/fflate@0.8.2')
+      const { data: txRows } = await supabase.from('fin_transactions')
+        .select('booked_at, amount, currency, counterparty, reference, category, doc_url, doc_name')
+        .gte('booked_at', from).lte('booked_at', `${to}T23:59:59Z`).order('booked_at')
+      const rows = (txRows ?? []) as Array<{ booked_at: string; amount: number; currency: string; counterparty: string | null; reference: string | null; category: string | null; doc_url: string | null; doc_name: string | null }>
+      const clean = (x: string) => x.replace(/[^A-Za-z0-9äöüÄÖÜß .,-]/g, '_').slice(0, 60)
+      const csvLines = ['Datum;Betrag;Währung;Gegenpartei;Referenz;Kategorie;Beleg']
+      const files: Record<string, Uint8Array> = {}
+      let recCount = 0
+      for (const x of rows) {
+        let recName = ''
+        if (x.doc_url) {
+          try {
+            const rr = await fetch(x.doc_url)
+            if (rr.ok) {
+              const ext = (x.doc_url.split('.').pop() ?? 'pdf').slice(0, 4)
+              recName = `belege/${x.booked_at.slice(0, 10)} ${clean(x.counterparty ?? 'Beleg')} ${String(x.amount).replace('.', ',')}${x.currency}.${ext}`
+              files[recName] = new Uint8Array(await rr.arrayBuffer())
+              recCount++
+            }
+          } catch { /* Beleg nicht ladbar → nur CSV-Zeile */ }
+        }
+        csvLines.push([x.booked_at.slice(0, 10), String(x.amount).replace('.', ','), x.currency, (x.counterparty ?? '').replaceAll(';', ','), (x.reference ?? '').replaceAll(';', ','), x.category ?? '', recName ? recName.slice(7) : ''].join(';'))
+      }
+      // Ausgangsrechnungen (sveru ltd) im Zeitraum
+      const { data: invRows } = await supabase.from('crm_invoices')
+        .select('invoice_number, total_gross, currency, pdf_path, created_at, status')
+        .gte('created_at', from).lte('created_at', `${to}T23:59:59Z`).in('status', ['sent', 'paid'])
+      let invCount = 0
+      for (const inv of ((invRows ?? []) as Array<{ invoice_number: string; pdf_path: string | null; created_at: string }>)) {
+        if (!inv.pdf_path) continue
+        try {
+          const rr = await fetch(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/invoice-documents/${inv.pdf_path}`)
+          if (rr.ok) { files[`ausgangsrechnungen/${inv.invoice_number}.pdf`] = new Uint8Array(await rr.arrayBuffer()); invCount++ }
+        } catch { /* weiter */ }
+      }
+      const csv = '\ufeff' + csvLines.join('\r\n')
+      files['transaktionen.csv'] = strToU8(csv)
+      const zip = zipSync(files, { level: 6 })
+      const zipPath = `exports/steuer-${from}-bis-${to}-${Date.now()}.zip`
+      const { error: zipErr } = await supabase.storage.from('fin-receipts').upload(zipPath, zip, { contentType: 'application/zip', upsert: true })
+      if (zipErr) return json({ error: `ZIP-Upload: ${zipErr.message}` }, 500)
+      const zipUrl = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/fin-receipts/${zipPath}`
+      const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1f2937;font-size:14px;line-height:1.6">
+        <p>Dear Georgios,</p>
+        <p>please find attached the bookkeeping export for <b>sveru ltd</b> for the period <b>${from}</b> to <b>${to}</b>.</p>
+        <ul>
+          <li>${rows.length} bank transactions (CSV attached)</li>
+          <li>${recCount} receipts</li>
+          <li>${invCount} outgoing invoices</li>
+        </ul>
+        <p>All receipts and invoices in one ZIP file - just click to download:</p>
+        <p style="text-align:center;margin:22px 0;"><a href="${zipUrl}" style="background:#ff795d;color:#fff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;display:inline-block;">Download ZIP (${Math.round(zip.length / 1048576 * 10) / 10} MB)</a></p>
+        <p>Best regards<br/>Sven Rüprich · Happy Property (sveru ltd)</p>
+      </div>`
+      const b64 = ((): string => { let bin = ''; const u = strToU8(csv); for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]); return btoa(bin) })()
+      const { error: mailErr } = await supabase.functions.invoke('send-email', { body: {
+        to: email, subject: `sveru ltd - bookkeeping export ${from} to ${to}`, html,
+        attachment: { filename: `transactions-${from}-${to}.csv`, content_base64: b64, content_type: 'text/csv' },
+      } })
+      return json({ success: true, sent_to: mailErr ? null : email, mail_error: mailErr ? String(mailErr) : null, transactions: rows.length, receipts: recCount, invoices: invCount, zip_url: zipUrl })
     }
     // Täglicher Lauf: erst Kontobewegungen (3 Tage), dann Rechnungsabgleich
     try { console.log('[revolut-sync] tx:', JSON.stringify(await syncTransactions(supabase, accessToken, 3))) }

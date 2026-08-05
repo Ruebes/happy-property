@@ -81,6 +81,32 @@ export default function Finance() {
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setBusy('') }
   }
 
+  // ── Steuerberater-Export (CSV + Belege-ZIP per Mail) ───────────────────────
+  const [taxOpen, setTaxOpen] = useState(false)
+  const [taxFrom, setTaxFrom] = useState(`${new Date().getFullYear()}-01-01`)
+  const [taxTo, setTaxTo] = useState(new Date().toISOString().slice(0, 10))
+  const [taxEmail, setTaxEmail] = useState('')
+  const [taxBusy, setTaxBusy] = useState(false)
+  const openTax = async () => {
+    setTaxOpen(true)
+    if (!taxEmail) {
+      try {
+        const { data } = await supabase.from('crm_business_contacts').select('email').ilike('role', '%steuerberater%').limit(1).maybeSingle()
+        setTaxEmail(((data as { email?: string } | null)?.email ?? '').trim())
+      } catch (e) { console.warn('[Finance] Steuerberater-Mail:', e) }
+    }
+  }
+  const sendTax = async () => {
+    setTaxBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('revolut-sync', { body: { action: 'tax_export', from: taxFrom, to: taxTo, email: taxEmail } })
+      const d = (data ?? {}) as { success?: boolean; error?: string; transactions?: number; receipts?: number; invoices?: number; sent_to?: string | null }
+      if (error || d.error || !d.success) throw new Error(d.error || error?.message || 'Fehler')
+      showToast(`📤 ${t('crm.fin.taxDone', 'Export an {{mail}} gesendet: {{tx}} Buchungen, {{r}} Belege, {{i}} Rechnungen', { mail: d.sent_to ?? taxEmail, tx: d.transactions ?? 0, r: d.receipts ?? 0, i: d.invoices ?? 0 })}`)
+      setTaxOpen(false)
+    } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setTaxBusy(false) }
+  }
+
   const setPayableStatus = async (p: Payable, status: string) => {
     const { error } = await supabase.from('fin_payables').update({ status, ...(status === 'bezahlt' ? { paid_at: new Date().toISOString() } : {}) }).eq('id', p.id)
     if (error) { showToast(`❌ ${error.message}`); return }
@@ -124,6 +150,7 @@ export default function Finance() {
             <button onClick={() => void runSync('tx_sync')} disabled={!!busy} className={btn}>{busy === 'tx_sync' ? '…' : `🔄 ${t('crm.fin.sync', 'Sync')}`}</button>
             <button onClick={() => void runSync('categorize_ai')} disabled={!!busy} className={btn}>{busy === 'categorize_ai' ? '…' : `🤖 ${t('crm.fin.ai', 'KI-Kategorien')}`}</button>
             <button onClick={exportCsv} className={btn}>⬇️ CSV</button>
+            <button onClick={() => void openTax()} className={btn}>📤 {t('crm.fin.taxBtn', 'An Steuerberater')}</button>
           </div>
         </div>
 
@@ -212,6 +239,35 @@ export default function Finance() {
           </div>
         )}
       </div>
+      {taxOpen && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setTaxOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-gray-900">📤 {t('crm.fin.taxTitle', 'Unterlagen an den Steuerberater senden')}</h2>
+            <p className="text-xs text-gray-500">{t('crm.fin.taxHint', 'Er bekommt eine E-Mail mit der Buchungsliste (CSV) und einem Download-Link: alle Belege + Ausgangsrechnungen des Zeitraums als ZIP - ein Klick, keine Technik nötig.')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.from', 'Von')}</label>
+                <input type="date" value={taxFrom} onChange={e => setTaxFrom(e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">{t('common.to', 'Bis')}</label>
+                <input type="date" value={taxTo} onChange={e => setTaxTo(e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.fin.taxEmail', 'E-Mail des Steuerberaters')}</label>
+              <input type="email" value={taxEmail} onChange={e => setTaxEmail(e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setTaxOpen(false)} className="px-4 py-2 rounded-xl text-sm border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void sendTax()} disabled={taxBusy || !taxEmail}
+                className="px-5 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
+                {taxBusy ? t('crm.fin.taxSending', 'packt & sendet …') : t('crm.fin.taxSend', 'Jetzt senden')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {toast && <div className="fixed bottom-6 right-6 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg z-50 max-w-sm">{toast}</div>}
     </DashboardLayout>
   )
