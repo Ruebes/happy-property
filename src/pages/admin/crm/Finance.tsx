@@ -13,6 +13,7 @@ interface FinTx {
   id: string; booked_at: string; amount: number; currency: string
   counterparty: string; reference: string; category: string | null
   category_source: string | null; doc_url: string | null; doc_name: string | null
+  doc_status: string | null
 }
 interface Payable {
   id: string; vendor: string; title: string; amount: number | null; currency: string
@@ -53,8 +54,31 @@ export default function Finance() {
   useEffect(() => { void fetchAll() }, [fetchAll])
 
   const months = useMemo(() => Array.from(new Set(txs.map(x => x.booked_at.slice(0, 7)))).sort().reverse(), [txs])
+  const [onlyNoDoc, setOnlyNoDoc] = useState(false)
+  const noDocCount = useMemo(() => txs.filter(x => !x.doc_url && x.doc_status !== 'nicht_noetig').length, [txs])
   const filtered = useMemo(() => txs.filter(x =>
-    (!month || x.booked_at.startsWith(month)) && (!catFilter || x.category === catFilter)), [txs, month, catFilter])
+    (!month || x.booked_at.startsWith(month)) && (!catFilter || x.category === catFilter)
+    && (!onlyNoDoc || (!x.doc_url && x.doc_status !== 'nicht_noetig'))), [txs, month, catFilter, onlyNoDoc])
+
+  // Beleg-Status („kein Beleg nötig" bei Dauerzahlungen/Kredit-Rückzahlung etc.)
+  const setDocStatus = async (tx: FinTx, v: string) => {
+    setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_status: v || null } : x))
+    const { error } = await supabase.from('fin_transactions').update({ doc_status: v || null }).eq('id', tx.id)
+    if (error) showToast(`❌ ${error.message}`)
+  }
+  // Beleg manuell an eine Buchung hängen (PDF oder Bild, max 15 MB)
+  const uploadDoc = async (tx: FinTx, file: File) => {
+    if (file.size > 15 * 1048576) { showToast(`❌ ${t('crm.fin.docTooBig', 'Datei zu groß (max. 15 MB)')}`); return }
+    const ext = file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : (file.name.split('.').pop() ?? 'jpg').toLowerCase().slice(0, 4)
+    const path = `manual/${tx.id}.${ext}`
+    const { error } = await supabase.storage.from('fin-receipts').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: true })
+    if (error) { showToast(`❌ ${error.message}`); return }
+    const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/fin-receipts/${path}`
+    const { error: e2 } = await supabase.from('fin_transactions').update({ doc_url: url, doc_name: file.name, doc_status: null }).eq('id', tx.id)
+    if (e2) { showToast(`❌ ${e2.message}`); return }
+    setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_url: url, doc_name: file.name, doc_status: null } : x))
+    showToast(`📎 ${t('crm.fin.docAdded', 'Beleg angehängt')}`)
+  }
 
   // Kategorie setzen + still lernen: Gegenpartei → Regel für die Zukunft
   const setCategory = async (tx: FinTx, cat: string) => {
@@ -175,6 +199,10 @@ export default function Finance() {
             <div className="flex gap-2 p-3 border-b border-gray-50 flex-wrap">
               <div className="w-40"><CustomSelect value={month} onChange={setMonth} options={[{ value: '', label: t('crm.fin.allMonths', 'Alle Monate') }, ...months.map(m => ({ value: m, label: m }))]} /></div>
               <div className="w-56"><CustomSelect value={catFilter} onChange={setCatFilter} options={[{ value: '', label: t('crm.fin.allCats', 'Alle Kategorien') }, ...CATS.map(c => ({ value: c, label: CAT_LABEL[c] }))]} /></div>
+              <button onClick={() => setOnlyNoDoc(v => !v)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${onlyNoDoc ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                🧾 {t('crm.fin.noDocFilter', 'Ohne Beleg')} ({noDocCount})
+              </button>
               <p className="ml-auto text-sm text-gray-400 self-center">{filtered.length} · {eur(filtered.reduce((s, x) => s + x.amount, 0))}</p>
             </div>
             <div className="overflow-x-auto">
@@ -190,7 +218,24 @@ export default function Finance() {
                           options={[{ value: '', label: t('crm.fin.pick', '— wählen —') }, ...CATS.map(c => ({ value: c, label: CAT_LABEL[c] }))]} />
                         {x.category_source === 'ki' && <p className="text-[10px] text-gray-400 mt-0.5">🤖 {t('crm.fin.bySrcKi', 'KI-Vorschlag')}</p>}
                       </td>
-                      <td className="px-3 py-2">{x.doc_url && <a href={x.doc_url} target="_blank" rel="noreferrer" title={x.doc_name ?? ''} className="text-lg">📎</a>}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {x.doc_url ? (
+                          <a href={x.doc_url} target="_blank" rel="noreferrer" title={x.doc_name ?? ''} className="text-lg">📎</a>
+                        ) : (
+                          <span className="inline-flex items-center gap-1">
+                            <label className="cursor-pointer text-gray-400 hover:text-orange-500 text-lg" title={t('crm.fin.docUpload', 'Beleg hochladen (PDF/Bild)') as string}>
+                              📎+<input type="file" accept="application/pdf,image/*" className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) void uploadDoc(x, f); e.target.value = '' }} />
+                            </label>
+                            <select value={x.doc_status ?? ''} onChange={e => void setDocStatus(x, e.target.value)}
+                              className={`text-[11px] bg-transparent border-0 outline-none cursor-pointer ${x.doc_status === 'nicht_noetig' ? 'text-green-600' : x.doc_status === 'fehlt' ? 'text-red-500' : 'text-gray-400'}`}>
+                              <option value="">{t('crm.fin.docOpen', 'offen')}</option>
+                              <option value="nicht_noetig">{t('crm.fin.docNotNeeded', 'kein Beleg nötig')}</option>
+                              <option value="fehlt">{t('crm.fin.docMissing', 'Beleg fehlt')}</option>
+                            </select>
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

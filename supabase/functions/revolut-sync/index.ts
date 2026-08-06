@@ -415,7 +415,7 @@ Deno.serve(async (req: Request) => {
       if (!email) return json({ error: 'Kein Steuerberater-Kontakt mit E-Mail gefunden' }, 400)
       const { zipSync, strToU8 } = await import('https://esm.sh/fflate@0.8.2')
       const { data: txRows } = await supabase.from('fin_transactions')
-        .select('booked_at, amount, currency, counterparty, reference, category, doc_url, doc_name')
+        .select('booked_at, amount, currency, counterparty, reference, category, doc_url, doc_name, doc_status')
         .gte('booked_at', from).lte('booked_at', `${to}T23:59:59Z`).order('booked_at')
       const rows = (txRows ?? []) as Array<{ booked_at: string; amount: number; currency: string; counterparty: string | null; reference: string | null; category: string | null; doc_url: string | null; doc_name: string | null }>
       const clean = (x: string) => x.replace(/[^A-Za-z0-9äöüÄÖÜß .,-]/g, '_').slice(0, 60)
@@ -435,7 +435,7 @@ Deno.serve(async (req: Request) => {
             }
           } catch { /* Beleg nicht ladbar → nur CSV-Zeile */ }
         }
-        csvLines.push([x.booked_at.slice(0, 10), String(x.amount).replace('.', ','), x.currency, (x.counterparty ?? '').replaceAll(';', ','), (x.reference ?? '').replaceAll(';', ','), x.category ?? '', recName ? recName.slice(7) : ''].join(';'))
+        csvLines.push([x.booked_at.slice(0, 10), String(x.amount).replace('.', ','), x.currency, (x.counterparty ?? '').replaceAll(';', ','), (x.reference ?? '').replaceAll(';', ','), x.category ?? '', recName ? recName.slice(7) : ((x as unknown as { doc_status?: string }).doc_status === 'nicht_noetig' ? 'no receipt required' : '')].join(';'))
       }
       // Ausgangsrechnungen (sveru ltd) im Zeitraum
       const { data: invRows } = await supabase.from('crm_invoices')
