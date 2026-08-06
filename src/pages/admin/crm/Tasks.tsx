@@ -75,12 +75,16 @@ async function shrinkImage(file: File, maxDim = 1600): Promise<Blob> {
 }
 async function uploadTaskImages(taskId: string, files: File[]): Promise<void> {
   for (let i = 0; i < files.length; i++) {
-    const small = await shrinkImage(files[i])
-    const path = `${taskId}/${Date.now()}-${i}.jpg`
-    const { error } = await supabase.storage.from('task-attachments').upload(path, small, { contentType: 'image/jpeg' })
+    const f = files[i]
+    const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    // PDFs NICHT durch die Bild-Verkleinerung (würde sie zerstören) — roh hochladen, max 15 MB
+    if (isPdf && f.size > 15 * 1048576) { console.warn('[Tasks] PDF zu groß (>15 MB):', f.name); continue }
+    const blob = isPdf ? f : await shrinkImage(f)
+    const path = `${taskId}/${Date.now()}-${i}.${isPdf ? 'pdf' : 'jpg'}`
+    const { error } = await supabase.storage.from('task-attachments').upload(path, blob, { contentType: isPdf ? 'application/pdf' : 'image/jpeg' })
     if (error) { console.warn('[Tasks] Anhang-Upload:', error.message); continue }
     const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`
-    await supabase.from('crm_task_attachments').insert({ task_id: taskId, name: files[i].name, url, storage_path: path })
+    await supabase.from('crm_task_attachments').insert({ task_id: taskId, name: f.name, url, storage_path: path })
   }
 }
 interface TaskAtt { id: string; name: string; url: string; storage_path: string }
@@ -197,9 +201,9 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
             <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.descLabel', 'Beschreibung')}</label>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3} className={input} placeholder={t('crm.tasks.descPh', 'Details zur Aufgabe …')} />
             <div className="mt-2">
-              <input type="file" accept="image/*" multiple onChange={e => setImgFiles(Array.from(e.target.files ?? []))}
+              <input type="file" accept="image/*,application/pdf" multiple onChange={e => setImgFiles(Array.from(e.target.files ?? []))}
                 className="text-sm text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:cursor-pointer" />
-              <p className="text-[11px] text-gray-400 mt-1">📎 {imgFiles.length ? t('crm.tasks.attachSel', '{{n}} Bild(er) ausgewählt — werden verkleinert hochgeladen', { n: imgFiles.length }) : t('crm.tasks.attach', 'Screenshots/Bilder anhängen (optional)')}</p>
+              <p className="text-[11px] text-gray-400 mt-1">📎 {imgFiles.length ? t('crm.tasks.attachSel2', '{{n}} Datei(en) ausgewählt - Bilder werden verkleinert, PDFs bleiben wie sie sind', { n: imgFiles.length }) : t('crm.tasks.attach2', 'Bilder oder PDFs anhängen (optional)')}</p>
             </div>
           </div>
 
@@ -536,12 +540,20 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
           <div className="flex items-center gap-2 flex-wrap">
             {atts.map(a => (
               <div key={a.id} className="relative group">
-                <a href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name} className="w-16 h-16 rounded-lg object-cover border border-gray-200" loading="lazy" /></a>
+                {a.url.endsWith('.pdf') ? (
+                  <a href={a.url} target="_blank" rel="noreferrer" title={a.name}
+                    className="w-16 h-16 rounded-lg border border-gray-200 bg-red-50 flex flex-col items-center justify-center text-[9px] text-red-700 font-medium px-1 text-center">
+                    <span className="text-xl leading-none mb-0.5">📄</span>
+                    <span className="truncate w-full">{a.name.replace(/\.pdf$/i, '').slice(0, 14)}</span>
+                  </a>
+                ) : (
+                  <a href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name} className="w-16 h-16 rounded-lg object-cover border border-gray-200" loading="lazy" /></a>
+                )}
                 <button onClick={() => void delAtt(a)} className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-gray-900/80 text-white text-[10px] opacity-0 group-hover:opacity-100">✕</button>
               </div>
             ))}
-            <label className="w-16 h-16 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer hover:border-orange-300 hover:text-orange-500 text-xl" title={t('crm.tasks.attach', 'Screenshots/Bilder anhängen (optional)') as string}>
-              +<input type="file" accept="image/*" multiple className="hidden" onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) void addImages(f); e.target.value = '' }} />
+            <label className="w-16 h-16 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 cursor-pointer hover:border-orange-300 hover:text-orange-500 text-xl" title={t('crm.tasks.attach2', 'Bilder oder PDFs anhängen (optional)') as string}>
+              +<input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={e => { const f = Array.from(e.target.files ?? []); if (f.length) void addImages(f); e.target.value = '' }} />
             </label>
             {atts.length > 0 && <p className="basis-full text-[10px] text-gray-400">{t('crm.tasks.attachHint', 'Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht.')}</p>}
           </div>
