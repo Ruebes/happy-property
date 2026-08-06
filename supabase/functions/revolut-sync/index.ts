@@ -222,6 +222,45 @@ Deno.serve(async (req: Request) => {
     // Empfänger enthält sven/sveru → Rechnung FÜR SVEN: passende Abbuchung
     // (Kreditkarte) → Beleg dranhängen, sonst Ausgangskorb. Andernfalls → für
     // einen Kunden (bleibt in den Developer-Mails zum Zuordnen).
+    // ── Rechnung aus dem Ausgangskorb per Revolut-Überweisung bezahlen ───────
+    // Wird AUSSCHLIESSLICH durch Svens Klick im Portal ausgelöst. request_id =
+    // payable_id macht den Aufruf idempotent (kein Doppelversand bei Retry).
+    if (body.action === 'pay_payable') {
+      const { data: pRow } = await supabase.from('fin_payables').select('*').eq('id', body.payable_id ?? '').maybeSingle()
+      if (!pRow) return json({ error: 'Rechnung nicht gefunden' }, 404)
+      const p = pRow as { id: string; vendor: string; title: string; amount: number | null; currency: string | null; status: string; beneficiary: string | null; iban: string | null; bic: string | null; revolut_payment_id: string | null }
+      if (p.status !== 'offen') return json({ error: 'Rechnung ist nicht (mehr) offen' }, 400)
+      if (p.revolut_payment_id) return json({ error: 'Zahlung wurde bereits beauftragt' }, 400)
+      const iban = (p.iban ?? '').replace(/\s/g, '').toUpperCase()
+      if (!/^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$/.test(iban)) return json({ error: 'Keine gültige IBAN hinterlegt' }, 400)
+      if (!p.amount || p.amount <= 0) return json({ error: 'Kein gültiger Betrag' }, 400)
+      const cur = (p.currency ?? 'EUR').toUpperCase()
+      const benName = (p.beneficiary ?? p.vendor).slice(0, 100)
+      const accs = await (await fetch(`${API}/accounts`, { headers: { Authorization: `Bearer ${accessToken}` } })).json() as Array<{ id: string; currency: string; balance: number; state: string }>
+      const acc = accs.find(a => a.currency === cur && a.state === 'active')
+      if (!acc) return json({ error: `Kein aktives ${cur}-Konto bei Revolut` }, 400)
+      if (acc.balance < p.amount) return json({ error: `Kontostand zu niedrig (${acc.balance.toFixed(2)} ${cur} verfügbar)` }, 400)
+      const cps = await (await fetch(`${API}/counterparties`, { headers: { Authorization: `Bearer ${accessToken}` } })).json() as Array<{ id: string; accounts?: Array<{ iban?: string }> }>
+      let cpId = (Array.isArray(cps) ? cps : []).find(c => (c.accounts ?? []).some(a => (a.iban ?? '').replace(/\s/g, '').toUpperCase() === iban))?.id ?? null
+      if (!cpId) {
+        const cr = await fetch(`${API}/counterparty`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_name: benName, bank_country: iban.slice(0, 2), currency: cur, iban, ...(p.bic ? { bic: p.bic } : {}) }) })
+        const cd = await cr.json() as { id?: string; message?: string }
+        if (!cr.ok || !cd.id) return json({ error: `Empfänger anlegen fehlgeschlagen: ${cd.message ?? cr.status}` }, 502)
+        cpId = cd.id
+      }
+      const pay = await fetch(`${API}/pay`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: p.id, account_id: acc.id, receiver: { counterparty_id: cpId }, amount: p.amount, currency: cur, reference: p.title.slice(0, 100) }) })
+      const pd = await pay.json() as { id?: string; state?: string; message?: string }
+      if (!pay.ok || !pd.id) {
+        const hint = pay.status === 403 ? ' — der Revolut-API-Zugang hat vermutlich keine Zahlungs-Berechtigung; unter Einstellungen die Revolut-Verbindung neu autorisieren (mit Payments-Scope)' : ''
+        return json({ error: `Revolut-Zahlung fehlgeschlagen: ${pd.message ?? pay.status}${hint}` }, 502)
+      }
+      await supabase.from('fin_payables').update({ status: 'bezahlt', paid_at: new Date().toISOString(), revolut_payment_id: pd.id }).eq('id', p.id)
+      console.log(`[revolut-sync] Zahlung beauftragt: ${p.title} → ${benName} (${p.amount} ${cur}), state=${pd.state}`)
+      return json({ success: true, payment_id: pd.id, state: pd.state ?? 'pending' })
+    }
+
     if (body.action === 'fin_analyze') {
       const { data: pmRow } = await supabase.from('partner_mails').select('id, subject, body, from_addr, attachments').eq('id', body.partner_mail_id ?? '').maybeSingle()
       if (!pmRow) return json({ error: 'Mail nicht gefunden' }, 404)
@@ -242,16 +281,18 @@ Deno.serve(async (req: Request) => {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY') ?? '', 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 1000,
-          system: 'Du analysierst eingehende Rechnungen für Happy Property (Inhaber Sven Rüprich, Firma sveru ltd, Zypern). Bestimme Rechnungsempfänger, Aussteller, Brutto-Betrag, Währung, Fälligkeit und ob die Rechnung laut Dokument bereits bezahlt ist (paid, receipt, Kreditkartenbeleg).',
+          system: 'Du analysierst eingehende Rechnungen für Happy Property (Inhaber Sven Rüprich, Firma sveru ltd, Zypern). Bestimme Rechnungsempfänger, Aussteller, Brutto-Betrag, Währung, Fälligkeit, ob die Rechnung laut Dokument bereits bezahlt ist (paid, receipt, Kreditkartenbeleg) sowie - falls angegeben - Bankverbindung des Ausstellers (Kontoinhaber, IBAN, BIC).',
           messages: [{ role: 'user', content }],
           tools: [{ name: 'set_invoice', input_schema: { type: 'object', properties: {
             recipient: { type: 'string' }, vendor: { type: 'string' }, amount: { type: 'number' }, currency: { type: 'string' },
             due_date: { type: 'string', description: 'YYYY-MM-DD oder leer' }, already_paid: { type: 'boolean' }, title: { type: 'string' },
+            beneficiary: { type: 'string', description: 'Kontoinhaber laut Bankverbindung, sonst leer' },
+            iban: { type: 'string', description: 'IBAN ohne Leerzeichen, sonst leer' }, bic: { type: 'string' },
           }, required: ['recipient', 'vendor'] } }],
           tool_choice: { type: 'tool', name: 'set_invoice' } }),
       })
       const d = await resp.json()
-      const inv = (((d.content ?? []) as Array<{ type: string; input?: Record<string, unknown> }>).find(b => b.type === 'tool_use')?.input ?? {}) as { recipient?: string; vendor?: string; amount?: number; currency?: string; due_date?: string; already_paid?: boolean; title?: string }
+      const inv = (((d.content ?? []) as Array<{ type: string; input?: Record<string, unknown> }>).find(b => b.type === 'tool_use')?.input ?? {}) as { recipient?: string; vendor?: string; amount?: number; currency?: string; due_date?: string; already_paid?: boolean; title?: string; beneficiary?: string; iban?: string; bic?: string }
       const forSven = /sven|sveru/i.test(inv.recipient ?? '')
       await supabase.from('partner_mails').update({ fin_class: forSven ? 'sven' : 'kunde', fin_vendor: inv.vendor ?? null, fin_amount: inv.amount ?? null }).eq('id', m.id)
       if (!forSven) return json({ success: true, fin_class: 'kunde' })
@@ -272,6 +313,8 @@ Deno.serve(async (req: Request) => {
         due_at: /^\d{4}-\d{2}-\d{2}$/.test(inv.due_date ?? '') ? inv.due_date : null,
         doc_url: pdf?.url ?? null, doc_name: pdf?.name ?? null,
         status: inv.already_paid ? 'bezahlt' : 'offen',
+        beneficiary: inv.beneficiary?.slice(0, 140) ?? null,
+        iban: inv.iban?.replace(/\s/g, '').slice(0, 34) ?? null, bic: inv.bic?.slice(0, 11) ?? null,
       })
       return json({ success: true, fin_class: 'sven', payable: true })
     }

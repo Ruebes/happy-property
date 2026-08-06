@@ -18,6 +18,7 @@ interface FinTx {
 interface Payable {
   id: string; vendor: string; title: string; amount: number | null; currency: string
   due_at: string | null; doc_url: string | null; status: string; created_at: string
+  beneficiary: string | null; iban: string | null; bic: string | null; revolut_payment_id: string | null
 }
 const CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero', 'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges']
 const CAT_LABEL: Record<string, string> = {
@@ -129,6 +130,30 @@ export default function Finance() {
       showToast(`📤 ${t('crm.fin.taxDone', 'Export an {{mail}} gesendet: {{tx}} Buchungen, {{r}} Belege, {{i}} Rechnungen', { mail: d.sent_to ?? taxEmail, tx: d.transactions ?? 0, r: d.receipts ?? 0, i: d.invoices ?? 0 })}`)
       setTaxOpen(false)
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setTaxBusy(false) }
+  }
+
+  // ── Rechnung direkt per Revolut überweisen (Svens Klick, mit Bestätigung) ──
+  const [payFor, setPayFor] = useState<Payable | null>(null)
+  const [payIban, setPayIban] = useState('')
+  const [payBen, setPayBen] = useState('')
+  const [payBusy, setPayBusy] = useState(false)
+  const openPay = (p: Payable) => { setPayFor(p); setPayIban(p.iban ?? ''); setPayBen(p.beneficiary ?? p.vendor) }
+  const doPay = async () => {
+    if (!payFor) return
+    setPayBusy(true)
+    try {
+      // Ggf. nachgetragene Bankdaten erst speichern
+      const iban = payIban.replace(/\s/g, '').toUpperCase()
+      if (iban !== (payFor.iban ?? '') || payBen !== (payFor.beneficiary ?? '')) {
+        await supabase.from('fin_payables').update({ iban, beneficiary: payBen.trim() || null }).eq('id', payFor.id)
+      }
+      const { data, error } = await supabase.functions.invoke('revolut-sync', { body: { action: 'pay_payable', payable_id: payFor.id } })
+      const d = (data ?? {}) as { success?: boolean; error?: string; state?: string }
+      if (error || d.error || !d.success) throw new Error(d.error || error?.message || 'Fehler')
+      setPayables(arr => arr.map(x => x.id === payFor.id ? { ...x, status: 'bezahlt' } : x))
+      showToast(`💸 ${t('crm.fin.payDone', 'Überweisung beauftragt ({{state}})', { state: d.state ?? 'pending' })}`)
+      setPayFor(null)
+    } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setPayBusy(false) }
   }
 
   const deletePayable = async (p: Payable) => {
@@ -255,6 +280,9 @@ export default function Finance() {
                 <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${p.status === 'offen' ? 'bg-amber-100 text-amber-700' : p.status === 'bezahlt' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{p.status}</span>
                 {p.doc_url && <a href={p.doc_url} target="_blank" rel="noreferrer" className={btn}>📎 PDF</a>}
                 {p.status === 'offen' && (<>
+                  {p.amount != null && p.amount > 0 && !p.revolut_payment_id && (
+                    <button onClick={() => openPay(p)} className="px-3 py-1.5 rounded-lg text-sm text-white font-medium" style={{ backgroundColor: '#16a34a' }}>💸 {t('crm.fin.payNow', 'Bezahlen')}</button>
+                  )}
                   <button onClick={() => void setPayableStatus(p, 'bezahlt')} className="px-3 py-1.5 rounded-lg text-sm text-white font-medium" style={{ backgroundColor: '#ff795d' }}>✓ {t('crm.fin.markPaid', 'Bezahlt')}</button>
                   <button onClick={() => void setPayableStatus(p, 'ignoriert')} className={btn}>{t('crm.fin.ignore', 'Ignorieren')}</button>
                 </>)}
@@ -293,6 +321,36 @@ export default function Finance() {
           </div>
         )}
       </div>
+      {payFor && (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setPayFor(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h2 className="text-lg font-bold text-gray-900">💸 {t('crm.fin.payTitle', 'Rechnung per Revolut bezahlen')}</h2>
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+              ⚠️ {t('crm.fin.payWarn', 'Es wird ECHTES Geld überwiesen. Prüfe Empfänger und IBAN, bevor du bestätigst.')}
+            </div>
+            <div className="bg-gray-50 rounded-xl px-4 py-3 text-sm space-y-1">
+              <p className="flex justify-between"><span className="text-gray-500">{t('crm.fin.payAmount', 'Betrag')}</span><span className="font-bold text-gray-900">{(payFor.amount ?? 0).toLocaleString('de-DE', { style: 'currency', currency: payFor.currency || 'EUR' })}</span></p>
+              <p className="flex justify-between gap-3"><span className="text-gray-500 shrink-0">{t('crm.fin.payRef', 'Verwendungszweck')}</span><span className="text-gray-900 text-right">{payFor.title.slice(0, 80)}</span></p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.fin.payBen', 'Empfänger (Kontoinhaber)')}</label>
+              <input value={payBen} onChange={e => setPayBen(e.target.value)} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">IBAN</label>
+              <input value={payIban} onChange={e => setPayIban(e.target.value)} placeholder={t('crm.fin.payIbanPh', 'aus der Rechnung übernommen oder hier eintragen')}
+                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setPayFor(null)} className="px-4 py-2 rounded-xl text-sm border border-gray-200 hover:bg-gray-50">{t('common.cancel', 'Abbrechen')}</button>
+              <button onClick={() => void doPay()} disabled={payBusy || !payIban.trim() || !payBen.trim()}
+                className="px-5 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
+                {payBusy ? t('crm.fin.paySending', 'beauftragt …') : t('crm.fin.payGo', 'Jetzt überweisen')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {taxOpen && (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setTaxOpen(false)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 space-y-4" onClick={e => e.stopPropagation()}>
