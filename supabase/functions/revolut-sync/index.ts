@@ -258,6 +258,51 @@ Deno.serve(async (req: Request) => {
       }
       await supabase.from('fin_payables').update({ status: 'bezahlt', paid_at: new Date().toISOString(), revolut_payment_id: pd.id }).eq('id', p.id)
       console.log(`[revolut-sync] Zahlung beauftragt: ${p.title} → ${benName} (${p.amount} ${cur}), state=${pd.state}`)
+
+      // ── Lotte informiert den Zahlungsempfänger per WhatsApp (Svens Vorgabe) ──
+      try {
+        const pmId = (pRow as { partner_mail_id?: string | null }).partner_mail_id
+        let contact: { first_name?: string | null; whatsapp?: string | null; phone?: string | null; language?: string | null } | null = null
+        if (pmId) {
+          const { data: pm2 } = await supabase.from('partner_mails').select('from_addr').eq('id', pmId).maybeSingle()
+          const fromAddr = ((pm2 as { from_addr?: string } | null)?.from_addr ?? '').toLowerCase().trim()
+          if (fromAddr) {
+            const { data: c1 } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone, language').ilike('email', fromAddr).limit(1)
+            contact = (c1?.[0] as typeof contact) ?? null
+            const dom = fromAddr.split('@')[1]
+            if (!contact && dom) {
+              const { data: c2 } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone, language').ilike('email', `%@${dom}`).limit(1)
+              contact = (c2?.[0] as typeof contact) ?? null
+            }
+          }
+        }
+        if (!contact) {
+          const tok = benName.split(/\s+/).find(w => w.replace(/[^A-Za-zÄÖÜäöüß]/g, '').length > 3)
+          if (tok) {
+            const { data: c3 } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone, language')
+              .or(`last_name.ilike.%${tok}%,company.ilike.%${tok}%`).limit(1)
+            contact = (c3?.[0] as typeof contact) ?? null
+          }
+        }
+        const tel = ((contact?.whatsapp ?? contact?.phone) ?? '').trim()
+        if (tel) {
+          const de_ = contact?.language !== 'en'
+          const first = (contact?.first_name ?? '').trim()
+          const amountStr = `${p.amount.toLocaleString('de-DE', { minimumFractionDigits: 2 })} ${cur === 'EUR' ? '€' : cur}`
+          const waText = de_
+            ? `Hallo${first ? ' ' + first : ''} 🐾\n\ngute Nachrichten aus der Buchhaltung: Sven hat deine Rechnung gerade bezahlt.\n\n${p.title.slice(0, 120)}\nBetrag: ${amountStr}\n\nDas Geld ist unterwegs zu dir. Danke für deine Arbeit!\n\nLiebe Grüße, Lotte 🐾`
+            : `Hi${first ? ' ' + first : ''} 🐾\n\nGood news from bookkeeping: Sven has just paid your invoice.\n\n${p.title.slice(0, 120)}\nAmount: ${amountStr}\n\nThe money is on its way to you. Thanks for your work!\n\nBest, Lotte 🐾`
+          await supabase.functions.invoke('send-whatsapp', { body: {
+            event_type: 'payment_sent', override_text: waText,
+            lead_data: { lead_name: first || benName, lead_phone: tel },
+            persona_image: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-payment.jpg`,
+          } })
+          console.log(`[revolut-sync] Zahlungs-WhatsApp an ${tel} gesendet`)
+        } else {
+          console.log('[revolut-sync] Zahlungs-WhatsApp übersprungen — keine Nummer zum Empfänger gefunden')
+        }
+      } catch (e) { console.warn('[revolut-sync] Zahlungs-WhatsApp fehlgeschlagen:', e) }
+
       return json({ success: true, payment_id: pd.id, state: pd.state ?? 'pending' })
     }
 
