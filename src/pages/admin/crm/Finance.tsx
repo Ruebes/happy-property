@@ -107,6 +107,14 @@ export default function Finance() {
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setTaxBusy(false) }
   }
 
+  const deletePayable = async (p: Payable) => {
+    if (!window.confirm(t('crm.fin.delPayConfirm', '„{{title}}" endgültig aus dem Ausgangskorb löschen?', { title: p.title }))) return
+    const { error } = await supabase.from('fin_payables').delete().eq('id', p.id)
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setPayables(arr => arr.filter(x => x.id !== p.id))
+    showToast(`🗑 ${t('crm.fin.delPayDone', 'Eintrag gelöscht')}`)
+  }
+
   const setPayableStatus = async (p: Payable, status: string) => {
     const { error } = await supabase.from('fin_payables').update({ status, ...(status === 'bezahlt' ? { paid_at: new Date().toISOString() } : {}) }).eq('id', p.id)
     if (error) { showToast(`❌ ${error.message}`); return }
@@ -205,6 +213,7 @@ export default function Finance() {
                   <button onClick={() => void setPayableStatus(p, 'bezahlt')} className="px-3 py-1.5 rounded-lg text-sm text-white font-medium" style={{ backgroundColor: '#ff795d' }}>✓ {t('crm.fin.markPaid', 'Bezahlt')}</button>
                   <button onClick={() => void setPayableStatus(p, 'ignoriert')} className={btn}>{t('crm.fin.ignore', 'Ignorieren')}</button>
                 </>)}
+                <button onClick={() => void deletePayable(p)} className="w-8 h-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title={t('crm.fin.delPay', 'Endgültig löschen')}>🗑</button>
               </div>
             ))}
           </div>
