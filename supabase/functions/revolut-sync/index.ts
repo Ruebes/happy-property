@@ -451,6 +451,20 @@ Deno.serve(async (req: Request) => {
       }
       const csv = '\ufeff' + csvLines.join('\r\n')
       files['transaktionen.csv'] = strToU8(csv)
+      // Echte Excel-Datei (.xlsx) — Georgios' (griechisches) Excel zerlegte die
+      // UTF-8-CSV in Zeichensalat; xlsx ist encoding-fest und öffnet überall.
+      const XLSX = await import('https://esm.sh/xlsx@0.18.5')
+      const aoa: Array<Array<string | number>> = [['Date', 'Amount', 'Currency', 'Counterparty', 'Reference', 'Category', 'Receipt file']]
+      for (let i = 0; i < rows.length; i++) {
+        const x = rows[i]
+        aoa.push([x.booked_at.slice(0, 10), x.amount, x.currency, x.counterparty ?? '', x.reference ?? '', x.category ?? '', (csvLines[i + 1] ?? '').split(';')[6] ?? ''])
+      }
+      const ws = XLSX.utils.aoa_to_sheet(aoa)
+      ws['!cols'] = [{ wch: 11 }, { wch: 11 }, { wch: 6 }, { wch: 32 }, { wch: 32 }, { wch: 16 }, { wch: 44 }]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'Transactions')
+      const xlsxBytes = new Uint8Array(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer)
+      files['transaktionen.xlsx'] = xlsxBytes
       const zip = zipSync(files, { level: 6 })
       const zipPath = `exports/steuer-${from}-bis-${to}-${Date.now()}.zip`
       const { error: zipErr } = await supabase.storage.from('fin-receipts').upload(zipPath, zip, { contentType: 'application/zip', upsert: true })
@@ -461,7 +475,7 @@ Deno.serve(async (req: Request) => {
         ${typeof body.note === 'string' && body.note ? `<p>${body.note}</p>` : ''}
         <p>Please find attached the bookkeeping export for <b>sveru ltd</b> for the period <b>${from}</b> to <b>${to}</b>.</p>
         <ul>
-          <li>${rows.length} bank transactions (CSV attached)</li>
+          <li>${rows.length} bank transactions (Excel file attached)</li>
           <li>${recCount} receipts</li>
           <li>${invCount} outgoing invoices</li>
         </ul>
@@ -469,10 +483,10 @@ Deno.serve(async (req: Request) => {
         <p style="text-align:center;margin:22px 0;"><a href="${zipUrl}" style="background:#ff795d;color:#fff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;display:inline-block;">Download ZIP (${Math.round(zip.length / 1048576 * 10) / 10} MB)</a></p>
         <p>Best regards<br/>Sven Rüprich · Happy Property (sveru ltd)</p>
       </div>`
-      const b64 = ((): string => { let bin = ''; const u = strToU8(csv); for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]); return btoa(bin) })()
+      const b64 = ((): string => { let bin = ''; for (let i = 0; i < xlsxBytes.length; i++) bin += String.fromCharCode(xlsxBytes[i]); return btoa(bin) })()
       const { error: mailErr } = await supabase.functions.invoke('send-email', { body: {
         to: email, subject: `sveru ltd - bookkeeping export ${from} to ${to}`, html,
-        attachment: { filename: `transactions-${from}-${to}.csv`, content_base64: b64, content_type: 'text/csv' },
+        attachment: { filename: `transactions-${from}-${to}.xlsx`, content_base64: b64, content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
       } })
       return json({ success: true, sent_to: mailErr ? null : email, mail_error: mailErr ? String(mailErr) : null, transactions: rows.length, receipts: recCount, invoices: invCount, zip_url: zipUrl })
     }
