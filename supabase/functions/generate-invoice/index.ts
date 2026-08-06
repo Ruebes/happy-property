@@ -221,7 +221,9 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             to, subject: `Rechnung ${invoiceNumber} — ${settings.brand_name}`, html,
             from_name: 'Lotte · Happy Property',
-            lead_id: body.lead_id ?? null, deal_id: body.deal_id ?? null,
+            // BEWUSST ohne lead_id/deal_id: Provisionsrechnungen gehen an den
+            // Geschäftspartner und haben in der KUNDENAKTE nichts verloren
+            // (tauchten sonst in dessen Nachrichten-Verlauf auf — Sven 6.8.26).
             attachment: { filename: `${invoiceNumber}.pdf`, content_base64: b64, content_type: 'application/pdf' },
           }),
         })

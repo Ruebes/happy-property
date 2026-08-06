@@ -585,7 +585,8 @@ Deno.serve(async (req: Request) => {
       if (payerEmail) {
         try {
           await supabase.functions.invoke('send-email', { body: {
-            to: payerEmail, lead_id: inv.lead_id, deal_id: inv.deal_id,
+            // ohne lead_id/deal_id — Provisions-Kommunikation bleibt aus der Kundenakte
+            to: payerEmail,
             subject: `Zahlungseingang bestätigt — Rechnung ${inv.invoice_number}`,
             html: paymentConfirmationHtml(inv, tx.created_at),
             from_name: 'Lotte · Happy Property',
