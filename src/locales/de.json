@@ -157,7 +157,8 @@
     "verwalter_desc": "Lese- & Schreibzugriff auf alle Immobilien-Daten",
     "eigentuemer_desc": "Sieht ausschließlich eigene Objekte & Dokumente",
     "feriengast_desc": "Ferienaufenthalt · Check-in, Hausregeln & Nachrichten",
-    "funnel": "Funnel-Redaktion"
+    "funnel": "Funnel-Redaktion",
+    "mitarbeiter": "Mitarbeiter"
   },
   "dashboard": {
     "greeting": "Hallo",

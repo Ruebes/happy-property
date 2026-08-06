@@ -157,7 +157,8 @@
     "verwalter_desc": "Read & write access to all property data",
     "eigentuemer_desc": "Sees only own properties & documents",
     "feriengast_desc": "Holiday stay · check-in, house rules & messages",
-    "funnel": "Funnel editor"
+    "funnel": "Funnel editor",
+    "mitarbeiter": "Staff"
   },
   "dashboard": {
     "greeting": "Hello",

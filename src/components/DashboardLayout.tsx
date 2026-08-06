@@ -245,7 +245,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
 
           {/* Links: Logo + Toggle + Nav */}
-          <div className="flex items-center gap-5">
+          <div className="flex items-center gap-5 flex-1 min-w-0">
 
             {/* Logo */}
             <Link
@@ -287,7 +287,9 @@ export default function DashboardLayout({ children, basePath }: Props) {
             {/* Navigation — erst ab xl (≥1280px) horizontal; darunter Hamburger.
                 Die volle CRM-Admin-Leiste (Pipeline · Kunden · Projekte · Einstellungen
                 + Sprache/Rolle/Profil) überläuft bei lg sonst → „Einstellungen" ragt in „EN". */}
-            <nav className="hidden xl:flex gap-1 items-center">
+            {/* min-w-0 + overflow-x-auto: bei vielen Reitern (z.B. Mitarbeiter mit
+                Funnel-Rechten) scrollt die Leiste, statt in Sprache/Badge zu ragen */}
+            <nav className="hidden xl:flex gap-1 items-center min-w-0 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
 
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
