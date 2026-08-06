@@ -295,29 +295,20 @@ export default function DashboardLayout({ children, basePath }: Props) {
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
                 <>
-                  {/* Hauptlinks: Pipeline · Kontakte · Postausgang · Kalender */}
-                  {crmTopItems.map(({ to, key }) => (
-                    <Link key={to} to={to}
-                      className={navLinkClass(to)}
-                      style={isActive(to) ? { backgroundColor: '#ff795d' } : undefined}
-                    >
-                      {t(key)}
-                    </Link>
-                  ))}
-
-                  {/* Tools (aufklappbar): Dashboard, Projekte, Rechnungen, Statistiken, Funnel, Newsletter, Empfängerlisten, Buchungslinks … */}
+                  {/* EIN Menü für alles (Svens Wunsch 6.8.26): Bereiche + Tools
+                      gruppiert in einem Dropdown — die Leiste bleibt immer einzeilig */}
                   <div className="relative" ref={moreRef}>
                     <button
                       onClick={() => setMoreOpen(prev => !prev)}
                       className={`px-3 py-1.5 rounded-lg text-sm font-medium font-body
                                   transition-colors flex items-center gap-1 ${
-                        crmMoreItems.some(i => isActive(i.to))
+                        [...crmTopItems, ...crmMoreItems].some(i => isActive(i.to))
                           ? 'text-white'
                           : 'text-gray-600 hover:bg-gray-100 hover:text-hp-black'
                       }`}
-                      style={crmMoreItems.some(i => isActive(i.to)) ? { backgroundColor: '#ff795d' } : undefined}
+                      style={[...crmTopItems, ...crmMoreItems].some(i => isActive(i.to)) ? { backgroundColor: '#ff795d' } : undefined}
                     >
-                      {t('crm.nav.more', 'Tools')}
+                      {t('crm.nav.menu', 'Menü')}
                       <svg
                         className={`w-3 h-3 mt-0.5 transition-transform duration-200 ${moreOpen ? 'rotate-180' : ''}`}
                         fill="none" stroke="currentColor" viewBox="0 0 24 24"
@@ -327,8 +318,11 @@ export default function DashboardLayout({ children, basePath }: Props) {
                     </button>
                     {moreOpen && (
                       <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200
-                                      rounded-xl shadow-lg z-50 min-w-[200px] py-1.5 overflow-hidden">
-                        {crmMoreItems.map(({ to, key }) => (
+                                      rounded-xl shadow-lg z-50 min-w-[220px] py-1.5 max-h-[75vh] overflow-y-auto">
+                        {([{ heading: 'Bereiche' }, ...crmTopItems, { heading: 'Tools' }, ...crmMoreItems] as Array<{ to: string; key: string } | { heading: string }>).map((item) => 'heading' in item ? (
+                          <div key={item.heading} className="px-4 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400 select-none">{item.heading}</div>
+                        ) : (
+                          (({ to, key }) => (
                           <Link key={to} to={to}
                             className={`flex items-center gap-2.5 px-4 py-2 text-sm font-body
                                         transition-colors ${
@@ -344,6 +338,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
                             />
                             {t(key)}
                           </Link>
+                          ))(item)
                         ))}
                       </div>
                     )}
