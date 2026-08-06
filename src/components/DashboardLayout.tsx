@@ -287,9 +287,10 @@ export default function DashboardLayout({ children, basePath }: Props) {
             {/* Navigation — erst ab xl (≥1280px) horizontal; darunter Hamburger.
                 Die volle CRM-Admin-Leiste (Pipeline · Kunden · Projekte · Einstellungen
                 + Sprache/Rolle/Profil) überläuft bei lg sonst → „Einstellungen" ragt in „EN". */}
-            {/* min-w-0 + overflow-x-auto: bei vielen Reitern (z.B. Mitarbeiter mit
-                Funnel-Rechten) scrollt die Leiste, statt in Sprache/Badge zu ragen */}
-            <nav className="hidden xl:flex gap-1 items-center min-w-0 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0">
+            {/* flex-wrap: bei vielen Reitern (z.B. Mitarbeiter mit Funnel-Rechten)
+                bricht die Leiste in eine zweite Zeile um — nichts überlappt,
+                nichts verschwindet aus dem Sichtfeld */}
+            <nav className="hidden xl:flex gap-1 items-center min-w-0 flex-wrap [&>*]:shrink-0 [&>*]:whitespace-nowrap">
 
               {/* ── Admin CRM-Ansicht ── */}
               {isAdmin && adminView === 'crm' && (
