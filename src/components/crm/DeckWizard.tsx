@@ -26,6 +26,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [developer, setDeveloper] = useState('')   // Filter: Developer-Name
   const [projectId, setProjectId] = useState('')
   const [withCalc, setWithCalc] = useState(false)
+  const [calcOnly, setCalcOnly] = useState(false)   // NUR Berechnung, kein Deck (Sven 7.8.26)
   const [calcParams, setCalcParams] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   // Pro Wohnung eigene Rendite + Wertsteigerung (unterscheiden sich je Projekt/Lage).
   // Leer = es gilt der globale Standardwert aus calcParams.
@@ -150,24 +151,6 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       const groupsMap = new Map<string, BasketItem[]>()
       for (const b of basket) { const g = groupsMap.get(b.projectId); if (g) g.push(b); else groupsMap.set(b.projectId, [b]) }
       const groups = [...groupsMap.values()]
-      const links: { token: string; label: string; items: BasketItem[] }[] = []
-      for (let i = 0; i < groups.length; i++) {
-        setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${groups.length} — ${groups[i][0].projectName}…`)
-        const r = await genProject(groups[i])
-        if (r) links.push(r)
-      }
-      if (!links.length) throw new Error(t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
-      // Begleit-Mail von der KI schreiben lassen → Postausgang (Entwurf). Fällt bei Fehler
-      // auf eine schlanke CI-Vorlage zurück, damit nie ohne Mail dastehen.
-      const origin = window.location.origin
-      // Verfügbarkeit je Projekt (Knappheit als Verkaufsargument in der Mail)
-      const projIds = [...new Set(links.map(l => l.items[0].projectId))]
-      const availByProject: Record<string, { available: number; total: number }> = {}
-      for (const pid of projIds) {
-        const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
-        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)')
-        availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
-      }
       // Möbel-Default-Kette: manuelle Eingabe je Wohnung → Projekt-Standard → globaler Wizard-Wert.
       const buildCalcItem = (it: BasketItem): CalcItem => {
         const pu = perUnit[it.unit.id] ?? {}
@@ -192,6 +175,57 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           bedrooms: it.unit.bedrooms, size_sqm: it.unit.size_sqm, terrace_sqm: it.unit.terrace_sqm, floor: it.unit.floor,
           price_net: it.unit.price_net, price_gross: it.unit.price_gross, params,
         }
+      }
+
+      // ── NUR Berechnung (kein Deck): property_calculations direkt anlegen ────
+      if (calcOnly) {
+        const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
+        const madeLinks: string[] = []
+        const allItems: CalcItem[] = []
+        for (let i = 0; i < groups.length; i++) {
+          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${groups.length}…`)
+          const items = groups[i].map(buildCalcItem)
+          allItems.push(...items)
+          const title = items.length > 1
+            ? `Berechnung ${groups[i][0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
+            : `Rechnung ${items[0].label}`
+          const content = { with_calc: true, recipient_name: recipientName, items }
+          const { data: calcRow, error: cErr } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
+          }).select('token').single()
+          if (cErr) throw cErr
+          const tok = (calcRow as { token?: string } | null)?.token
+          if (tok) madeLinks.push(`${window.location.origin}/rechnung/${tok}`)
+        }
+        if (groups.length >= 2) {
+          setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
+          const content = { with_calc: true, recipient_name: recipientName, items: allItems }
+          await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
+          })
+        }
+        try { await navigator.clipboard.writeText(madeLinks.join('\n')) } catch { /* Clipboard optional */ }
+        onDone(`✅ ${madeLinks.length} ${t('crm.wizard.calcOnlyDone', 'Berechnung(en) erstellt — Links in der Zwischenablage, bearbeitbar im Postausgang.')}`)
+        if (!background) onClose()
+        return
+      }
+      const links: { token: string; label: string; items: BasketItem[] }[] = []
+      for (let i = 0; i < groups.length; i++) {
+        setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${groups.length} — ${groups[i][0].projectName}…`)
+        const r = await genProject(groups[i])
+        if (r) links.push(r)
+      }
+      if (!links.length) throw new Error(t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
+      // Begleit-Mail von der KI schreiben lassen → Postausgang (Entwurf). Fällt bei Fehler
+      // auf eine schlanke CI-Vorlage zurück, damit nie ohne Mail dastehen.
+      const origin = window.location.origin
+      // Verfügbarkeit je Projekt (Knappheit als Verkaufsargument in der Mail)
+      const projIds = [...new Set(links.map(l => l.items[0].projectId))]
+      const availByProject: Record<string, { available: number; total: number }> = {}
+      for (const pid of projIds) {
+        const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
+        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)')
+        availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
       const calcLinkByToken: Record<string, string> = {}
       let compareLink: string | undefined
@@ -463,6 +497,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             <label className="flex items-center gap-2 cursor-pointer">
               <input type="checkbox" checked={withCalc} onChange={e => setWithCalc(e.target.checked)} className="w-4 h-4 accent-orange-500" />
               <span className="text-sm font-medium text-gray-700">📊 {t('crm.wizard.withCalc', 'Mit Rendite-Berechnung / Vergleich')}</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer mt-2">
+              <input type="checkbox" checked={calcOnly} onChange={e => setCalcOnly(e.target.checked)} className="w-4 h-4 accent-orange-500" />
+              <span className="text-sm font-medium text-gray-700">🧮 {t('crm.wizard.calcOnly', 'NUR Berechnung erstellen (kein Deck)')}</span>
             </label>
             {withCalc && (
               <div className="mt-3 space-y-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
