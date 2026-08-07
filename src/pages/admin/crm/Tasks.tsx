@@ -920,7 +920,12 @@ export default function Tasks() {
 
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
-        ) : (
+        ) : (<>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-1 text-[11px] text-gray-500">
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ backgroundColor: '#ff795d' }} /> {t('crm.tasks.legendMine', 'Du bist dran')}</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ backgroundColor: '#2563eb' }} /> {t('crm.tasks.legendDelegated', 'Von dir delegiert - andere liefern')}</span>
+            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ backgroundColor: '#94a3b8' }} /> {t('crm.tasks.legendOthers', 'Läuft zwischen anderen')}</span>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {COLUMNS.map(col => {
               const colTasks = tasks.filter(x => x.status === col.status)
@@ -939,13 +944,20 @@ export default function Tasks() {
                     {colTasks.length === 0 && <p className="text-xs text-gray-400 text-center py-6">—</p>}
                     {colTasks.map(task => {
                       const mine = task.created_by === myId
+                      // Farbe = ZUSTÄNDIGKEIT: Orange = ich bin dran, Blau = von mir
+                      // delegiert (andere liefern), Grau = läuft zwischen anderen.
+                      // Der STATUS steckt bereits in der Spalte.
+                      const forMe = task.assigned_to === myId
+                      const byMeForOthers = mine && task.assigned_to !== myId
+                      const ownCol = forMe ? '#ff795d' : byMeForOthers ? '#2563eb' : '#94a3b8'
+                      const ownBg  = task.status === 'erledigt' ? '#f0fdf4' : forMe ? '#FFF5F1' : byMeForOthers ? '#EFF5FF' : '#ffffff'
                       return (
                         <button key={task.id} onClick={() => setDetail(task)}
                           draggable
                           onDragStart={() => setDragId(task.id)}
                           onDragEnd={() => { setDragId(null); setDragOver(null) }}
                           className={`w-full text-left rounded-xl border border-gray-100 shadow-sm p-3 hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing ${dragId === task.id ? 'opacity-50' : ''}`}
-                          style={{ backgroundColor: cardBg(task.status), borderLeft: `3px solid ${accentOf(task.status)}` }}>
+                          style={{ backgroundColor: ownBg, borderLeft: `4px solid ${ownCol}` }}>
                           <div className="flex items-start justify-between gap-2">
                             <span className="font-medium text-gray-900 text-sm">
                               {task.parent_task_id && <span className="text-gray-400 mr-1" title={t('crm.tasks.subtasks', 'Zuarbeit')}>↳</span>}
@@ -974,6 +986,7 @@ export default function Tasks() {
               )
             })}
           </div>
+        </>
         )}
       </div>
 
