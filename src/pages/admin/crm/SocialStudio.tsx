@@ -30,6 +30,7 @@ const PLATFORMS = [
   { key: 'facebook', label: 'Facebook' },
   { key: 'instagram', label: 'Instagram' },
   { key: 'linkedin', label: 'LinkedIn' },
+  { key: 'youtube', label: 'YouTube' },
 ]
 const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
   entwurf: { de: 'Entwurf', cls: 'bg-gray-100 text-gray-600' },
@@ -653,6 +654,7 @@ const PLAT_CHIP: Record<string, { txt: string; cls: string }> = {
   facebook: { txt: 'f', cls: 'bg-[#1877F2] text-white' },
   instagram: { txt: 'IG', cls: 'bg-[#E1306C] text-white' },
   linkedin: { txt: 'in', cls: 'bg-[#0A66C2] text-white' },
+  youtube: { txt: '▶', cls: 'bg-[#FF0000] text-white' },
 }
 
 function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }: {

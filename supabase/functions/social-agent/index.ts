@@ -662,7 +662,7 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
     // ── Idee verwenden: Captions je Plattform + Bilder + optional Newsletter ──
     if (body.action === 'use_idea') {
       const ideaId = String(body.idea_id ?? '')
-      const sel = Array.isArray(body.platforms) ? (body.platforms as string[]).filter(p => ['facebook', 'instagram', 'linkedin'].includes(p)) : []
+      const sel = Array.isArray(body.platforms) ? (body.platforms as string[]).filter(p => ['facebook', 'instagram', 'linkedin', 'youtube'].includes(p)) : []
       const wantNewsletter = body.newsletter === true
       const wantMeta = sel.includes('facebook') || sel.includes('instagram')
       const wantLi = sel.includes('linkedin')
@@ -787,10 +787,12 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       const posted = (doneToday as { platforms: string[] }[] | null) ?? []
       const metaDone = posted.some(p => (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram'))
       const liDone = posted.some(p => (p.platforms ?? []).includes('linkedin'))
+      const ytDone = posted.some(p => (p.platforms ?? []).includes('youtube'))
       const next = dueList.find(p => {
         const isMeta = (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram')
         const isLi = (p.platforms ?? []).includes('linkedin')
-        return !(isMeta && metaDone) && !(isLi && liDone)
+        const isYt = (p.platforms ?? []).includes('youtube')
+        return !(isMeta && metaDone) && !(isLi && liDone) && !(isYt && ytDone)
       })
       if (!next) return json({ ok: true, skipped: 'Tageslimit erreicht (max. 1 Post/Tag je Kanal).' })
       body.post_id = next.id
@@ -910,6 +912,40 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
         } catch (e) { if (!(e as { __done?: boolean }).__done) results.instagram = { ok: false, error: (e as Error).message } }
       }
       // LinkedIn (optional — Token muss Sven einmalig hinterlegen)
+      // ── YouTube: Video-Upload über die Data API (Svens Kanal) ────────────────
+      if (p.platforms.includes('youtube')) {
+        const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+        const [cid, csec, rtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+        if (!videoUrl) {
+          results.youtube = { ok: false, error: 'YouTube braucht ein Video — bitte im Post ein Video hochladen.' }
+        } else if (!cid || !csec || !rtok) {
+          results.youtube = { ok: false, error: 'YouTube ist noch nicht verbunden (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN in Einstellungen → Connectoren hinterlegen).' }
+        } else {
+          try {
+            const tr = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }) })
+            const td = await tr.json() as { access_token?: string; error_description?: string }
+            if (!td.access_token) throw new Error(`OAuth: ${td.error_description ?? tr.status}`)
+            const head = await fetch(videoUrl, { method: 'HEAD' })
+            const size = Number(head.headers.get('content-length') ?? 0)
+            if (!size || size > 80 * 1048576) throw new Error(`Video zu groß für den Auto-Upload (${Math.round(size / 1048576)} MB, max. 80 MB)`) 
+            const vres = await fetch(videoUrl)
+            const bytes = new Uint8Array(await vres.arrayBuffer())
+            const title = (p.title ?? '').replace(/^[^A-Za-z0-9ÄÖÜäöü]*/, '').slice(0, 95) || 'Happy Property'
+            const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+              method: 'POST', headers: { Authorization: `Bearer ${td.access_token}`, 'Content-Type': 'application/json', 'X-Upload-Content-Length': String(bytes.length), 'X-Upload-Content-Type': 'video/mp4' },
+              body: JSON.stringify({ snippet: { title, description: (p.content ?? '').slice(0, 4800), categoryId: '26' }, status: { privacyStatus: 'public', selfDeclaredMadeForKids: false } }),
+            })
+            const loc = init.headers.get('location')
+            if (!init.ok || !loc) throw new Error(`Upload-Init ${init.status}: ${(await init.text()).slice(0, 200)}`)
+            const up = await fetch(loc, { method: 'PUT', headers: { 'Content-Length': String(bytes.length), 'Content-Type': 'video/mp4' }, body: bytes })
+            const ud = await up.json() as { id?: string; error?: { message?: string } }
+            if (!up.ok || !ud.id) throw new Error(ud.error?.message ?? `Upload ${up.status}`)
+            results.youtube = { ok: true, id: ud.id, url: `https://youtu.be/${ud.id}` }
+          } catch (e) { results.youtube = { ok: false, error: (e as Error).message } }
+        }
+      }
+
       if (p.platforms.includes('linkedin')) {
         if (videoUrl) {
           results.linkedin = { ok: false, error: 'Video/Reel auf LinkedIn noch nicht angebunden — bitte dort manuell posten.' }
