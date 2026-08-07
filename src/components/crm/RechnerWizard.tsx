@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
-import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem } from '../../lib/rechner'
+import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 
@@ -292,6 +292,69 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
               {numF(t('rechnerWizard.appreciationLabel', 'Wertsteigerung'), 'appreciationPct', '%', '0.1')}
             </div>
             {p.letType === 'short' && <div className="mt-3">{toggle(`🏨 ${t('rechnerWizard.hotelConceptLabel', 'Hotelkonzept')}`, 'hotelConcept', t('rechnerWizard.hotelConceptHint', 'Verwaltung übernimmt kompletten Hotelservice'))}</div>}
+            {p.letType === 'short' && p.dealType === 'single' && (
+              <div className="mt-3 space-y-3">
+                <button type="button" onClick={() => setP(prev => ({ ...prev, season: prev.season ? null : { totalOcc: 56, adrHigh: 120 } }))}
+                  className={`flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl border text-sm transition-all ${p.season ? 'border-orange-300 bg-orange-50' : 'border-gray-200 bg-white'}`}>
+                  <span className="text-left"><span className="font-medium text-gray-700">🏖 {t('rechnerWizard.seasonLabel', 'Saisonmodell (4 Saisons)')}</span>
+                    <span className="block text-[11px] text-gray-400">{t('rechnerWizard.seasonHint', 'Auslastung + Preis/Nacht statt pauschaler Bruttorendite')}</span></span>
+                  <span className={`w-9 h-5 rounded-full relative transition-colors shrink-0 ${p.season ? 'bg-orange-500' : 'bg-gray-300'}`}>
+                    <span className="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" style={{ left: p.season ? 18 : 2 }} />
+                  </span>
+                </button>
+                {p.season && (() => {
+                  const sb = seasonBreakdown(p.season)
+                  const effY = applySeason(p).yieldPct
+                  return (
+                    <div className="rounded-xl border border-orange-100 bg-orange-50/40 p-3 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <span className="block text-xs font-medium text-gray-500 mb-1.5">{t('rechnerWizard.seasonOcc', 'Gesamtauslastung (Jahr)')}</span>
+                          <NumberStepper value={p.season.totalOcc} min={5} max={90} onChange={v => setP(prev => ({ ...prev, season: { totalOcc: v, adrHigh: prev.season?.adrHigh ?? 120 } }))} suffix="%" />
+                        </div>
+                        <div>
+                          <span className="block text-xs font-medium text-gray-500 mb-1.5">{t('rechnerWizard.seasonAdr', 'Preis/Nacht Hochsaison')}</span>
+                          <NumberStepper value={p.season.adrHigh} min={20} step={5} onChange={v => setP(prev => ({ ...prev, season: { totalOcc: prev.season?.totalOcc ?? 56, adrHigh: v } }))} suffix="€" />
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead><tr className="text-left text-gray-400">
+                            <th className="py-1 pr-2 font-medium">{t('rechnerWizard.seasonCol', 'Saison')}</th>
+                            <th className="py-1 pr-2 font-medium">{t('rechnerWizard.seasonPeriod', 'Zeitraum')}</th>
+                            <th className="py-1 pr-2 font-medium text-right">{t('rechnerWizard.seasonOccCol', 'Auslastung')}</th>
+                            <th className="py-1 pr-2 font-medium text-right">{t('rechnerWizard.seasonDays', 'Tage')}</th>
+                            <th className="py-1 pr-2 font-medium text-right">€/{t('rechnerWizard.seasonNight', 'Nacht')}</th>
+                            <th className="py-1 font-medium text-right">{t('rechnerWizard.seasonRevenue', 'Einnahmen')}</th>
+                          </tr></thead>
+                          <tbody>
+                            {sb.rows.map(x => (
+                              <tr key={x.key} className="border-t border-orange-100">
+                                <td className="py-1 pr-2 font-medium text-gray-700">{x.label}</td>
+                                <td className="py-1 pr-2 text-gray-500">{x.period}</td>
+                                <td className="py-1 pr-2 text-right">{x.occPct.toLocaleString('de-DE')} %</td>
+                                <td className="py-1 pr-2 text-right">{x.occDays} / {x.days}</td>
+                                <td className="py-1 pr-2 text-right">{x.adr} €</td>
+                                <td className="py-1 text-right font-medium">{x.revenue.toLocaleString('de-DE')} €</td>
+                              </tr>
+                            ))}
+                            <tr className="border-t-2 border-orange-200 font-semibold text-gray-800">
+                              <td className="py-1 pr-2">{t('rechnerWizard.seasonTotal', 'Gesamt')}</td>
+                              <td className="py-1 pr-2" />
+                              <td className="py-1 pr-2 text-right">{sb.occPct.toLocaleString('de-DE')} %</td>
+                              <td className="py-1 pr-2 text-right">{sb.occDays} / {sb.totalDays}</td>
+                              <td className="py-1 pr-2" />
+                              <td className="py-1 text-right">{sb.rent.toLocaleString('de-DE')} €</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[11px] text-gray-500">→ {t('rechnerWizard.seasonYield', 'Ergibt Jahresmiete {{rent}} € = Bruttorendite {{y}} % (ersetzt das Feld oben)', { rent: sb.rent.toLocaleString('de-DE'), y: effY.toLocaleString('de-DE') })}</p>
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
           </div>
 
           {/* ── Sondertilgung (erweitert) ── */}

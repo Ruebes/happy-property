@@ -57,6 +57,45 @@ export interface CalcParams {
   furnCost: number         // s-furn (Einrichtungspaket €)
   furnFree: boolean        // furn-free (Einrichtung kostenfrei?)
   ppVals: number[]         // 10× Sondertilgung pro Jahr
+  // Saisonmodell Kurzzeit (optional): statt pauschaler Bruttorendite
+  season?: { totalOcc: number; adrHigh: number } | null
+}
+
+// ── Saisonmodell Kurzzeitvermietung (Paphos-Marktprofil) ─────────────────────
+// Sven gibt GESAMT-Auslastung + Preis/Nacht der Hochsaison ein; wir verteilen
+// auf 4 Saisons (Basisprofil aus Hotelier-Erfahrung) und leiten die Preise der
+// übrigen Saisons über Marktfaktoren ab. Weihnachten (kurzer Ausreißer in der
+// Nebensaison) ist im Basiswert der Nebensaison bereits eingepreist.
+export interface SeasonRow { key: string; label: string; period: string; days: number; occPct: number; occDays: number; adr: number; revenue: number }
+export const SEASON_DEF = [
+  { key: 'neben', label: 'Nebensaison', period: '15.11. – 31.03.', days: 137, baseOcc: 27.5, adrFactor: 0.45 },
+  { key: 'vor',   label: 'Vorsaison',   period: '01.04. – 31.05.', days: 61,  baseOcc: 55,   adrFactor: 0.65 },
+  { key: 'hoch',  label: 'Hochsaison',  period: '01.06. – 31.08.', days: 92,  baseOcc: 87.5, adrFactor: 1 },
+  { key: 'nach',  label: 'Nachsaison',  period: '01.09. – 14.11.', days: 75,  baseOcc: 70,   adrFactor: 0.75 },
+] as const
+export function seasonBreakdown(cfg: { totalOcc: number; adrHigh: number }): { rows: SeasonRow[]; totalDays: number; occDays: number; occPct: number; rent: number } {
+  const totalDays = SEASON_DEF.reduce((a, x) => a + x.days, 0)                     // 365
+  const baseAvg = SEASON_DEF.reduce((a, x) => a + x.baseOcc * x.days, 0) / totalDays
+  const f = Math.max(0, cfg.totalOcc || 0) / baseAvg
+  const rows: SeasonRow[] = SEASON_DEF.map(x => {
+    const occPct = Math.min(98, Math.round(x.baseOcc * f * 10) / 10)
+    const occDays = Math.round(x.days * occPct / 100)
+    const adr = Math.round((cfg.adrHigh || 0) * x.adrFactor)
+    return { key: x.key, label: x.label, period: x.period, days: x.days, occPct, occDays, adr, revenue: occDays * adr }
+  })
+  const occDays = rows.reduce((a, x) => a + x.occDays, 0)
+  const rent = rows.reduce((a, x) => a + x.revenue, 0)
+  return { rows, totalDays, occDays, occPct: Math.round(occDays / totalDays * 1000) / 10, rent }
+}
+// Saison aktiv → effektive Bruttorendite aus der Saison-Jahresmiete ableiten;
+// die verifizierte Engine bleibt formelgleich (Miete = pGrossList × yield%).
+export function applySeason(p: CalcParams): CalcParams {
+  const sn = p.season
+  if (!sn || p.letType !== 'short' || p.dealType !== 'single' || !(sn.totalOcc > 0) || !(sn.adrHigh > 0)) return p
+  const basis = Math.round((p.priceNet || 0) * 1.19)
+  if (basis <= 0) return p
+  const { rent } = seasonBreakdown(sn)
+  return { ...p, yieldPct: Math.round(rent / basis * 10000) / 100 }
 }
 
 export const DEFAULT_PARAMS: CalcParams = {
@@ -68,6 +107,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   equity: 75000, cyBI: 0, yieldPct: 5.5, rentGrowth: 5, mgmtPct: 2, interestPct: 4.1,
   termYears: 20, amortPct: 2, appreciationPct: 5, deTaxPct: 42, furnCost: 0, furnFree: false,
   ppVals: Array(10).fill(0),
+  season: null,
 }
 
 // Zypern progressive Einkommensteuer (Banden)
@@ -121,7 +161,9 @@ export interface CalcResult {
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
 }
 
-export function compute(p: CalcParams): CalcResult {
+export function compute(p: CalcParams): CalcResult { return computeCore(applySeason(p)) }
+
+function computeCore(p: CalcParams): CalcResult {
   const ppVals = p.ppVals && p.ppVals.length === 10 ? p.ppVals : Array(10).fill(0)
   const km = p.month || 8
   const ky = p.year || 2025

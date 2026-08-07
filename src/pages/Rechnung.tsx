@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode, type CSSProperties } from
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
-import { compute, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
+import { compute, seasonBreakdown, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
 import { DECK_LOGO } from '../lib/deckTypes'
 
 // ── Öffentliche Rendite-Rechnung / Immobilienvergleich (HTML-Microsite) ───────
@@ -247,6 +247,51 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           </div>
         </div>
       </Card>
+
+      {/* 2b. Saisonkalkulation Kurzzeitvermietung (nur wenn Saisonmodell aktiv) */}
+      {p.season && p.letType === 'short' && (() => {
+        const sb = seasonBreakdown(p.season)
+        return (
+          <>
+            <H2Section>{t('rechnung.seasonTitle', 'Kurzzeitvermietung – Saisonkalkulation (Jahr 1)')}</H2Section>
+            <Card style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+                  <thead><tr>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.seasonCol', 'Saison')}</th>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('rechnung.seasonPeriod', 'Zeitraum')}</th>
+                    <th style={th}>{t('rechnung.seasonOcc', 'Auslastung')}</th>
+                    <th style={th}>{t('rechnung.seasonDays', 'Belegte Tage')}</th>
+                    <th style={th}>{t('rechnung.seasonAdr', 'Preis/Nacht')}</th>
+                    <th style={th}>{t('rechnung.seasonRevenue', 'Mieteinnahmen')}</th>
+                  </tr></thead>
+                  <tbody>
+                    {sb.rows.map(x => (
+                      <tr key={x.key}>
+                        <td style={{ ...td, textAlign: 'left', fontWeight: 600 }}>{x.label}</td>
+                        <td style={{ ...td, textAlign: 'left' }}>{x.period}</td>
+                        <td style={td}>{x.occPct.toLocaleString('de-DE')} %</td>
+                        <td style={td}>{x.occDays} {t('rechnung.seasonOf', 'von')} {x.days}</td>
+                        <td style={td}>{x.adr.toLocaleString('de-DE')} €</td>
+                        <td style={td}>{x.revenue.toLocaleString('de-DE')} €</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: '#FAF6EC' }}>
+                      <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{t('rechnung.seasonTotal', 'Gesamt')}</td>
+                      <td style={td} />
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.occPct.toLocaleString('de-DE')} %</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.occDays} {t('rechnung.seasonOf', 'von')} {sb.totalDays}</td>
+                      <td style={td} />
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.rent.toLocaleString('de-DE')} €</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+            <Note>{t('rechnung.seasonNote', 'Saisonprofil auf Basis lokaler Markterfahrung (Paphos): Hochsaison Juni–August, Nachsaison September–Oktober, Vorsaison April–Mai, Nebensaison Mitte November–März (Weihnachten als kurzer Ausreißer eingerechnet). Preise der übrigen Saisons werden vom Hochsaisonpreis abgeleitet.')}</Note>
+          </>
+        )
+      })()}
 
       {/* 3. Tabelle A – Cashflow */}
       <H2Section>{t('rechnung.tableACashflow', 'Tabelle A – Cashflow (10 Jahre)')}</H2Section>
