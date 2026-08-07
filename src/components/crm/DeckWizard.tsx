@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
-import { DEFAULT_PARAMS, type CalcParams, type CalcItem } from '../../lib/rechner'
+import { DEFAULT_PARAMS, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 
@@ -528,6 +528,38 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                   {cpToggle(t('deckWizard.furnishingFree', 'Einrichtung kostenfrei'), 'furnFree')}
                   {calcParams.letType === 'short' && cpToggle('🏨 ' + t('deckWizard.hotelConceptToggle', 'Hotelkonzept'), 'hotelConcept')}
                 </div>
+                {calcParams.letType === 'short' && (
+                  <div className="space-y-2">
+                    <button type="button" onClick={() => setCalcParams(prev => ({ ...prev, season: prev.season ? null : { totalOcc: 56, adrHigh: 120 } }))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${calcParams.season ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                      🏖 {t('deckWizard.seasonToggle', 'Saisonmodell (4 Saisons) statt pauschaler Rendite')}
+                    </button>
+                    {calcParams.season && (() => {
+                      const sb = seasonBreakdown(calcParams.season)
+                      const effY = applySeason({ ...calcParams, dealType: 'single', priceNet: basket[0]?.unit.price_net ?? calcParams.priceNet }).yieldPct
+                      return (
+                        <div className="rounded-lg border border-orange-100 bg-white p-2.5 space-y-2">
+                          <div className="grid grid-cols-2 gap-2 max-w-sm">
+                            <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                              <span>{t('deckWizard.seasonOcc', 'Gesamtauslastung')}</span>
+                              <NumberStepper value={calcParams.season.totalOcc} min={5} max={90} suffix="%"
+                                onChange={v => setCalcParams(prev => ({ ...prev, season: { totalOcc: v, adrHigh: prev.season?.adrHigh ?? 120 } }))} />
+                            </label>
+                            <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                              <span>{t('deckWizard.seasonAdr', 'Preis/Nacht Hochsaison')}</span>
+                              <NumberStepper value={calcParams.season.adrHigh} min={20} step={5} suffix="€"
+                                onChange={v => setCalcParams(prev => ({ ...prev, season: { totalOcc: prev.season?.totalOcc ?? 56, adrHigh: v } }))} />
+                            </label>
+                          </div>
+                          <div className="text-[11px] text-gray-500 leading-relaxed">
+                            {sb.rows.map(x => `${x.label} ${x.occPct.toLocaleString('de-DE')}% (${x.occDays}/${x.days} T., ${x.adr} €)`).join(' · ')}
+                            <br />→ {t('deckWizard.seasonSum', 'Jahresmiete')} <b>{sb.rent.toLocaleString('de-DE')} €</b> = {t('deckWizard.seasonYield', 'Bruttorendite')} <b>{effY.toLocaleString('de-DE')} %</b> ({t('deckWizard.seasonRef', 'bezogen auf die erste Wohnung im Korb')})
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                )}
                 {/* Je Wohnung ALLE Parameter einzeln: Vermietung (Kurz/Lang), Finanzierung,
                     Eigenkapital, Rendite, Wertsteigerung, Einrichtung, Hotelkonzept. Sinnvoll,
                     wenn mehrere Immos zugleich angeboten werden. Werte oben = Standard für alle. */}
