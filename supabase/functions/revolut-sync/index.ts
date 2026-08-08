@@ -262,8 +262,12 @@ Deno.serve(async (req: Request) => {
       if (!forSven) return json({ success: true, fin_class: 'kunde' })
       let txId: string | null = null
       if (inv.amount && inv.amount > 0) {
+        // Nur Buchungen im ZEITFENSTER um den Mail-Eingang (21 Tage zurück):
+        // sonst heftet sich eine NEUE, unbezahlte Rechnung an eine zufällig
+        // betragsgleiche ALTE Zahlung (Giona RE0105 → Juli-Buchung, 9.8.26).
         const { data: cand } = await supabase.from('fin_transactions').select('id').lt('amount', 0)
           .gte('amount', -(inv.amount * 1.005)).lte('amount', -(inv.amount * 0.995)).is('doc_url', null)
+          .gte('booked_at', new Date(Date.now() - 21 * 86400e3).toISOString())
           .order('booked_at', { ascending: false }).limit(1)
         txId = (cand?.[0] as { id: string } | undefined)?.id ?? null
       }

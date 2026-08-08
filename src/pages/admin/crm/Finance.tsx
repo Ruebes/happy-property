@@ -194,6 +194,9 @@ export default function Finance() {
   }
 
   const openPayables = payables.filter(p => p.status === 'offen')
+  // Ausgangskorb: bezahlte/ignorierte Karten standardmäßig ausblenden (Sven 9.8.26)
+  const [showDonePay, setShowDonePay] = useState(false)
+  const visiblePayables = showDonePay ? payables : openPayables
   const btn = 'px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50'
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -269,8 +272,14 @@ export default function Finance() {
           </div>
         ) : tab === 'payables' ? (
           <div className="space-y-2">
-            {payables.length === 0 && <p className="text-sm text-gray-400 text-center py-8">{t('crm.fin.noPay', 'Keine offenen Rechnungen — Partner-Rechnungen an info@ landen automatisch hier.')}</p>}
-            {payables.map(p => (
+            <div className="flex justify-end">
+              <button onClick={() => setShowDonePay(v => !v)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border ${showDonePay ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                {showDonePay ? t('crm.fin.hideDone', 'Erledigte ausblenden') : t('crm.fin.showDone', 'Erledigte anzeigen')}
+              </button>
+            </div>
+            {visiblePayables.length === 0 && <p className="text-sm text-gray-400 text-center py-8">{t('crm.fin.noPay', 'Keine offenen Rechnungen — Partner-Rechnungen an info@ landen automatisch hier.')}</p>}
+            {visiblePayables.map(p => (
               <div key={p.id} className={`bg-white rounded-2xl border shadow-sm p-4 flex items-center gap-3 flex-wrap ${p.status === 'offen' ? 'border-amber-200' : 'border-gray-100 opacity-60'}`}>
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-gray-900 text-sm">{p.title}</p>
