@@ -582,9 +582,11 @@ Regeln:
       const out: Record<string, unknown> = { fb_comments: 0, ig_comments: 0, fb_msgs: 0, ig_msgs: 0, yt_comments: 0 }
       const errs: string[] = []
       const up = async (row: Record<string, unknown>) => {
+        const bucket = String(row._bucket)
+        delete row._bucket   // Hilfsfeld — existiert nicht als Spalte
         const { error } = await sb.from('social_interactions').upsert(row, { onConflict: 'external_id', ignoreDuplicates: true })
         if (error) errs.push(`upsert: ${error.message}`)
-        else out[row._bucket as string] = Number(out[row._bucket as string] ?? 0) + 1
+        else out[bucket] = Number(out[bucket] ?? 0) + 1
       }
       const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
       const metaToken = await cs('META_ACCESS_TOKEN')
