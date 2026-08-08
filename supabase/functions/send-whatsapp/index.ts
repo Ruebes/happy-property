@@ -332,8 +332,16 @@ Deno.serve(async (req) => {
       })
     }
 
+    // Erfolg NUR, wenn mindestens ein Versand wirklich ok war. Vorher stand hier
+    // pauschal success:true — ein TimelinesAI-Fehler wurde verschluckt und der
+    // Aufrufer loggte "gesendet", obwohl nichts raus war (Rainer, 7.8.26).
+    const okResults = results.filter(r => (r as { ok?: boolean }).ok)
+    const firstErr = results.find(r => !(r as { ok?: boolean }).ok) as { status?: number; data?: unknown } | undefined
+    const allSkipped = okResults.length > 0 && okResults.every(r => ((r as { data?: { skipped?: string } }).data?.skipped) === 'duplicate')
     return new Response(
-      JSON.stringify({ success: true, sent: results.length, results,
+      JSON.stringify({ success: okResults.length > 0, sent: okResults.length, results,
+        ...(allSkipped ? { skipped_duplicate: true } : {}),
+        ...(okResults.length === 0 && firstErr ? { error: `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'}): ${JSON.stringify(firstErr.data ?? '').slice(0, 180)}` } : {}),
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
         // ein gescheiterter Anhang faellt sonst nie auf.
         attached: !!fileUidCache, ...(attachError ? { attach_error: attachError } : {}) }),

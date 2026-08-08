@@ -204,8 +204,12 @@ export default function Inbox() {
             ...(i > 0 ? { allow_duplicate: true } : {}),   // Folge-Dateien: gleicher Leer-Text nicht deduppen
           } })
           if (error) throw error
-          const r = data as { success?: boolean; attached?: boolean } | null
-          if (!r?.success) throw new Error('WhatsApp')
+          const r = data as { success?: boolean; attached?: boolean; error?: string; skipped_duplicate?: boolean } | null
+          if (!r?.success) throw new Error(r?.error || 'WhatsApp-Versand fehlgeschlagen')
+          if (r.skipped_duplicate) {
+            showToast(t('crm.inbox.dupSkipped', '⚠️ Identische Nachricht wurde in den letzten 6 Stunden schon gesendet - kein erneuter Versand. Text leicht ändern, falls doch gewollt.'))
+            setSending(false); return
+          }
           if (f && r.attached === false) anyAttachFailed = true
         }
         if (anyAttachFailed) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: '' }))
