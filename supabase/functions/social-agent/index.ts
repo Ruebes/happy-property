@@ -606,9 +606,11 @@ Regeln:
           const posts = await fetch(`${G}/${pageId}/posts?fields=id,message&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; message?: string }>; error?: { message?: string } }
           if (posts.error) throw new Error(posts.error.message)
           for (const post of posts.data ?? []) {
-            const cs2 = await fetch(`${G}/${post.id}/comments?fields=id,from{name,id},message,created_time&filter=stream&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> }
+            const cs2 = await fetch(`${G}/${post.id}/comments?fields=id,from{name,id},message,created_time,comments.limit(10){from}&filter=stream&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string; comments?: { data?: Array<{ from?: { id?: string } }> } }> }
             for (const c of cs2.data ?? []) {
               if (!c.message || c.from?.id === pageId) continue
+              // Schon von der Seite beantwortet (egal ob per App oder Portal) → überspringen
+              if ((c.comments?.data ?? []).some(r2 => r2.from?.id === pageId)) continue
               await up({ _bucket: 'fb_comments', platform: 'facebook', kind: 'comment', external_id: c.id, thread_ref: post.id, post_preview: (post.message ?? '').slice(0, 120), author_name: c.from?.name ?? null, author_id: c.from?.id ?? null, text: c.message, happened_at: c.created_time ?? null, raw: c })
             }
           }
@@ -616,11 +618,16 @@ Regeln:
         // FB- + IG-Direktnachrichten (Conversations)
         for (const plat of ['messenger', 'instagram'] as const) {
           try {
-            const convs = await fetch(`${G}/${pageId}/conversations?platform=${plat}&fields=id,messages.limit(10){id,from,message,created_time}&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; messages?: { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> } }>; error?: { message?: string } }
+            const convs = await fetch(`${G}/${pageId}/conversations?platform=${plat}&fields=id,messages.limit(15){id,from,message,created_time}&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; messages?: { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> } }>; error?: { message?: string } }
             if (convs.error) throw new Error(convs.error.message)
             for (const conv of convs.data ?? []) {
+              // Zeitpunkt UNSERER letzten Antwort in dieser Konversation — alles
+              // davor gilt als erledigt (wurde per App/Portal schon beantwortet).
+              const ours = (conv.messages?.data ?? []).filter(m => m.from?.id === pageId || m.from?.id === igId)
+              const lastOurs = ours.length ? Math.max(...ours.map(m => new Date(m.created_time ?? 0).getTime())) : 0
               for (const m of conv.messages?.data ?? []) {
                 if (!m.message || m.from?.id === pageId || m.from?.id === igId) continue
+                if (lastOurs && new Date(m.created_time ?? 0).getTime() <= lastOurs) continue
                 await up({ _bucket: plat === 'messenger' ? 'fb_msgs' : 'ig_msgs', platform: plat === 'messenger' ? 'facebook' : 'instagram', kind: 'message', external_id: m.id, thread_ref: conv.id, author_name: m.from?.name ?? null, author_id: m.from?.id ?? null, text: m.message, happened_at: m.created_time ?? null, raw: m })
               }
             }
@@ -629,12 +636,15 @@ Regeln:
         // IG-Kommentare (letzte 25 Medien)
         if (igId) {
           try {
+            const igMe = await fetch(`${G}/${igId}?fields=username&access_token=${pageToken}`).then(r => r.json()) as { username?: string }
+            const igUser = igMe.username ?? 'happy_property_cyprus'
             const media = await fetch(`${G}/${igId}/media?fields=id,caption&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; caption?: string }>; error?: { message?: string } }
             if (media.error) throw new Error(media.error.message)
             for (const md of media.data ?? []) {
-              const cs3 = await fetch(`${G}/${md.id}/comments?fields=id,username,text,timestamp&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; username?: string; text?: string; timestamp?: string }> }
+              const cs3 = await fetch(`${G}/${md.id}/comments?fields=id,username,text,timestamp,replies.limit(10){username}&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; username?: string; text?: string; timestamp?: string; replies?: { data?: Array<{ username?: string }> } }> }
               for (const c of cs3.data ?? []) {
-                if (!c.text || c.username === 'happy_property_cyprus') continue
+                if (!c.text || c.username === igUser) continue
+                if ((c.replies?.data ?? []).some(r2 => r2.username === igUser)) continue
                 await up({ _bucket: 'ig_comments', platform: 'instagram', kind: 'comment', external_id: c.id, thread_ref: md.id, post_preview: (md.caption ?? '').slice(0, 120), author_name: c.username ?? null, author_id: null, text: c.text, happened_at: c.timestamp ?? null, raw: c })
               }
             }
@@ -650,11 +660,12 @@ Regeln:
           const ch = await fetch('https://www.googleapis.com/youtube/v3/channels?part=id&mine=true', { headers: { Authorization: `Bearer ${tr.access_token}` } }).then(r => r.json()) as { items?: Array<{ id: string }> }
           const chId = ch.items?.[0]?.id
           if (chId) {
-            const th = await fetch(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&allThreadsRelatedToChannelId=${chId}&maxResults=50&order=time`, { headers: { Authorization: `Bearer ${tr.access_token}` } }).then(r => r.json()) as { items?: Array<{ id: string; snippet?: { videoId?: string; topLevelComment?: { id: string; snippet?: { authorDisplayName?: string; textDisplay?: string; publishedAt?: string; authorChannelId?: { value?: string } } } } }> }
+            const th = await fetch(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&allThreadsRelatedToChannelId=${chId}&maxResults=50&order=time`, { headers: { Authorization: `Bearer ${tr.access_token}` } }).then(r => r.json()) as { items?: Array<{ id: string; snippet?: { videoId?: string; topLevelComment?: { id: string; snippet?: { authorDisplayName?: string; textDisplay?: string; publishedAt?: string; authorChannelId?: { value?: string } } } }; replies?: { comments?: Array<{ snippet?: { authorChannelId?: { value?: string } } }> } }> }
             for (const t2 of th.items ?? []) {
               const c = t2.snippet?.topLevelComment
               if (!c?.snippet?.textDisplay) continue
               if (c.snippet.authorChannelId?.value === chId) continue
+              if ((t2.replies?.comments ?? []).some(r2 => r2.snippet?.authorChannelId?.value === chId)) continue
               await up({ _bucket: 'yt_comments', platform: 'youtube', kind: 'comment', external_id: c.id, thread_ref: t2.snippet?.videoId ?? null, author_name: c.snippet.authorDisplayName ?? null, author_id: c.snippet.authorChannelId?.value ?? null, text: c.snippet.textDisplay.replace(/<[^>]+>/g, ''), happened_at: c.snippet.publishedAt ?? null, raw: t2 })
             }
           }
