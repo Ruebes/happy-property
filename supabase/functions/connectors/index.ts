@@ -29,8 +29,8 @@ type Check = { key: string; label: string; editable?: boolean; run: (sb: Supabas
 const timeout = (ms: number) => ({ signal: AbortSignal.timeout(ms) })
 
 const CHECKS: Check[] = [
-  { key: 'META', label: 'Meta (Facebook & Instagram)', run: async () => {
-    const tok = Deno.env.get('META_ACCESS_TOKEN') ?? ''
+  { key: 'META_ACCESS_TOKEN', label: 'Meta (Facebook & Instagram)', editable: true, run: async (sb) => {
+    const tok = await secretOf(sb, 'META_ACCESS_TOKEN') || (Deno.env.get('META_ACCESS_TOKEN') ?? '')
     if (!tok) return { ok: false, detail: 'Kein Token hinterlegt.' }
     const me = await fetch(`https://graph.facebook.com/v21.0/me?fields=name&access_token=${tok}`, timeout(8000)).then(r => r.json()).catch(e => ({ error: { message: String(e) } }))
     if (me.error) return { ok: false, detail: me.error.message?.slice(0, 120) ?? 'Fehler' }
@@ -44,6 +44,18 @@ const CHECKS: Check[] = [
     if (!tok) return { ok: false, detail: 'Noch nicht verbunden — Token hier eintragen.' }
     const me = await fetch('https://api.linkedin.com/v2/userinfo', { headers: { Authorization: `Bearer ${tok}` }, ...timeout(8000) }).then(r => r.ok ? r.json() : null).catch(() => null)
     return me?.sub ? { ok: true, detail: `Verbunden als ${me.name ?? me.sub}` } : { ok: false, detail: 'Token ungültig oder abgelaufen.' }
+  } },
+  { key: 'YOUTUBE_CLIENT_ID', label: 'YouTube — Client-ID', editable: true, run: async (sb) => {
+    const v = await secretOf(sb, 'YOUTUBE_CLIENT_ID')
+    return v ? { ok: true, detail: 'Hinterlegt.' } : { ok: false, detail: 'Fehlt — für Video-Upload & Kommentare (Google-OAuth).' }
+  } },
+  { key: 'YOUTUBE_CLIENT_SECRET', label: 'YouTube — Client-Secret', editable: true, run: async (sb) => {
+    const v = await secretOf(sb, 'YOUTUBE_CLIENT_SECRET')
+    return v ? { ok: true, detail: 'Hinterlegt.' } : { ok: false, detail: 'Fehlt.' }
+  } },
+  { key: 'YOUTUBE_REFRESH_TOKEN', label: 'YouTube — Refresh-Token', editable: true, run: async (sb) => {
+    const v = await secretOf(sb, 'YOUTUBE_REFRESH_TOKEN')
+    return v ? { ok: true, detail: 'Hinterlegt.' } : { ok: false, detail: 'Fehlt.' }
   } },
   { key: 'OPENAI', label: 'OpenAI (Bilder)', run: async () => {
     const tok = Deno.env.get('OPENAI_API_KEY') ?? ''
