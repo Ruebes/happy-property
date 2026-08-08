@@ -352,6 +352,7 @@ Deno.serve(async (req: Request) => {
       console.log(`[revolut-sync] Zahlung beauftragt: ${p.title} → ${benName} (${p.amount} ${cur}), state=${pd.state}`)
 
       // ── Lotte informiert den Zahlungsempfänger per WhatsApp (Svens Vorgabe) ──
+      let waInfo = 'keine Nummer zum Empfänger gefunden'
       try {
         const pmId = (pRow as { partner_mail_id?: string | null }).partner_mail_id
         let contact: { first_name?: string | null; whatsapp?: string | null; phone?: string | null; language?: string | null } | null = null
@@ -369,11 +370,24 @@ Deno.serve(async (req: Request) => {
           }
         }
         if (!contact) {
-          const tok = benName.split(/\s+/).find(w => w.replace(/[^A-Za-zÄÖÜäöüß]/g, '').length > 3)
-          if (tok) {
+          // Alle brauchbaren Namens-Bausteine gegen Vor-/Nachname/Firma prüfen
+          // (Giona-Fall 9.8.26: „Giona Sophia Schauf" — Giona steht im VORnamen,
+          // und die Rechnung kam über Lexware, nicht von ihrer eigenen Adresse).
+          const toks = benName.split(/\s+/).map(w => w.replace(/[^A-Za-zÄÖÜäöüß-]/g, '')).filter(w => w.length > 3)
+          for (const tok of toks) {
             const { data: c3 } = await supabase.from('crm_business_contacts').select('first_name, whatsapp, phone, language')
-              .or(`last_name.ilike.%${tok}%,company.ilike.%${tok}%`).limit(1)
+              .or(`first_name.ilike.%${tok}%,last_name.ilike.%${tok}%,company.ilike.%${tok}%`).limit(1)
             contact = (c3?.[0] as typeof contact) ?? null
+            if (contact) break
+          }
+        }
+        if (!contact) {
+          // Letzter Rückgriff: Mitarbeiter-Profile (z.B. Leonard/Giona arbeiten für uns)
+          const toks = benName.split(/\s+/).map(w => w.replace(/[^A-Za-zÄÖÜäöüß-]/g, '')).filter(w => w.length > 3)
+          for (const tok of toks) {
+            const { data: c4 } = await supabase.from('profiles').select('full_name, phone, language').ilike('full_name', `%${tok}%`).not('phone', 'is', null).limit(1)
+            const prof = c4?.[0] as { full_name?: string; phone?: string; language?: string } | undefined
+            if (prof?.phone) { contact = { first_name: (prof.full_name ?? '').split(' ')[0], whatsapp: prof.phone, phone: prof.phone, language: prof.language }; break }
           }
         }
         const tel = ((contact?.whatsapp ?? contact?.phone) ?? '').trim()
@@ -390,12 +404,13 @@ Deno.serve(async (req: Request) => {
             persona_image: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-payment.jpg`,
           } })
           console.log(`[revolut-sync] Zahlungs-WhatsApp an ${tel} gesendet`)
+          waInfo = 'ok'
         } else {
           console.log('[revolut-sync] Zahlungs-WhatsApp übersprungen — keine Nummer zum Empfänger gefunden')
         }
-      } catch (e) { console.warn('[revolut-sync] Zahlungs-WhatsApp fehlgeschlagen:', e) }
+      } catch (e) { console.warn('[revolut-sync] Zahlungs-WhatsApp fehlgeschlagen:', e); waInfo = 'Fehler beim WhatsApp-Versand' }
 
-      return json({ success: true, payment_id: pd.id, state: pd.state ?? 'pending' })
+      return json({ success: true, payment_id: pd.id, state: pd.state ?? 'pending', wa_notified: waInfo === 'ok', wa_info: waInfo })
     }
 
 

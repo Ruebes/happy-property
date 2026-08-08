@@ -148,10 +148,12 @@ export default function Finance() {
         await supabase.from('fin_payables').update({ iban, beneficiary: payBen.trim() || null }).eq('id', payFor.id)
       }
       const { data, error } = await supabase.functions.invoke('revolut-sync', { body: { action: 'pay_payable', payable_id: payFor.id } })
-      const d = (data ?? {}) as { success?: boolean; error?: string; state?: string }
+      const d = (data ?? {}) as { success?: boolean; error?: string; state?: string; wa_notified?: boolean; wa_info?: string }
       if (error || d.error || !d.success) throw new Error(d.error || error?.message || 'Fehler')
       setPayables(arr => arr.map(x => x.id === payFor.id ? { ...x, status: 'bezahlt' } : x))
-      showToast(`💸 ${t('crm.fin.payDone', 'Überweisung beauftragt ({{state}})', { state: d.state ?? 'pending' })}`)
+      showToast(d.wa_notified === false
+        ? `💸 ${t('crm.fin.payDoneNoWa', 'Überweisung beauftragt - aber KEINE Info-WhatsApp an den Empfänger ({{why}})', { why: d.wa_info ?? '' })}`
+        : `💸 ${t('crm.fin.payDone', 'Überweisung beauftragt ({{state}})', { state: d.state ?? 'pending' })}`)
       setPayFor(null)
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setPayBusy(false) }
   }
