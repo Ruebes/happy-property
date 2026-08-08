@@ -721,6 +721,21 @@ Regeln:
       return json({ ok: true })
     }
 
+    if (body.action === 'yt_check') {
+      const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+      const [cid, csec, rtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+      const out: Record<string, unknown> = { cid_len: cid.length, cid_ends: cid.slice(-30), csec_len: csec.length, rtok_len: rtok.length, rtok_start: rtok.slice(0, 4) }
+      const tr = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: cid.trim(), client_secret: csec.trim(), refresh_token: rtok.trim(), grant_type: 'refresh_token' }) })
+      const td = await tr.json() as { access_token?: string; error?: string; error_description?: string }
+      out.oauth = td.access_token ? 'OK' : `${td.error}: ${td.error_description}`
+      if (td.access_token) {
+        const ch = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', { headers: { Authorization: `Bearer ${td.access_token}` } }).then(r => r.json()) as { items?: Array<{ snippet?: { title?: string } }> }
+        out.channel = ch.items?.[0]?.snippet?.title ?? 'kein Kanal'
+      }
+      return json(out)
+    }
+
     if (body.action === 'meta_scopes') {
       const { data: mtRow } = await sb.from('connector_secrets').select('value').eq('key', 'META_ACCESS_TOKEN').maybeSingle()
       const tok = (mtRow as { value: string } | null)?.value ?? Deno.env.get('META_ACCESS_TOKEN') ?? ''
