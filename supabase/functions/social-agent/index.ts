@@ -577,6 +577,137 @@ Regeln:
     }
 
     // ── Meta-Token-Scopes prüfen (Debug für Publishing-Berechtigungen) ───────
+    // ── Interaktionen: Kommentare + DMs von FB/IG/YouTube einsammeln ─────────
+    if (body.action === 'interactions_sync') {
+      const out: Record<string, unknown> = { fb_comments: 0, ig_comments: 0, fb_msgs: 0, ig_msgs: 0, yt_comments: 0 }
+      const errs: string[] = []
+      const up = async (row: Record<string, unknown>) => {
+        const { error } = await sb.from('social_interactions').upsert(row, { onConflict: 'external_id', ignoreDuplicates: true })
+        if (error) errs.push(`upsert: ${error.message}`)
+        else out[row._bucket as string] = Number(out[row._bucket as string] ?? 0) + 1
+      }
+      const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+      const metaToken = await cs('META_ACCESS_TOKEN')
+      let pageId = '', pageToken = '', igId = ''
+      if (metaToken) {
+        try {
+          const acc = await fetch(`https://graph.facebook.com/v21.0/me/accounts?fields=id,name,access_token,instagram_business_account&access_token=${metaToken}`).then(r => r.json()) as { data?: Array<{ id: string; access_token: string; instagram_business_account?: { id: string } }>; error?: { message?: string } }
+          const page = acc.data?.[0]
+          if (page) { pageId = page.id; pageToken = page.access_token; igId = page.instagram_business_account?.id ?? '' }
+          else errs.push(`me/accounts: ${acc.error?.message ?? 'keine Seite'}`)
+        } catch (e) { errs.push(`me/accounts: ${(e as Error).message}`) }
+      } else errs.push('META_ACCESS_TOKEN fehlt')
+      const G = 'https://graph.facebook.com/v21.0'
+      if (pageId) {
+        // FB-Kommentare (letzte 25 Posts)
+        try {
+          const posts = await fetch(`${G}/${pageId}/posts?fields=id,message&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; message?: string }>; error?: { message?: string } }
+          if (posts.error) throw new Error(posts.error.message)
+          for (const post of posts.data ?? []) {
+            const cs2 = await fetch(`${G}/${post.id}/comments?fields=id,from{name,id},message,created_time&filter=stream&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> }
+            for (const c of cs2.data ?? []) {
+              if (!c.message || c.from?.id === pageId) continue
+              await up({ _bucket: 'fb_comments', platform: 'facebook', kind: 'comment', external_id: c.id, thread_ref: post.id, post_preview: (post.message ?? '').slice(0, 120), author_name: c.from?.name ?? null, author_id: c.from?.id ?? null, text: c.message, happened_at: c.created_time ?? null, raw: c })
+            }
+          }
+        } catch (e) { errs.push(`fb_comments: ${(e as Error).message}`) }
+        // FB- + IG-Direktnachrichten (Conversations)
+        for (const plat of ['messenger', 'instagram'] as const) {
+          try {
+            const convs = await fetch(`${G}/${pageId}/conversations?platform=${plat}&fields=id,messages.limit(10){id,from,message,created_time}&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; messages?: { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string }> } }>; error?: { message?: string } }
+            if (convs.error) throw new Error(convs.error.message)
+            for (const conv of convs.data ?? []) {
+              for (const m of conv.messages?.data ?? []) {
+                if (!m.message || m.from?.id === pageId || m.from?.id === igId) continue
+                await up({ _bucket: plat === 'messenger' ? 'fb_msgs' : 'ig_msgs', platform: plat === 'messenger' ? 'facebook' : 'instagram', kind: 'message', external_id: m.id, thread_ref: conv.id, author_name: m.from?.name ?? null, author_id: m.from?.id ?? null, text: m.message, happened_at: m.created_time ?? null, raw: m })
+              }
+            }
+          } catch (e) { errs.push(`${plat}_msgs: ${(e as Error).message}`) }
+        }
+        // IG-Kommentare (letzte 25 Medien)
+        if (igId) {
+          try {
+            const media = await fetch(`${G}/${igId}/media?fields=id,caption&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; caption?: string }>; error?: { message?: string } }
+            if (media.error) throw new Error(media.error.message)
+            for (const md of media.data ?? []) {
+              const cs3 = await fetch(`${G}/${md.id}/comments?fields=id,username,text,timestamp&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; username?: string; text?: string; timestamp?: string }> }
+              for (const c of cs3.data ?? []) {
+                if (!c.text || c.username === 'happy_property_cyprus') continue
+                await up({ _bucket: 'ig_comments', platform: 'instagram', kind: 'comment', external_id: c.id, thread_ref: md.id, post_preview: (md.caption ?? '').slice(0, 120), author_name: c.username ?? null, author_id: null, text: c.text, happened_at: c.timestamp ?? null, raw: c })
+              }
+            }
+          } catch (e) { errs.push(`ig_comments: ${(e as Error).message}`) }
+        }
+      }
+      // YouTube-Kommentare (wenn OAuth-Connector eingerichtet)
+      const [ycid, ycsec, yrtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+      if (ycid && ycsec && yrtok) {
+        try {
+          const tr = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: ycid, client_secret: ycsec, refresh_token: yrtok, grant_type: 'refresh_token' }) }).then(r => r.json()) as { access_token?: string }
+          if (!tr.access_token) throw new Error('OAuth fehlgeschlagen')
+          const ch = await fetch('https://www.googleapis.com/youtube/v3/channels?part=id&mine=true', { headers: { Authorization: `Bearer ${tr.access_token}` } }).then(r => r.json()) as { items?: Array<{ id: string }> }
+          const chId = ch.items?.[0]?.id
+          if (chId) {
+            const th = await fetch(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&allThreadsRelatedToChannelId=${chId}&maxResults=50&order=time`, { headers: { Authorization: `Bearer ${tr.access_token}` } }).then(r => r.json()) as { items?: Array<{ id: string; snippet?: { videoId?: string; topLevelComment?: { id: string; snippet?: { authorDisplayName?: string; textDisplay?: string; publishedAt?: string; authorChannelId?: { value?: string } } } } }> }
+            for (const t2 of th.items ?? []) {
+              const c = t2.snippet?.topLevelComment
+              if (!c?.snippet?.textDisplay) continue
+              if (c.snippet.authorChannelId?.value === chId) continue
+              await up({ _bucket: 'yt_comments', platform: 'youtube', kind: 'comment', external_id: c.id, thread_ref: t2.snippet?.videoId ?? null, author_name: c.snippet.authorDisplayName ?? null, author_id: c.snippet.authorChannelId?.value ?? null, text: c.snippet.textDisplay.replace(/<[^>]+>/g, ''), happened_at: c.snippet.publishedAt ?? null, raw: t2 })
+            }
+          }
+        } catch (e) { errs.push(`yt: ${(e as Error).message}`) }
+      }
+      return json({ ok: true, ...out, errors: errs })
+    }
+
+    // ── Interaktion beantworten (Kommentar-Reply / DM) ───────────────────────
+    if (body.action === 'interactions_reply') {
+      const b = body as unknown as { id?: string; text?: string }
+      if (!b.id || !b.text?.trim()) return json({ error: 'id und text erforderlich' })
+      const { data: rowRaw } = await sb.from('social_interactions').select('*').eq('id', b.id).maybeSingle()
+      const row = rowRaw as { id: string; platform: string; kind: string; external_id: string; thread_ref: string | null; author_id: string | null; replied_at: string | null } | null
+      if (!row) return json({ error: 'Interaktion nicht gefunden' })
+      if (row.replied_at) return json({ error: 'Bereits beantwortet' })
+      const text = b.text.trim()
+      const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+      const G = 'https://graph.facebook.com/v21.0'
+      try {
+        if (row.platform === 'youtube') {
+          const [ycid, ycsec, yrtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+          if (!ycid) throw new Error('YouTube nicht verbunden')
+          const tr = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: ycid, client_secret: ycsec, refresh_token: yrtok, grant_type: 'refresh_token' }) }).then(r => r.json()) as { access_token?: string }
+          const rr = await fetch('https://www.googleapis.com/youtube/v3/comments?part=snippet', { method: 'POST', headers: { Authorization: `Bearer ${tr.access_token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ snippet: { parentId: row.external_id, textOriginal: text } }) })
+          if (!rr.ok) throw new Error(`YouTube ${rr.status}: ${(await rr.text()).slice(0, 160)}`)
+        } else {
+          const metaToken = await cs('META_ACCESS_TOKEN')
+          const acc = await fetch(`${G}/me/accounts?fields=id,access_token&access_token=${metaToken}`).then(r => r.json()) as { data?: Array<{ id: string; access_token: string }> }
+          const page = acc.data?.[0]
+          if (!page) throw new Error('Meta-Seite nicht erreichbar')
+          if (row.kind === 'comment') {
+            const ep = row.platform === 'instagram' ? `${G}/${row.external_id}/replies` : `${G}/${row.external_id}/comments`
+            const rr = await fetch(ep, { method: 'POST', body: new URLSearchParams({ message: text, access_token: page.access_token }) })
+            const rd = await rr.json() as { id?: string; error?: { message?: string } }
+            if (!rr.ok || !rd.id) throw new Error(rd.error?.message ?? `Meta ${rr.status}`)
+          } else {
+            if (!row.author_id) throw new Error('Kein Absender zum Antworten')
+            const rr = await fetch(`${G}/${page.id}/messages?access_token=${page.access_token}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recipient: { id: row.author_id }, messaging_type: 'RESPONSE', message: { text } }) })
+            const rd = await rr.json() as { message_id?: string; error?: { message?: string } }
+            if (!rr.ok || !rd.message_id) throw new Error(rd.error?.message ?? `Meta ${rr.status}`)
+          }
+        }
+        await sb.from('social_interactions').update({ replied_at: new Date().toISOString(), reply_text: text, ...(row.kind === 'comment' ? { archived_at: new Date().toISOString() } : {}) }).eq('id', row.id)
+        return json({ ok: true })
+      } catch (e) { return json({ error: (e as Error).message }) }
+    }
+
+    if (body.action === 'interactions_archive') {
+      const b = body as unknown as { id?: string }
+      if (!b.id) return json({ error: 'id fehlt' })
+      await sb.from('social_interactions').update({ archived_at: new Date().toISOString() }).eq('id', b.id)
+      return json({ ok: true })
+    }
+
     if (body.action === 'meta_scopes') {
       const { data: mtRow } = await sb.from('connector_secrets').select('value').eq('key', 'META_ACCESS_TOKEN').maybeSingle()
       const tok = (mtRow as { value: string } | null)?.value ?? Deno.env.get('META_ACCESS_TOKEN') ?? ''

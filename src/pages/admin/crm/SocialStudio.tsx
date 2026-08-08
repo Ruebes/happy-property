@@ -751,6 +751,103 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
 }
 
 // ── Seite ────────────────────────────────────────────────────────────────────
+
+// ── Interaktionen: Kommentare + Direktnachrichten (FB/IG/YouTube) ────────────
+interface Interaction { id: string; platform: string; kind: string; post_preview: string | null; author_name: string | null; text: string | null; happened_at: string | null; replied_at: string | null; reply_text: string | null; archived_at: string | null }
+function InteractionsSection() {
+  const { t } = useTranslation()
+  const [items, setItems] = useState<Interaction[]>([])
+  const [showArchive, setShowArchive] = useState(false)
+  const [replyFor, setReplyFor] = useState<string | null>(null)
+  const [replyText, setReplyText] = useState('')
+  const [busy, setBusy] = useState('')
+  const [note, setNote] = useState('')
+  const load = useCallback(async () => {
+    let q = supabase.from('social_interactions').select('*').order('happened_at', { ascending: false }).limit(80)
+    q = showArchive ? q.not('archived_at', 'is', null) : q.is('archived_at', null)
+    const { data } = await q
+    setItems((data as Interaction[] | null) ?? [])
+  }, [showArchive])
+  useEffect(() => { void load() }, [load])
+  const syncNow = async () => {
+    setBusy('sync'); setNote('')
+    try {
+      const { data } = await supabase.functions.invoke('social-agent', { body: { action: 'interactions_sync' } })
+      const d = (data ?? {}) as { errors?: string[] }
+      const permErr = (d.errors ?? []).some(e => /permission|#10|#200|#230/i.test(e))
+      setNote(permErr ? t('crm.social.iaPerm', '⚠️ Für Insta-Kommentare und Direktnachrichten fehlen dem Meta-Token noch Rechte - siehe Hinweis unten.') : '')
+      await load()
+    } catch (e) { setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setBusy('') }
+  }
+  const sendReply = async (id: string) => {
+    if (!replyText.trim()) return
+    setBusy(id)
+    try {
+      const { data } = await supabase.functions.invoke('social-agent', { body: { action: 'interactions_reply', id, text: replyText.trim() } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string }
+      if (!d.ok) throw new Error(d.error || 'Antwort fehlgeschlagen')
+      setReplyFor(null); setReplyText(''); await load()
+    } catch (e) { setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setBusy('') }
+  }
+  const archive = async (id: string) => {
+    setBusy(id)
+    try { await supabase.functions.invoke('social-agent', { body: { action: 'interactions_archive', id } }); await load() } finally { setBusy('') }
+  }
+  const kindIcon = (k: string) => k === 'message' ? '✉️' : '💬'
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="font-bold text-gray-900">💬 {t('crm.social.iaTitle', 'Kommentare & Nachrichten')}{!showArchive && items.length > 0 && <span className="ml-2 text-xs font-bold text-white bg-red-500 rounded-full px-2 py-0.5">{items.length}</span>}</h2>
+        <div className="flex gap-1.5">
+          <button onClick={() => void syncNow()} disabled={busy === 'sync'} className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50">{busy === 'sync' ? '…' : `🔄 ${t('crm.social.iaSync', 'Abrufen')}`}</button>
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+            {([[false, t('crm.social.iaOpen', 'Offen')], [true, t('crm.social.iaArchive', 'Archiv')]] as const).map(([v, l]) => (
+              <button key={String(v)} onClick={() => setShowArchive(v)} className={`px-2.5 py-1 rounded-md text-xs font-medium ${showArchive === v ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{l}</button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {note && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{note}</p>}
+      {items.length === 0 ? (
+        <p className="text-sm text-gray-400 text-center py-6">{showArchive ? t('crm.social.iaEmptyArch', 'Archiv ist leer.') : t('crm.social.iaEmpty', 'Keine offenen Kommentare oder Nachrichten. Automatischer Abruf läuft stündlich.')}</p>
+      ) : (
+        <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+          {items.map(x => (
+            <div key={x.id} className="border border-gray-100 rounded-xl p-3">
+              <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+                <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] ${PLAT_CHIP[x.platform]?.cls ?? 'bg-gray-200'}`}>{PLAT_CHIP[x.platform]?.txt ?? x.platform}</span>
+                <span>{kindIcon(x.kind)} {x.kind === 'message' ? t('crm.social.iaMsg', 'Nachricht') : t('crm.social.iaComment', 'Kommentar')}</span>
+                <span className="font-semibold text-gray-700">{x.author_name ?? '—'}</span>
+                {x.happened_at && <span>· {new Date(x.happened_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+              </div>
+              {x.post_preview && <p className="text-[11px] text-gray-400 mt-1 truncate">↳ {t('crm.social.iaOnPost', 'zu Post')}: „{x.post_preview}"</p>}
+              <p className="text-sm text-gray-800 mt-1 whitespace-pre-wrap">{x.text}</p>
+              {x.reply_text && <p className="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-2.5 py-1.5 mt-2">↩︎ {x.reply_text}</p>}
+              {!showArchive && (
+                replyFor === x.id ? (
+                  <div className="mt-2 space-y-1.5">
+                    <textarea value={replyText} onChange={e => setReplyText(e.target.value)} rows={2} autoFocus
+                      className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm outline-none focus:border-orange-400" placeholder={t('crm.social.iaReplyPh', 'Deine Antwort …')} />
+                    <div className="flex gap-1.5 justify-end">
+                      <button onClick={() => { setReplyFor(null); setReplyText('') }} className="px-2.5 py-1 rounded-lg text-xs border border-gray-200">{t('common.cancel', 'Abbrechen')}</button>
+                      <button onClick={() => void sendReply(x.id)} disabled={busy === x.id || !replyText.trim()} className="px-3 py-1 rounded-lg text-xs font-semibold text-white disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>{busy === x.id ? '…' : t('crm.social.iaSend', 'Antworten')}</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-1.5 mt-2">
+                    <button onClick={() => { setReplyFor(x.id); setReplyText('') }} className="px-2.5 py-1 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50">↩︎ {t('crm.social.iaReply', 'Antworten')}</button>
+                    <button onClick={() => void archive(x.id)} disabled={busy === x.id} className="px-2.5 py-1 rounded-lg text-xs text-gray-400 border border-gray-100 hover:bg-gray-50">🗂 {t('crm.social.iaArch', 'Ins Archiv')}</button>
+                  </div>
+                )
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function SocialStudio() {
   const { t } = useTranslation()
   const { profile } = useAuth()
@@ -989,10 +1086,12 @@ export default function SocialStudio() {
           </div>
         )}
 
-        {!loading && view === 'plan' && (
+        {!loading && view === 'plan' && (<>
+          <InteractionsSection />
+
           <PlanCalendar posts={posts} newsletters={newsletters} topics={topics}
             onOpenPost={p => setOpenPost(p)} onCreateForDay={d => void createForDay(d)} />
-        )}
+        </>)}
 
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
