@@ -56,10 +56,15 @@ export default function Finance() {
 
   const months = useMemo(() => Array.from(new Set(txs.map(x => x.booked_at.slice(0, 7)))).sort().reverse(), [txs])
   const [onlyNoDoc, setOnlyNoDoc] = useState(false)
+  const [txSearch, setTxSearch] = useState('')
   const noDocCount = useMemo(() => txs.filter(x => !x.doc_url && x.doc_status !== 'nicht_noetig').length, [txs])
-  const filtered = useMemo(() => txs.filter(x =>
-    (!month || x.booked_at.startsWith(month)) && (!catFilter || x.category === catFilter)
-    && (!onlyNoDoc || (!x.doc_url && x.doc_status !== 'nicht_noetig'))), [txs, month, catFilter, onlyNoDoc])
+  const filtered = useMemo(() => {
+    const q = txSearch.trim().toLowerCase()
+    return txs.filter(x =>
+      (!month || x.booked_at.startsWith(month)) && (!catFilter || x.category === catFilter)
+      && (!onlyNoDoc || (!x.doc_url && x.doc_status !== 'nicht_noetig'))
+      && (!q || `${x.counterparty} ${x.reference} ${x.doc_name ?? ''} ${x.amount}`.toLowerCase().includes(q)))
+  }, [txs, month, catFilter, onlyNoDoc, txSearch])
 
   // Beleg-Status („kein Beleg nötig" bei Dauerzahlungen/Kredit-Rückzahlung etc.)
   const setDocStatus = async (tx: FinTx, v: string) => {
@@ -229,6 +234,9 @@ export default function Finance() {
             <div className="flex gap-2 p-3 border-b border-gray-50 flex-wrap">
               <div className="w-40"><CustomSelect value={month} onChange={setMonth} options={[{ value: '', label: t('crm.fin.allMonths', 'Alle Monate') }, ...months.map(m => ({ value: m, label: m }))]} /></div>
               <div className="w-56"><CustomSelect value={catFilter} onChange={setCatFilter} options={[{ value: '', label: t('crm.fin.allCats', 'Alle Kategorien') }, ...CATS.map(c => ({ value: c, label: CAT_LABEL[c] }))]} /></div>
+              <input value={txSearch} onChange={e => setTxSearch(e.target.value)}
+                placeholder={t('crm.fin.searchPh', '🔍 Suchen (Firma, Verwendungszweck, Betrag, Beleg) …')}
+                className="w-64 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-orange-400" />
               <button onClick={() => setOnlyNoDoc(v => !v)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium border ${onlyNoDoc ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                 🧾 {t('crm.fin.noDocFilter', 'Ohne Beleg')} ({noDocCount})
