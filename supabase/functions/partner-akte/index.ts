@@ -219,18 +219,24 @@ Deno.serve(async (req) => {
           const lead = leadRow as LeadRow | null
           if (!lead) { results.push({ share: share.id, error: 'lead fehlt' }); continue }
 
+          // Absenderin ist Lotte (Svens Wunsch 9.8.26) — mit echtem Strandfoto von ihr.
           const msg = [
+            `🐾 Hallo ${share.partner_name}, während ich mir eine Pause am Strand gönne, hier etwas für dich zum Lesen:`,
+            ``,
             `📁 Update zu ${leadName(lead)}${lead.phone || lead.whatsapp ? ` (${lead.phone ?? lead.whatsapp})` : ''}:`,
             ``,
             ...lines,
             ``,
             `Komplette Akte: ${PORTAL}/akte/${share.token}`,
+            ``,
+            `Deine Lotte 🐾`,
           ].join('\n')
 
           const { data: waRes, error: waErr } = await sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'partner_akte_update',
             override_text: msg,
             lead_data: { lead_name: share.partner_name, lead_phone: share.whatsapp },
+            persona_image: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-strand.jpg`,
           } })
           const waOk = !waErr && (waRes as { success?: boolean } | null)?.success !== false
           if (waOk) {

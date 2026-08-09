@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { createCalcOutboxDraft } from '../../lib/calcOutbox'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
@@ -181,6 +182,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       if (calcOnly) {
         const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
         const madeLinks: string[] = []
+        const madeCalcs: Array<{ token: string; title: string }> = []
         const allItems: CalcItem[] = []
         for (let i = 0; i < groups.length; i++) {
           setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${groups.length}…`)
@@ -195,17 +197,21 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           }).select('token').single()
           if (cErr) throw cErr
           const tok = (calcRow as { token?: string } | null)?.token
-          if (tok) madeLinks.push(`${window.location.origin}/rechnung/${tok}`)
+          if (tok) { madeLinks.push(`${window.location.origin}/rechnung/${tok}`); madeCalcs.push({ token: tok, title }) }
         }
         if (groups.length >= 2) {
           setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
           const content = { with_calc: true, recipient_name: recipientName, items: allItems }
-          await supabase.from('property_calculations').insert({
+          const { data: cmpRow2 } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
-          })
+          }).select('token').single()
+          const cmpTok = (cmpRow2 as { token?: string } | null)?.token
+          if (cmpTok) { madeLinks.push(`${window.location.origin}/rechnung/${cmpTok}`); madeCalcs.push({ token: cmpTok, title: 'Immobilienvergleich' }) }
         }
+        // Wie bei Decks: fertiger Mail-Entwurf mit allen Rechnungs-Links → Postausgang
+        await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, email: lead.email, calcs: madeCalcs })
         try { await navigator.clipboard.writeText(madeLinks.join('\n')) } catch { /* Clipboard optional */ }
-        onDone(`✅ ${madeLinks.length} ${t('crm.wizard.calcOnlyDone', 'Berechnung(en) erstellt — Links in der Zwischenablage, bearbeitbar im Postausgang.')}`)
+        onDone(`✅ ${madeCalcs.length} ${t('crm.wizard.calcOnlyDone', 'Berechnung(en) erstellt — liegen als Mail-Entwurf im Postausgang.')}`)
         if (!background) onClose()
         return
       }

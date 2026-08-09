@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { createCalcOutboxDraft } from '../../lib/calcOutbox'
 import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
@@ -119,17 +120,21 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
         })
       }
       const content = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items }
+      const calcTitle = items.length > 1 ? 'Immobilienvergleich' : `Rechnung ${items[0].label}`
       const { data, error } = await supabase.from('property_calculations').insert({
         lead_id: lead.id, recipient_name: content.recipient_name,
-        title: items.length > 1 ? 'Immobilienvergleich' : `Rechnung ${items[0].label}`,
+        title: calcTitle,
         with_calc: true, content,
       }).select('token').single()
       if (error) throw new Error(error.message)
-      const url = `${window.location.origin}/rechnung/${(data as { token: string }).token}`
+      const token = (data as { token: string }).token
+      // Wie bei Sales-Decks: fertigen Mail-Entwurf in den Postausgang legen (Sven 9.8.26)
+      await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, calcs: [{ token, title: calcTitle }] })
+      const url = `${window.location.origin}/rechnung/${token}`
       window.open(url, '_blank')
       onDone(items.length > 1
-        ? t('rechnerWizard.comparisonCreated', 'Vergleich erstellt — Link geöffnet.')
-        : t('rechnerWizard.invoiceCreated', 'Rechnung erstellt — Link geöffnet.'))
+        ? t('rechnerWizard.comparisonCreated', 'Vergleich erstellt — liegt im Postausgang zur Freigabe.')
+        : t('rechnerWizard.invoiceCreated', 'Rechnung erstellt — liegt im Postausgang zur Freigabe.'))
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('rechnerWizard.genericError', 'Fehler'))
     } finally { setBusy(false) }
