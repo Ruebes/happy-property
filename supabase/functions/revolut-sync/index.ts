@@ -140,6 +140,22 @@ async function attachPayableDocs(supabase: SupabaseClient): Promise<number> {
     attached++
     console.log(`[revolut-sync] Beleg angeheftet: ${p.title} → Buchung ${tx.id}`)
   }
+  // EIGENE Ausgangsrechnungen (sveru ltd) → eingehende Zahlung als Beleg
+  const { data: invRaw } = await supabase.from('crm_invoices')
+    .select('invoice_number, total_gross, pdf_path').in('status', ['sent', 'paid']).not('pdf_path', 'is', null)
+  for (const inv of ((invRaw ?? []) as Array<{ invoice_number: string; total_gross: number; pdf_path: string }>)) {
+    const { data: cand } = await supabase.from('fin_transactions').select('id').is('doc_url', null)
+      .gte('amount', inv.total_gross - 0.03).lte('amount', inv.total_gross + 0.03)
+      .order('booked_at', { ascending: false }).limit(1)
+    const tx = (cand?.[0] as { id: string } | undefined)
+    if (!tx) continue
+    await supabase.from('fin_transactions').update({
+      doc_url: `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/invoice-documents/${inv.pdf_path}`,
+      doc_name: `${inv.invoice_number}.pdf`,
+    }).eq('id', tx.id)
+    attached++
+    console.log(`[revolut-sync] Ausgangsrechnung angeheftet: ${inv.invoice_number} → Buchung ${tx.id}`)
+  }
   return attached
 }
 
