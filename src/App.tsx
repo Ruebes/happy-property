@@ -36,6 +36,7 @@ const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const Anmelden = lazy(() => import('./pages/Anmelden'))
 const PartnerReview = lazy(() => import('./pages/PartnerReview'))
+const PartnerAkte = lazy(() => import('./pages/PartnerAkte'))
 const SocialStudio = lazy(() => import('./pages/admin/crm/SocialStudio'))
 const ThumbnailStudio = lazy(() => import('./pages/admin/crm/ThumbnailStudio'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
@@ -140,6 +141,7 @@ export default function App() {
             <Route path="/termin" element={<Funnel />} />
             <Route path="/anmelden" element={<Anmelden />} />
             <Route path="/partner/:token" element={<PartnerReview />} />
+            <Route path="/akte/:token" element={<PartnerAkte />} />
             <Route path="/termin/verwalten/:token" element={<TerminVerwalten />} />
             {/* Öffentliche Newsletter-Abmeldung (per Token, kein Login) */}
             <Route path="/abmelden" element={<Abmelden />} />

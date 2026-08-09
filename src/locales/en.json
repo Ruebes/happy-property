@@ -1331,6 +1331,7 @@
       "appt": "Create appointment",
       "deck": "Create sales deck",
       "calc": "Create invoice",
+      "partnerShare": "Partner file",
       "driveOpen": "Open Drive",
       "driveCreate": "Create Drive",
       "driveCreating": "Creating…",
@@ -3812,6 +3813,19 @@
       "open": "Open",
       "wip": "In progress",
       "done": "Done"
+    },
+    "pshare": {
+      "title": "Partner file",
+      "intro": "The partner immediately receives a WhatsApp with the customer details and the file link. After that, every new event (mail, calculation, deck, appointment) is reported automatically as a short summary.",
+      "partnerName": "Partner",
+      "partnerWa": "WhatsApp number",
+      "activate": "Activate + send link",
+      "deactivate": "Stop sharing",
+      "link": "File link",
+      "activeInfo": "Active - {{name}} ({{wa}}) automatically receives a WhatsApp with a short summary and the link for every new event.",
+      "wasShared": "This file was shared before - activating keeps the same link.",
+      "waWarn": "⚠️ File is active, but the WhatsApp to the partner failed - please send the link manually.",
+      "err": "Activation failed."
     },
     "thumbs": {
       "title": "Thumbnail studio",

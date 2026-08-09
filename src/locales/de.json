@@ -1331,6 +1331,7 @@
       "appt": "Termin erstellen",
       "deck": "Sales Deck erstellen",
       "calc": "Rechnung erstellen",
+      "partnerShare": "Partner-Akte",
       "driveOpen": "Drive öffnen",
       "driveCreate": "Drive erstellen",
       "driveCreating": "Erstelle…",
@@ -3812,6 +3813,19 @@
       "open": "Gestellt",
       "wip": "In Arbeit",
       "done": "Erledigt"
+    },
+    "pshare": {
+      "title": "Partner-Akte",
+      "intro": "Der Partner bekommt sofort eine WhatsApp mit den Stammdaten und dem Akten-Link. Danach meldet das System jeden neuen Vorgang (Mail, Berechnung, Deck, Termin) automatisch als Kurzfassung.",
+      "partnerName": "Partner",
+      "partnerWa": "WhatsApp-Nummer",
+      "activate": "Aktivieren + Link senden",
+      "deactivate": "Teilen beenden",
+      "link": "Akten-Link",
+      "activeInfo": "Aktiv - {{name}} ({{wa}}) bekommt bei jedem neuen Vorgang automatisch eine WhatsApp mit Kurzfassung und Link.",
+      "wasShared": "Diese Akte war schon einmal geteilt - beim Aktivieren gilt derselbe Link weiter.",
+      "waWarn": "⚠️ Akte ist aktiv, aber die WhatsApp an den Partner kam nicht durch - bitte Link manuell schicken.",
+      "err": "Aktivieren fehlgeschlagen."
     },
     "thumbs": {
       "title": "Thumbnail-Studio",
