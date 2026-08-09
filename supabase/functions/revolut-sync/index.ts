@@ -116,6 +116,33 @@ function paymentConfirmationHtml(inv: OpenInvoice, paidIso: string): string {
 // Idempotent über revolut_id (leg-genau); Kategorien aus fin_rules (Substring
 // auf Gegenpartei+Verwendungszweck), Eingänge ohne Regel = kundenzahlung.
 // Danach: offene Ausgangskorb-Posten gegen neue Abbuchungen matchen.
+
+// Belege bezahlter Ausgangskorb-Rechnungen an die entstandene Kontobewegung
+// heften (Svens Regel: Betrag passt + Datum im Fenster = das ist der Beleg).
+async function attachPayableDocs(supabase: SupabaseClient): Promise<number> {
+  const { data: paidRaw } = await supabase.from('fin_payables')
+    .select('id, vendor, title, amount, doc_url, doc_name, paid_at')
+    .eq('status', 'bezahlt').not('doc_url', 'is', null).not('paid_at', 'is', null)
+  let attached = 0
+  for (const p of ((paidRaw ?? []) as Array<{ id: string; vendor: string; title: string; amount: number | null; doc_url: string; doc_name: string | null; paid_at: string }>)) {
+    if (!p.amount || p.amount <= 0) continue
+    const from = new Date(new Date(p.paid_at).getTime() - 3 * 86400e3).toISOString()
+    const to = new Date(new Date(p.paid_at).getTime() + 5 * 86400e3).toISOString()
+    const { data: cand } = await supabase.from('fin_transactions').select('id').is('doc_url', null)
+      .gte('amount', -(p.amount + 0.02)).lte('amount', -(p.amount - 0.02))
+      .gte('booked_at', from).lte('booked_at', to)
+      .order('booked_at', { ascending: true }).limit(1)
+    const tx = (cand?.[0] as { id: string } | undefined)
+    if (!tx) continue
+    await supabase.from('fin_transactions').update({
+      doc_url: p.doc_url, doc_name: (p.doc_name ?? `Rechnung ${p.vendor}`).slice(0, 200),
+    }).eq('id', tx.id)
+    attached++
+    console.log(`[revolut-sync] Beleg angeheftet: ${p.title} → Buchung ${tx.id}`)
+  }
+  return attached
+}
+
 async function syncTransactions(supabase: SupabaseClient, accessToken: string, days: number, fromOverride?: string) {
   const from = fromOverride ?? new Date(Date.now() - days * 86400e3).toISOString().slice(0, 10)
   // Pagination: liefert die API 1000 Stück, rückwärts weiterblättern (to=ältestes Datum)
@@ -489,7 +516,8 @@ Deno.serve(async (req: Request) => {
       const days = body.action === 'tx_backfill' ? Math.min(1200, Number(body.days) || 365) : Math.min(60, Number(body.days) || 14)
       const fromOverride = body.action === 'tx_backfill' && typeof body.from === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.from) ? body.from : undefined
       const r = await syncTransactions(supabase, accessToken, days, fromOverride)
-      return json({ success: true, days, from: fromOverride ?? null, ...r })
+      const docs = await attachPayableDocs(supabase)
+      return json({ success: true, days, from: fromOverride ?? null, payable_docs_attached: docs, ...r })
     }
 
     // ── Revolut-Belege (Expenses-App) den Buchungen zuordnen ─────────────────
@@ -622,6 +650,8 @@ Deno.serve(async (req: Request) => {
     // Täglicher Lauf: erst Kontobewegungen (3 Tage), dann Rechnungsabgleich
     try { console.log('[revolut-sync] tx:', JSON.stringify(await syncTransactions(supabase, accessToken, 3))) }
     catch (e) { console.warn('[revolut-sync] tx-sync:', e) }
+    try { console.log('[revolut-sync] payable-docs:', await attachPayableDocs(supabase)) }
+    catch (e) { console.warn('[revolut-sync] payable-docs:', e) }
 
     // Offene Rechnungen
     const { data: openInv, error: invErr } = await supabase
