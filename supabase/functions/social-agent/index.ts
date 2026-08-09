@@ -410,7 +410,7 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
 
     // ── Chat: Post formulieren/verfeinern, Agent setzt den Text direkt ─────────
     if (body.action === 'chat') {
@@ -585,6 +585,95 @@ Regeln:
         const url = await generatePersonaImage(sb, String(body.post_id ?? ''), String(body.prompt ?? 'sitting relaxed on a Mediterranean terrace in Cyprus, sea view'), Array.isArray(body.include) ? (body.include as string[]) : ['lotte'])
         return json({ ok: true, url })
       } catch (e) { return json({ error: (e as Error).message }, 500) }
+    }
+
+    // ── Thumbnail-Studio: Prompt → Plattform-Bild (Soul-Charaktere) ──────────
+    // Universell für YouTube/Instagram/Story/Facebook/LinkedIn — je Plattform
+    // das passende Format. Verlauf in thumbnail_creations (RLS deny-all, Zugriff
+    // nur über diese Aktionen). YouTube-Set lädt das Bild als 1280×720-JPEG hoch.
+    if (body.action === 'thumbnail_generate') {
+      const prompt = String(body.prompt ?? '').trim()
+      if (!prompt) return json({ error: 'Prompt fehlt.' }, 400)
+      const PLAT_ASPECT: Record<string, string> = { youtube: '16:9', instagram: '3:4', story: '9:16', facebook: '1:1', linkedin: '16:9' }
+      const platform = Object.keys(PLAT_ASPECT).includes(String(body.platform)) ? String(body.platform) : 'youtube'
+      const persona = ['sven', 'lotte', 'none'].includes(String(body.persona)) ? String(body.persona) : 'sven'
+      try {
+        const cfg = await personaCfg(sb)
+        const soulId = persona === 'sven' ? cfg.sven_soul_id : persona === 'lotte' ? cfg.lotte_soul_id : undefined
+        if (persona !== 'none' && !soulId) return json({ error: 'Soul-ID fehlt in den Einstellungen (social_persona_refs).' }, 500)
+        const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
+          : persona === 'lotte' ? " The image shows Lotte, Sven's chocolate labrador and office boss (the trained character), as the main subject." : ''
+        const params: Record<string, unknown> = {
+          prompt: `${prompt}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no watermark.`,
+          aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
+        }
+        if (soulId) params.custom_reference_id = soulId
+        const bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
+        const path = `thumbnails/${Date.now()}-${platform}.png`
+        const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+        if (upErr) return json({ error: `Upload: ${upErr.message}` }, 500)
+        const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+        const { data: row } = await sb.from('thumbnail_creations')
+          .insert({ platform, prompt, persona, image_url: url, created_by: typeof body.user_id === 'string' && body.user_id ? body.user_id : null })
+          .select('id').maybeSingle()
+        return json({ ok: true, id: (row as { id?: string } | null)?.id ?? null, url, platform })
+      } catch (e) { return json({ error: (e as Error).message }, 500) }
+    }
+
+    if (body.action === 'thumbnail_list') {
+      const { data } = await sb.from('thumbnail_creations')
+        .select('id, platform, prompt, persona, image_url, video_id, created_at')
+        .order('created_at', { ascending: true }).limit(50)
+      return json({ ok: true, items: data ?? [] })
+    }
+
+    if (body.action === 'thumbnail_videos') {
+      const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+      const [cid, csec, rtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+      if (!cid || !csec || !rtok) return json({ error: 'YouTube nicht verbunden.' }, 400)
+      try {
+        const td = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }) }).then(r => r.json()) as { access_token?: string }
+        if (!td.access_token) return json({ error: 'YouTube-OAuth fehlgeschlagen.' }, 502)
+        const hdr = { Authorization: `Bearer ${td.access_token}` }
+        const ch = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', { headers: hdr }).then(r => r.json()) as { items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }> }
+        const uploads = ch.items?.[0]?.contentDetails?.relatedPlaylists?.uploads
+        if (!uploads) return json({ error: 'YouTube-Kanal nicht gefunden.' }, 502)
+        const pl = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&playlistId=${uploads}&maxResults=15`, { headers: hdr }).then(r => r.json()) as { items?: Array<{ snippet?: { title?: string; publishedAt?: string; resourceId?: { videoId?: string }; thumbnails?: { default?: { url?: string } } } }> }
+        const items = (pl.items ?? []).map(i => ({ video_id: i.snippet?.resourceId?.videoId ?? '', title: i.snippet?.title ?? '', published_at: i.snippet?.publishedAt ?? '', thumb: i.snippet?.thumbnails?.default?.url ?? '' })).filter(v => v.video_id)
+        return json({ ok: true, items })
+      } catch (e) { return json({ error: (e as Error).message }, 502) }
+    }
+
+    if (body.action === 'thumbnail_set') {
+      const videoId = String(body.video_id ?? '').trim()
+      const imgUrl = String(body.url ?? '').trim()
+      if (!videoId || !imgUrl) return json({ error: 'video_id und url erforderlich.' }, 400)
+      // Nur im Studio erzeugte Bilder (eigener Bucket) — kein beliebiger Fremd-Fetch.
+      if (!imgUrl.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/`)) {
+        return json({ error: 'Nur im Studio erzeugte Bilder können gesetzt werden.' }, 400)
+      }
+      const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+      const [cid, csec, rtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+      if (!cid || !csec || !rtok) return json({ error: 'YouTube nicht verbunden.' }, 400)
+      try {
+        const src = await fetch(imgUrl)
+        if (!src.ok) return json({ error: 'Bild nicht ladbar.' }, 400)
+        // YouTube-Limit 2 MB → auf 1280×720 cover-croppen und als JPEG hochladen.
+        const img = await Image.decode(new Uint8Array(await src.arrayBuffer()))
+        const W = 1280, H = 720
+        let cw = img.width, chh = img.height
+        if (cw / chh > W / H) cw = Math.round(chh * (W / H)); else chh = Math.round(cw / (W / H))
+        const jpg = await img.clone().crop(Math.round((img.width - cw) / 2), Math.round((img.height - chh) / 2), cw, chh).resize(W, H).encodeJPEG(88)
+        const td = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }) }).then(r => r.json()) as { access_token?: string }
+        if (!td.access_token) return json({ error: 'YouTube-OAuth fehlgeschlagen.' }, 502)
+        const r = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`, {
+          method: 'POST', headers: { Authorization: `Bearer ${td.access_token}`, 'Content-Type': 'image/jpeg' }, body: jpg,
+        })
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) return json({ error: `YouTube: ${JSON.stringify((d as { error?: { message?: string } })?.error?.message ?? d).slice(0, 200)}` }, 502)
+        if (typeof body.id === 'string' && body.id) await sb.from('thumbnail_creations').update({ video_id: videoId }).eq('id', body.id)
+        return json({ ok: true })
+      } catch (e) { return json({ error: (e as Error).message }, 502) }
     }
 
     // ── YouTube-Sonntagsvideo → Wochen-Posts (So 11:30 CY per Cron) ──────────

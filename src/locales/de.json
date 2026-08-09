@@ -1375,6 +1375,7 @@
       "bookingLinks": "Buchungslinks",
       "lists": "Empfängerlisten",
       "social": "Social Media",
+      "thumbnails": "🖼️ Thumbnails",
       "connectors": "Connectoren",
       "ownerContent": "📢 Eigentümer-Inhalte",
       "finance": "📒 Buchhaltung"
@@ -3811,6 +3812,26 @@
       "open": "Gestellt",
       "wip": "In Arbeit",
       "done": "Erledigt"
+    },
+    "thumbs": {
+      "title": "Thumbnail-Studio",
+      "subtitle": "Beschreibe das Motiv, wähle Plattform und Person - das Bild wird fotorealistisch mit den trainierten Charakteren erstellt. Bei YouTube kannst du es direkt aufs Video setzen.",
+      "empty": "Noch keine Thumbnails.",
+      "emptyHint": "Beschreib unten dein erstes Motiv, z.B. „Sven zeigt auf einen Neubau in Paphos, überraschter Blick, Meer im Hintergrund\".",
+      "placeholder": "Motiv beschreiben … z.B. „Sven hält einen Schlüssel hoch, im Hintergrund ein Neubau mit Pool, dramatisches Abendlicht\"",
+      "go": "Erstellen",
+      "generating": "Bild wird erstellt … dauert etwa eine Minute.",
+      "genErr": "Generierung fehlgeschlagen.",
+      "download": "Herunterladen",
+      "setBtn": "Auf YouTube-Video setzen",
+      "onVideo": "Auf Video gesetzt",
+      "pickTitle": "Auf welches Video?",
+      "pickHint": "Das Bild wird auf 1280×720 zugeschnitten und ersetzt das aktuelle Thumbnail sofort.",
+      "noVideos": "Keine Videos gefunden.",
+      "videosErr": "Videoliste konnte nicht geladen werden.",
+      "setOk": "✅ Thumbnail ist auf dem Video gesetzt.",
+      "setErr": "Setzen fehlgeschlagen: {{msg}}",
+      "textHint": "Tipp: Text auf dem Bild lieber nachträglich im Schnittprogramm ergänzen - KI-Schrift ist oft fehlerhaft."
     },
     "social": {
       "title": "Social Media",

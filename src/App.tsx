@@ -37,6 +37,7 @@ const Funnel   = lazy(() => import('./pages/Funnel'))
 const Anmelden = lazy(() => import('./pages/Anmelden'))
 const PartnerReview = lazy(() => import('./pages/PartnerReview'))
 const SocialStudio = lazy(() => import('./pages/admin/crm/SocialStudio'))
+const ThumbnailStudio = lazy(() => import('./pages/admin/crm/ThumbnailStudio'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
 const Zusage = lazy(() => import('./pages/Zusage'))
@@ -176,6 +177,11 @@ export default function App() {
               <Route path="/admin/crm/newsletter"        element={<Newsletter />} />
               <Route path="/admin/crm/settings/lists"    element={<CrmNewsletterLists />} />
               <Route path="/admin/crm/social"            element={<SocialStudio />} />
+            </Route>
+
+            {/* ── Thumbnail-Studio (Recht 'thumbnails' — z.B. Leonard) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="thumbnails" />}>
+              <Route path="/admin/crm/thumbnails"        element={<ThumbnailStudio />} />
             </Route>
 
             {/* ── CRM-Einstellungen (nur Admin/Verwalter) ── */}

@@ -1375,6 +1375,7 @@
       "bookingLinks": "Booking links",
       "lists": "Recipient lists",
       "social": "Social media",
+      "thumbnails": "🖼️ Thumbnails",
       "connectors": "Connectors",
       "ownerContent": "📢 Owner content",
       "finance": "📒 Accounting"
@@ -3811,6 +3812,26 @@
       "open": "Open",
       "wip": "In progress",
       "done": "Done"
+    },
+    "thumbs": {
+      "title": "Thumbnail studio",
+      "subtitle": "Describe the scene, pick platform and person - the image is created photorealistically with the trained characters. For YouTube you can set it on a video directly.",
+      "empty": "No thumbnails yet.",
+      "emptyHint": "Describe your first scene below, e.g. \"Sven pointing at a new build in Paphos, surprised look, sea in the background\".",
+      "placeholder": "Describe the scene … e.g. \"Sven holding up a key, new build with pool in the background, dramatic evening light\"",
+      "go": "Create",
+      "generating": "Creating image … takes about a minute.",
+      "genErr": "Generation failed.",
+      "download": "Download",
+      "setBtn": "Set on YouTube video",
+      "onVideo": "Set on video",
+      "pickTitle": "Which video?",
+      "pickHint": "The image is cropped to 1280×720 and replaces the current thumbnail immediately.",
+      "noVideos": "No videos found.",
+      "videosErr": "Could not load the video list.",
+      "setOk": "✅ Thumbnail set on the video.",
+      "setErr": "Setting failed: {{msg}}",
+      "textHint": "Tip: add text to the image later in your editing tool - AI lettering is often flawed."
     },
     "social": {
       "title": "Social media",

@@ -146,6 +146,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/newsletter',    key: 'crm.nav.newsletter'   },
     { to: '/admin/crm/settings/lists', key: 'crm.nav.lists'       },
     { to: '/admin/crm/social',         key: 'crm.nav.social'      },
+    { to: '/admin/crm/thumbnails',     key: 'crm.nav.thumbnails'  },
     { to: '/admin/crm/settings/booking-links', key: 'crm.nav.bookingLinks' },
   ]
 
@@ -175,6 +176,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/newsletter',     key: 'crm.nav.newsletter',  perm: 'funnel'   },
     { to: '/admin/crm/settings/lists', key: 'crm.nav.lists',       perm: 'funnel'   },
     { to: '/admin/crm/social',         key: 'crm.nav.social',      perm: 'funnel'   },
+    { to: '/admin/crm/thumbnails',     key: 'crm.nav.thumbnails',  perm: 'thumbnails' },
     { to: '/admin/crm/invoices',       key: 'crm.nav.invoices',    perm: 'invoices' },
     { to: '/admin/crm/ads',            key: 'crm.nav.ads',         perm: 'werbung'  },
     { to: '/admin/crm/settings/contacts', key: 'crm.nav.contacts', perm: 'contacts' },
