@@ -459,21 +459,22 @@ Deno.serve(async (req: Request) => {
 
     // ── Debug-Probe: Was liefert die API zu Belegen/Anhängen? ────────────────
     if (body.action === 'probe') {
+      // Sondierung: Gibt Revolut die in der App erstellten AUSGANGSRECHNUNGEN
+      // (Invoices-Produkt) über die API heraus? Nur Status + Kopf, keine Daten.
       const out: Record<string, unknown> = {}
-      const from = new Date(Date.now() - 60 * 86400e3).toISOString().slice(0, 10)
-      const txr = await fetch(`${API}/transactions?from=${from}&count=20`, { headers: { Authorization: `Bearer ${accessToken}` } })
-      const txs = await txr.json() as Array<Record<string, unknown>>
-      const card = txs.find(t => t.type === 'card_payment') ?? txs[0]
-      out.list_keys = card ? Object.keys(card) : []
-      if (card) {
-        const det = await fetch(`${API}/transaction/${card.id}`, { headers: { Authorization: `Bearer ${accessToken}` } })
-        const d = await det.json() as Record<string, unknown>
-        out.detail_keys = Object.keys(d)
-        out.detail_sample = JSON.stringify(d).slice(0, 600)
-        for (const ep of [`/transaction/${card.id}/attachments`, `/expenses?from=${from}&count=5`, `/expenses`]) {
-          const r2 = await fetch(`${API}${ep}`, { headers: { Authorization: `Bearer ${accessToken}` } })
-          out[`ep ${ep.slice(0, 40)}`] = `${r2.status} ${(await r2.text()).slice(0, 300)}`
-        }
+      const eps = [
+        'https://b2b.revolut.com/api/1.0/invoices',
+        'https://b2b.revolut.com/api/1.0/invoices?count=5',
+        'https://b2b.revolut.com/api/2.0/invoices',
+        'https://b2b.revolut.com/api/1.0/sales-invoices',
+        'https://b2b.revolut.com/api/1.0/customers',
+        'https://b2b.revolut.com/invoices/api/1.0/invoices',
+      ]
+      for (const ep of eps) {
+        try {
+          const r2 = await fetch(ep, { headers: { Authorization: `Bearer ${accessToken}` } })
+          out[ep.replace('https://b2b.revolut.com', '')] = `${r2.status} ${(await r2.text()).slice(0, 220)}`
+        } catch (e) { out[ep] = `ERR ${(e as Error).message.slice(0, 80)}` }
       }
       return json(out)
     }

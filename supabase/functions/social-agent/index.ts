@@ -4,8 +4,9 @@
 //   chat        { post_id, message }   → hochwertiger Post-Chat (Claude, volles Firmen-
 //               wissen). Der Agent ANTWORTET und kann den Post-Text direkt setzen
 //               (Tool set_post) — das Textfeld im Studio aktualisiert sich live.
-//   image       { post_id, prompt? }   → Bild via OpenAI (gpt-image-1) → Bucket
-//               ad-creatives/social/… (public) → social_posts.image_url.
+//   image       { post_id, prompt? }   → Bild via Higgsfield (Soul Location,
+//               fotorealistisch, Svens Abo), Fallback OpenAI (gpt-image-1) →
+//               Bucket ad-creatives/social/… (public) → social_posts.image_url.
 //   news_scan   {}                     → Websuche nach aktuellen Immobilien-News
 //               (Zypern + Deutschland) → Aufgabe für Sven (Startseite) mit den
 //               Fundstücken + Post-Winkeln. Läuft auch per Cron (Mo+Do).
@@ -16,6 +17,8 @@
 //
 // Secrets: ANTHROPIC_API_KEY, OPENAI_API_KEY, META_ACCESS_TOKEN,
 //          LINKEDIN_ACCESS_TOKEN? (optional), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+//          Higgsfield-Tokens liegen ÄNDERBAR in connector_secrets (rotieren!):
+//          HIGGSFIELD_ACCESS_TOKEN/_REFRESH_TOKEN/_EXPIRES_AT/_WORKSPACE_ID
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
@@ -78,6 +81,81 @@ async function claude(apiKey: string, opts: { system: string; messages: Array<{ 
   throw new Error(`Claude: ${lastErr}`)
 }
 
+// ── Higgsfield (Soul) — fotorealistische Bildgenerierung ────────────────────
+// Läuft über Svens bezahltes Higgsfield-Abo (Plus, ~0,12 Credits/Bild). Auth:
+// OAuth-Session (Clerk) mit ROTIERENDEM Refresh-Token — deshalb liegen die
+// Tokens änderbar in connector_secrets und werden hier bei Ablauf erneuert und
+// zurückgeschrieben. Diese Session gehört EXKLUSIV dem Server; das lokale CLI
+// hat eine eigene. Fällt Higgsfield aus, greift automatisch der OpenAI-Fallback.
+const HF_BASE = 'https://fnf-api-gw.higgsfield.ai/fnf/developer/v2alpha'
+const HF_TOKEN_URL = 'https://clerk.higgsfield.ai/oauth/token'
+const HF_CLIENT_ID = 'sRGCQJvvJkPrrtRj'
+
+async function hfSecret(sb: SupabaseClient, key: string): Promise<string> {
+  const { data } = await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()
+  return ((data as { value?: string } | null)?.value ?? '').trim()
+}
+
+async function hfAuth(sb: SupabaseClient): Promise<{ token: string; ws: string }> {
+  const ws = await hfSecret(sb, 'HIGGSFIELD_WORKSPACE_ID')
+  const rt = await hfSecret(sb, 'HIGGSFIELD_REFRESH_TOKEN')
+  if (!ws || !rt) throw new Error('Higgsfield nicht verbunden (connector_secrets fehlen).')
+  const at = await hfSecret(sb, 'HIGGSFIELD_ACCESS_TOKEN')
+  const exp = Number(await hfSecret(sb, 'HIGGSFIELD_EXPIRES_AT') || 0)
+  const now = Math.floor(Date.now() / 1000)
+  if (at && exp - now > 600) return { token: at, ws }
+  // Access-Token (fast) abgelaufen → Refresh. ACHTUNG: rotiert den Refresh-Token,
+  // das neue Paar MUSS zurück in connector_secrets.
+  const r = await fetch(HF_TOKEN_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, client_id: HF_CLIENT_ID }),
+  })
+  const td = await r.json() as { access_token?: string; refresh_token?: string; expires_in?: number }
+  if (!r.ok || !td.access_token) {
+    // Eine parallele Instanz kann schon rotiert haben → Secrets neu lesen und
+    // deren frisches Token nutzen, statt hart zu scheitern.
+    const at2 = await hfSecret(sb, 'HIGGSFIELD_ACCESS_TOKEN')
+    const exp2 = Number(await hfSecret(sb, 'HIGGSFIELD_EXPIRES_AT') || 0)
+    if (at2 && at2 !== at && exp2 - now > 60) return { token: at2, ws }
+    throw new Error(`Higgsfield-Token-Refresh fehlgeschlagen: ${JSON.stringify(td).slice(0, 150)}`)
+  }
+  const stamp = new Date().toISOString()
+  for (const row of [
+    { key: 'HIGGSFIELD_ACCESS_TOKEN', value: td.access_token },
+    { key: 'HIGGSFIELD_REFRESH_TOKEN', value: td.refresh_token ?? rt },
+    { key: 'HIGGSFIELD_EXPIRES_AT', value: String(now + (td.expires_in ?? 86400)) },
+  ]) {
+    const { error } = await sb.from('connector_secrets').upsert({ ...row, updated_at: stamp }, { onConflict: 'key' })
+    if (error) console.error('[social-agent] Higgsfield-Secret speichern:', error.message)
+  }
+  return { token: td.access_token, ws }
+}
+
+// Bild über Higgsfield erzeugen: Job anlegen → pollen → Bild-Bytes zurück.
+// jobType 'soul_location' = Orte/Objekte/Umgebungen (Standard, keine Personen),
+// 'text2image_soul_v2' = Lifestyle/Personen (params.custom_reference_id =
+// trainierte Soul-ID, params.image_references optional).
+async function hfGenerateBytes(sb: SupabaseClient, jobType: string, params: Record<string, unknown>): Promise<Uint8Array> {
+  const { token, ws } = await hfAuth(sb)
+  const hdr = { Authorization: `Bearer ${token}`, 'hf-workspace-id': ws, 'Content-Type': 'application/json' }
+  const sub = await fetch(`${HF_BASE}/images/${jobType}/generations`, { method: 'POST', headers: hdr, body: JSON.stringify({ params }) })
+  const sd = await sub.json() as { id?: string }
+  if (!sub.ok || !sd.id) throw new Error(`Higgsfield submit: ${JSON.stringify(sd).slice(0, 200)}`)
+  // Typisch ~40 s; Deckel 150 s, damit die Edge-Wallclock nicht reißt.
+  for (let i = 0; i < 30; i++) {
+    await new Promise(res => setTimeout(res, 5000))
+    const jr = await fetch(`${HF_BASE}/jobs/${sd.id}`, { headers: hdr })
+    const j = await jr.json() as { status?: string; result_url?: string }
+    if (j.status === 'completed' && j.result_url) {
+      const img = await fetch(j.result_url)
+      if (!img.ok) throw new Error(`Higgsfield-Bild nicht ladbar (${img.status}).`)
+      return new Uint8Array(await img.arrayBuffer())
+    }
+    if (j.status === 'failed' || j.status === 'canceled') throw new Error(`Higgsfield-Job ${j.status}.`)
+  }
+  throw new Error('Higgsfield-Timeout (150 s).')
+}
+
 // Kompakter Projekt-Kontext (Namen, Orte, Preisspannen) für fundierte Objekt-Posts.
 async function projectContext(sb: SupabaseClient): Promise<string> {
   const { data } = await sb.from('crm_projects').select('id, name, location, status').limit(30)
@@ -121,26 +199,38 @@ async function editPostImage(sb: SupabaseClient, postId: string, sourceUrl: stri
   return url
 }
 
-// Bild via OpenAI erzeugen, in ad-creatives/social hochladen, an image_urls anhängen.
-// Wird von der image-Aktion UND vom Chat-Tool make_image genutzt.
+// Bild erzeugen: ZUERST Higgsfield Soul Location (fotorealistisch, Svens Abo),
+// bei Fehlern OpenAI (gpt-image-1) als Fallback. In ad-creatives/social hoch-
+// laden, an image_urls anhängen. Genutzt von image-Aktion + Chat-Tool make_image.
 async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
-  const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
-  if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
-  const res = await fetch('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gpt-image-1',
-      // Foto-Stil hart erzwingen — sonst driftet gpt-image-1 gern in Illustration/Comic.
-      prompt: `Professional photograph: ${prompt}. Shot on a full-frame camera, 35mm lens, natural lighting, realistic textures and materials, subtle depth of field, true-to-life colors. Strictly photorealistic — NO cartoon, NO illustration, NO 3D render, NO painting, no text, no watermark.`,
-      size: '1024x1024', quality: 'high', n: 1,
-    }),
-  })
-  const d = await res.json()
-  if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
-  const b64 = d?.data?.[0]?.b64_json as string | undefined
-  if (!b64) throw new Error('OpenAI lieferte kein Bild.')
-  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  let bytes: Uint8Array | null = null
+  try {
+    bytes = await hfGenerateBytes(sb, 'soul_location', {
+      prompt: `${prompt}. Photorealistic, natural lighting, realistic materials, high detail, no text, no watermark.`,
+      aspect_ratio: '1:1',
+    })
+  } catch (e) {
+    console.warn('[social-agent] Higgsfield fehlgeschlagen — OpenAI-Fallback:', e instanceof Error ? e.message : String(e))
+  }
+  if (!bytes) {
+    const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
+    if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
+    const res = await fetch('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-image-1',
+        // Foto-Stil hart erzwingen — sonst driftet gpt-image-1 gern in Illustration/Comic.
+        prompt: `Professional photograph: ${prompt}. Shot on a full-frame camera, 35mm lens, natural lighting, realistic textures and materials, subtle depth of field, true-to-life colors. Strictly photorealistic — NO cartoon, NO illustration, NO 3D render, NO painting, no text, no watermark.`,
+        size: '1024x1024', quality: 'high', n: 1,
+      }),
+    })
+    const d = await res.json()
+    if (!res.ok) throw new Error(`OpenAI: ${JSON.stringify(d?.error ?? d).slice(0, 200)}`)
+    const b64 = d?.data?.[0]?.b64_json as string | undefined
+    if (!b64) throw new Error('OpenAI lieferte kein Bild.')
+    bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
+  }
   const path = `social/${postId}-${Date.now()}.png`
   const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
   if (upErr) throw new Error(`Upload: ${upErr.message}`)
@@ -170,7 +260,7 @@ async function driveToken(): Promise<string> {
   if (!d.access_token) throw new Error('Drive-SA-Token fehlgeschlagen')
   return d.access_token
 }
-interface PersonaCfg { lotte_folder?: string; lotte_fallback_folder?: string; sven_folder?: string; sven_min_bytes?: number }
+interface PersonaCfg { lotte_folder?: string; lotte_fallback_folder?: string; sven_folder?: string; sven_min_bytes?: number; sven_soul_id?: string; lotte_soul_id?: string }
 async function personaCfg(sb: SupabaseClient): Promise<PersonaCfg> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_persona_refs').maybeSingle()
   try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as PersonaCfg } catch { return {} }
@@ -186,12 +276,35 @@ async function driveDownload(token: string, fileId: string): Promise<Blob> {
   if (!r.ok) throw new Error(`Drive-Download ${fileId}: ${r.status}`)
   return await r.blob()
 }
-// Persona-Bild: echte Referenzfotos (Lotte/Sven) + Szene → OpenAI images/edits.
-// Ohne verfügbare Referenzen fällt es sauber auf die normale Generierung zurück.
+// Persona-Bild. BESTER Weg: trainierte Higgsfield-Soul-ID (fotorealistisch,
+// crm_settings social_persona_refs → sven_soul_id/lotte_soul_id) — geht nur für
+// EINE Persona pro Bild. Sonst (beide Personas, keine Soul-ID, HF-Fehler):
+// bisheriger Weg mit echten Drive-Referenzfotos → OpenAI images/edits.
 async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: string, include: string[]): Promise<string> {
   const openaiKey = Deno.env.get('OPENAI_API_KEY') ?? ''
   if (!openaiKey) throw new Error('OPENAI_API_KEY fehlt in den Secrets.')
   const cfg = await personaCfg(sb)
+  const wantSven = include.includes('sven'), wantLotte = include.includes('lotte')
+  const soulId = wantSven && !wantLotte ? cfg.sven_soul_id : (wantLotte && !wantSven ? cfg.lotte_soul_id : undefined)
+  if (soulId) {
+    try {
+      const who = wantSven ? 'Sven Rüprich, founder of Happy Property (the trained character)' : "Lotte, Sven's chocolate labrador and office boss (the trained character)"
+      const bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', {
+        prompt: `${prompt}. The image shows ${who}. Photorealistic, natural lighting, realistic materials, no text, no watermark.`,
+        aspect_ratio: '1:1', quality: '2k', custom_reference_id: soulId,
+      })
+      const path = `social/${postId}-persona-${Date.now()}.png`
+      const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+      if (upErr) throw new Error(`Upload: ${upErr.message}`)
+      const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+      const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
+      const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
+      await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+      return url
+    } catch (e) {
+      console.warn('[social-agent] Soul-ID-Bild fehlgeschlagen — Referenzfoto-Fallback:', e instanceof Error ? e.message : String(e))
+    }
+  }
   const token = await driveToken()
   // Referenzen einsammeln, mit Persona-Label — Bild-Nummern vermeiden wir im
   // Prompt bewusst: einzelne Dateien können unten wieder rausfliegen.
