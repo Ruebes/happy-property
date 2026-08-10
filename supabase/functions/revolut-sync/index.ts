@@ -626,6 +626,21 @@ Deno.serve(async (req: Request) => {
           if (rr.ok) { files[`ausgangsrechnungen/${inv.invoice_number}.pdf`] = new Uint8Array(await rr.arrayBuffer()); invCount++ }
         } catch { /* weiter */ }
       }
+      // Eigenbeleg-Hinweis f\u00fcr Georgios: automatisch, sobald im Zeitraum
+      // Ersatzbelege liegen (doc_name beginnt mit \u201eEigenbeleg"). Listet Anbieter
+      // + Summe auf, damit er die verlorenen Originale fachlich einordnen kann.
+      const selfDocs = rows.filter(x => (x.doc_name ?? '').toLowerCase().startsWith('eigenbeleg'))
+      let selfNote = ''
+      if (selfDocs.length) {
+        const byVendor = new Map<string, { n: number; sum: number }>()
+        for (const s of selfDocs) {
+          const v = (s.counterparty ?? '').replace(/^To\s+/i, '').trim() || 'Supplier'
+          const e = byVendor.get(v) ?? { n: 0, sum: 0 }
+          e.n += 1; e.sum += Math.abs(Number(s.amount) || 0); byVendor.set(v, e)
+        }
+        const lines = [...byVendor.entries()].map(([v, e]) => `<li>${e.n}\u00d7 ${v} (total ${e.sum.toFixed(2)} EUR)</li>`).join('')
+        selfNote = `<p><b>Note on self-generated vouchers (Eigenbelege):</b> ${selfDocs.length} of the attached receipts are internal replacement vouchers, clearly marked "Eigenbeleg" in the top-left corner. The original supplier invoices were lost when an e-mail mailbox was cleared; every payment is fully evidenced by the corresponding bank transaction. Affected:</p><ul>${lines}</ul><p>Please let me know whether you can book these as they are or whether you need anything else for them.</p>`
+      }
       const csv = '\ufeff' + csvLines.join('\r\n')
       files['transaktionen.csv'] = strToU8(csv)
       // Echte Excel-Datei (.xlsx) — Georgios' (griechisches) Excel zerlegte die
@@ -651,6 +666,7 @@ Deno.serve(async (req: Request) => {
         <p>Dear Georgios,</p>
         ${typeof body.note === 'string' && body.note ? `<p>${body.note}</p>` : ''}
         <p>Please find attached the bookkeeping export for <b>sveru ltd</b> for the period <b>${from}</b> to <b>${to}</b>.</p>
+        ${selfNote}
         <ul>
           <li>${rows.length} bank transactions (Excel file attached)</li>
           <li>${recCount} receipts</li>
