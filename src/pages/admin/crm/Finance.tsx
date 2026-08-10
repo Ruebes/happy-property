@@ -57,12 +57,14 @@ export default function Finance() {
   const months = useMemo(() => Array.from(new Set(txs.map(x => x.booked_at.slice(0, 7)))).sort().reverse(), [txs])
   const [onlyNoDoc, setOnlyNoDoc] = useState(false)
   const [txSearch, setTxSearch] = useState('')
-  const noDocCount = useMemo(() => txs.filter(x => !x.doc_url && x.doc_status !== 'nicht_noetig').length, [txs])
+  // 0,00-Buchungen brauchen nie einen Beleg → zählen nicht als „ohne Beleg" (Sven 10.8.26)
+  const needsDoc = (x: FinTx) => !x.doc_url && x.doc_status !== 'nicht_noetig' && Number(x.amount) !== 0
+  const noDocCount = useMemo(() => txs.filter(needsDoc).length, [txs])
   const filtered = useMemo(() => {
     const q = txSearch.trim().toLowerCase()
     return txs.filter(x =>
       (!month || x.booked_at.startsWith(month)) && (!catFilter || x.category === catFilter)
-      && (!onlyNoDoc || (!x.doc_url && x.doc_status !== 'nicht_noetig'))
+      && (!onlyNoDoc || needsDoc(x))
       && (!q || `${x.counterparty} ${x.reference} ${x.doc_name ?? ''} ${x.amount}`.toLowerCase().includes(q)))
   }, [txs, month, catFilter, onlyNoDoc, txSearch])
 

@@ -464,11 +464,14 @@ Deno.serve(async (req: Request) => {
       const out: Record<string, unknown> = {}
       const eps = [
         'https://b2b.revolut.com/api/1.0/invoices',
-        'https://b2b.revolut.com/api/1.0/invoices?count=5',
-        'https://b2b.revolut.com/api/2.0/invoices',
-        'https://b2b.revolut.com/api/1.0/sales-invoices',
-        'https://b2b.revolut.com/api/1.0/customers',
-        'https://b2b.revolut.com/invoices/api/1.0/invoices',
+        'https://b2b.revolut.com/api/1.0/invoicing/invoices',
+        'https://b2b.revolut.com/api/1.0/merchant/invoices',
+        'https://b2b.revolut.com/api/1.0/orders',
+        'https://b2b.revolut.com/api/1.0/payment-requests',
+        'https://b2b.revolut.com/api/1.0/documents',
+        'https://b2b.revolut.com/api/3.0/invoices',
+        'https://merchant.revolut.com/api/1.0/orders',
+        'https://merchant.revolut.com/api/orders',
       ]
       for (const ep of eps) {
         try {
