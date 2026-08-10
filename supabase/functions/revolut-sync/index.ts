@@ -626,10 +626,10 @@ Deno.serve(async (req: Request) => {
           if (rr.ok) { files[`ausgangsrechnungen/${inv.invoice_number}.pdf`] = new Uint8Array(await rr.arrayBuffer()); invCount++ }
         } catch { /* weiter */ }
       }
-      // Eigenbeleg-Hinweis f\u00fcr Georgios: automatisch, sobald im Zeitraum
-      // Ersatzbelege liegen (doc_name beginnt mit \u201eEigenbeleg"). Listet Anbieter
-      // + Summe auf, damit er die verlorenen Originale fachlich einordnen kann.
-      const selfDocs = rows.filter(x => (x.doc_name ?? '').toLowerCase().startsWith('eigenbeleg'))
+      // Hinweis f\u00fcr Georgios: automatisch, sobald im Zeitraum Expense Voucher
+      // (verlorene Originalrechnungen, alternative Evidenz) liegen. Listet
+      // Anbieter + Summe auf, damit er sie fachlich einordnen kann.
+      const selfDocs = rows.filter(x => (x.doc_name ?? '').toLowerCase().startsWith('expense voucher'))
       let selfNote = ''
       if (selfDocs.length) {
         const byVendor = new Map<string, { n: number; sum: number }>()
@@ -639,7 +639,7 @@ Deno.serve(async (req: Request) => {
           e.n += 1; e.sum += Math.abs(Number(s.amount) || 0); byVendor.set(v, e)
         }
         const lines = [...byVendor.entries()].map(([v, e]) => `<li>${e.n}\u00d7 ${v} (total ${e.sum.toFixed(2)} EUR)</li>`).join('')
-        selfNote = `<p><b>Note on self-generated vouchers (Eigenbelege):</b> ${selfDocs.length} of the attached receipts are internal replacement vouchers, clearly marked "Eigenbeleg" in the top-left corner. The original supplier invoices were lost when an e-mail mailbox was cleared; every payment is fully evidenced by the corresponding bank transaction. Affected:</p><ul>${lines}</ul><p>Please let me know whether you can book these as they are or whether you need anything else for them.</p>`
+        selfNote = `<p><b>Note on expenses with a missing original invoice:</b> ${selfDocs.length} of the attached documents are internal expense vouchers. For these, the original supplier invoice could not be retrieved (an e-mail mailbox was cleared and, for some, the supplier is no longer reachable). Each voucher documents supplier, date, expense type, business purpose, amount and payment method, and every payment is fully evidenced by the corresponding bank transaction. Affected:</p><ul>${lines}</ul><p>Please book these as expenses supported by alternative evidence (original invoice missing) if acceptable, and let me know if you need anything additional for them.</p>`
       }
       const csv = '\ufeff' + csvLines.join('\r\n')
       files['transaktionen.csv'] = strToU8(csv)
