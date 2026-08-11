@@ -220,14 +220,25 @@ function computeCore(p: CalcParams): CalcResult {
   const resCY = p.res === 'cy'
   const hotelConcept = letT === 'short' ? !!p.hotelConcept : false
 
+  // Einrichtung ist Teil der GESAMTINVESTITION (Sven 11.8.26): Das Eigenkapital
+  // gilt auf Immobilie + Einrichtung, die Bank finanziert den Rest. Mehr Möbel =
+  // höherer Kredit (bei gleichem EK) UND niedrigere Bruttorendite auf den Gesamtpreis.
+  // Einrichtung trägt MwSt wie die Immobilie: normal 19 %, im sdMode netto (VAT via Sondertilgung).
+  const furnCost = Math.max(0, p.furnCost || 0)
+  const furnFree = !!p.furnFree
+  const furnVat = (furnFree || sdMode) ? 0 : Math.round(furnCost * 0.19)
+  const furnGross = furnFree ? 0 : furnCost + furnVat
+  const furnForIRR = furnFree ? 0 : furnCost
+  const totalGross = pGross + furnGross
+
   // WICHTIG: nullish-Prüfung statt `|| default` — eine ausdrücklich eingegebene 0
   // (kein Eigenkapital, 100 % Finanzierung) ist gültig und darf NICHT auf den
   // Default (75.000/200.000) zurückfallen. `0 || 75000` = 75000 war der Bug.
   let ekAbs = Math.max(0, Number.isFinite(p.equity) ? p.equity : (sdMode ? 200000 : 75000))
-  if (ekAbs > pGross) ekAbs = pGross
-  const loan = fin === 'no' ? 0 : Math.max(0, Math.round(pGross - ekAbs))
+  if (ekAbs > totalGross) ekAbs = totalGross
+  const loan = fin === 'no' ? 0 : Math.max(0, Math.round(totalGross - ekAbs))
   const ekCosts = costs + sdVatClawback
-  const ekStart = fin === 'no' ? pGross + ekCosts : Math.round(ekAbs + ekCosts)
+  const ekStart = fin === 'no' ? totalGross + ekCosts : Math.round(ekAbs + ekCosts)
 
   const cyBI = resCY ? Math.max(0, p.cyBI || 0) : 0
   const yPct = p.yieldPct || 5.5
@@ -238,8 +249,6 @@ function computeCore(p: CalcParams): CalcResult {
   const amP = p.amortPct || 2
   const appP = p.appreciationPct || 5
   const deTx = p.deTaxPct || 42
-  const furnCost = Math.max(0, p.furnCost || 0)
-  const furnFree = !!p.furnFree
 
   const vatA = Array(10).fill(0)
   if (letT === 'short') {
@@ -326,19 +335,16 @@ function computeCore(p: CalcParams): CalcResult {
   const totRet = sumCF + (ek10 - ekStart)
   const roe10 = ekStart > 0 ? totRet / ekStart * 100 : 0
 
-  const furnForIRR = furnFree ? 0 : furnCost
-  // Einrichtung trägt MwSt wie die Immobilie: im Normalfall 19 %, im sdMode (netto
-  // ausgewiesen, VAT via Sondertilgung) keine separate MwSt. Fix: der Gesamtpreis
-  // enthielt bisher die Einrichtung NETTO → MwSt auf die Einrichtung fehlte.
-  const furnVat = (furnFree || sdMode) ? 0 : Math.round(furnCost * 0.19)
-  const furnGross = furnFree ? 0 : furnCost + furnVat
-  const ekForIRR = ekStart + furnForIRR
-  const cfIRR = [-ekForIRR].concat(cfA); cfIRR[cfIRR.length - 1] += ek10
+  // Einrichtung steckt bereits in ekStart/loan (Gesamtinvestition) — daher hier
+  // NICHT erneut auf das IRR-Eigenkapital aufaddieren, sonst doppelt gezählt.
+  const cfIRR = [-ekStart].concat(cfA); cfIRR[cfIRR.length - 1] += ek10
   const irrV = irrCalc(cfIRR)
   const mRate = rateC[0] / Math.max(1, mF)
   const mCF = cfA[0] / Math.max(1, mF)
 
-  const effYield = pGross > 0 ? baseR / pGross * 100 : yPct
+  // Bruttorendite auf den GESAMTPREIS inkl. bezahlter Einrichtung (Sven 11.8.26).
+  // Ohne/bei kostenloser Einrichtung ist totalGross == pGross → unverändert.
+  const effYield = totalGross > 0 ? baseR / totalGross * 100 : yPct
   return {
     km, ky, mA, fA, yN, pNet, pNetList, pGross, pGrossList, vatAmt, costs, loan, ekStart, ekAbs,
     fin, letT, hotelConcept, mode, resCY, cyBI, yPct, effYield, rG, mgP, iP, termY, amP, appP, deTx,

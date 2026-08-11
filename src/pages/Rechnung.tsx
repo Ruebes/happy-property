@@ -228,7 +228,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
             <KV k={t('rechnung.purchasePriceGross', 'Kaufpreis brutto')} v={eur(r.pGross)} />
             <KV k={t('rechnung.equityStart', 'Eigenkapital (Start)')} v={eur(r.ekStart)} />
             <KV k={t('rechnung.bedrooms', 'Schlafzimmer')} v={String(r.bedrooms)} />
-            <KV k={t('rechnung.grossYieldY1', 'Bruttorendite J1')} v={pct(r.yPct) + (r.discountPct > 0 ? ` → ${pct(r.effYield)}` : '')} />
+            <KV k={t('rechnung.grossYieldY1', 'Bruttorendite J1')} v={pct(r.effYield)} />
             <KV k={r.letT === 'short' ? t('rechnung.holidayMgmtCommission', 'Ferienverwaltung & Buchungsprovision') : t('rechnung.ongoingCosts', 'Laufende Kosten')}
               v={t('rechnung.pctPlusAnnual', '{{pct}} (+2% p.a.){{hotel}}', { pct: pct(r.mgP), hotel: r.letT === 'short' && r.hotelConcept ? ` · 🏨 ${t('rechnung.hotelConceptShort', 'Hotelkonzept')}` : '' })} />
             <KV k={t('rechnung.loanTerm', 'Laufzeit Kredit')} v={t('rechnung.years', '{{n}} Jahre', { n: r.termY })} />
