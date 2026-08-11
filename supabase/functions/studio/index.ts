@@ -23,8 +23,10 @@
 // ── Deployment ──  supabase functions deploy studio --no-verify-jwt
 //                   supabase functions deploy ad-studio --no-verify-jwt   (Shim)
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
+
+declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -47,18 +49,40 @@ interface Draft {
   cards?: Card[]
 }
 
+// Stärkstes Modell zuerst, mit Fallback + Retry: ein einzelnes überlastetes/
+// unbekanntes Modell soll das Studio NICHT lahmlegen (war eine Fehlerquelle).
+const CLAUDE_MODELS = ['claude-sonnet-4-6', 'claude-sonnet-4-5', 'claude-opus-5']
 async function claude(prompt: string): Promise<string> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1600, messages: [{ role: 'user', content: prompt }] }),
-  })
-  const j = await res.json()
-  if (!res.ok) throw new Error(`Claude ${res.status}: ${JSON.stringify(j).slice(0, 200)}`)
-  return (j.content?.[0]?.text ?? '') as string
+  let lastErr = ''
+  for (const model of CLAUDE_MODELS) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': Deno.env.get('ANTHROPIC_API_KEY')!, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model, max_tokens: 1600, messages: [{ role: 'user', content: prompt }] }),
+        })
+        const j = await res.json()
+        if (res.ok) return (j.content?.[0]?.text ?? '') as string
+        lastErr = `Claude ${res.status}: ${JSON.stringify(j).slice(0, 160)}`
+        // Nächstes Modell bei unbekanntem Modell/Nicht-Verfügbar; Retry bei Überlast/Rate-Limit
+        if (/model|not_found|404/i.test(lastErr)) break
+        if (!/overloaded|rate.?limit|429|529|500|502|503/i.test(lastErr)) throw new Error(lastErr)
+        await new Promise(r => setTimeout(r, 1200))
+      } catch (e) { lastErr = e instanceof Error ? e.message : String(e); await new Promise(r => setTimeout(r, 800)) }
+    }
+  }
+  throw new Error(lastErr || 'Claude nicht erreichbar')
 }
 
-const parseJson = <T>(text: string): T => JSON.parse(text.replace(/^```json?\s*|```\s*$/g, '').trim()) as T
+// Robust: JSON-Block aus der Antwort ziehen (auch wenn Claude drumherum textet).
+const parseJson = <T>(text: string): T => {
+  const cleaned = text.replace(/^```json?\s*|```\s*$/g, '').trim()
+  try { return JSON.parse(cleaned) as T } catch { /* Fallback: ersten {...}-Block extrahieren */ }
+  const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}')
+  if (s >= 0 && e > s) return JSON.parse(cleaned.slice(s, e + 1)) as T
+  throw new Error('Antwort der KI war kein gültiges JSON')
+}
 
 // gpt-image-1: Basisbild + Prompt → PNG-Bytes (hohe Gesichtstreue)
 async function generateImage(baseUrl: string, prompt: string): Promise<Uint8Array> {
@@ -111,6 +135,38 @@ Deno.serve(async (req) => {
       return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
     }
 
+    // Bild-Generierung im HINTERGRUND (Sven 11.8.26): gpt-image-1 in hoher
+    // Qualität braucht ~70 s — synchron riss das den Gateway-Timeout, gerade bei
+    // langsameren Verbindungen (Giona). Jetzt: Job anlegen, sofort antworten,
+    // Frontend fragt per mode:'image_status' nach.
+    const startImageJob = async (base: string, prompt: string): Promise<string> => {
+      const jobId = crypto.randomUUID()
+      await supabase.from('studio_image_jobs').insert({ id: jobId })
+      const work = async () => {
+        try {
+          const url = await storeImage(await generateImage(base, prompt))
+          await supabase.from('studio_image_jobs').update({ image_url: url }).eq('id', jobId)
+        } catch (e) {
+          console.error('[studio] image job:', e)
+          await supabase.from('studio_image_jobs').update({ error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq('id', jobId)
+        }
+      }
+      if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(work()); else await work()
+      return jobId
+    }
+
+    // ── Status eines Bild-Jobs (Frontend-Polling) ────────────────────────────
+    if (mode === 'image_status') {
+      const jobId = String(body.job ?? '')
+      if (!jobId) throw new Error('job fehlt')
+      const { data } = await supabase.from('studio_image_jobs').select('image_url, error').eq('id', jobId).maybeSingle()
+      const row = data as { image_url: string | null; error: string | null } | null
+      if (!row) return json({ status: 'unknown' })
+      if (row.error) return json({ status: 'error', error: row.error })
+      if (row.image_url) return json({ status: 'done', image_url: row.image_url })
+      return json({ status: 'pending' })
+    }
+
     // ── Entwurf erzeugen ─────────────────────────────────────────────────────
     if (mode === 'generate') {
       const brief = String(body.brief ?? '').trim().slice(0, 2000)
@@ -143,6 +199,7 @@ Deno.serve(async (req) => {
         image_prompt?: string
         cards?: Array<{ title: string; description: string; image_url: string }>
       }>(await claude(`Du bist der Anzeigen-Texter von Happy Property (Immobilien-Investment Zypern, Zielgruppe deutschsprachige Kapitalanleger, Du-Ansprache, Stil der bisherigen Gewinner-Ads: emotionaler Einstieg über Schmerzpunkte wie Steuern/Bürokratie/Wetter, dann Zypern-Vorteile mit ✅-Aufzählung, klare Aufforderung zum kostenlosen Beratungsgespräch über den Online-Terminkalender).
+SCHREIBREGEL: NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (–) verwenden, immer den normalen Bindestrich "-" (auch bei Zahlenspannen: "8-12 %", nicht "8–12 %").
 
 AUFTRAG von Sven:
 """${brief}"""
@@ -161,12 +218,12 @@ Antworte NUR mit JSON:
 
       const draft: Draft = { format: plan.format, headline: plan.headline, message: plan.message }
       if (plan.format === 'single') {
-        const bytes = await generateImage(SVEN_PHOTO, plan.image_prompt ?? 'Fotorealistische Szene mit dem Mann aus dem Foto, Umgebung modernes Neubauprojekt am Mittelmeer, Original-Pose beibehalten, neutrales Tageslicht, kein Text')
-        draft.image_url = await storeImage(bytes)
-      } else {
-        draft.cards = (plan.cards ?? []).slice(0, 6)
-        if (!draft.cards.length) throw new Error('Zum genannten Projekt habe ich keine Fotos — bitte Fotos im Projekt hinterlegen (oder Drive-Sync abwarten) und nochmal versuchen')
+        // Text sofort zurück, Bild im Hintergrund → Frontend pollt image_status.
+        const jobId = await startImageJob(SVEN_PHOTO, plan.image_prompt ?? 'Fotorealistische Szene mit dem Mann aus dem Foto, Umgebung modernes Neubauprojekt am Mittelmeer, Original-Pose beibehalten, neutrales Tageslicht, kein Text')
+        return json({ success: true, draft, image_job: jobId })
       }
+      draft.cards = (plan.cards ?? []).slice(0, 6)
+      if (!draft.cards.length) throw new Error('Zum genannten Projekt habe ich keine Fotos — bitte Fotos im Projekt hinterlegen (oder Drive-Sync abwarten) und nochmal versuchen')
       return json({ success: true, draft })
     }
 
@@ -178,6 +235,7 @@ Antworte NUR mit JSON:
 
       const decision = parseJson<{ target: 'caption' | 'image' | 'cards'; headline?: string; message?: string; image_prompt?: string; cards?: Card[] }>(
         await claude(`Sven bearbeitet einen Anzeigen-Entwurf per Chat. Entscheide, was er ändern will, und liefere die Änderung.
+SCHREIBREGEL für alle Texte: NIEMALS Gedankenstrich (—) oder Bis-Strich (–), immer normaler Bindestrich "-" (auch "8-12 %").
 
 AKTUELLER ENTWURF:
 ${JSON.stringify(draft)}
@@ -199,8 +257,9 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         updated.headline = decision.headline ?? draft.headline
         updated.message = decision.message ?? draft.message
       } else if (decision.target === 'image' && draft.format === 'single') {
-        const bytes = await generateImage(draft.image_url ?? SVEN_PHOTO, decision.image_prompt ?? instruction)
-        updated.image_url = await storeImage(bytes)
+        // Neues Bild im Hintergrund — altes Bild bleibt sichtbar, bis das neue da ist.
+        const jobId = await startImageJob(draft.image_url ?? SVEN_PHOTO, decision.image_prompt ?? instruction)
+        return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {
         updated.cards = (decision.cards ?? draft.cards ?? []).slice(0, 6)
       }
