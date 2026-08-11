@@ -77,13 +77,16 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(SUPA, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
-    const body = await req.json().catch(() => ({})) as { project_id?: string; test?: boolean }
+    const body = await req.json().catch(() => ({})) as { project_id?: string; test?: boolean; force?: boolean; buyers_only?: boolean; all_photos?: boolean }
     const projectId = String(body.project_id ?? '').trim()
     const test = body.test === true
+    const force = body.force === true        // Schalter überspringen (gezielter Einmal-Versand)
+    const buyersOnly = body.buyers_only === true  // nur Käufer (Eigentümer + Deals), keine Interessenten
+    const allPhotos = body.all_photos === true    // ALLE Projektfotos senden (nicht nur die neuen)
     if (!projectId) return json({ error: 'project_id fehlt' }, 400)
 
-    // Ein/Aus-Schalter (Standard AUS) — scharf nur wenn ausdrücklich aktiviert.
-    if (!test) {
+    // Ein/Aus-Schalter (Standard AUS) — scharf nur wenn aktiviert ODER force.
+    if (!test && !force) {
       const { data: flag } = await sb.from('crm_settings').select('value').eq('key', 'construction_update_enabled').maybeSingle()
       if ((flag as { value?: string } | null)?.value !== 'true') {
         const { count } = await sb.from('construction_photos').select('id', { count: 'exact', head: true }).eq('project_id', projectId).is('notified_at', null)
@@ -97,12 +100,17 @@ Deno.serve(async (req) => {
     if (!project) return json({ error: 'Projekt nicht gefunden' }, 404)
     const projName = project.name
 
-    // Fotos bestimmen: test → neueste als Muster (kein Claim); scharf → NEUE atomar claimen.
+    // Fotos bestimmen: test/all_photos → alle (bis Deckel); scharf-normal → NUR
+    // NEUE atomar claimen. Bei all_photos-Scharfversand alle als gemeldet stempeln.
     let photos: ConPhoto[] = []
-    if (test) {
+    if (test || allPhotos) {
       const { data } = await sb.from('construction_photos').select('id, file_path, file_name')
         .eq('project_id', projectId).order('created_at', { ascending: false }).limit(MAX_MAIL_PHOTOS)
       photos = (data ?? []) as ConPhoto[]
+      if (!test && photos.length) {
+        await sb.from('construction_photos').update({ notified_at: new Date().toISOString() })
+          .eq('project_id', projectId).is('notified_at', null)
+      }
     } else {
       const { data } = await sb.from('construction_photos').update({ notified_at: new Date().toISOString() })
         .eq('project_id', projectId).is('notified_at', null).select('id, file_path, file_name')
@@ -148,9 +156,11 @@ Deno.serve(async (req) => {
       const { data: d2 } = await sb.from('deals').select('lead_id').in('id', dealIds).neq('phase', 'archiviert')
       for (const d of (d2 ?? []) as Array<{ lead_id: string | null }>) if (d.lead_id) leadIds.add(d.lead_id)
     }
-    // (c) Interessenten: Deck zum Projekt verschickt
-    const { data: decks } = await sb.from('sales_decks').select('lead_id').eq('project_id', projectId)
-    for (const d of (decks ?? []) as Array<{ lead_id: string | null }>) if (d.lead_id) leadIds.add(d.lead_id)
+    // (c) Interessenten: Deck zum Projekt verschickt — bei buyers_only weglassen.
+    if (!buyersOnly) {
+      const { data: decks } = await sb.from('sales_decks').select('lead_id').eq('project_id', projectId)
+      for (const d of (decks ?? []) as Array<{ lead_id: string | null }>) if (d.lead_id) leadIds.add(d.lead_id)
+    }
 
     let leadRows: Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null }> = []
     if (leadIds.size) {
