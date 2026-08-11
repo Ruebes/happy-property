@@ -20,7 +20,7 @@ interface SocialPost {
   format: string; status: string; scheduled_for: string | null
   project_id: string | null; unit_id: string | null; news_source: string | null
   post_results: Record<string, { ok: boolean; id?: string; error?: string }> | null
-  created_at: string
+  created_at: string; posted_at: string | null
 }
 interface ChatMsg { role: 'user' | 'assistant'; content: string }
 interface ProjectOpt { id: string; name: string; deck_assets: { renders?: string[]; gallery?: string[] } | null }
@@ -860,7 +860,8 @@ export default function SocialStudio() {
   const [busyKey, setBusyKey] = useState('')
   const [toast, setToast] = useState('')
   const [manageTopics, setManageTopics] = useState(false)
-  const [view, setView] = useState<'plan' | 'list'>('plan')
+  const [view, setView] = useState<'plan' | 'list' | 'archive'>('plan')
+  const [archiveMonth, setArchiveMonth] = useState('')
   const [newsletters, setNewsletters] = useState<NlEntry[]>([])
   const [ideas, setIdeas] = useState<Idea[]>([])
   const [ideasOpen, setIdeasOpen] = useState(true)
@@ -986,6 +987,14 @@ export default function SocialStudio() {
 
   const d2 = (s: string | null) => s ? new Date(s).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null
   const queued = posts.filter(p => p.status === 'geplant').length
+  // „Posts" zeigt aktive Entwürfe/Freigaben; gelaufene (gepostet) wandern ins Archiv.
+  const monthOf = (p: SocialPost) => (p.posted_at ?? p.scheduled_for ?? p.created_at).slice(0, 7)
+  const archivePosts = posts.filter(p => p.status === 'gepostet')
+  const archiveMonths = Array.from(new Set(archivePosts.map(monthOf))).sort().reverse()
+  const monthLabel = (m: string) => { try { return new Date(`${m}-01T00:00:00`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) } catch { return m } }
+  const shownPosts = view === 'archive'
+    ? (archiveMonth ? archivePosts.filter(p => monthOf(p) === archiveMonth) : archivePosts)
+    : posts.filter(p => p.status !== 'gepostet')
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -1000,7 +1009,7 @@ export default function SocialStudio() {
             </p>
           </div>
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
-            {([['plan', t('crm.social.viewPlan', '📅 Redaktionsplan')], ['list', t('crm.social.viewList', '📋 Posts')]] as const).map(([k, lbl]) => (
+            {([['plan', t('crm.social.viewPlan', '📅 Redaktionsplan')], ['list', t('crm.social.viewList', '📋 Posts')], ['archive', t('crm.social.viewArchive', '🗄 Archiv')]] as const).map(([k, lbl]) => (
               <button key={k} onClick={() => setView(k)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium ${view === k ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{lbl}</button>
             ))}
@@ -1093,13 +1102,24 @@ export default function SocialStudio() {
             onOpenPost={p => setOpenPost(p)} onCreateForDay={d => void createForDay(d)} />
         </>)}
 
+        {view === 'archive' && !loading && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-gray-500">🗄 {t('crm.social.archiveInfo', 'Gelaufene Posts')}</span>
+            <div className="min-w-[200px]">
+              <CustomSelect value={archiveMonth} onChange={setArchiveMonth}
+                options={[{ value: '', label: t('crm.social.archiveAllMonths', 'Alle Monate') }, ...archiveMonths.map(m => ({ value: m, label: monthLabel(m) }))]} />
+            </div>
+            <span className="text-xs text-gray-400">{shownPosts.length} {t('crm.social.postsCount', 'Posts')}</span>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" /></div>
-        ) : view === 'plan' ? null : posts.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-sm text-gray-500">{t('crm.social.empty', 'Noch keine Posts — starte oben deinen ersten.')}</div>
+        ) : view === 'plan' ? null : shownPosts.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-gray-100 p-8 text-center text-sm text-gray-500">{view === 'archive' ? t('crm.social.archiveEmpty', 'Für diesen Zeitraum sind noch keine Posts gelaufen.') : t('crm.social.empty', 'Noch keine Posts — starte oben deinen ersten.')}</div>
         ) : (
           <div className="grid sm:grid-cols-2 gap-3">
-            {posts.map(p => {
+            {shownPosts.map(p => {
               const tp = topics.find(x => x.key === p.topic)
               const st = STATUS_BADGE[p.status] ?? STATUS_BADGE.entwurf
               const nImgs = (Array.isArray(p.image_urls) && p.image_urls.length) || (p.image_url ? 1 : 0)
