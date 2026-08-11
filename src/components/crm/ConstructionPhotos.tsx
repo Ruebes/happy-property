@@ -48,40 +48,10 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
 
   useEffect(() => { fetchPhotos() }, [fetchPhotos])
 
-  // Eigentümer mit Wohnung in diesem Projekt per E-Mail benachrichtigen
-  async function notifyOwners(fileName: string) {
-    try {
-      const { data: unitCustomers } = await supabase
-        .from('crm_project_units')
-        .select('property_id')
-        .eq('project_id', projectId)
-        .not('property_id', 'is', null)
-      if (!unitCustomers || unitCustomers.length === 0) return
-      const propIds = (unitCustomers as { property_id: string }[]).map(u => u.property_id)
-      const { data: owners } = await supabase.from('properties').select('owner_id').in('id', propIds)
-      if (!owners || owners.length === 0) return
-      const ownerIds = (owners as { owner_id: string }[]).map(o => o.owner_id)
-      const { data: profs } = await supabase.from('profiles').select('email, full_name').in('id', ownerIds)
-      for (const p of (profs ?? []) as { email: string; full_name: string }[]) {
-        void supabase.functions.invoke('send-email', {
-          body: {
-            to:      p.email,
-            subject: t('constructionPhotos.notifyEmailSubject', 'Neue Datei in Ihrem Happy Property Portal'),
-            html:    t('constructionPhotos.notifyEmailBody', `<p>Hallo {{firstName}},</p>
-<p>es wurde ein neues <strong>Baustellenfoto</strong> für Ihre Immobilie hochgeladen: <em>{{fileName}}</em></p>
-<p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
-<p>Viele Grüße<br>Ihr Happy Property Team</p>`, { firstName: p.full_name.split(' ')[0], fileName }),
-          },
-        })
-      }
-    } catch (err) {
-      console.warn('[ConstructionPhotos] notifyOwners failed:', err)
-    }
-  }
-
   async function handleUpload(files: FileList) {
     if (!projectId || files.length === 0) return
     setUploading(true)
+    let anyUploaded = false
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
@@ -100,12 +70,19 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
           description: photoDesc.trim() || null,
           uploaded_by: profile?.id ?? null,
         })
-        void notifyOwners(file.name)
+        anyUploaded = true
       }
       showMsg(t('crm.pd.toastConstructionUploaded', { count: files.length }))
       setPhotoDesc('')
       if (inputRef.current) inputRef.current.value = ''
       await fetchPhotos()
+      // Lotte informiert die Kunden des Projekts über die neuen Fotos (Mail + WhatsApp).
+      // Feuert EINMAL nach dem Upload; die Function selbst greift nur bei
+      // eingeschaltetem Schalter und nur auf die NEUEN Fotos (atomar geclaimt).
+      if (anyUploaded) {
+        void supabase.functions.invoke('construction-update', { body: { project_id: projectId } })
+          .catch(err => console.warn('[ConstructionPhotos] construction-update failed:', err))
+      }
     } catch (err) {
       showMsg(`❌ ${err instanceof Error ? err.message : t('constructionPhotos.genericError', 'Fehler')}`)
     } finally {

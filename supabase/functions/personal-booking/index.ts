@@ -11,7 +11,9 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { isInternalContact } from '../_shared/internalContact.ts'
 import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
-import { lotteBild } from '../_shared/lotte.ts'   // Office-Bild von Lotte für die Bestätigungsmail
+// Kalender-/Termin-Bild von Lotte je Sprache (öffentlicher Assets-Bucket):
+// „Termin vereinbart!" (de) bzw. „Appointment booked!" (eng).
+const lotteTerminBild = (lang: string) => `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/Assets/wa/lotte-termin-${lang === 'en' ? 'eng' : 'de'}.jpg`
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -235,9 +237,9 @@ Deno.serve(async (req) => {
       // Bestätigung per E-Mail (+ .ics)
       if (email) {
         const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
-          <div style="text-align:center;margin-bottom:6px;">
-            <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
-            <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">${lang === 'en' ? "Lotte · Sven's personal assistant 🐾" : 'Lotte · persönliche Assistentin von Sven 🐾'}</p>
+          <div style="text-align:center;margin-bottom:10px;">
+            <img src="${lotteTerminBild(lang)}" alt="${lang === 'en' ? 'Appointment booked' : 'Termin vereinbart'}" style="width:100%;max-width:520px;border-radius:14px;display:block;margin:0 auto;" />
+            <p style="font-size:12px;color:#6b7280;margin:8px 0 0;">${lang === 'en' ? "Lotte · Sven's personal assistant 🐾" : 'Lotte · persönliche Assistentin von Sven 🐾'}</p>
           </div>
           <p>${T.greet(first)}</p><p>${T.confirmed}</p>
           <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
@@ -254,7 +256,7 @@ Deno.serve(async (req) => {
       // Bestätigung per WhatsApp
       if (phone) {
         const wa = T.waMsg(first, subject, dateStr, typeLabel, zoomLink)
-        await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: wa, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteBild() } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
+        await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: wa, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteTerminBild(lang) } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
       }
       return json({ ok: true, appointment: appt?.id, dateStr, typeLabel, zoomLink })
     }
