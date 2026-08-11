@@ -22,6 +22,7 @@
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
 import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
+import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -368,6 +369,105 @@ async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: 
 // 16:9-Thumbnail → 1080×1350-Insta-Format: Hintergrund = unscharfe, abgedunkelte
 // Cover-Version des Bilds selbst (bilinear aus stark verkleinerter Quelle = Blur),
 // Original pixelgenau mittig. Deterministisch — kein KI-Risiko, keine Balken.
+// ── Vergleichs-Karussell (gestaltete Slides mit SCHARFEM Text) ──────────────
+// SVG → PNG via resvg-wasm. Text ist echt (kein KI-Gekrakel), 1080×1350 (4:5).
+// Chat-editierbar: der Agent schickt die komplette Slide-Liste, wir ersetzen.
+let _resvgReady: Promise<unknown> | null = null
+function ensureResvg(): Promise<unknown> {
+  if (!_resvgReady) _resvgReady = initWasm(fetch('https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm'))
+  return _resvgReady
+}
+let _fontBufs: Uint8Array[] | null = null
+async function loadFonts(): Promise<Uint8Array[]> {
+  if (_fontBufs) return _fontBufs
+  const urls = [
+    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Bold.ttf',
+    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Regular.ttf',
+  ]
+  const bufs: Uint8Array[] = []
+  for (const u of urls) { try { const r = await fetch(u); if (r.ok) bufs.push(new Uint8Array(await r.arrayBuffer())) } catch { /* Font optional */ } }
+  _fontBufs = bufs
+  return bufs
+}
+async function svgToPng(svg: string): Promise<Uint8Array> {
+  await ensureResvg()
+  const fontBuffers = await loadFonts()
+  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
+  return r.render().asPng()
+}
+const CMP_W = 1080, CMP_H = 1350
+const xesc = (s: string) => (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+function xwrap(s: string, max: number): string[] {
+  const words = (s ?? '').trim().split(/\s+/).filter(Boolean); const lines: string[] = []; let cur = ''
+  for (const w of words) { if ((`${cur} ${w}`).trim().length > max && cur) { lines.push(cur); cur = w } else cur = (`${cur} ${w}`).trim() }
+  if (cur) lines.push(cur); return lines.length ? lines : ['']
+}
+function xtspan(lines: string[], x: number, y: number, lh: number): string {
+  return lines.map((l, i) => `<tspan x="${x}" y="${y + i * lh}">${xesc(l)}</tspan>`).join('')
+}
+interface CmpSlide { kind?: string; kicker?: string; title?: string; subtitle?: string; metric?: string; de?: string; de_note?: string; cy?: string; cy_note?: string; cta?: string }
+function cmpSlideSvg(s: CmpSlide): string {
+  const F = 'font-family="Open Sans"'
+  const brand = `<text ${F} x="540" y="1290" font-size="26" fill="#94a3b8" text-anchor="middle" letter-spacing="2">happy-property.com</text>`
+  if ((s.kind ?? 'compare') === 'cover') {
+    const title = xwrap(s.title ?? 'Deutschland vs. Zypern', 16)
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#0e7490"/></linearGradient></defs>
+      <rect width="${CMP_W}" height="${CMP_H}" fill="url(#g)"/>
+      <text ${F} x="540" y="330" font-size="34" fill="#ff795d" font-weight="700" text-anchor="middle" letter-spacing="6">${xesc((s.kicker ?? 'STEUERVERGLEICH').toUpperCase())}</text>
+      <text ${F} font-size="94" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(title, 540, 560, 108)}</text>
+      <text ${F} font-size="38" fill="#cbd5e1" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 34), 540, 560 + title.length * 108 + 60, 52)}</text>
+      ${brand}</svg>`
+  }
+  if (s.kind === 'cta') {
+    const title = xwrap(s.title ?? 'Weniger Steuern. Mehr Rendite.', 18)
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#134e4a"/></linearGradient></defs>
+      <rect width="${CMP_W}" height="${CMP_H}" fill="url(#g)"/>
+      <text ${F} font-size="80" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(title, 540, 470, 96)}</text>
+      <text ${F} font-size="38" fill="#cbd5e1" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 32), 540, 470 + title.length * 96 + 70, 52)}</text>
+      <rect x="240" y="960" width="600" height="120" rx="60" fill="#ff795d"/>
+      <text ${F} x="540" y="1038" font-size="40" fill="#ffffff" font-weight="700" text-anchor="middle">${xesc(s.cta ?? 'Jetzt Termin sichern')}</text>
+      ${brand}</svg>`
+  }
+  // compare
+  const metric = xwrap(s.metric ?? '', 22)
+  const deVal = xwrap(s.de ?? '', 12), cyVal = xwrap(s.cy ?? '', 12)
+  const deNote = xwrap(s.de_note ?? '', 26), cyNote = xwrap(s.cy_note ?? '', 26)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
+    <rect width="${CMP_W}" height="${CMP_H}" fill="#0f172a"/>
+    <text ${F} x="540" y="150" font-size="30" fill="#94a3b8" font-weight="700" text-anchor="middle" letter-spacing="6">DEUTSCHLAND  vs  ZYPERN</text>
+    <text ${F} font-size="72" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(metric, 540, 268, 82)}</text>
+    <rect x="70" y="392" width="440" height="720" rx="30" fill="#1e293b"/>
+    <rect x="70" y="392" width="440" height="92" rx="30" fill="#b91c1c"/><rect x="70" y="440" width="440" height="44" fill="#b91c1c"/>
+    <text ${F} x="290" y="453" font-size="34" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="2">DEUTSCHLAND</text>
+    <text ${F} font-size="66" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(deVal, 290, 640, 76)}</text>
+    <text ${F} font-size="30" fill="#cbd5e1" text-anchor="middle">${xtspan(deNote, 290, 640 + deVal.length * 76 + 40, 40)}</text>
+    <rect x="570" y="392" width="440" height="720" rx="30" fill="#0e7490"/>
+    <rect x="570" y="392" width="440" height="92" rx="30" fill="#0d9488"/><rect x="570" y="440" width="440" height="44" fill="#0d9488"/>
+    <text ${F} x="790" y="453" font-size="34" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="2">ZYPERN</text>
+    <text ${F} font-size="66" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(cyVal, 790, 640, 76)}</text>
+    <text ${F} font-size="30" fill="#d1fae5" text-anchor="middle">${xtspan(cyNote, 790, 640 + cyVal.length * 76 + 40, 40)}</text>
+    <circle cx="540" cy="752" r="54" fill="#ffffff"/><text ${F} x="540" y="768" font-size="36" fill="#0f172a" font-weight="700" text-anchor="middle">vs</text>
+    ${brand}</svg>`
+}
+async function renderComparison(sb: SupabaseClient, postId: string, slides: CmpSlide[], replace: boolean): Promise<string[]> {
+  const base = Deno.env.get('SUPABASE_URL')
+  const urls: string[] = []
+  for (let i = 0; i < slides.length; i++) {
+    const png = await svgToPng(cmpSlideSvg(slides[i]))
+    const path = `social/${postId}-cmp-${Date.now()}-${i}.png`
+    const { error } = await sb.storage.from('ad-creatives').upload(path, png, { contentType: 'image/png', upsert: true })
+    if (error) throw new Error(`Upload Slide ${i + 1}: ${error.message}`)
+    urls.push(`${base}/storage/v1/object/public/ad-creatives/${path}`)
+  }
+  const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
+  const prev = (!replace && Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls)) ? (cur as { image_urls: string[] }).image_urls : []
+  const all = [...prev, ...urls]
+  await sb.from('social_posts').update({ image_urls: all, image_url: all[0], format: 'carousel', updated_at: new Date().toISOString() }).eq('id', postId)
+  return urls
+}
+
 function bilinearCover(srcSmall: Image, W: number, H: number, dim: number): Image {
   const targetAR = W / H
   let cw = srcSmall.width, ch = srcSmall.height
@@ -462,6 +562,10 @@ Regeln:
 - Hashtags am Ende, 3–6 Stück. Instagram verträgt mehr Emojis als LinkedIn.
 - image_prompt: nur setzen, wenn ein neues Bild sinnvoll ist — englisch, fotorealistisch
   bzw. passend zum Thema, OHNE Text im Bild.
+- Für VERGLEICHE / Gegenüberstellungen / Infografiken / „Karussell mit Fakten"
+  (z.B. Deutschland vs. Zypern) NICHT make_image nehmen (KI verhunzt Text),
+  sondern make_comparison mit gestalteten Slides. Immer die komplette Slide-Liste
+  übergeben. Nur echte Fakten, knappe Werte, keine Gedankenstriche.
 - Erfinde keine Zahlen/Fakten. Bei Objekt-Posts nur die Projektdaten oben.`
 
       const messages = [
@@ -489,6 +593,32 @@ Regeln:
             include: { type: 'array', items: { type: 'string', enum: ['lotte', 'sven'] }, description: 'Echte Personas einbeziehen: lotte (Svens Hündin, echtes Aussehen) und/oder sven (Sven Rüprich, echtes Aussehen)' },
           },
           required: ['prompt'],
+        },
+      }, {
+        name: 'make_comparison',
+        description: 'Erzeugt/ERSETZT ein VERGLEICHS-KARUSSELL mit gestalteten Slides und SCHARFEM, korrektem Text (kein KI-Foto). Nutzen, wenn der Nutzer einen Vergleich, eine Gegenüberstellung (z.B. Deutschland vs. Zypern), eine Infografik oder ein Karussell mit Fakten will ODER Änderungen daran wünscht (Farbe, Text, Slide hinzufügen/ändern). WICHTIG: immer die KOMPLETTE, aktuelle Slide-Liste übergeben (auch unveränderte Slides), da das Karussell komplett ersetzt wird. Struktur: erste Slide kind=cover (kicker/title/subtitle), dann je Vergleichspunkt kind=compare (metric + de/de_note + cy/cy_note), am Ende kind=cta (title/subtitle/cta). Nur echte Fakten, kurze Werte (JA/NEIN, „0 %", „11-14 %"). Keine Gedankenstriche.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            slides: {
+              type: 'array', description: 'Alle Slides in Reihenfolge',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: ['cover', 'compare', 'cta'] },
+                  kicker: { type: 'string' }, title: { type: 'string' }, subtitle: { type: 'string' },
+                  metric: { type: 'string', description: 'Überschrift des Vergleichspunkts (nur compare)' },
+                  de: { type: 'string', description: 'Großer Wert Deutschland-Spalte (nur compare)' },
+                  de_note: { type: 'string', description: 'Kleiner Zusatz Deutschland (nur compare)' },
+                  cy: { type: 'string', description: 'Großer Wert Zypern-Spalte (nur compare)' },
+                  cy_note: { type: 'string', description: 'Kleiner Zusatz Zypern (nur compare)' },
+                  cta: { type: 'string', description: 'Button-Text (nur cta)' },
+                },
+                required: ['kind'],
+              },
+            },
+          },
+          required: ['slides'],
         },
       }, {
         name: 'edit_image',
@@ -525,9 +655,17 @@ Regeln:
           } catch (e) { reply = `${reply}\n\n❌ Bild-Bearbeitung fehlgeschlagen: ${(e as Error).message}`.trim() }
         } else { reply = `${reply}\n\n❌ Bild ${editTool.input.image_number} gibt es nicht.`.trim() }
       }
-      const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image') as { input?: { prompt?: string; include?: string[] } } | undefined
+      // Vergleichs-Karussell aus dem Chat: gestaltete Slides (scharfer Text) im Hintergrund rendern.
+      const cmpTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_comparison') as { input?: { slides?: CmpSlide[] } } | undefined
       let imagePending = false
-      if (!newImageUrl && imgTool?.input?.prompt) {
+      if (cmpTool?.input?.slides && Array.isArray(cmpTool.input.slides) && cmpTool.input.slides.length) {
+        const slides = cmpTool.input.slides
+        const job = async () => { try { await renderComparison(sb, body.post_id!, slides, true) } catch (e) { console.error('[social-agent] chat comparison:', e) } }
+        if (typeof EdgeRuntime !== 'undefined') { EdgeRuntime.waitUntil(job()); imagePending = true; reply = reply ? `${reply}\n\n🖼️ Vergleichs-Karussell wird erstellt (${slides.length} Slides) — erscheint gleich in der Bilderliste.` : `🖼️ Vergleichs-Karussell wird erstellt (${slides.length} Slides) — erscheint gleich in der Bilderliste.` }
+        else { await job() }
+      }
+      const imgTool = blocks.find(b => b.type === 'tool_use' && b.name === 'make_image') as { input?: { prompt?: string; include?: string[] } } | undefined
+      if (!imagePending && !newImageUrl && imgTool?.input?.prompt) {
         const inc = Array.isArray(imgTool.input.include) ? imgTool.input.include.filter(x => x === 'lotte' || x === 'sven') : []
         const mkPrompt = imgTool.input.prompt
         const job = async () => {
@@ -551,6 +689,16 @@ Regeln:
         { post_id: body.post_id, role: 'assistant', content: reply || (newContent ? 'Post aktualisiert ✓' : '…') },
       ])
       return json({ ok: true, reply: reply || (newContent ? 'Ich habe den Post-Text aktualisiert. ✓' : ''), content: newContent, image_url: newImageUrl, image_pending: imagePending, image_prompt: toolUse?.input?.image_prompt ?? null })
+    }
+
+    // ── Vergleichs-Karussell direkt erzeugen (aus dem Studio) ─────────────────
+    if (body.action === 'comparison_carousel') {
+      const b = body as unknown as { post_id?: string; slides?: CmpSlide[]; replace?: boolean }
+      if (!b.post_id || !Array.isArray(b.slides) || !b.slides.length) return json({ error: 'post_id und slides erforderlich' }, 400)
+      try {
+        const urls = await renderComparison(sb, b.post_id, b.slides, b.replace !== false)
+        return json({ ok: true, urls, count: urls.length })
+      } catch (e) { return json({ error: (e as Error).message }, 500) }
     }
 
     // ── Bild via OpenAI (gpt-image-1) → ad-creatives/social/… ─────────────────
