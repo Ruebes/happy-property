@@ -253,10 +253,15 @@ Deno.serve(async (req) => {
         const ics = buildIcs({ uid: appt?.id ?? crypto.randomUUID(), title: subject, startIso, endIso: end.toISOString(), description: desc, location: location ?? undefined })
         await admin.functions.invoke('send-email', { body: { to: email, subject: T.mailSubj(subject, fmtL(startIso, { day: '2-digit', month: '2-digit' })), html, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, lead_id: leadId, auto: true, attachment: { filename: 'termin.ics', content_base64: toB64(ics), content_type: 'text/calendar' } } }).catch((e: unknown) => console.warn('[personal-booking] mail:', e))
       }
-      // Bestätigung per WhatsApp
+      // Bestätigung per WhatsApp — inkl. kurzem „Termin speichern"-Link (.ics
+      // via /cal/:id → öffnet den Kalender auf iPhone/Android), statt eines langen
+      // Google-Kalender-Links.
       if (phone) {
         const wa = T.waMsg(first, subject, dateStr, typeLabel, zoomLink)
-        await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: wa, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteTerminBild(lang) } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
+        const waFull = appt?.id
+          ? `${wa}\n\n📅 ${lang === 'en' ? 'Save to calendar' : 'Termin speichern'}: https://portal.happy-property.com/cal/${appt.id}`
+          : wa
+        await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: waFull, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteTerminBild(lang) } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
       }
       return json({ ok: true, appointment: appt?.id, dateStr, typeLabel, zoomLink })
     }

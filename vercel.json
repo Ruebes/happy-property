@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/cal/:id",
+      "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/cal?a=:id"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

@@ -196,9 +196,9 @@ Deno.serve(async (req) => {
         ? `hier ist Lotte 🐾. Ich war heute auf der Baustelle von <b>${projName}</b> und habe ein paar frische Fotos für dich geschossen. Es geht sichtbar voran, deine Immobilie am Mittelmeer wächst Stück für Stück.`
         : `it's Lotte 🐾. I stopped by the construction site of <b>${projName}</b> today and took a few fresh photos for you. Things are visibly moving, your property by the Mediterranean is coming along step by step.`
       const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#1f2937;">
-        <div style="text-align:center;margin-bottom:10px;">
-          <img src="${lottePhoto}" alt="Lotte" width="84" height="84" style="width:84px;height:84px;border-radius:50%;object-fit:cover;" />
-          <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
+        <div style="text-align:center;margin-bottom:12px;">
+          <img src="${lottePhoto}" alt="Lotte auf der Baustelle" style="width:100%;max-width:560px;border-radius:14px;display:block;margin:0 auto;" />
+          <p style="font-size:12px;color:#6b7280;margin:8px 0 0;">Lotte · ${de ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
         </div>
         <p>${de ? `Hallo ${r.name},` : `Hi ${r.name},`}</p>
         <p>${intro}</p>
@@ -219,20 +219,27 @@ Deno.serve(async (req) => {
           res.mail = true
         }
         if (r.phone) {
-          // WhatsApp hat nur EINEN Bild-Slot → zwei Nachrichten: (1) Lotte meldet
-          // sich mit IHREM Bild, (2) das erste frische Baustellenfoto hinterher.
-          const { error } = await sb.functions.invoke('send-whatsapp', { body: {
+          // WhatsApp hat nur EINEN Bild-Slot je Nachricht → mehrere Nachrichten:
+          // (1) Lotte meldet sich mit IHREM Bild, dann (2..N) je ein frisches Foto.
+          // allow_duplicate ÜBERALL: sonst greift der 6h-Text-Doppelschutz bei
+          // gleichlautenden Foto-Captions und unterdrückt Fotos (bzw. die
+          // Lotte-Nachricht, wenn derselbe Text kurz zuvor schon rausging).
+          const r1 = await sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'construction_update', override_text: waText,
             lead_data: { lead_name: r.name, lead_phone: r.phone },
-            persona_image: lottePhoto,
+            persona_image: lottePhoto, allow_duplicate: true,
           } })
-          if (error) throw new Error(error.message)
-          const photoCaption = de ? `📸 Frisch von der Baustelle: ${projName}` : `📸 Fresh from the site: ${projName}`
-          await sb.functions.invoke('send-whatsapp', { body: {
-            event_type: 'construction_update', override_text: photoCaption,
-            lead_data: { lead_name: r.name, lead_phone: r.phone },
-            file_url: photoUrls[0], file_name: `${projName}.jpg`, allow_duplicate: true,
-          } }).catch((e2: unknown) => console.warn('[construction-update] WA-Foto:', e2))
+          if (r1.error) throw new Error(r1.error.message)
+          for (let i = 0; i < photoUrls.length; i++) {
+            const cap = i === 0
+              ? (de ? `📸 Frisch von der Baustelle: ${projName}` : `📸 Fresh from the site: ${projName}`)
+              : `📸 ${projName} (${i + 1}/${photoUrls.length})`
+            await sb.functions.invoke('send-whatsapp', { body: {
+              event_type: 'construction_update', override_text: cap,
+              lead_data: { lead_name: r.name, lead_phone: r.phone },
+              file_url: photoUrls[i], file_name: `${projName}-${i + 1}.jpg`, allow_duplicate: true,
+            } }).catch((e2: unknown) => console.warn('[construction-update] WA-Foto:', e2))
+          }
           res.whatsapp = true
         }
       } catch (err) {
