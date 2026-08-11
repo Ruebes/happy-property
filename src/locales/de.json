@@ -3877,6 +3877,11 @@
       "publish": "Jetzt posten",
       "publishing": "Wird veröffentlicht…",
       "publishConfirm": "Diesen Post JETZT öffentlich auf {{p}} veröffentlichen?",
+      "scheduleGo": "Zur geplanten Zeit posten",
+      "scheduling": "Wird eingeplant…",
+      "scheduleConfirm": "Diesen Post zur geplanten Zeit ({{t}}) automatisch auf {{p}} posten?",
+      "scheduleNoTime": "Bitte oben unter „Geplant für\" eine Zeit setzen.",
+      "alreadyPosted": "Dieser Post ist bereits gelaufen.",
       "topic": {
         "objekt": "Immobilie vorstellen",
         "wissen": "Wissenswertes",

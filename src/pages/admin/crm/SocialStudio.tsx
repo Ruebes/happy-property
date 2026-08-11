@@ -325,18 +325,27 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     } finally { setBusy('') }
   }
 
-  const publish = async () => {
-    if (!window.confirm(t('crm.social.publishConfirm', 'Diesen Post JETZT öffentlich auf {{p}} veröffentlichen?', { p: platforms.join(' + ') }) as string)) return
+  // Zur geplanten Zeit posten: Post freigeben + auf die oben gesetzte Zeit
+  // einplanen. Die Automatik veröffentlicht ihn dann zur fälligen Uhrzeit.
+  const schedulePublish = async () => {
+    if (post.status === 'gepostet') { setNote(t('crm.social.alreadyPosted', 'Dieser Post ist bereits gelaufen.')); return }
+    if (!scheduled) { setNote(`❌ ${t('crm.social.scheduleNoTime', 'Bitte oben unter „Geplant für" eine Zeit setzen.')}`); return }
+    const when = new Date(scheduled)
+    if (!window.confirm(t('crm.social.scheduleConfirm', 'Diesen Post zur geplanten Zeit ({{t}}) automatisch auf {{p}} posten?', { t: when.toLocaleString('de-DE'), p: platforms.join(' + ') }) as string)) return
     setBusy('publish'); setNote('')
     try {
-      await save(true)
-      const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'publish', post_id: post.id } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; results?: Record<string, { ok: boolean; error?: string }> }
-      if (error && !d.results) throw new Error(d.error || error.message)
-      const parts = Object.entries(d.results ?? {}).map(([k, v]) => `${k}: ${v.ok ? '✓' : `❌ ${v.error}`}`)
-      setNote(parts.join('  ·  ') || (d.error ?? 'Keine Plattform-Antwort'))
+      const { error } = await supabase.from('social_posts').update({
+        content: content || null, platforms, format,
+        project_id: projectId || null, unit_id: unitId || null,
+        image_urls: images, image_url: images[0] ?? null,
+        scheduled_for: when.toISOString(), video_url: videoUrl,
+        status: 'geplant', updated_at: new Date().toISOString(),
+      }).eq('id', post.id)
+      if (error) throw error
+      setApproved(true)
+      onClose()
     } catch (e) {
-      setNote(`❌ ${e instanceof Error ? e.message : 'Veröffentlichen fehlgeschlagen'}`)
+      setNote(`❌ ${e instanceof Error ? e.message : 'Einplanen fehlgeschlagen'}`)
     } finally { setBusy('') }
   }
 
@@ -558,9 +567,9 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
             <button onClick={() => void save()} disabled={!!busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? t('common.saving', 'Speichert…') : `💾 ${t('common.save', 'Speichern')}`}
             </button>
-            <button onClick={() => void publish()} disabled={!!busy || !content.trim() || platforms.length === 0 || (format === 'carousel' && images.length < 2)}
+            <button onClick={() => void schedulePublish()} disabled={!!busy || !content.trim() || platforms.length === 0 || !scheduled || post.status === 'gepostet' || (format === 'carousel' && images.length < 2)}
               className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
-              {busy === 'publish' ? t('crm.social.publishing', 'Wird veröffentlicht…') : `🚀 ${t('crm.social.publish', 'Jetzt posten')}`}
+              {busy === 'publish' ? t('crm.social.scheduling', 'Wird eingeplant…') : `🗓 ${t('crm.social.scheduleGo', 'Zur geplanten Zeit posten')}`}
             </button>
           </div>
           {showPreview && <PostPreview content={content} images={images} format={format} platforms={platforms} onClose={() => setShowPreview(false)} />}

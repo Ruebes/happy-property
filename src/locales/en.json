@@ -3877,6 +3877,11 @@
       "publish": "Post now",
       "publishing": "Publishing…",
       "publishConfirm": "Publish this post publicly on {{p}} NOW?",
+      "scheduleGo": "Post at the scheduled time",
+      "scheduling": "Scheduling…",
+      "scheduleConfirm": "Automatically post this at the scheduled time ({{t}}) on {{p}}?",
+      "scheduleNoTime": "Please set a time under „Scheduled for\" above.",
+      "alreadyPosted": "This post has already run.",
       "topic": {
         "objekt": "Feature a property",
         "wissen": "Good to know",
