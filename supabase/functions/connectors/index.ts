@@ -57,18 +57,12 @@ const CHECKS: Check[] = [
     const v = await secretOf(sb, 'YOUTUBE_REFRESH_TOKEN')
     return v ? { ok: true, detail: 'Hinterlegt.' } : { ok: false, detail: 'Fehlt.' }
   } },
-  { key: 'OPENAI', label: 'OpenAI (Bilder)', run: async () => {
-    const tok = Deno.env.get('OPENAI_API_KEY') ?? ''
-    if (!tok) return { ok: false, detail: 'Kein Schlüssel hinterlegt.' }
-    const r = await fetch('https://api.openai.com/v1/models?limit=1', { headers: { Authorization: `Bearer ${tok}` }, ...timeout(8000) }).catch(() => null)
-    return r?.ok ? { ok: true, detail: 'Schlüssel gültig.' } : { ok: false, detail: `Schlüssel abgelehnt (HTTP ${r?.status ?? '—'}).` }
-  } },
-  { key: 'HIGGSFIELD', label: 'Higgsfield (Soul-Bilder)', run: async (sb) => {
+  { key: 'HIGGSFIELD', label: 'Higgsfield (Bild-KI)', run: async (sb) => {
     // Bewusst OHNE Token-Refresh: das würde den rotierenden Refresh-Token
     // verbrauchen und mit dem social-agent kollidieren. Nur Status lesen.
     const ws = await secretOf(sb, 'HIGGSFIELD_WORKSPACE_ID')
     const rt = await secretOf(sb, 'HIGGSFIELD_REFRESH_TOKEN')
-    if (!ws || !rt) return { ok: false, detail: 'Nicht verbunden — Bilder laufen über den OpenAI-Fallback.' }
+    if (!ws || !rt) return { ok: false, detail: 'Nicht verbunden — ohne Higgsfield können keine KI-Bilder erzeugt werden.' }
     const at = await secretOf(sb, 'HIGGSFIELD_ACCESS_TOKEN')
     const exp = Number(await secretOf(sb, 'HIGGSFIELD_EXPIRES_AT') || 0)
     if (at && exp - Math.floor(Date.now() / 1000) > 600) {

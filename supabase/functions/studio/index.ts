@@ -16,15 +16,19 @@
 //
 // Karussell nutzt ECHTE Projektfotos: crm_projects.images + die Drive-
 // synchronisierte Galerie aus deck_assets.gallery (keine KI-Bilder).
-// Einzelbild nutzt Svens Basisfoto + gpt-image-1 (input_fidelity=high) und
-// beachtet die gelernten Creative-Regeln aus ads_ai_rules (kind='creative').
+// Einzelbild nutzt Svens Basisfoto + Higgsfield flux_kontext (behält Gesicht +
+// Pose, tauscht die Umgebung) und beachtet die gelernten Creative-Regeln aus
+// ads_ai_rules (kind='creative'). Bild-KI = AUSSCHLIESSLICH Higgsfield (Sven
+// 11.8.26), kein OpenAI.
 //
-// ── Secrets ──  META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, ANTHROPIC_API_KEY, OPENAI_API_KEY
+// ── Secrets ──  META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, ANTHROPIC_API_KEY
+//               Higgsfield-Tokens rotieren in connector_secrets (siehe _shared/higgsfield.ts)
 // ── Deployment ──  supabase functions deploy studio --no-verify-jwt
 //                   supabase functions deploy ad-studio --no-verify-jwt   (Shim)
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
+import { hfGenerateBytes, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -84,25 +88,33 @@ const parseJson = <T>(text: string): T => {
   throw new Error('Antwort der KI war kein gültiges JSON')
 }
 
-// gpt-image-1: Basisbild + Prompt → PNG-Bytes (hohe Gesichtstreue)
-async function generateImage(baseUrl: string, prompt: string): Promise<Uint8Array> {
+// Store-Adapter für _shared/higgsfield.ts (liest/schreibt connector_secrets).
+function hfStoreFrom(sb: SupabaseClient): HfStore {
+  return {
+    get: async (key) => (((await sb.from('connector_secrets').select('value').eq('key', key).maybeSingle()).data as { value?: string } | null)?.value ?? '').trim(),
+    set: async (rows) => {
+      const stamp = new Date().toISOString()
+      for (const r of rows) {
+        const { error } = await sb.from('connector_secrets').upsert({ ...r, updated_at: stamp }, { onConflict: 'key' })
+        if (error) console.error('[studio] Higgsfield-Secret speichern:', error.message)
+      }
+    },
+  }
+}
+
+// Higgsfield flux_kontext: Basisbild (Sven) + Prompt → PNG-Bytes. Behält Gesicht
+// und Pose der Vorlage, tauscht die Umgebung. NUR Higgsfield, kein OpenAI.
+async function generateImage(store: HfStore, baseUrl: string, prompt: string): Promise<Uint8Array> {
   const baseRes = await fetch(baseUrl)
   if (!baseRes.ok) throw new Error(`Basisbild ${baseRes.status}`)
   const baseBytes = new Uint8Array(await baseRes.arrayBuffer())
-  const form = new FormData()
-  form.append('model', 'gpt-image-1')
-  form.append('image[]', new Blob([baseBytes], { type: 'image/jpeg' }), 'base.jpg')
-  form.append('prompt', prompt)
-  form.append('size', '1024x1024')
-  form.append('quality', 'high')
-  form.append('input_fidelity', 'high')
-  form.append('n', '1')
-  const res = await fetch('https://api.openai.com/v1/images/edits', {
-    method: 'POST', headers: { Authorization: `Bearer ${Deno.env.get('OPENAI_API_KEY')!}` }, body: form,
+  const ct = baseRes.headers.get('content-type') || 'image/jpeg'
+  const refId = await hfUploadImage(store, baseBytes, ct)
+  return await hfGenerateBytes(store, 'flux_kontext', {
+    prompt: `Same man as in the reference photo, keep his face and body true to the reference. ${prompt}. Photorealistic documentary style, natural light, no text, no watermark.`,
+    aspect_ratio: '1:1',
+    image_references: [{ id: refId }],
   })
-  const j = await res.json()
-  if (!res.ok || !j.data?.[0]?.b64_json) throw new Error(`OpenAI: ${JSON.stringify(j.error ?? j).slice(0, 200)}`)
-  return Uint8Array.from(atob(j.data[0].b64_json), c => c.charCodeAt(0))
 }
 
 Deno.serve(async (req) => {
@@ -135,8 +147,10 @@ Deno.serve(async (req) => {
       return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
     }
 
-    // Bild-Generierung im HINTERGRUND (Sven 11.8.26): gpt-image-1 in hoher
-    // Qualität braucht ~70 s — synchron riss das den Gateway-Timeout, gerade bei
+    const hfStore = hfStoreFrom(supabase)
+
+    // Bild-Generierung im HINTERGRUND (Sven 11.8.26): Higgsfield-Job + Polling
+    // braucht ~20-40 s — synchron riss das den Gateway-Timeout, gerade bei
     // langsameren Verbindungen (Giona). Jetzt: Job anlegen, sofort antworten,
     // Frontend fragt per mode:'image_status' nach.
     const startImageJob = async (base: string, prompt: string): Promise<string> => {
@@ -144,7 +158,7 @@ Deno.serve(async (req) => {
       await supabase.from('studio_image_jobs').insert({ id: jobId })
       const work = async () => {
         try {
-          const url = await storeImage(await generateImage(base, prompt))
+          const url = await storeImage(await generateImage(hfStore, base, prompt))
           await supabase.from('studio_image_jobs').update({ image_url: url }).eq('id', jobId)
         } catch (e) {
           console.error('[studio] image job:', e)
