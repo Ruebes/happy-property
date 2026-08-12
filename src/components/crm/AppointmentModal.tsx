@@ -113,6 +113,9 @@ function StepBar({ step }: { step: number }) {
 // ── Einladung im Happy-Property-Template (E-Mail-sicher, Tabellen + Inline-CSS) ──
 const HP_PHOTO_SQ = DECK_PHOTO.replace('/object/public/', '/render/image/public/') + '?width=112&height=112&resize=cover&quality=80'
 const HP_SANS = "Montserrat, Helvetica, Arial, sans-serif"
+// Termin-Bild je Sprache (öffentlich) — als WhatsApp-Bild, damit statt einer
+// wilden Maps-Link-Vorschau ein sauberes „Termin vereinbart"-Motiv erscheint.
+const LOTTE_TERMIN_IMG = (lang: string) => `https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-termin-${lang === 'en' ? 'eng' : 'de'}.jpg`
 
 interface InviteParams {
   firstName: string; isEdit: boolean; title: string
@@ -128,59 +131,63 @@ interface InviteParams {
   // Zu-/Absage-Links (One-Click, /zusage)
   rsvpYesHref?: string
   rsvpNoHref?: string
+  // Sprache des Empfängers (Standard de)
+  lang?: 'de' | 'en'
 }
 
 function buildInviteHtml(pr: InviteParams): string {
   const e = escHtml
+  const de = pr.lang !== 'en'
   const intro = pr.isEdit
-    ? `unser Termin hat sich geändert — hier sind die neuen Details:`
-    : `ich freue mich auf unser Treffen! Hier die Details:`
+    ? (de ? `unser Termin hat sich geändert — hier sind die neuen Details:` : `our appointment has changed. Here are the new details:`)
+    : (de ? `ich freue mich auf unser Treffen! Hier die Details:` : `I'm looking forward to our meeting. Here are the details:`)
   // Remote-Termine (Zoom/Telefon/WhatsApp): Uhrzeit in KUNDENZEIT (Deutschland) — der
   // Kunde sitzt i.d.R. in DE. Vor Ort = Ortszeit (Zypern, das Venue), ohne Zusatz.
-  const tzNote = pr.apptType === 'inperson' ? '' : ' (deutsche Zeit)'
+  const tzNote = pr.apptType === 'inperson' ? '' : (de ? ' (deutsche Zeit)' : ' (German time)')
+  const uhr = de ? ' Uhr' : ''
   const where = pr.apptType === 'inperson'
     ? (pr.location
-        ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.`
-        : `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong>.`)
+        ? (de ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong> hier: <strong>${e(pr.location)}</strong>.` : `We'll meet at <strong>${e(pr.von)}</strong> here: <strong>${e(pr.location)}</strong>.`)
+        : (de ? `Wir sehen uns um <strong>${e(pr.von)} Uhr</strong>.` : `We'll meet at <strong>${e(pr.von)}</strong>.`))
     : pr.apptType === 'zoom'
-      ? `Wir sprechen um <strong>${e(pr.von)} Uhr${tzNote}</strong> per Zoom${pr.zoomPassword ? ` (Passwort: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.`
+      ? (de ? `Wir sprechen um <strong>${e(pr.von)} Uhr${tzNote}</strong> per Zoom${pr.zoomPassword ? ` (Passwort: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.` : `We'll talk at <strong>${e(pr.von)}${tzNote}</strong> via Zoom${pr.zoomPassword ? ` (password: <strong>${e(pr.zoomPassword)}</strong>)` : ''}.`)
       : pr.isPrimary === false
-        ? `Der Termin findet um <strong>${e(pr.von)} Uhr${tzNote}</strong> ${pr.apptType === 'whatsapp' ? 'per WhatsApp-Call' : 'telefonisch'} statt.`
+        ? (de ? `Der Termin findet um <strong>${e(pr.von)} Uhr${tzNote}</strong> ${pr.apptType === 'whatsapp' ? 'per WhatsApp-Call' : 'telefonisch'} statt.` : `The appointment takes place at <strong>${e(pr.von)}${tzNote}</strong> ${pr.apptType === 'whatsapp' ? 'as a WhatsApp call' : 'by phone'}.`)
         : pr.apptType === 'whatsapp'
-          ? `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> per WhatsApp an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
-          : `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> an${pr.phone ? ` (${e(pr.phone)})` : ''}.`
+          ? (de ? `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> per WhatsApp an${pr.phone ? ` (${e(pr.phone)})` : ''}.` : `I'll call you at <strong>${e(pr.von)}${tzNote}</strong> via WhatsApp${pr.phone ? ` (${e(pr.phone)})` : ''}.`)
+          : (de ? `Ich rufe dich um <strong>${e(pr.von)} Uhr${tzNote}</strong> an${pr.phone ? ` (${e(pr.phone)})` : ''}.` : `I'll call you at <strong>${e(pr.von)}${tzNote}</strong>${pr.phone ? ` (${e(pr.phone)})` : ''}.`)
   const btn = (href: string, label: string, solid: boolean) =>
     `<a href="${e(href)}" target="_blank" style="display:inline-block;white-space:nowrap;font-family:${HP_SANS};font-size:13px;font-weight:600;text-decoration:none;padding:11px 20px;border-radius:10px;margin:0 8px 8px 0;${solid ? 'background-color:#ff795d;color:#ffffff;' : 'background-color:#ffffff;color:#1a2332;border:1px solid #e6dfd0;'}">${label}</a>`
   const buttons = [
-    pr.rsvpYesHref ? btn(pr.rsvpYesHref, '✅ Ich bin dabei', true) : '',
-    pr.apptType === 'zoom' && pr.zoomLink ? btn(pr.zoomLink, '📹 Zoom beitreten', !pr.rsvpYesHref) : '',
-    pr.apptType === 'inperson' && pr.locationUrl ? btn(pr.locationUrl, '📍 Ort auf Google Maps', false) : '',
-    btn(pr.gcalHref, '🗓 In meinen Kalender', false),
+    pr.rsvpYesHref ? btn(pr.rsvpYesHref, de ? '✅ Ich bin dabei' : "✅ I'll be there", true) : '',
+    pr.apptType === 'zoom' && pr.zoomLink ? btn(pr.zoomLink, de ? '📹 Zoom beitreten' : '📹 Join Zoom', !pr.rsvpYesHref) : '',
+    pr.apptType === 'inperson' && pr.locationUrl ? btn(pr.locationUrl, de ? '📍 Ort auf Google Maps' : '📍 Open in Google Maps', false) : '',
+    btn(pr.gcalHref, de ? '🗓 In meinen Kalender' : '🗓 Add to my calendar', false),
   ].filter(Boolean).join('')
   const rsvpNoLine = pr.rsvpNoHref
-    ? `<div style="font-family:${HP_SANS};font-size:12px;color:#9a9aa3;margin-top:10px;">Passt der Termin nicht? <a href="${e(pr.rsvpNoHref)}" style="color:#9a9aa3;text-decoration:underline;">Kurz Bescheid geben</a> — dann finden wir einen neuen.</div>`
+    ? `<div style="font-family:${HP_SANS};font-size:12px;color:#9a9aa3;margin-top:10px;">${de ? `Passt der Termin nicht? <a href="${e(pr.rsvpNoHref)}" style="color:#9a9aa3;text-decoration:underline;">Kurz Bescheid geben</a> — dann finden wir einen neuen.` : `Doesn't fit? <a href="${e(pr.rsvpNoHref)}" style="color:#9a9aa3;text-decoration:underline;">Let me know</a> and we'll find a new time.`}</div>`
     : ''
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;background-color:#FAF6EC;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#FAF6EC;"><tr><td align="center" style="padding:28px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;">
   <tr><td style="padding:0 0 20px 0;"><img src="${DECK_LOGO}" alt="Happy Property" width="120" height="37" style="display:block;border:0;"></td></tr>
   <tr><td style="background-color:#ffffff;border-radius:14px;padding:32px 36px;">
-    <div style="font-family:Georgia, 'Times New Roman', serif;font-size:22px;font-weight:700;color:#1a2332;">${pr.isEdit ? 'Terminänderung' : 'Unser Termin steht'} ✔</div>
+    <div style="font-family:Georgia, 'Times New Roman', serif;font-size:22px;font-weight:700;color:#1a2332;">${pr.isEdit ? (de ? 'Terminänderung' : 'Appointment updated') : (de ? 'Unser Termin steht' : 'Your appointment is confirmed')} ✔</div>
     <div style="font-family:${HP_SANS};font-size:14px;line-height:1.7;color:#1b1b22;margin-top:16px;">
-      Hallo ${e(pr.firstName)},<br><br>
+      ${de ? 'Hallo' : 'Hi'} ${e(pr.firstName)},<br><br>
       ${intro}<br><br>
       <strong>${e(pr.title)}</strong><br>
       ${e(pr.dateStr)}<br>
-      ${e(pr.von)}–${e(pr.bis)} Uhr<br><br>
+      ${e(pr.von)}–${e(pr.bis)}${uhr}<br><br>
       ${pr.personalNote ? `${e(pr.personalNote)}<br><br>` : ''}${where}
     </div>
     <div style="margin-top:22px;">${buttons}</div>
     ${rsvpNoLine}
-    <div style="font-family:${HP_SANS};font-size:11px;color:#9a9aa3;margin-top:8px;">Der Termin hängt außerdem als Kalender-Datei an dieser E-Mail.</div>
+    <div style="font-family:${HP_SANS};font-size:11px;color:#9a9aa3;margin-top:8px;">${de ? 'Der Termin hängt außerdem als Kalender-Datei an dieser E-Mail.' : 'The appointment is also attached to this email as a calendar file.'}</div>
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:28px;"><tr>
       <td style="padding-right:14px;"><img src="${HP_PHOTO_SQ}" alt="Sven" width="56" height="56" style="display:block;border-radius:28px;border:0;"></td>
       <td style="font-family:${HP_SANS};font-size:13px;line-height:1.5;color:#1b1b22;">
-        Bis bald!<br><strong>Sven</strong> · Happy Property<br>
+        ${de ? 'Bis bald!' : 'See you soon!'}<br><strong>Sven</strong> · Happy Property<br>
         <a href="mailto:info@happy-property.com" style="color:#ff795d;text-decoration:none;">info@happy-property.com</a>
       </td>
     </tr></table>
@@ -224,7 +231,7 @@ export default function AppointmentModal({
   onClose,
   onCreated,
 }: Props) {
-  const { t }        = useTranslation()
+  const { t, i18n }  = useTranslation()
   const { profile }  = useAuth()
   const isEdit       = !!appointment
 
@@ -626,7 +633,6 @@ export default function AppointmentModal({
       // in Ortszeit (Zypern = Venue). start_time ist als UTC gespeichert (korrekt) — das
       // hier ist reine Anzeige-Umrechnung, damit der Kunde nicht 1h daneben liegt.
       const dispTz = apptType === 'inperson' ? 'Asia/Nicosia' : 'Europe/Berlin'
-      const tzHint = apptType === 'inperson' ? '' : ' ' + t('crm.appt.germanTimeParen', '(deutsche Zeit)')
       const fmtHM = (iso: string) => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: dispTz }).format(new Date(iso))
       const vonDisp = fmtHM(start_time)
       const bisDisp = fmtHM(end_time)
@@ -639,27 +645,29 @@ export default function AppointmentModal({
       const gcalHref = buildGcalHref(title, start_time, end_time, gcalDetails, effLocation || undefined)
 
       // Empfängerliste: verknüpfter Lead + weitere Teilnehmer (Partner)
-      const mailTargets: Array<{ firstName: string; email: string; leadId?: string; pKey: string }> = []
-      const waTargets: Array<{ firstName: string; fullName: string; phone: string; leadId?: string; pKey: string }> = []
+      const mailTargets: Array<{ firstName: string; email: string; leadId?: string; pKey: string; lang: 'de' | 'en' }> = []
+      const waTargets: Array<{ firstName: string; fullName: string; phone: string; leadId?: string; pKey: string; lang: 'de' | 'en' }> = []
       if ((sendEmailInvite || sendWhatsAppInvite) && selectedLeadId) {
-        const { data: ld } = await supabase.from('leads').select('email, phone, whatsapp, first_name, last_name').eq('id', selectedLeadId).maybeSingle()
-        const le = ld as { email?: string | null; phone?: string | null; whatsapp?: string | null; first_name?: string | null; last_name?: string | null } | null
-        if (le?.email) mailTargets.push({ firstName: le.first_name || '', email: le.email, leadId: selectedLeadId, pKey: 'lead' })
+        const { data: ld } = await supabase.from('leads').select('email, phone, whatsapp, first_name, last_name, language').eq('id', selectedLeadId).maybeSingle()
+        const le = ld as { email?: string | null; phone?: string | null; whatsapp?: string | null; first_name?: string | null; last_name?: string | null; language?: string | null } | null
+        const leadLang: 'de' | 'en' = le?.language === 'en' ? 'en' : 'de'
+        if (le?.email) mailTargets.push({ firstName: le.first_name || '', email: le.email, leadId: selectedLeadId, pKey: 'lead', lang: leadLang })
         else if (sendEmailInvite) warnings.push(t('crm.appt.noLeadEmail', 'Lead hat keine E-Mail-Adresse — Einladung nicht gesendet.'))
         const waPhone = (le?.whatsapp || le?.phone || phoneNumber || '').trim()
-        if (waPhone) waTargets.push({ firstName: le?.first_name || '', fullName: `${le?.first_name ?? ''} ${le?.last_name ?? ''}`.trim(), phone: waPhone, leadId: selectedLeadId, pKey: 'lead' })
+        if (waPhone) waTargets.push({ firstName: le?.first_name || '', fullName: `${le?.first_name ?? ''} ${le?.last_name ?? ''}`.trim(), phone: waPhone, leadId: selectedLeadId, pKey: 'lead', lang: leadLang })
         else if (sendWhatsAppInvite) warnings.push(t('crm.appt.noLeadPhone', 'Keine WhatsApp-Nummer vorhanden — Einladung nicht gesendet.'))
       }
       for (const a of attendees) {
         const first = a.name.split(' ')[0]
+        const aLang: 'de' | 'en' = a.language === 'en' ? 'en' : 'de'
         // Dedupe: Lead kann auch als Geschäftskontakt erfasst sein — keine Doppel-Einladung
         const mailKey = (a.email ?? '').trim().toLowerCase()
         if (mailKey && !mailTargets.some(x => x.email.trim().toLowerCase() === mailKey)) {
-          mailTargets.push({ firstName: first, email: a.email as string, pKey: `a:${a.name}` })
+          mailTargets.push({ firstName: first, email: a.email as string, pKey: `a:${a.name}`, lang: aLang })
         }
         const phoneKey = (a.phone ?? '').replace(/\D/g, '')
         if (phoneKey && !waTargets.some(x => x.phone.replace(/\D/g, '') === phoneKey)) {
-          waTargets.push({ firstName: first, fullName: a.name, phone: a.phone as string, pKey: `a:${a.name}` })
+          waTargets.push({ firstName: first, fullName: a.name, phone: a.phone as string, pKey: `a:${a.name}`, lang: aLang })
         }
       }
 
@@ -716,12 +724,16 @@ export default function AppointmentModal({
       if (sendEmailInvite) {
         for (const tgt of mailTargets) {
           try {
+            // Datum in der Sprache des Empfängers (EN → englisch, sonst deutsch).
+            const dateStrM = tgt.lang === 'en'
+              ? new Date(start_time).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
+              : dateStr
             const html = buildInviteHtml({
-              firstName: tgt.firstName, isEdit, title, dateStr, von: vonDisp, bis: bisDisp, apptType,
+              firstName: tgt.firstName, isEdit, title, dateStr: dateStrM, von: vonDisp, bis: bisDisp, apptType,
               zoomLink: effZoomLink || undefined, zoomPassword: effZoomPassword || undefined,
               location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
               phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
-              isPrimary: !!tgt.leadId,
+              isPrimary: !!tgt.leadId, lang: tgt.lang,
               personalNote: personalTexts[tgt.pKey],
               rsvpYesHref: rsvpHref(tgt.pKey, 'yes') || undefined,
               rsvpNoHref: rsvpHref(tgt.pKey, 'no') || undefined,
@@ -739,8 +751,9 @@ export default function AppointmentModal({
             const { error: mailErr } = await supabase.functions.invoke('send-email', {
               body: {
                 to: tgt.email,
-                subject: `${isEdit ? t('crm.appt.mailSubjectEdit', 'Terminänderung') : t('crm.appt.mailSubjectNew', 'Terminbestätigung')}: ${title}`,
+                subject: `${isEdit ? (tgt.lang === 'en' ? 'Appointment updated' : 'Terminänderung') : (tgt.lang === 'en' ? 'Appointment confirmation' : 'Terminbestätigung')}: ${title}`,
                 html,
+                lang: tgt.lang,
                 ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
                 attachment: {
                   filename:       'termin.ics',
@@ -760,18 +773,24 @@ export default function AppointmentModal({
       if (sendWhatsAppInvite) {
         for (const tgt of waTargets) {
           try {
+            // WhatsApp-Text in der SPRACHE DES EMPFÄNGERS bauen (nicht in Svens
+            // App-Sprache). getFixedT liefert die Übersetzung fix zur Empfängersprache.
+            const tt = i18n.getFixedT(tgt.lang)
+            const localeL = tgt.lang === 'en' ? 'en-GB' : 'de-DE'
+            const dateStrL = new Date(start_time).toLocaleDateString(localeL, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
+            const tzHintL = apptType === 'inperson' ? '' : ' ' + tt('crm.appt.germanTimeParen', '(deutsche Zeit)')
             const whereText = apptType === 'zoom' && effZoomLink
-              ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\n${t('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword}` : ''}`
+              ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\n${tt('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword}` : ''}`
               : apptType === 'inperson'
-                ? `\n🤝 ${t('crm.appt.waInperson', 'Wir treffen uns vor Ort')}${effLocation ? `: ${effLocation}` : ''}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
+                ? `\n🤝 ${tt('crm.appt.waInperson', 'Wir treffen uns vor Ort')}${effLocation ? `: ${effLocation}` : ''}${effLocationUrl ? `\n${effLocationUrl}` : ''}`
                 : apptType === 'whatsapp'
                   ? (tgt.leadId
-                      ? `\n📞 ${t('crm.appt.waCallReminderWa', 'Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.')}`
-                      : `\n📞 ${t('crm.appt.waCallInfoWa', 'Der Termin findet als WhatsApp-Call statt.')}`)
+                      ? `\n📞 ${tt('crm.appt.waCallReminderWa', 'Ich rufe dich zur vereinbarten Zeit per WhatsApp an — du musst nichts weiter tun.')}`
+                      : `\n📞 ${tt('crm.appt.waCallInfoWa', 'Der Termin findet als WhatsApp-Call statt.')}`)
                   : apptType === 'phone'
                     ? (tgt.leadId
-                        ? `\n📞 ${t('crm.appt.waCallReminderPhone', 'Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.')}`
-                        : `\n📞 ${t('crm.appt.waCallInfoPhone', 'Der Termin findet telefonisch statt.')}`)
+                        ? `\n📞 ${tt('crm.appt.waCallReminderPhone', 'Ich rufe dich zur vereinbarten Zeit an — du musst nichts weiter tun.')}`
+                        : `\n📞 ${tt('crm.appt.waCallInfoPhone', 'Der Termin findet telefonisch statt.')}`)
                     : ''
             const pNote = personalTexts[tgt.pKey] ? `\n\n${personalTexts[tgt.pKey]}` : ''
             // Lange URLs für WhatsApp kürzen (portal.../s/<code>)
@@ -781,16 +800,18 @@ export default function AppointmentModal({
               yesRaw ? shortenUrl(rsvpHref(tgt.pKey, 'no')) : Promise.resolve(''),
               shortenUrl(gcalHref),
             ])
-            const rsvpText = yes ? `\n\n✅ ${t('crm.appt.waRsvpAsk', 'Sagst du mir kurz zu? Ein Klick genügt:')}\n${yes}\n(${t('crm.appt.waRsvpNo', 'Falls es nicht passt: {{no}}', { no })})` : ''
+            const rsvpText = yes ? `\n\n✅ ${tt('crm.appt.waRsvpAsk', 'Sagst du mir kurz zu? Ein Klick genügt:')}\n${yes}\n(${tt('crm.appt.waRsvpNo', 'Falls es nicht passt: {{no}}', { no })})` : ''
             const waIntro = isEdit
-              ? t('crm.appt.waIntroEdit', 'unser Termin hat sich geändert — hier die neuen Details')
-              : t('crm.appt.waIntroNew', 'ich freue mich auf unser Treffen')
-            const waText = `${t('crm.appt.waHello', 'Hallo {{name}}', { name: tgt.firstName })}, ${waIntro}:\n\n${title}\n${dateStr}, ${vonDisp}–${bisDisp} ${t('crm.appt.clock', 'Uhr')}${tzHint}${pNote}${whereText}${rsvpText}\n\n🗓 ${t('crm.appt.waSaveToCalendar', 'Termin in deinen Kalender speichern:')}\n${gcalShort}\n\n${t('crm.appt.waSignoff', 'Bis bald!\nSven · Happy Property')}`
+              ? tt('crm.appt.waIntroEdit', 'unser Termin hat sich geändert — hier die neuen Details')
+              : tt('crm.appt.waIntroNew', 'ich freue mich auf unser Treffen')
+            const waText = `${tt('crm.appt.waHello', 'Hallo {{name}}', { name: tgt.firstName })}, ${waIntro}:\n\n${title}\n${dateStrL}, ${vonDisp}–${bisDisp} ${tt('crm.appt.clock', 'Uhr')}${tzHintL}${pNote}${whereText}${rsvpText}\n\n🗓 ${tt('crm.appt.waSaveToCalendar', 'Termin in deinen Kalender speichern:')}\n${gcalShort}\n\n${tt('crm.appt.waSignoff', 'Bis bald!\nSven · Happy Property')}`
             const { data: waData, error: waErr } = await supabase.functions.invoke('send-whatsapp', {
               body: {
                 event_type:   'termin_einladung',   // reines Label fürs Activity-Log (override_text braucht kein Template)
                 override_text: waText,
                 lead_data:    { lead_name: tgt.fullName, lead_phone: tgt.phone },
+                // Termin-Bild je Sprache → sauberes Motiv statt wilder Maps-Link-Vorschau.
+                persona_image: LOTTE_TERMIN_IMG(tgt.lang),
                 ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
               },
             })
