@@ -10,11 +10,15 @@ import { supabase } from '../../lib/supabase'
 // die Anzeige PAUSIERT in der System-Kampagne (Edge Function ad-studio).
 
 interface Card { title: string; description: string; image_url: string }
+interface Overlay { badge?: string; subheadline?: string; checks?: string[] }
 interface Draft {
   format: 'single' | 'carousel'
   headline: string
   message: string
   image_url?: string
+  /** rohes Hintergrundfoto ohne Text-Overlay (Server nutzt es für Änderungen) */
+  bg_url?: string
+  overlay?: Overlay | null
   cards?: Card[]
 }
 
@@ -86,11 +90,11 @@ export default function AdStudio({ onPublished, showToast }: Props) {
 
   // Bild-Job pollen: der Text kommt sofort, das KI-Bild entsteht im Hintergrund
   // (verhindert Gateway-Timeouts bei langsameren Verbindungen).
-  const pollImage = async (jobId: string): Promise<string> => {
+  const pollImage = async (jobId: string): Promise<{ url: string; bg: string | null }> => {
     for (let i = 0; i < 45; i++) {
       await new Promise(r => setTimeout(r, 4000))
       const s = await call({ mode: 'image_status', job: jobId })
-      if (s.status === 'done' && s.image_url) return String(s.image_url)
+      if (s.status === 'done' && s.image_url) return { url: String(s.image_url), bg: s.bg_url ? String(s.bg_url) : null }
       if (s.status === 'error') throw new Error(String(s.error ?? t('crm.studio.imgError', 'Bild konnte nicht erstellt werden')))
     }
     throw new Error(t('crm.studio.imgSlow', 'Bild dauert ungewöhnlich lange — bitte noch einmal versuchen'))
@@ -99,8 +103,8 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   const runImageJob = async (jobId: string) => {
     setImgBusy(true)
     try {
-      const url = await pollImage(jobId)
-      setDraft(prev => prev ? { ...prev, image_url: url } : prev)
+      const { url, bg } = await pollImage(jobId)
+      setDraft(prev => prev ? { ...prev, image_url: url, ...(bg ? { bg_url: bg } : {}) } : prev)
     } catch (err) {
       console.error('[AdStudio] image:', err)
       showToast(`❌ ${err instanceof Error ? err.message : t('crm.studio.error', 'Das hat nicht geklappt')}`)
@@ -248,7 +252,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
             <input value={chat} onChange={e => setChat(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') void refine() }}
               placeholder={draft.format === 'single'
-                ? t('crm.studio.chatPhSingle', 'z.B. „mach den Himmel blauer“, „anderes Motiv: am Pool“, „Caption kürzer“ …')
+                ? t('crm.studio.chatPhSingle', 'z.B. „Badge-Text: …", „anderer Checkpunkt", „anderes Motiv: am Pool", „Caption kürzer" …')
                 : t('crm.studio.chatPhCarousel', 'z.B. „nur 4 Karten“, „erste Karte: anderes Foto“, „Caption emotionaler“ …')}
               className="flex-1 min-w-[240px] border border-gray-200 rounded-xl px-4 py-3 text-base bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
             <button onClick={() => void refine()} disabled={busy !== null || imgBusy || !chat.trim()}

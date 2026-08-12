@@ -27,6 +27,8 @@
 //                   supabase functions deploy ad-studio --no-verify-jwt   (Shim)
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
+import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import { hfGenerateBytes, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
 
@@ -47,11 +49,18 @@ const URL_TAGS = 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&u
 const LINK = 'https://portal.happy-property.com/termin'
 
 interface Card { title: string; description: string; image_url: string }
+// Text-Overlay AUF dem Anzeigenbild (Badge + Subheadline + Checkmarks) —
+// wird als SVG gerendert (scharfer Text) und aufs Foto komponiert. So sehen
+// die Anzeigen aus wie die Landingpage-Hero-Grafiken, ohne KI-Krakel-Schrift.
+interface Overlay { badge?: string; subheadline?: string; checks?: string[] }
 interface Draft {
   format: 'single' | 'carousel'
   headline: string
   message: string
   image_url?: string
+  /** rohes Hintergrundfoto OHNE Overlay — Basis für Text-/Bild-Änderungen */
+  bg_url?: string
+  overlay?: Overlay | null
   cards?: Card[]
 }
 
@@ -120,6 +129,91 @@ async function generateImage(store: HfStore, bases: string[], prompt: string): P
   return await hfGenerateBytes(store, jobType, { prompt, aspect_ratio: '1:1', image_references: refs })
 }
 
+// ── Text-Overlay: SVG → PNG (resvg) → aufs Foto komponieren (imagescript) ───
+// Muster aus dem Social-Studio (Vergleichs-Karussell): Text wird GERENDERT,
+// nicht von der KI gemalt — gestochen scharf, korrekte Umlaute, CI-Farben.
+let _resvgReady: Promise<unknown> | null = null
+const ensureResvg = () => (_resvgReady ??= initWasm(fetch('https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm')))
+let _fontBufs: Uint8Array[] | null = null
+async function loadFonts(): Promise<Uint8Array[]> {
+  if (_fontBufs) return _fontBufs
+  const urls = [
+    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Bold.ttf',
+    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Regular.ttf',
+  ]
+  const bufs: Uint8Array[] = []
+  for (const u of urls) { try { const r = await fetch(u); if (r.ok) bufs.push(new Uint8Array(await r.arrayBuffer())) } catch { /* Font optional */ } }
+  return (_fontBufs = bufs)
+}
+async function svgToPng(svg: string): Promise<Uint8Array> {
+  await ensureResvg()
+  const fontBuffers = await loadFonts()
+  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
+  return r.render().asPng()
+}
+const xesc = (s: string) => (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+function xwrap(s: string, max: number): string[] {
+  const words = (s ?? '').trim().split(/\s+/).filter(Boolean); const lines: string[] = []; let cur = ''
+  for (const w of words) { if ((`${cur} ${w}`).trim().length > max && cur) { lines.push(cur); cur = w } else cur = (`${cur} ${w}`).trim() }
+  if (cur) lines.push(cur); return lines.length ? lines : ['']
+}
+
+// Overlay-Layout (1080×1080, transparent): roter Badge mit Headline oben links,
+// unten cremefarbenes Panel mit dunkelblauer Subheadline + Checkmark-Zeilen —
+// die Optik der Landingpage-Heros (roter Badge / navy Subheadline / ✓-Punkte).
+function overlaySvg(ov: Overlay): string {
+  const W = 1080, H = 1080
+  const F = 'font-family="Open Sans"'
+  const parts: string[] = []
+  // Badge oben links (rot, weiße Bold-Schrift)
+  if (ov.badge?.trim()) {
+    const lines = xwrap(ov.badge, 30).slice(0, 3)
+    const fs = 42, lh = 54, padX = 30, padY = 20
+    const wMax = Math.max(...lines.map(l => l.length))
+    const bw = Math.min(W - 96, Math.round(wMax * fs * 0.62) + padX * 2)
+    const bh = lines.length * lh + padY * 2 - (lh - fs)
+    parts.push(`<rect x="48" y="48" width="${bw}" height="${bh}" rx="14" fill="#e02424"/>`)
+    parts.push(`<text ${F} font-size="${fs}" font-weight="700" fill="#ffffff">${lines.map((l, i) => `<tspan x="${48 + padX}" y="${48 + padY + fs - 6 + i * lh}">${xesc(l)}</tspan>`).join('')}</text>`)
+  }
+  // Unteres Panel (creme) mit Subheadline + Checks
+  const checks = (ov.checks ?? []).map(c => (c ?? '').trim()).filter(Boolean).slice(0, 4)
+  const subLines = ov.subheadline?.trim() ? xwrap(ov.subheadline, 44).slice(0, 2) : []
+  if (subLines.length || checks.length) {
+    const subH = subLines.length ? subLines.length * 52 + 14 : 0
+    const checksH = checks.length * 56
+    const panelH = 36 + subH + checksH + 30
+    const py = H - panelH
+    parts.push(`<rect x="0" y="${py}" width="${W}" height="${panelH}" fill="#FAF6EC" fill-opacity="0.97"/>`)
+    parts.push(`<rect x="0" y="${py}" width="${W}" height="6" fill="#e02424"/>`)
+    let cy = py + 36
+    if (subLines.length) {
+      parts.push(`<text ${F} font-size="40" font-weight="700" fill="#1a2332">${subLines.map((l, i) => `<tspan x="52" y="${cy + 34 + i * 52}">${xesc(l)}</tspan>`).join('')}</text>`)
+      cy += subH
+    }
+    checks.forEach((c, i) => {
+      const yy = cy + i * 56 + 26
+      parts.push(`<circle cx="70" cy="${yy}" r="17" fill="#16a34a"/>`)
+      parts.push(`<path d="M ${62} ${yy} l 6 7 l 11 -13" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`)
+      parts.push(`<text ${F} x="100" y="${yy + 11}" font-size="31" fill="#1b1b22">${xesc(c.slice(0, 60))}</text>`)
+    })
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('\n')}</svg>`
+}
+
+// Foto (cover 1080×1080) + Overlay-PNG zusammenfügen → JPEG-Bytes.
+async function composeCreative(photoBytes: Uint8Array, ov: Overlay): Promise<Uint8Array> {
+  const W = 1080, H = 1080
+  const img = await Image.decode(photoBytes)
+  let cw = img.width, ch = img.height
+  if (cw / ch > W / H) cw = Math.round(ch * (W / H)); else ch = Math.round(cw / (W / H))
+  const base = img.clone().crop(Math.round((img.width - cw) / 2), Math.round((img.height - ch) / 2), cw, ch).resize(W, H)
+  const ovPng = await svgToPng(overlaySvg(ov))
+  base.composite(await Image.decode(ovPng), 0, 0)
+  return await base.encodeJPEG(92)
+}
+const hasOverlayText = (ov: Overlay | null | undefined): ov is Overlay =>
+  !!ov && (!!ov.badge?.trim() || !!ov.subheadline?.trim() || (ov.checks ?? []).some(c => c?.trim()))
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
 
@@ -143,9 +237,9 @@ Deno.serve(async (req) => {
       .order('created_at', { ascending: false }).limit(15)
     const creativeRules = ((ruleRows ?? []) as { rule: string }[]).map(r => `- ${r.rule}`).join('\n')
 
-    const storeImage = async (bytes: Uint8Array): Promise<string> => {
-      const path = `studio/${crypto.randomUUID()}.png`
-      const { error } = await supabase.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png' })
+    const storeImage = async (bytes: Uint8Array, ext: 'png' | 'jpg' = 'png'): Promise<string> => {
+      const path = `studio/${crypto.randomUUID()}.${ext}`
+      const { error } = await supabase.storage.from('ad-creatives').upload(path, bytes, { contentType: ext === 'jpg' ? 'image/jpeg' : 'image/png' })
       if (error) throw new Error(`Storage: ${error.message}`)
       return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
     }
@@ -155,14 +249,21 @@ Deno.serve(async (req) => {
     // Bild-Generierung im HINTERGRUND (Sven 11.8.26): Higgsfield-Job + Polling
     // braucht ~20-40 s — synchron riss das den Gateway-Timeout, gerade bei
     // langsameren Verbindungen (Giona). Jetzt: Job anlegen, sofort antworten,
-    // Frontend fragt per mode:'image_status' nach.
-    const startImageJob = async (bases: string[], prompt: string): Promise<string> => {
+    // Frontend fragt per mode:'image_status' nach. Mit Overlay wird das fertige
+    // Foto zusätzlich mit dem gerenderten Text komponiert (bg_url = rohes Foto).
+    const startImageJob = async (bases: string[], prompt: string, overlay?: Overlay | null): Promise<string> => {
       const jobId = crypto.randomUUID()
       await supabase.from('studio_image_jobs').insert({ id: jobId })
       const work = async () => {
         try {
-          const url = await storeImage(await generateImage(hfStore, bases, prompt))
-          await supabase.from('studio_image_jobs').update({ image_url: url }).eq('id', jobId)
+          const photo = await generateImage(hfStore, bases, prompt)
+          const bgUrl = await storeImage(photo)
+          let finalUrl = bgUrl
+          if (hasOverlayText(overlay)) {
+            try { finalUrl = await storeImage(await composeCreative(photo, overlay), 'jpg') }
+            catch (ce) { console.error('[studio] compose:', ce) /* Netz: rohes Foto statt gar nichts */ }
+          }
+          await supabase.from('studio_image_jobs').update({ image_url: finalUrl, bg_url: bgUrl }).eq('id', jobId)
         } catch (e) {
           console.error('[studio] image job:', e)
           await supabase.from('studio_image_jobs').update({ error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq('id', jobId)
@@ -176,11 +277,11 @@ Deno.serve(async (req) => {
     if (mode === 'image_status') {
       const jobId = String(body.job ?? '')
       if (!jobId) throw new Error('job fehlt')
-      const { data } = await supabase.from('studio_image_jobs').select('image_url, error').eq('id', jobId).maybeSingle()
-      const row = data as { image_url: string | null; error: string | null } | null
+      const { data } = await supabase.from('studio_image_jobs').select('image_url, bg_url, error').eq('id', jobId).maybeSingle()
+      const row = data as { image_url: string | null; bg_url: string | null; error: string | null } | null
       if (!row) return json({ status: 'unknown' })
       if (row.error) return json({ status: 'error', error: row.error })
-      if (row.image_url) return json({ status: 'done', image_url: row.image_url })
+      if (row.image_url) return json({ status: 'done', image_url: row.image_url, bg_url: row.bg_url })
       return json({ status: 'pending' })
     }
 
@@ -219,8 +320,9 @@ Deno.serve(async (req) => {
         message: string
         image_prompt?: string
         personas?: string[]
+        overlay?: Overlay | null
         cards?: Array<{ title: string; description: string; image_url: string }>
-      }>(await claude(`Du bist der Anzeigen-Texter von Happy Property (Immobilien-Investment Zypern, Zielgruppe deutschsprachige Kapitalanleger, Du-Ansprache, Stil der bisherigen Gewinner-Ads: emotionaler Einstieg über Schmerzpunkte wie Steuern/Bürokratie/Wetter, dann Zypern-Vorteile mit ✅-Aufzählung, klare Aufforderung zum kostenlosen Beratungsgespräch über den Online-Terminkalender).
+      }>(await claude(`Du bist der Anzeigen-Texter von Happy Property (Immobilien-Investment Zypern, Zielgruppe deutschsprachige Kapitalanleger, Du-Ansprache, Stil der bisherigen Gewinner-Ads: emotionaler Einstieg über Schmerzpunkte wie Steuern/Bürokratie/Wetter, dann Zypern-Vorteile mit ✅-Aufzählung, klare Aufforderung zum kostenlosen Beratungsgespräch über den Online-Terminkalender). JEDE Anzeige muss sofort klarmachen: Wir verkaufen Immobilien-Investments auf Zypern, Ziel ist ein kostenloses Beratungsgespräch (Lead).
 SCHREIBREGEL: NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (–) verwenden, immer den normalen Bindestrich "-" (auch bei Zahlenspannen: "8-12 %", nicht "8–12 %").
 
 AUFTRAG von Sven:
@@ -235,7 +337,8 @@ Antworte NUR mit JSON:
   "format": "single" | "carousel"  (Karussell wenn der Auftrag Projekte/mehrere Karten nahelegt),
   "headline": "max. 40 Zeichen",
   "message": "die komplette Caption (Hauptext) im Gewinner-Stil, mit Absätzen und ✅",
-  "image_prompt": "NUR bei single: deutscher Prompt für das Bild. Ohne Basisbild: Szene mit Sven, Original-Pose beibehalten. Mit Basisbild: die gewünschte Veränderung des Basisbilds. Fotorealistisch-dokumentarisch",
+  "image_prompt": "NUR bei single: deutscher Prompt für das HINTERGRUND-Foto. Ohne Basisbild: Szene mit Sven — Pose UND KLEIDUNG des Referenzfotos UNVERÄNDERT lassen, NUR die Umgebung passend zum Auftrag (Mittelmeer/Neubau/Zypern-Immobilien). Mit Basisbild: die gewünschte Veränderung des Basisbilds. KEIN Text im Foto",
+  "overlay": NUR bei single — der TEXT AUF dem Bild (wird gestochen scharf gerendert, KEIN KI-Text): {"badge": "kurze knackige Bild-Headline, max. 55 Zeichen (roter Badge)", "subheadline": "1 Satz, max. 80 Zeichen (dunkelblau)", "checks": [2-4 kurze Vorteils-Punkte, je max. 55 Zeichen]}. Nennt der Auftrag konkrete Bild-Headline/Subheadline/Checkmark-Texte, übernimm sie WÖRTLICH. Nur wenn der Auftrag ausdrücklich "nur Foto ohne Text" will: null,
   "personas": ["sven" und/oder "lotte" NUR wenn sie laut Auftrag ins Bild sollen, sonst []],
   "cards": [NUR bei carousel, 2-6 Karten: {"title": "max. 35 Zeichen", "description": "max. 60 Zeichen", "image_url": "eine der echten Projekt-Foto-URLs"}]
 }`))
@@ -243,6 +346,7 @@ Antworte NUR mit JSON:
       const draft: Draft = { format: plan.format, headline: plan.headline, message: plan.message }
       if (plan.format === 'single' || baseImage) {
         draft.format = 'single'
+        draft.overlay = hasOverlayText(plan.overlay) ? plan.overlay : null
         // Text sofort zurück, Bild im Hintergrund → Frontend pollt image_status.
         const personas = Array.isArray(plan.personas) ? plan.personas.filter(p => p === 'sven' || p === 'lotte') : []
         let bases: string[]
@@ -260,9 +364,11 @@ Antworte NUR mit JSON:
           prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} Photorealistic, natural light, no text, no watermark.`
         } else {
           bases = [SVEN_PHOTO]
-          prompt = `Same man as in the reference photo, keep his face and body true to the reference. ${plan.image_prompt ?? 'Fotorealistische Szene mit dem Mann aus dem Foto, Umgebung modernes Neubauprojekt am Mittelmeer, Original-Pose beibehalten, neutrales Tageslicht, kein Text'}. Photorealistic documentary style, natural light, no text, no watermark.`
+          // Pose UND Kleidung unangetastet lassen — je mehr das Modell am
+          // Menschen ändert, desto künstlicher wirkt das Ergebnis (12.8.).
+          prompt = `Same man as in the reference photo. Keep his face, pose AND clothing EXACTLY as in the reference - change ONLY the surroundings. ${plan.image_prompt ?? 'Umgebung: modernes Neubauprojekt am Mittelmeer auf Zypern, Meer im Hintergrund'}. Photorealistic documentary style, natural light, no text, no watermark.`
         }
-        const jobId = await startImageJob(bases, prompt)
+        const jobId = await startImageJob(bases, prompt, draft.overlay)
         return json({ success: true, draft, image_job: jobId })
       }
       draft.cards = (plan.cards ?? []).slice(0, 6)
@@ -276,7 +382,7 @@ Antworte NUR mit JSON:
       const instruction = String(body.instruction ?? '').trim().slice(0, 1000)
       if (!draft || !instruction) throw new Error('draft/instruction fehlt')
 
-      const decision = parseJson<{ target: 'caption' | 'image' | 'cards'; headline?: string; message?: string; image_prompt?: string; cards?: Card[] }>(
+      const decision = parseJson<{ target: 'caption' | 'image' | 'overlay' | 'cards'; headline?: string; message?: string; image_prompt?: string; overlay?: Overlay | null; cards?: Card[] }>(
         await claude(`Sven bearbeitet einen Anzeigen-Entwurf per Chat. Entscheide, was er ändern will, und liefere die Änderung.
 SCHREIBREGEL für alle Texte: NIEMALS Gedankenstrich (—) oder Bis-Strich (–), immer normaler Bindestrich "-" (auch "8-12 %").
 
@@ -287,8 +393,9 @@ SVENS ANWEISUNG:
 """${instruction}"""
 ${creativeRules ? `\nGELERNTE BILD-REGELN (bei image_prompt beachten):\n${creativeRules}` : ''}
 Antworte NUR mit JSON:
-- Text-/Caption-Änderung: {"target":"caption","headline":"...","message":"..."} (beides vollständig, mit der Änderung umgesetzt)
-- Bild-Änderung (nur bei format=single): {"target":"image","image_prompt":"deutscher Prompt: Original-Pose des Mannes beibehalten, Änderung laut Anweisung, fotorealistisch-dokumentarisch, kein Text im Bild"}
+- Text-/Caption-Änderung (Haupttext UNTER der Anzeige): {"target":"caption","headline":"...","message":"..."} (beides vollständig, mit der Änderung umgesetzt)
+- Änderung des TEXTS AUF DEM BILD (Badge/Subheadline/Checkmarks): {"target":"overlay","overlay":{"badge":"...","subheadline":"...","checks":["..."]}} — IMMER das komplette Overlay liefern (auch unveränderte Teile)
+- FOTO-Änderung (Motiv/Umgebung, nur bei format=single): {"target":"image","image_prompt":"deutscher Prompt: Pose UND Kleidung des Mannes unverändert lassen, Änderung laut Anweisung, fotorealistisch-dokumentarisch, kein Text im Bild"}
 - Karten-Änderung (nur bei format=carousel): {"target":"cards","cards":[...komplette aktualisierte Kartenliste, image_url beibehalten...]}
 Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für den Haupt-Teil und lege headline/message ZUSÄTZLICH bei — sie werden immer übernommen, wenn vorhanden.`))
 
@@ -299,12 +406,30 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
       if (decision.target === 'caption') {
         updated.headline = decision.headline ?? draft.headline
         updated.message = decision.message ?? draft.message
+      } else if (decision.target === 'overlay' && draft.format === 'single') {
+        // Text AUF dem Bild ändern: kein neues KI-Foto nötig — Overlay neu
+        // rendern und aufs vorhandene Hintergrundfoto komponieren (synchron, schnell).
+        updated.overlay = hasOverlayText(decision.overlay) ? decision.overlay : null
+        const bg = draft.bg_url ?? draft.image_url
+        if (bg) {
+          const res = await fetch(bg)
+          if (res.ok) {
+            const photo = new Uint8Array(await res.arrayBuffer())
+            updated.image_url = hasOverlayText(updated.overlay)
+              ? await storeImage(await composeCreative(photo, updated.overlay), 'jpg')
+              : (draft.bg_url ?? draft.image_url)
+            updated.bg_url = draft.bg_url ?? draft.image_url
+          }
+        }
+        return json({ success: true, draft: updated, changed: 'overlay' })
       } else if (decision.target === 'image' && draft.format === 'single') {
-        // Neues Bild im Hintergrund — altes Bild bleibt sichtbar, bis das neue da
-        // ist. Basis ist das AKTUELLE Bild (edit-in-place via flux_kontext).
+        // Neues FOTO im Hintergrund — altes Bild bleibt sichtbar, bis das neue da
+        // ist. Basis ist das ROHE Hintergrundfoto (ohne Overlay), das Overlay
+        // wird aufs neue Foto wieder draufgerendert.
         const jobId = await startImageJob(
-          [draft.image_url ?? SVEN_PHOTO],
+          [draft.bg_url ?? draft.image_url ?? SVEN_PHOTO],
           `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. Photorealistic, no text, no watermark.`,
+          draft.overlay,
         )
         return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {
