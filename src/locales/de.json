@@ -3414,7 +3414,14 @@
       "stReview": "In Prüfung",
       "stRejected": "Abgelehnt",
       "stDraft": "Entwurf",
-      "stArchived": "Archiviert"
+      "stArchived": "Archiviert",
+      "prepTitle": "Vorbereitete Anzeigen",
+      "prepSub": "Hier gespeicherte Anzeigen sind noch NICHT in der Übersicht und noch nicht aktiv. „Freigeben\" nimmt sie (pausiert) zu den anderen Anzeigen dazu — aktiviert werden sie dann dort.",
+      "prepEmpty": "Keine vorbereiteten Anzeigen — neu erstellte landen automatisch hier.",
+      "prepSince": "vorbereitet seit",
+      "prepBadge": "Nicht veröffentlicht",
+      "prepRelease": "Freigeben",
+      "prepReleased": "✅ Freigegeben — die Anzeige steht jetzt (pausiert) bei den anderen Anzeigen"
     },
     "studio": {
       "title": "Anzeigen-Studio (KI)",
@@ -3434,7 +3441,7 @@
       "image": "Bild",
       "cards": "Karten",
       "publish": "Als Anzeige anlegen (pausiert)",
-      "published": "✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren",
+      "published": "✅ Anzeige gespeichert — liegt unter „Vorbereitete Anzeigen\" und ist noch NICHT veröffentlicht",
       "error": "Das hat nicht geklappt",
       "networkError": "Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.",
       "uploadErr": "Bild-Upload fehlgeschlagen",

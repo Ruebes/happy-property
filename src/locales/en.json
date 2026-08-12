@@ -3414,7 +3414,14 @@
       "stReview": "In review",
       "stRejected": "Rejected",
       "stDraft": "Draft",
-      "stArchived": "Archived"
+      "stArchived": "Archived",
+      "prepTitle": "Prepared ads",
+      "prepSub": "Ads saved here are NOT in the overview yet and not active. \"Release\" adds them (paused) to the other ads — you activate them there.",
+      "prepEmpty": "No prepared ads — newly created ones land here automatically.",
+      "prepSince": "prepared since",
+      "prepBadge": "Not published",
+      "prepRelease": "Release",
+      "prepReleased": "✅ Released — the ad now sits (paused) with the other ads"
     },
     "studio": {
       "title": "Ad studio (AI)",
@@ -3434,7 +3441,7 @@
       "image": "Image",
       "cards": "Cards",
       "publish": "Create as ad (paused)",
-      "published": "✅ Ad created (paused) — check via 👁 preview, then activate",
+      "published": "✅ Ad saved — it sits under \"Prepared ads\" and is NOT published yet",
       "error": "That did not work",
       "networkError": "The request never reached the server — check your internet and disable any ad blocker for this page.",
       "uploadErr": "Image upload failed",

@@ -150,7 +150,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     setBusy('publish')
     try {
       await call({ mode: 'publish', draft })
-      showToast(t('crm.studio.published', '✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren'))
+      showToast(t('crm.studio.published', '✅ Anzeige gespeichert — liegt unter „Vorbereitete Anzeigen" und ist noch NICHT veröffentlicht'))
       setDraft(null)
       setBrief('')
       setBaseImage('')

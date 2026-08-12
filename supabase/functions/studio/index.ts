@@ -379,6 +379,10 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
       const adJson = await adRes.json()
       if (!adRes.ok) throw new Error(`Ad: ${JSON.stringify(adJson.error?.message ?? adJson).slice(0, 200)}`)
       console.log(`[ad-studio] Anzeige angelegt (PAUSED): ${adJson.id}`)
+      // In die „Vorbereitete Anzeigen"-Ablage: bleibt aus der Haupt-Übersicht
+      // draussen, bis Sven/Giona sie dort per „Freigeben" dazunehmen.
+      await supabase.from('studio_prepared_ads')
+        .upsert({ ad_id: String(adJson.id), ad_name: `Studio – ${draft.headline}`.slice(0, 100) }, { onConflict: 'ad_id' })
       return json({ success: true, ad_id: adJson.id, creative_id: creativeJson.id })
     }
 

@@ -306,6 +306,9 @@ export default function AdsManager() {
   const [days, setDays] = useState<7 | 30 | 90>(30)
   const [loading, setLoading] = useState(true)
   const [catalog, setCatalog] = useState<AdCatalogRow[]>([])
+  // Vorbereitete Anzeigen (Studio/Werbemanager, noch nicht freigegeben):
+  // bleiben aus der Haupt-Übersicht draussen, bis sie per „Freigeben" dazukommen.
+  const [prepared, setPrepared] = useState<Array<AdCatalogRow & { prepared_at: string }>>([])
   const [insights, setInsights] = useState<InsightRow[]>([])
   const [leads, setLeads] = useState<AdLead[]>([])
   const [appts, setAppts] = useState<AdAppt[]>([])
@@ -355,7 +358,20 @@ export default function AdsManager() {
       ])
       if (e1) throw e1
       if (e2) throw e2
-      const catRows = (cat as unknown as AdCatalogRow[]) ?? []
+      const catRowsAll = (cat as unknown as AdCatalogRow[]) ?? []
+      // Vorbereitete (nicht freigegebene) Anzeigen aus der Übersicht heraushalten
+      const { data: prep } = await supabase.from('studio_prepared_ads')
+        .select('ad_id, ad_name, created_at').is('released_at', null)
+      const prepRows = (prep as Array<{ ad_id: string; ad_name: string | null; created_at: string }> | null) ?? []
+      const prepIds = new Set(prepRows.map(p => p.ad_id))
+      setPrepared(prepRows.map(p => {
+        const c = catRowsAll.find(x => x.ad_id === p.ad_id)
+        return {
+          ...(c ?? { ad_id: p.ad_id, campaign_id: '', campaign_name: null, adset_id: null, adset_name: null, ad_name: p.ad_name, status: 'PAUSED', thumbnail_url: null }),
+          prepared_at: p.created_at,
+        }
+      }))
+      const catRows = catRowsAll.filter(c => !prepIds.has(c.ad_id))
       setCatalog(catRows)
       setInsights((ins as unknown as InsightRow[]) ?? [])
 
@@ -578,6 +594,21 @@ export default function AdsManager() {
       console.error('[AdsManager] openPreview:', err)
       setPreview(null)
       showToast(`❌ ${t('crm.ads.previewError', 'Vorschau konnte nicht geladen werden')}`)
+    }
+  }
+
+  // ── Vorbereitete Anzeige freigeben: erscheint danach (weiterhin pausiert)
+  // in der normalen Anzeigen-Übersicht und wird DORT wie gewohnt aktiviert. ──
+  const releasePrepared = async (adId: string) => {
+    try {
+      const { error } = await supabase.from('studio_prepared_ads')
+        .update({ released_at: new Date().toISOString() }).eq('ad_id', adId)
+      if (error) throw error
+      showToast(t('crm.ads.prepReleased', '✅ Freigegeben — die Anzeige steht jetzt (pausiert) bei den anderen Anzeigen'))
+      void fetchAll()
+    } catch (err) {
+      console.error('[AdsManager] releasePrepared:', err)
+      showToast(`❌ ${t('crm.ads.toastError', 'Fehler beim Speichern')}`)
     }
   }
 
@@ -978,6 +1009,42 @@ export default function AdsManager() {
             {view === 'studio' && (<div>
             {/* KI-Anzeigen-Studio: Brief → Anzeige (Bild/Karussell + Caption) → Chat-Bearbeitung */}
             <AdStudio showToast={showToast} onPublished={() => { void runSync() }} />
+
+            {/* Vorbereitete Anzeigen: erstellt, aber noch nicht in der Übersicht.
+                „Freigeben" nimmt sie (weiterhin pausiert) zu den anderen Anzeigen dazu. */}
+            <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">📦 {t('crm.ads.prepTitle', 'Vorbereitete Anzeigen')}</h2>
+              <p className="text-sm text-gray-400 mb-3">{t('crm.ads.prepSub', 'Hier gespeicherte Anzeigen sind noch NICHT in der Übersicht und noch nicht aktiv. „Freigeben" nimmt sie (pausiert) zu den anderen Anzeigen dazu — aktiviert werden sie dann dort.')}</p>
+              {prepared.length === 0 ? (
+                <p className="text-sm text-gray-400 border-2 border-dashed border-gray-200 rounded-xl py-6 text-center">{t('crm.ads.prepEmpty', 'Keine vorbereiteten Anzeigen — neu erstellte landen automatisch hier.')}</p>
+              ) : (
+                <div className="space-y-2">
+                  {prepared.map(p => (
+                    <div key={p.ad_id} className="flex flex-wrap items-center gap-3 border border-gray-100 rounded-xl px-3 py-2.5">
+                      {p.thumbnail_url
+                        ? <img src={p.thumbnail_url} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                        : <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center text-lg">🖼</div>}
+                      <div className="flex-1 min-w-[160px]">
+                        <p className="text-sm font-semibold text-gray-800">{p.ad_name ?? p.ad_id}</p>
+                        <p className="text-[11px] text-gray-400">
+                          {t('crm.ads.prepSince', 'vorbereitet seit')} {new Date(p.prepared_at).toLocaleDateString('de-DE')}
+                          {p.campaign_name ? ` · ${p.campaign_name}` : ''}
+                        </p>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gray-100 text-gray-500">{t('crm.ads.prepBadge', 'Nicht veröffentlicht')}</span>
+                      <button onClick={() => void openPreview(p)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50">
+                        👁 {t('crm.ads.preview', 'Vorschau')}
+                      </button>
+                      <button onClick={() => void releasePrepared(p.ad_id)}
+                        className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                        ✅ {t('crm.ads.prepRelease', 'Freigeben')}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Zielgruppen-Assistent: Beschreibung → Meta-Targeting (System-Kampagne) */}
             <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-6">
