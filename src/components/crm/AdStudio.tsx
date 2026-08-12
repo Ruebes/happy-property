@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 
@@ -31,6 +31,29 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   const [busy, setBusy] = useState<'generate' | 'refine' | 'publish' | null>(null)
   const [imgBusy, setImgBusy] = useState(false)   // Bild wird im Hintergrund erstellt
   const [lastChange, setLastChange] = useState('')
+  const [baseImage, setBaseImage] = useState('')  // eigenes hochgeladenes Basisbild (URL)
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Eigenes Basisbild hochladen → Bucket ad-creatives (public) → als base_image
+  // an generate. Die KI verändert/ergänzt dann DIESES Bild statt neu zu erfinden.
+  const uploadBase = async (file: File) => {
+    setUploading(true)
+    try {
+      const ext = file.name.split('.').pop() || 'jpg'
+      const path = `studio/base/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('ad-creatives').upload(path, file, { upsert: false })
+      if (error) throw error
+      const { data } = supabase.storage.from('ad-creatives').getPublicUrl(path)
+      setBaseImage(data.publicUrl)
+    } catch (err) {
+      console.error('[AdStudio] upload:', err)
+      showToast(`❌ ${t('crm.studio.uploadErr', 'Bild-Upload fehlgeschlagen')}`)
+    } finally {
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
 
   // Slug „studio" statt „ad-studio": Werbeblocker filtern „ad-"-URLs — der
   // alte Aufruf kam bei aktivem Blocker nie am Server an (22.7.).
@@ -82,7 +105,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     setDraft(null)
     let jobId: string | null = null
     try {
-      const d = await call({ mode: 'generate', brief: brief.trim() })
+      const d = await call({ mode: 'generate', brief: brief.trim(), ...(baseImage ? { base_image: baseImage } : {}) })
       setDraft(d.draft as Draft)
       setLastChange('')
       jobId = d.image_job ? String(d.image_job) : null
@@ -122,6 +145,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       showToast(t('crm.studio.published', '✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren'))
       setDraft(null)
       setBrief('')
+      setBaseImage('')
       onPublished()
     } catch (err) {
       console.error('[AdStudio] publish:', err)
@@ -149,6 +173,27 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           {busy === 'generate' && spinner}
           ✨ {t('crm.studio.cta', 'Anzeige erstellen')}
         </button>
+      </div>
+      {/* Eigenes Basisbild (optional): hochladen → die KI verändert DIESES Bild */}
+      <div className="mt-2 flex items-center gap-3 flex-wrap">
+        <input ref={fileRef} type="file" accept="image/*" className="hidden"
+          onChange={e => { const f = e.target.files?.[0]; if (f) void uploadBase(f) }} />
+        {baseImage ? (
+          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl pl-1.5 pr-2 py-1.5">
+            <img src={baseImage} alt="" className="w-12 h-12 rounded-lg object-cover" />
+            <div>
+              <p className="text-xs font-medium text-gray-700">{t('crm.studio.baseImgSet', 'Eigenes Basisbild aktiv')}</p>
+              <p className="text-[10px] text-gray-400">{t('crm.studio.baseImgHint2', 'Im Text oben beschreiben, was verändert werden soll')}</p>
+            </div>
+            <button onClick={() => setBaseImage('')} className="w-6 h-6 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 text-sm" title={t('crm.studio.baseImgRemove', 'Basisbild entfernen')}>×</button>
+          </div>
+        ) : (
+          <button onClick={() => fileRef.current?.click()} disabled={uploading || busy !== null}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+            {uploading ? `⏳ ${t('crm.studio.uploading', 'Lädt hoch …')}` : `📷 ${t('crm.studio.baseImgBtn', 'Eigenes Bild als Basis hochladen (optional)')}`}
+          </button>
+        )}
+        {baseImage && <p className="text-[10px] text-gray-400">{t('crm.studio.baseImgTip', 'z.B. „füge Lotte und mich hinzu", „stell einen Tisch dazu", „im 80er-Jahre-Stil"')}</p>}
       </div>
       {busy === 'generate' && (
         <p className="mt-2 text-[11px] text-gray-400">{t('crm.studio.generating', 'Erstelle Copy und Bildmaterial — bei KI-Bildern dauert das bis zu einer Minute …')}</p>

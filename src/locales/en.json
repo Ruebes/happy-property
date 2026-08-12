@@ -3436,7 +3436,14 @@
       "publish": "Create as ad (paused)",
       "published": "✅ Ad created (paused) — check via 👁 preview, then activate",
       "error": "That did not work",
-      "networkError": "The request never reached the server — check your internet and disable any ad blocker for this page."
+      "networkError": "The request never reached the server — check your internet and disable any ad blocker for this page.",
+      "uploadErr": "Image upload failed",
+      "uploading": "Uploading …",
+      "baseImgBtn": "Upload your own image as base (optional)",
+      "baseImgSet": "Custom base image active",
+      "baseImgHint2": "Describe in the text above what should be changed",
+      "baseImgRemove": "Remove base image",
+      "baseImgTip": "e.g. \"add Lotte and me\", \"add a table\", \"in 80s style\""
     },
     "waImage": {
       "label": "Image (optional)",

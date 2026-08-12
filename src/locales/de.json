@@ -3436,7 +3436,14 @@
       "publish": "Als Anzeige anlegen (pausiert)",
       "published": "✅ Anzeige angelegt (pausiert) — per 👁 Vorschau prüfen, dann aktivieren",
       "error": "Das hat nicht geklappt",
-      "networkError": "Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten."
+      "networkError": "Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.",
+      "uploadErr": "Bild-Upload fehlgeschlagen",
+      "uploading": "Lädt hoch …",
+      "baseImgBtn": "Eigenes Bild als Basis hochladen (optional)",
+      "baseImgSet": "Eigenes Basisbild aktiv",
+      "baseImgHint2": "Im Text oben beschreiben, was verändert werden soll",
+      "baseImgRemove": "Basisbild entfernen",
+      "baseImgTip": "z.B. „füge Lotte und mich hinzu\", „stell einen Tisch dazu\", „im 80er-Jahre-Stil\""
     },
     "waImage": {
       "label": "Bild (optional)",

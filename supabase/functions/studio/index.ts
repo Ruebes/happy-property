@@ -41,6 +41,8 @@ const CORS = {
 const GRAPH = 'https://graph.facebook.com/v21.0'
 const PAGE_ID = '556440087559971'
 const SVEN_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
+// Echtes Lotte-Foto als Persona-Referenz (für „Lotte mit ins Bild")
+const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg'
 const URL_TAGS = 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}'
 const LINK = 'https://portal.happy-property.com/termin'
 
@@ -102,19 +104,20 @@ function hfStoreFrom(sb: SupabaseClient): HfStore {
   }
 }
 
-// Higgsfield flux_kontext: Basisbild (Sven) + Prompt → PNG-Bytes. Behält Gesicht
-// und Pose der Vorlage, tauscht die Umgebung. NUR Higgsfield, kein OpenAI.
-async function generateImage(store: HfStore, baseUrl: string, prompt: string): Promise<Uint8Array> {
-  const baseRes = await fetch(baseUrl)
-  if (!baseRes.ok) throw new Error(`Basisbild ${baseRes.status}`)
-  const baseBytes = new Uint8Array(await baseRes.arrayBuffer())
-  const ct = baseRes.headers.get('content-type') || 'image/jpeg'
-  const refId = await hfUploadImage(store, baseBytes, ct)
-  return await hfGenerateBytes(store, 'flux_kontext', {
-    prompt: `Same man as in the reference photo, keep his face and body true to the reference. ${prompt}. Photorealistic documentary style, natural light, no text, no watermark.`,
-    aspect_ratio: '1:1',
-    image_references: [{ id: refId }],
-  })
+// Higgsfield: Basisbild(er) + Prompt → PNG-Bytes. 1 Referenz = flux_kontext
+// (bearbeitet die Vorlage, behält sie), mehrere Referenzen (z.B. eigenes Bild
+// + Sven + Lotte) = nano_banana (Gemini, max 3 Refs). NUR Higgsfield.
+async function generateImage(store: HfStore, bases: string[], prompt: string): Promise<Uint8Array> {
+  const refs: Array<{ id: string }> = []
+  for (const url of bases.slice(0, 3)) {
+    const r = await fetch(url)
+    if (!r.ok) throw new Error(`Basisbild ${r.status}`)
+    const bytes = new Uint8Array(await r.arrayBuffer())
+    refs.push({ id: await hfUploadImage(store, bytes, r.headers.get('content-type') || 'image/jpeg') })
+  }
+  if (!refs.length) throw new Error('Kein Basisbild')
+  const jobType = refs.length > 1 ? 'nano_banana' : 'flux_kontext'
+  return await hfGenerateBytes(store, jobType, { prompt, aspect_ratio: '1:1', image_references: refs })
 }
 
 Deno.serve(async (req) => {
@@ -153,12 +156,12 @@ Deno.serve(async (req) => {
     // braucht ~20-40 s — synchron riss das den Gateway-Timeout, gerade bei
     // langsameren Verbindungen (Giona). Jetzt: Job anlegen, sofort antworten,
     // Frontend fragt per mode:'image_status' nach.
-    const startImageJob = async (base: string, prompt: string): Promise<string> => {
+    const startImageJob = async (bases: string[], prompt: string): Promise<string> => {
       const jobId = crypto.randomUUID()
       await supabase.from('studio_image_jobs').insert({ id: jobId })
       const work = async () => {
         try {
-          const url = await storeImage(await generateImage(hfStore, base, prompt))
+          const url = await storeImage(await generateImage(hfStore, bases, prompt))
           await supabase.from('studio_image_jobs').update({ image_url: url }).eq('id', jobId)
         } catch (e) {
           console.error('[studio] image job:', e)
@@ -185,6 +188,10 @@ Deno.serve(async (req) => {
     if (mode === 'generate') {
       const brief = String(body.brief ?? '').trim().slice(0, 2000)
       if (!brief) throw new Error('brief fehlt')
+      // Optionales EIGENES Basisbild (Sven lädt ein Foto hoch, das als Grundlage
+      // dient). Nur eigene Storage-URLs zulassen (kein Fremd-Fetch).
+      const baseImage = typeof body.base_image === 'string' && body.base_image.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/`)
+        ? body.base_image : ''
 
       // Projekte mit echten Fotos als Material für Karussells.
       // Fotoquellen: crm_projects.images (manuell gepflegt) + deck_assets.gallery
@@ -211,12 +218,14 @@ Deno.serve(async (req) => {
         headline: string
         message: string
         image_prompt?: string
+        personas?: string[]
         cards?: Array<{ title: string; description: string; image_url: string }>
       }>(await claude(`Du bist der Anzeigen-Texter von Happy Property (Immobilien-Investment Zypern, Zielgruppe deutschsprachige Kapitalanleger, Du-Ansprache, Stil der bisherigen Gewinner-Ads: emotionaler Einstieg über Schmerzpunkte wie Steuern/Bürokratie/Wetter, dann Zypern-Vorteile mit ✅-Aufzählung, klare Aufforderung zum kostenlosen Beratungsgespräch über den Online-Terminkalender).
 SCHREIBREGEL: NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (–) verwenden, immer den normalen Bindestrich "-" (auch bei Zahlenspannen: "8-12 %", nicht "8–12 %").
 
 AUFTRAG von Sven:
 """${brief}"""
+${baseImage ? `\nWICHTIG: Sven hat ein EIGENES BASISBILD hochgeladen, das als Grundlage des Anzeigenbilds dient. Wähle format=single. image_prompt beschreibt dann, WIE dieses Basisbild laut Auftrag verändert/ergänzt werden soll (z.B. Personen/Objekte hinzufügen, Stil ändern) — NICHT eine komplett neue Szene. Sollen Sven und/oder seine Hündin Lotte ins Bild, liste sie in "personas".` : ''}
 
 Verfügbare Projekte mit ECHTEN Fotos (für Karussells IMMER diese echten Foto-URLs verwenden). Sven nennt Projekte oft über den BAUTRÄGER oder mit Tippfehlern — ordne selbstständig dem passenden Projekt aus der Liste zu (z.B. „Luma" = Bauträger von Genesis/Emerald Park/Skala, „MITO"/„Mito Mama" = Bauträger Mito, gemeint ist meist Mamba). Findest du kein passendes Projekt, wähle format=carousel NICHT mit erfundenen URLs, sondern liefere cards=[] — der Fehler sagt Sven dann, dass Fotos fehlen:
 ${projectInfo || '(keine Projektfotos vorhanden)'}
@@ -226,14 +235,34 @@ Antworte NUR mit JSON:
   "format": "single" | "carousel"  (Karussell wenn der Auftrag Projekte/mehrere Karten nahelegt),
   "headline": "max. 40 Zeichen",
   "message": "die komplette Caption (Hauptext) im Gewinner-Stil, mit Absätzen und ✅",
-  "image_prompt": "NUR bei single: deutscher Prompt für ein Bild mit Sven — Original-Pose beibehalten, nur Umgebung passend zum Auftrag ändern, fotorealistisch-dokumentarisch",
+  "image_prompt": "NUR bei single: deutscher Prompt für das Bild. Ohne Basisbild: Szene mit Sven, Original-Pose beibehalten. Mit Basisbild: die gewünschte Veränderung des Basisbilds. Fotorealistisch-dokumentarisch",
+  "personas": ["sven" und/oder "lotte" NUR wenn sie laut Auftrag ins Bild sollen, sonst []],
   "cards": [NUR bei carousel, 2-6 Karten: {"title": "max. 35 Zeichen", "description": "max. 60 Zeichen", "image_url": "eine der echten Projekt-Foto-URLs"}]
 }`))
 
       const draft: Draft = { format: plan.format, headline: plan.headline, message: plan.message }
-      if (plan.format === 'single') {
+      if (plan.format === 'single' || baseImage) {
+        draft.format = 'single'
         // Text sofort zurück, Bild im Hintergrund → Frontend pollt image_status.
-        const jobId = await startImageJob(SVEN_PHOTO, plan.image_prompt ?? 'Fotorealistische Szene mit dem Mann aus dem Foto, Umgebung modernes Neubauprojekt am Mittelmeer, Original-Pose beibehalten, neutrales Tageslicht, kein Text')
+        const personas = Array.isArray(plan.personas) ? plan.personas.filter(p => p === 'sven' || p === 'lotte') : []
+        let bases: string[]
+        let prompt: string
+        if (baseImage) {
+          // Eigenes Basisbild: bearbeiten (flux_kontext) bzw. mit Personas
+          // kombinieren (nano_banana, max 3 Referenzen).
+          bases = [baseImage,
+            ...(personas.includes('sven') ? [SVEN_PHOTO] : []),
+            ...(personas.includes('lotte') ? [LOTTE_PHOTO] : [])].slice(0, 3)
+          const personaNote = [
+            personas.includes('sven') ? 'One reference photo shows Sven Rüprich (real person) - his face must match that reference exactly.' : '',
+            personas.includes('lotte') ? "One reference shows Lotte, Sven's chocolate labrador - she must match that reference exactly." : '',
+          ].filter(Boolean).join(' ')
+          prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} Photorealistic, natural light, no text, no watermark.`
+        } else {
+          bases = [SVEN_PHOTO]
+          prompt = `Same man as in the reference photo, keep his face and body true to the reference. ${plan.image_prompt ?? 'Fotorealistische Szene mit dem Mann aus dem Foto, Umgebung modernes Neubauprojekt am Mittelmeer, Original-Pose beibehalten, neutrales Tageslicht, kein Text'}. Photorealistic documentary style, natural light, no text, no watermark.`
+        }
+        const jobId = await startImageJob(bases, prompt)
         return json({ success: true, draft, image_job: jobId })
       }
       draft.cards = (plan.cards ?? []).slice(0, 6)
@@ -271,8 +300,12 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         updated.headline = decision.headline ?? draft.headline
         updated.message = decision.message ?? draft.message
       } else if (decision.target === 'image' && draft.format === 'single') {
-        // Neues Bild im Hintergrund — altes Bild bleibt sichtbar, bis das neue da ist.
-        const jobId = await startImageJob(draft.image_url ?? SVEN_PHOTO, decision.image_prompt ?? instruction)
+        // Neues Bild im Hintergrund — altes Bild bleibt sichtbar, bis das neue da
+        // ist. Basis ist das AKTUELLE Bild (edit-in-place via flux_kontext).
+        const jobId = await startImageJob(
+          [draft.image_url ?? SVEN_PHOTO],
+          `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. Photorealistic, no text, no watermark.`,
+        )
         return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {
         updated.cards = (decision.cards ?? draft.cards ?? []).slice(0, 6)
