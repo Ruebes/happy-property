@@ -57,16 +57,24 @@ export default function AdStudio({ onPublished, showToast }: Props) {
 
   // Slug „studio" statt „ad-studio": Werbeblocker filtern „ad-"-URLs — der
   // alte Aufruf kam bei aktivem Blocker nie am Server an (22.7.).
-  const call = async (body: Record<string, unknown>) => {
+  // Bei Netz-Wacklern (Anfrage kam gar nicht an, z.B. Gionas Verbindung 12.8.)
+  // wird EINMAL automatisch neu versucht, bevor der Fehler gezeigt wird.
+  const call = async (body: Record<string, unknown>, retried = false): Promise<Record<string, unknown>> => {
     const { data, error } = await supabase.functions.invoke('studio', { body })
     if (error) {
       // Netzwerk-Ebene (gar nicht angekommen) von Function-Fehlern unterscheiden:
       // die Klartext-Meldung der Function steckt bei non-2xx im Response-Body.
-      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null)
-      if (detail && typeof (detail as { error?: unknown }).error === 'string') {
-        throw new Error((detail as { error: string }).error)
+      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null) as { error?: unknown; hint?: unknown } | null
+      if (detail && typeof detail.error === 'string') {
+        // hint (verständliche Erklärung) hat Vorrang vor dem Fehlercode —
+        // sonst sieht Giona kryptisches „app_dev_mode" statt der Anleitung.
+        throw new Error(typeof detail.hint === 'string' && detail.hint ? detail.hint : detail.error)
       }
       if (/Failed to send/i.test(error.message ?? '')) {
+        if (!retried) {
+          await new Promise(r => setTimeout(r, 1500))
+          return call(body, true)
+        }
         throw new Error(t('crm.studio.networkError', 'Der Aufruf kam nicht am Server an — Internet prüfen und ggf. Werbeblocker für diese Seite ausschalten.'))
       }
       throw error
