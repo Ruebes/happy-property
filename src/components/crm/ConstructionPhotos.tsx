@@ -19,12 +19,28 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
   const [photoDesc, setPhotoDesc] = useState('')
   const [msg,       setMsg]       = useState('')
   const [urls,      setUrls]      = useState<Record<string, string>>({})   // file_path → signierte URL
+  const [broken,    setBroken]    = useState<Set<string>>(new Set())        // Foto-IDs, deren Vorschau nicht lud
   const inputRef = useRef<HTMLInputElement>(null)
 
   const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3500) }
 
   const fetchPhotos = useCallback(async () => {
     if (!projectId) return
+    setBroken(new Set())
+    // Vorschau-URLs bevorzugt SERVERSEITIG erzeugen (Service-Role, 24 h, robust) —
+    // der Browser-Weg war fragil (leere Vorschau je nach Session/RLS/Ablauf).
+    try {
+      const { data, error } = await supabase.functions.invoke('construction-media', { body: { project_id: projectId } })
+      if (!error && data && Array.isArray((data as { photos?: unknown }).photos)) {
+        setPhotos(((data as { photos: ConstructionPhoto[] }).photos) ?? [])
+        setUrls(((data as { urls?: Record<string, string> }).urls) ?? {})
+        return
+      }
+    } catch (err) {
+      console.warn('[ConstructionPhotos] construction-media fehlgeschlagen, nutze Fallback:', err)
+    }
+    // Fallback: direkter Client-Weg, aber je Datei EINZELN signieren, damit eine
+    // fehlende Datei nicht die ganze Vorschau kippt.
     const { data } = await supabase
       .from('construction_photos')
       .select('*')
@@ -33,13 +49,14 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
       .order('created_at', { ascending: false })
     const list = (data ?? []) as ConstructionPhoto[]
     setPhotos(list)
-    // Bucket ist privat → signierte URLs erzeugen (path → URL)
     if (list.length) {
-      const { data: signed } = await supabase.storage
-        .from('construction-photos')
-        .createSignedUrls(list.map(p => p.file_path), 3600)
       const map: Record<string, string> = {}
-      for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
+      for (const p of list) {
+        try {
+          const { data: one } = await supabase.storage.from('construction-photos').createSignedUrl(p.file_path, 60 * 60 * 24)
+          if (one?.signedUrl) map[p.file_path] = one.signedUrl
+        } catch { /* einzelne Datei überspringen */ }
+      }
       setUrls(map)
     } else {
       setUrls({})
@@ -147,15 +164,30 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
             const mediaUrl = urls[photo.file_path] ?? ''
             return (
               <div key={photo.id} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
-                {isVideo ? (
-                  <video src={mediaUrl} className="w-full h-32 object-cover" controls preload="metadata" />
+                {(!mediaUrl || broken.has(photo.id)) ? (
+                  <div
+                    className="w-full h-32 flex flex-col items-center justify-center gap-1 bg-gray-100 text-gray-400 text-[11px] cursor-pointer"
+                    onClick={() => fetchPhotos()}
+                    title={t('crm.pd.reloadMedia', 'Erneut laden')}
+                  >
+                    <span className="text-xl">🏗️</span>
+                    <span>{t('crm.pd.reloadMedia', 'Erneut laden')}</span>
+                  </div>
+                ) : isVideo ? (
+                  <video
+                    src={mediaUrl}
+                    className="w-full h-32 object-cover"
+                    controls
+                    preload="metadata"
+                    onError={() => setBroken(prev => new Set(prev).add(photo.id))}
+                  />
                 ) : (
                   <img
                     src={mediaUrl}
                     alt={photo.file_name}
                     className="w-full h-32 object-cover cursor-pointer"
                     onClick={() => window.open(mediaUrl, '_blank')}
-                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                    onError={() => setBroken(prev => new Set(prev).add(photo.id))}
                   />
                 )}
                 <div className="px-2 py-1.5">
