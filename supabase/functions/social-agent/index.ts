@@ -21,8 +21,8 @@
 //          HIGGSFIELD_ACCESS_TOKEN/_REFRESH_TOKEN/_EXPIRES_AT/_WORKSPACE_ID
 //          Bild-KI = AUSSCHLIESSLICH Higgsfield (Sven 11.8.26), kein OpenAI mehr.
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
-import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
-import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
+import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
 

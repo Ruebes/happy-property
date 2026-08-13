@@ -10,7 +10,7 @@
 //
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, PUBLIC_SITE_URL?
 // Deploy: supabase functions deploy task-notify --no-verify-jwt
-import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
+import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBossBild } from '../_shared/lotte.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 

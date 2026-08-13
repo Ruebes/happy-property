@@ -9,7 +9,7 @@
 //
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy:  supabase functions deploy cal --no-verify-jwt
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.4'
+import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { buildIcs } from '../_shared/ics.ts'
 
 const CORS = {

@@ -5,7 +5,7 @@
 // Deploy: supabase functions deploy notify-bank-change
 // Env: RESEND_API_KEY, NOTIFY_FROM_EMAIL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'jsr:@supabase/supabase-js@2'
 
 const RESEND_API_KEY   = Deno.env.get('RESEND_API_KEY') ?? ''
 const FROM_EMAIL       = Deno.env.get('NOTIFY_FROM_EMAIL') ?? 'noreply@happy-property.com'

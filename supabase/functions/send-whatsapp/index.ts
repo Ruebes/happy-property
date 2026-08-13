@@ -1,5 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
+import { Image } from '../_vendor/imagescript/ImageScript.js'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',

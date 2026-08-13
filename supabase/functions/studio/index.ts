@@ -27,7 +27,7 @@
 //                   supabase functions deploy ad-studio --no-verify-jwt   (Shim)
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts'
+import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import { hfGenerateBytes, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
