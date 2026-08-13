@@ -221,6 +221,11 @@ Deno.serve(async (req: Request) => {
         if (!tk) continue
         if (tk === 'client') { if (lead.email) out.push(lead.email) }
         else if (tk === 'unit_developer') { if (unitDevEmail) out.push(unitDevEmail) }
+        else if (tk.startsWith('vw:')) {
+          const { data } = await supabase.from('verwaltungen').select('email, ansprechpartner_email').eq('id', tk.slice(3)).maybeSingle()
+          const v = data as { email?: string | null; ansprechpartner_email?: string | null } | null
+          const e = v?.ansprechpartner_email || v?.email; if (e) out.push(e)
+        }
         else if (tk.startsWith('bc:') || tk.startsWith('dc:')) {
           const table = tk.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
           const { data } = await supabase.from(table).select('email').eq('id', tk.slice(3)).maybeSingle()

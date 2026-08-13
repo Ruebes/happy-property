@@ -304,16 +304,20 @@ export default function AppointmentModal({
   const loadAllContacts = useCallback(async (): Promise<typeof bcResults> => {
     if (allContactsRef.current) return allContactsRef.current
     try {
-      const [bc, dc] = await Promise.all([
+      const [bc, dc, vw] = await Promise.all([
         supabase.from('crm_business_contacts')
           .select('id, first_name, last_name, company, email, phone, whatsapp, language')
           .order('first_name'),
         supabase.from('crm_developer_contacts')
           .select('id, name, email, phone, whatsapp, language, developer:crm_developers(name)')
           .order('name'),
+        supabase.from('verwaltungen')
+          .select('id, name, ansprechpartner, ansprechpartner_email, ansprechpartner_phone, email, phone, language')
+          .order('name'),
       ])
       if (bc.error) throw bc.error
       if (dc.error) throw dc.error
+      if (vw.error) throw vw.error
       const rows = ((bc.data ?? []) as typeof bcResults).map(r => ({ ...r }))
       for (const d of (dc.data ?? []) as Array<{ id: string; name: string; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null; developer?: { name?: string } | { name?: string }[] | null }>) {
         const [first, ...rest] = (d.name ?? '').split(' ')
@@ -322,6 +326,18 @@ export default function AppointmentModal({
           id: `dev-${d.id}`, first_name: first || d.name, last_name: rest.join(' ') || null,
           company: dev?.name ? (t('crm.appt.developerSuffix', '{{name}} (Developer)', { name: dev.name }) as string) : (t('crm.appt.developerContact', 'Developer') as string),
           email: d.email, phone: d.whatsapp || d.phone, whatsapp: d.whatsapp ?? null, language: d.language ?? null,
+        })
+      }
+      // Verwaltungen: Ansprechpartner als Kontakt, Firma als Badge — damit Sven
+      // z.B. mit Stella (Paphosfinder) direkt einen Termin vereinbaren kann.
+      for (const v of (vw.data ?? []) as Array<{ id: string; name: string; ansprechpartner: string | null; ansprechpartner_email: string | null; ansprechpartner_phone: string | null; email: string | null; phone: string | null; language?: string | null }>) {
+        const person = (v.ansprechpartner ?? '').trim() || v.name
+        const [first, ...rest] = person.split(' ')
+        rows.push({
+          id: `vw-${v.id}`, first_name: first || person, last_name: rest.join(' ') || null,
+          company: t('crm.appt.vwSuffix', '{{name}} (Verwaltung)', { name: v.name }) as string,
+          email: v.ansprechpartner_email || v.email, phone: v.ansprechpartner_phone || v.phone,
+          whatsapp: null, language: v.language ?? null,
         })
       }
       allContactsRef.current = rows

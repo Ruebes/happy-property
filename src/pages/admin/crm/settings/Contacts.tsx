@@ -284,6 +284,9 @@ export default function Contacts() {
 
   const [items,   setItems]   = useState<BusinessContact[]>([])
   const [devContacts, setDevContacts] = useState<(DeveloperContact & { developer_name: string | null })[]>([])
+  // Verwaltungen (Hausverwaltungen) — read-only hier, gepflegt unter /admin/verwaltungen.
+  // Sven will sie als Geschäftskontakte sehen (Mails schreiben, Termine vereinbaren).
+  const [verwaltungen, setVerwaltungen] = useState<Array<{ id: string; name: string; ansprechpartner: string | null; ansprechpartner_email: string | null; ansprechpartner_phone: string | null; email: string | null; phone: string | null; website: string | null; language: string | null }>>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<{ contact: BusinessContact | null } | null>(null)
   const [granting, setGranting] = useState<BusinessContact | null>(null)   // Systemzugang erteilen
@@ -297,10 +300,11 @@ export default function Contacts() {
     try {
       // Eigenständige Geschäftskontakte + Developer-Ansprechpartner (read-only hier,
       // werden in den Developer-Einstellungen gepflegt) — beide Gruppen sichtbar.
-      const [bcRes, dcRes, devRes] = await Promise.all([
+      const [bcRes, dcRes, devRes, vwRes] = await Promise.all([
         supabase.from('crm_business_contacts').select('*').order('first_name', { ascending: true }),
         supabase.from('crm_developer_contacts').select('*').order('name', { ascending: true }),
         supabase.from('crm_developers').select('id, name'),
+        supabase.from('verwaltungen').select('id, name, ansprechpartner, ansprechpartner_email, ansprechpartner_phone, email, phone, website, language').order('name', { ascending: true }),
       ])
       if (bcRes.error) throw bcRes.error
       setItems((bcRes.data ?? []) as BusinessContact[])
@@ -309,6 +313,7 @@ export default function Contacts() {
         ...c,
         developer_name: devMap.get(c.developer_id) ?? null,
       })))
+      setVerwaltungen((vwRes.data ?? []) as typeof verwaltungen)
     } catch (err) {
       console.error('[Contacts] fetch:', err)
     } finally {
@@ -438,6 +443,39 @@ export default function Contacts() {
                     </div>
                     <span className="text-xs text-gray-300 shrink-0 italic whitespace-nowrap">
                       {t('crm.contacts.managedInDeveloper', 'beim Developer')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Verwaltungen — read-only, gepflegt unter Admin → Verwaltungen */}
+        {!loading && verwaltungen.length > 0 && (
+          <div className="pt-2">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">
+              {t('crm.contacts.vwSection', 'Verwaltungen')}
+            </h2>
+            <div className="space-y-2">
+              {verwaltungen.map(v => (
+                <div key={v.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="shrink-0 text-lg mt-0.5">🏢</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-gray-900 text-sm">{v.ansprechpartner || v.name}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">🏢 {v.name}</span>
+                        {v.language === 'en' && (
+                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">EN</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400 mt-1 truncate">
+                        {[v.ansprechpartner_email || v.email, v.ansprechpartner_phone || v.phone, v.website].filter(Boolean).join(' · ') || '—'}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-300 shrink-0 italic whitespace-nowrap">
+                      {t('crm.contacts.managedInVw', 'unter Verwaltungen')}
                     </span>
                   </div>
                 </div>

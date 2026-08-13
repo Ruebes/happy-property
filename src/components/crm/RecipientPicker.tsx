@@ -21,15 +21,17 @@ export default function RecipientPicker({ value, onChange, channel = 'both' }: P
   const { t } = useTranslation()
   const [business, setBusiness] = useState<BusinessContact[]>([])
   const [dev,      setDev]      = useState<DevC[]>([])
+  const [vw,       setVw]       = useState<Array<{ id: string; name: string; ansprechpartner: string | null; ansprechpartner_email: string | null; ansprechpartner_phone: string | null; email: string | null; phone: string | null }>>([])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const [bc, dc, dv] = await Promise.all([
+        const [bc, dc, dv, vwRes] = await Promise.all([
           supabase.from('crm_business_contacts').select('*').order('first_name'),
           supabase.from('crm_developer_contacts').select('*').order('name'),
           supabase.from('crm_developers').select('id, name'),
+          supabase.from('verwaltungen').select('id, name, ansprechpartner, ansprechpartner_email, ansprechpartner_phone, email, phone').order('name'),
         ])
         if (cancelled) return
         if (bc.data) setBusiness(bc.data as BusinessContact[])
@@ -37,6 +39,7 @@ export default function RecipientPicker({ value, onChange, channel = 'both' }: P
           const m = new Map(((dv.data ?? []) as { id: string; name: string }[]).map(d => [d.id, d.name]))
           setDev((dc.data as DeveloperContact[]).map(c => ({ ...c, developer_name: m.get(c.developer_id) ?? null })))
         }
+        if (vwRes.data) setVw(vwRes.data as typeof vw)
       } catch (e) {
         console.error('[RecipientPicker]', e)
       }
@@ -59,6 +62,11 @@ export default function RecipientPicker({ value, onChange, channel = 'both' }: P
     ...dev.filter(usable).map(c => ({
       value: `dc:${c.id}`,
       label: `🏗 ${c.name}${c.developer_name ? ` · ${c.developer_name}` : ''}${c.role ? ` (${c.role})` : ''}`,
+    })),
+    // Verwaltungen (Hausverwaltungen): Ansprechpartner als Empfänger
+    ...vw.filter(v => channel === 'email' ? !!(v.ansprechpartner_email || v.email) : !!(v.ansprechpartner_email || v.email || v.ansprechpartner_phone || v.phone)).map(v => ({
+      value: `vw:${v.id}`,
+      label: `🏢 ${(v.ansprechpartner ?? '').trim() || v.name} · ${v.name}`,
     })),
   ]
 

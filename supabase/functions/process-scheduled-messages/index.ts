@@ -143,6 +143,14 @@ async function resolveRecipient(
     const d = data as { email: string | null; phone: string | null; whatsapp: string | null; language: string | null } | null
     return { email: d?.email ?? null, phone: (d?.whatsapp || d?.phone) ?? null, language: d?.language ?? 'de' }
   }
+  // 'vw:<id>' → Verwaltung (Ansprechpartner-Kontaktdaten, sonst Firmen-Daten)
+  if (recipient && recipient.startsWith('vw:')) {
+    const { data } = await supabase.from('verwaltungen')
+      .select('email, phone, ansprechpartner_email, ansprechpartner_phone, language')
+      .eq('id', recipient.slice(3)).maybeSingle()
+    const v = data as { email: string | null; phone: string | null; ansprechpartner_email: string | null; ansprechpartner_phone: string | null; language: string | null } | null
+    return { email: (v?.ansprechpartner_email || v?.email) ?? null, phone: (v?.ansprechpartner_phone || v?.phone) ?? null, language: v?.language ?? 'de' }
+  }
   if (recipient && (recipient.startsWith('bc:') || recipient.startsWith('dc:'))) {
     const table = recipient.startsWith('bc:') ? 'crm_business_contacts' : 'crm_developer_contacts'
     const { data } = await supabase.from(table)

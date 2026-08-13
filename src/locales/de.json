@@ -1743,7 +1743,9 @@
       "langEn": "Englisch",
       "langHint": "Automatische Mails & WhatsApp an diesen Kontakt kommen in dieser Sprache an.",
       "grantAccess": "Mitarbeiter",
-      "grantAccessHint": "Diesem Kontakt Systemzugang als Mitarbeiter geben"
+      "grantAccessHint": "Diesem Kontakt Systemzugang als Mitarbeiter geben",
+      "vwSection": "Verwaltungen",
+      "managedInVw": "unter Verwaltungen"
     },
     "recipient": {
       "label": "Empfänger",
@@ -2670,7 +2672,8 @@
       "waSignoff": "Bis bald!\nSven · Happy Property",
       "mailSubjectEdit": "Terminänderung",
       "mailSubjectNew": "Terminbestätigung",
-      "waInperson": "Wir treffen uns vor Ort"
+      "waInperson": "Wir treffen uns vor Ort",
+      "vwSuffix": "{{name}} (Verwaltung)"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

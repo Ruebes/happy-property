@@ -1743,7 +1743,9 @@
       "langEn": "English",
       "langHint": "Automated emails & WhatsApp to this contact arrive in this language.",
       "grantAccess": "Grant access",
-      "grantAccessHint": "Give this contact staff access to the system"
+      "grantAccessHint": "Give this contact staff access to the system",
+      "vwSection": "Property managers",
+      "managedInVw": "managed under Verwaltungen"
     },
     "recipient": {
       "label": "Recipient",
@@ -2670,7 +2672,8 @@
       "waSignoff": "See you soon!\nSven · Happy Property",
       "mailSubjectEdit": "Appointment change",
       "mailSubjectNew": "Appointment confirmation",
-      "waInperson": "We meet in person"
+      "waInperson": "We meet in person",
+      "vwSuffix": "{{name}} (property manager)"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",
