@@ -71,7 +71,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { heroVideo?: string; renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
 // Deterministischer Wahrheits-Backstop: filtert bekannte erfundene Behauptungen
 // raus, falls das Modell die Prompt-Regeln (4d / 5b) doch mal ignoriert. Greift
 // SATZWEISE (entfernt nur den betroffenen Satz, nicht den ganzen Block).
@@ -356,6 +356,8 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
   for (const b of blocks) {
     const t = b.type
     if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
+    // Cover: animierte Kamerafahrt (Higgsfield) statt Standbild, wenn vorhanden
+    if (t === 'cover' && images?.heroVideo) b.video = images.heroVideo
     if (t === 'facts') {
       // Standort-Karte, in Prioritäts-Reihenfolge:
       // 1) Echte Koordinaten (lat/lng) → interaktive Google-Maps-Einbettung im Deck
@@ -662,10 +664,12 @@ Deno.serve(async (req) => {
       try {
         const { data: proj } = await sbRules.from('crm_projects')
           .select('name, location, latitude, longitude, video_url, developer, payment_schedule, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string } | null } | null
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string } } | null } | null
         projRow = pr
         if (pr) {
           body.images = body.images ?? {}
+          // Projekt-Hero-Video (EINE Kamerafahrt je Projekt, von allen Decks geteilt)
+          if (!body.images.heroVideo && pr.deck_assets?.hero_video?.url) body.images.heroVideo = pr.deck_assets.hero_video.url
           if (body.images.mapLat == null && pr.latitude != null && pr.longitude != null) {
             body.images.mapLat = pr.latitude
             body.images.mapLng = pr.longitude

@@ -16,7 +16,7 @@ export interface DeckPaymentPhase {
 export interface FloorplanRoom { x: number; y: number; w: number; h: number; name: string; area?: string; kind?: 'room' | 'living' | 'bed' | 'bath' | 'hall' | 'kitchen' | 'terrace' }
 
 export type DeckBlock =
-  | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string }
+  | { type: 'cover';   kicker?: string; title: string; tagline?: string; forLine?: string; image?: string; video?: string }
   | { type: 'letter';  kicker?: string; headline?: string; paragraphs: string[]; signoff?: string; signName?: string }
   | { type: 'unit';    kicker?: string; number?: string; nickname?: string; specs?: string[]; priceMain?: string; priceSub?: string; priceLines?: { label: string; value: string; strong?: boolean }[]; note?: string; image?: string }
   | { type: 'facts';   kicker?: string; headline?: string; items?: { min: string; label: string }[]; image?: string; mapUrl?: string; mapLabel?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; mapEmbed?: string }

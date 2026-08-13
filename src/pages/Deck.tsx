@@ -30,10 +30,29 @@ function Img({ src, alt, className, style }: { src?: string; alt?: string; class
 }
 
 // ── Block-Renderer ──────────────────────────────────────────────────────────────
+// Cover: animierte Kamerafahrt (Higgsfield, EIN Video je Projekt) statt Standbild,
+// wenn vorhanden. Stumm, Loop, autoplay, poster = Originalbild; bei Ladefehler
+// fällt es still aufs Bild zurück (VideoCover-State).
+function CoverMedia({ image, video }: { image?: string; video?: string }) {
+  const [videoFailed, setVideoFailed] = useState(false)
+  if (video && !videoFailed) {
+    return (
+      <video
+        src={video}
+        poster={image}
+        autoPlay muted loop playsInline
+        preload="metadata"
+        onError={() => setVideoFailed(true)}
+        className="w-full h-[62vh] object-cover"
+      />
+    )
+  }
+  return <Img src={image} className="w-full h-[62vh] object-cover" />
+}
 function CoverBlock(b: Extract<DeckBlock, { type: 'cover' }>) {
   return (
     <section>
-      <Img src={b.image} className="w-full h-[62vh] object-cover" />
+      <CoverMedia image={b.image} video={b.video} />
       <div className="px-5 md:px-20 py-16" style={{ background: DARK }}>
         <img src={DECK_LOGO} alt="Happy Property" className="h-16 w-auto mb-6" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
         <Accent />
