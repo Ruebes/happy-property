@@ -114,7 +114,7 @@ function InvoiceModal({ properties, onClose, onSuccess }: InvoiceModalProps) {
       const { error: dbErr } = await supabase.from('documents').insert({
         property_id:  form.property_id,
         title:        form.title,
-        document_type: 'rechnung',
+        type:         'rechnung',
         creditor:     form.creditor || null,
         amount_gross: form.amount_gross ? parseFloat(form.amount_gross) : null,
         file_url:     urlData.publicUrl,
@@ -123,8 +123,10 @@ function InvoiceModal({ properties, onClose, onSuccess }: InvoiceModalProps) {
 
       if (dbErr) throw dbErr
       onSuccess()
-    } catch {
-      setErr(t('errors.uploadFailed'))
+    } catch (err) {
+      console.error('[InvoiceModal] upload:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setErr(`${t('errors.uploadFailed')}${msg ? ` (${msg})` : ''}`)
     } finally {
       setUploading(false)
     }
@@ -403,7 +405,7 @@ export default function VerwaltungDashboard() {
         // House rules pending
         supabase.from('guest_agreements')
           .select('*', { count: 'exact', head: true })
-          .eq('agreed', false),
+          .is('agreed_at', null),
 
         // Expiring contracts (30d)
         supabase.from('contracts')

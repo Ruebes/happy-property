@@ -28,11 +28,13 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [uploadWarn, setUploadWarn] = useState('')
   const send = async () => {
     if (!text.trim() || busy) { if (!text.trim()) setErr(t('eigentuemer.bug.needText', 'Bitte beschreibe kurz das Problem.')); return }
     setBusy(true); setErr('')
     try {
       const atts: Array<{ name: string; url: string; path: string }> = []
+      let failedUploads = 0
       for (let i = 0; i < Math.min(files.length, 5); i++) {
         const f = files[i]
         let blob: Blob = f
@@ -45,7 +47,17 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
         } catch { /* Original nehmen */ }
         const path = `bug/${profile?.id ?? 'x'}/${Date.now()}-${i}.jpg`
         const { error } = await supabase.storage.from('task-attachments').upload(path, blob, { contentType: 'image/jpeg' })
-        if (!error) atts.push({ name: f.name, url: `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`, path })
+        if (error) {
+          console.error('[Eigentuemer/Dashboard] bug upload:', error)
+          failedUploads++
+        } else {
+          atts.push({ name: f.name, url: `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`, path })
+        }
+      }
+      if (failedUploads > 0 && !uploadWarn) {
+        setUploadWarn(t('eigentuemer.bug.uploadFailed', '{{n}} Bild(er) konnten nicht hochgeladen werden. Du kannst die Meldung trotzdem ohne diese Bilder senden.', { n: failedUploads }))
+        setBusy(false)
+        return
       }
       const { data, error } = await supabase.functions.invoke('owner-content', { body: { action: 'bug_report', text: text.trim(), attachments: atts } })
       const d = (data ?? {}) as { success?: boolean; error?: string }
@@ -61,9 +73,10 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
         <textarea value={text} onChange={e => setText(e.target.value)} rows={4} autoFocus
           className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
           placeholder={t('eigentuemer.bug.ph', 'Beschreibe kurz, was passiert ist …')} />
-        <input type="file" accept="image/*" multiple onChange={e => setFiles(Array.from(e.target.files ?? []))}
+        <input type="file" accept="image/*" multiple onChange={e => { setFiles(Array.from(e.target.files ?? [])); setUploadWarn('') }}
           className="text-sm text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:cursor-pointer" />
         {files.length > 0 && <p className="text-[11px] text-gray-400">📎 {files.length} {t('eigentuemer.bug.files', 'Bild(er) ausgewählt')}</p>}
+        {uploadWarn && <p className="text-sm text-amber-600">⚠️ {uploadWarn}</p>}
         {err && <p className="text-sm text-red-600">❌ {err}</p>}
         <div className="flex gap-2 justify-end pt-1">
           <button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-600">{t('common.cancel', 'Abbrechen')}</button>
@@ -91,6 +104,7 @@ export default function EigentuemerDashboard() {
   const [crmImages,     setCrmImages]     = useState<Record<string, string>>({}) // property_id → first CRM project image
   const [ownerDocs,     setOwnerDocs]     = useState<OwnerDocItem[]>([])
   const [notifs,        setNotifs]        = useState<OwnerNotif[]>([])
+  const [newsError,     setNewsError]     = useState(false)
   const [showBug,       setShowBug]       = useState(false)
   const [bugToast,      setBugToast]      = useState('')
 
@@ -128,10 +142,11 @@ export default function EigentuemerDashboard() {
         // 2a. Kanonische Unit-Daten (Projektname/Ort/Bild) aus der ZENTRALEN Tabelle
         // crm_project_units ziehen — nie die (evtl. leere/veraltete) properties-Kopie
         // anzeigen. Fixt u.a. den leeren Projektnamen („· 102" ohne Name).
-        const { data: unitData } = await supabase
+        const { data: unitData, error: unitErr } = await supabase
           .from('crm_project_units')
           .select('property_id, project:crm_projects(name, images, location)')
           .in('property_id', propIds)
+        if (unitErr) throw unitErr
         const metaMap: Record<string, { name?: string; city?: string; img?: string }> = {}
         for (const u of (unitData ?? [])) {
           const pid = (u as { property_id?: string | null }).property_id
@@ -156,10 +171,11 @@ export default function EigentuemerDashboard() {
         setCrmImages(imgMap)
 
         // 2b. Unit-IDs für CRM-Dokumente ermitteln
-        const { data: unitRows } = await supabase
+        const { data: unitRows, error: unitRowsErr } = await supabase
           .from('crm_project_units')
           .select('id')
           .in('property_id', propIds)
+        if (unitRowsErr) throw unitRowsErr
         const unitIds = (unitRows ?? []).map((u: { id: string }) => u.id)
 
         // 2c. Buchungen + Dokumente parallel zählen
@@ -177,8 +193,10 @@ export default function EigentuemerDashboard() {
                 .from('crm_unit_documents')
                 .select('*', { count: 'exact', head: true })
                 .in('unit_id', unitIds)
-            : Promise.resolve({ count: 0 }),
+            : Promise.resolve({ count: 0, error: null }),
         ])
+        const countErr = bookRes.error || docRes.error || crmDocRes.error
+        if (countErr) throw countErr
 
         if (cancelled) return
         setBookingCount(bookRes.count ?? 0)
@@ -200,10 +218,16 @@ export default function EigentuemerDashboard() {
     if (!profile?.id) return
     void supabase.from('owner_documents').select('id, title, kind, file_url, created_at')
       .order('created_at', { ascending: false }).limit(20)
-      .then(({ data }) => setOwnerDocs((data as OwnerDocItem[]) ?? []))
+      .then(({ data, error }) => {
+        if (error) { console.error('[Eigentuemer/Dashboard] owner_documents:', error); setNewsError(true); return }
+        setOwnerDocs((data as OwnerDocItem[]) ?? [])
+      })
     void supabase.from('owner_notifications').select('id, title, body, created_at')
       .is('read_at', null).order('created_at', { ascending: false })
-      .then(({ data }) => setNotifs((data as OwnerNotif[]) ?? []))
+      .then(({ data, error }) => {
+        if (error) { console.error('[Eigentuemer/Dashboard] owner_notifications:', error); setNewsError(true); return }
+        setNotifs((data as OwnerNotif[]) ?? [])
+      })
   }, [profile?.id])
   const dismissNotif = async (id: string) => {
     await supabase.from('owner_notifications').update({ read_at: new Date().toISOString() }).eq('id', id)
@@ -419,12 +443,15 @@ export default function EigentuemerDashboard() {
       </div>
 
       {/* ── Neuigkeiten & Dokumente von Happy Property ────── */}
-      {ownerDocs.length > 0 && (
+      {(ownerDocs.length > 0 || newsError) && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mt-8">
           <div className="px-6 py-5 border-b border-gray-50">
             <h2 className="font-semibold text-hp-black font-body text-base">📢 {t('eigentuemer.news.title', 'Neuigkeiten & Dokumente')}</h2>
             <p className="text-xs text-gray-400 mt-0.5">{t('eigentuemer.news.subtitle', 'Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.')}</p>
           </div>
+          {newsError && ownerDocs.length === 0 ? (
+            <p className="p-5 text-sm text-gray-400">⚠️ {t('eigentuemer.news.loadError', 'Konnte nicht geladen werden.')}</p>
+          ) : (
           <div className="p-5 space-y-4">
             {ownerDocs.map(d => {
               const isNew = Date.now() - new Date(d.created_at).getTime() < 14 * 864e5
@@ -452,6 +479,7 @@ export default function EigentuemerDashboard() {
               )
             })}
           </div>
+          )}
         </div>
       )}
 

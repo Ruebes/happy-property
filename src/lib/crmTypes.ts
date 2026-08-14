@@ -478,6 +478,7 @@ export interface CrmUnitPayment {
   receipt_path:      string | null
   receipt_filename:  string | null
   receipt_filesize:  number | null
+  uploaded_by:       string | null
   created_at:        string
   updated_at:        string
 }

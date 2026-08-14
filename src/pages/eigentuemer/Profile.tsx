@@ -140,13 +140,18 @@ export default function EigentuemerProfile() {
       if (updateErr) throw new Error(updateErr.message)
 
       // If IBAN changed → create notification
+      let bankNotifyFailed = false
       if (ibanChanged && (oldIban || iban.trim())) {
-        await supabase.from('bank_change_notifications').insert({
+        const { error: notifyErr } = await supabase.from('bank_change_notifications').insert({
           owner_id:        profile.id,
           old_iban_masked: oldIban ? maskIban(oldIban) : null,
           new_iban_masked: iban.trim() ? maskIban(iban.trim()) : null,
           status:          'pending',
         })
+        if (notifyErr) {
+          console.error('[EigentuemerProfile] bank_change_notifications insert:', notifyErr)
+          bankNotifyFailed = true
+        }
         // Trigger edge function for email notification
         supabase.functions.invoke('notify-bank-change', {
           body: {
@@ -158,7 +163,14 @@ export default function EigentuemerProfile() {
         }).catch(() => { /* non-blocking */ })
       }
 
-      setToast({ msg: t('profile.saved') })
+      if (bankNotifyFailed) {
+        setToast({
+          msg: t('owner.bank.notifyFailed', 'Profil gespeichert, aber die Meldung der Bank-Änderung konnte nicht übermittelt werden. Bitte melde die Änderung direkt bei uns.'),
+          type: 'error',
+        })
+      } else {
+        setToast({ msg: t('profile.saved') })
+      }
       fetchProfile()
     } catch (e) {
       setError(e instanceof Error ? e.message : t('errors.saveFailed'))

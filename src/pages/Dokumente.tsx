@@ -296,10 +296,20 @@ export default function Dokumente() {
     if (!window.confirm(t('documents.deleteConfirm'))) return
 
     // Remove file from storage
-    await supabase.storage.from('documents').remove([doc.file_url])
+    const { error: storageErr } = await supabase.storage.from('documents').remove([doc.file_url])
+    if (storageErr) {
+      console.error('[Dokumente] handleDelete storage:', storageErr)
+      setToast({ msg: t('dokumente.deleteFailed', 'Löschen fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
+      return
+    }
 
     // Remove DB record
-    await supabase.from('documents').delete().eq('id', doc.id)
+    const { error: dbErr } = await supabase.from('documents').delete().eq('id', doc.id)
+    if (dbErr) {
+      console.error('[Dokumente] handleDelete db:', dbErr)
+      setToast({ msg: t('dokumente.deleteFailed', 'Löschen fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
+      return
+    }
 
     setToast({ msg: t('success.deleted') })
     fetchDocuments()

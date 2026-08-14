@@ -144,11 +144,21 @@ Deno.serve(async (req) => {
     }
 
     // ── Empfänger bestimmen ───────────────────────────────────────
-    let recipients: Recipient[] = (template?.recipients as Recipient[]) ?? []
+    // Nummern IMMER normalisieren: iPhone-Kontakte kommen oft mit unsichtbaren
+    // Bidi-Zeichen (U+202A/U+202C) und geschützten Leerzeichen an - TimelinesAI
+    // erkennt das nicht als Telefonnummer und antwortet mit "Cannot message this
+    // group" (Michael Decker, 14.8.). Erlaubt bleiben nur führendes + und Ziffern.
+    const normPhone = (raw: unknown): string => {
+      const s = String(raw ?? '')
+      const digits = s.replace(/[^0-9]/g, '')
+      return digits ? (s.includes('+') ? '+' : '') + digits : ''
+    }
+    let recipients: Recipient[] = ((template?.recipients as Recipient[]) ?? [])
+      .map(r => ({ ...r, phone: normPhone(r.phone) })).filter(r => r.phone)
 
     const explicitPhone =
-      (lead_data?.lead_whatsapp as string | undefined) ??
-      (lead_data?.lead_phone   as string | undefined) ??
+      normPhone(lead_data?.lead_whatsapp) ||
+      normPhone(lead_data?.lead_phone) ||
       null
 
     if (override_text && explicitPhone) {

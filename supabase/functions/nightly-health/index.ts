@@ -408,11 +408,57 @@ const checkFloorplanCoverage: Check = {
   },
 }
 
+// ── Prüfung: Telefonnummern mit unsichtbaren Zeichen ─────────────────────────
+// iPhone-Kontakte bringen oft Bidi-Steuerzeichen (U+202A/U+202C) und geschützte
+// Leerzeichen mit - TimelinesAI lehnt solche Nummern ab ("Cannot message this
+// group", Michael Decker 14.8.). AUTO-FIX: Normalisierung (nur führendes + und
+// Ziffern) ist beweisbar eindeutig.
+const checkDirtyPhones: Check = {
+  key: 'telefonnummern_unsauber',
+  title: 'Telefonnummern mit unsichtbaren Zeichen',
+  run: async (sb, dryRun) => {
+    const out: Finding[] = []
+    const clean = (raw: string): string => {
+      const digits = raw.replace(/[^0-9]/g, '')
+      return digits ? (raw.includes('+') ? '+' : '') + digits : ''
+    }
+    const isDirty = (v: unknown): v is string => typeof v === 'string' && v !== '' && !/^\+?[0-9]+$/.test(v)
+    const TARGETS: Array<{ table: string; cols: string[]; label: string }> = [
+      { table: 'leads', cols: ['phone', 'whatsapp'], label: 'Kunde' },
+      { table: 'verwaltungen', cols: ['phone', 'ansprechpartner_phone'], label: 'Verwaltung' },
+      { table: 'crm_business_contacts', cols: ['phone', 'whatsapp'], label: 'Geschäftskontakt' },
+      { table: 'crm_developer_contacts', cols: ['phone', 'whatsapp'], label: 'Developer-Kontakt' },
+    ]
+    for (const tgt of TARGETS) {
+      const { data, error } = await sb.from(tgt.table).select(['id', ...tgt.cols].join(','))
+      if (error) { console.warn(`[nightly-health] dirtyPhones ${tgt.table}:`, error.message); continue }
+      for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+        const patch: Record<string, string | null> = {}
+        for (const c of tgt.cols) if (isDirty(row[c])) patch[c] = clean(row[c] as string) || null
+        if (!Object.keys(patch).length) continue
+        if (!dryRun) {
+          const { error: ue } = await sb.from(tgt.table).update(patch).eq('id', row.id as string)
+          if (ue) { console.warn(`[nightly-health] dirtyPhones fix ${tgt.table}/${row.id}:`, ue.message); continue }
+        }
+        out.push({
+          check_key: 'telefonnummern_unsauber', severity: 'mittel', entity_kind: tgt.table,
+          entity_id: String(row.id), entity_label: tgt.label,
+          what_plain: 'Eine Telefonnummer enthielt unsichtbare Formatierungszeichen (typisch iPhone-Kontakt) - WhatsApp-Versand an diese Nummer schlägt damit fehl.',
+          action: dryRun ? 'proposed' : 'auto_fixed',
+          fix_plain: dryRun ? 'Nummer auf +Ziffern normalisieren.' : 'Nummer auf +Ziffern normalisiert.',
+        })
+      }
+    }
+    return out
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
   checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
+  checkDirtyPhones,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────

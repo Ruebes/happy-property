@@ -743,16 +743,24 @@ export default function PropertyDetail() {
     if (linkedUnitId) {
       const crmRentalType = aktivierRentalType === 'longterm' ? 'long' : 'short'
       // Wenn die Unit noch auf 'under_construction' steht → auf 'active' hochsetzen
-      await supabase
+      const { error: statusErr } = await supabase
         .from('crm_project_units')
-        .update({ rental_type: crmRentalType, status: 'active' })
+        .update({ status: 'active' })
         .eq('id', linkedUnitId)
         .eq('status', 'under_construction')   // nur wenn noch im Bau
       // rental_type immer aktualisieren (unabhängig vom Status)
-      await supabase
+      const { error: rentalErr } = await supabase
         .from('crm_project_units')
         .update({ rental_type: crmRentalType })
         .eq('id', linkedUnitId)
+      if (statusErr || rentalErr) {
+        console.error('[PropertyDetail] handleAktivieren unit sync:', statusErr ?? rentalErr)
+        setAktivierSaving(false)
+        setShowVerwaltungModal(false)
+        setToast({ msg: t('propertyDetail.verwaltung.unitSyncError', 'Gespeichert, aber das verknüpfte CRM-Objekt konnte nicht aktualisiert werden.'), type: 'error' })
+        fetchProperty()
+        return
+      }
     }
 
     setAktivierSaving(false)
@@ -773,11 +781,17 @@ export default function PropertyDetail() {
 
     // Linked unit zurück auf 'under_construction' setzen (wenn nicht bereits verkauft)
     if (linkedUnitId) {
-      await supabase
+      const { error: unitErr } = await supabase
         .from('crm_project_units')
         .update({ status: 'under_construction', rental_type: null })
         .eq('id', linkedUnitId)
         .eq('status', 'active')   // nur aktive Units zurücksetzen, nicht zugewiesene
+      if (unitErr) {
+        console.error('[PropertyDetail] handleDeaktivieren unit sync:', unitErr)
+        setToast({ msg: t('propertyDetail.verwaltung.unitSyncError', 'Gespeichert, aber das verknüpfte CRM-Objekt konnte nicht aktualisiert werden.'), type: 'error' })
+        fetchProperty()
+        return
+      }
     }
 
     setToast({ msg: t('propertyDetail.verwaltung.deactivated', 'Immobilie deaktiviert') })
@@ -981,8 +995,14 @@ export default function PropertyDetail() {
 
   async function deleteDoc(doc: DocRecord) {
     if (!window.confirm(t('documents.deleteConfirm'))) return
-    await supabase.storage.from('documents').remove([doc.file_url])
-    await supabase.from('documents').delete().eq('id', doc.id)
+    const { error: rmErr } = await supabase.storage.from('documents').remove([doc.file_url])
+    if (rmErr) console.error('[PropertyDetail] deleteDoc storage:', rmErr)
+    const { error } = await supabase.from('documents').delete().eq('id', doc.id)
+    if (error) {
+      console.error('[PropertyDetail] deleteDoc:', error)
+      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
+      return
+    }
     setToast({ msg: t('success.deleted') })
     fetchDocs()
   }
@@ -1037,10 +1057,16 @@ export default function PropertyDetail() {
     // Extract storage path from public URL
     const pathPart = url.split('/property-images/')[1]
     if (pathPart) {
-      await supabase.storage.from('property-images').remove([pathPart])
+      const { error: rmErr } = await supabase.storage.from('property-images').remove([pathPart])
+      if (rmErr) console.error('[PropertyDetail] confirmDeleteImage storage:', rmErr)
     }
     const newImages = property.images.filter(u => u !== url)
-    await supabase.from('properties').update({ images: newImages }).eq('id', id)
+    const { error } = await supabase.from('properties').update({ images: newImages }).eq('id', id)
+    if (error) {
+      console.error('[PropertyDetail] confirmDeleteImage:', error)
+      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
+      return
+    }
     setToast({ msg: t('success.deleted') })
     fetchProperty()
   }
@@ -1188,7 +1214,8 @@ export default function PropertyDetail() {
         } catch { /* silent – amount stays as-is */ }
       }
 
-      await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+      const { error: updErr } = await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+      if (updErr) throw updErr
       void notifyOwner(file.name, 'Dokument')
       await fetchUnitPayments()
     } catch (err) {
@@ -1204,11 +1231,19 @@ export default function PropertyDetail() {
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
     const path = type === 'invoice' ? pay.invoice_path : pay.receipt_path
-    if (path) await supabase.storage.from('unit-documents').remove([path])
+    if (path) {
+      const { error: rmErr } = await supabase.storage.from('unit-documents').remove([path])
+      if (rmErr) console.error('[PropertyDetail] handleRemovePaymentFile storage:', rmErr)
+    }
     const update = type === 'invoice'
       ? { invoice_path: null, invoice_filename: null, invoice_filesize: null }
       : { receipt_path: null, receipt_filename: null, receipt_filesize: null }
-    await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+    const { error } = await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+    if (error) {
+      console.error('[PropertyDetail] handleRemovePaymentFile:', error)
+      setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
+      return
+    }
     await fetchUnitPayments()
   }
 
@@ -1227,15 +1262,28 @@ export default function PropertyDetail() {
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
     const paths = [pay.invoice_path, pay.receipt_path].filter(Boolean) as string[]
-    if (paths.length) await supabase.storage.from('unit-documents').remove(paths)
-    await supabase.from('crm_unit_payments').delete().eq('id', payId)
+    if (paths.length) {
+      const { error: rmErr } = await supabase.storage.from('unit-documents').remove(paths)
+      if (rmErr) console.error('[PropertyDetail] handleDeletePaymentEntry storage:', rmErr)
+    }
+    const { error } = await supabase.from('crm_unit_payments').delete().eq('id', payId)
+    if (error) {
+      console.error('[PropertyDetail] handleDeletePaymentEntry:', error)
+      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
+      return
+    }
     await fetchUnitPayments()
   }
 
   async function handleSaveEditedAmount(payId: string) {
     const val = parseFloat(editingAmount.replace(',', '.'))
     if (isNaN(val) || val < 0) { setEditingPayId(null); return }
-    await supabase.from('crm_unit_payments').update({ amount: val }).eq('id', payId)
+    const { error } = await supabase.from('crm_unit_payments').update({ amount: val }).eq('id', payId)
+    if (error) {
+      console.error('[PropertyDetail] handleSaveEditedAmount:', error)
+      setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
+      return
+    }
     setEditingPayId(null)
     await fetchUnitPayments()
   }
@@ -1385,8 +1433,14 @@ export default function PropertyDetail() {
 
   async function handleDeleteEigDoc(doc: CrmUnitDocument) {
     if (!window.confirm(t('propertyDetail.contracts.deleteDocConfirm', '„{{name}}" löschen?', { name: doc.name }))) return
-    await supabase.storage.from('unit-documents').remove([doc.file_path])
-    await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
+    const { error: rmErr } = await supabase.storage.from('unit-documents').remove([doc.file_path])
+    if (rmErr) console.error('[PropertyDetail] handleDeleteEigDoc storage:', rmErr)
+    const { error } = await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
+    if (error) {
+      console.error('[PropertyDetail] handleDeleteEigDoc:', error)
+      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
+      return
+    }
     await fetchUnitPayments()
   }
 
@@ -2684,6 +2738,7 @@ export default function PropertyDetail() {
   async function handleUploadConstructionPhoto(files: FileList) {
     if (!linkedProjectId || !files.length) return
     setUploadingPhoto(true)
+    let failedCount = 0
     try {
       for (let i = 0; i < files.length; i++) {
         const file = files[i]
@@ -2692,8 +2747,8 @@ export default function PropertyDetail() {
         const { error: upErr } = await supabase.storage
           .from('construction-photos')
           .upload(path, file, { upsert: false })
-        if (upErr) { console.error('[PropertyDetail] Upload error:', upErr); continue }
-        await supabase.from('construction_photos').insert({
+        if (upErr) { console.error('[PropertyDetail] Upload error:', upErr); failedCount++; continue }
+        const { error: insErr } = await supabase.from('construction_photos').insert({
           project_id:  linkedProjectId,
           file_path:   path,
           file_name:   file.name,
@@ -2702,13 +2757,21 @@ export default function PropertyDetail() {
           description: photoDesc.trim() || null,
           uploaded_by: profile?.id ?? null,
         })
+        if (insErr) { console.error('[PropertyDetail] construction_photos insert:', insErr); failedCount++; continue }
       }
-      void notifyOwner(`${files.length} neues Baustellenfoto${files.length > 1 ? 's' : ''}`, 'Baustellenfoto')
+      const okCount = files.length - failedCount
+      if (okCount > 0) {
+        void notifyOwner(`${okCount} neues Baustellenfoto${okCount > 1 ? 's' : ''}`, 'Baustellenfoto')
+      }
       setPhotoDesc('')
       if (constPhotoInputRef.current) constPhotoInputRef.current.value = ''
       await fetchUnitPayments()
+      if (failedCount > 0) {
+        setToast({ msg: t('propertyDetail.images.uploadPartlyFailed', '{{failed}} von {{total}} Dateien konnten nicht hochgeladen werden.', { failed: failedCount, total: files.length }), type: 'error' })
+      }
     } catch (err) {
       console.error('[PropertyDetail] Baustellenfoto:', err)
+      setToast({ msg: t('propertyDetail.purchases.uploadFailed', 'Upload fehlgeschlagen.'), type: 'error' })
     } finally {
       setUploadingPhoto(false)
     }

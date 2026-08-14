@@ -212,6 +212,7 @@ export default function Objekte() {
   const [ownerModalSaving, setOwnerModalSaving]     = useState(false)
   const [ownerModalError, setOwnerModalError]       = useState('')
   const [ownerModalSuccess, setOwnerModalSuccess]   = useState(false)
+  const [ownerMailSent, setOwnerMailSent]           = useState(true)
   // CRM-Verknüpfung
   const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string; location: string | null }[]>([])
   const [crmProjId, setCrmProjId]           = useState('')
@@ -373,7 +374,7 @@ export default function Objekte() {
     }
   }
 
-  async function uploadPendingImages(propertyId: string): Promise<string[]> {
+  async function uploadPendingImages(propertyId: string): Promise<{ urls: string[]; failedCount: number }> {
     // Upload all files in parallel; random suffix prevents path collisions
     const results = await Promise.all(
       pendingFiles.map(async (file) => {
@@ -382,14 +383,18 @@ export default function Objekte() {
         const { error } = await supabase.storage
           .from('property-images')
           .upload(path, file, { upsert: true })
-        if (error) return null
+        if (error) {
+          console.error('[Objekte] uploadPendingImages:', error)
+          return null
+        }
         const { data: pub } = supabase.storage
           .from('property-images')
           .getPublicUrl(path)
         return pub.publicUrl
       })
     )
-    return results.filter((u): u is string => u !== null)
+    const urls = results.filter((u): u is string => u !== null)
+    return { urls, failedCount: results.length - urls.length }
   }
 
   // ── Open / close form ─────────────────────────────────────
@@ -495,12 +500,15 @@ export default function Objekte() {
       }
 
       let savedId = editId
+      let crmSyncFailed = false
+      let failedUploads = 0
       if (editId) {
         // Upload new images first, then do a SINGLE update (data + images together)
         let finalImages = [...existingImages]
         if (pendingFiles.length > 0) {
-          const newUrls = await uploadPendingImages(editId)
+          const { urls: newUrls, failedCount } = await uploadPendingImages(editId)
           finalImages = [...finalImages, ...newUrls]
+          failedUploads = failedCount
         }
         const { error } = await supabase
           .from('properties')
@@ -513,7 +521,7 @@ export default function Objekte() {
           const crmRentalType = form.rental_type === 'longterm' ? 'long'
                               : form.rental_type === 'shortterm' ? 'short'
                               : null
-          await supabase
+          const { error: crmUpdateError } = await supabase
             .from('crm_project_units')
             .update({
               type:        form.type,
@@ -531,14 +539,22 @@ export default function Objekte() {
               unit_number: form.unit_number.trim() || null,
             })
             .eq('property_id', editId)
+          if (crmUpdateError) {
+            console.error('[Objekte] handleSave crm_project_units update:', crmUpdateError)
+            crmSyncFailed = true
+          }
         }
 
         // Also update management_rental_type if property is managed
-        await supabase
+        const { error: managedError } = await supabase
           .from('properties')
           .update({ management_rental_type: form.rental_type })
           .eq('id', editId)
           .eq('is_managed', true)
+        if (managedError) {
+          console.error('[Objekte] handleSave management_rental_type update:', managedError)
+          crmSyncFailed = true
+        }
 
       } else {
         // Generate UUID client-side → upload images → SINGLE insert with all data
@@ -546,7 +562,9 @@ export default function Objekte() {
         savedId = newId
         let images: string[] = []
         if (pendingFiles.length > 0) {
-          images = await uploadPendingImages(newId)
+          const { urls, failedCount } = await uploadPendingImages(newId)
+          images = urls
+          failedUploads = failedCount
         }
         const { error } = await supabase
           .from('properties')
@@ -561,7 +579,7 @@ export default function Objekte() {
           const crmRentalType = form.rental_type === 'longterm' ? 'long'
                               : form.rental_type === 'shortterm' ? 'short'
                               : null
-          await supabase.from('crm_project_units').insert({
+          const { error: crmInsertError } = await supabase.from('crm_project_units').insert({
             project_id:  crmProjId,
             unit_number: form.unit_number.trim() || 'NEU',
             type:        form.type,
@@ -578,17 +596,31 @@ export default function Objekte() {
             vat_rate:    parseFloat(form.vat_rate.replace(',', '.')) || 19,
             property_id: savedId,
           })
+          if (crmInsertError) {
+            console.error('[Objekte] handleSave crm_project_units insert:', crmInsertError)
+            crmSyncFailed = true
+          }
         } else {
           // Bestehende Einheit mit property verknüpfen
-          await supabase
+          const { error: crmLinkError } = await supabase
             .from('crm_project_units')
             .update({ property_id: savedId })
             .eq('id', crmUnitId)
+          if (crmLinkError) {
+            console.error('[Objekte] handleSave crm_project_units link:', crmLinkError)
+            crmSyncFailed = true
+          }
         }
       }
 
       closeForm()
-      setToast(t('success.saved'))
+      if (failedUploads > 0) {
+        setToast(t('objekte.imagesUploadFailed', 'Objekt gespeichert, {{count}} Bild(er) konnten nicht hochgeladen werden', { count: failedUploads }))
+      } else if (crmSyncFailed) {
+        setToast(t('objekte.crmSyncFailed', 'Objekt gespeichert, CRM-Abgleich fehlgeschlagen'))
+      } else {
+        setToast(t('success.saved'))
+      }
       fetchProperties()
 
     } catch (err) {
@@ -610,7 +642,12 @@ export default function Objekte() {
   // ── Delete ────────────────────────────────────────────────
   async function handleDelete(id: string) {
     if (!window.confirm(t('properties.deleteConfirm'))) return
-    await supabase.from('properties').delete().eq('id', id)
+    const { error } = await supabase.from('properties').delete().eq('id', id)
+    if (error) {
+      console.error('[Objekte] handleDelete:', error)
+      setToast(t('objekte.deleteError', 'Fehler: Objekt konnte nicht gelöscht werden'))
+      return
+    }
     setToast(t('success.deleted'))
     fetchProperties()
   }
@@ -620,6 +657,7 @@ export default function Objekte() {
     setOwnerModal({ ...EMPTY_OWNER_MODAL })
     setOwnerModalError('')
     setOwnerModalSuccess(false)
+    setOwnerMailSent(true)
     setShowOwnerModal(true)
   }
 
@@ -656,13 +694,22 @@ export default function Objekte() {
       }
 
       // Zugangsdaten automatisch per E-Mail senden
+      let mailSent = false
       if (data?.password && data?.userId) {
         const email = ownerModal.email.trim().toLowerCase()
-        const { subject, html } = await renderPortalAccessEmail(ownerModal.first_name.trim(), email, data.password)
-        supabase.functions.invoke('send-email', {
-          body: { to: email, subject, html },
-        }).catch(() => {})
+        try {
+          const { subject, html } = await renderPortalAccessEmail(ownerModal.first_name.trim(), email, data.password)
+          const { error: mailError } = await supabase.functions.invoke('send-email', {
+            body: { to: email, subject, html },
+          })
+          if (mailError) throw mailError
+          mailSent = true
+        } catch (mailErr) {
+          console.error('[Objekte] send-email Zugangsdaten:', mailErr)
+          setToast(t('objekte.credentialsMailFailed', 'Fehler: Zugangsdaten-E-Mail konnte nicht gesendet werden'))
+        }
       }
+      setOwnerMailSent(mailSent)
       setOwnerModalSuccess(true)
       await fetchOwners()
       if (data?.userId) setField('owner_id', data.userId)
@@ -1152,7 +1199,9 @@ export default function Objekte() {
                 <div>
                   <p className="text-sm font-semibold text-green-800 font-body">{t('objekte.userCreated', 'Nutzer angelegt')}</p>
                   <p className="text-xs text-green-700 font-body mt-0.5">
-                    {t('objekte.credentialsSentTo', 'Zugangsdaten wurden automatisch an {{email}} gesendet.', { email: ownerModal.email })}
+                    {ownerMailSent
+                      ? t('objekte.credentialsSentTo', 'Zugangsdaten wurden automatisch an {{email}} gesendet.', { email: ownerModal.email })
+                      : t('objekte.credentialsMailNotSent', 'Zugangsdaten-E-Mail an {{email}} konnte nicht gesendet werden, bitte manuell senden.', { email: ownerModal.email })}
                   </p>
                 </div>
               </div>

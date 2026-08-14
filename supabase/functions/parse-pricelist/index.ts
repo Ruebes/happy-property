@@ -170,6 +170,20 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
       const dealLinked = new Set((dealUnits ?? []).map(d => (d as { unit_id: string }).unit_id))
+      // VERKAUFTE Units mit Eigentümer im Portal ebenso NIE anfassen - der Deal kann
+      // archiviert sein, und Bauträger-Listen führen solche Wohnungen manchmal fälschlich
+      // weiter (Emerald A-202/Waldemar): ohne diesen Schutz würde der Sync sie wieder
+      // auf 'proposal' reaktivieren oder den Vertragspreis überschreiben.
+      const { data: propUnits } = await supabase.from('crm_project_units')
+        .select('id, property_id').eq('project_id', body.project_id).not('property_id', 'is', null)
+      const propIds = (propUnits ?? []).map(r => (r as { property_id: string }).property_id)
+      const { data: ownedProps } = propIds.length
+        ? await supabase.from('properties').select('id').in('id', propIds).not('owner_id', 'is', null)
+        : { data: [] }
+      const ownedPropSet = new Set((ownedProps ?? []).map(p => (p as { id: string }).id))
+      for (const r of (propUnits ?? []) as Array<{ id: string; property_id: string }>) {
+        if (ownedPropSet.has(r.property_id)) dealLinked.add(r.id)
+      }
       // Verfügbarkeit + Preis aus der aktuellen Preisliste je Unit-Nummer
       const avail = new Map<string, string>()
       const listByNum = new Map<string, Unit>()

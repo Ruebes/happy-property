@@ -30,6 +30,7 @@ export default function EigentuemerProperties() {
 
   const [properties, setProperties] = useState<PropertyCard[]>([])
   const [loading,    setLoading]    = useState(true)
+  const [loadError,  setLoadError]  = useState(false)
   const [search,     setSearch]     = useState('')
   const [crmImages,  setCrmImages]  = useState<Record<string, string>>({}) // property_id → first CRM project image
   const [imgError,   setImgError]   = useState<Set<string>>(new Set())     // property_ids mit kaputter Bild-URL
@@ -43,12 +44,14 @@ export default function EigentuemerProperties() {
 
     async function load() {
       setLoading(true)
+      setLoadError(false)
       try {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from('properties')
           .select('id, project_name, unit_number, type, bedrooms, size_sqm, city, zip, street, images, rental_type, is_furnished')
           .eq('owner_id', profile!.id)
           .order('project_name')
+        if (error) throw error
 
         if (cancelled) return
         const propList = (data ?? []) as PropertyCard[]
@@ -60,10 +63,13 @@ export default function EigentuemerProperties() {
 
         // Kanonische Unit-Daten (Name/Zimmer/Größe/Ort/Bild) aus der ZENTRALEN Tabelle
         // ziehen und über die (evtl. leere/veraltete) properties-Kopie legen. Single source.
-        const { data: unitData } = await supabase
+        const { data: unitData, error: unitError } = await supabase
           .from('crm_project_units')
           .select('property_id, bedrooms, size_sqm, project:crm_projects(name, images, location)')
           .in('property_id', propIds)
+        // Anreicherung ist Best-Effort: bei Fehler loggen und die bereits
+        // geladenen properties-Daten unangereichert anzeigen (kein Fehler-Screen).
+        if (unitError) console.error('[Eigentuemer/Properties] units:', unitError)
         if (!cancelled && unitData) {
           const metaMap: Record<string, { name?: string; bedrooms?: number; size?: number | null; city?: string; img?: string }> = {}
           for (const u of unitData) {
@@ -92,6 +98,7 @@ export default function EigentuemerProperties() {
         }
       } catch (err) {
         console.error('[Eigentuemer/Properties] load:', err)
+        if (!cancelled) setLoadError(true)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -144,6 +151,18 @@ export default function EigentuemerProperties() {
         <div className="flex items-center gap-2 justify-center py-16 text-gray-400 font-body text-sm">
           <span className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
           {t('common.loading')}
+        </div>
+      ) : loadError ? (
+        <div className="text-center py-16 px-6">
+          <div className="text-5xl mb-4">⚠️</div>
+          <p className="text-sm font-semibold text-gray-600 font-body">
+            {t('eigentuemer.loadError', 'Deine Objekte konnten gerade nicht geladen werden.')}
+          </p>
+          <button onClick={() => window.location.reload()}
+            className="mt-4 px-5 py-2 rounded-full text-white text-sm font-semibold"
+            style={{ backgroundColor: 'var(--color-highlight)' }}>
+            {t('common.retry', 'Neu laden')}
+          </button>
         </div>
       ) : filtered.length === 0 && properties.length === 0 ? (
         <div className="text-center py-16 px-6">

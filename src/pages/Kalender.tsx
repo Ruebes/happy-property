@@ -445,8 +445,13 @@ export default function Kalender() {
   async function handleCancelConfirm() {
     if (!cancelTarget) return
     setCancelling(true)
-    await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', cancelTarget.id)
+    const { error } = await supabase.from('bookings').update({ status: 'cancelled' }).eq('id', cancelTarget.id)
     setCancelling(false)
+    if (error) {
+      console.error('[Kalender] cancel booking:', error)
+      showToast(t('kalender.cancelError', 'Stornierung fehlgeschlagen. Bitte erneut versuchen.'))
+      return
+    }
     setCancelTarget(null)
     setDetailBook(null)
     showToast(t('calendar.detail.cancelled'))

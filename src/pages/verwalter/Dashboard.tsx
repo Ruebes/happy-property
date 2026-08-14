@@ -82,25 +82,35 @@ export default function VerwalterDashboard() {
 
   // ── Fetch pending bank change notifications ───────────────
   const fetchNotifications = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('bank_change_notifications')
       .select('*, owner:owner_id(full_name, email)')
       .eq('status', 'pending')
       .order('changed_at', { ascending: false })
       .limit(100)
+    if (error) {
+      console.error('[VerwalterDashboard] fetchNotifications:', error)
+      setVerwToast(t('dashboard.notificationsLoadFailed', '❌ Benachrichtigungen konnten nicht geladen werden'))
+      return
+    }
     setNotifications((data as BankNotification[]) ?? [])
-  }, [])
+  }, [t])
 
   // ── Fetch eigene Verwaltungs-Stammdaten ──────────────────
   const fetchVerwaltung = useCallback(async () => {
     if (!profile?.verwaltung_id) return
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('verwaltungen')
       .select('id, name, address_street, address_zip, address_city, address_country, phone, email, website, ansprechpartner, ansprechpartner_phone, ansprechpartner_email')
       .eq('id', profile.verwaltung_id)
       .single()
+    if (error) {
+      console.error('[VerwalterDashboard] fetchVerwaltung:', error)
+      setVerwToast(t('dashboard.masterDataLoadFailed', '❌ Stammdaten konnten nicht geladen werden'))
+      return
+    }
     if (data) setVerwaltung(data as VerwaltungStammdaten)
-  }, [profile?.verwaltung_id])
+  }, [profile?.verwaltung_id, t])
 
   useEffect(() => {
     fetchStats()
@@ -132,7 +142,7 @@ export default function VerwalterDashboard() {
   async function confirmNotification(id: string) {
     if (!profile) return
     setConfirming(id)
-    await supabase
+    const { error } = await supabase
       .from('bank_change_notifications')
       .update({
         status:       'confirmed',
@@ -140,8 +150,13 @@ export default function VerwalterDashboard() {
         confirmed_at: new Date().toISOString(),
       })
       .eq('id', id)
-    setNotifications(n => n.filter(x => x.id !== id))
     setConfirming(null)
+    if (error) {
+      console.error('[VerwalterDashboard] confirmNotification:', error)
+      setVerwToast(t('dashboard.confirmNotificationFailed', '❌ Bestätigen fehlgeschlagen'))
+      return
+    }
+    setNotifications(n => n.filter(x => x.id !== id))
   }
 
   // ── Quick actions ─────────────────────────────────────────
@@ -153,6 +168,12 @@ export default function VerwalterDashboard() {
 
   return (
     <DashboardLayout basePath="/verwalter/dashboard">
+
+      {verwToast && (
+        <div className="fixed top-4 right-4 z-50 bg-hp-black text-white text-sm font-body px-4 py-2.5 rounded-xl shadow-lg">
+          {verwToast}
+        </div>
+      )}
 
       {/* Header */}
       <div className="mb-8">
@@ -255,11 +276,6 @@ export default function VerwalterDashboard() {
       {/* ── Eigene Verwaltungs-Stammdaten ─────────────────── */}
       {verwaltung && (
         <section className="mt-8">
-          {verwToast && (
-            <div className="fixed top-4 right-4 z-50 bg-hp-black text-white text-sm font-body px-4 py-2.5 rounded-xl shadow-lg">
-              {verwToast}
-            </div>
-          )}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest font-body">
               {t('dashboard.myManagement', 'Meine Verwaltung')}

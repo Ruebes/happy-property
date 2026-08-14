@@ -86,12 +86,13 @@ export default function VerwalterBookings() {
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
   const [toast, setToast]         = useState('')
+  const [loadError, setLoadError] = useState(false)
   const [step, setStep]           = useState<1|2|3>(1)
 
   const setF = (k: keyof NewBookingForm, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   const load = useCallback(async () => {
-    const [{ data: bData }, { data: pData }] = await Promise.all([
+    const [{ data: bData, error: bErr }, { data: pData, error: pErr }] = await Promise.all([
       supabase
         .from('bookings')
         .select('id, booking_number, check_in, check_out, total_price, property:property_id(project_name, unit_number), guest:guest_id(full_name, email)')
@@ -101,6 +102,12 @@ export default function VerwalterBookings() {
         .select('id, project_name, unit_number')
         .order('project_name'),
     ])
+    if (bErr || pErr) {
+      console.error('[VerwalterBookings] load:', bErr ?? pErr)
+      setLoadError(true)
+    } else {
+      setLoadError(false)
+    }
     setBookings((bData ?? []) as unknown as GuestBooking[])
     setProperties(pData ?? [])
     setLoading(false)
@@ -192,7 +199,7 @@ export default function VerwalterBookings() {
 
       // 3. Gäste-Vereinbarung anlegen (für Hausregeln-Zustimmung)
       if (form.house_rules.trim()) {
-        await supabase.from('guest_agreements').insert({
+        const { error: agreementErr } = await supabase.from('guest_agreements').insert({
           booking_id:  bookingData.id,
           guest_id:    guestId,
           property_id: form.property_id,
@@ -201,6 +208,10 @@ export default function VerwalterBookings() {
           total_price: totalPrice,
           house_rules: form.house_rules.trim(),
         })
+        if (agreementErr) {
+          console.error('[VerwalterBookings] guest_agreements insert:', agreementErr)
+          throw new Error(t('bookings.agreementFailed', 'Buchung wurde angelegt, aber die Hausregeln-Vereinbarung konnte nicht gespeichert werden. Bitte nicht erneut anlegen, sondern die Buchung prüfen.'))
+        }
       }
 
       setShowModal(false)
@@ -249,6 +260,10 @@ export default function VerwalterBookings() {
         <div className="flex items-center justify-center py-32 text-gray-400 gap-3 font-body text-sm">
           <span className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
           {t('common.loading')}
+        </div>
+      ) : loadError ? (
+        <div className="text-center py-20 text-red-500 font-body text-sm">
+          {t('bookings.loadError', 'Buchungen konnten nicht geladen werden. Bitte Seite neu laden.')}
         </div>
       ) : bookings.length === 0 ? (
         <div className="text-center py-20 text-gray-400 font-body text-sm">{t('bookings.empty')}</div>
