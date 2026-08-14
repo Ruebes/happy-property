@@ -1,1 +1,11 @@
-{"version":"0.0.1","configurations":[{"name":"happy-property","runtimeExecutable":"npm","runtimeArgs":["run","dev"],"port":5173}]}
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "scratchpad-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8931", "-d", "/private/tmp/claude-502/-Users-ArPritsch-Downloads/d2ab4283-49ee-4bc3-b842-12e25de1be0b/scratchpad"],
+      "port": 8931
+    }
+  ]
+}

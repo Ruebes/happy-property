@@ -6,6 +6,7 @@ import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
+import StrategySimulator, { type SimUnit } from './StrategySimulator'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
 // Aus dem Kunden heraus: Projekt → Vorschlags-Wohnung(en) → Freitext → ins Paket;
@@ -53,6 +54,29 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [busy, setBusy]         = useState(false)
   const [progress, setProgress] = useState('')
   const [err, setErr]           = useState('')
+  const [simOpen, setSimOpen]   = useState(false)
+
+  // Paket → Simulator-Wohnungen: Brutto inkl. Möbel (MwSt nach Winkel), Miete als
+  // Startvorschlag aus der Wizard-Rendite (falls gesetzt, sonst 5,5 %), Übergabe
+  // aus dem Projekt-Fertigstellungsdatum.
+  const basketToSim = (): SimUnit[] => basket.map(b => {
+    const vat: 5 | 19 = angle === 'investment' ? 19 : 5
+    const netBase = (b.unit.price_net ?? 0) + (b.furnitureIncluded ? 0 : (b.furnitureCost ?? 0))
+    const price = Math.round(netBase * (1 + vat / 100))
+    const proj = projects.find(p => p.id === b.projectId)
+    const readyIso = proj?.completion_date ?? null
+    let readyM = 24
+    if (readyIso) {
+      const d = new Date(readyIso), now = new Date()
+      if (!isNaN(d.getTime())) readyM = Math.max(0, (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth()))
+    }
+    const yieldPct = perUnit[b.unit.id]?.yieldPct ?? 5.5
+    return {
+      key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`, price, vat, netBase,
+      rent: Math.round(price * yieldPct / 100 / 12), buyM: 0, readyM,
+      plan: readyM > 2 ? 'luma' as const : 'sofort' as const, mortgage: false,
+    }
+  })
 
   useEffect(() => { void (async () => {
     const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, latitude, longitude, completion_date').order('name')
@@ -508,6 +532,15 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <input type="checkbox" checked={calcOnly} onChange={e => setCalcOnly(e.target.checked)} className="w-4 h-4 accent-orange-500" />
               <span className="text-sm font-medium text-gray-700">🧮 {t('crm.wizard.calcOnly', 'NUR Berechnung erstellen (kein Deck)')}</span>
             </label>
+            <div className="flex items-center gap-3 mt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={simOpen} onChange={e => setSimOpen(e.target.checked)} className="w-4 h-4 accent-orange-500" />
+                <span className="text-sm font-medium text-gray-700">📈 {t('crm.wizard.strategySim', 'Strategie-Simulator (Bundlekauf, EK-Verteilung, 10-Jahres-Plan)')}</span>
+              </label>
+              {basket.length === 0 && (
+                <span className="text-xs text-gray-400">{t('crm.wizard.strategySimHint', 'nutzt die Wohnungen aus dem Paket')}</span>
+              )}
+            </div>
             {withCalc && (
               <div className="mt-3 space-y-3 border border-gray-100 rounded-xl p-3 bg-gray-50">
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -655,6 +688,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           </div>
         </div>
       </div>
+      {simOpen && (
+        <StrategySimulator lead={lead} initialUnits={basketToSim()} onClose={() => setSimOpen(false)} />
+      )}
     </div>
   )
 }
