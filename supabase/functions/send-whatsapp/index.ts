@@ -20,6 +20,28 @@ function bodyHash(s: string): string {
   for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0
   return h.toString(36) + ':' + t.length
 }
+// TimelinesAI nimmt max. 2000 Zeichen je Nachricht (HTTP 400 validation_error,
+// Sven 14.8.26). Lange Texte deshalb automatisch in mehrere Nachrichten teilen —
+// bevorzugt an Absatz-, dann Satz-, dann Wortgrenzen, nie mitten im Wort.
+const TEXT_LIMIT = 1900       // Puffer unter TimelinesAIs 2000
+const CAPTION_LIMIT = 950     // WhatsApp-Bildunterschrift deckelt bei ~1024
+function splitText(msg: string, limit = TEXT_LIMIT): string[] {
+  if (msg.length <= limit) return [msg]
+  const parts: string[] = []
+  let rest = msg
+  while (rest.length > limit) {
+    let cut = rest.lastIndexOf('\n\n', limit)
+    if (cut < limit * 0.4) cut = rest.lastIndexOf('\n', limit)
+    if (cut < limit * 0.4) cut = rest.lastIndexOf('. ', limit)
+    if (cut < limit * 0.4) cut = rest.lastIndexOf(' ', limit)
+    if (cut < limit * 0.4) cut = limit
+    parts.push(rest.slice(0, cut).trimEnd())
+    rest = rest.slice(cut).trimStart()
+  }
+  if (rest) parts.push(rest)
+  return parts
+}
+
 function waSize(url: string): string {
   if (!url.includes('/storage/v1/object/public/')) return url
   // Nur Bilder durch den Verkleinerer schicken: /render/image/ wandelt eine PDF/
@@ -190,11 +212,6 @@ Deno.serve(async (req) => {
           continue
         }
       }
-      const payload: Record<string, unknown> = {
-        phone:                  recipient.phone,
-        whatsapp_account_phone: senderPhone,
-        text:                   message,
-      }
       // Anhang (Bild/PDF) optional — ZWEI Schritte, weil TimelinesAI `file_url`
       // abgeschafft hat („no longer supported, use file_uid instead"):
       //   1. Datei laden und per multipart an POST /files_upload → liefert file_uid
@@ -300,23 +317,59 @@ Deno.serve(async (req) => {
           attachError = e instanceof Error ? e.message : String(e)
         }
       }
-      if (fileUidCache) payload.file_uid = fileUidCache
-      console.log(`[send-whatsapp] Sende an ${recipient.phone}`, JSON.stringify(payload))
+      // ── Text in TimelinesAI-taugliche Teile schneiden ─────────────
+      // Haengt ein Bild dran, wird der ERSTE Teil zur Bildunterschrift — und
+      // WhatsApp deckelt Unterschriften bei ~1024 Zeichen. Deshalb dort frueher
+      // schneiden; der Rest geht als normale Folgenachrichten raus.
+      let chunks: string[]
+      if (fileUidCache && message.length > CAPTION_LIMIT) {
+        const head = splitText(message, CAPTION_LIMIT)[0]
+        chunks = [head, ...splitText(message.slice(head.length).trimStart())]
+      } else {
+        chunks = splitText(message)
+      }
+      if (chunks.length > 1) console.log(`[send-whatsapp] ${message.length} Zeichen → ${chunks.length} Teile für ${recipient.phone}`)
 
-      const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(payload),
-      })
-      const json = await res.json()
-      console.log(`[send-whatsapp] Antwort ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
-      if (!res.ok) console.error(`[send-whatsapp] FEHLER ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
-      results.push({ phone: recipient.phone, ok: res.ok, status: res.status, data: json })
-      // Erfolgreich raus → merken, damit derselbe Text nicht erneut an diese Nummer geht.
-      if (res.ok && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
+      let sentAllParts = true
+      for (let ci = 0; ci < chunks.length; ci++) {
+        const payload: Record<string, unknown> = {
+          phone:                  recipient.phone,
+          whatsapp_account_phone: senderPhone,
+          text:                   chunks[ci],
+        }
+        // Das Bild haengt am ersten Teil — so steht es oben im Chat und der
+        // Text liest sich darunter in einem Stueck weiter.
+        if (ci === 0 && fileUidCache) payload.file_uid = fileUidCache
+        console.log(`[send-whatsapp] Sende an ${recipient.phone} (Teil ${ci + 1}/${chunks.length})`, JSON.stringify(payload))
+
+        const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(payload),
+        })
+        const json = await res.json()
+        console.log(`[send-whatsapp] Antwort ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
+        if (!res.ok) {
+          console.error(`[send-whatsapp] FEHLER ${res.status} für ${recipient.phone} (Teil ${ci + 1}/${chunks.length}):`, JSON.stringify(json))
+          results.push({ phone: recipient.phone, ok: false, status: res.status, data: json, part: ci + 1, parts: chunks.length })
+          sentAllParts = false
+          break // Folgeteile ohne den Anfang ergeben keinen Sinn
+        }
+        if (ci === chunks.length - 1) {
+          results.push({ phone: recipient.phone, ok: true, status: res.status, data: json,
+            ...(chunks.length > 1 ? { parts: chunks.length } : {}) })
+        } else {
+          // Kurze Pause, damit die Teile beim Empfaenger sicher in der
+          // richtigen Reihenfolge ankommen.
+          await new Promise(r => setTimeout(r, 700))
+        }
+      }
+      // Erfolgreich raus → merken, damit derselbe Text nicht erneut an diese Nummer
+      // geht. Hash immer ueber den GESAMTEN Text, unabhaengig von der Teilung.
+      if (sentAllParts && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
     }
 
     // ── Aktivität in CRM loggen ───────────────────────────────────
