@@ -1,0 +1,157 @@
+<svg viewBox="0 0 680 900" xmlns="http://www.w3.org/2000/svg" font-family="Montserrat, Arial, sans-serif">
+  <defs>
+    <pattern id="hpHatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#f4efe4"/><line x1="546.0" y1="0" x2="546.0" y2="8" stroke="#d9cfba" stroke-width="1.4"/>
+    </pattern>
+    <pattern id="hpTiles" width="26" height="26" patternUnits="userSpaceOnUse">
+      <rect width="26" height="26" fill="#fdeee9"/><path d="M26 0H0V26" fill="none" stroke="#f5c9bc" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect x="0" y="0" width="680" height="900" fill="#FAF6EC"/>
+  <text x="60" y="44" font-size="24" font-weight="700" fill="#1a2332" font-family="Playfair Display, Georgia, serif">Apartment 101</text>
+  <text x="60" y="66" font-size="13" fill="#6b7280">2 Schlafzimmer · 81,5 m² Wohnfläche · Terrasse 20,5 m² · 1. Ebene</text>
+
+  <!-- Bodenflächen: oben schmaler Zimmertrakt, unten breiterer Wohntrakt -->
+  <polygon points="250,112 426,112 426,672 223,672 223,485 250,485" fill="#fbf8f1"/>
+  <rect x="223" y="672" width="198" height="112" fill="url(#hpTiles)"/>
+
+  <!-- ── Außenwände ── -->
+  <!-- Nord -->
+  <line x1="250" y1="112" x2="426" y2="112" stroke="#1b1b22" stroke-width="9"/>
+  <!-- West: oben (Kern-/Nachbarseite) mit Eingangsöffnung im Flur-Band -->
+  <line x1="250" y1="112" x2="250" y2="252" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="250" y1="294" x2="250" y2="485" stroke="#1b1b22" stroke-width="9"/>
+  <!-- Versatz zum breiteren Wohntrakt -->
+  <line x1="250" y1="485" x2="223" y2="485" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="223" y1="485" x2="223" y2="672" stroke="#1b1b22" stroke-width="9"/>
+  <!-- Ost mit Fenstern (SZ1, Bad 1, SZ2, Bad 2, Essen) -->
+  <line x1="426" y1="112" x2="426" y2="132" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="426" y1="132" x2="426" y2="205" stroke="#8fb3cf" stroke-width="9"/>
+  <line x1="426" y1="132" x2="426" y2="205" stroke="#ffffff" stroke-width="3"/>
+  <line x1="426" y1="205" x2="426" y2="243" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="426" y1="243" x2="426" y2="281" stroke="#8fb3cf" stroke-width="9"/>
+  <line x1="426" y1="243" x2="426" y2="281" stroke="#ffffff" stroke-width="3"/>
+  <line x1="426" y1="281" x2="426" y2="340" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="426" y1="340" x2="426" y2="412" stroke="#8fb3cf" stroke-width="9"/>
+  <line x1="426" y1="340" x2="426" y2="412" stroke="#ffffff" stroke-width="3"/>
+  <line x1="426" y1="412" x2="426" y2="441" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="426" y1="441" x2="426" y2="474" stroke="#8fb3cf" stroke-width="9"/>
+  <line x1="426" y1="441" x2="426" y2="474" stroke="#ffffff" stroke-width="3"/>
+  <line x1="426" y1="474" x2="426" y2="540" stroke="#1b1b22" stroke-width="9"/>
+  <line x1="426" y1="540" x2="426" y2="648" stroke="#8fb3cf" stroke-width="9"/>
+  <line x1="426" y1="540" x2="426" y2="648" stroke="#ffffff" stroke-width="3"/>
+  <line x1="426" y1="648" x2="426" y2="672" stroke="#1b1b22" stroke-width="9"/>
+  <!-- Süd: Glasschiebefront zur Veranda -->
+  <line x1="223" y1="672" x2="240" y2="672" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="240" y1="672" x2="408" y2="672" stroke="#8fb3cf" stroke-width="5"/>
+  <line x1="240" y1="672" x2="408" y2="672" stroke="#ffffff" stroke-width="3"/>
+  <line x1="408" y1="672" x2="426" y2="672" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Veranda-Rand -->
+  <line x1="223" y1="672" x2="223" y2="784" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="421" y1="672" x2="421" y2="784" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="223" y1="784" x2="421" y2="784" stroke="#1b1b22" stroke-width="4" stroke-dasharray="10 6"/>
+
+  <!-- ── Innenwände ── -->
+  <!-- Flur / Schlafzimmer 1 (oben) -->
+  <line x1="296" y1="112" x2="296" y2="227" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Südwand SZ1 (mit Tür vom Flur) -->
+  <line x1="250" y1="227" x2="262" y2="227" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="300" y1="227" x2="426" y2="227" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Bad 1: Westwand + Südwand (Tür vom Flur her, Öffnung in der Westwand) -->
+  <line x1="356" y1="227" x2="356" y2="240" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="356" y1="278" x2="356" y2="319" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="356" y1="319" x2="426" y2="319" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Nordwand SZ2 (= Flur-Süd) mit Tür -->
+  <line x1="250" y1="319" x2="356" y2="319" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Südwand SZ2 mit Tür (vom Küchenflur) -->
+  <line x1="250" y1="431" x2="288" y2="431" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="326" y1="431" x2="426" y2="431" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Bad 2 (Ost) + Abstell (West): Trennwand + Südwand -->
+  <line x1="332" y1="431" x2="332" y2="443" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="332" y1="475" x2="332" y2="485" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="250" y1="485" x2="296" y2="485" stroke="#1b1b22" stroke-width="4"/>
+  <line x1="332" y1="485" x2="426" y2="485" stroke="#1b1b22" stroke-width="4"/>
+  <!-- Abstell-Ostwand -->
+  <line x1="296" y1="450" x2="296" y2="485" stroke="#1b1b22" stroke-width="4"/>
+
+  <!-- ── Türen (Blatt + Schwenk) ── -->
+  <!-- Eingang (Westwand, Flur-Band): Angel unten, oeffnet in den Flur -->
+  <line x1="250" y1="294" x2="292" y2="294" stroke="#1b1b22" stroke-width="3"/>
+  <path d="M250 252 A42 42 0 0 1 292 294" fill="none" stroke="#9aa1ad" stroke-width="1.5"/>
+  <!-- SZ1-Tür (Südwand SZ1, öffnet ins Zimmer) -->
+  <line x1="262" y1="227" x2="262" y2="189" stroke="#1b1b22" stroke-width="3"/>
+  <path d="M262 189 A38 38 0 0 1 300 227" fill="none" stroke="#9aa1ad" stroke-width="1.5"/>
+  <!-- Bad-1-Tür (Westwand des Bads, oeffnet ins Bad) -->
+  <line x1="356" y1="278" x2="394" y2="278" stroke="#1b1b22" stroke-width="3"/>
+  <path d="M356 240 A38 38 0 0 1 394 278" fill="none" stroke="#9aa1ad" stroke-width="1.5"/>
+  <!-- SZ2-Tür (Südwand, öffnet ins Zimmer) -->
+  <line x1="288" y1="431" x2="288" y2="395" stroke="#1b1b22" stroke-width="3"/>
+  <path d="M288 395 A38 38 0 0 1 326 431" fill="none" stroke="#9aa1ad" stroke-width="1.5"/>
+  <!-- Bad-2-Tür (Westwand zum Durchgang, oeffnet ins Bad) -->
+  <line x1="332" y1="443" x2="364" y2="443" stroke="#1b1b22" stroke-width="3"/>
+  <path d="M332 475 A32 32 0 0 0 364 443" fill="none" stroke="#9aa1ad" stroke-width="1.5"/>
+
+  <!-- ── Möbel ── -->
+  <!-- SZ1: Doppelbett an Nordwand -->
+  <rect x="316" y="122" width="84" height="62" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <line x1="400" y1="138" x2="316" y2="138" stroke="#c9bfa9" stroke-width="1.5"/>
+  <rect x="324" y="125" width="22" height="11" fill="none" stroke="#c9bfa9" stroke-width="1.2"/>
+  <rect x="354" y="125" width="22" height="11" fill="none" stroke="#c9bfa9" stroke-width="1.2"/>
+  <!-- Bad 1: Dusche + WC + Waschtisch -->
+  <rect x="360" y="230" width="24" height="24" fill="url(#hpHatch)" stroke="#c9bfa9" stroke-width="1.4"/>
+  <ellipse cx="410" cy="246" rx="9" ry="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <ellipse cx="410" cy="296" rx="9" ry="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <!-- SZ2: Bett Ost + Einbauschrank West -->
+  <rect x="330" y="336" width="88" height="64" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <line x1="418" y1="352" x2="330" y2="352" stroke="#c9bfa9" stroke-width="1.5"/>
+  <rect x="338" y="339" width="22" height="11" fill="none" stroke="#c9bfa9" stroke-width="1.2"/>
+  <rect x="368" y="339" width="22" height="11" fill="none" stroke="#c9bfa9" stroke-width="1.2"/>
+  <rect x="254" y="326" width="30" height="72" fill="url(#hpHatch)" stroke="#c9bfa9" stroke-width="1.5"/>
+  <!-- Bad 2: Waschtisch + WC -->
+  <ellipse cx="352" cy="458" rx="9" ry="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <ellipse cx="398" cy="458" rx="9" ry="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <!-- Küche: Zeile unterm Bad-Band -->
+  <rect x="252" y="490" width="44" height="22" fill="url(#hpHatch)" stroke="#c9bfa9" stroke-width="1.5"/>
+  <circle cx="272" cy="501" r="6" fill="none" stroke="#c9bfa9" stroke-width="1.4"/>
+  <rect x="334" y="490" width="56" height="22" fill="url(#hpHatch)" stroke="#c9bfa9" stroke-width="1.5"/>
+  <rect x="346" y="493" width="22" height="15" fill="none" stroke="#c9bfa9" stroke-width="1.4"/>
+  <!-- Essen: Tisch + 4 Stühle (Ost) -->
+  <rect x="352" y="560" width="46" height="58" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="344" cy="574" r="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <circle cx="344" cy="604" r="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <circle cx="406" cy="574" r="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <circle cx="406" cy="604" r="8" fill="none" stroke="#c9bfa9" stroke-width="1.6"/>
+  <!-- Wohnen: Sofa (Westwand) + zwei Sessel -->
+  <rect x="228" y="552" width="24" height="76" rx="4" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="266" cy="646" r="11" fill="none" stroke="#c9bfa9" stroke-width="1.8"/>
+  <circle cx="298" cy="650" r="11" fill="none" stroke="#c9bfa9" stroke-width="1.8"/>
+  <!-- Veranda: Sitzgruppe -->
+  <rect x="300" y="710" width="34" height="34" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="284" cy="716" r="9" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="284" cy="744" r="9" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="350" cy="716" r="9" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+  <circle cx="350" cy="744" r="9" fill="none" stroke="#c9bfa9" stroke-width="2"/>
+
+  <!-- ── Raum-Labels + Maße ── -->
+  <text x="352" y="204" font-size="12" fill="#1a2332" font-weight="600" text-anchor="middle">SCHLAFEN 1</text>
+  <text x="352" y="218" font-size="10" fill="#9ca3af" text-anchor="middle">3,50 × 3,20 m</text>
+  <text x="382" y="271" font-size="10.5" fill="#1a2332" font-weight="600">BAD</text>
+  <text x="300" y="382" font-size="12" fill="#1a2332" font-weight="600" text-anchor="middle">SCHLAFEN 2</text>
+  <text x="300" y="396" font-size="10" fill="#9ca3af" text-anchor="middle">4,00 × 3,10 m</text>
+  <text x="340" y="478" font-size="10.5" fill="#1a2332" font-weight="600">BAD</text>
+  <text x="256" y="466" font-size="9.5" fill="#1a2332" font-weight="600">ABSTELL</text>
+  <text x="300" y="528" font-size="12" fill="#1a2332" font-weight="600" text-anchor="middle">KÜCHE</text>
+  <text x="266" y="586" font-size="12" fill="#1a2332" font-weight="600">WOHNEN</text>
+  <text x="358" y="546" font-size="12" fill="#1a2332" font-weight="600">ESSEN</text>
+  <text x="322" y="666" font-size="10" fill="#9ca3af" text-anchor="middle">offener Bereich · 5,25 × 4,56 m</text>
+  <text x="322" y="774" font-size="11" fill="#b45309" text-anchor="middle" font-weight="600">VERANDA · 16,5 m² · überdacht</text>
+
+  <!-- Eingang-Pill -->
+  <rect x="150" y="262" width="82" height="22" rx="11" fill="#ff795d"/>
+  <text x="191" y="277" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="600">EINGANG</text>
+
+  <!-- Footer -->
+  <text x="60" y="856" font-size="11" fill="#9ca3af">Grundriss nach Originalplan (Luma Developers, Maßstab 1:100) · Möblierung beispielhaft · Maße ca.</text>
+  <text x="60" y="874" font-size="11" fill="#9ca3af">Skala · Apartment 101 · Wohnfläche 81,5 m² + Terrasse 20,5 m²</text>
+</svg>

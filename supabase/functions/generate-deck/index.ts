@@ -449,6 +449,9 @@ Deno.serve(async (req) => {
     // existiert, kommt er ins Deck. Quelle: crm_projects.deck_assets.floorplans
     // (Map Wohnungsnummer → Bild-URL, Fallback-Key "<n>br" je Zimmertyp).
     const floorplanByUnit: Record<string, string> = {}
+    // Wohnungen im Deck, fuer die NIRGENDS ein HP-Grundriss hinterlegt ist — wird
+    // in der Antwort gemeldet (Grundriss-Garantie: Luecken sichtbar machen).
+    let missingFloorplans: string[] = []
     // Anzeige-Wohnungsnummer je normalisiertem Schlüssel — für die Beschriftung der
     // Grundriss-Blöcke, wenn ein Deck MEHRERE Wohnungen enthält.
     const floorplanLabel: Record<string, string> = {}
@@ -485,6 +488,10 @@ Deno.serve(async (req) => {
           const fpUrl = fpMap[normU(u.unit_number)] ?? (u.bedrooms != null ? fpMap[`${u.bedrooms}br`] : undefined)
           if (fpUrl) { floorplanByUnit[normU(u.unit_number)] = fpUrl; floorplanLabel[normU(u.unit_number)] = u.unit_number }
         }
+        // GRUNDRISS-GARANTIE: fehlende Plaene laut melden statt still weglassen — der
+        // floorplan-Block bliebe sonst ohne Zeichnung und niemand merkt es (Skala 14.8.).
+        missingFloorplans = unitList.filter(u => !floorplanByUnit[normU(u.unit_number)]).map(u => u.unit_number)
+        if (missingFloorplans.length) console.error(`[generate-deck] KEIN hinterlegter Grundriss fuer Wohnung(en) ${missingFloorplans.join(', ')} (Projekt ${body.project_id}) — deck_assets.unit_floorplans ergaenzen`)
         const furnIncluded = !!(p as { furniture_included?: boolean } | null)?.furniture_included
         const furnDefault = Number((p as { furniture_cost?: number } | null)?.furniture_cost) || 0
         const furnByBed = (p as { calc_defaults?: { furniture_by_bedrooms?: Record<string, number> } } | null)?.calc_defaults?.furniture_by_bedrooms ?? null
@@ -867,7 +874,8 @@ Deno.serve(async (req) => {
       return json({ ok: true, background: true })
     }
     const out = await doGenerate()
-    return json({ ok: true, token: out.token, url: `/deck/${out.token}`, blocks: out.blocks })
+    return json({ ok: true, token: out.token, url: `/deck/${out.token}`, blocks: out.blocks,
+      ...(missingFloorplans.length ? { missing_floorplans: missingFloorplans } : {}) })
 
   } catch (err) {
     return json({ error: (err as Error).message }, 500)

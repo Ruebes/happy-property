@@ -364,11 +364,55 @@ const checkDeckRuleBloat: Check = {
   },
 }
 
+// ── Prüfung 13: Grundriss-Garantie ──────────────────────────────────────────
+// Sven 14.8.: Grundrisse sollen IMMER im Deck sein, wenn sie irgendwo verfügbar
+// sind. Zwei Luecken werden gemeldet: (a) junge Decks mit Grundriss-Abschnitt
+// ohne Zeichnung, (b) Projekte, deren Drive-Ordner Grundriss-Dateien hat
+// (drive_sync.floorplans_newest vom Nacht-Sync), aber ohne unit_floorplans-Mapping.
+const checkFloorplanCoverage: Check = {
+  key: 'grundriss_fehlt',
+  title: 'Grundrisse fehlen in Decks',
+  run: async (sb) => {
+    const out: Finding[] = []
+    const seit = new Date(Date.now() - 14 * 86400e3).toISOString()
+    const { data: decks } = await sb.from('sales_decks').select('token, recipient_name, content, created_at').gt('created_at', seit).limit(400)
+    for (const d of (decks ?? []) as Array<{ token: string; recipient_name?: string | null; content?: { blocks?: Array<Record<string, unknown>> } | null }>) {
+      const leer = (d.content?.blocks ?? []).some(b => b.type === 'floorplan' && !b.image)
+      if (leer) {
+        out.push({
+          check_key: 'grundriss_fehlt', severity: 'mittel', entity_kind: 'deck', entity_id: String(d.token), entity_label: String(d.recipient_name ?? d.token),
+          what_plain: 'Ein aktuelles Deck hat einen Grundriss-Abschnitt ohne Zeichnung — für die Wohnung ist kein HP-Grundriss hinterlegt.',
+          action: 'proposed',
+          fix_plain: 'Grundriss im HP-Stil anlegen und in deck_assets.unit_floorplans des Projekts eintragen — neue Decks bekommen ihn dann automatisch.',
+        })
+      }
+    }
+    const { data: projs } = await sb.from('crm_projects').select('id, name, deck_assets').not('drive_folder_id', 'is', null)
+    for (const p of (projs ?? []) as Array<{ id: string; name: string; deck_assets?: Record<string, unknown> | null }>) {
+      const da = p.deck_assets ?? {}
+      const hatDrivePlaene = !!(da.drive_sync as { floorplans_newest?: string } | undefined)?.floorplans_newest
+      const ufp = da.unit_floorplans as Record<string, unknown> | undefined
+      const hatMapping = !!ufp && Object.keys(ufp).length > 0
+      if (!hatDrivePlaene || hatMapping) continue
+      const { count } = await sb.from('sales_decks').select('id', { count: 'exact', head: true }).eq('project_id', p.id)
+      if ((count ?? 0) > 0) {
+        out.push({
+          check_key: 'grundriss_fehlt', severity: 'niedrig', entity_kind: 'projekt', entity_id: p.id, entity_label: p.name,
+          what_plain: `Im Drive-Ordner von ${p.name} liegen Grundriss-Zeichnungen, aber im CRM ist kein HP-Grundriss je Wohnung hinterlegt — Decks dieses Projekts erscheinen ohne Grundriss.`,
+          action: 'proposed',
+          fix_plain: 'Grundrisse im HP-Stil nachzeichnen (wie Emerald/Skala) und als unit_floorplans hinterlegen.',
+        })
+      }
+    }
+    return out
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
-  checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat,
+  checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────

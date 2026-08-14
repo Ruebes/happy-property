@@ -70,8 +70,22 @@ async function getParentId(token: string, fileId: string): Promise<string | null
   const data = await res.json() as { parents?: string[] }
   return data.parents?.[0] ?? null
 }
-async function driveBytes(token: string, fileId: string): Promise<Uint8Array> {
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+// Native Google-Dateien (Sheet/Doc/Slides) haben keinen Binaer-Body — alt=media
+// liefert dort einen Fehler und der Import scheiterte STILL (Skala-Preisliste 14.8.:
+// Luma stellte die Liste von einer xlsx-Datei auf ein natives Sheet um → der Spiegel
+// blieb auf dem Stand vom 12.7. und der Preis-Sync las veraltete Preise).
+// Deshalb: native Typen IMMER ueber den Export-Endpunkt holen (Sheet→xlsx, Doc/Slides→pdf).
+const GAPPS_EXPORT: Record<string, { mime: string; ext: string }> = {
+  'application/vnd.google-apps.spreadsheet':  { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: 'xlsx' },
+  'application/vnd.google-apps.document':     { mime: 'application/pdf', ext: 'pdf' },
+  'application/vnd.google-apps.presentation': { mime: 'application/pdf', ext: 'pdf' },
+}
+async function driveBytes(token: string, fileId: string, mimeType = ''): Promise<Uint8Array> {
+  const exp = GAPPS_EXPORT[mimeType]
+  const url = exp
+    ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exp.mime)}&supportsAllDrives=true`
+    : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   if (!res.ok) throw new Error(`Download ${res.status}`)
   return new Uint8Array(await res.arrayBuffer())
 }
@@ -369,8 +383,151 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string }
+    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string }
     const { project_id, action, folder_id, sync } = body
+
+    // ── nightly: alle angebundenen Drive-Ordner durchsuchen (Cron ~04:00 CY) ─────
+    // Sven 14.8.: jede Nacht alle Ordner durchsuchen — unsere UND die der Developer.
+    // Je Projekt mit drive_folder_id: neueste Preisliste ueber alle Quellen suchen
+    // (Projektordner, Doc-Unterordner, Developer-Elternordner, drive_external_sources).
+    // Geaendert seit letztem Lauf → docs-Spiegel erneuern + parse-pricelist-Sync
+    // (Preise + Verfuegbarkeit). Zusaetzlich neue Dateien im "Floor plans"-Ordner
+    // melden (Grundriss-Garantie). Mail an Sven NUR wenn sich etwas geaendert hat.
+    // Ausloeser der Regel: Luma stellte die Skala-Liste still auf 350k um (14.8.) —
+    // Deck an Tobias waere fast mit 330k-Basis rausgegangen.
+    if (action === 'nightly') {
+      const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
+      const token = await getReadToken()
+      const runNightly = async () => {
+      const { data: projs } = await supabase.from('crm_projects')
+        .select('id, name, developer, drive_folder_id, deck_assets')
+        .not('drive_folder_id', 'is', null)
+      const callFn = async (fn: string, b: Record<string, unknown>) => {
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/${fn}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_ROLE}`, apikey: SERVICE_ROLE },
+          body: JSON.stringify(b),
+        })
+        return await r.json().catch(() => ({})) as Record<string, unknown>
+      }
+      const report: string[] = []
+      const errors: string[] = []
+      let synced = 0
+      // Wall-Time-Schutz der Edge-Runtime: pro Nacht max. 6 volle Preislisten-Syncs
+      // (je ~40s); weitere geaenderte Projekte laufen automatisch in der Folgenacht,
+      // weil ihr Zustand nicht fortgeschrieben wird.
+      const MAX_SYNCS = 6
+      type NightlyState = { pricelist_id?: string; pricelist_mtime?: string; floorplans_newest?: string; last_run?: string }
+      for (const pr of (projs ?? []) as Array<{ id: string; name: string; developer?: string | null; drive_folder_id: string; deck_assets?: { drive_sync?: NightlyState } | null }>) {
+        try {
+          const kids = await listChildren(token, pr.drive_folder_id)
+          const files: DriveFile[] = kids.filter(f => !isFolder(f.mimeType))
+          for (const sf of kids.filter(f => isFolder(f.mimeType) && /price|preis|payment|zahlung|document|dokument/i.test(f.name)).slice(0, 4)) {
+            try { files.push(...(await listChildren(token, sf.id)).filter(f => !isFolder(f.mimeType))) } catch { /* Unterordner optional */ }
+          }
+          try {
+            const dev = await getParentId(token, pr.drive_folder_id)
+            if (dev) files.push(...(await listChildren(token, dev)).filter(f => !isFolder(f.mimeType)))
+          } catch { /* Developer-Ordner optional */ }
+          try {
+            const devName = String(pr.developer ?? '').trim()
+            if (devName) {
+              const { data: src } = await supabase.from('drive_external_sources').select('folder_id').eq('developer_name', devName).eq('active', true).maybeSingle()
+              const ext = (src as { folder_id?: string } | null)?.folder_id
+              if (ext) files.push(...(await listChildren(token, ext)).filter(f => !isFolder(f.mimeType)))
+            }
+          } catch { /* externe Quelle optional */ }
+
+          const newest = files.filter(f => docType(f.name) === 'pricelist')
+            .sort((a, b) => (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? ''))[0]
+          const fpFolder = kids.find(f => isFolder(f.mimeType) && /floor\s*plan|grundriss/i.test(f.name))
+          let fpNewest = ''
+          let fpCount = 0
+          if (fpFolder) {
+            try {
+              const fps = (await listChildren(token, fpFolder.id)).filter(f => !isFolder(f.mimeType))
+              fpCount = fps.length
+              fpNewest = fps.map(f => f.modifiedTime ?? '').sort().pop() ?? ''
+            } catch { /* Grundriss-Ordner optional */ }
+          }
+
+          const state: NightlyState = pr.deck_assets?.drive_sync ?? {}
+          const plChanged = !!newest && (newest.id !== state.pricelist_id || (newest.modifiedTime ?? '') !== (state.pricelist_mtime ?? ''))
+          const fpChanged = !!fpNewest && fpNewest !== (state.floorplans_newest ?? '')
+
+          let syncNote = ''
+          let syncOk = false
+          if (plChanged && synced < MAX_SYNCS) {
+            synced++
+            await callFn('prepare-project-assets', { project_id: pr.id, action: 'docs', force: true })
+            const ps = await callFn('parse-pricelist', { project_id: pr.id, create: true })
+            if (ps.ok === true) {
+              syncOk = true
+              syncNote = `Preisliste synchronisiert: ${ps.updated ?? 0} Preise aktualisiert, ${ps.deleted ?? 0} aus dem Angebot genommen, ${ps.created ?? 0} neu`
+            } else {
+              syncNote = `Preislisten-Sync FEHLER: ${JSON.stringify(ps).slice(0, 160)}`
+            }
+          } else if (plChanged) {
+            syncNote = 'Preisliste geaendert · Sync folgt naechste Nacht (Nacht-Limit erreicht)'
+          }
+          if (plChanged || fpChanged) {
+            report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Dateien im Grundriss-Ordner (${fpCount} Dateien)` : null].filter(Boolean).join(' · ')}`)
+          }
+
+          // Zustand fortschreiben. Preislisten-Stand NUR nach erfolgreichem Sync (bzw.
+          // wenn nichts zu tun war) — sonst wuerde ein Fehler den Diff verschlucken
+          // und die Aenderung nie wieder auffallen.
+          const advancePl = !plChanged || syncOk
+          const nextState: NightlyState = {
+            pricelist_id:      advancePl ? (newest?.id ?? state.pricelist_id) : state.pricelist_id,
+            pricelist_mtime:   advancePl ? (newest?.modifiedTime ?? state.pricelist_mtime) : state.pricelist_mtime,
+            floorplans_newest: fpNewest || state.floorplans_newest,
+            last_run:          new Date().toISOString(),
+          }
+          const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', pr.id).maybeSingle()
+          const da = ((fresh as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+          await supabase.from('crm_projects').update({ deck_assets: { ...da, drive_sync: nextState } }).eq('id', pr.id)
+        } catch (e) {
+          errors.push(`${pr.name}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+      // quiet=true (manueller Backfill): keine Mail, Report nur in DB/Antwort.
+      if ((report.length || errors.length) && body.quiet !== true) {
+        try {
+          await callFn('send-email', {
+            to: 'sven@happy-property.com',
+            subject: `Drive-Sync: ${report.length} Projekt(e) mit Aenderungen`,
+            html: `<p>Naechtlicher Drive-Sync (Preislisten + Ordner-Ueberwachung):</p><p>${report.map(r => `• ${r}`).join('<br/>')}</p>${errors.length ? `<p><b>Fehler:</b><br/>${errors.map(r => `• ${r}`).join('<br/>')}</p>` : ''}`,
+            auto: true,
+            from_name: 'System · Happy Property',
+          })
+        } catch (e) { console.warn('[prepare-project-assets] nightly-Mail fehlgeschlagen:', e) }
+      }
+      console.log(`[prepare-project-assets] nightly: ${(projs ?? []).length} Projekte, ${report.length} Aenderungen, ${synced} Syncs, ${errors.length} Fehler`)
+      // Ergebnis DB-sichtbar ablegen — der Lauf selbst antwortet dem Aufrufer sofort
+      // (Hintergrund), also braucht es eine nachlesbare Spur jenseits der Logs.
+      try {
+        await supabase.from('crm_settings').upsert({
+          key: 'drive_sync_last_report',
+          value: JSON.stringify({ at: new Date().toISOString(), projects: (projs ?? []).length, changed: report.length, synced, report: report.slice(0, 40), errors: errors.slice(0, 20) }),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'key' })
+      } catch (e) { console.warn('[prepare-project-assets] nightly-Report speichern fehlgeschlagen:', e) }
+      return { projects: (projs ?? []).length, changed: report.length, synced, report, errors }
+      }   // ── Ende runNightly ──
+
+      // Der volle Lauf dauert laenger als das Gateway-Fenster (~150s) → im Hintergrund
+      // ausfuehren und sofort antworten (gleiches Muster wie parse-pricelist background).
+      // body.sync=true erzwingt Vordergrund (nur fuer kleine Bestaende/Tests sinnvoll).
+      const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime
+      if (body.sync !== true && er?.waitUntil) {
+        er.waitUntil(runNightly().catch(e => console.error('[prepare-project-assets] nightly:', e)))
+        return json({ ok: true, action, background: true })
+      }
+      const out = await runNightly()
+      return json({ ok: true, action, ...out })
+    }
+
     if (!project_id) return json({ error: 'project_id fehlt' }, 400)
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     const { folderId: dbFolder, assets, project } = await loadAssets(supabase, project_id)
@@ -418,8 +575,9 @@ Deno.serve(async (req) => {
         const url = `${SUPABASE_URL}/storage/v1/object/public/deck-assets/${path}`
         return json({ ok: true, url, name: meta.name, mimeType: mime, size: meta.size ? Number(meta.size) : undefined, streamed: true })
       }
-      const url = await uploadBytes(supabase, await driveBytes(token, fid), mime, `projects/${project_id}/import`, meta.name ?? `${fid}.${ext}`)
-      return json({ ok: true, url, name: meta.name, mimeType: mime })
+      const expG = GAPPS_EXPORT[mime]
+      const url = await uploadBytes(supabase, await driveBytes(token, fid, mime), expG?.mime ?? mime, `projects/${project_id}/import`, expG ? `${meta.name ?? fid}.${expG.ext}` : (meta.name ?? `${fid}.${ext}`))
+      return json({ ok: true, url, name: meta.name, mimeType: expG?.mime ?? mime })
     }
 
     // ── uploadimage: ein fertig aufbereitetes Bild (base64) in Storage ablegen ────
@@ -662,7 +820,13 @@ Deno.serve(async (req) => {
       const importDoc = async (f: DriveFile | undefined, key: string) => {
         if (!f) return
         if (f.size && parseInt(f.size, 10) > MAX_DOC_BYTES) { skippedLarge.push(`${key} (${Math.round(parseInt(f.size, 10) / 1024 / 1024)} MB)`); return }
-        try { doc_urls[key] = await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/docs`, f.name) } catch { /* skip */ }
+        try {
+          // Bei nativen Google-Dateien Export-MIME + Endung verwenden, sonst landet
+          // z.B. ein Sheet ohne .xlsx-Endung im Storage und parse-pricelist erkennt
+          // das Format nicht.
+          const exp = GAPPS_EXPORT[f.mimeType]
+          doc_urls[key] = await uploadBytes(supabase, await driveBytes(token, f.id, f.mimeType), exp?.mime ?? f.mimeType, `projects/${project_id}/docs`, exp ? `${f.name}.${exp.ext}` : f.name)
+        } catch (e) { console.warn(`[prepare-project-assets] docs-Import ${key} fehlgeschlagen:`, e) }
       }
       // WICHTIG — Reihenfolge nach Speicher-Risiko + sofortiges Zwischenspeichern:
       // Die Preisliste (kritisch für die Wohnungen) zuerst importieren UND sichern,
