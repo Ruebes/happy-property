@@ -4251,7 +4251,8 @@
       "colCommitted": "committed",
       "mgmt": "Management % of rent",
       "fromCalc": "{{n}} apartment(s) use the values from the individual calculation.",
-      "fromSeason": "from season model"
+      "fromSeason": "from season model",
+      "period": "{{from}} to {{to}} · 10 years from the first handover"
     }
   },
   "docs": {
@@ -5420,6 +5421,8 @@
     "disclaimer": "This overview is an example calculation based on the assumptions above and does not replace tax or investment advice. You received the detailed individual calculations for the apartments separately.",
     "mostlyFinanced": "mostly debt-financed",
     "rowFinanced": "Financing share",
-    "colCommitted": "committed capital"
+    "colCommitted": "committed capital",
+    "period": "{{from}} to {{to}}",
+    "periodNote": "Period considered: 10 years from the handover of the first apartment (until {{to}})."
   }
 }

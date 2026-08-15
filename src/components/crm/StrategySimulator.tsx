@@ -447,7 +447,11 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
 
             {/* Jahres-Tabelle: die komplette Rechnung auf der Zeitachse */}
             <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('crm.sim.yearTable', 'Verlauf je Jahr (alle Wohnungen zusammen)')}</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('crm.sim.yearTable', 'Verlauf je Jahr (alle Wohnungen zusammen)')}
+              <span className="ml-2 normal-case tracking-normal font-normal text-gray-400">
+                {t('crm.sim.period', '{{from}} bis {{to}} · 10 Jahre ab der ersten Übergabe', { from: agg.firstYear, to: agg.lastYear })}
+              </span>
+            </p>
               <div className="border border-gray-200 rounded-xl overflow-x-auto">
                 <table className="w-full text-xs tabular-nums">
                   <thead><tr className="text-left text-[10px] uppercase tracking-wide text-gray-400 border-b border-gray-100">

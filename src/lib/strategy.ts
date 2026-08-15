@@ -174,10 +174,21 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   return units.map(u => out.get(u.key)!)
 }
 
-export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear: number } {
-  if (!outcomes.length) return { rows: [], firstYear: new Date().getFullYear() }
+export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear: number; lastYear: number } {
+  if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y } }
   const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
-  const lastYear = Math.max(...outcomes.map(o => o.unit.readyY + 9))
+  // Die Engine rechnet je Wohnung GENAU 10 Jahre ab ihrer Übergabe. Wohnungen mit
+  // früherer Übergabe laufen also früher aus. Zeigte man darüber hinaus weiter,
+  // bräche die Summe ein (Miete fällt weg, Zins/Tilgung der späteren Wohnung
+  // laufen weiter) - genau Svens Beobachtung 15.8. für 2037. Das ist kein
+  // wirtschaftlicher Effekt, sondern das Ende des Rechenhorizonts. Deshalb endet
+  // der gemeinsame Zeitraum, wenn die ERSTE Wohnung ihre 10 Jahre voll hat; so
+  // ist jedes gezeigte Jahr vollständig. (Untergrenze: die letzte Übergabe muss
+  // enthalten sein, sonst fiele eine spät übergebene Wohnung ganz heraus.)
+  const lastYear = Math.max(
+    Math.min(...outcomes.map(o => o.unit.readyY + 9)),
+    Math.max(...outcomes.map(o => o.unit.readyY)),
+  )
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
     const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0 }
@@ -201,7 +212,7 @@ export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear
     }
     rows.push(row)
   }
-  return { rows, firstYear }
+  return { rows, firstYear, lastYear }
 }
 
 // Eigenkapital-Rendite ist nur aussagekräftig, wenn nennenswertes EK im Spiel

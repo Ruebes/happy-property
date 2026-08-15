@@ -4251,7 +4251,8 @@
       "colCommitted": "gebunden",
       "mgmt": "Verwaltung % der Miete",
       "fromCalc": "{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung.",
-      "fromSeason": "aus Saisonmodell"
+      "fromSeason": "aus Saisonmodell",
+      "period": "{{from}} bis {{to}} · 10 Jahre ab der ersten Übergabe"
     }
   },
   "docs": {
@@ -5420,6 +5421,8 @@
     "disclaimer": "Diese Übersicht ist eine Beispielrechnung auf Basis der oben genannten Annahmen und ersetzt keine Steuer- oder Anlageberatung. Die detaillierten Einzelrechnungen zu den Wohnungen hast du separat erhalten.",
     "mostlyFinanced": "überwiegend fremdfinanziert",
     "rowFinanced": "Finanzierungsanteil",
-    "colCommitted": "gebundenes Kapital"
+    "colCommitted": "gebundenes Kapital",
+    "period": "{{from}} bis {{to}}",
+    "periodNote": "Betrachtungszeitraum: 10 Jahre ab der Übergabe der ersten Wohnung (bis {{to}})."
   }
 }

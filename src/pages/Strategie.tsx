@@ -156,7 +156,11 @@ export default function Strategie() {
         </div>
 
         {/* Jahr für Jahr */}
-        <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>{t('strategie.yearsTitle', 'Jahr für Jahr')}</h2>
+        <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>{t('strategie.yearsTitle', 'Jahr für Jahr')}
+          <span style={{ fontFamily: SANS, fontSize: 12.5, fontWeight: 400, color: '#8a8a8a', marginLeft: 8 }}>
+            {t('strategie.period', '{{from}} bis {{to}}', { from: agg.firstYear, to: agg.lastYear })}
+          </span>
+        </h2>
         <div style={{ ...card, padding: 0, overflowX: 'auto', marginBottom: 22 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
             <thead>
@@ -198,6 +202,7 @@ export default function Strategie() {
         <div style={{ ...card, marginBottom: 18 }}>
           <div style={{ fontSize: 12.5, color: '#666', lineHeight: 1.8 }}>
             <b style={{ color: DARK }}>{t('strategie.assumptionsTitle', 'Annahmen')}:</b>{' '}
+            {t('strategie.periodNote', 'Betrachtungszeitraum: 10 Jahre ab der Übergabe der ersten Wohnung (bis {{to}}).', { to: agg.lastYear })}{' '}
             {t('strategie.assumptions', 'Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre, Steuersitz Deutschland ({{d}} % Grenzsteuersatz). Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt.', {
               g: String(params.growth).replace('.', ','), r: String(params.rentGrowth).replace('.', ','),
               i: String(params.interest).replace('.', ','), y: params.termYears, d: params.deTaxPct,
