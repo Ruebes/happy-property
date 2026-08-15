@@ -28,6 +28,11 @@ export default function OwnerContent() {
   const [target, setTarget] = useState('all')
   const [file, setFile] = useState<File | null>(null)
   const [notify, setNotify] = useState(true)
+  // Stichpunkte → KI formuliert Lottes Nachricht (editierbar, DE + EN)
+  const [bullets, setBullets] = useState('')
+  const [msgDe, setMsgDe] = useState('')
+  const [msgEn, setMsgEn] = useState('')
+  const [composing, setComposing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [renameId, setRenameId] = useState<string | null>(null)
@@ -73,12 +78,16 @@ export default function OwnerContent() {
       if (error) throw error
       let msg = `✓ ${t('crm.ownerContent.uploaded', 'Hochgeladen')}`
       if (notify) {
-        const { data: nd, error: ne } = await supabase.functions.invoke('owner-content', { body: { action: 'notify', doc_id: (row as { id: string }).id } })
+        const { data: nd, error: ne } = await supabase.functions.invoke('owner-content', { body: {
+          action: 'notify', doc_id: (row as { id: string }).id,
+          message_de: msgDe.trim() || undefined, message_en: msgEn.trim() || undefined,
+        } })
         const n = (nd ?? {}) as { success?: boolean; recipients?: number; error?: string }
         msg += ne || n.error ? ` — ❌ ${t('crm.ownerContent.notifyFail', 'Benachrichtigung fehlgeschlagen')}: ${n.error ?? ne?.message}` : ` — 🐾 ${t('crm.ownerContent.notified', '{{n}} Eigentümer benachrichtigt', { n: n.recipients ?? 0 })}`
       }
       showToast(msg)
-      setTitle(''); setFile(null); if (fileRef.current) fileRef.current.value = ''
+      setTitle(''); setFile(null); setBullets(''); setMsgDe(''); setMsgEn('')
+      if (fileRef.current) fileRef.current.value = ''
       await fetchAll()
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : 'Fehler'}`)
@@ -98,12 +107,33 @@ export default function OwnerContent() {
     if (error) { showToast(`❌ ${error.message}`); return }
     setDocs(arr => arr.filter(x => x.id !== d.id))
   }
+  // Stichpunkte → Lotte-Nachricht entwerfen lassen (DE + EN, danach editierbar)
+  const compose = async () => {
+    if (!bullets.trim() || !title.trim() || composing) return
+    setComposing(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('owner-content', { body: {
+        action: 'compose', title: title.trim(),
+        kind: file?.type.startsWith('video/') ? 'video' : 'document', bullets: bullets.trim(),
+      } })
+      const d = (data ?? {}) as { de?: string; en?: string; error?: string }
+      if (error || d.error || !d.de) throw new Error(d.error ?? error?.message ?? 'KI-Fehler')
+      setMsgDe(d.de); setMsgEn(d.en ?? d.de)
+    } catch (err) {
+      showToast(`❌ ${t('crm.ownerContent.composeFail', 'Entwurf fehlgeschlagen')}: ${err instanceof Error ? err.message : String(err)}`)
+    } finally { setComposing(false) }
+  }
+
   const notifyNow = async (d: OwnerDoc) => {
     const scope = d.property_id ? props.find(p => p.id === d.property_id)?.label ?? '1 Wohnung' : t('crm.ownerContent.allOwners', 'ALLE Eigentümer')
     if (!window.confirm(t('crm.ownerContent.notifyConfirm', 'Lotte benachrichtigt jetzt {{s}} per Mail + WhatsApp. Fortfahren?', { s: scope }) as string)) return
     setBusy(true)
     try {
-      const { data, error } = await supabase.functions.invoke('owner-content', { body: { action: 'notify', doc_id: d.id } })
+      const { data, error } = await supabase.functions.invoke('owner-content', { body: {
+        action: 'notify', doc_id: d.id,
+        // frueher freigegebener KI-Text (am Dokument gespeichert) wird wiederverwendet
+        message_de: d.description?.trim() || undefined,
+      } })
       const n = (data ?? {}) as { success?: boolean; recipients?: number; error?: string }
       if (error || n.error) throw new Error(n.error ?? error?.message)
       showToast(`🐾 ${t('crm.ownerContent.notified', '{{n}} Eigentümer benachrichtigt', { n: n.recipients ?? 0 })}`)
@@ -129,6 +159,30 @@ export default function OwnerContent() {
             <div className="min-w-[260px] flex-1">
               <CustomSelect value={target} onChange={v => setTarget(v)} options={[{ value: 'all', label: `👥 ${t('crm.ownerContent.allOwners', 'ALLE Eigentümer')}` }, ...props.map(p => ({ value: p.id, label: `🏠 ${p.label}` }))]} />
             </div>
+          </div>
+          {/* Stichpunkte → Lotte formuliert die Nachricht */}
+          <div className="border border-gray-100 rounded-xl bg-gray-50 p-3 space-y-2">
+            <label className="block text-xs font-medium text-gray-500">
+              💬 {t('crm.ownerContent.bullets', 'Stichpunkte für Lotte (was ist drin, warum lohnt es sich?)')}
+            </label>
+            <textarea rows={3} value={bullets} onChange={e => setBullets(e.target.value)} className={input}
+              placeholder={t('crm.ownerContent.bulletsPh', 'z.B. neue Steuerregeln 2027, Checkliste für die Steuererklärung, spart bares Geld')} />
+            <button onClick={() => void compose()} disabled={composing || !bullets.trim() || !title.trim()}
+              className="px-4 py-2 rounded-xl text-sm font-medium border border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40">
+              {composing ? t('crm.ownerContent.composing', 'Lotte formuliert…') : `🐾 ${t('crm.ownerContent.composeBtn', 'Nachricht von Lotte entwerfen')}`}
+            </button>
+            {msgDe && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">🇩🇪 {t('crm.ownerContent.msgDe', 'Nachricht (Deutsch, editierbar)')}</label>
+                  <textarea rows={6} value={msgDe} onChange={e => setMsgDe(e.target.value)} className={input} />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-gray-400 mb-1">🇬🇧 {t('crm.ownerContent.msgEn', 'Nachricht (Englisch, editierbar)')}</label>
+                  <textarea rows={6} value={msgEn} onChange={e => setMsgEn(e.target.value)} className={input} />
+                </div>
+              </div>
+            )}
           </div>
           <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
             <input type="checkbox" checked={notify} onChange={e => setNotify(e.target.checked)} className="accent-orange-500" />

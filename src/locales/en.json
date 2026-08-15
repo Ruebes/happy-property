@@ -1379,7 +1379,8 @@
       "thumbnails": "🖼️ Thumbnails",
       "connectors": "Connectors",
       "ownerContent": "📢 Owner content",
-      "finance": "📒 Accounting"
+      "finance": "📒 Accounting",
+      "uploadBtn": "Upload"
     },
     "tasks": {
       "title": "Tasks",
@@ -4027,7 +4028,14 @@
       "notifiedBadge": "notified",
       "delConfirm": "Delete \"{{t}}\" for the owners?",
       "empty": "Nothing uploaded yet.",
-      "oneUnit": "one apartment"
+      "oneUnit": "one apartment",
+      "bullets": "Bullet points for Lotte (what is inside, why is it worth it?)",
+      "bulletsPh": "e.g. new tax rules 2027, checklist for the tax return, saves real money",
+      "composing": "Lotte is writing…",
+      "composeBtn": "Let Lotte draft the message",
+      "msgDe": "Message (German, editable)",
+      "msgEn": "Message (English, editable)",
+      "composeFail": "Draft failed"
     },
     "devmails": {
       "title": "Developer mails",

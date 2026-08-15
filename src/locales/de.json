@@ -1379,7 +1379,8 @@
       "thumbnails": "🖼️ Thumbnails",
       "connectors": "Connectoren",
       "ownerContent": "📢 Eigentümer-Inhalte",
-      "finance": "📒 Buchhaltung"
+      "finance": "📒 Buchhaltung",
+      "uploadBtn": "Upload"
     },
     "tasks": {
       "title": "Aufgaben",
@@ -4027,7 +4028,14 @@
       "notifiedBadge": "benachrichtigt",
       "delConfirm": "„{{t}}\" für die Eigentümer löschen?",
       "empty": "Noch nichts hochgeladen.",
-      "oneUnit": "eine Wohnung"
+      "oneUnit": "eine Wohnung",
+      "bullets": "Stichpunkte für Lotte (was ist drin, warum lohnt es sich?)",
+      "bulletsPh": "z.B. neue Steuerregeln 2027, Checkliste für die Steuererklärung, spart bares Geld",
+      "composing": "Lotte formuliert…",
+      "composeBtn": "Nachricht von Lotte entwerfen",
+      "msgDe": "Nachricht (Deutsch, editierbar)",
+      "msgEn": "Nachricht (Englisch, editierbar)",
+      "composeFail": "Entwurf fehlgeschlagen"
     },
     "devmails": {
       "title": "Developer-Mails",

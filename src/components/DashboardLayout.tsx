@@ -509,6 +509,19 @@ export default function DashboardLayout({ children, basePath }: Props) {
                 </svg>
               </button>
             )}
+            {/* Upload für die Eigentümer — direkt in der Leiste (Sven 15.8.26):
+                erst EIN Button; wird es mehr, machen wir hier ein Aktions-Menü. */}
+            {isAdmin && (
+              <Link
+                to="/admin/crm/owner-content"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold font-body
+                           text-white transition-opacity hover:opacity-90 shrink-0"
+                style={{ backgroundColor: '#ff795d' }}
+                title={t('crm.nav.ownerContent', 'Eigentümer-Inhalte')}
+              >
+                ⬆️ <span className="hidden sm:inline">{t('crm.nav.uploadBtn', 'Upload')}</span>
+              </Link>
+            )}
             <LanguageSwitcher />
 
             {effectiveRole && (

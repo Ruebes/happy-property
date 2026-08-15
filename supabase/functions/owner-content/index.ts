@@ -21,6 +21,9 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SITE = 'https://portal.happy-property.com'
 const TEST_MAIL = 'sven@happy-property.com'
 const TEST_PHONE = '+35795096409'
+// Eigenes Motiv fuer Upload-Meldungen: Lotte am Laptop beim Hochladen
+// (Svens Drive „Lotte Upload", gespiegelt nach Assets/wa).
+const LOTTE_UPLOAD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte-upload.jpg'
 
 interface Recipient { name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
 
@@ -119,8 +122,54 @@ Deno.serve(async (req) => {
       return json({ success: true, notified: true, mail: !!rep.email, whatsapp: !!phone })
     }
 
+    // ── compose: Stichpunkte → wohlklingende Lotte-Nachricht (DE + EN) ────────
+    // Sven tippt ein paar Stichpunkte zum Upload; die KI formuliert daraus die
+    // Nachricht, die Lotte an die Eigentümer schickt. Editierbar im Frontend.
+    if (body.action === 'compose') {
+      const b = body as unknown as { title?: string; kind?: string; bullets?: string }
+      if (!b.title || !b.bullets?.trim()) return json({ error: 'title + bullets nötig' }, 400)
+      const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+      if (!apiKey) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
+      const isVideo = b.kind === 'video'
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6', max_tokens: 900,
+          messages: [{ role: 'user', content:
+`Du schreibst als "Lotte", die Hündin und persönliche Assistentin von Sven bei Happy Property (Immobilien auf Zypern). Lotte informiert die Eigentümer, dass etwas Neues im Eigentümer-Portal liegt: ${isVideo ? 'ein Video' : 'ein Dokument'} mit dem Titel "${b.title}".
+
+Svens Stichpunkte dazu (das steckt drin / darum lohnt es sich):
+${b.bullets.trim()}
+
+Schreibe die Benachrichtigung in ZWEI Sprachen. Regeln:
+- Warm, persönlich, DU-Form, kurz (4 bis 7 Saetze), WhatsApp-tauglich. Sparsame Emojis (🐾 passt zu Lotte).
+- Sag klar, WAS neu ist und was die Eigentümer davon haben (aus den Stichpunkten, nichts erfinden).
+- KEINE Anrede am Anfang (die setzt das System je Empfänger) und KEINE Grußformel am Ende (kommt ebenfalls vom System).
+- KEINE Links (der Portal-Link wird automatisch angehängt).
+- Niemals Gedankenstriche (— oder –) verwenden, nur normale Bindestriche.
+Antworte NUR als JSON: {"de": "...", "en": "..."}`
+          }],
+        }),
+      })
+      if (!res.ok) return json({ error: `KI-Fehler ${res.status}` }, 502)
+      const data = await res.json() as { content?: Array<{ type?: string; text?: string }> }
+      const raw = (data.content ?? []).find(c => c.type === 'text')?.text ?? ''
+      const m = raw.match(/\{[\s\S]*\}/)
+      if (!m) return json({ error: 'KI-Antwort unlesbar' }, 502)
+      try {
+        const out = JSON.parse(m[0]) as { de?: string; en?: string }
+        if (!out.de) throw new Error('de fehlt')
+        return json({ success: true, de: out.de.trim(), en: (out.en ?? out.de).trim() })
+      } catch { return json({ error: 'KI-Antwort unlesbar' }, 502) }
+    }
+
     if (body.action !== 'notify' || !body.doc_id) return json({ error: 'action=notify + doc_id nötig' }, 400)
     const test = body.test === true
+    // Von Sven freigegebene KI-Texte (Stichpunkte-Flow); ohne sie greift der Standardtext.
+    const custom = body as unknown as { message_de?: string; message_en?: string }
+    const customDe = (custom.message_de ?? '').trim()
+    const customEn = (custom.message_en ?? '').trim() || customDe
 
     const { data: docRow, error: de } = await sb.from('owner_documents')
       .select('id, title, kind, property_id, file_url').eq('id', body.doc_id).maybeSingle()
@@ -172,23 +221,32 @@ Deno.serve(async (req) => {
         : ''
       const prefix = test ? 'TEST · ' : ''
       const subject = `${prefix}${de_ ? `Neu im Eigentümer-Portal: ${doc.title}` : `New in your owner portal: ${doc.title}`}`
+      // Kern der Nachricht: Svens KI-Text (aus Stichpunkten), sonst Standardsatz.
+      const core = de_ ? customDe : customEn
+      const coreHtml = core
+        ? core.split(/\n{2,}/).map(p => `<p>${p.replace(/\n/g, '<br/>')}</p>`).join('')
+        : `<p>${de_
+          ? `im Eigentümer-Portal liegt ${what}${forUnit} für dich bereit: <b>„${doc.title}"</b>.`
+          : `there is ${what}${forUnit} waiting for you in your owner portal: <b>“${doc.title}”</b>.`}</p>`
       const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
         <div style="text-align:center;margin-bottom:6px;">
-          <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
+          <img src="${LOTTE_UPLOAD}" alt="Lotte" width="200" style="width:200px;max-width:80%;border-radius:14px;" />
           <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">Lotte · ${de_ ? 'persönliche Assistentin von Sven' : "Sven's personal assistant"} 🐾</p>
         </div>
         <p>${de_ ? `Hallo ${r.name},` : `Hi ${r.name},`}</p>
-        <p>${de_
-          ? `im Eigentümer-Portal liegt ${what}${forUnit} für dich bereit: <b>„${doc.title}"</b>.`
-          : `there is ${what}${forUnit} waiting for you in your owner portal: <b>“${doc.title}”</b>.`}</p>
+        ${coreHtml}
         <p style="text-align:center;margin:24px 0;">
           <a href="${portal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;display:inline-block;">${de_ ? 'Zum Eigentümer-Portal →' : 'Open owner portal →'}</a>
         </p>
         <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
       </div>`
-      const waText = de_
-        ? `${prefix}Hallo ${r.name} 🐾\n\nhier ist Lotte von Happy Property. Im Eigentümer-Portal liegt ${what}${forUnit} für dich bereit:\n\n*${doc.title}*\n\n${portal}\n\nLiebe Grüße, Lotte`
-        : `${prefix}Hi ${r.name} 🐾\n\nLotte from Happy Property here. There is ${what}${forUnit} waiting for you in your owner portal:\n\n*${doc.title}*\n\n${portal}\n\nBest, Lotte`
+      const waText = core
+        ? (de_
+          ? `${prefix}Hallo ${r.name} 🐾\n\n${core}\n\n*${doc.title}*\n${portal}\n\nLiebe Grüße, Lotte`
+          : `${prefix}Hi ${r.name} 🐾\n\n${core}\n\n*${doc.title}*\n${portal}\n\nBest, Lotte`)
+        : (de_
+          ? `${prefix}Hallo ${r.name} 🐾\n\nhier ist Lotte von Happy Property. Im Eigentümer-Portal liegt ${what}${forUnit} für dich bereit:\n\n*${doc.title}*\n\n${portal}\n\nLiebe Grüße, Lotte`
+          : `${prefix}Hi ${r.name} 🐾\n\nLotte from Happy Property here. There is ${what}${forUnit} waiting for you in your owner portal:\n\n*${doc.title}*\n\n${portal}\n\nBest, Lotte`)
 
       const res = { name: r.name, mail: false, whatsapp: false } as typeof results[number]
       try {
@@ -205,7 +263,7 @@ Deno.serve(async (req) => {
           const { error } = await sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'owner_document', override_text: waText,
             lead_data: { lead_name: r.name, lead_phone: phone },
-            persona_image: lotteBild(),
+            persona_image: LOTTE_UPLOAD,
           } })
           if (error) throw new Error(error.message)
           res.whatsapp = true
@@ -218,7 +276,13 @@ Deno.serve(async (req) => {
       if (test) break // Test: nur EIN Durchlauf an Sven
     }
 
-    if (!test) await sb.from('owner_documents').update({ notified_at: new Date().toISOString() }).eq('id', doc.id)
+    if (!test) {
+      // KI-Text am Dokument festhalten - so nutzt ein spaeteres "Benachrichtigen"
+      // aus der Liste denselben freigegebenen Text.
+      const patch: Record<string, string> = { notified_at: new Date().toISOString() }
+      if (customDe) patch.description = customDe
+      await sb.from('owner_documents').update(patch).eq('id', doc.id)
+    }
     return json({ success: true, recipients: results.length, results })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
