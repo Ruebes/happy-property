@@ -7,6 +7,7 @@ import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonB
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
+import { rentFromSeason } from '../../lib/strategy'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
 // Aus dem Kunden heraus: Projekt → Vorschlags-Wohnung(en) → Freitext → ins Paket;
@@ -77,10 +78,13 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const hotel = letType === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false
     const yieldPct = pu.yieldPct ?? calcParams.yieldPct ?? 5.5
     const monthsAway = (readyY - nowD.getFullYear()) * 12 + (readyM - (nowD.getMonth() + 1))
+    const puSeason = letType === 'short' ? (pu.season !== undefined ? pu.season : calcParams.season) : null
     return {
       key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`,
       priceNet, furnNet,
-      rent: Math.round(gross * yieldPct / 100 / 12),
+      // Saisonmodell schlägt die pauschale Rendite - sonst zeigt der Simulator
+      // eine andere Miete als er rechnet.
+      rent: rentFromSeason(puSeason) ?? Math.round(gross * yieldPct / 100 / 12),
       letType,
       fin: (pu.fin ?? calcParams.fin) === 'yes',
       buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
@@ -90,7 +94,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       calc: {
         mgmtPct: pu.mgmtPct ?? (letType === calcParams.letType ? calcParams.mgmtPct : defaultMgmtPct(letType, hotel)),
         hotelConcept: hotel,
-        season: letType === 'short' ? (pu.season !== undefined ? pu.season : calcParams.season) : null,
+        season: puSeason,
         yieldPct, bedrooms: b.unit.bedrooms ?? 2,
         deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
         res: calcParams.res,

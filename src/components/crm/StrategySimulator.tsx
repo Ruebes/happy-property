@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf,
+  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf, rentFromSeason,
   DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
 } from '../../lib/strategy'
 import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
@@ -120,11 +120,17 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         const p = byUnit.get(u.name.trim().toLowerCase())
         if (!p) return u
         hits++
+        const letType = p.letType === 'long' ? 'long' : 'short'
+        const season = letType === 'short' ? (p.season ?? null) : null
+        // Bei Saisonmodell rechnet die Engine daraus - Miete entsprechend angleichen,
+        // sonst zeigt der Simulator eine andere Miete als er rechnet.
+        const seasonRent = rentFromSeason(season)
         return {
           ...u,
-          letType: p.letType === 'long' ? 'long' : 'short',
+          letType,
+          rent: seasonRent ?? u.rent,
           calc: {
-            mgmtPct: p.mgmtPct, hotelConcept: p.hotelConcept, season: p.season ?? null,
+            mgmtPct: p.mgmtPct, hotelConcept: p.hotelConcept, season,
             yieldPct: p.yieldPct, bedrooms: p.bedrooms, deTaxPct: p.deTaxPct, res: p.res,
           },
         }
@@ -285,9 +291,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         onChange={e => patchUnit(u.key, { furnNet: +e.target.value })} />
                     </div>
                     <div>
-                      <label className={lbl}>{t('crm.sim.rent', 'Miete/Monat (€)')}</label>
+                      <label className={lbl}>
+                        {t('crm.sim.rent', 'Miete/Monat (€)')}
+                        {u.calc?.season && <span className="text-orange-600"> · {t('crm.sim.fromSeason', 'aus Saisonmodell')}</span>}
+                      </label>
+                      {/* Eigene Miete eintippen hebt ein Saisonmodell auf - sonst
+                          würde die Engine weiter mit dem Modell rechnen. */}
                       <input type="number" step={50} className={inputCls} value={Math.round(u.rent)}
-                        onChange={e => patchUnit(u.key, { rent: +e.target.value })} />
+                        onChange={e => patchUnit(u.key, { rent: +e.target.value, calc: { ...(u.calc ?? {}), season: null } })} />
                     </div>
                     <div>
                       <label className={lbl}>{t('crm.sim.letType', 'Vermietung')}</label>

@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, compute, defaultMgmtPct, type CalcParams, type CalcResult } from './rechner'
+import { DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, type CalcParams, type CalcResult } from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
 // Wird vom CRM-Simulator UND von der öffentlichen Kundenseite /strategie/:token
@@ -106,6 +106,16 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
 }
 
 export const ymOf = (y: number, m: number) => y * 12 + (m - 1)
+
+// Monatsmiete aus dem Saisonmodell (Auslastung + Preis/Nacht je Saison).
+// WICHTIG: Ist ein Saisonmodell gesetzt, rechnet die Engine IMMER damit und
+// ignoriert eine abweichend eingetippte Miete. Damit Anzeige und Rechnung nicht
+// auseinanderlaufen, wird die Miete daraus abgeleitet, sobald ein Modell
+// übernommen wird.
+export function rentFromSeason(season: { totalOcc: number; adrHigh: number } | null | undefined): number | null {
+  if (!season || !(season.totalOcc > 0) || !(season.adrHigh > 0)) return null
+  return Math.round(seasonBreakdown(season).rent / 12)
+}
 
 export function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amount: number; label: string }> {
   const buy = ymOf(u.buyY, u.buyM), ready = Math.max(buy, ymOf(u.readyY, u.readyM))

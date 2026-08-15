@@ -4250,7 +4250,8 @@
       "roeHint2": "gesamt über den Zeitraum, nicht p.a.",
       "colCommitted": "gebunden",
       "mgmt": "Verwaltung % der Miete",
-      "fromCalc": "{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung."
+      "fromCalc": "{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung.",
+      "fromSeason": "aus Saisonmodell"
     }
   },
   "docs": {

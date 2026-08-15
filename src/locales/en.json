@@ -4250,7 +4250,8 @@
       "roeHint2": "total over the period, not p.a.",
       "colCommitted": "committed",
       "mgmt": "Management % of rent",
-      "fromCalc": "{{n}} apartment(s) use the values from the individual calculation."
+      "fromCalc": "{{n}} apartment(s) use the values from the individual calculation.",
+      "fromSeason": "from season model"
     }
   },
   "docs": {
