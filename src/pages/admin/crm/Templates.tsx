@@ -144,9 +144,9 @@ export default function Templates() {
         const { error } = await supabase.from('email_templates').insert(payload)
         if (error) throw new Error(error.message)
       }
-      await fetchTemplates()
       setShowForm(false)
       showToast('✅ ' + t(editingId ? 'crm.template.savedToast' : 'crm.template.createdToast'))
+      await fetchTemplates()
     } catch (err) {
       showToast('❌ ' + t('templates.saveErrorToast', 'Fehler: {{message}}', { message: err instanceof Error ? err.message : String(err) }))
     } finally {

@@ -695,7 +695,7 @@ export default function AdsManager() {
     return msg.slice(0, 200)
   }
 
-  const applyUpdate = async (entityId: string, entityType: 'campaign' | 'adset' | 'ad', patch: Record<string, unknown>) => {
+  const applyUpdate = async (entityId: string, entityType: 'campaign' | 'adset' | 'ad', patch: Record<string, unknown>, keepOpen = false) => {
     if (!settingsView || settingsView.busy) return
     setSettingsView(s => s ? { ...s, busy: true } : s)
     try {
@@ -708,8 +708,16 @@ export default function AdsManager() {
         throw new Error((detail as { error?: string })?.error ?? (error as Error).message)
       }
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
-      showToast(t('crm.ads.entityUpdated', '✅ Bei Meta gespeichert'))
-      await openSettings(settingsView.campaignId)   // frisch von Meta laden
+      if (keepOpen) {
+        // Schnell-Umschalter (Pausieren/Aktivieren): Fenster bleibt offen, frisch von Meta laden
+        showToast(t('crm.ads.entityUpdated', '✅ Bei Meta gespeichert'))
+        await openSettings(settingsView.campaignId)
+      } else {
+        // Svens Regel (15.8.): nach Speichern schliesst sich das Fenster sofort -
+        // der Toast liegt auf der Seite, Nacharbeiten laufen danach im Hintergrund.
+        setSettingsView(null)
+        showToast(t('crm.ads.entityUpdated', '✅ Bei Meta gespeichert'))
+      }
       void fetchAll()
     } catch (err) {
       console.error('[AdsManager] applyUpdate:', err)
@@ -718,9 +726,9 @@ export default function AdsManager() {
     }
   }
 
-  /** Schnell-Aktion: Status sofort umschalten (ohne Formular). */
+  /** Schnell-Aktion: Status sofort umschalten (ohne Formular, Fenster bleibt offen). */
   const toggleStatus = (entityId: string, entityType: 'campaign' | 'adset' | 'ad', current: unknown) =>
-    applyUpdate(entityId, entityType, { status: String(current) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' })
+    applyUpdate(entityId, entityType, { status: String(current) === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' }, true)
 
   /** Speichert alle offenen Feld-Änderungen einer Entität bei Meta. */
   const saveEntity = (entityId: string, entityType: 'campaign' | 'adset' | 'ad') => {
@@ -756,8 +764,9 @@ export default function AdsManager() {
         throw new Error((detail as { error?: string })?.error ?? (error as Error).message)
       }
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
+      // Svens Regel (15.8.): nach Speichern schliesst sich das Fenster sofort
+      setSettingsView(null)
       showToast(t('crm.ads.targetingSaved', '✅ Zielgruppe bei Meta gespeichert'))
-      await openSettings(settingsView.campaignId)
     } catch (err) {
       console.error('[AdsManager] saveTargeting:', err)
       setSettingsView(s => s ? { ...s, busy: false } : s)

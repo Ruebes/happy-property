@@ -36,6 +36,7 @@ export default function ProjectSelectionModal({
   const [selected, setSelected]   = useState<SelectedProjectEntry[]>([])
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
+  const [error, setError]         = useState('')
   const [search, setSearch]       = useState('')
 
   useEffect(() => {
@@ -109,13 +110,15 @@ export default function ProjectSelectionModal({
 
   const handleSave = async () => {
     setSaving(true)
+    setError('')
     try {
       // Delete all existing deal_projects for this deal
-      await supabase.from('deal_projects').delete().eq('deal_id', dealId)
+      const { error: delErr } = await supabase.from('deal_projects').delete().eq('deal_id', dealId)
+      if (delErr) throw new Error(delErr.message)
 
       // Insert new selections
       if (selected.length > 0) {
-        await supabase.from('deal_projects').insert(
+        const { error: insErr } = await supabase.from('deal_projects').insert(
           selected.map(e => ({
             deal_id:      dealId,
             project_id:   e.project.id,
@@ -124,11 +127,16 @@ export default function ProjectSelectionModal({
             notes:        e.notes.trim() || null,
           }))
         )
+        if (insErr) throw new Error(insErr.message)
       }
-      onSaved()
+      // Erfolg: Fenster sofort schliessen, Nacharbeiten (Reload) macht der Parent
       onClose()
+      onSaved()
     } catch (err) {
       console.error('[ProjectSelectionModal]', err)
+      setError(err instanceof Error && err.message
+        ? err.message
+        : t('projectSelectionModal.saveError', 'Speichern fehlgeschlagen. Bitte erneut versuchen.'))
     } finally {
       setSaving(false)
     }
@@ -299,7 +307,8 @@ export default function ProjectSelectionModal({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100 flex-shrink-0">
+          {error && <p className="mr-auto text-xs text-red-600">{error}</p>}
           <button onClick={onClose}
             className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">
             {t('crm.dealProject.modal.cancel', 'Abbrechen')}

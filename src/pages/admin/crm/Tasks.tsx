@@ -173,10 +173,14 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
       ]
       if (rows.length) { const r = await supabase.from('crm_task_assignees').insert(rows); if (r.error) throw r.error }
       if (customers.length) await supabase.from('crm_task_leads').insert(customers.map(c => ({ task_id: taskId, lead_id: c.lead_id })))
-      if (imgFiles.length) await uploadTaskImages(taskId, imgFiles)
-      // Zustellung (Mail/WhatsApp an Externe, Mail an Interne) im Hintergrund
-      supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[Tasks] dispatch:', e))
+      // Fenster sofort schliessen (Sven: nach Senden direkt zu) - Anhang-Upload und
+      // Zustellung laufen im Hintergrund weiter, Reihenfolge bleibt Upload vor Dispatch.
       onCreated(t('crm.tasks.created', 'Aufgabe angelegt'))
+      void (async () => {
+        if (imgFiles.length) await uploadTaskImages(taskId, imgFiles)
+        // Zustellung (Mail/WhatsApp an Externe, Mail an Interne)
+        supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[Tasks] dispatch:', e))
+      })()
     } catch (e) {
       const msg = e instanceof Error ? e.message
         : (e && typeof e === 'object' && 'message' in e) ? String((e as { message: unknown }).message) : t('common.error', 'Fehler')
@@ -486,7 +490,8 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     setSavingEdit(true)
     const { error } = await supabase.from('crm_tasks').update({ title: eTitle.trim(), description: eDesc.trim() || null }).eq('id', task.id)
     setSavingEdit(false)
-    if (!error) { setEditing(false); onChanged() }
+    // Popup direkt zu (Sven: nach Speichern schliessen) - onClose des Parents laedt die Liste neu.
+    if (!error) onClose()
   }
   const dispatchNew = () => supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: task.id } }).catch(e => console.warn('[Tasks] dispatch:', e))
   const toggleInternalEdit = async (pid: string) => {

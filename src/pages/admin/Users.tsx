@@ -474,26 +474,32 @@ export default function AdminUsers() {
         bic:                 form.bic.trim() || null,
         bank_account_holder: form.bank_account_holder.trim() || null,
       })
-      // Wohnung zuweisen falls ausgewählt
-      if (form.role === 'eigentuemer' && assignProjectId && assignUnitId) {
-        await performUnitAssignment(result.userId, form.email.trim())
-      }
-      // Willkommens-E-Mail mit Zugangsdaten automatisch senden
-      const { subject: welcomeSubject, html: welcomeHtml } = await renderPortalAccessEmail(
-        form.firstName.trim(),
-        form.email.trim(),
-        result.password,
-      )
-      supabase.functions.invoke('send-email', {
-        body: {
-          to:      form.email.trim(),
-          subject: welcomeSubject,
-          html:    welcomeHtml,
-        },
-      }).catch(() => { /* Fehler im Hintergrund ignorieren */ })
+      const email             = form.email.trim()
+      const firstName         = form.firstName.trim()
+      const doUnitAssignment  = form.role === 'eigentuemer' && !!assignProjectId && !!assignUnitId
+      // Nutzer ist angelegt - Fenster sofort schliessen, Nacharbeiten laufen im Hintergrund
       closeModal()
-      setToast(`✉️ ${t('users.toast.createdCredentialsSent', 'Nutzer angelegt – Zugangsdaten wurden an {{email}} gesendet.', { email: form.email.trim() })}`)
+      setToast(`✉️ ${t('users.toast.createdCredentialsSent', 'Nutzer angelegt – Zugangsdaten wurden an {{email}} gesendet.', { email })}`)
       fetchUsers()
+      ;(async () => {
+        // Wohnung zuweisen falls ausgewählt
+        if (doUnitAssignment) {
+          await performUnitAssignment(result.userId, email)
+        }
+        // Willkommens-E-Mail mit Zugangsdaten automatisch senden
+        const { subject: welcomeSubject, html: welcomeHtml } = await renderPortalAccessEmail(
+          firstName,
+          email,
+          result.password,
+        )
+        await supabase.functions.invoke('send-email', {
+          body: {
+            to:      email,
+            subject: welcomeSubject,
+            html:    welcomeHtml,
+          },
+        })
+      })().catch(() => { /* Fehler im Hintergrund ignorieren */ })
     } catch (e) {
       setFormError(e instanceof Error ? e.message : t('errors.saveFailed'))
     } finally {

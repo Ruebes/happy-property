@@ -801,23 +801,25 @@ export default function ProjectDetail() {
         if (error) throw error
         // Offer customer assignment for active units
         if (newUnit && form.status !== 'under_construction') {
-          await fetchData()
-          showToast(t('crm.pd.toastUnitCreated'))
+          // Fenster sofort schliessen - Listen-Reload laeuft danach
           setShowModal(false)
+          showToast(t('crm.pd.toastUnitCreated'))
           setAssigningUnit(newUnit as CrmProjectUnit)
           setShowAssignModal(true)
+          await fetchData()
           return
         }
       }
-      await fetchData()
-      showToast(editUnit ? t('crm.pd.toastUnitUpdated') : t('crm.pd.toastUnitCreated'))
+      // Fenster sofort schliessen - Toast lebt auf der Seite, Reload danach
       setShowModal(false)
+      showToast(editUnit ? t('crm.pd.toastUnitUpdated') : t('crm.pd.toastUnitCreated'))
       // Wenn von "Im Bau" → "Aktiv" gewechselt: Portal-Dialog anbieten
       if (wasUnderConstruction && isNowActive) {
         setPortalSuccess(false)
         setPortalError('')
         setShowPortalDialog(true)
       }
+      await fetchData()
     } catch (err) {
       console.error('[ProjectDetail] saveUnit:', err)
       showToast(t('crm.pd.toastError', { msg: err instanceof Error ? err.message : String(err) }))
@@ -911,8 +913,8 @@ export default function ProjectDetail() {
   // Dialog shown after saving a unit that was changed TO 'sold'
   const [showPortalDialog, setShowPortalDialog] = useState(false)
 
-  async function sendPortalAccess(email: string, name: string) {
-    if (!email.trim() || !name.trim()) return
+  async function sendPortalAccess(email: string, name: string): Promise<boolean> {
+    if (!email.trim() || !name.trim()) return false
     setPortalSending(true)
     setPortalError('')
     try {
@@ -924,9 +926,11 @@ export default function ProjectDetail() {
       setPortalEmail('')
       setPortalName('')
       setTimeout(() => setPortalSuccess(false), 6000)
+      return true
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setPortalError(t('crm.pd.errorPrefix', { msg }))
+      return false
     } finally {
       setPortalSending(false)
     }
@@ -2010,7 +2014,13 @@ export default function ProjectDetail() {
               </button>
               <button
                 onClick={async () => {
-                  await sendPortalAccess(portalEmail, portalName)
+                  const ok = await sendPortalAccess(portalEmail, portalName)
+                  if (ok) {
+                    // Dialog sofort schliessen, Erfolg als Seiten-Toast
+                    setShowPortalDialog(false)
+                    setPortalSuccess(false)
+                    showToast(t('crm.pd.accessSent'))
+                  }
                 }}
                 disabled={!portalEmail.trim() || !portalName.trim() || portalSending || portalSuccess}
                 className="flex-1 py-2.5 text-sm font-medium text-white rounded-xl disabled:opacity-50"

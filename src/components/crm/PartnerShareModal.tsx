@@ -45,8 +45,14 @@ export default function PartnerShareModal({ leadId, leadName, onClose }: Props) 
       if (error) throw error
       const d = data as { ok?: boolean; url?: string; wa_sent?: boolean; error?: string } | null
       if (!d?.ok) throw new Error(d?.error || t('crm.pshare.err', 'Aktivieren fehlgeschlagen.'))
-      setShare({ active: true, partner_name: name.trim(), whatsapp: wa.trim(), url: d.url ?? '' })
-      if (d.wa_sent === false) setErr(t('crm.pshare.waWarn', '⚠️ Akte ist aktiv, aber die WhatsApp an den Partner kam nicht durch - bitte Link manuell schicken.'))
+      if (d.wa_sent === false) {
+        // WhatsApp kam nicht durch: Fenster offen lassen, damit der Link manuell kopiert werden kann
+        setShare({ active: true, partner_name: name.trim(), whatsapp: wa.trim(), url: d.url ?? '' })
+        setErr(t('crm.pshare.waWarn', '⚠️ Akte ist aktiv, aber die WhatsApp an den Partner kam nicht durch - bitte Link manuell schicken.'))
+        return
+      }
+      // Erfolg: Fenster sofort schliessen (Partner hat den Link per WhatsApp bekommen)
+      onClose()
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('crm.pshare.err', 'Aktivieren fehlgeschlagen.'))
     } finally { setBusy(false) }
@@ -57,7 +63,8 @@ export default function PartnerShareModal({ leadId, leadName, onClose }: Props) 
     try {
       const { error } = await supabase.functions.invoke('partner-akte', { body: { action: 'deactivate', lead_id: leadId } })
       if (error) throw error
-      setShare(s => s ? { ...s, active: false } : null)
+      // Erfolg: Fenster sofort schliessen
+      onClose()
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Fehler')
     } finally { setBusy(false) }

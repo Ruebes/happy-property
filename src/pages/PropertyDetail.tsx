@@ -739,6 +739,10 @@ export default function PropertyDetail() {
     }).eq('id', id)
     if (error) { setAktivierSaving(false); setToast({ msg: t('propertyDetail.verwaltung.activateError', 'Fehler beim Aktivieren.'), type: 'error' }); return }
 
+    // Erfolg: Fenster sofort schliessen, Nacharbeiten (Unit-Sync + Reload) laufen danach
+    setAktivierSaving(false)
+    setShowVerwaltungModal(false)
+
     // Sync rental_type + status to linked crm_project_unit
     if (linkedUnitId) {
       const crmRentalType = aktivierRentalType === 'longterm' ? 'long' : 'short'
@@ -755,16 +759,12 @@ export default function PropertyDetail() {
         .eq('id', linkedUnitId)
       if (statusErr || rentalErr) {
         console.error('[PropertyDetail] handleAktivieren unit sync:', statusErr ?? rentalErr)
-        setAktivierSaving(false)
-        setShowVerwaltungModal(false)
         setToast({ msg: t('propertyDetail.verwaltung.unitSyncError', 'Gespeichert, aber das verknüpfte CRM-Objekt konnte nicht aktualisiert werden.'), type: 'error' })
         fetchProperty()
         return
       }
     }
 
-    setAktivierSaving(false)
-    setShowVerwaltungModal(false)
     setToast({ msg: t('propertyDetail.verwaltung.activated', '✅ Immobilie für Verwaltung aktiviert') })
     fetchProperty()
   }

@@ -211,8 +211,6 @@ export default function Objekte() {
   const [ownerModal, setOwnerModal]                 = useState<OwnerModalData>(EMPTY_OWNER_MODAL)
   const [ownerModalSaving, setOwnerModalSaving]     = useState(false)
   const [ownerModalError, setOwnerModalError]       = useState('')
-  const [ownerModalSuccess, setOwnerModalSuccess]   = useState(false)
-  const [ownerMailSent, setOwnerMailSent]           = useState(true)
   // CRM-Verknüpfung
   const [crmProjects, setCrmProjects]       = useState<{ id: string; name: string; location: string | null }[]>([])
   const [crmProjId, setCrmProjId]           = useState('')
@@ -656,8 +654,6 @@ export default function Objekte() {
   function openOwnerModal() {
     setOwnerModal({ ...EMPTY_OWNER_MODAL })
     setOwnerModalError('')
-    setOwnerModalSuccess(false)
-    setOwnerMailSent(true)
     setShowOwnerModal(true)
   }
 
@@ -709,8 +705,14 @@ export default function Objekte() {
           setToast(t('objekte.credentialsMailFailed', 'Fehler: Zugangsdaten-E-Mail konnte nicht gesendet werden'))
         }
       }
-      setOwnerMailSent(mailSent)
-      setOwnerModalSuccess(true)
+      // Bei Erfolg: Fenster sofort schliessen, Bestätigung als Toast auf der Seite.
+      // Bei fehlgeschlagenem Mailversand steht der rote Fehler-Toast bereits (oben gesetzt).
+      setShowOwnerModal(false)
+      if (mailSent) {
+        setToast(t('objekte.credentialsSentTo', 'Zugangsdaten wurden automatisch an {{email}} gesendet.', { email: ownerModal.email.trim().toLowerCase() }))
+      } else if (!data?.password || !data?.userId) {
+        setToast(t('objekte.userCreated', 'Nutzer angelegt'))
+      }
       await fetchOwners()
       if (data?.userId) setField('owner_id', data.userId)
     } catch (err) {
@@ -1192,30 +1194,7 @@ export default function Objekte() {
               className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
           </div>
 
-          {ownerModalSuccess ? (
-            <div className="py-4 space-y-4">
-              <div className="flex items-start gap-3 bg-green-50 border border-green-100 rounded-xl px-4 py-3">
-                <span className="text-2xl shrink-0">✉️</span>
-                <div>
-                  <p className="text-sm font-semibold text-green-800 font-body">{t('objekte.userCreated', 'Nutzer angelegt')}</p>
-                  <p className="text-xs text-green-700 font-body mt-0.5">
-                    {ownerMailSent
-                      ? t('objekte.credentialsSentTo', 'Zugangsdaten wurden automatisch an {{email}} gesendet.', { email: ownerModal.email })
-                      : t('objekte.credentialsMailNotSent', 'Zugangsdaten-E-Mail an {{email}} konnte nicht gesendet werden, bitte manuell senden.', { email: ownerModal.email })}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => { setShowOwnerModal(false); setOwnerModalSuccess(false) }}
-                className="w-full py-2.5 rounded-xl text-white text-sm font-semibold font-body hover:opacity-90 transition-opacity"
-                style={{ backgroundColor: 'var(--color-highlight)' }}
-              >
-                {t('objekte.closeAndContinue', 'Schließen & weiter')}
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-4">
+          <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label required>{t('properties.ownerModal.firstName')}</Label>
@@ -1313,8 +1292,7 @@ export default function Objekte() {
                   {ownerModalSaving ? t('properties.ownerModal.submitting') : t('properties.ownerModal.submit')}
                 </button>
               </div>
-            </div>
-          )}
+          </div>
         </div>
       </div>
     )

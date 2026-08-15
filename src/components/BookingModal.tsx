@@ -440,14 +440,18 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
       if (attempt.error) throw new Error(attempt.error.message)
       const bookingData = attempt.data
 
+      // Buchung steht - Fenster sofort schliessen (Parent zeigt Toast + laedt neu),
+      // alle Nacharbeiten laufen fire-and-forget im Hintergrund
+      onCreated()
+
       // 4. Buchungsbestätigung per E-Mail (fire-and-forget – Fehler blockieren nicht)
       supabase.functions.invoke('send-booking-confirmation', {
         body: { booking_id: bookingData.id },
       }).catch(e => console.warn('[BookingModal] confirmation email failed:', e))
 
-      // 5. Guest agreement stub
+      // 5. Guest agreement stub (fire-and-forget)
       if (form.houseRules.trim()) {
-        await supabase.from('guest_agreements').insert({
+        supabase.from('guest_agreements').insert({
           booking_id:  bookingData.id,
           guest_id:    guestId,
           property_id: form.propertyId,
@@ -455,6 +459,8 @@ export default function BookingModal({ properties, presetDate, isOwner: _isOwner
           check_out:   form.checkOut,
           total_price: isOwnerGuest ? 0 : (totalGross || null),
           house_rules: form.houseRules.trim(),
+        }).then(({ error: agreementErr }) => {
+          if (agreementErr) console.warn('[BookingModal] guest agreement failed:', agreementErr.message)
         })
       }
 

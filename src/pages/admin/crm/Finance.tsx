@@ -134,8 +134,8 @@ export default function Finance() {
       const { data, error } = await supabase.functions.invoke('revolut-sync', { body: { action: 'tax_export', from: taxFrom, to: taxTo, email: taxEmail } })
       const d = (data ?? {}) as { success?: boolean; error?: string; transactions?: number; receipts?: number; invoices?: number; sent_to?: string | null }
       if (error || d.error || !d.success) throw new Error(d.error || error?.message || 'Fehler')
-      showToast(`📤 ${t('crm.fin.taxDone', 'Export an {{mail}} gesendet: {{tx}} Buchungen, {{r}} Belege, {{i}} Rechnungen', { mail: d.sent_to ?? taxEmail, tx: d.transactions ?? 0, r: d.receipts ?? 0, i: d.invoices ?? 0 })}`)
       setTaxOpen(false)
+      showToast(`📤 ${t('crm.fin.taxDone', 'Export an {{mail}} gesendet: {{tx}} Buchungen, {{r}} Belege, {{i}} Rechnungen', { mail: d.sent_to ?? taxEmail, tx: d.transactions ?? 0, r: d.receipts ?? 0, i: d.invoices ?? 0 })}`)
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setTaxBusy(false) }
   }
 
@@ -157,11 +157,11 @@ export default function Finance() {
       const { data, error } = await supabase.functions.invoke('revolut-sync', { body: { action: 'pay_payable', payable_id: payFor.id } })
       const d = (data ?? {}) as { success?: boolean; error?: string; state?: string; wa_notified?: boolean; wa_info?: string }
       if (error || d.error || !d.success) throw new Error(d.error || error?.message || 'Fehler')
+      setPayFor(null)
       setPayables(arr => arr.map(x => x.id === payFor.id ? { ...x, status: 'bezahlt' } : x))
       showToast(d.wa_notified === false
         ? `💸 ${t('crm.fin.payDoneNoWa', 'Überweisung beauftragt - aber KEINE Info-WhatsApp an den Empfänger ({{why}})', { why: d.wa_info ?? '' })}`
         : `💸 ${t('crm.fin.payDone', 'Überweisung beauftragt ({{state}})', { state: d.state ?? 'pending' })}`)
-      setPayFor(null)
     } catch (e) { showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setPayBusy(false) }
   }
 

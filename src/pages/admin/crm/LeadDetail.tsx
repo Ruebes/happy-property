@@ -823,6 +823,10 @@ export default function LeadDetail() {
           : t('leadDetail.logRegistrationSent', 'Phase geändert: {{oldPhase}} → registrierung. Registrierung gesendet an: {{developers}}', { oldPhase, developers: selectedDevelopers.join(', ') }),
         created_by: profile?.id ?? null,
       }).throwOnError()
+      // Erfolg: Fenster sofort schliessen - Webhook, Automatik und Reload laufen danach weiter
+      setShowRegistrationModal(false)
+      showToast(t('crm.registrationSent', 'Registrierung gesendet'))
+
       await sendWebhook('deal.registration', {
         developers:  selectedDevelopers,
         bemerkungen: notes,
@@ -834,8 +838,6 @@ export default function LeadDetail() {
       // recipients=[] und ginge sonst an die KUNDEN-Nummer zurück (Datenleck, bestätigt).
       triggerScheduleMessage('registrierung')
 
-      setShowRegistrationModal(false)
-      showToast(t('crm.registrationSent', 'Registrierung gesendet'))
       await fetchAll(true)
     } catch (err) {
       console.error('[LeadDetail] registrationConfirm:', err)
@@ -1132,7 +1134,7 @@ export default function LeadDetail() {
     if (!lead) return
     setSendingWa(true)
     try {
-      await sendWhatsApp({
+      const res = await sendWhatsApp({
         event_type: 'no_show',
         lead_data: {
           lead_name:    `${lead.first_name} ${lead.last_name}`,
@@ -1144,6 +1146,7 @@ export default function LeadDetail() {
         lead_id:       id,
         override_text: waMsg,   // user-edited preview text
       })
+      if (!res.success) throw new Error(res.error || t('leadDetail.errWhatsapp', 'WhatsApp Fehler'))
       setShowWaPreview(false)
       showToast(t('crm.whatsappSent', '📱 WhatsApp gesendet'))
       await fetchAll(true)
@@ -1573,8 +1576,12 @@ export default function LeadDetail() {
           created_by:   profile?.id ?? null,
           completed_at: new Date().toISOString(),
         })
-        await fetchAll(true)
       }
+
+      // Erfolg: Fenster sofort schliessen - Reload, Portal-Sync und Zugangs-Anlage laufen danach weiter
+      setShowUnitEdit(false)
+      showToast(t('leadDetail.toastUnitSaved', '✅ Einheit gespeichert'))
+      if (!unitEditData) void fetchAll(true)
 
       // ── Sync properties-Eintrag für Eigentümer-Portal ─────────────
       if (savedUnitId && profile?.id) {
@@ -1628,9 +1635,6 @@ export default function LeadDetail() {
         }
       }
       // ──────────────────────────────────────────────────────────────
-
-      showToast(t('leadDetail.toastUnitSaved', '✅ Einheit gespeichert'))
-      setShowUnitEdit(false)
 
       // Kein Portalzugang → Eigentümer-Account automatisch anlegen
       if (portalAccessChecked && !customerHasAccess && lead?.email) {

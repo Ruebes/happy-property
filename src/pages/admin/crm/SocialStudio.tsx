@@ -316,10 +316,9 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
         updated_at: new Date().toISOString(),
       }).eq('id', post.id)
       if (error) throw error
-      // Freigegeben + Speichern → Fenster direkt schließen (Svens Wunsch);
-      // Entwürfe bleiben offen und zeigen die Bestätigung.
-      if (!silent && approved) { onClose(); return }
-      if (!silent) setNote(`✓ ${t('crm.social.saved', 'Gespeichert')}${approved && scheduled ? ` — ${t('crm.social.savedQueue', 'in der Tages-Warteschlange')}` : !approved ? ` — ${t('crm.social.savedDraft', 'Entwurf, wird NICHT automatisch gepostet')}` : ''}`)
+      // Svens Regel (15.8.): nach Speichern schliesst sich das Fenster sofort -
+      // auch bei Entwuerfen. Fehler halten es offen.
+      if (!silent) { onClose(); return }
     } catch (e) {
       setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`)
     } finally { setBusy('') }

@@ -358,8 +358,9 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         ) as DbResult
         if (res.error) throw new Error(res.error.message)
       }
-      onSaved()
+      // Fenster sofort schliessen - der Listen-Reload (onSaved) laeuft danach im Hintergrund
       onClose()
+      onSaved()
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('crm.project.unknownError', 'Unbekannter Fehler')
       setSaveError(msg)

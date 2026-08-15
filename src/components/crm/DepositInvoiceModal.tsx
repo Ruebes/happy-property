@@ -71,8 +71,16 @@ export default function DepositInvoiceModal({ deal, onClose, onDone }: Props) {
       const res = data as { ok?: boolean; invoice_number?: string; sent?: boolean; error?: string }
       if (!res?.ok) throw new Error(res?.error || t('depositInvoiceModal.errInvoiceCreationFailed', 'Rechnung konnte nicht erstellt werden.'))
 
-      // Deal auf Anzahlung setzen + Aktivität loggen (die Pipeline hatte den Wechsel ausgesetzt)
+      // Deal auf Anzahlung setzen (die Pipeline hatte den Wechsel ausgesetzt) - muss vor dem
+      // Schliessen fertig sein, damit der Pipeline-Refresh im Parent die neue Phase sieht
       await supabase.from('deals').update({ phase: 'anzahlung', deposit_paid_at: new Date().toISOString() }).eq('id', deal.id)
+
+      // Fenster sofort schliessen, Toast + Reload macht der Parent (onDone);
+      // das Aktivitaets-Log ist Nacharbeit und laeuft danach im Hintergrund weiter
+      onDone(send && res.sent
+        ? t('depositInvoiceModal.doneCreatedAndSent', 'Rechnung {{number}} erstellt & gesendet', { number: res.invoice_number })
+        : t('depositInvoiceModal.doneCreatedDraft', 'Rechnung {{number}} als Entwurf erstellt', { number: res.invoice_number }))
+
       await supabase.from('activities').insert({
         lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
         subject: t('depositInvoiceModal.activitySubjectCreated', 'Rechnung {{number}} erstellt', { number: res.invoice_number }),
@@ -83,9 +91,6 @@ export default function DepositInvoiceModal({ deal, onClose, onDone }: Props) {
           statusSuffix: res.sent ? t('depositInvoiceModal.activitySuffixSent', ' — an Kunden gesendet') : t('depositInvoiceModal.activitySuffixDraft', ' — als Entwurf'),
         }),
       })
-      onDone(send && res.sent
-        ? t('depositInvoiceModal.doneCreatedAndSent', 'Rechnung {{number}} erstellt & gesendet', { number: res.invoice_number })
-        : t('depositInvoiceModal.doneCreatedDraft', 'Rechnung {{number}} als Entwurf erstellt', { number: res.invoice_number }))
     } catch (e) {
       setErr((e as Error).message)
       setBusy(false)
