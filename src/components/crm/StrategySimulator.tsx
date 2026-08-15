@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, ymOf,
+  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf,
   DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
 } from '../../lib/strategy'
 
@@ -53,8 +53,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     if (initialUnits.length > 0 || !lead) { setLoaded(true); return }
     try {
       const { data } = await supabase.from('crm_strategy_scenarios').select('config').eq('lead_id', lead.id).maybeSingle()
-      const cfg = (data as { config?: { unitsV2?: SimUnit[]; paramsV2?: SimParams } } | null)?.config
-      if (cfg?.unitsV2?.length) { setUnits(cfg.unitsV2); if (cfg.paramsV2) setParams(cfg.paramsV2) }
+      const mig = migrateConfig((data as { config?: unknown } | null)?.config as never)
+      if (mig.units.length) { setUnits(mig.units); setParams(mig.params) }
     } catch (err) { console.error('[StrategySimulator] load:', err) }
     setLoaded(true)
   })() }, [initialUnits.length, lead])

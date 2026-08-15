@@ -38,7 +38,57 @@ export interface YearRow {
   taxes: number; vat: number; cashflow: number; invest: number; debt: number; value: number
 }
 
-export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams }
+export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams; units?: LegacyUnit[]; params?: LegacyParams }
+
+// ── Altbestand (v1) ──────────────────────────────────────────────────────────
+// Die erste Simulator-Fassung speicherte Bruttopreise, MwSt-Wahl und Monats-
+// ABSTÄNDE statt Datumsangaben. Solche Stände liegen noch in der Datenbank und
+// entstehen sogar neu, solange irgendwo ein alter Browser-Tab offen ist (der
+// speichert im Altformat weiter). Ohne Umrechnung stünde der Kunde vor einer
+// leeren Seite - deshalb lesen beide Ansichten v1 mit.
+interface LegacyUnit {
+  key: string; name: string; price?: number; vat?: number; netBase?: number | null
+  rent?: number; buyM?: number; readyM?: number; plan?: 'sofort' | 'luma'; mortgage?: boolean
+}
+interface LegacyParams { ek?: number; growth?: number; ltv?: number; interest?: number; rentGrowth?: number; bundle?: boolean }
+
+export function migrateConfig(cfg: StrategyConfig | null | undefined): { units: SimUnit[]; params: SimParams } {
+  if (cfg?.unitsV2?.length) {
+    return { units: cfg.unitsV2, params: { ...DEFAULT_SIM_PARAMS, ...(cfg.paramsV2 ?? {}) } }
+  }
+  const now = new Date()
+  const baseYm = now.getFullYear() * 12 + now.getMonth()   // 0-basierter Monat
+  const fromOffset = (off: number) => {
+    const ym = baseYm + Math.max(0, Math.round(off || 0))
+    return { m: (ym % 12) + 1, y: Math.floor(ym / 12) }
+  }
+  const units: SimUnit[] = (cfg?.units ?? []).map(u => {
+    const vat = u.vat === 19 ? 19 : 5
+    // netBase = netto inkl. Möbel; sonst aus dem Bruttopreis zurückrechnen.
+    const net = u.netBase && u.netBase > 0 ? u.netBase : Math.round((u.price ?? 0) / (1 + vat / 100))
+    const buy = fromOffset(u.buyM ?? 0), ready = fromOffset(u.readyM ?? 24)
+    return {
+      key: u.key, name: u.name,
+      priceNet: net, furnNet: 0,          // Möbel steckten in v1 im Gesamtpreis
+      rent: u.rent ?? 0,
+      letType: 'short', fin: true,        // v1 kannte beides nicht → Standardfall
+      buyM: buy.m, buyY: buy.y, readyM: ready.m, readyY: ready.y,
+      plan: u.plan === 'sofort' ? 'sofort' : 'luma',
+    }
+  })
+  const lp = cfg?.params ?? {}
+  return {
+    units,
+    params: {
+      ...DEFAULT_SIM_PARAMS,
+      ek: lp.ek ?? DEFAULT_SIM_PARAMS.ek,
+      growth: lp.growth ?? DEFAULT_SIM_PARAMS.growth,
+      interest: lp.interest ?? DEFAULT_SIM_PARAMS.interest,
+      rentGrowth: lp.rentGrowth ?? DEFAULT_SIM_PARAMS.rentGrowth,
+      bundle: lp.bundle ?? DEFAULT_SIM_PARAMS.bundle,
+    },
+  }
+}
 
 export const DEFAULT_SIM_PARAMS: SimParams = {
   ek: 350000, growth: 5, interest: 4.1, termYears: 20, rentGrowth: 2, deTaxPct: 42, bundle: true,

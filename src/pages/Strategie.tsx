@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, DEFAULT_SIM_PARAMS,
+  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, DEFAULT_SIM_PARAMS,
   type SimUnit, type SimParams, type StrategyConfig,
 } from '../lib/strategy'
 
@@ -61,9 +61,10 @@ export default function Strategie() {
     const { data, error } = await supabase.rpc('get_strategy_by_token', { p_token: token })
     const row = Array.isArray(data) ? data[0] : data
     if (error || !row) { setErr(t('strategie.notFound', 'Dieser Fahrplan wurde nicht gefunden.')); setLoading(false); return }
-    const cfg = (row.config ?? {}) as StrategyConfig
-    setUnits(cfg.unitsV2 ?? [])
-    if (cfg.paramsV2) setParams(cfg.paramsV2)
+    // migrateConfig liest auch Altstände (v1) - sonst sieht der Kunde eine leere Seite
+    const mig = migrateConfig((row.config ?? {}) as StrategyConfig)
+    setUnits(mig.units)
+    setParams(mig.params)
     setMeta({ title: row.title as string | undefined, recipient_name: row.recipient_name as string | undefined })
     setLoading(false)
   })() }, [token, t])
