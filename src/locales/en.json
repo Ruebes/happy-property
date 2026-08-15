@@ -1352,7 +1352,8 @@
       "driveCreating": "Creating…",
       "portalResend": "Resend access",
       "portal": "Portal access",
-      "deleteDeal": "Delete deal"
+      "deleteDeal": "Delete deal",
+      "strategy": "Edit roadmap"
     },
     "title": "CRM",
     "nav": {

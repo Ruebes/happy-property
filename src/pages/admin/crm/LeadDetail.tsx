@@ -14,6 +14,7 @@ import AppointmentModal from '../../../components/crm/AppointmentModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
 import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
+import StrategySimulator from '../../../components/crm/StrategySimulator'
 import PartnerShareModal from '../../../components/crm/PartnerShareModal'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
@@ -59,6 +60,7 @@ export default function LeadDetail() {
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
   const [showWizard, setShowWizard] = useState(false)
   const [showRechner, setShowRechner] = useState(false)
+  const [showStrategy, setShowStrategy] = useState(false)   // Investitions-Fahrplan
   const [showForward, setShowForward] = useState(false)   // „Kontakt versenden"-Modal
   const [showPartnerShare, setShowPartnerShare] = useState(false)  // Partner-Akte (z.B. Burkhard)
 
@@ -2173,6 +2175,7 @@ export default function LeadDetail() {
                 { key: 'appt', icon: '📅', label: t('crm.action.appt', 'Termin erstellen'),     cls: 'bg-violet-50 text-violet-700 hover:bg-violet-100', on: () => setShowApptModal(true) },
                 { key: 'deck', icon: '📑', label: t('crm.action.deck', 'Sales Deck erstellen'), cls: 'bg-rose-50 text-rose-700 hover:bg-rose-100',       on: () => setShowWizard(true) },
                 { key: 'calc', icon: '📊', label: t('crm.action.calc', 'Rechnung erstellen'),   cls: 'bg-teal-50 text-teal-700 hover:bg-teal-100',       on: () => setShowRechner(true) },
+                { key: 'strat', icon: '📈', label: t('crm.action.strategy', 'Fahrplan bearbeiten'), cls: 'bg-amber-50 text-amber-700 hover:bg-amber-100',   on: () => setShowStrategy(true) },
                 { key: 'pshare', icon: '🤝', label: t('crm.action.partnerShare', 'Partner-Akte'), cls: 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100', on: () => setShowPartnerShare(true) },
               ] as const).map(a => (
                 <button key={a.key} onClick={a.on}
@@ -4296,6 +4299,15 @@ export default function LeadDetail() {
           leadId={lead.id}
           leadName={`${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || lead.email || ''}
           onClose={() => setShowPartnerShare(false)}
+        />
+      )}
+
+      {/* ── Investitions-Fahrplan (Strategie) ─────────────────────────── */}
+      {showStrategy && lead && (
+        <StrategySimulator
+          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+          initialUnits={[]}
+          onClose={() => setShowStrategy(false)}
         />
       )}
 

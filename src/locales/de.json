@@ -1352,7 +1352,8 @@
       "driveCreating": "Erstelle…",
       "portalResend": "Zugang erneut",
       "portal": "Portalzugang",
-      "deleteDeal": "Deal löschen"
+      "deleteDeal": "Deal löschen",
+      "strategy": "Fahrplan bearbeiten"
     },
     "title": "CRM",
     "nav": {
