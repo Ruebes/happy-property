@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
-  allocate, aggregate, totalsOf, ymOf,
+  allocate, aggregate, totalsOf, roeMeaningful, ymOf,
   DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
 } from '../../lib/strategy'
 
@@ -278,7 +278,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <p className="text-[11px] text-gray-400 mt-2">
                       {t('crm.sim.unitLine', 'Gesamt brutto')} {eur(o.gross)} · EK {eur(o.ekUsed)}
                       {o.loan > 0 ? ` · ${t('crm.sim.loan', 'Darlehen')} ${eur(o.loan)} (${t('crm.sim.annuity', 'Annuität')} ${eur(o.res.mRate)}/M.)` : ''}
-                      {' · '}{t('crm.sim.roe', 'EK-Rendite 10 J.')} {pct(o.res.roe10)}
+                      {roeMeaningful(o) ? `${' · '}${t('crm.sim.roe', 'EK-Rendite 10 J.')} ${pct(o.res.roe10)}` : ` · ${t('crm.sim.mostlyFinanced', 'überwiegend fremdfinanziert')}`}
                     </p>
                   )}
                 </div>
@@ -344,7 +344,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-3 py-2 tabular-nums">{String(o.unit.readyM).padStart(2, '0')}/{o.unit.readyY}</td>
                         <td className="px-3 py-2 text-green-700 font-semibold">{eur(o.ekUsed)}</td>
                         <td className="px-3 py-2 text-amber-700 font-semibold">{o.loan > 0 ? eur(o.loan) : '–'}</td>
-                        <td className="px-3 py-2">{pct(o.res.roe10)}</td>
+                        <td className="px-3 py-2">{roeMeaningful(o) ? pct(o.res.roe10) : '–'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -355,11 +355,11 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             {/* Gesamt-KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {[
-                { l: t('crm.sim.ekTotal', 'Eigenkapital gesamt'), v: eur(totals.ekTotal), d: t('crm.sim.overAll', 'über alle Käufe') },
+                { l: t('crm.sim.ekTotal', 'Eigenkapital gesamt'), v: eur(totals.ekTotal), d: t('crm.sim.inclCosts', 'inkl. Kaufnebenkosten') },
                 { l: t('crm.sim.netWorthEnd', 'Netto-Vermögen am Ende'), v: eur(totals.netWorth), d: t('crm.sim.valueMinusDebt', 'Wert abzgl. Restschuld'), hero: true },
                 { l: t('crm.sim.rents', 'Mieten kumuliert'), v: eur(totals.rents), d: `${t('crm.sim.interestPaid', 'Zinsen')} −${eur(totals.interest)}` },
                 { l: t('crm.sim.taxesTotal', 'Steuern gesamt'), v: `${totals.taxes >= 0 ? '−' : '+'}${eur(Math.abs(totals.taxes))}`, d: `${t('crm.sim.vatBack', 'MwSt-Erstattung')} +${eur(totals.vat)}` },
-                { l: t('crm.sim.roeTotal', 'EK-Rendite gesamt'), v: pct(totals.roe), d: t('crm.sim.roeHint', 'Gesamtertrag auf eingesetztes EK') },
+                { l: t('crm.sim.roeTotal', 'EK-Rendite gesamt'), v: pct(totals.roe), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
               ].map(k => (
                 <div key={k.l} className={`rounded-xl border p-3 ${k.hero ? 'border-orange-300' : 'border-gray-200'}`}>
                   <p className="text-[10px] uppercase tracking-wide text-gray-400">{k.l}</p>

@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import {
-  allocate, aggregate, totalsOf, DEFAULT_SIM_PARAMS,
+  allocate, aggregate, totalsOf, roeMeaningful, DEFAULT_SIM_PARAMS,
   type SimUnit, type SimParams, type StrategyConfig,
 } from '../lib/strategy'
 
@@ -113,10 +113,10 @@ export default function Strategie() {
         {/* Kernzahlen */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: 12, marginBottom: 22 }}>
           {[
-            { l: t('strategie.kpiEk', 'Dein Eigenkapital'), v: eur(totals.ekTotal) },
+            { l: t('strategie.kpiEk', 'Eigenkapital inkl. Nebenkosten'), v: eur(totals.ekTotal) },
             { l: t('strategie.kpiWorth', 'Netto-Vermögen am Ende'), v: eur(totals.netWorth), hero: true },
             { l: t('strategie.kpiRents', 'Mieteinnahmen gesamt'), v: eur(totals.rents) },
-            { l: t('strategie.kpiRoe', 'Rendite auf dein Kapital'), v: pct(totals.roe) },
+            { l: t('strategie.kpiRoe', 'Gesamtrendite über den Zeitraum'), v: pct(totals.roe) },
           ].map(k => (
             <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : '#e6e3dd'}` }}>
               <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: '#8a8a8a' }}>{k.l}</div>
@@ -141,7 +141,9 @@ export default function Strategie() {
                   [t('strategie.rowEk', 'davon Eigenkapital'), eur(o.ekUsed)],
                   ...(o.loan > 0 ? [[t('strategie.rowLoan', 'Annuitätendarlehen'), `${eur(o.loan)} · ${eur(o.res.mRate)}/${t('strategie.month', 'Monat')}`]] : []),
                   [t('strategie.rowRent', 'Miete im 1. Jahr'), eur(o.res.rents[0])],
-                  [t('strategie.rowRoe', 'Rendite auf Eigenkapital (10 J.)'), pct(o.res.roe10)],
+                  ...(roeMeaningful(o)
+                    ? [[t('strategie.rowRoe', 'Rendite auf Eigenkapital (10 J.)'), pct(o.res.roe10)]]
+                    : [[t('strategie.rowFinanced', 'Finanzierungsanteil'), t('strategie.mostlyFinanced', 'überwiegend fremdfinanziert')]]),
                 ].map(([l, v]) => (
                   <div key={l} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #f2f0ec', paddingBottom: 5 }}>
                     <span style={{ color: '#666' }}>{l}</span><b style={{ color: DARK, fontVariantNumeric: 'tabular-nums' }}>{v}</b>

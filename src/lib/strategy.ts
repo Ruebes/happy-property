@@ -117,6 +117,15 @@ export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear
   return { rows, firstYear }
 }
 
+// Eigenkapital-Rendite ist nur aussagekräftig, wenn nennenswertes EK im Spiel
+// ist: bei einer fast vollständig fremdfinanzierten Wohnung (Rest-EK nach der
+// Bundle-Verteilung) laufen die Prozente ins Absurde (mehrere tausend Prozent).
+// Solche Zahlen gehen NICHT an Kunden - dann lieber ehrlich nichts ausweisen.
+export const MIN_EK_SHARE = 0.05
+export function roeMeaningful(o: UnitOutcome): boolean {
+  return o.gross > 0 && o.ekUsed / o.gross >= MIN_EK_SHARE
+}
+
 export interface StrategyTotals {
   ekTotal: number; netWorth: number; rents: number; taxes: number; vat: number
   interest: number; cashflow: number; totalReturn: number; roe: number

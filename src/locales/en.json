@@ -4240,7 +4240,10 @@
       "shared": "Shared with the customer - the accompanying draft is in the outbox.",
       "copy": "Copy link",
       "openPlan": "View",
-      "sharedHint": "Changes here take effect on the customer page immediately - the link stays the same. Sending happens via the outbox (mail or WhatsApp)."
+      "sharedHint": "Changes here take effect on the customer page immediately - the link stays the same. Sending happens via the outbox (mail or WhatsApp).",
+      "mostlyFinanced": "mostly debt-financed",
+      "inclCosts": "incl. purchase costs",
+      "roeHint2": "total over the period, not p.a."
     }
   },
   "docs": {
@@ -5378,10 +5381,10 @@
     "oneUnit": "1 apartment",
     "nUnits": "{{n}} apartments",
     "generatedOn": "As of {{date}}",
-    "kpiEk": "Your equity",
+    "kpiEk": "Equity incl. purchase costs",
     "kpiWorth": "Net worth at the end",
     "kpiRents": "Total rental income",
-    "kpiRoe": "Return on your capital",
+    "kpiRoe": "Total return over the period",
     "unitsTitle": "Your apartments",
     "purchase": "Purchase",
     "handover": "Handover",
@@ -5406,6 +5409,8 @@
     "colWorth": "Net worth",
     "assumptionsTitle": "Assumptions",
     "assumptions": "Appreciation {{g}} % p.a., rent growth {{r}} % p.a., financing as an annuity loan at {{i}} % over {{y}} years, tax residence Germany ({{d}} % marginal rate). For short-term letting the VAT refund after 24 months is included.",
-    "disclaimer": "This overview is an example calculation based on the assumptions above and does not replace tax or investment advice. You received the detailed individual calculations for the apartments separately."
+    "disclaimer": "This overview is an example calculation based on the assumptions above and does not replace tax or investment advice. You received the detailed individual calculations for the apartments separately.",
+    "mostlyFinanced": "mostly debt-financed",
+    "rowFinanced": "Financing share"
   }
 }

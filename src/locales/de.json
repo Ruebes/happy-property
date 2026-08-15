@@ -4240,7 +4240,10 @@
       "shared": "Für den Kunden freigegeben - der Begleit-Entwurf liegt im Postausgang.",
       "copy": "Link kopieren",
       "openPlan": "Ansehen",
-      "sharedHint": "Änderungen hier wirken sofort auf der Kundenseite - der Link bleibt derselbe. Versendet wird über den Postausgang (Mail oder WhatsApp)."
+      "sharedHint": "Änderungen hier wirken sofort auf der Kundenseite - der Link bleibt derselbe. Versendet wird über den Postausgang (Mail oder WhatsApp).",
+      "mostlyFinanced": "überwiegend fremdfinanziert",
+      "inclCosts": "inkl. Kaufnebenkosten",
+      "roeHint2": "gesamt über den Zeitraum, nicht p.a."
     }
   },
   "docs": {
@@ -5378,10 +5381,10 @@
     "oneUnit": "1 Wohnung",
     "nUnits": "{{n}} Wohnungen",
     "generatedOn": "Stand {{date}}",
-    "kpiEk": "Dein Eigenkapital",
+    "kpiEk": "Eigenkapital inkl. Nebenkosten",
     "kpiWorth": "Netto-Vermögen am Ende",
     "kpiRents": "Mieteinnahmen gesamt",
-    "kpiRoe": "Rendite auf dein Kapital",
+    "kpiRoe": "Gesamtrendite über den Zeitraum",
     "unitsTitle": "Deine Wohnungen",
     "purchase": "Kauf",
     "handover": "Übergabe",
@@ -5406,6 +5409,8 @@
     "colWorth": "Netto-Vermögen",
     "assumptionsTitle": "Annahmen",
     "assumptions": "Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre, Steuersitz Deutschland ({{d}} % Grenzsteuersatz). Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt.",
-    "disclaimer": "Diese Übersicht ist eine Beispielrechnung auf Basis der oben genannten Annahmen und ersetzt keine Steuer- oder Anlageberatung. Die detaillierten Einzelrechnungen zu den Wohnungen hast du separat erhalten."
+    "disclaimer": "Diese Übersicht ist eine Beispielrechnung auf Basis der oben genannten Annahmen und ersetzt keine Steuer- oder Anlageberatung. Die detaillierten Einzelrechnungen zu den Wohnungen hast du separat erhalten.",
+    "mostlyFinanced": "überwiegend fremdfinanziert",
+    "rowFinanced": "Finanzierungsanteil"
   }
 }
