@@ -4997,7 +4997,8 @@
     "createButton": "✓ Create",
     "deleteConfirmTitle": "Delete management company?",
     "deleteConfirmBody": "Assigned properties will not be deleted — only the assignment will be removed.",
-    "deleteButton": "Delete"
+    "deleteButton": "Delete",
+    "languageLabel": "Contact language"
   },
   "leadAngebote": {
     "calcFallback": "Yield calculation",

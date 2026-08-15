@@ -4997,7 +4997,8 @@
     "createButton": "✓ Anlegen",
     "deleteConfirmTitle": "Verwaltung löschen?",
     "deleteConfirmBody": "Zugewiesene Immobilien werden nicht gelöscht – nur die Zuweisung wird aufgehoben.",
-    "deleteButton": "Löschen"
+    "deleteButton": "Löschen",
+    "languageLabel": "Kontaktsprache"
   },
   "leadAngebote": {
     "calcFallback": "Rendite-Berechnung",

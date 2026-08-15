@@ -19,6 +19,7 @@ interface VerwaltungRecord {
   ansprechpartner_phone: string | null
   ansprechpartner_email: string | null
   notes:                 string | null
+  language:              string | null
   created_at:            string
 }
 
@@ -35,6 +36,7 @@ const EMPTY_FORM = {
   ansprechpartner_phone: '',
   ansprechpartner_email: '',
   notes:                 '',
+  language:              'de',
 }
 
 const inputCls = `w-full rounded-xl border border-gray-200 bg-white px-3 py-2
@@ -111,6 +113,7 @@ export default function AdminVerwaltungen() {
       ansprechpartner_phone: v.ansprechpartner_phone ?? '',
       ansprechpartner_email: v.ansprechpartner_email ?? '',
       notes:                 v.notes                 ?? '',
+      language:              v.language              ?? 'de',
     })
     setFormError('')
     setVerwaltungProps([])
@@ -144,6 +147,7 @@ export default function AdminVerwaltungen() {
       ansprechpartner_phone: form.ansprechpartner_phone.trim() || null,
       ansprechpartner_email: form.ansprechpartner_email.trim() || null,
       notes:                 form.notes.trim()                 || null,
+      language:              form.language === 'en' ? 'en' : 'de',
       updated_at:            new Date().toISOString(),
     }
     let error
@@ -356,6 +360,21 @@ export default function AdminVerwaltungen() {
                            value={form.ansprechpartner_email}
                            onChange={e => setForm(f => ({ ...f, ansprechpartner_email: e.target.value }))} />
                   </div>
+                </div>
+              </div>
+
+              {/* Kontaktsprache — bestimmt die Sprache aller Mails/WhatsApps an diese Verwaltung */}
+              <div>
+                <label className="block text-xs text-gray-500 font-body mb-1 font-semibold">{t('verwaltungen.languageLabel', 'Kontaktsprache')}</label>
+                <div className="flex gap-2">
+                  {(['de', 'en'] as const).map(l => (
+                    <button key={l} type="button" onClick={() => setForm(f => ({ ...f, language: l }))}
+                      className={`px-4 py-1.5 rounded-xl text-sm font-semibold border transition-colors ${
+                        form.language === l ? 'text-white border-transparent' : 'text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                      style={form.language === l ? { backgroundColor: 'var(--color-highlight)' } : undefined}>
+                      {l === 'de' ? '🇩🇪 Deutsch' : '🇬🇧 English'}
+                    </button>
+                  ))}
                 </div>
               </div>
 

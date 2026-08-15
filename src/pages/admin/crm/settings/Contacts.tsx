@@ -382,9 +382,9 @@ export default function Contacts() {
                       {c.company && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{c.company}</span>
                       )}
-                      {c.language === 'en' && (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">EN</span>
-                      )}
+                      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.language === 'en' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {c.language === 'en' ? 'EN' : 'DE'}
+                      </span>
                     </div>
                     <p className="text-xs text-gray-400 mt-1 truncate">
                       {[c.email, c.phone, c.whatsapp && `WA ${c.whatsapp}`].filter(Boolean).join(' · ') || '—'}
@@ -436,6 +436,9 @@ export default function Contacts() {
                         {c.developer_name && (
                           <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">🏗 {c.developer_name}</span>
                         )}
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${c.language === 'en' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {c.language === 'en' ? 'EN' : 'DE'}
+                        </span>
                       </div>
                       <p className="text-xs text-gray-400 mt-1 truncate">
                         {[c.email, c.phone, c.whatsapp && `WA ${c.whatsapp}`].filter(Boolean).join(' · ') || '—'}
@@ -466,9 +469,9 @@ export default function Contacts() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-gray-900 text-sm">{v.ansprechpartner || v.name}</span>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">🏢 {v.name}</span>
-                        {v.language === 'en' && (
-                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">EN</span>
-                        )}
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${v.language === 'en' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {v.language === 'en' ? 'EN' : 'DE'}
+                        </span>
                       </div>
                       <p className="text-xs text-gray-400 mt-1 truncate">
                         {[v.ansprechpartner_email || v.email, v.ansprechpartner_phone || v.phone, v.website].filter(Boolean).join(' · ') || '—'}
