@@ -4252,7 +4252,13 @@
       "mgmt": "Management % of rent",
       "fromCalc": "{{n}} apartment(s) use the values from the individual calculation.",
       "fromSeason": "from season model",
-      "period": "{{from}} to {{to}} · 10 years from the first handover"
+      "period": "{{from}} to {{to}} · 10 years from the first handover",
+      "bridgeTitle": "Bridge financing needed",
+      "bridgeText": "The instalments exceed the equity by {{peak}} at peak. The construction-period interest is included in the interest figures.",
+      "debtEnd": "Loan outstanding at the end",
+      "debtHint": "Remaining debt of all loans",
+      "roe5": "ROE after 5 yrs",
+      "roe10": "ROE after 10 yrs"
     }
   },
   "docs": {
@@ -5423,6 +5429,20 @@
     "rowFinanced": "Financing share",
     "colCommitted": "committed capital",
     "period": "{{from}} to {{to}}",
-    "periodNote": "Period considered: 10 years from the handover of the first apartment (until {{to}})."
+    "periodNote": "Period considered: 10 years from the handover of the first apartment (until {{to}}).",
+    "kpiDebt": "Loan outstanding",
+    "kpiRoe5": "Return on equity after 5 years",
+    "kpiRoe10": "Return on equity after 10 years",
+    "chartsTitle": "At a glance",
+    "chartWorthTitle": "Net worth and outstanding loan",
+    "chartWorthSub": "Your net worth grows while the loan is being repaid.",
+    "chartCfTitle": "Cashflow per year",
+    "chartCfSub": "What remains after interest, principal, management and taxes.",
+    "legendWorth": "Net worth",
+    "legendDebt": "Loan outstanding",
+    "legendPos": "Surplus",
+    "legendNeg": "Top-up",
+    "bridgeTitle": "Bridge financing during construction",
+    "bridgeText": "The instalments temporarily exceed your equity - by {{peak}} at peak. That amount is bridge-financed until handover; the interest is included in the table (interest column) and at handover the actual loan replaces the bridge."
   }
 }

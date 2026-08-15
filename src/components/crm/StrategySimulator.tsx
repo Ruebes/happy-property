@@ -177,7 +177,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   }
 
   const outcomes = useMemo(() => units.length ? allocate(units, params) : [], [units, params])
-  const agg = useMemo(() => aggregate(outcomes), [outcomes])
+  const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
 
   // Gesamt-Kennzahlen über den Horizont
   const totals = useMemo(() => totalsOf(outcomes, agg.rows), [agg, outcomes])
@@ -428,6 +428,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               </div>
             </div>
 
+            {agg.bridgeNeeded && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 text-sm text-orange-900">
+                ⚠️ <strong>{t('crm.sim.bridgeTitle', 'Zwischenfinanzierung nötig')}:</strong>{' '}
+                {t('crm.sim.bridgeText', 'Die Kaufraten übersteigen das Eigenkapital in der Spitze um {{peak}}. Die Bauzeitzinsen darauf sind in den Zinsen enthalten.', { peak: eur(agg.bridgePeak) })}
+              </div>
+            )}
+
             {/* Gesamt-KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
               {[
@@ -435,7 +442,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 { l: t('crm.sim.netWorthEnd', 'Netto-Vermögen am Ende'), v: eur(totals.netWorth), d: t('crm.sim.valueMinusDebt', 'Wert abzgl. Restschuld'), hero: true },
                 { l: t('crm.sim.rents', 'Mieten kumuliert'), v: eur(totals.rents), d: `${t('crm.sim.interestPaid', 'Zinsen')} −${eur(totals.interest)}` },
                 { l: t('crm.sim.taxesTotal', 'Steuern gesamt'), v: `${totals.taxes >= 0 ? '−' : '+'}${eur(Math.abs(totals.taxes))}`, d: `${t('crm.sim.vatBack', 'MwSt-Erstattung')} +${eur(totals.vat)}` },
-                { l: t('crm.sim.roeTotal', 'EK-Rendite gesamt'), v: pct(totals.roe), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
+                { l: t('crm.sim.debtEnd', 'Kredit offen am Ende'), v: eur(totals.debtEnd), d: t('crm.sim.debtHint', 'Restschuld aller Darlehen') },
+                { l: t('crm.sim.roe5', 'EK-Rendite nach 5 J.'), v: pct(totals.roe5), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
+                { l: t('crm.sim.roe10', 'EK-Rendite nach 10 J.'), v: pct(totals.roe10), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
               ].map(k => (
                 <div key={k.l} className={`rounded-xl border p-3 ${k.hero ? 'border-orange-300' : 'border-gray-200'}`}>
                   <p className="text-[10px] uppercase tracking-wide text-gray-400">{k.l}</p>

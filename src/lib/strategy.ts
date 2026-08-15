@@ -47,6 +47,13 @@ export interface YearRow {
   // diese Position sähe es im Vermögensverlauf aus, als würde Kapital
   // verschwinden (Svens Frage 15.8.: „Warum geht das erst so massiv runter?").
   committed: number
+  // Zwischenfinanzierung während der Bauzeit: Sobald die Kaufraten das
+  // Eigenkapital übersteigen, braucht der Kunde SOFORT Geld von der Bank - nicht
+  // erst bei der Übergabe. Diese Zinsen fielen vorher komplett unter den Tisch
+  // (Sven 15.8.: „2027 haben wir alle Kredite genommen, 2028 müsste die höchste
+  // Zinslast sein"). bridgeDebt = offener Zwischenkredit am Jahresende.
+  bridgeInterest: number
+  bridgeDebt: number
 }
 
 export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams; units?: LegacyUnit[]; params?: LegacyParams }
@@ -174,8 +181,8 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   return units.map(u => out.get(u.key)!)
 }
 
-export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear: number; lastYear: number } {
-  if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y } }
+export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number } {
+  if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y, bridgeNeeded: false, bridgePeak: 0 } }
   const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
   // Die Engine rechnet je Wohnung GENAU 10 Jahre ab ihrer Übergabe. Wohnungen mit
   // früherer Übergabe laufen also früher aus. Zeigte man darüber hinaus weiter,
@@ -191,7 +198,7 @@ export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear
   )
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0 }
     for (const o of outcomes) {
       const i = y - o.unit.readyY
       // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
@@ -212,7 +219,47 @@ export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear
     }
     rows.push(row)
   }
-  return { rows, firstYear, lastYear }
+
+  // ── Zwischenfinanzierung in der Bauzeit ───────────────────────────────────
+  // Monat für Monat: Was ist bis hier zu zahlen, und was ist gedeckt? Gedeckt
+  // sind das Eigenkapital und die Enddarlehen der bereits ÜBERGEBENEN Wohnungen.
+  // Alles darüber muss die Bank vorfinanzieren - darauf laufen Zinsen ab dem
+  // Monat der Entstehung, nicht erst ab Übergabe.
+  const ek = p?.ek ?? 0
+  const iMon = (p?.interest ?? 0) / 100 / 12
+  let bridgePeak = 0
+  if (iMon > 0) {
+    const pays = outcomes.flatMap(o => o.payments)
+    const startYm = Math.min(...pays.map(x => x.ym))
+    const endYm = ymOf(lastYear, 12)
+    let paid = 0
+    for (let ym = startYm; ym <= endYm; ym++) {
+      paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
+      // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung
+      const loansReady = outcomes
+        .filter(o => ymOf(o.unit.readyY, o.unit.readyM) <= ym)
+        .reduce((a, o) => a + o.loan, 0)
+      const bridge = Math.max(0, paid - ek - loansReady)
+      if (bridge > bridgePeak) bridgePeak = bridge
+      const row = rows.find(r => r.year === Math.floor(ym / 12))
+      if (row) {
+        if (bridge > 0) row.bridgeInterest += bridge * iMon
+        // IMMER setzen (auch 0): sonst bliebe der Höchststand aus der Bauzeit
+        // stehen, obwohl das Enddarlehen die Zwischenfinanzierung bei der
+        // Übergabe ablöst - die Restschuld wäre doppelt gezählt.
+        row.bridgeDebt = bridge
+      }
+    }
+    // Bauzeitzinsen zählen wie jede andere Zinslast: in die Zinsspalte, in den
+    // Cashflow und in die Restschuld-Betrachtung.
+    for (const r of rows) {
+      if (!r.bridgeInterest) { r.bridgeDebt = 0; continue }
+      r.interest += r.bridgeInterest
+      r.cashflow -= r.bridgeInterest
+      r.debt += r.bridgeDebt
+    }
+  }
+  return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 
 // Eigenkapital-Rendite ist nur aussagekräftig, wenn nennenswertes EK im Spiel
@@ -227,6 +274,25 @@ export function roeMeaningful(o: UnitOutcome): boolean {
 export interface StrategyTotals {
   ekTotal: number; netWorth: number; rents: number; taxes: number; vat: number
   interest: number; cashflow: number; totalReturn: number; roe: number
+  debtEnd: number          // offener Kredit am Ende des Zeitraums
+  roe5: number; roe10: number   // Eigenkapital-Rendite nach 5 bzw. 10 Jahren
+}
+
+// Eigenkapital-Rendite zu einem Zeitpunkt: erwirtschaftetes Plus (Vermögen zum
+// Stichtag + bis dahin geflossener Cashflow − eingesetztes Eigenkapital) bezogen
+// auf das Eigenkapital. Kumuliert über den Zeitraum, NICHT p.a.
+export function roeAfterYears(rows: YearRow[], ekTotal: number, years: number): number {
+  if (!rows.length || ekTotal <= 0) return 0
+  const target = rows[0].year + years
+  let cash = 0, worth = 0, found = false
+  for (const r of rows) {
+    if (r.year > target) break
+    cash += r.cashflow
+    worth = r.value + r.committed - r.debt
+    found = true
+  }
+  if (!found) return 0
+  return ((worth + cash - ekTotal) / ekTotal) * 100
 }
 
 export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTotals {
@@ -238,5 +304,9 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTota
   const interest = sum(r => r.interest), cashflow = sum(r => r.cashflow)
   const totalReturn = netWorth - ekTotal + cashflow
   const roe = ekTotal > 0 ? (totalReturn / ekTotal) * 100 : 0
-  return { ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe }
+  const debtEnd = last ? last.debt : 0
+  return {
+    ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
+    roe5: roeAfterYears(rows, ekTotal, 5), roe10: roeAfterYears(rows, ekTotal, 10),
+  }
 }

@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import {
   allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, DEFAULT_SIM_PARAMS,
-  type SimUnit, type SimParams, type StrategyConfig,
+  type SimUnit, type SimParams, type StrategyConfig, type YearRow,
 } from '../lib/strategy'
 
 // ── Öffentlicher Investitions-Fahrplan ───────────────────────────────────────
@@ -15,6 +15,10 @@ import {
 // Begleit-Entwurf liegt dann im Postausgang.
 
 const CORAL = '#ff795d', DARK = '#2e3c47', GREEN = '#2d8a5e'
+// Diagramm-Palette: gegen Farbfehlsichtigkeit geprüft (Blau/Koralle/Grün),
+// Kontrast-Warnung der Koralle wird durch Direktlabels + Tabelle aufgefangen.
+const C_WORTH = '#2563eb', C_DEBT = '#ff795d', C_POS = '#1d7a4f', C_NEG = '#b45309'
+const GRID = '#e8e5e0', AXIS = '#9a9a9a'
 const SERIF = "'Playfair Display',Georgia,serif"
 const SANS = "'Montserrat','Helvetica Neue',Arial,sans-serif"
 
@@ -43,6 +47,111 @@ function Centered({ children }: { children: React.ReactNode }) {
     <div style={{ background: '#f4f3f1', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: SANS, color: '#555', padding: 24, textAlign: 'center' }}>
       {children}
     </div>
+  )
+}
+
+
+// ── Diagramme (reines SVG, keine Fremdbibliothek) ───────────────────────────
+// Regeln: eine Achse je Diagramm (nie zwei Skalen), dünne Marken, zurückhaltendes
+// Raster, Legende bei mehreren Reihen, Direktlabels statt Zahl an jedem Punkt.
+// Werte erscheinen zusätzlich beim Überfahren (title) und stehen vollständig in
+// der Jahres-Tabelle darunter - so ist nichts allein über Farbe kodiert.
+
+const kEur = (n: number) => Math.abs(n) >= 1_000_000
+  ? (n / 1_000_000).toFixed(1).replace('.', ',') + ' Mio'
+  : Math.round(n / 1000) + 'k'
+
+function Legend({ items }: { items: Array<{ c: string; l: string }> }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 10 }}>
+      {items.map(i => (
+        <span key={i.l} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#555' }}>
+          <i style={{ width: 12, height: 3, borderRadius: 2, background: i.c, display: 'inline-block' }} />{i.l}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function WorthChart({ rows, isMobile }: { rows: YearRow[]; isMobile: boolean }) {
+  if (rows.length < 2) return null
+  const W = 900, H = isMobile ? 220 : 260, padL = 58, padR = 14, padT = 14, padB = 30
+  const worth = rows.map(r => r.value + r.committed - r.debt)
+  const debt = rows.map(r => r.debt)
+  const max = Math.max(...worth, ...debt, 1)
+  const x = (i: number) => padL + (W - padL - padR) * (i / (rows.length - 1))
+  const y = (v: number) => padT + (H - padT - padB) * (1 - v / max)
+  const path = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => max * f)
+  const lastW = worth[worth.length - 1], lastD = debt[debt.length - 1]
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img"
+      aria-label="Verlauf von Netto-Vermögen und Restschuld">
+      {ticks.map(v => (
+        <g key={v}>
+          <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke={GRID} strokeWidth={1} />
+          <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill={AXIS}>{kEur(v)}</text>
+        </g>
+      ))}
+      {rows.map((r, i) => (i % (isMobile ? 3 : 2) === 0 || i === rows.length - 1) && (
+        <text key={r.year} x={x(i)} y={H - 10} textAnchor="middle" fontSize={11} fill={AXIS}>{r.year}</text>
+      ))}
+      {/* Fläche unter dem Vermögen für Ruhe im Bild */}
+      <path d={`${path(worth)} L${x(rows.length - 1)},${y(0)} L${x(0)},${y(0)} Z`} fill={C_WORTH} opacity={0.08} />
+      <path d={path(debt)} fill="none" stroke={C_DEBT} strokeWidth={2} strokeLinecap="round" />
+      <path d={path(worth)} fill="none" stroke={C_WORTH} strokeWidth={2.5} strokeLinecap="round" />
+      {rows.map((r, i) => (
+        <g key={r.year}>
+          <title>{`${r.year}: Vermögen ${eur(worth[i])} · Kredit offen ${eur(debt[i])}`}</title>
+          <rect x={x(i) - 8} y={padT} width={16} height={H - padT - padB} fill="transparent" />
+        </g>
+      ))}
+      <circle cx={x(rows.length - 1)} cy={y(lastW)} r={4} fill={C_WORTH} stroke="#fff" strokeWidth={2} />
+      <circle cx={x(rows.length - 1)} cy={y(lastD)} r={4} fill={C_DEBT} stroke="#fff" strokeWidth={2} />
+    </svg>
+  )
+}
+
+function CashflowChart({ rows, isMobile }: { rows: YearRow[]; isMobile: boolean }) {
+  const data = rows.filter(r => r.rents > 0 || r.cashflow !== 0)
+  if (!data.length) return null
+  const W = 900, H = isMobile ? 190 : 220, padL = 58, padR = 14, padT = 14, padB = 30
+  const vals = data.map(r => r.cashflow)
+  const max = Math.max(...vals, 0), min = Math.min(...vals, 0)
+  const span = (max - min) || 1
+  const y = (v: number) => padT + (H - padT - padB) * (1 - (v - min) / span)
+  const bw = Math.max(6, (W - padL - padR) / data.length - 6)   // 6px Luft zwischen den Balken
+  const x = (i: number) => padL + (W - padL - padR) * (i / data.length) + 3
+  const zero = y(0)
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }} role="img"
+      aria-label="Cashflow je Jahr">
+      {[max, (max + min) / 2, min].map((v, i) => (
+        <g key={i}>
+          <line x1={padL} y1={y(v)} x2={W - padR} y2={y(v)} stroke={GRID} strokeWidth={1} />
+          <text x={padL - 8} y={y(v) + 4} textAnchor="end" fontSize={11} fill={AXIS}>{kEur(v)}</text>
+        </g>
+      ))}
+      <line x1={padL} y1={zero} x2={W - padR} y2={zero} stroke={AXIS} strokeWidth={1} />
+      {data.map((r, i) => {
+        const pos = r.cashflow >= 0
+        const h = Math.max(2, Math.abs(y(r.cashflow) - zero))
+        return (
+          <g key={r.year}>
+            <title>{`${r.year}: ${eur(r.cashflow)}`}</title>
+            <rect x={x(i)} y={pos ? zero - h : zero} width={bw} height={h} rx={4}
+              fill={pos ? C_POS : C_NEG} />
+            {(i === 0 || i === data.length - 1) && (
+              <text x={x(i) + bw / 2} y={pos ? zero - h - 6 : zero + h + 14} textAnchor="middle"
+                fontSize={11} fill={pos ? C_POS : C_NEG} fontWeight={600}>{kEur(r.cashflow)}</text>
+            )}
+            {(i % (isMobile ? 3 : 2) === 0 || i === data.length - 1) && (
+              <text x={x(i) + bw / 2} y={H - 10} textAnchor="middle" fontSize={11} fill={AXIS}>{r.year}</text>
+            )}
+          </g>
+        )
+      })}
+    </svg>
   )
 }
 
@@ -81,7 +190,7 @@ export default function Strategie() {
   }, [token])
 
   const outcomes = useMemo(() => units.length ? allocate(units, params) : [], [units, params])
-  const agg = useMemo(() => aggregate(outcomes), [outcomes])
+  const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
   const totals = useMemo(() => totalsOf(outcomes, agg.rows), [outcomes, agg])
 
   if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
@@ -112,12 +221,14 @@ export default function Strategie() {
         <div style={{ height: 3, background: `linear-gradient(90deg,${CORAL},#ffb89d)`, borderRadius: 2, marginBottom: 22 }} />
 
         {/* Kernzahlen */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4,1fr)', gap: 12, marginBottom: 22 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3,1fr)', gap: 12, marginBottom: 22 }}>
           {[
             { l: t('strategie.kpiEk', 'Eigenkapital inkl. Nebenkosten'), v: eur(totals.ekTotal) },
             { l: t('strategie.kpiWorth', 'Netto-Vermögen am Ende'), v: eur(totals.netWorth), hero: true },
             { l: t('strategie.kpiRents', 'Mieteinnahmen gesamt'), v: eur(totals.rents) },
-            { l: t('strategie.kpiRoe', 'Gesamtrendite über den Zeitraum'), v: pct(totals.roe) },
+            { l: t('strategie.kpiDebt', 'Kredit noch offen'), v: eur(totals.debtEnd) },
+            { l: t('strategie.kpiRoe5', 'EK-Rendite nach 5 Jahren'), v: pct(totals.roe5) },
+            { l: t('strategie.kpiRoe10', 'EK-Rendite nach 10 Jahren'), v: pct(totals.roe10) },
           ].map(k => (
             <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : '#e6e3dd'}` }}>
               <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: '#8a8a8a' }}>{k.l}</div>
@@ -153,6 +264,48 @@ export default function Strategie() {
               </div>
             </div>
           ))}
+        </div>
+
+        {agg.bridgeNeeded && (
+          <div style={{ ...card, marginBottom: 22, borderLeft: `4px solid ${CORAL}` }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 4 }}>
+              {t('strategie.bridgeTitle', 'Zwischenfinanzierung in der Bauzeit')}
+            </div>
+            <div style={{ fontSize: 13, color: '#555', lineHeight: 1.6 }}>
+              {t('strategie.bridgeText', 'Die Kaufraten übersteigen zeitweise dein Eigenkapital - in der Spitze um {{peak}}. Dieser Betrag wird bis zur Übergabe zwischenfinanziert; die Zinsen dafür sind in der Tabelle enthalten (Spalte Zinsen) und bei der Übergabe löst das eigentliche Darlehen die Zwischenfinanzierung ab.', { peak: eur(agg.bridgePeak) })}
+            </div>
+          </div>
+        )}
+
+        {/* Grafiken */}
+        <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>
+          {t('strategie.chartsTitle', 'Auf einen Blick')}
+        </h2>
+        <div style={{ ...card, marginBottom: 12 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 2 }}>
+            {t('strategie.chartWorthTitle', 'Vermögen und Restschuld')}
+          </div>
+          <div style={{ fontSize: 12, color: '#777', marginBottom: 10 }}>
+            {t('strategie.chartWorthSub', 'Dein Netto-Vermögen wächst, während der Kredit getilgt wird.')}
+          </div>
+          <WorthChart rows={agg.rows} isMobile={isMobile} />
+          <Legend items={[
+            { c: C_WORTH, l: t('strategie.legendWorth', 'Netto-Vermögen') },
+            { c: C_DEBT, l: t('strategie.legendDebt', 'Kredit offen') },
+          ]} />
+        </div>
+        <div style={{ ...card, marginBottom: 26 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 2 }}>
+            {t('strategie.chartCfTitle', 'Cashflow je Jahr')}
+          </div>
+          <div style={{ fontSize: 12, color: '#777', marginBottom: 10 }}>
+            {t('strategie.chartCfSub', 'Was nach Zins, Tilgung, Verwaltung und Steuern übrig bleibt.')}
+          </div>
+          <CashflowChart rows={agg.rows} isMobile={isMobile} />
+          <Legend items={[
+            { c: C_POS, l: t('strategie.legendPos', 'Überschuss') },
+            { c: C_NEG, l: t('strategie.legendNeg', 'Zuzahlung') },
+          ]} />
         </div>
 
         {/* Jahr für Jahr */}

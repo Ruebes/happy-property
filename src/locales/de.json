@@ -4252,7 +4252,13 @@
       "mgmt": "Verwaltung % der Miete",
       "fromCalc": "{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung.",
       "fromSeason": "aus Saisonmodell",
-      "period": "{{from}} bis {{to}} · 10 Jahre ab der ersten Übergabe"
+      "period": "{{from}} bis {{to}} · 10 Jahre ab der ersten Übergabe",
+      "bridgeTitle": "Zwischenfinanzierung nötig",
+      "bridgeText": "Die Kaufraten übersteigen das Eigenkapital in der Spitze um {{peak}}. Die Bauzeitzinsen darauf sind in den Zinsen enthalten.",
+      "debtEnd": "Kredit offen am Ende",
+      "debtHint": "Restschuld aller Darlehen",
+      "roe5": "EK-Rendite nach 5 J.",
+      "roe10": "EK-Rendite nach 10 J."
     }
   },
   "docs": {
@@ -5423,6 +5429,20 @@
     "rowFinanced": "Finanzierungsanteil",
     "colCommitted": "gebundenes Kapital",
     "period": "{{from}} bis {{to}}",
-    "periodNote": "Betrachtungszeitraum: 10 Jahre ab der Übergabe der ersten Wohnung (bis {{to}})."
+    "periodNote": "Betrachtungszeitraum: 10 Jahre ab der Übergabe der ersten Wohnung (bis {{to}}).",
+    "kpiDebt": "Kredit noch offen",
+    "kpiRoe5": "EK-Rendite nach 5 Jahren",
+    "kpiRoe10": "EK-Rendite nach 10 Jahren",
+    "chartsTitle": "Auf einen Blick",
+    "chartWorthTitle": "Vermögen und Restschuld",
+    "chartWorthSub": "Dein Netto-Vermögen wächst, während der Kredit getilgt wird.",
+    "chartCfTitle": "Cashflow je Jahr",
+    "chartCfSub": "Was nach Zins, Tilgung, Verwaltung und Steuern übrig bleibt.",
+    "legendWorth": "Netto-Vermögen",
+    "legendDebt": "Kredit offen",
+    "legendPos": "Überschuss",
+    "legendNeg": "Zuzahlung",
+    "bridgeTitle": "Zwischenfinanzierung in der Bauzeit",
+    "bridgeText": "Die Kaufraten übersteigen zeitweise dein Eigenkapital - in der Spitze um {{peak}}. Dieser Betrag wird bis zur Übergabe zwischenfinanziert; die Zinsen dafür sind in der Tabelle enthalten (Spalte Zinsen) und bei der Übergabe löst das eigentliche Darlehen die Zwischenfinanzierung ab."
   }
 }
