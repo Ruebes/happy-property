@@ -124,7 +124,8 @@
     "logout": "Sign out",
     "settings": "Settings",
     "profile": "Profile",
-    "menu": "Menu"
+    "menu": "Menu",
+    "downloads": "Downloads"
   },
   "login": {
     "title": "Welcome back",
@@ -288,7 +289,8 @@
       "title": "News & documents",
       "subtitle": "Videos and documents from Sven — e.g. to forward to your tax advisor.",
       "new": "NEW",
-      "open": "Open"
+      "open": "Open",
+      "allDownloads": "View all →"
     },
     "bug": {
       "title": "Report a problem",
@@ -302,6 +304,19 @@
       "cardTitle": "Something not working?",
       "cardSub": "Let us know — with a screenshot if possible. We will take care of it and get back to you once fixed.",
       "cardBtn": "Report a problem"
+    },
+    "downloads": {
+      "title": "Downloads",
+      "subtitle": "Guides, documents and videos from Happy Property - provided for you.",
+      "yourUnit": "Your apartment",
+      "forAll": "For all owners",
+      "play": "Watch",
+      "close": "Close",
+      "open": "Open",
+      "loadError": "Could not load. Please reload the page.",
+      "empty": "Nothing here yet - as soon as something new is ready for you, Lotte will let you know.",
+      "mine": "For your apartments",
+      "general": "For all owners"
     }
   },
   "stats": {

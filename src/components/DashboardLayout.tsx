@@ -456,6 +456,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
                       {t(key)}
                     </Link>
                   ))}
+                  {/* Downloadportal — nur Eigentümer (Guides/Videos von Sven) */}
+                  {effectiveRole === 'eigentuemer' && (
+                    <Link to="/eigentuemer/downloads"
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium font-body text-gray-600
+                                 hover:bg-gray-100 hover:text-hp-black transition-colors">
+                      {t('nav.downloads', 'Downloads')}
+                    </Link>
+                  )}
 
                   {/* CRM-Dropdown für Verwalter */}
                   {profile?.role === 'verwalter' && (

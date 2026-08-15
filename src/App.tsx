@@ -51,6 +51,7 @@ const AdminDashboard      = lazy(() => import('./pages/admin/Dashboard'))
 const VerwalterDashboard  = lazy(() => import('./pages/verwalter/Dashboard'))
 const EigentuemerDashboard   = lazy(() => import('./pages/eigentuemer/Dashboard'))
 const EigentuemerProperties  = lazy(() => import('./pages/eigentuemer/Properties'))
+const EigentuemerDownloads   = lazy(() => import('./pages/eigentuemer/Downloads'))
 
 // Admin-Seiten
 const AdminUsers        = lazy(() => import('./pages/admin/Users'))
@@ -253,6 +254,7 @@ export default function App() {
             <Route element={<ProtectedRoute allowedRoles={['eigentuemer']} />}>
               <Route path="/eigentuemer/dashboard"      element={<EigentuemerDashboard />} />
               <Route path="/eigentuemer/properties"     element={<EigentuemerProperties />} />
+              <Route path="/eigentuemer/downloads"      element={<EigentuemerDownloads />} />
               <Route path="/eigentuemer/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 

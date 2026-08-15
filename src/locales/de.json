@@ -124,7 +124,8 @@
     "logout": "Abmelden",
     "settings": "Einstellungen",
     "profile": "Profil",
-    "menu": "Menü"
+    "menu": "Menü",
+    "downloads": "Downloads"
   },
   "login": {
     "title": "Willkommen zurück",
@@ -288,7 +289,8 @@
       "title": "Neuigkeiten & Dokumente",
       "subtitle": "Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.",
       "new": "NEU",
-      "open": "Öffnen"
+      "open": "Öffnen",
+      "allDownloads": "Alle ansehen →"
     },
     "bug": {
       "title": "Problem melden",
@@ -302,6 +304,19 @@
       "cardTitle": "Etwas funktioniert nicht?",
       "cardSub": "Sag uns Bescheid — mit Screenshot, wenn möglich. Wir kümmern uns und melden uns, sobald es behoben ist.",
       "cardBtn": "Problem melden"
+    },
+    "downloads": {
+      "title": "Downloads",
+      "subtitle": "Guides, Dokumente und Videos von Happy Property - für dich bereitgestellt.",
+      "yourUnit": "Deine Wohnung",
+      "forAll": "Für alle Eigentümer",
+      "play": "Ansehen",
+      "close": "Schließen",
+      "open": "Öffnen",
+      "loadError": "Konnte nicht geladen werden. Bitte Seite neu laden.",
+      "empty": "Noch keine Inhalte - sobald etwas Neues für dich bereitliegt, sagt Lotte dir Bescheid.",
+      "mine": "Zu deinen Wohnungen",
+      "general": "Für alle Eigentümer"
     }
   },
   "stats": {

@@ -445,9 +445,15 @@ export default function EigentuemerDashboard() {
       {/* ── Neuigkeiten & Dokumente von Happy Property ────── */}
       {(ownerDocs.length > 0 || newsError) && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden mt-8">
-          <div className="px-6 py-5 border-b border-gray-50">
-            <h2 className="font-semibold text-hp-black font-body text-base">📢 {t('eigentuemer.news.title', 'Neuigkeiten & Dokumente')}</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{t('eigentuemer.news.subtitle', 'Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.')}</p>
+          <div className="px-6 py-5 border-b border-gray-50 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-hp-black font-body text-base">📢 {t('eigentuemer.news.title', 'Neuigkeiten & Dokumente')}</h2>
+              <p className="text-xs text-gray-400 mt-0.5">{t('eigentuemer.news.subtitle', 'Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.')}</p>
+            </div>
+            <Link to="/eigentuemer/downloads"
+              className="shrink-0 text-sm font-medium px-3 py-1.5 rounded-lg border border-orange-200 text-orange-600 hover:bg-orange-50">
+              {t('eigentuemer.news.allDownloads', 'Alle ansehen →')}
+            </Link>
           </div>
           {newsError && ownerDocs.length === 0 ? (
             <p className="p-5 text-sm text-gray-400">⚠️ {t('eigentuemer.news.loadError', 'Konnte nicht geladen werden.')}</p>
