@@ -56,25 +56,30 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [err, setErr]           = useState('')
   const [simOpen, setSimOpen]   = useState(false)
 
-  // Paket → Simulator-Wohnungen: Brutto inkl. Möbel (MwSt nach Winkel), Miete als
-  // Startvorschlag aus der Wizard-Rendite (falls gesetzt, sonst 5,5 %), Übergabe
-  // aus dem Projekt-Fertigstellungsdatum.
+  // Paket → Simulator-Wohnungen: Netto-Basis (Engine rechnet MwSt/brutto selbst),
+  // Miete aus der Wizard-Rendite (falls je Wohnung gesetzt, sonst 5,5 %),
+  // Vermietungsart/Finanzierung aus den Wizard-Overrides, Übergabe aus dem
+  // Projekt-Fertigstellungsdatum, Kauf = heute.
   const basketToSim = (): SimUnit[] => basket.map(b => {
-    const vat: 5 | 19 = angle === 'investment' ? 19 : 5
-    const netBase = (b.unit.price_net ?? 0) + (b.furnitureIncluded ? 0 : (b.furnitureCost ?? 0))
-    const price = Math.round(netBase * (1 + vat / 100))
+    const priceNet = b.unit.price_net ?? 0
+    const furnNet = b.furnitureIncluded ? 0 : (b.furnitureCost ?? 0)
+    const gross = Math.round((priceNet + furnNet) * 1.19)
     const proj = projects.find(p => p.id === b.projectId)
-    const readyIso = proj?.completion_date ?? null
-    let readyM = 24
-    if (readyIso) {
-      const d = new Date(readyIso), now = new Date()
-      if (!isNaN(d.getTime())) readyM = Math.max(0, (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth()))
-    }
-    const yieldPct = perUnit[b.unit.id]?.yieldPct ?? 5.5
+    const nowD = new Date()
+    const done = proj?.completion_date ? new Date(proj.completion_date) : null
+    const readyY = done && !isNaN(done.getTime()) ? Math.max(nowD.getFullYear(), done.getFullYear()) : nowD.getFullYear() + 2
+    const readyM = done && !isNaN(done.getTime()) ? done.getMonth() + 1 : 6
+    const pu = perUnit[b.unit.id]
+    const yieldPct = pu?.yieldPct ?? 5.5
+    const monthsAway = (readyY - nowD.getFullYear()) * 12 + (readyM - (nowD.getMonth() + 1))
     return {
-      key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`, price, vat, netBase,
-      rent: Math.round(price * yieldPct / 100 / 12), buyM: 0, readyM,
-      plan: readyM > 2 ? 'luma' as const : 'sofort' as const, mortgage: false,
+      key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`,
+      priceNet, furnNet,
+      rent: Math.round(gross * yieldPct / 100 / 12),
+      letType: pu?.letType ?? 'short',
+      fin: (pu?.fin ?? 'yes') === 'yes',
+      buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
+      plan: monthsAway > 2 ? 'luma' as const : 'sofort' as const,
     }
   })
 
