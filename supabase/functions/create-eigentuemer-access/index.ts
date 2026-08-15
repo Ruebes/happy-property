@@ -17,6 +17,7 @@ import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { SOCIAL_FOOTER_HTML, socialFooterHtml } from '../_shared/socialFooter.ts'
+import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -452,8 +453,47 @@ Deno.serve(async (req: Request) => {
       console.log(`[create-eigentuemer-access] Passwort (dev): ${password}`)
     }
 
+    // ── 5. Zugangsdaten zusätzlich per WhatsApp von Lotte (Sven 15.8.26) ──────
+    // Rainer bekam Lottes Portal-WhatsApps, hatte aber keine Zugangsdaten zur
+    // Hand — ab jetzt gehen sie IMMER auch per WhatsApp raus. Nummer aus dem
+    // Lead (whatsapp vor phone). Scheitert der Versand, bleibt die Funktion
+    // erfolgreich (Passwort ist gesetzt, Mail ist raus) — nur Flag + Log.
+    let whatsapped = false
+    if (!suppress_mail) {
+      try {
+        const { data: ld } = await adminClient.from('leads')
+          .select('whatsapp, phone').ilike('email', email)
+          .order('created_at', { ascending: true }).limit(1)
+        const lrow = ld?.[0] as { whatsapp?: string | null; phone?: string | null } | undefined
+        const phone = (lrow?.whatsapp ?? lrow?.phone ?? '').trim()
+        if (phone) {
+          const firstName = full_name.split(' ')[0]
+          const de_ = leadLang !== 'en'
+          const waText = de_
+            ? `Hallo ${firstName} 🐾\n\nhier ist Lotte von Happy Property. Dein Zugang zum Eigentümer-Portal ist bereit - hier sind deine Zugangsdaten:\n\n👤 E-Mail: ${email}\n🔑 Passwort: ${password}\n\nZum Portal: ${appUrl}/login\n\nBitte ändere das Passwort nach dem ersten Login. Bei Fragen einfach hier antworten.\n\nLiebe Grüße, Lotte`
+            : `Hi ${firstName} 🐾\n\nLotte from Happy Property here. Your owner portal access is ready - here are your login details:\n\n👤 Email: ${email}\n🔑 Password: ${password}\n\nPortal: ${appUrl}/login\n\nPlease change the password after your first login. Just reply here if you have questions.\n\nBest, Lotte`
+          const { data: wa, error: waErr } = await adminClient.functions.invoke('send-whatsapp', { body: {
+            event_type: 'portal_access', override_text: waText, allow_duplicate: true,
+            lead_data: { lead_name: firstName, lead_phone: phone },
+            persona_image: lotteBild(),
+          } })
+          const w = (wa ?? {}) as { success?: boolean; error?: string }
+          if (waErr || w.error || w.success === false) {
+            console.error('[create-eigentuemer-access] WhatsApp fehlgeschlagen:', w.error ?? waErr?.message)
+          } else {
+            whatsapped = true
+            console.log(`[create-eigentuemer-access] ✓ WhatsApp gesendet an: ${phone}`)
+          }
+        } else {
+          console.warn(`[create-eigentuemer-access] Keine WhatsApp-Nummer zu ${email} gefunden`)
+        }
+      } catch (waErr) {
+        console.error('[create-eigentuemer-access] WhatsApp-Block Fehler:', waErr instanceof Error ? waErr.message : String(waErr))
+      }
+    }
+
     return new Response(
-      JSON.stringify({ success: true, userId, password, emailed }),
+      JSON.stringify({ success: true, userId, password, emailed, whatsapped }),
       { headers: { ...CORS, 'Content-Type': 'application/json' } }
     )
 
