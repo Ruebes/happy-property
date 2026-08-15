@@ -115,6 +115,10 @@ async function logEvent(type: string, token: string | null) {
     } else if (type === 'calc_view') {
       const { data: c } = await supabase.from('property_calculations').select('lead_id, title').eq('token', token).maybeSingle()
       if (c) { leadId = (c.lead_id as string) ?? null; label = (c.title as string) ?? '' }
+    } else if (type === 'strategy_view') {
+      // Investitions-Fahrplan (Strategie-Simulator, /strategie/<token>)
+      const { data: s } = await supabase.from('crm_strategy_scenarios').select('lead_id, title').eq('token', token).maybeSingle()
+      if (s) { leadId = (s.lead_id as string) ?? null; label = (s.title as string) ?? '' }
     }
   } catch { /* Auflösung best-effort */ }
 

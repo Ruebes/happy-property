@@ -2,125 +2,28 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
-import { DEFAULT_PARAMS, compute, type CalcParams, type CalcResult } from '../../lib/rechner'
+import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
+import {
+  allocate, aggregate, totalsOf, ymOf,
+  DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
+} from '../../lib/strategy'
 
 // ── Strategie-Simulator ──────────────────────────────────────────────────────
 // Zusatz ÜBER den Einzelrechnungen (Sven 15.8.26): rechnet je Wohnung mit der
-// verifizierten Rechner-Engine (rechner.ts - dieselbe wie die Kundenrechnungen,
-// Annuitätendarlehen, Kurz-/Langzeit inkl. MwSt-Erstattung, Steuern CY/DE) und
-// legt die Ergebnisse auf eine echte Zeitachse (Kauf- und Übergabe-Monat/Jahr).
-// Kaufphase (Zahlungsplan, EK-Verteilung beim Bundlekauf) simuliert die
-// Strategie-Schicht; ab Übergabe übernimmt die Engine. Szenario wird je Lead
-// in crm_strategy_scenarios gesichert.
+// verifizierten Rechner-Engine (lib/strategy → lib/rechner - dieselbe wie die
+// Kundenrechnungen: Annuität, Kurz-/Langzeit inkl. MwSt-Erstattung, Steuern) und
+// legt die Ergebnisse auf eine echte Zeitachse (Kauf-/Übergabe-Monat + Jahr).
+// „Für Kunden freigeben" veröffentlicht den Plan unter /strategie/<token> und
+// legt einen Begleit-Entwurf in den Postausgang (wie bei Berechnungen/Decks).
 
-export interface SimUnit {
-  key: string
-  name: string
-  priceNet: number            // Listenpreis netto (Engine rechnet MwSt/brutto)
-  furnNet: number             // Möbelpaket netto
-  rent: number                // Miete/Monat (brutto-Basis) → Engine-Rendite
-  letType: 'short' | 'long'   // Kurzzeit (MwSt-Erstattung) / Langzeit
-  fin: boolean                // Annuitätendarlehen ja/nein
-  buyM: number; buyY: number      // Kauf Monat/Jahr
-  readyM: number; readyY: number  // Übergabe Monat/Jahr (= Mietstart)
-  plan: 'sofort' | 'luma'
-}
-
-interface SimParams {
-  ek: number; growth: number; interest: number; termYears: number
-  rentGrowth: number; deTaxPct: number; bundle: boolean
-}
-interface UnitOutcome {
-  unit: SimUnit; res: CalcResult; ekUsed: number; loan: number
-  gross: number; payments: Array<{ ym: number; amount: number; label: string }>
-}
+export type { SimUnit } from '../../lib/strategy'
 
 const eur = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n)) + ' €'
 const pct = (n: number) => (isFinite(n) ? n.toFixed(1).replace('.', ',') : '0') + ' %'
-const ymOf = (y: number, m: number) => y * 12 + (m - 1)
 const now = new Date()
 const NOW_YM = ymOf(now.getFullYear(), now.getMonth() + 1)
 const MONTH_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: String(i + 1).padStart(2, '0') }))
 const YEAR_OPTS = Array.from({ length: 12 }, (_, i) => ({ value: String(now.getFullYear() + i), label: String(now.getFullYear() + i) }))
-
-function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amount: number; label: string }> {
-  const buy = ymOf(u.buyY, u.buyM), ready = Math.max(buy, ymOf(u.readyY, u.readyM))
-  if (u.plan === 'sofort') return [{ ym: buy, amount: gross, label: 'Kaufpreis komplett' }]
-  const span = Math.max(1, ready - buy)
-  return [
-    { ym: buy, amount: 10000, label: 'Reservierung' },
-    { ym: buy, amount: gross * 0.35 - 10000, label: '35 % bei Vertrag' },
-    { ym: Math.round(buy + span * 0.33), amount: gross * 0.20, label: '2. Rate 20 %' },
-    { ym: Math.round(buy + span * 0.62), amount: gross * 0.20, label: '3. Rate 20 %' },
-    { ym: Math.round(buy + span * 0.85), amount: gross * 0.15, label: '4. Rate 15 %' },
-    { ym: ready, amount: gross * 0.10, label: '10 % bei Übergabe' },
-  ]
-}
-
-// Engine-Lauf je Wohnung: verankert an der ÜBERGABE (ab da Miete/Annuität/
-// Steuern/MwSt-Erstattung) - identische Semantik wie die Einzelrechnung.
-function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcome {
-  const params: CalcParams = {
-    ...DEFAULT_PARAMS,
-    month: u.readyM, year: u.readyY, dealType: 'single',
-    priceNet: u.priceNet, discountPct: 0, bedrooms: 2,
-    fin: u.fin ? 'yes' : 'no', letType: u.letType, mode: 'ann', res: 'de',
-    hotelConcept: false,
-    equity: ekForUnit,
-    yieldPct: u.priceNet > 0 ? (u.rent * 12) / Math.round(u.priceNet * 1.19) * 100 : 0,
-    rentGrowth: p.rentGrowth, interestPct: p.interest, termYears: p.termYears,
-    appreciationPct: p.growth, deTaxPct: p.deTaxPct,
-    furnCost: u.furnNet, furnFree: false, season: null,
-  }
-  const res = compute(params)
-  const gross = res.pGross + res.furnGross
-  return { unit: u, res, ekUsed: res.ekStart, loan: res.loan, gross, payments: paymentPlan(u, gross) }
-}
-
-// Bundlekauf: EK in ÜBERGABE-Reihenfolge verteilen. Erste Wohnung bekommt EK
-// bis zu ihrem Gesamtpreis, die nächste den Rest usw.; was fehlt, finanziert
-// die Engine als Annuitätendarlehen ab Übergabe.
-function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
-  const order = [...units].sort((a, b) => ymOf(a.readyY, a.readyM) - ymOf(b.readyY, b.readyM))
-  let pool = p.ek
-  const out = new Map<string, UnitOutcome>()
-  for (const u of order) {
-    const probe = runUnit(u, 0, p)                     // Gesamtpreis brutto ermitteln
-    const ekForUnit = p.bundle ? Math.min(pool, probe.gross) : Math.min(p.ek / Math.max(1, units.length), probe.gross)
-    pool -= ekForUnit
-    out.set(u.key, u.fin ? runUnit(u, ekForUnit, p) : runUnit(u, probe.gross, p))
-  }
-  return units.map(u => out.get(u.key)!)
-}
-
-// Kalender-Aggregation: Engine-Jahresreihen (ab Übergabejahr) + Kaufphase.
-interface YearRow {
-  year: number; rents: number; mgmt: number; interest: number; principal: number
-  taxes: number; vat: number; cashflow: number; invest: number; debt: number; value: number
-}
-function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear: number } {
-  if (!outcomes.length) return { rows: [], firstYear: now.getFullYear() }
-  const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
-  const lastYear = Math.max(...outcomes.map(o => o.unit.readyY + 9))
-  const rows: YearRow[] = []
-  for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0 }
-    for (const o of outcomes) {
-      const i = y - o.unit.readyY
-      if (i >= 0 && i < 10) {
-        row.rents += o.res.rents[i]; row.mgmt += o.res.mgmt[i]
-        row.interest += o.res.intC[i]; row.principal += o.res.princC[i]
-        row.taxes += o.res.taxU[i]; row.vat += o.res.vatA[i]; row.cashflow += o.res.cfA[i]
-        row.debt += o.res.restL[i]; row.value += o.res.propV[i]
-      } else if (i >= 10) {
-        row.debt += o.res.restL[9]; row.value += o.res.propV[9]
-      }
-      for (const pay of o.payments) if (Math.floor(pay.ym / 12) === y) row.invest += pay.amount
-    }
-    rows.push(row)
-  }
-  return { rows, firstYear }
-}
 
 interface PickProject { id: string; name: string; furniture_cost: number | null; furniture_included: boolean | null; completion_date: string | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null }
 interface PickUnit { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; price_net: number | null }
@@ -132,7 +35,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
 }) {
   const { t } = useTranslation()
   const [units, setUnits] = useState<SimUnit[]>(initialUnits)
-  const [params, setParams] = useState<SimParams>({ ek: 350000, growth: 5, interest: 4.1, termYears: 20, rentGrowth: 2, deTaxPct: 42, bundle: true })
+  const [params, setParams] = useState<SimParams>({ ...DEFAULT_SIM_PARAMS })
   const [loaded, setLoaded] = useState(initialUnits.length > 0)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [projects, setProjects] = useState<PickProject[]>([])
@@ -140,6 +43,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [pickUnits, setPickUnits] = useState<PickUnit[]>([])
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   const freeCounter = useRef(0)
+  // Freigabe an den Kunden
+  const [sharing, setSharing] = useState(false)
+  const [shareUrl, setShareUrl] = useState('')
+  const [shareErr, setShareErr] = useState('')
 
   // Gespeichertes Szenario laden, wenn der Wizard nichts mitgibt
   useEffect(() => { void (async () => {
@@ -222,17 +129,38 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const agg = useMemo(() => aggregate(outcomes), [outcomes])
 
   // Gesamt-Kennzahlen über den Horizont
-  const totals = useMemo(() => {
-    const sum = (f: (r: YearRow) => number) => agg.rows.reduce((a, r) => a + f(r), 0)
-    const ekTotal = outcomes.reduce((a, o) => a + o.ekUsed, 0)
-    const last = agg.rows[agg.rows.length - 1]
-    const netWorth = last ? last.value - last.debt : 0
-    const rents = sum(r => r.rents), taxes = sum(r => r.taxes), vat = sum(r => r.vat)
-    const interest = sum(r => r.interest), cashflow = sum(r => r.cashflow)
-    const totalReturn = netWorth - ekTotal + cashflow
-    const roe = ekTotal > 0 ? (totalReturn / ekTotal) * 100 : 0
-    return { ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe }
-  }, [agg, outcomes])
+  const totals = useMemo(() => totalsOf(outcomes, agg.rows), [agg, outcomes])
+
+  // ── Für den Kunden freigeben ───────────────────────────────────────────────
+  // Speichert den aktuellen Stand SOFORT (nicht entprellt), schaltet den
+  // öffentlichen Link frei (/strategie/<token>) und legt einen Begleit-Entwurf
+  // in den Postausgang - genau wie bei Berechnungen und Decks.
+  const share = async () => {
+    if (!lead || !units.length || sharing) return
+    setSharing(true); setShareErr('')
+    try {
+      const title = units.length === 1
+        ? `Investitions-Fahrplan · ${units[0].name}`
+        : `Investitions-Fahrplan · ${units.length} Wohnungen`
+      const recipient = `${lead.first_name} ${lead.last_name}`.trim()
+      const { data, error } = await supabase.from('crm_strategy_scenarios')
+        .upsert({
+          lead_id: lead.id, config: { unitsV2: units, paramsV2: params },
+          title, recipient_name: recipient,
+          shared_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        }, { onConflict: 'lead_id' })
+        .select('token').single()
+      if (error) throw error
+      const token = (data as { token: string }).token
+      await createStrategyOutboxDraft({
+        leadId: lead.id, firstName: lead.first_name, token, title, unitCount: units.length,
+      })
+      setShareUrl(`${window.location.origin}/strategie/${token}`)
+    } catch (err) {
+      console.error('[StrategySimulator] share:', err)
+      setShareErr(err instanceof Error ? err.message : String(err))
+    } finally { setSharing(false) }
+  }
 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300'
   const lbl = 'block text-[11px] text-gray-500 mb-0.5'
@@ -478,6 +406,47 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* Für den Kunden freigeben */}
+            <div className="border border-orange-200 bg-orange-50/50 rounded-xl p-4">
+              {shareUrl ? (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-gray-900">
+                    ✓ {t('crm.sim.shared', 'Für den Kunden freigegeben - der Begleit-Entwurf liegt im Postausgang.')}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input readOnly value={shareUrl} onFocus={e => e.currentTarget.select()}
+                      className="flex-1 min-w-[240px] border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs bg-white" />
+                    <button onClick={() => void navigator.clipboard?.writeText(shareUrl)}
+                      className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-white">
+                      {t('crm.sim.copy', 'Link kopieren')}
+                    </button>
+                    <a href={shareUrl} target="_blank" rel="noreferrer"
+                      className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+                      {t('crm.sim.openPlan', 'Ansehen')}
+                    </a>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    {t('crm.sim.sharedHint', 'Änderungen hier wirken sofort auf der Kundenseite - der Link bleibt derselbe. Versendet wird über den Postausgang (Mail oder WhatsApp).')}
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{t('crm.sim.shareTitle', 'Fahrplan an den Kunden schicken')}</p>
+                    <p className="text-xs text-gray-500">
+                      {t('crm.sim.shareHint', 'Legt eine Kundenseite mit eigenem Link an und einen fertigen Begleit-Entwurf in den Postausgang.')}
+                    </p>
+                    {shareErr && <p className="text-xs text-red-600 mt-1">{shareErr}</p>}
+                  </div>
+                  <button onClick={() => void share()} disabled={sharing || !lead}
+                    className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 shrink-0"
+                    style={{ backgroundColor: '#ff795d' }}>
+                    {sharing ? t('crm.sim.sharing', 'Wird vorbereitet…') : `📤 ${t('crm.sim.shareBtn', 'Für Kunden freigeben')}`}
+                  </button>
+                </div>
+              )}
             </div>
 
             <p className="text-[11px] text-gray-400">

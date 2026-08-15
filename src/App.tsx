@@ -31,6 +31,7 @@ import SetPassword from './pages/SetPassword'
 const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
+const Strategie = lazy(() => import('./pages/Strategie'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
@@ -155,6 +156,7 @@ export default function App() {
             <Route path="/deck/:token/print" element={<Deck />} />
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
             <Route path="/rechnung/:token" element={<Rechnung />} />
+            <Route path="/strategie/:token" element={<Strategie />} />
             {/* Öffentliche Rechnung (per Token, kein Login) */}
             <Route path="/re/:token" element={<Invoice />} />
             {/* Öffentliche Aufgaben-Aktion (per Token, kein Login) */}
