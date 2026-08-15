@@ -4243,7 +4243,8 @@
       "sharedHint": "Änderungen hier wirken sofort auf der Kundenseite - der Link bleibt derselbe. Versendet wird über den Postausgang (Mail oder WhatsApp).",
       "mostlyFinanced": "überwiegend fremdfinanziert",
       "inclCosts": "inkl. Kaufnebenkosten",
-      "roeHint2": "gesamt über den Zeitraum, nicht p.a."
+      "roeHint2": "gesamt über den Zeitraum, nicht p.a.",
+      "colCommitted": "gebunden"
     }
   },
   "docs": {
@@ -5408,9 +5409,10 @@
     "colCashflow": "Cashflow",
     "colWorth": "Netto-Vermögen",
     "assumptionsTitle": "Annahmen",
-    "assumptions": "Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre, Steuersitz Deutschland ({{d}} % Grenzsteuersatz). Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt.",
+    "assumptions": "Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre, Steuersitz Deutschland ({{d}} % Grenzsteuersatz). Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt. In der Bauzeit werden bereits gezahlte Kaufraten als gebundenes Kapital geführt - dieses Geld ist in der Immobilie, nicht verloren.",
     "disclaimer": "Diese Übersicht ist eine Beispielrechnung auf Basis der oben genannten Annahmen und ersetzt keine Steuer- oder Anlageberatung. Die detaillierten Einzelrechnungen zu den Wohnungen hast du separat erhalten.",
     "mostlyFinanced": "überwiegend fremdfinanziert",
-    "rowFinanced": "Finanzierungsanteil"
+    "rowFinanced": "Finanzierungsanteil",
+    "colCommitted": "gebundenes Kapital"
   }
 }

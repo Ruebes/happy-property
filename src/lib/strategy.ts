@@ -36,6 +36,11 @@ export interface UnitOutcome {
 export interface YearRow {
   year: number; rents: number; mgmt: number; interest: number; principal: number
   taxes: number; vat: number; cashflow: number; invest: number; debt: number; value: number
+  // Bauphase: bereits gezahlte Kaufraten von Wohnungen, die noch nicht übergeben
+  // sind. Dieses Geld ist NICHT weg, sondern in der Immobilie gebunden - ohne
+  // diese Position sähe es im Vermögensverlauf aus, als würde Kapital
+  // verschwinden (Svens Frage 15.8.: „Warum geht das erst so massiv runter?").
+  committed: number
 }
 
 export interface StrategyConfig { unitsV2?: SimUnit[]; paramsV2?: SimParams; units?: LegacyUnit[]; params?: LegacyParams }
@@ -149,9 +154,15 @@ export function aggregate(outcomes: UnitOutcome[]): { rows: YearRow[]; firstYear
   const lastYear = Math.max(...outcomes.map(o => o.unit.readyY + 9))
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0 }
     for (const o of outcomes) {
       const i = y - o.unit.readyY
+      // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
+      // führen (konservativ ohne Wertzuwachs). Ab Übergabe steht der volle
+      // Immobilienwert aus der Engine, die Raten sind darin aufgegangen.
+      if (i < 0) {
+        for (const pay of o.payments) if (Math.floor(pay.ym / 12) <= y) row.committed += pay.amount
+      }
       if (i >= 0 && i < 10) {
         row.rents += o.res.rents[i]; row.mgmt += o.res.mgmt[i]
         row.interest += o.res.intC[i]; row.principal += o.res.princC[i]
@@ -185,7 +196,7 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTota
   const sum = (f: (r: YearRow) => number) => rows.reduce((a, r) => a + f(r), 0)
   const ekTotal = outcomes.reduce((a, o) => a + o.ekUsed, 0)
   const last = rows[rows.length - 1]
-  const netWorth = last ? last.value - last.debt : 0
+  const netWorth = last ? last.value + last.committed - last.debt : 0
   const rents = sum(r => r.rents), taxes = sum(r => r.taxes), vat = sum(r => r.vat)
   const interest = sum(r => r.interest), cashflow = sum(r => r.cashflow)
   const totalReturn = netWorth - ekTotal + cashflow

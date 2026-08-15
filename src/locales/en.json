@@ -4243,7 +4243,8 @@
       "sharedHint": "Changes here take effect on the customer page immediately - the link stays the same. Sending happens via the outbox (mail or WhatsApp).",
       "mostlyFinanced": "mostly debt-financed",
       "inclCosts": "incl. purchase costs",
-      "roeHint2": "total over the period, not p.a."
+      "roeHint2": "total over the period, not p.a.",
+      "colCommitted": "committed"
     }
   },
   "docs": {
@@ -5408,9 +5409,10 @@
     "colCashflow": "Cashflow",
     "colWorth": "Net worth",
     "assumptionsTitle": "Assumptions",
-    "assumptions": "Appreciation {{g}} % p.a., rent growth {{r}} % p.a., financing as an annuity loan at {{i}} % over {{y}} years, tax residence Germany ({{d}} % marginal rate). For short-term letting the VAT refund after 24 months is included.",
+    "assumptions": "Appreciation {{g}} % p.a., rent growth {{r}} % p.a., financing as an annuity loan at {{i}} % over {{y}} years, tax residence Germany ({{d}} % marginal rate). For short-term letting the VAT refund after 24 months is included. During construction, instalments already paid are shown as committed capital - that money sits in the property, it is not lost.",
     "disclaimer": "This overview is an example calculation based on the assumptions above and does not replace tax or investment advice. You received the detailed individual calculations for the apartments separately.",
     "mostlyFinanced": "mostly debt-financed",
-    "rowFinanced": "Financing share"
+    "rowFinanced": "Financing share",
+    "colCommitted": "committed capital"
   }
 }

@@ -385,6 +385,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <th className="px-2 py-2 text-right">{t('crm.sim.colVat', 'MwSt-Erst.')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colCashflow', 'Cashflow')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colDebt', 'Restschuld')}</th>
+                    <th className="px-2 py-2 text-right">{t('crm.sim.colCommitted', 'gebunden')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colWorth', 'Netto-Vermögen')}</th>
                   </tr></thead>
                   <tbody>
@@ -400,7 +401,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-2 py-1.5 text-right text-green-700">{r.vat ? `+${eur(r.vat)}` : ''}</td>
                         <td className={`px-2 py-1.5 text-right font-semibold ${r.cashflow >= 0 ? 'text-green-700' : 'text-amber-700'}`}>{r.rents || r.cashflow ? eur(r.cashflow) : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.debt ? eur(r.debt) : ''}</td>
-                        <td className="px-2 py-1.5 text-right font-semibold">{r.value ? eur(r.value - r.debt) : ''}</td>
+                        <td className="px-2 py-1.5 text-right text-gray-500">{r.committed ? eur(r.committed) : ''}</td>
+                        <td className="px-2 py-1.5 text-right font-semibold">{(r.value + r.committed) ? eur(r.value + r.committed - r.debt) : ''}</td>
                       </tr>
                     ))}
                   </tbody>

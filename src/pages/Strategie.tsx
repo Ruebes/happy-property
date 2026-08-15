@@ -158,7 +158,7 @@ export default function Strategie() {
         {/* Jahr für Jahr */}
         <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>{t('strategie.yearsTitle', 'Jahr für Jahr')}</h2>
         <div style={{ ...card, padding: 0, overflowX: 'auto', marginBottom: 22 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 760 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #eee' }}>
                 <th style={{ ...th, textAlign: 'left' }}>{t('strategie.colYear', 'Jahr')}</th>
@@ -170,6 +170,7 @@ export default function Strategie() {
                 <th style={th}>{t('strategie.colTaxes', 'Steuern')}</th>
                 <th style={th}>{t('strategie.colVat', 'MwSt-Erstattung')}</th>
                 <th style={th}>{t('strategie.colCashflow', 'Cashflow')}</th>
+                <th style={th}>{t('strategie.colCommitted', 'gebundenes Kapital')}</th>
                 <th style={th}>{t('strategie.colWorth', 'Netto-Vermögen')}</th>
               </tr>
             </thead>
@@ -185,7 +186,8 @@ export default function Strategie() {
                   <td style={td}>{r.taxes ? `−${eur(r.taxes)}` : ''}</td>
                   <td style={{ ...td, color: GREEN }}>{r.vat ? `+${eur(r.vat)}` : ''}</td>
                   <td style={{ ...td, fontWeight: 700, color: r.cashflow >= 0 ? GREEN : '#b45309' }}>{r.rents || r.cashflow ? eur(r.cashflow) : ''}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{r.value ? eur(r.value - r.debt) : ''}</td>
+                  <td style={{ ...td, color: '#777' }}>{r.committed ? eur(r.committed) : ''}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{(r.value + r.committed) ? eur(r.value + r.committed - r.debt) : ''}</td>
                 </tr>
               ))}
             </tbody>
