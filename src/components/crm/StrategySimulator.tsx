@@ -181,7 +181,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     try {
       const [{ data }, { data: dealRows }] = await Promise.all([
         supabase.from('crm_project_units').select('id, unit_number, bedrooms, size_sqm, price_net')
-          .eq('project_id', pickProject).not('status', 'in', '(sold,reserved)').gt('price_net', 0).order('unit_number'),
+          .eq('project_id', pickProject).not('status', 'in', '(sold,reserved)').is('property_id', null).gt('price_net', 0).order('unit_number'),
         supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null),
       ])
       const taken = new Set((dealRows ?? []).map(d => (d as { unit_id: string }).unit_id))

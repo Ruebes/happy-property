@@ -92,7 +92,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const [{ data }, { data: dealRows }] = await Promise.all([
       supabase.from('crm_project_units')
         .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor')
-        .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').order('unit_number'),
+        // Zugewiesene Wohnungen (property_id = im Kundenportal materialisiert) sind
+        // verkauft und NIE anbietbar — Status allein reicht nicht (Sven 14.8.).
+        .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').is('property_id', null).order('unit_number'),
       supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null),
     ])
     const taken = new Set((dealRows ?? []).map(d => (d as { unit_id: string }).unit_id))
@@ -254,7 +256,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       const availByProject: Record<string, { available: number; total: number }> = {}
       for (const pid of projIds) {
         const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
-        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)')
+        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)').is('property_id', null)
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
       const calcLinkByToken: Record<string, string> = {}
