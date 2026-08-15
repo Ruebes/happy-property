@@ -53,7 +53,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [sel, setSel]           = useState<Set<string>>(new Set())
   const [basket, setBasket]     = useState<BasketItem[]>([])
   const [briefing, setBriefing] = useState('')
-  const [angle, setAngle]       = useState<'eigennutz' | 'investment'>('eigennutz')
+  // Standard: Investment mit 19 % MwSt (Sven 15.8.) - der Regelfall im Vertrieb;
+  // Eigennutz (5 %) bleibt als Auswahl fuer die Ausnahmen.
+  const [angle, setAngle]       = useState<'eigennutz' | 'investment'>('investment')
   const [handoverDate, setHandoverDate] = useState('')   // Zeitpunkt der Übergabe (= crm_projects.completion_date)
   const [busy, setBusy]         = useState(false)
   const [progress, setProgress] = useState('')
@@ -552,8 +554,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <CustomSelect
                 value={angle}
                 onChange={v => setAngle(v as 'eigennutz' | 'investment')}
-                options={[{ value: 'eigennutz', label: t('crm.wizard.eigennutz', 'Eigennutz (5 % MwSt)') },
-                  { value: 'investment', label: t('crm.wizard.investment', 'Investment (19 %)') }]}
+                options={[{ value: 'investment', label: t('crm.wizard.investment', 'Investment (19 % MwSt)') },
+                  { value: 'eigennutz', label: t('crm.wizard.eigennutz', 'Eigennutz (5 % MwSt)') }]}
               />
             </div>
           </div>

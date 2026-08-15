@@ -3643,7 +3643,7 @@
       "briefingPh": "e.g. Wants 2-bed with sea view, budget up to 450k, plans to rent out…",
       "angle": "Angle",
       "eigennutz": "Own use (5 % VAT)",
-      "investment": "Investment (19 %)",
+      "investment": "Investment (19 % VAT)",
       "withCalc": "With yield calculation / comparison",
       "perUnitTitle": "Per apartment individually (overrides the defaults above)",
       "letType": "Rental",
