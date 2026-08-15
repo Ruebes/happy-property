@@ -7,6 +7,7 @@ import {
   allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf,
   DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
 } from '../../lib/strategy'
+import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
 
 // ── Strategie-Simulator ──────────────────────────────────────────────────────
 // Zusatz ÜBER den Einzelrechnungen (Sven 15.8.26): rechnet je Wohnung mit der
@@ -44,6 +45,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const saveTimer = useRef<ReturnType<typeof setTimeout>>()
   const freeCounter = useRef(0)
   // Freigabe an den Kunden
+  const [calcApplied, setCalcApplied] = useState(false)
+  const [calcNote, setCalcNote] = useState('')
   const [sharing, setSharing] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [shareErr, setShareErr] = useState('')
@@ -90,6 +93,48 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       setPickUnits((data ?? []).filter(u => !taken.has((u as { id: string }).id)) as PickUnit[])
     } catch (err) { console.error('[StrategySimulator] units:', err) }
   })() }, [pickProject])
+
+  // ── Werte aus den Einzelberechnungen des Kunden übernehmen ────────────────
+  // Sven 15.8.: der Simulator soll mit denselben Zahlen rechnen wie die vorher
+  // erstellten Berechnungen (v.a. Verwaltung: 25-40 % Kurzzeit statt Standard).
+  // Zuordnung über „Projekt Wohnungsnummer" im Namen; jüngste Berechnung gewinnt.
+  useEffect(() => { void (async () => {
+    if (!lead || !units.length || calcApplied) return
+    try {
+      const { data, error } = await supabase.from('property_calculations')
+        .select('content, created_at').eq('lead_id', lead.id)
+        .order('created_at', { ascending: false }).limit(12)
+      if (error) throw error
+      const byUnit = new Map<string, Partial<CalcParams>>()
+      for (const row of (data ?? []) as Array<{ content: { items?: CalcItem[] } }>) {
+        for (const it of (row.content?.items ?? [])) {
+          if (!it.params) continue
+          const k = `${it.project ?? ''} ${it.unit ?? ''}`.trim().toLowerCase()
+          if (k && !byUnit.has(k)) byUnit.set(k, it.params)
+        }
+      }
+      if (!byUnit.size) { setCalcApplied(true); return }
+      let hits = 0
+      setUnits(us => us.map(u => {
+        if (u.calc) return u
+        const p = byUnit.get(u.name.trim().toLowerCase())
+        if (!p) return u
+        hits++
+        return {
+          ...u,
+          letType: p.letType === 'long' ? 'long' : 'short',
+          calc: {
+            mgmtPct: p.mgmtPct, hotelConcept: p.hotelConcept, season: p.season ?? null,
+            yieldPct: p.yieldPct, bedrooms: p.bedrooms, deTaxPct: p.deTaxPct, res: p.res,
+          },
+        }
+      }))
+      if (hits) setCalcNote(t('crm.sim.fromCalc', '{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung.', { n: hits }))
+    } catch (err) {
+      console.error('[StrategySimulator] Einzelberechnungen:', err)
+    }
+    setCalcApplied(true)
+  })() }, [lead, units.length, calcApplied, t])
 
   const patchUnit = (key: string, patch: Partial<SimUnit>) =>
     setUnits(us => us.map(u => u.key === key ? { ...u, ...patch } : u))
@@ -210,6 +255,12 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             </label>
           </div>
 
+          {calcNote && (
+            <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              ✓ {calcNote}
+            </p>
+          )}
+
           {/* Wohnungen */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {units.map(u => {
@@ -241,9 +292,23 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <div>
                       <label className={lbl}>{t('crm.sim.letType', 'Vermietung')}</label>
                       <CustomSelect value={u.letType}
-                        onChange={v => patchUnit(u.key, { letType: v as 'short' | 'long' })}
+                        onChange={v => {
+                          const lt = v as 'short' | 'long'
+                          const cur = u.calc?.mgmtPct
+                          const wasDefault = cur == null || cur === defaultMgmtPct(u.letType, u.calc?.hotelConcept)
+                          patchUnit(u.key, {
+                            letType: lt,
+                            calc: { ...(u.calc ?? {}), ...(wasDefault ? { mgmtPct: defaultMgmtPct(lt, u.calc?.hotelConcept) } : {}) },
+                          })
+                        }}
                         options={[{ value: 'short', label: t('crm.sim.letShort', 'Kurzzeit (MwSt-Erstattung)') },
                           { value: 'long', label: t('crm.sim.letLong', 'Langzeit') }]} />
+                    </div>
+                    <div>
+                      <label className={lbl}>{t('crm.sim.mgmt', 'Verwaltung % der Miete')}</label>
+                      <input type="number" step={1} className={inputCls}
+                        value={Math.round(u.calc?.mgmtPct ?? defaultMgmtPct(u.letType, u.calc?.hotelConcept))}
+                        onChange={e => patchUnit(u.key, { calc: { ...(u.calc ?? {}), mgmtPct: +e.target.value } })} />
                     </div>
                     <div>
                       <label className={lbl}>{t('crm.sim.finance', 'Finanzierung')}</label>

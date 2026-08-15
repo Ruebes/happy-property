@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, compute, type CalcParams, type CalcResult } from './rechner'
+import { DEFAULT_PARAMS, compute, defaultMgmtPct, type CalcParams, type CalcResult } from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
 // Wird vom CRM-Simulator UND von der öffentlichen Kundenseite /strategie/:token
@@ -21,6 +21,12 @@ export interface SimUnit {
   buyM: number; buyY: number      // Kauf Monat/Jahr
   readyM: number; readyY: number  // Übergabe Monat/Jahr (= Mietstart)
   plan: 'sofort' | 'luma'
+  // Feineinstellungen aus der EINZELBERECHNUNG dieser Wohnung (Verwaltung,
+  // Hotelkonzept, Saisonmodell, Rendite, Zins …). Sven 15.8.: „Der
+  // Strategierechner muss auf die Daten zugreifen, die ich vorher in der
+  // Einzelberechnung eingegeben habe." Ohne das rechnete die Strategie mit
+  // Standardwerten - v.a. 2 % Verwaltung statt real 25-40 % bei Kurzzeit.
+  calc?: Partial<CalcParams>
 }
 
 export interface SimParams {
@@ -116,17 +122,27 @@ export function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amou
 }
 
 export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcome {
+  const fromCalc = u.calc ?? {}
+  // Hotelkonzept + Saisonmodell nur bei Kurzzeit; Verwaltung: Wert aus der
+  // Einzelberechnung, sonst der fachliche Standard der Vermietungsart.
+  const hotel = u.letType === 'short' ? !!fromCalc.hotelConcept : false
+  const season = u.letType === 'short' ? (fromCalc.season ?? null) : null
   const params: CalcParams = {
     ...DEFAULT_PARAMS,
+    ...fromCalc,                                   // Einzelberechnung als Basis
     month: u.readyM, year: u.readyY, dealType: 'single',
-    priceNet: u.priceNet, discountPct: 0, bedrooms: 2,
-    fin: u.fin ? 'yes' : 'no', letType: u.letType, mode: 'ann', res: 'de',
-    hotelConcept: false,
+    priceNet: u.priceNet, discountPct: 0,
+    bedrooms: fromCalc.bedrooms ?? 2,
+    fin: u.fin ? 'yes' : 'no', letType: u.letType, mode: 'ann', res: fromCalc.res ?? 'de',
+    hotelConcept: hotel, season,
+    mgmtPct: fromCalc.mgmtPct ?? defaultMgmtPct(u.letType, hotel),
     equity: ekForUnit,
+    // Miete kommt aus dem Simulator (monatlich) → als Bruttorendite an die Engine
     yieldPct: u.priceNet > 0 ? (u.rent * 12) / Math.round(u.priceNet * 1.19) * 100 : 0,
+    // Zeitachsen-Parameter setzt IMMER die Strategie (gelten über alle Wohnungen)
     rentGrowth: p.rentGrowth, interestPct: p.interest, termYears: p.termYears,
     appreciationPct: p.growth, deTaxPct: p.deTaxPct,
-    furnCost: u.furnNet, furnFree: false, season: null,
+    furnCost: u.furnNet, furnFree: false,
   }
   const res = compute(params)
   const gross = res.pGross + res.furnGross

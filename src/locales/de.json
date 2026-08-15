@@ -3667,7 +3667,11 @@
       "creating": "Erstelle…",
       "createAll": "Alle Decks erstellen",
       "strategySim": "Strategie-Simulator (Bundlekauf, EK-Verteilung, 10-Jahres-Plan)",
-      "strategySimHint": "nutzt die Wohnungen aus dem Paket"
+      "strategySimHint": "nutzt die Wohnungen aus dem Paket",
+      "mgmt": "Verwaltung",
+      "season": "Saisonmodell",
+      "seasonResult": "Jahresmiete",
+      "seasonYieldUnit": "Bruttorendite dieser Wohnung"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
@@ -4244,7 +4248,9 @@
       "mostlyFinanced": "überwiegend fremdfinanziert",
       "inclCosts": "inkl. Kaufnebenkosten",
       "roeHint2": "gesamt über den Zeitraum, nicht p.a.",
-      "colCommitted": "gebunden"
+      "colCommitted": "gebunden",
+      "mgmt": "Verwaltung % der Miete",
+      "fromCalc": "{{n}} Wohnung(en) übernehmen die Werte aus der Einzelberechnung."
     }
   },
   "docs": {

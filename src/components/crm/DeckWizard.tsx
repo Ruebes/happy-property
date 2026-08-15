@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
-import { DEFAULT_PARAMS, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
+import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
@@ -38,6 +38,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   type PerUnit = {
     yieldPct?: number; appreciationPct?: number; furnCost?: number; furnFree?: boolean; hotelConcept?: boolean
     letType?: 'short' | 'long'; fin?: 'yes' | 'no'; equity?: number; amortPct?: number; deTaxPct?: number
+    // Verwaltung + Saisonmodell JE WOHNUNG (Sven 15.8.): sonst laesst sich eine
+    // Kurzzeit- und eine Langzeit-Wohnung nicht in EINER Berechnung abbilden.
+    mgmtPct?: number; season?: { totalOcc: number; adrHigh: number } | null
   }
   const [perUnit, setPerUnit] = useState<Record<string, PerUnit>>({})
   const setPu = (id: string, patch: Partial<PerUnit>) =>
@@ -69,17 +72,29 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const done = proj?.completion_date ? new Date(proj.completion_date) : null
     const readyY = done && !isNaN(done.getTime()) ? Math.max(nowD.getFullYear(), done.getFullYear()) : nowD.getFullYear() + 2
     const readyM = done && !isNaN(done.getTime()) ? done.getMonth() + 1 : 6
-    const pu = perUnit[b.unit.id]
-    const yieldPct = pu?.yieldPct ?? 5.5
+    const pu = perUnit[b.unit.id] ?? {}
+    const letType = pu.letType ?? calcParams.letType
+    const hotel = letType === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false
+    const yieldPct = pu.yieldPct ?? calcParams.yieldPct ?? 5.5
     const monthsAway = (readyY - nowD.getFullYear()) * 12 + (readyM - (nowD.getMonth() + 1))
     return {
       key: b.unit.id, name: `${b.projectName} ${b.unit.unit_number}`,
       priceNet, furnNet,
       rent: Math.round(gross * yieldPct / 100 / 12),
-      letType: pu?.letType ?? 'short',
-      fin: (pu?.fin ?? 'yes') === 'yes',
+      letType,
+      fin: (pu.fin ?? calcParams.fin) === 'yes',
       buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
       plan: monthsAway > 2 ? 'luma' as const : 'sofort' as const,
+      // Die im Wizard eingestellten Werte dieser Wohnung 1:1 weitergeben, damit
+      // die Strategie mit denselben Zahlen rechnet wie die Einzelberechnung.
+      calc: {
+        mgmtPct: pu.mgmtPct ?? (letType === calcParams.letType ? calcParams.mgmtPct : defaultMgmtPct(letType, hotel)),
+        hotelConcept: hotel,
+        season: letType === 'short' ? (pu.season !== undefined ? pu.season : calcParams.season) : null,
+        yieldPct, bedrooms: b.unit.bedrooms ?? 2,
+        deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
+        res: calcParams.res,
+      },
     }
   })
 
@@ -201,6 +216,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           furnFree:        pu.furnFree ?? it.furnitureIncluded ?? calcParams.furnFree,
           // Hotelkonzept nur bei Kurzzeit dieser Wohnung
           hotelConcept:    (pu.letType ?? calcParams.letType) === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false,
+          // Verwaltung: eigener Wert der Wohnung, sonst der globale - ABER nur
+          // solange die Wohnung dieselbe Vermietungsart hat. Weicht sie ab
+          // (gemischtes Paket), gilt der fachliche Standard ihrer Art.
+          mgmtPct:         pu.mgmtPct ?? ((pu.letType ?? calcParams.letType) === calcParams.letType
+            ? calcParams.mgmtPct
+            : defaultMgmtPct(pu.letType ?? calcParams.letType, (pu.hotelConcept ?? calcParams.hotelConcept))),
+          // Saisonmodell greift nur bei Kurzzeit; eigenes Modell der Wohnung hat Vorrang.
+          season:          (pu.letType ?? calcParams.letType) === 'short'
+            ? (pu.season !== undefined ? pu.season : calcParams.season)
+            : null,
         }
         return {
           label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
@@ -649,6 +674,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                             {fin_ === 'yes' && calcParams.mode === 'tilg' && miniInput(t('crm.wizard.amort', 'Tilgung'), String(pu.amortPct ?? calcParams.amortPct ?? ''), v => setPu(b.unit.id, { amortPct: v }))}
                             {calcParams.res === 'de' && miniInput(t('crm.wizard.deTax', 'DE-Steuer'), String(pu.deTaxPct ?? calcParams.deTaxPct ?? ''), v => setPu(b.unit.id, { deTaxPct: v }), '1')}
                             {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                            {/* Verwaltung je Wohnung: Kurzzeit kostet ein Vielfaches von Langzeit */}
+                            {miniInput(t('crm.wizard.mgmt', 'Verwaltung'),
+                              String(pu.mgmtPct ?? (let_ === calcParams.letType ? calcParams.mgmtPct : defaultMgmtPct(let_, hc)) ?? ''),
+                              v => setPu(b.unit.id, { mgmtPct: v }), '1')}
                           </div>
                           <div className="flex flex-wrap items-center gap-2 pt-1">
                             <button type="button" onClick={() => setPu(b.unit.id, { furnFree: !ff })}
@@ -663,7 +692,48 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                                 🏨 {t('crm.wizard.hotel', 'Hotelkonzept')}
                               </button>
                             )}
+                            {/* Saisonmodell JE WOHNUNG - nur bei Kurzzeit sinnvoll.
+                                Vorher ging es nur global, wodurch sich Kurz- und
+                                Langzeit nicht in einer Berechnung mischen ließen. */}
+                            {let_ === 'short' && (() => {
+                              const puSeason = pu.season !== undefined ? pu.season : calcParams.season
+                              return (
+                                <button type="button"
+                                  onClick={() => setPu(b.unit.id, { season: puSeason ? null : { totalOcc: 56, adrHigh: 120 } })}
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${puSeason ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+                                  <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${puSeason ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{puSeason ? '✓' : ''}</span>
+                                  🏖 {t('crm.wizard.season', 'Saisonmodell')}
+                                </button>
+                              )
+                            })()}
                           </div>
+                          {/* Saison-Feineinstellung dieser Wohnung */}
+                          {let_ === 'short' && (pu.season !== undefined ? pu.season : calcParams.season) && (() => {
+                            const sn = (pu.season !== undefined ? pu.season : calcParams.season)!
+                            const sb = seasonBreakdown(sn)
+                            const basis = Math.round((b.unit.price_net ?? 0) * 1.19)   // wie applySeason()
+                            const effY = basis > 0 ? Math.round(sb.rent / basis * 1000) / 10 : 0
+                            return (
+                              <div className="bg-orange-50/60 border border-orange-100 rounded-lg p-2.5 space-y-2">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                                    <span>{t('deckWizard.seasonOcc', 'Gesamtauslastung')}</span>
+                                    <NumberStepper value={sn.totalOcc} min={5} max={90} suffix="%"
+                                      onChange={v => setPu(b.unit.id, { season: { totalOcc: v, adrHigh: sn.adrHigh } })} />
+                                  </label>
+                                  <label className="flex flex-col gap-1 text-xs font-medium text-gray-500">
+                                    <span>{t('deckWizard.seasonAdr', 'Preis/Nacht Hochsaison')}</span>
+                                    <NumberStepper value={sn.adrHigh} min={20} step={5} suffix="€"
+                                      onChange={v => setPu(b.unit.id, { season: { totalOcc: sn.totalOcc, adrHigh: v } })} />
+                                  </label>
+                                </div>
+                                <p className="text-[11px] text-gray-500">
+                                  {t('crm.wizard.seasonResult', 'Jahresmiete')} <b>{sb.rent.toLocaleString('de-DE')} €</b>
+                                  {' = '}{t('crm.wizard.seasonYieldUnit', 'Bruttorendite dieser Wohnung')} <b>{effY.toLocaleString('de-DE')} %</b>
+                                </p>
+                              </div>
+                            )
+                          })()}
                         </div>
                       )
                     })}

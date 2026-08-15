@@ -3667,7 +3667,11 @@
       "creating": "Creating…",
       "createAll": "Create all decks",
       "strategySim": "Strategy simulator (bundle purchase, equity allocation, 10-year plan)",
-      "strategySimHint": "uses the apartments from the package"
+      "strategySimHint": "uses the apartments from the package",
+      "mgmt": "Management",
+      "season": "Season model",
+      "seasonResult": "Annual rent",
+      "seasonYieldUnit": "gross yield of this apartment"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -4244,7 +4248,9 @@
       "mostlyFinanced": "mostly debt-financed",
       "inclCosts": "incl. purchase costs",
       "roeHint2": "total over the period, not p.a.",
-      "colCommitted": "committed"
+      "colCommitted": "committed",
+      "mgmt": "Management % of rent",
+      "fromCalc": "{{n}} apartment(s) use the values from the individual calculation."
     }
   },
   "docs": {

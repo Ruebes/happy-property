@@ -98,6 +98,15 @@ export function applySeason(p: CalcParams): CalcParams {
   return { ...p, yieldPct: Math.round(rent / basis * 10000) / 100 }
 }
 
+// Verwaltungskosten unterscheiden sich je Vermietungsart drastisch (Svens
+// echte Berechnungen): Langzeit ~5 % der Miete, Kurzzeit 25 %, mit
+// Hotelkonzept 40 % (Rezeption/Reinigung/Wäsche/Betreuung inklusive).
+// Ein pauschaler Wert rechnet die Kurzzeitvermietung systematisch zu schön.
+export function defaultMgmtPct(letType: 'short' | 'long', hotelConcept?: boolean): number {
+  if (letType !== 'short') return 5
+  return hotelConcept ? 40 : 25
+}
+
 export const DEFAULT_PARAMS: CalcParams = {
   month: 8, year: 2025, dealType: 'single',
   priceNet: 250000, discountPct: 0, bedrooms: 2,
