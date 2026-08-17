@@ -159,6 +159,7 @@ export default function LeadDetail() {
 
   // Task form
   const [taskForm, setTaskForm] = useState({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
+  const [newPerson, setNewPerson] = useState({ name: '', phone: '', email: '' })   // Aufgabe an jemanden ohne CRM-Zugang
   const [savingTask, setSavingTask] = useState(false)
 
   // Email / Nachrichten-Composer
@@ -894,7 +895,20 @@ export default function LeadDetail() {
 
       // Zuständige/n als assignee-Zeile (Team intern ODER Geschäftskontakt extern)
       const a = taskForm.assigned_to
-      if (a.startsWith('staff:')) {
+      if (a === 'new' && newPerson.name.trim() && (newPerson.phone.trim() || newPerson.email.trim())) {
+        const nm = newPerson.name.trim(), ph = newPerson.phone.trim(), em = newPerson.email.trim()
+        await supabase.from('crm_task_assignees').insert({
+          task_id: taskId, ext_name: nm, ext_email: em || null, ext_phone: ph || null,
+          channel: ph ? 'whatsapp' : 'email', ext_lang: 'de',
+        })
+        // Person behalten, damit sie beim naechsten Mal in der Auswahl steht.
+        const [first, ...rest] = nm.split(' ')
+        const { error: cErr } = await supabase.from('crm_business_contacts').insert({
+          first_name: first, last_name: rest.join(' ') || null, email: em || null,
+          phone: ph || null, whatsapp: ph || null, role: t('crm.taskRoleZuarbeit', 'Zuarbeit'),
+        })
+        if (cErr) console.warn('[LeadDetail] Kontakt merken:', cErr.message)
+      } else if (a.startsWith('staff:')) {
         await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
       } else if (a.startsWith('biz:')) {
         const b = bizContacts.find(x => x.id === a.slice(4))
@@ -911,6 +925,7 @@ export default function LeadDetail() {
       if (a) supabase.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: taskId } }).catch(e => console.warn('[LeadDetail] task-notify:', e))
 
       setTaskForm({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
+      setNewPerson({ name: '', phone: '', email: '' })
       await loadLeadTasks()
       showToast(a ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
@@ -3699,11 +3714,28 @@ export default function LeadDetail() {
                           { value: '', label: `— ${t('crm.nobody', 'Niemand')} —` },
                           ...staff.map(s => ({ value: `staff:${s.id}`, label: `👥 ${s.full_name}` })),
                           ...bizContacts.map(b => ({ value: `biz:${b.id}`, label: `📇 ${b.name}${b.lang === 'en' ? ' · EN' : ''}`, hint: b.phone ? t('crm.viaWhatsapp', 'per WhatsApp') : b.email ? t('crm.viaEmail', 'per E-Mail') : undefined })),
+                          { value: 'new', label: `➕ ${t('crm.taskNewPerson', 'Neue Person (kein CRM-Zugang nötig)')}` },
                         ]}
                       />
                     </div>
                   </div>
-                  {taskForm.assigned_to && (
+                  {/* Neue Person: Name + Nummer reichen. Sie bekommt die Aufgabe von
+                      Lotte per WhatsApp/Mail und wird als Kontakt behalten, damit sie
+                      beim naechsten Mal in der Liste steht (Sven 17.8., Fall Stella). */}
+                  {taskForm.assigned_to === 'new' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input value={newPerson.name} onChange={e => setNewPerson(p => ({ ...p, name: e.target.value }))}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        placeholder={t('crm.taskNewName', 'Name')} />
+                      <input value={newPerson.phone} onChange={e => setNewPerson(p => ({ ...p, phone: e.target.value }))}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        placeholder={t('crm.taskNewPhone', 'WhatsApp-Nummer')} />
+                      <input value={newPerson.email} onChange={e => setNewPerson(p => ({ ...p, email: e.target.value }))}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        placeholder={t('crm.taskNewMail', 'E-Mail (optional)')} />
+                    </div>
+                  )}
+                  {taskForm.assigned_to && taskForm.assigned_to !== 'new' && (
                     <p className="text-[11px] text-gray-400">
                       {taskForm.assigned_to.startsWith('biz:')
                         ? t('crm.taskBizHint', 'Der Geschäftskontakt erhält die Aufgabe von Lotte — automatisch in seiner hinterlegten Sprache.')

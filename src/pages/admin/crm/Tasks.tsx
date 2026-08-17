@@ -255,8 +255,8 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
 
           {/* Externe Zuständige */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.externalAssignees', 'Externe Personen (per Mail/WhatsApp)')}</label>
-            <p className="text-xs text-gray-400 mb-1.5">{t('crm.tasks.externalHint', 'Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht.')}</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('crm.tasks.externalAssignees2', 'Weitere Person - auch ohne CRM-Zugang')}</label>
+            <p className="text-xs text-gray-400 mb-1.5">{t('crm.tasks.externalHint2', 'Steht jemand nicht oben? Name + WhatsApp-Nummer (oder Mail) genügt - die Aufgabe kommt per Nachricht von Lotte.')}</p>
             {externals.length > 0 && (
               <div className="space-y-1.5 mb-2">
                 {externals.map((e, i) => (

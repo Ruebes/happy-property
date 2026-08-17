@@ -1471,7 +1471,9 @@
       "attachSel": "{{n}} Bild(er) ausgewählt — werden verkleinert hochgeladen",
       "attachHint": "Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht.",
       "rememberPerson": "Person merken - steht beim nächsten Mal in der Auswahl",
-      "roleZuarbeit": "Zuarbeit"
+      "roleZuarbeit": "Zuarbeit",
+      "externalAssignees2": "Weitere Person - auch ohne CRM-Zugang",
+      "externalHint2": "Steht jemand nicht oben? Name + WhatsApp-Nummer (oder Mail) genügt - die Aufgabe kommt per Nachricht von Lotte."
     },
     "home": {
       "hello": "Hallo",
@@ -4266,7 +4268,12 @@
       "debtHint": "Restschuld aller Darlehen",
       "roe5": "EK-Rendite nach 5 J.",
       "roe10": "EK-Rendite nach 10 J."
-    }
+    },
+    "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
+    "taskNewName": "Name",
+    "taskNewPhone": "WhatsApp-Nummer",
+    "taskNewMail": "E-Mail (optional)",
+    "taskRoleZuarbeit": "Zuarbeit"
   },
   "docs": {
     "title": "Workflow Dokumente",

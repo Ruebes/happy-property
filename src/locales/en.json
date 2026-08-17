@@ -1471,7 +1471,9 @@
       "attachSel": "{{n}} image(s) selected — uploaded downscaled",
       "attachHint": "Attachments are deleted from the server automatically on Sunday archiving.",
       "rememberPerson": "Remember person - available in the list next time",
-      "roleZuarbeit": "Support"
+      "roleZuarbeit": "Support",
+      "externalAssignees2": "Another person - no CRM account needed",
+      "externalHint2": "Someone missing above? Name + WhatsApp number (or email) is enough - the task arrives as a message from Lotte."
     },
     "home": {
       "hello": "Hello",
@@ -4266,7 +4268,12 @@
       "debtHint": "Remaining debt of all loans",
       "roe5": "ROE after 5 yrs",
       "roe10": "ROE after 10 yrs"
-    }
+    },
+    "taskNewPerson": "New person (no CRM account needed)",
+    "taskNewName": "Name",
+    "taskNewPhone": "WhatsApp number",
+    "taskNewMail": "Email (optional)",
+    "taskRoleZuarbeit": "Support"
   },
   "docs": {
     "title": "Workflow Documents",
