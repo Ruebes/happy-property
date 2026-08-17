@@ -1469,7 +1469,9 @@
       "externalHint": "No team member needed — a name + number (or email) is enough.",
       "attach": "Attach screenshots/images (optional)",
       "attachSel": "{{n}} image(s) selected — uploaded downscaled",
-      "attachHint": "Attachments are deleted from the server automatically on Sunday archiving."
+      "attachHint": "Attachments are deleted from the server automatically on Sunday archiving.",
+      "rememberPerson": "Remember person - available in the list next time",
+      "roleZuarbeit": "Support"
     },
     "home": {
       "hello": "Hello",
@@ -3611,7 +3613,8 @@
       "namePlaceholder": "First and last name",
       "emailLabel": "Email",
       "addBtn": "+ Staff member",
-      "empty": "No staff members created yet."
+      "empty": "No staff members created yet.",
+      "phoneLabel": "WhatsApp number"
     },
     "wizard": {
       "handover": "Handover date",

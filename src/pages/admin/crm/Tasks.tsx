@@ -127,6 +127,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
 
   // Externe-Add-Formular
   const [exName, setExName] = useState(''); const [exEmail, setExEmail] = useState(''); const [exPhone, setExPhone] = useState(''); const [exCh, setExCh] = useState<Channel>('both'); const [exLang, setExLang] = useState<'de' | 'en'>('de')
+  const [remember, setRemember] = useState(true)     // neue Person in den Kontakten behalten
   const [custQuery, setCustQuery] = useState('')
 
   const toggleInternal = (id: string) => setInternalIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
@@ -134,10 +135,34 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
     const c = contacts.find(x => x.key === key); if (!c) return
     setExName(c.name); setExEmail(c.email ?? ''); setExPhone(c.phone ?? ''); setExLang(c.lang)
   }
+  // Eine hier eingetippte Person war bisher NUR fuer diese eine Aufgabe da und
+  // musste beim naechsten Mal neu getippt werden - deshalb stand z.B. Stella in
+  // keiner Auswahl (Sven 17.8.). Neue Personen landen jetzt zusaetzlich in den
+  // Geschaeftskontakten und stehen ab sofort im Dropdown. Wer schon existiert
+  // (gleiche Mail oder Nummer), wird nicht doppelt angelegt.
+  const rememberContact = async (name: string, email: string, phone: string, lang: 'de' | 'en') => {
+    const digits = (v: string) => v.replace(/[^0-9]/g, '')
+    const dup = contacts.some(c => c.kind === 'biz' && (
+      (email && c.email?.toLowerCase() === email.toLowerCase()) ||
+      (phone && digits(c.phone ?? '') === digits(phone) && digits(phone).length > 5)
+    ))
+    if (dup) return
+    const [first, ...rest] = name.split(' ')
+    const { data, error } = await supabase.from('crm_business_contacts')
+      .insert({ first_name: first, last_name: rest.join(' ') || null, email: email || null,
+                phone: phone || null, whatsapp: phone || null, language: lang, role: t('crm.tasks.roleZuarbeit', 'Zuarbeit') })
+      .select('id').single()
+    if (error) { console.warn('[Tasks] Kontakt merken:', error.message); return }   // Aufgabe nie am Merken scheitern lassen
+    setContacts(prev => [...prev, { key: `biz:${(data as { id: string }).id}`, id: (data as { id: string }).id,
+      kind: 'biz', name, email: email || null, phone: phone || null, lang }])
+  }
+
   const addExternal = () => {
     if (!exName.trim()) return
     if (!exEmail.trim() && !exPhone.trim()) { setErr(t('crm.tasks.extContactReq', 'Externe brauchen E-Mail oder Telefon.')); return }
-    setExternals(prev => [...prev, { name: exName.trim(), email: exEmail.trim(), phone: exPhone.trim(), channel: exCh, lang: exLang }])
+    const [n, e, ph, lg] = [exName.trim(), exEmail.trim(), exPhone.trim(), exLang]
+    setExternals(prev => [...prev, { name: n, email: e, phone: ph, channel: exCh, lang: lg }])
+    if (remember) void rememberContact(n, e, ph, lg)
     setExName(''); setExEmail(''); setExPhone(''); setExCh('both'); setExLang('de'); setErr('')
   }
   const custMatches = custQuery.trim().length >= 2
@@ -286,6 +311,10 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
                   {t('crm.tasks.addPerson', '+ Person')}
                 </button>
               </div>
+              <label className="flex items-center gap-2 text-xs text-gray-600 pt-0.5">
+                <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="accent-orange-500" />
+                {t('crm.tasks.rememberPerson', 'Person merken - steht beim nächsten Mal in der Auswahl')}
+              </label>
             </div>
           </div>
 
@@ -502,7 +531,22 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   }
   const addExternalEdit = async () => {
     if (!exName.trim() || (!exEmail.trim() && !exPhone.trim())) return
-    await supabase.from('crm_task_assignees').insert({ task_id: task.id, ext_name: exName.trim(), ext_email: exEmail.trim() || null, ext_phone: exPhone.trim() || null, channel: exCh })
+    const [n, e, ph] = [exName.trim(), exEmail.trim(), exPhone.trim()]
+    await supabase.from('crm_task_assignees').insert({ task_id: task.id, ext_name: n, ext_email: e || null, ext_phone: ph || null, channel: exCh })
+    // Auch hier: neue Person in den Kontakten behalten, sonst steht sie beim
+    // naechsten Mal wieder nirgends (Sven 17.8., Fall "Stella").
+    const digits = (v: string) => v.replace(/[^0-9]/g, '')
+    const dup = contacts.some(c => c.kind === 'biz' && (
+      (e && c.email?.toLowerCase() === e.toLowerCase()) ||
+      (ph && digits(c.phone ?? '') === digits(ph) && digits(ph).length > 5)
+    ))
+    if (!dup) {
+      const [first, ...rest] = n.split(' ')
+      const { error } = await supabase.from('crm_business_contacts').insert({
+        first_name: first, last_name: rest.join(' ') || null, email: e || null,
+        phone: ph || null, whatsapp: ph || null, role: t('crm.tasks.roleZuarbeit', 'Zuarbeit') })
+      if (error) console.warn('[Tasks] Kontakt merken:', error.message)
+    }
     setExName(''); setExEmail(''); setExPhone(''); setExCh('both'); dispatchNew(); await loadAll()
   }
   const removeAssignee = async (id: string) => { await supabase.from('crm_task_assignees').delete().eq('id', id); await loadAll() }

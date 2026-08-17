@@ -1469,7 +1469,9 @@
       "externalHint": "Kein Teammitglied nötig — Name + Nummer (oder Mail) reicht.",
       "attach": "Screenshots/Bilder anhängen (optional)",
       "attachSel": "{{n}} Bild(er) ausgewählt — werden verkleinert hochgeladen",
-      "attachHint": "Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht."
+      "attachHint": "Anhänge werden beim Sonntags-Archiv automatisch vom Server gelöscht.",
+      "rememberPerson": "Person merken - steht beim nächsten Mal in der Auswahl",
+      "roleZuarbeit": "Zuarbeit"
     },
     "home": {
       "hello": "Hallo",
@@ -3611,7 +3613,8 @@
       "namePlaceholder": "Vor- und Nachname",
       "emailLabel": "E-Mail",
       "addBtn": "+ Mitarbeiter",
-      "empty": "Noch keine Mitarbeiter angelegt."
+      "empty": "Noch keine Mitarbeiter angelegt.",
+      "phoneLabel": "WhatsApp-Nummer"
     },
     "wizard": {
       "handover": "Zeitpunkt der Übergabe",

@@ -18,7 +18,7 @@ function StaffSection() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
-  const [form, setForm] = useState({ full_name: '', email: '' })
+  const [form, setForm] = useState({ full_name: '', email: '', phone: '' })
   const [msg, setMsg] = useState('')
 
   const load = useCallback(async () => {
@@ -49,10 +49,12 @@ function StaffSection() {
     setAdding(true)
     try {
       const { data, error } = await supabase.functions.invoke('admin-user-ops', {
-        body: { action: 'create', email: form.email.trim().toLowerCase(), full_name: form.full_name.trim(), role: 'mitarbeiter' },
+        // Nummer gleich mit anlegen: Aufgaben gehen per Mail UND WhatsApp raus -
+        // ohne Nummer bleibt der WhatsApp-Weg fuer diesen Mitarbeiter tot.
+        body: { action: 'create', email: form.email.trim().toLowerCase(), full_name: form.full_name.trim(), phone: form.phone.trim() || null, role: 'mitarbeiter' },
       })
       if (error || (data as { error?: string } | null)?.error) throw new Error((data as { error?: string } | null)?.error || error?.message)
-      setForm({ full_name: '', email: '' })
+      setForm({ full_name: '', email: '', phone: '' })
       flash(t('crm.staff.created', '✓ Mitarbeiter angelegt — Zugangs-Mail versendet'))
       load()
     } catch (e) { flash(`❌ ${e instanceof Error ? e.message : t('common.error', 'Fehler')}`) } finally { setAdding(false) }
@@ -76,6 +78,11 @@ function StaffSection() {
           <label className="block text-xs text-gray-500 mb-1">{t('crm.staff.emailLabel', 'E-Mail')}</label>
           <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" placeholder="name@…" />
+        </div>
+        <div className="flex-1 min-w-[140px]">
+          <label className="block text-xs text-gray-500 mb-1">{t('crm.staff.phoneLabel', 'WhatsApp-Nummer')}</label>
+          <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" placeholder="+49…" />
         </div>
         <button onClick={addStaff} disabled={adding}
           className="px-3 py-2 rounded-xl text-white text-sm font-medium whitespace-nowrap disabled:opacity-60"
