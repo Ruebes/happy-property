@@ -3540,7 +3540,10 @@
       "attach": "Attach",
       "seeAttachment": "See attachment.",
       "tooBigForWa": "too large for WhatsApp",
-      "attachFailed": "Text sent, but the attachment failed: {{e}}"
+      "attachFailed": "Text sent, but the attachment failed: {{e}}",
+      "textPart": "Text",
+      "allFailed": "Sending failed: {{f}}",
+      "partFailed": "Partly sent - did not arrive: {{f}}"
     },
     "outbox": {
       "waBody": "Hi {{name}},\n\ngreat talking with you! Here are your personal offers:\n\n{{links}}\n\nTake your time to look through them – I'm here any time if you have questions.\n\nBest regards\nSven · Happy Property",

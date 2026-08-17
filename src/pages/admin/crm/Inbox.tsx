@@ -185,7 +185,13 @@ export default function Inbox() {
         // WhatsApp trägt EIN Medium pro Nachricht: Text (+ erste Datei) als erste
         // Nachricht, jede weitere Datei als eigene Folge-Nachricht. Grosse Bilder
         // verkleinert send-whatsapp selbst auf unter 2 MB.
+        // Fehler bei EINER Datei darf den Rest nicht mitreissen: bisher flog eine
+        // Exception, der Verlauf bekam keinen Eintrag und Sven sah nur "geht nicht",
+        // obwohl Teil 1 laengst beim Kunden war (17.8.). Jetzt wird je Datei
+        // gesammelt und am Ende ehrlich berichtet.
         let anyAttachFailed = false
+        const failed: string[] = []
+        let anySent = false
         for (let i = 0; i < Math.max(1, files.length); i++) {
           const f = files[i]
           let file_url: string | undefined, file_name: string | undefined
@@ -197,21 +203,31 @@ export default function Inbox() {
             file_url = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
             file_name = f.name
           }
+          // Folge-Dateien OHNE Text: send-whatsapp setzt den Dateinamen als
+          // Bildunterschrift. Ein Leerzeichen als Text lehnt TimelinesAI mit
+          // HTTP 400 ab ("can not be empty string") - genau daran scheiterte
+          // jeder Versand einer zweiten Datei.
           const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: {
-            event_type: 'no_show', override_text: i === 0 ? (text || ' ') : ' ',
+            event_type: 'no_show', override_text: i === 0 ? text : '',
             lead_data: { lead_name: current.name, lead_phone: phone },
             ...(file_url ? { file_url, file_name } : {}),
-            ...(i > 0 ? { allow_duplicate: true } : {}),   // Folge-Dateien: gleicher Leer-Text nicht deduppen
+            ...(i > 0 ? { allow_duplicate: true } : {}),   // Folge-Dateien nicht deduppen
           } })
-          if (error) throw error
           const r = data as { success?: boolean; attached?: boolean; error?: string; skipped_duplicate?: boolean } | null
-          if (!r?.success) throw new Error(r?.error || 'WhatsApp-Versand fehlgeschlagen')
+          if (error || !r?.success) {
+            failed.push(f ? f.name : t('crm.inbox.textPart', 'Text'))
+            console.error('[Inbox] WhatsApp-Teil fehlgeschlagen:', error ?? r?.error)
+            continue
+          }
           if (r.skipped_duplicate) {
             showToast(t('crm.inbox.dupSkipped', '⚠️ Identische Nachricht wurde in den letzten 6 Stunden schon gesendet - kein erneuter Versand. Text leicht ändern, falls doch gewollt.'))
             setSending(false); return
           }
+          anySent = true
           if (f && r.attached === false) anyAttachFailed = true
         }
+        if (!anySent) throw new Error(t('crm.inbox.allFailed', 'Versand fehlgeschlagen: {{f}}', { f: failed.join(', ') }))
+        if (failed.length) showToast(t('crm.inbox.partFailed', 'Teilweise gesendet - nicht angekommen: {{f}}', { f: failed.join(', ') }))
         if (anyAttachFailed) showToast(t('crm.inbox.attachFailed', 'Text gesendet, Anhang leider nicht: {{e}}', { e: '' }))
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'whatsapp', direction: 'outbound',

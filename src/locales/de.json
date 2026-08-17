@@ -3540,7 +3540,10 @@
       "attach": "Anhang",
       "seeAttachment": "Siehe Anhang.",
       "tooBigForWa": "zu groß für WhatsApp",
-      "attachFailed": "Text gesendet, Anhang leider nicht: {{e}}"
+      "attachFailed": "Text gesendet, Anhang leider nicht: {{e}}",
+      "textPart": "Text",
+      "allFailed": "Versand fehlgeschlagen: {{f}}",
+      "partFailed": "Teilweise gesendet - nicht angekommen: {{f}}"
     },
     "outbox": {
       "waBody": "Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property",

@@ -182,6 +182,7 @@ Deno.serve(async (req) => {
     // Anhang nur EINMAL hochladen und die UID für alle Empfänger wiederverwenden.
     let fileUidCache: string | null = null
     let attachError:  string | null = null
+    let linkFallback = false     // Anhang ging nicht hoch → Link steht im Text
     // waSize auch fuer EXPLIZITE Anhaenge: ein Vorlagenbild aus dem Storage kommt
     // sonst in Originalgroesse (gemessen 8,4 MB Deck-Render) und scheitert still an
     // der 2-MB-Grenze — die Nachricht ging dann als nackter Text raus, obwohl der
@@ -204,6 +205,31 @@ Deno.serve(async (req) => {
 
     let attachUrl:  string | null = file_url  ? waSize(String(file_url))  : null
     let attachName: string | null = file_name ? String(file_name) : null
+
+    // ── Leerer Text ist bei TimelinesAI ein harter Fehler ─────────
+    // HTTP 400 validation_error: text "can not be empty string". Genau das traf
+    // jeden Versand einer REINEN Datei (Sven 17.8.: sechs Versuche im Posteingang,
+    // jedes Mal Fehlermeldung): der Posteingang schickt fuer jede Datei ab der
+    // zweiten ein Leerzeichen als Text mit. Statt zu scheitern bekommt der Anhang
+    // jetzt den Dateinamen als Bildunterschrift - lesbar, ohne Endung und ohne
+    // technischen Namensmuell.
+    const captionFromName = (n: string | null): string => {
+      const base = (n ?? '').split('/').pop()?.replace(/\.[A-Za-z0-9]+$/, '') ?? ''
+      const clean = base.replace(/^\d{10,}-\w+$/, '').replace(/[_-]+/g, ' ').trim()
+      return clean ? `\u{1F4CE} ${clean}` : '\u{1F4CE}'
+    }
+    if (typeof message !== 'string' || !message.trim()) {
+      if (!attachUrl && !persona_image) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Nachricht nicht gesendet: kein Text und kein Anhang.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        )
+      }
+      message = captionFromName(attachName)
+      console.log(`[send-whatsapp] Leerer Text + Anhang → Unterschrift "${message}"`)
+    } else {
+      message = message.trim()
+    }
     const results = []
     for (const recipient of recipients) {
       // ── Universeller Doppel-Schutz ────────────────────────────────
@@ -211,7 +237,9 @@ Deno.serve(async (req) => {
       // Dann nicht nochmal. Faengt Re-Trigger, ueberlappende Automatiken und Cron-
       // Races quellenuebergreifend ab. Verschiedene Empfaenger / verschiedene Texte
       // sind nicht betroffen (Key = Nummer + Text-Hash).
-      const bh = typeof message === 'string' ? bodyHash(message) : ''
+      // Anhang in den Doppel-Schutz einrechnen: sonst gilt "zweite Datei, gleicher
+      // Text" faelschlich als Wiederholung und die Folgedatei bleibt liegen.
+      const bh = typeof message === 'string' ? bodyHash(message + (attachName ?? attachUrl ?? '')) : ''
       if (!allow_duplicate && bh) {
         const win = new Date(Date.now() - DEDUP_HOURS * 3600_000).toISOString()
         const { data: dup } = await supabase.from('wa_sent').select('id')
@@ -301,7 +329,11 @@ Deno.serve(async (req) => {
                 console.log(`[send-whatsapp] Anhang auf ${Math.round(bytes.length / 1024)} KB verkleinert`)
               } catch (e) { console.warn('[send-whatsapp] Verkleinern fehlgeschlagen:', e) }
             }
-            if (bytes.length > 2_000_000) throw new Error(`Anhang zu groß (${Math.round(bytes.length / 1024)} KB) — konnte nicht klein genug komprimiert werden`)
+            // Nicht-Bilder (PDF, Video) lassen sich hier nicht schrumpfen. Frueher
+            // brach der Versand hier ab. Jetzt wird der Upload trotzdem VERSUCHT -
+            // scheitert er, haengt der Download-Link unten an der Nachricht, und
+            // der Kunde bekommt die Datei trotzdem (Sven 17.8.: 3,4-MB-Rendite-PDF).
+            if (bytes.length > 2_000_000) console.warn(`[send-whatsapp] Anhang ${Math.round(bytes.length / 1024)} KB - Upload wird trotzdem versucht`)
           }
           const ext = ctype === 'image/jpeg' ? 'jpg' : ctype === 'image/png' ? 'png'
                     : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/webp' ? 'webp' : ''
@@ -320,8 +352,19 @@ Deno.serve(async (req) => {
           // beim Senden). Fallbacks fuer den Fall, dass sich die Form aendert.
           fileUidCache = (upJson?.data?.uid ?? upJson?.uid ?? upJson?.data?.file_uid ?? null) as string | null
           console.log(`[send-whatsapp] Upload ${upRes.status}, uid=${fileUidCache ?? 'KEINE'}`, fileUidCache ? '' : JSON.stringify(upJson))
+          if (!fileUidCache) throw new Error(`Datei-Upload abgelehnt (HTTP ${upRes.status}): ${JSON.stringify(upJson).slice(0, 140)}`)
         } catch (e) {
-          console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, sende nur Text:', e)
+          console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, haenge Link an:', e)
+          // Statt den Anhang stillschweigend fallen zu lassen: oeffentlichen Link
+          // in die Nachricht schreiben. Ein antippbarer Link ist immer besser als
+          // eine Nachricht, in der die angekuendigte Datei einfach fehlt.
+          // Nur EINMAL anhaengen, auch wenn mehrere Empfaenger folgen.
+          if (!linkFallback && attachUrl && /^https?:\/\//.test(String(attachUrl))) {
+            const label = attachName || 'Datei'
+            message = `${message}\n\n\u{1F4CE} ${label}:\n${attachUrl}`
+            linkFallback = true
+            attachUrl = null          // kein zweiter Upload-Versuch je Empfaenger
+          }
           // Nicht nur loggen: der Aufrufer (und jeder Test) muss sehen koennen, dass
           // das Bild fehlt — genau dieser stille Ausfall hat den 2-MB-Fall verdeckt.
           attachError = e instanceof Error ? e.message : String(e)
@@ -407,7 +450,8 @@ Deno.serve(async (req) => {
         ...(okResults.length === 0 && firstErr ? { error: `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'}): ${JSON.stringify(firstErr.data ?? '').slice(0, 180)}` } : {}),
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
         // ein gescheiterter Anhang faellt sonst nie auf.
-        attached: !!fileUidCache, ...(attachError ? { attach_error: attachError } : {}) }),
+        attached: !!fileUidCache || linkFallback, ...(linkFallback ? { attach_as_link: true } : {}),
+        ...(attachError ? { attach_error: attachError } : {}) }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
 
