@@ -378,15 +378,34 @@ export default function LeadDetail() {
 
   // ── Data fetching ───────────────────────────────────────────────
   // Geschäftskontakte (für Aufgaben-Zuweisung) — einmal laden.
+  // Dazu die Verwaltungs-/Property-Management-Partner: deren Ansprechpartner
+  // (z.B. Stella Demetriou von Paphosfinder) standen in KEINER Aufgaben-Auswahl,
+  // obwohl sie laengst im System sind - Sven 17.8.: "auch diesen Partnern moechte
+  // ich eine Aufgabe erstellen koennen".
   const loadBizContacts = useCallback(async () => {
-    const { data } = await supabase.from('crm_business_contacts')
-      .select('id, first_name, last_name, company, email, phone, whatsapp, language').order('first_name')
+    const [{ data }, { data: vw }] = await Promise.all([
+      supabase.from('crm_business_contacts')
+        .select('id, first_name, last_name, company, email, phone, whatsapp, language').order('first_name'),
+      supabase.from('verwaltungen')
+        .select('id, name, ansprechpartner, ansprechpartner_phone, ansprechpartner_email, phone, email, language').order('name'),
+    ])
     const rows = (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null }>
-    setBizContacts(rows.map(b => ({
+    const list: BizContactRow[] = rows.map(b => ({
       id: b.id,
       name: `${b.first_name ?? ''} ${b.last_name ?? ''}`.trim() || b.company || b.email || 'Kontakt',
       email: b.email, phone: b.whatsapp || b.phone, lang: b.language === 'en' ? 'en' : 'de',
-    })))
+    }))
+    for (const v of ((vw ?? []) as Array<{ id: string; name: string | null; ansprechpartner: string | null; ansprechpartner_phone: string | null; ansprechpartner_email: string | null; phone: string | null; email: string | null; language: string | null }>)) {
+      const person = (v.ansprechpartner ?? '').trim()
+      list.push({
+        id: `vw-${v.id}`,
+        name: person ? `${person} (${v.name ?? 'Verwaltung'})` : (v.name ?? 'Verwaltung'),
+        email: v.ansprechpartner_email || v.email,
+        phone: v.ansprechpartner_phone || v.phone,
+        lang: v.language === 'en' ? 'en' : 'de',
+      })
+    }
+    setBizContacts(list)
   }, [])
 
   // Echte crm_tasks, die mit DIESEM Lead verknüpft sind (crm_task_leads).
