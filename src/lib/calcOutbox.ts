@@ -20,9 +20,19 @@ export async function createCalcOutboxDraft(opts: {
   }
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const origin = window.location.origin
-  const linksHtml = opts.calcs.map(c =>
+  // Der Vergleich ist bei mehreren Objekten das Hauptelement der Mail (Sven 18.8.,
+  // Muster aus der Tobias-Mail): erst die Gegenüberstellung als Kasten, darunter die
+  // Einzelrechnungen. Vorher standen alle Links gleichwertig untereinander.
+  const compare = opts.calcs.find(c => /vergleich/i.test(c.title))
+  const singles = opts.calcs.filter(c => c !== compare)
+  const linksHtml = singles.map(c =>
     `<p style="margin:0 0 10px 0"><a href="${origin}/rechnung/${c.token}" style="color:#2f6b4f;font-weight:700;font-size:15px;text-decoration:none">📊 ${esc(c.title)} →</a></p>`
   ).join('')
+  const compareHtml = compare
+    ? `<div style="margin:0 0 18px;padding:16px 18px;border-radius:12px;background:#f0f7f4;border:1px solid #d4e9df">`
+      + `<div style="font-weight:700;margin:0 0 10px">📊 Dein Immobilienvergleich – alle Wohnungen direkt gegenübergestellt</div>`
+      + `<a href="${origin}/rechnung/${compare.token}" style="display:inline-block;background:#2f6b4f;color:#ffffff;font-weight:700;font-size:15px;text-decoration:none;padding:10px 18px;border-radius:8px">Immobilienvergleich ansehen →</a></div>`
+    : ''
   const multi = opts.calcs.length > 1
   const subject = multi
     ? 'Deine Rendite-Berechnungen'
@@ -30,6 +40,8 @@ export async function createCalcOutboxDraft(opts: {
   const body = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto">`
     + `<p style="margin:0 0 16px">Hallo ${esc(opts.firstName)},</p>`
     + `<p style="margin:0 0 16px">wie besprochen habe ich dir ${multi ? 'die Berechnungen' : 'deine Berechnung'} fertig gemacht. Alle Zahlen kannst du hier in Ruhe online durchgehen:</p>`
+    + compareHtml
+    + (compare && linksHtml ? `<p style="margin:0 0 10px;font-size:14px;color:#666">Und hier jede Wohnung einzeln:</p>` : '')
     + linksHtml
     + `<p style="margin:16px 0 16px">Wenn du Fragen zu den Zahlen hast, melde dich einfach. Wir gehen das gern gemeinsam durch.</p>`
     + `<p style="margin:24px 0 4px">Ich freue mich von dir zu hören.</p>`

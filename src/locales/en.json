@@ -3331,6 +3331,10 @@
       "recReasonNoLeads": "{{spend}} spent, not a single lead in the period",
       "recReasonCpl": "Cost per lead {{cpl}} — {{factor}}× more expensive than the campaign median ({{median}})",
       "recReasonFatigue": "Fatigue: frequency {{freq}} at only {{ctr}} CTR — the creative is worn out",
+      "recReasonLpLoss": "Only {{arrived}} of the clicks reach the page ({{lpv}} of {{clicks}}) — the rest drop off while it loads",
+      "recAdviceLpLoss": "Check the landing page, not the ad",
+      "recReasonOrphan": "{{leads}} leads on Meta but none in the CRM — they come from an instant form",
+      "recAdviceOrphan": "Collect them on Meta",
       "reasonManual": "Manually in the ads manager",
       "actQueued": "queued",
       "actCancel": "Cancel",
@@ -4808,7 +4812,14 @@
     "creatingButton": "Creating…",
     "saveButton": "Save",
     "createComparisonButton": "Create comparison",
-    "createInvoiceButton": "Create invoice"
+    "createInvoiceButton": "Create invoice",
+    "objectsInCalc": "Already in this calculation",
+    "removeObject": "Remove property",
+    "noObjectsLeft": "No property left - pick at least one below.",
+    "addMoreHint": "You can add more properties below. A single calculation then becomes a comparison - the customer link stays the same.",
+    "addObjectLabel": "Add another property",
+    "editHint2": "Change values or add properties - saving updates the same calculation under the same link.",
+    "calcExtended": "{{n}} property/properties added - comparison and mail draft are in the outbox."
   },
   "appointmentModal": {
     "stepBasis": "Basics",

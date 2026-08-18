@@ -90,6 +90,40 @@ function metaPixel(...args: unknown[]) {
   w.fbq(...args)
 }
 
+// ── Meta-Zuordnungsmerkmale (Event Match Quality) ────────────────────────────
+// meta-ads-sync meldet Termine, gute Leads und Abschlüsse per Conversions-API
+// an Meta zurück, damit die Auslieferung auf echte Kundenqualität optimiert.
+// Bis 18.08.2026 gingen dabei nur E-Mail und Telefon mit — Meta bewertete die
+// Zuordnung deshalb mit 4,6 von 10 und blieb unter der Schwelle von 6,0, ab
+// der die Events voll in die Optimierung einfliessen. Die beiden stärksten
+// fehlenden Merkmale entstehen ausschliesslich im Browser: die Browser-ID
+// (_fbp, vom Pixel gesetzt) und die Klick-ID (_fbc, aus dem ?fbclid= der
+// Anzeigen-URL). Also hier einsammeln und am Lead ablegen.
+function readCookie(name: string): string {
+  const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`))
+  return m ? decodeURIComponent(m[1]) : ''
+}
+
+export interface MetaMatchKeys { fbc?: string; fbp?: string; user_agent?: string }
+
+// Bewusst erst beim Absenden aufrufen, nicht beim Rendern: das Pixel-Skript
+// lädt asynchron, direkt beim ersten Render fehlen die Cookies meistens noch.
+function metaMatchKeys(): MetaMatchKeys {
+  const keys: MetaMatchKeys = {}
+  const fbp = readCookie('_fbp')
+  if (fbp) keys.fbp = fbp.slice(0, 200)
+  let fbc = readCookie('_fbc')
+  if (!fbc) {
+    // Cookie noch nicht geschrieben: Klick-ID aus der URL selbst bauen.
+    // Format laut Meta: fb.1.<Zeitstempel in Millisekunden>.<fbclid>
+    const fbclid = new URLSearchParams(window.location.search).get('fbclid')
+    if (fbclid) fbc = `fb.1.${Date.now()}.${fbclid.slice(0, 300)}`
+  }
+  if (fbc) keys.fbc = fbc.slice(0, 400)
+  if (navigator.userAgent) keys.user_agent = navigator.userAgent.slice(0, 400)
+  return keys
+}
+
 export default function Funnel() {
   const { t } = useTranslation()
   const utmBase = useUtm()
@@ -215,7 +249,7 @@ export default function Funnel() {
         action: 'contact', session_id: sessionRef.current,
         contact: { ...contact, email, phone },
         answers: Object.entries(answers).map(([k, v]) => ({ question: QUESTION_TEXT[k] ?? k, answer: v })),
-        utm,
+        utm, meta_match: metaMatchKeys(),
       } })
       if (e) throw new Error(e.message)
       leadRef.current = (data as { lead_id?: string } | null)?.lead_id ?? null

@@ -28,6 +28,11 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   const [units, setUnits] = useState<UnitRow[]>([])
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [basket, setBasket] = useState<BasketItem[]>([])
+  // Bearbeiten: die schon enthaltenen Objekte. Frueher waren sie fest verdrahtet -
+  // Sven 18.8.: "ich wuerde gern noch eine weitere Immobilie nur als Rechnung
+  // hinzufuegen ... so dass auch im Postausgang weitere Objekte hinzugefuegt werden
+  // koennen". Jetzt sind sie eine Liste, die waechst und schrumpft.
+  const [keptItems, setKeptItems] = useState<CalcItem[]>([])
   const [p, setP] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -43,6 +48,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   useEffect(() => {
     const it0 = editCalc?.content?.items?.[0]
     if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params })
+    setKeptItems(editCalc?.content?.items ?? [])
   }, [editCalc])
 
   useEffect(() => { void (async () => {
@@ -87,15 +93,71 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
       // ── Bearbeiten: gleiche Objekte behalten, nur (geteilte) Parameter neu anwenden,
       //    Preis/Schlafzimmer je Objekt bewahren → bestehenden Token aktualisieren. ──
       if (editCalc) {
-        const items = editCalc.content.items.map(it => ({
+        // Bestehende Objekte: Preis/Schlafzimmer je Objekt bewahren, geteilte Werte neu.
+        const kept = keptItems.map(it => ({
           ...it,
           params: { ...p, priceNet: it.params?.priceNet ?? p.priceNet, bedrooms: it.params?.bedrooms ?? p.bedrooms, dealType: it.params?.dealType ?? p.dealType },
         }))
-        const content = { with_calc: true, recipient_name: editCalc.content.recipient_name ?? `${lead.first_name} ${lead.last_name}`.trim(), items }
-        const { error } = await supabase.from('property_calculations').update({ content }).eq('token', editCalc.token)
-        if (error) throw new Error(error.message)
-        window.open(`${window.location.origin}/rechnung/${editCalc.token}`, '_blank')
-        onDone(t('rechnerWizard.calculationUpdated', 'Berechnung aktualisiert.'))
+        // Neu dazugewaehlte Objekte wie beim Ersterstellen aufbauen.
+        const added: CalcItem[] = basket.map(b => {
+          const u = b.unit
+          return {
+            label: `${b.project.name} · ${u.unit_number}`, project: b.project.name, unit: u.unit_number,
+            bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
+            price_net: u.price_net, price_gross: u.price_gross,
+            location: b.project.location ?? undefined, developer: b.project.developer ?? undefined,
+            params: { ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
+          }
+        })
+        if (!kept.length && !added.length) { setErr(t('rechnerWizard.selectAtLeastOneUnit', 'Bitte mindestens eine Wohnung wählen.')); setBusy(false); return }
+        const recipient = editCalc.content.recipient_name ?? `${lead.first_name} ${lead.last_name}`.trim()
+        const madeCalcs: Array<{ token: string; title: string }> = []
+
+        // 1) Die bestehende Berechnung bleibt, was sie ist - nur Werte neu, Objekte
+        //    ggf. entfernt. Ihr Link ist beim Kunden und darf nie den Inhalt tauschen.
+        if (kept.length) {
+          const keptTitle = kept.length > 1 ? 'Immobilienvergleich' : `Rechnung ${kept[0].label}`
+          const { error } = await supabase.from('property_calculations')
+            .update({ content: { with_calc: true, recipient_name: recipient, items: kept }, title: keptTitle })
+            .eq('token', editCalc.token)
+          if (error) throw new Error(error.message)
+          madeCalcs.push({ token: editCalc.token, title: keptTitle })
+        }
+
+        // 2) Jedes neu gewählte Objekt bekommt eine EIGENE Einzelrechnung -
+        //    genau wie beim Sales-Deck-Weg (Sven 18.8.: "eine weitere Immobilie
+        //    nur als Rechnung hinzufügen").
+        for (const it of added) {
+          const { data, error } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipient, title: `Rechnung ${it.label}`, with_calc: true,
+            content: { with_calc: true, recipient_name: recipient, items: [it] },
+          }).select('token').single()
+          if (error) throw new Error(error.message)
+          madeCalcs.push({ token: (data as { token: string }).token, title: `Rechnung ${it.label}` })
+        }
+
+        // 3) Ab zwei Objekten IMMER zusätzlich der Vergleich - Sven 18.8.: bei
+        //    mehreren Objekten soll der Immobilienvergleich Standard in der Mail sein.
+        const allItems = [...kept, ...added]
+        let cmpToken: string | null = null
+        if (allItems.length > 1) {
+          const { data, error } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipient, title: 'Immobilienvergleich', with_calc: true,
+            content: { with_calc: true, recipient_name: recipient, items: allItems },
+          }).select('token').single()
+          if (error) throw new Error(error.message)
+          cmpToken = (data as { token: string }).token
+          madeCalcs.push({ token: cmpToken, title: 'Immobilienvergleich' })
+        }
+
+        // Neue Objekte oder neuer Vergleich → frischer Mail-Entwurf im Postausgang.
+        if (added.length || cmpToken) {
+          await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, calcs: madeCalcs })
+        }
+        window.open(`${window.location.origin}/rechnung/${cmpToken ?? editCalc.token}`, '_blank')
+        onDone(added.length
+          ? t('rechnerWizard.calcExtended', '{{n}} Objekt(e) ergänzt - Vergleich und Mail-Entwurf liegen im Postausgang.', { n: added.length })
+          : t('rechnerWizard.calculationUpdated', 'Berechnung aktualisiert.'))
         setBusy(false)
         return
       }
@@ -119,17 +181,33 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           }
         })
       }
-      const content = { with_calc: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), items }
-      const calcTitle = items.length > 1 ? 'Immobilienvergleich' : `Rechnung ${items[0].label}`
-      const { data, error } = await supabase.from('property_calculations').insert({
-        lead_id: lead.id, recipient_name: content.recipient_name,
-        title: calcTitle,
-        with_calc: true, content,
-      }).select('token').single()
-      if (error) throw new Error(error.message)
-      const token = (data as { token: string }).token
+      const recipient = `${lead.first_name} ${lead.last_name}`.trim()
+      const madeCalcs: Array<{ token: string; title: string }> = []
+      // Je Objekt eine eigene Rechnung - der Kunde kann jede Wohnung fuer sich
+      // ansehen. Bei Share-Deals bleibt es bei der einen Gesamtrechnung.
+      const singles = p.dealType === 'share' ? [items] : items.map(it => [it])
+      for (const group of singles) {
+        const title = group.length > 1 ? 'Immobilienvergleich' : `Rechnung ${group[0].label}`
+        const { data, error } = await supabase.from('property_calculations').insert({
+          lead_id: lead.id, recipient_name: recipient, title, with_calc: true,
+          content: { with_calc: true, recipient_name: recipient, items: group },
+        }).select('token').single()
+        if (error) throw new Error(error.message)
+        madeCalcs.push({ token: (data as { token: string }).token, title })
+      }
+      // Ab zwei Objekten IMMER zusaetzlich der Vergleich (Sven 18.8.: Standard in der Mail).
+      let token = madeCalcs[0].token
+      if (items.length > 1 && p.dealType !== 'share') {
+        const { data, error } = await supabase.from('property_calculations').insert({
+          lead_id: lead.id, recipient_name: recipient, title: 'Immobilienvergleich', with_calc: true,
+          content: { with_calc: true, recipient_name: recipient, items },
+        }).select('token').single()
+        if (error) throw new Error(error.message)
+        token = (data as { token: string }).token
+        madeCalcs.push({ token, title: 'Immobilienvergleich' })
+      }
       // Wie bei Sales-Decks: fertigen Mail-Entwurf in den Postausgang legen (Sven 9.8.26)
-      await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, calcs: [{ token, title: calcTitle }] })
+      await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, calcs: madeCalcs })
       const url = `${window.location.origin}/rechnung/${token}`
       window.open(url, '_blank')
       onDone(items.length > 1
@@ -181,19 +259,26 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
 
         <div className="px-6 py-5 space-y-6">
           {/* ── Objekte ── */}
-          {editCalc ? (
+          {editCalc && (
             <div>
-              <SectionLabel>{t('rechnerWizard.objectsLabel', 'Objekt(e)')}</SectionLabel>
+              <SectionLabel>{t('rechnerWizard.objectsInCalc', 'Bereits in dieser Berechnung')}</SectionLabel>
               <div className="flex flex-wrap gap-2">
-                {editCalc.content.items.map((it, i) => (
-                  <span key={i} className="inline-flex items-center text-xs bg-gray-100 rounded-xl px-2.5 py-1.5">{it.label}</span>
+                {keptItems.map((it, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 text-xs bg-gray-100 rounded-xl px-2.5 py-1.5">
+                    {it.label}
+                    <button onClick={() => setKeptItems(list => list.filter((_, j) => j !== i))}
+                      title={t('rechnerWizard.removeObject', 'Objekt entfernen')} className="text-gray-400 hover:text-red-500">×</button>
+                  </span>
                 ))}
+                {keptItems.length === 0 && (
+                  <span className="text-xs text-gray-400">{t('rechnerWizard.noObjectsLeft', 'Kein Objekt mehr drin - unten mindestens eines wählen.')}</span>
+                )}
               </div>
-              <p className="text-[11px] text-gray-400 mt-2">{t('rechnerWizard.objectsUnchangedHint', 'Objekte bleiben gleich — du änderst nur die Werte unten und speicherst.')}</p>
+              <p className="text-[11px] text-gray-400 mt-2">{t('rechnerWizard.addMoreHint', 'Unten kannst du weitere Objekte dazunehmen. Aus einer Einzelrechnung wird dadurch automatisch ein Vergleich - der Link zum Kunden bleibt derselbe.')}</p>
             </div>
-          ) : (
+          )}
           <div>
-            <SectionLabel>{t('rechnerWizard.objectLabel', 'Objekt')}{p.dealType === 'single' ? t('rechnerWizard.objectSuffixSingle', '(e)') : t('rechnerWizard.objectSuffixPortfolio', ' / Portfolio')}</SectionLabel>
+            <SectionLabel>{editCalc ? t('rechnerWizard.addObjectLabel', 'Weiteres Objekt hinzufügen') : `${t('rechnerWizard.objectLabel', 'Objekt')}${p.dealType === 'single' ? t('rechnerWizard.objectSuffixSingle', '(e)') : t('rechnerWizard.objectSuffixPortfolio', ' / Portfolio')}`}</SectionLabel>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <span className="block text-xs font-medium text-gray-500 mb-1.5">{t('rechnerWizard.developerLabel', 'Developer')}</span>
@@ -240,7 +325,6 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
               </div>
             )}
           </div>
-          )}
 
           {/* ── Kauf ── */}
           <div>
@@ -391,10 +475,10 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
         </div>
 
         <div className="flex items-center justify-between gap-2 px-6 py-4 border-t border-gray-100 sticky bottom-0 bg-white rounded-b-2xl">
-          <p className="text-xs text-gray-400">{editCalc ? t('rechnerWizard.editHint', 'Werte ändern → Speichern aktualisiert dieselbe Berechnung.') : basket.length > 1 ? t('rechnerWizard.multipleUnitsHint', 'Mehrere Wohnungen → Vergleich.') : t('rechnerWizard.autoPriceHint', 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.')}</p>
+          <p className="text-xs text-gray-400">{editCalc ? t('rechnerWizard.editHint2', 'Werte ändern oder Objekte ergänzen - Speichern aktualisiert dieselbe Berechnung unter demselben Link.') : basket.length > 1 ? t('rechnerWizard.multipleUnitsHint', 'Mehrere Wohnungen → Vergleich.') : t('rechnerWizard.autoPriceHint', 'Kaufpreis je Wohnung kommt automatisch aus dem CRM.')}</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">{t('rechnerWizard.cancelButton', 'Abbrechen')}</button>
-            <button onClick={() => void generate()} disabled={busy || (!editCalc && p.dealType === 'single' && !basket.length)}
+            <button onClick={() => void generate()} disabled={busy || (p.dealType === 'single' && !basket.length && (editCalc ? !keptItems.length : true))}
               className="px-5 py-2 rounded-xl text-white text-sm font-medium disabled:opacity-50" style={{ backgroundColor: '#ff795d' }}>
               {busy ? (editCalc ? t('rechnerWizard.savingButton', 'Speichert…') : t('rechnerWizard.creatingButton', 'Erstellt…')) : editCalc ? t('rechnerWizard.saveButton', 'Speichern') : basket.length > 1 ? t('rechnerWizard.createComparisonButton', 'Vergleich erstellen') : t('rechnerWizard.createInvoiceButton', 'Rechnung erstellen')}
             </button>

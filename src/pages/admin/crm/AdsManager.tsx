@@ -35,6 +35,8 @@ interface InsightRow {
   impressions: number
   reach: number
   link_clicks: number
+  outbound_clicks: number
+  landing_page_views: number
   platform_leads: number
   video_3s: number
 }
@@ -63,8 +65,17 @@ interface AdAction {
   result: string | null
 }
 
-// Empfehlung der Regel-Engine (rein deterministisch, transparent begründet)
-interface Recommendation { ad: AdCatalogRow; kind: 'no_leads' | 'high_cpl' | 'over_target' | 'fatigue'; reason: string; spend: number }
+// Empfehlung der Regel-Engine (rein deterministisch, transparent begründet).
+// Zwei Sorten: „Pausieren" (die Anzeige selbst ist das Problem) und „Hinweis"
+// (advice gesetzt — die Anzeige läuft, aber dahinter klemmt etwas, Pausieren
+// wäre die falsche Reaktion).
+interface Recommendation {
+  ad: AdCatalogRow
+  kind: 'no_leads' | 'high_cpl' | 'over_target' | 'fatigue' | 'lp_loss' | 'orphan_leads'
+  reason: string
+  spend: number
+  advice?: string
+}
 
 // Leitplanken (ad_settings, von Sven festgelegt): Ziel-Leadpreis + Tageslimit
 interface AdSettings { target_cpl: number; max_account_daily_budget: number; system_campaign_daily_budget: number }
@@ -76,6 +87,8 @@ interface Agg {
   impressions: number
   reach: number
   clicks: number
+  outboundClicks: number
+  landingPageViews: number
   platformLeads: number
   video3s: number
   crmLeads: number
@@ -87,7 +100,7 @@ interface Agg {
   sales: number
   revenue: number
 }
-const emptyAgg = (): Agg => ({ spendEur: 0, impressions: 0, reach: 0, clicks: 0, platformLeads: 0, video3s: 0, crmLeads: 0, termine: 0, stattgefunden: 0, noShows: 0, gut: 0, schlecht: 0, sales: 0, revenue: 0 })
+const emptyAgg = (): Agg => ({ spendEur: 0, impressions: 0, reach: 0, clicks: 0, outboundClicks: 0, landingPageViews: 0, platformLeads: 0, video3s: 0, crmLeads: 0, termine: 0, stattgefunden: 0, noShows: 0, gut: 0, schlecht: 0, sales: 0, revenue: 0 })
 
 const SALE_PHASES = new Set(['anzahlung', 'provision_erhalten'])
 const META_SOURCES = new Set(['meta', 'facebook', 'fb', 'instagram', 'ig'])
@@ -354,7 +367,7 @@ export default function AdsManager() {
       const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
       const [{ data: cat, error: e1 }, { data: ins, error: e2 }] = await Promise.all([
         supabase.from('ad_catalog').select('ad_id, campaign_id, campaign_name, adset_id, adset_name, ad_name, status, thumbnail_url').eq('platform', segment),
-        supabase.from('ad_insights_daily').select('day, ad_id, spend_eur, impressions, reach, link_clicks, platform_leads, video_3s').eq('platform', segment).gte('day', since),
+        supabase.from('ad_insights_daily').select('day, ad_id, spend_eur, impressions, reach, link_clicks, outbound_clicks, landing_page_views, platform_leads, video_3s').eq('platform', segment).gte('day', since),
       ])
       if (e1) throw e1
       if (e2) throw e2
@@ -485,11 +498,13 @@ export default function AdsManager() {
       const a = get(byAd, r.ad_id)
       a.spendEur += r.spend_eur; a.impressions += r.impressions; a.reach += r.reach
       a.clicks += r.link_clicks; a.platformLeads += r.platform_leads; a.video3s += r.video_3s
+      a.outboundClicks += r.outbound_clicks ?? 0; a.landingPageViews += r.landing_page_views ?? 0
       const cid = adToCampaign.get(r.ad_id)
       if (cid) {
         const c = get(byCampaign, cid)
         c.spendEur += r.spend_eur; c.impressions += r.impressions; c.reach += r.reach
         c.clicks += r.link_clicks; c.platformLeads += r.platform_leads; c.video3s += r.video_3s
+        c.outboundClicks += r.outbound_clicks ?? 0; c.landingPageViews += r.landing_page_views ?? 0
       }
       trendMap.set(r.day, (trendMap.get(r.day) ?? 0) + r.spend_eur)
     }
@@ -866,7 +881,45 @@ export default function AdsManager() {
         recs.push({ ad: c, kind: 'fatigue', spend: a.spendEur, reason: t('crm.ads.recReasonFatigue', 'Ermüdung: Frequenz {{freq}} bei nur {{ctr}} Klickrate — Motiv ist verbraucht', { freq: freq.toLocaleString(locale, { maximumFractionDigits: 1 }), ctr: pct(ctr) }) })
       }
     }
-    return recs.sort((x, y) => y.spend - x.spend).slice(0, 5)
+
+    // ── Hinweise: die Anzeige ist in Ordnung, das Problem liegt dahinter ──────
+    const hints: Recommendation[] = []
+    for (const c of catalog) {
+      if (c.status !== 'ACTIVE') continue
+      const a = byAd.get(c.ad_id)
+      if (!a) continue
+
+      // Bezahlte Klicks, die nie auf der Seite ankommen. Meta zählt beides
+      // getrennt: „Outbound Clicks" sind die Klicks weg von Meta, „Landing Page
+      // Views" die Seiten, die wirklich geladen haben. Die Lücke ist verlorenes
+      // Geld und liegt fast immer an der Ladezeit der Zielseite.
+      if (a.outboundClicks >= 40) {
+        const arrived = a.landingPageViews / a.outboundClicks
+        if (arrived < 0.7) {
+          hints.push({
+            ad: c, kind: 'lp_loss', spend: a.spendEur,
+            reason: t('crm.ads.recReasonLpLoss', 'Nur {{arrived}} der Klicks erreichen die Seite ({{lpv}} von {{clicks}}) — der Rest bricht beim Laden ab', {
+              arrived: pct(arrived), lpv: int(a.landingPageViews), clicks: int(a.outboundClicks),
+            }),
+            advice: t('crm.ads.recAdviceLpLoss', 'Zielseite prüfen, nicht die Anzeige'),
+          })
+        }
+      }
+
+      // Leads, die Meta zählt, ohne dass jemals eine Seite geladen wurde: das
+      // sind Sofortformulare, die direkt bei Meta ausgefüllt werden. Ohne
+      // Anbindung landen sie NICHT im CRM und ruft niemand an.
+      if (a.platformLeads >= 3 && a.crmLeads === 0 && a.landingPageViews < a.platformLeads) {
+        hints.push({
+          ad: c, kind: 'orphan_leads', spend: a.spendEur,
+          reason: t('crm.ads.recReasonOrphan', '{{leads}} Leads bei Meta, aber keiner im CRM — sie kommen aus einem Sofortformular', { leads: int(a.platformLeads) }),
+          advice: t('crm.ads.recAdviceOrphan', 'Bei Meta abholen'),
+        })
+      }
+    }
+
+    return [...recs.sort((x, y) => y.spend - x.spend).slice(0, 5),
+            ...hints.sort((x, y) => y.spend - x.spend).slice(0, 3)]
     // eur/pct sind stabile Formatter — bewusst nicht in den Deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalog, byAd, pendingByAd, settings, t, locale])
@@ -1128,15 +1181,19 @@ export default function AdsManager() {
                 {recommendations.length > 0 && (
                   <div className="space-y-2 mb-3">
                     {recommendations.map(r => (
-                      <div key={r.ad.ad_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+                      <div key={`${r.kind}-${r.ad.ad_id}`}
+                        className={`flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 ${r.advice ? 'border-sky-200 bg-sky-50/60' : 'border-amber-200 bg-amber-50/60'}`}>
                         <span className="text-sm font-semibold text-gray-800 truncate max-w-[240px]" title={r.ad.ad_name ?? r.ad.ad_id}>{r.ad.ad_name ?? r.ad.ad_id}</span>
                         <span className="text-[11px] text-gray-500 truncate">{r.ad.campaign_name}</span>
-                        <span className="text-xs text-amber-800 basis-full md:basis-auto md:flex-1">{r.reason}</span>
-                        <button onClick={() => void queueAction(r.ad, 'pause', r.reason)}
-                          className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold text-white shrink-0"
-                          style={{ backgroundColor: '#ff795d' }}>
-                          ⏸ {t('crm.ads.recPauseCta', 'Pausieren vormerken')}
-                        </button>
+                        <span className={`text-xs basis-full md:basis-auto md:flex-1 ${r.advice ? 'text-sky-900' : 'text-amber-800'}`}>{r.reason}</span>
+                        {r.advice
+                          // Hinweis: Pausieren würde das eigentliche Problem nicht lösen.
+                          ? <span className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold text-sky-800 bg-sky-100 shrink-0">🔎 {r.advice}</span>
+                          : <button onClick={() => void queueAction(r.ad, 'pause', r.reason)}
+                              className="ml-auto px-3 py-1.5 rounded-lg text-xs font-semibold text-white shrink-0"
+                              style={{ backgroundColor: '#ff795d' }}>
+                              ⏸ {t('crm.ads.recPauseCta', 'Pausieren vormerken')}
+                            </button>}
                       </div>
                     ))}
                   </div>

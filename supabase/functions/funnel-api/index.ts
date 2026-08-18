@@ -129,6 +129,9 @@ Deno.serve(async (req) => {
       reason?: string
       step?: number; question_key?: string; answer?: string
       utm?: Record<string, string>; referrer?: string
+      // Zuordnungsmerkmale für die Conversions-API (siehe Funnel.tsx):
+      // Klick-ID, Browser-ID und Browserkennung aus der Buchungssitzung.
+      meta_match?: { fbc?: string; fbp?: string; user_agent?: string }
       slot_start_iso?: string
       meeting_type?: 'zoom' | 'whatsapp'
       source?: string
@@ -236,6 +239,14 @@ Deno.serve(async (req) => {
       const utmNote = body.utm && Object.keys(body.utm).length ? `\nKanal: ${JSON.stringify(body.utm)}` : ''
       const answersText = (body.answers ?? []).map(a => `• ${a.question}: ${a.answer}`).join('\n')
       const utm = body.utm ?? {}
+      // Klick-/Browser-ID nur übernehmen, wenn wirklich etwas ankam — sonst
+      // würde eine spätere Direktbuchung die Merkmale einer früheren
+      // Anzeigen-Buchung überschreiben und die Zuordnung bei Meta verschlechtern.
+      const mm = body.meta_match ?? {}
+      const matchPatch: Record<string, unknown> = {}
+      if (mm.fbc) matchPatch.fbc = mm.fbc.slice(0, 400)
+      if (mm.fbp) matchPatch.fbp = mm.fbp.slice(0, 200)
+      if (mm.user_agent) matchPatch.client_user_agent = mm.user_agent.slice(0, 400)
       if (!leadId) {
         const { data: nl, error: nlErr } = await admin.from('leads').insert({
           first_name: c.first_name?.trim(), last_name: (c.last_name ?? '').trim(),
@@ -243,6 +254,7 @@ Deno.serve(async (req) => {
           utm_source: utm.utm_source ?? null, utm_medium: utm.utm_medium ?? null,
           utm_campaign: utm.utm_campaign ?? null, utm_content: utm.utm_content ?? null,
           utm_term: utm.utm_term ?? null,
+          ...matchPatch,
           notes: `Fragebogen (eigener Funnel):\n${answersText}${utmNote}`,
         }).select('id').single()
         if (nlErr) console.error('[funnel-api] Lead-Insert fehlgeschlagen:', nlErr.message)
@@ -250,7 +262,7 @@ Deno.serve(async (req) => {
       } else {
         const { data: old } = await admin.from('leads').select('notes, utm_source').eq('id', leadId).single()
         const prev = (old as { notes?: string } | null)?.notes ?? ''
-        const patch: Record<string, unknown> = { notes: `${prev ? prev + '\n\n' : ''}Fragebogen (eigener Funnel, ${new Date().toLocaleDateString('de-DE')}):\n${answersText}${utmNote}` }
+        const patch: Record<string, unknown> = { notes: `${prev ? prev + '\n\n' : ''}Fragebogen (eigener Funnel, ${new Date().toLocaleDateString('de-DE')}):\n${answersText}${utmNote}`, ...matchPatch }
         if (!(old as { utm_source?: string } | null)?.utm_source && utm.utm_source) {
           patch.utm_source = utm.utm_source; patch.utm_medium = utm.utm_medium ?? null
           patch.utm_campaign = utm.utm_campaign ?? null; patch.utm_content = utm.utm_content ?? null

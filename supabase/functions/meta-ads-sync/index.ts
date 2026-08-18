@@ -45,6 +45,7 @@ interface InsightRow {
   frequency?: string
   inline_link_clicks?: string
   actions?: Array<{ action_type: string; value: string }>
+  outbound_clicks?: Array<{ action_type: string; value: string }>
   video_continuous_2_sec_watched_actions?: Array<{ action_type: string; value: string }>
   date_start: string
 }
@@ -85,22 +86,48 @@ interface CapiCandidate {
   lead_id: string | null
   email: string | null
   phone: string | null
+  fbc?: string | null           // Klick-ID aus der Anzeige (im Funnel eingesammelt)
+  fbp?: string | null           // Browser-ID des Pixels
+  user_agent?: string | null    // nur für action_source 'website' erlaubt
   value?: number                // nur Purchase (EUR)
+  // Termine entstehen auf /termin, sind also echte Website-Ereignisse. Alles
+  // andere (Bewertung, Abschluss) passiert im CRM und bleibt system_generated.
+  from_website?: boolean
 }
 
+const FUNNEL_URL = 'https://analytics.happy-property.com/termin'
+
+// Baut ein Conversions-API-Event. Je mehr Zuordnungsmerkmale mitgehen, desto
+// höher bewertet Meta die Event Match Quality (Skala 0-10) und desto stärker
+// fliesst das Ereignis in die Auslieferungs-Optimierung ein. Vor dem 18.08.2026
+// gingen nur E-Mail und Telefon mit → Bewertung 4,6. Klick-ID (fbc), Browser-ID
+// (fbp) und eine stabile eigene Kennung (external_id) sind die Hebel darüber.
 async function buildCapiEvent(c: CapiCandidate): Promise<Record<string, unknown> | null> {
-  const user_data: Record<string, string[]> = {}
+  const user_data: Record<string, unknown> = {}
   const email = c.email?.trim().toLowerCase()
   if (email) user_data.em = [await sha256(email)]
   const phone = c.phone?.replace(/[^0-9]/g, '')
   if (phone && phone.length >= 8) user_data.ph = [await sha256(phone)]
   if (!user_data.em && !user_data.ph) return null   // ohne Matching-Daten sinnlos
+  if (c.fbc) user_data.fbc = c.fbc
+  if (c.fbp) user_data.fbp = c.fbp
+  // Eigene, über alle Ereignisse eines Kontakts gleiche Kennung. Meta zählt sie
+  // als vollwertiges Merkmal und kann damit Ereignisse desselben Menschen
+  // zusammenführen, auch wenn Mail oder Nummer sich später ändern.
+  if (c.lead_id) user_data.external_id = [await sha256(c.lead_id)]
+
   const ev: Record<string, unknown> = {
     event_name: c.event_name,
     event_time: c.event_time,
     event_id: c.event_id,
-    action_source: 'system_generated',
+    action_source: c.from_website ? 'website' : 'system_generated',
     user_data,
+  }
+  // Browserkennung und Quell-URL akzeptiert Meta nur bei Website-Ereignissen;
+  // bei system_generated führen sie zu einer Warnung im Events Manager.
+  if (c.from_website) {
+    if (c.user_agent) user_data.client_user_agent = c.user_agent
+    ev.event_source_url = FUNNEL_URL
   }
   if (c.value && c.value > 0) ev.custom_data = { currency: 'EUR', value: c.value }
   return ev
@@ -142,7 +169,7 @@ Deno.serve(async (req) => {
         if (j?.rates?.USD) usdPerEur = j.rates.USD
       } catch { console.warn('[meta-ads-sync] Kurs-API nicht erreichbar, Fallback', usdPerEur) }
 
-      const fields = 'ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,spend,impressions,reach,frequency,inline_link_clicks,actions,video_continuous_2_sec_watched_actions'
+      const fields = 'ad_id,ad_name,campaign_id,campaign_name,adset_id,adset_name,spend,impressions,reach,frequency,inline_link_clicks,actions,outbound_clicks,video_continuous_2_sec_watched_actions'
       const insightsUrl = `${GRAPH}/act_${account}/insights?level=ad&time_increment=1&fields=${fields}` +
         `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}&limit=500`
       const rows = (await graphAll(insightsUrl, token)) as unknown as InsightRow[]
@@ -172,6 +199,11 @@ Deno.serve(async (req) => {
             reach: Math.trunc(num(r.reach)),
             frequency: num(r.frequency),
             link_clicks: Math.trunc(num(r.inline_link_clicks) || actionValue(r.actions, 'link_click')),
+            // Klicks, die zur Zielseite führen sollten, gegen tatsächlich
+            // geladene Seiten. Die Differenz sind Leute, die unterwegs
+            // abgesprungen sind — meistens zu lange Ladezeit.
+            outbound_clicks: Math.trunc(actionValue(r.outbound_clicks, 'outbound_click')),
+            landing_page_views: Math.trunc(actionValue(r.actions, 'landing_page_view')),
             platform_leads: Math.trunc(actionValue(r.actions, 'lead')),
             video_3s: Math.trunc(num(r.video_continuous_2_sec_watched_actions?.[0]?.value)),
             synced_at: new Date().toISOString(),
@@ -249,53 +281,75 @@ Deno.serve(async (req) => {
           const winStart = new Date(Date.now() - 7 * 86_400_000).toISOString()
           const clampTime = (iso: string) => Math.trunc(new Date(iso).getTime() / 1000)
           const candidates: CapiCandidate[] = []
+          // Zuordnungsmerkmale, die der Funnel am Lead abgelegt hat
+          type LeadMatch = {
+            email: string | null; phone: string | null; whatsapp: string | null
+            fbc: string | null; fbp: string | null; client_user_agent: string | null
+          }
+          const LEAD_FIELDS = 'id, email, phone, whatsapp, fbc, fbp, client_user_agent'
 
           // Termin gebucht → Schedule
           const { data: appts } = await supabase
             .from('crm_appointments')
-            .select('id, lead_id, created_at, start_time, outcome, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .select(`id, lead_id, created_at, start_time, outcome, updated_at, lead:leads(${LEAD_FIELDS})`)
             // internal raus: interne Termine als Conversion zu melden verfaelscht die
             // Anzeigen-Optimierung (Meta lernt auf Termine, die keine Kundentermine sind).
             .eq('internal', false)
             .gte('created_at', winStart)
             .not('lead_id', 'is', null)
-          for (const a of (appts ?? []) as unknown as Array<{ id: string; lead_id: string; created_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+          for (const a of (appts ?? []) as unknown as Array<{ id: string; lead_id: string; created_at: string; lead: LeadMatch | null }>) {
             if (!a.lead) continue
-            candidates.push({ event_id: `appt-${a.id}`, event_name: 'Schedule', event_time: clampTime(a.created_at), lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone })
+            candidates.push({
+              event_id: `appt-${a.id}`, event_name: 'Schedule', event_time: clampTime(a.created_at),
+              lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone,
+              fbc: a.lead.fbc, fbp: a.lead.fbp, user_agent: a.lead.client_user_agent,
+              from_website: true,
+            })
           }
 
           // Termin stattgefunden → AppointmentHeld (Bewertungszeitpunkt = updated_at)
           const { data: held } = await supabase
             .from('crm_appointments')
-            .select('id, lead_id, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .select(`id, lead_id, updated_at, lead:leads(${LEAD_FIELDS})`)
             .eq('outcome', 'completed')
             .eq('internal', false)
             .gte('updated_at', winStart)
             .not('lead_id', 'is', null)
-          for (const a of (held ?? []) as unknown as Array<{ id: string; lead_id: string; updated_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+          for (const a of (held ?? []) as unknown as Array<{ id: string; lead_id: string; updated_at: string; lead: LeadMatch | null }>) {
             if (!a.lead) continue
-            candidates.push({ event_id: `held-${a.id}`, event_name: 'AppointmentHeld', event_time: clampTime(a.updated_at), lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone })
+            candidates.push({
+              event_id: `held-${a.id}`, event_name: 'AppointmentHeld', event_time: clampTime(a.updated_at),
+              lead_id: a.lead_id, email: a.lead.email, phone: a.lead.whatsapp ?? a.lead.phone,
+              fbc: a.lead.fbc, fbp: a.lead.fbp,
+            })
           }
 
           // 👍-Bewertung → QualifiedLead
           const { data: rated } = await supabase
             .from('leads')
-            .select('id, email, phone, whatsapp, quality_rated_at')
+            .select(`${LEAD_FIELDS}, quality_rated_at`)
             .eq('quality_rating', 'gut')
             .gte('quality_rated_at', winStart)
-          for (const l of (rated ?? []) as Array<{ id: string; email: string | null; phone: string | null; whatsapp: string | null; quality_rated_at: string }>) {
-            candidates.push({ event_id: `goodlead-${l.id}`, event_name: 'QualifiedLead', event_time: clampTime(l.quality_rated_at), lead_id: l.id, email: l.email, phone: l.whatsapp ?? l.phone })
+          for (const l of (rated ?? []) as Array<LeadMatch & { id: string; quality_rated_at: string }>) {
+            candidates.push({
+              event_id: `goodlead-${l.id}`, event_name: 'QualifiedLead', event_time: clampTime(l.quality_rated_at),
+              lead_id: l.id, email: l.email, phone: l.whatsapp ?? l.phone, fbc: l.fbc, fbp: l.fbp,
+            })
           }
 
           // Sale (Anzahlung/Provision) → Purchase mit Provisionswert
           const { data: sales } = await supabase
             .from('deals')
-            .select('id, lead_id, phase, commission_amount, updated_at, lead:leads(id, email, phone, whatsapp)')
+            .select(`id, lead_id, phase, commission_amount, updated_at, lead:leads(${LEAD_FIELDS})`)
             .in('phase', ['anzahlung', 'provision_erhalten'])
             .gte('updated_at', winStart)
-          for (const d of (sales ?? []) as unknown as Array<{ id: string; lead_id: string; commission_amount: number | null; updated_at: string; lead: { email: string | null; phone: string | null; whatsapp: string | null } | null }>) {
+          for (const d of (sales ?? []) as unknown as Array<{ id: string; lead_id: string; commission_amount: number | null; updated_at: string; lead: LeadMatch | null }>) {
             if (!d.lead) continue
-            candidates.push({ event_id: `sale-${d.id}`, event_name: 'Purchase', event_time: clampTime(d.updated_at), lead_id: d.lead_id, email: d.lead.email, phone: d.lead.whatsapp ?? d.lead.phone, value: d.commission_amount ?? 0 })
+            candidates.push({
+              event_id: `sale-${d.id}`, event_name: 'Purchase', event_time: clampTime(d.updated_at),
+              lead_id: d.lead_id, email: d.lead.email, phone: d.lead.whatsapp ?? d.lead.phone,
+              fbc: d.lead.fbc, fbp: d.lead.fbp, value: d.commission_amount ?? 0,
+            })
           }
 
           // Bereits gesendete rausfiltern

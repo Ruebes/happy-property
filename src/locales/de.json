@@ -3331,6 +3331,10 @@
       "recReasonNoLeads": "{{spend}} ausgegeben, kein einziger Lead im Zeitraum",
       "recReasonCpl": "Leadpreis {{cpl}} — {{factor}}× teurer als der Kampagnen-Schnitt ({{median}})",
       "recReasonFatigue": "Ermüdung: Frequenz {{freq}} bei nur {{ctr}} Klickrate — Motiv ist verbraucht",
+      "recReasonLpLoss": "Nur {{arrived}} der Klicks erreichen die Seite ({{lpv}} von {{clicks}}) — der Rest bricht beim Laden ab",
+      "recAdviceLpLoss": "Zielseite prüfen, nicht die Anzeige",
+      "recReasonOrphan": "{{leads}} Leads bei Meta, aber keiner im CRM — sie kommen aus einem Sofortformular",
+      "recAdviceOrphan": "Bei Meta abholen",
       "reasonManual": "Manuell im Werbemanager",
       "actQueued": "vorgemerkt",
       "actCancel": "Stornieren",
@@ -4808,7 +4812,14 @@
     "creatingButton": "Erstellt…",
     "saveButton": "Speichern",
     "createComparisonButton": "Vergleich erstellen",
-    "createInvoiceButton": "Rechnung erstellen"
+    "createInvoiceButton": "Rechnung erstellen",
+    "objectsInCalc": "Bereits in dieser Berechnung",
+    "removeObject": "Objekt entfernen",
+    "noObjectsLeft": "Kein Objekt mehr drin - unten mindestens eines wählen.",
+    "addMoreHint": "Unten kannst du weitere Objekte dazunehmen. Aus einer Einzelrechnung wird dadurch automatisch ein Vergleich - der Link zum Kunden bleibt derselbe.",
+    "addObjectLabel": "Weiteres Objekt hinzufügen",
+    "editHint2": "Werte ändern oder Objekte ergänzen - Speichern aktualisiert dieselbe Berechnung unter demselben Link.",
+    "calcExtended": "{{n}} Objekt(e) ergänzt - Vergleich und Mail-Entwurf liegen im Postausgang."
   },
   "appointmentModal": {
     "stepBasis": "Basis",
