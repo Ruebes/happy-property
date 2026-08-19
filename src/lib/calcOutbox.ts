@@ -11,8 +11,25 @@ export async function createCalcOutboxDraft(opts: {
   firstName: string
   email?: string | null
   calcs: Array<{ token: string; title: string }>
+  // Tokens, deren OFFENE Entwuerfe dieser neue Entwurf ersetzt. Beim Ergaenzen
+  // einer Berechnung enthaelt der neue Entwurf ohnehin alle Links - ohne das
+  // Aufraeumen lagen zwei Entwuerfe fuer denselben Kunden im Postausgang, einer
+  // mit beiden Wohnungen und einer nur mit der ersten (Sven 18.8.).
+  // GESENDETE Eintraege bleiben immer unangetastet.
+  replacesTokens?: string[]
 }): Promise<void> {
   if (!opts.calcs.length) return
+  if (opts.replacesTokens?.length) {
+    const { data: olds } = await supabase.from('deck_outbox')
+      .select('id, body').eq('lead_id', opts.leadId).eq('status', 'draft')
+    const stale = ((olds ?? []) as Array<{ id: string; body: string | null }>)
+      .filter(o => opts.replacesTokens!.some(tk => (o.body ?? '').includes(`/rechnung/${tk}`)))
+      .map(o => o.id)
+    if (stale.length) {
+      const { error } = await supabase.from('deck_outbox').delete().in('id', stale)
+      if (error) console.warn('[calcOutbox] alten Entwurf ersetzen:', error.message)
+    }
+  }
   let email = opts.email ?? null
   if (!email) {
     const { data } = await supabase.from('leads').select('email').eq('id', opts.leadId).maybeSingle()

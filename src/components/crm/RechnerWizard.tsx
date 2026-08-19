@@ -152,7 +152,10 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
 
         // Neue Objekte oder neuer Vergleich → frischer Mail-Entwurf im Postausgang.
         if (added.length || cmpToken) {
-          await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, calcs: madeCalcs })
+          await createCalcOutboxDraft({
+            leadId: lead.id, firstName: lead.first_name, calcs: madeCalcs,
+            replacesTokens: [editCalc.token],   // alten Entwurf ersetzen statt danebenlegen
+          })
         }
         window.open(`${window.location.origin}/rechnung/${cmpToken ?? editCalc.token}`, '_blank')
         onDone(added.length
