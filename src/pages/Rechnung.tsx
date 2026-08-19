@@ -557,18 +557,23 @@ function CompareTable({ rows }: { rows: Row[] }) {
 
 function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
   const { t } = useTranslation()
-  const block = (title: string, fn: (r: Row) => number, fmt: (n: number) => string) => {
+  const block = (title: string, fn: (r: Row) => number, fmt: (n: number) => string, hero?: boolean) => {
     const vals = rows.map(fn); const max = Math.max(...vals.map(Math.abs), 1)
+    const bestIdx = vals.indexOf(Math.max(...vals))
     return (
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ fontWeight: 700, fontSize: 14.5, marginBottom: 12 }}>{title}</div>
+      <div style={hero
+        ? { margin: '4px -10px 26px', padding: '16px 10px 8px', background: '#f0f7f4', border: '2px solid #2f6b4f', borderRadius: 12 }
+        : { marginBottom: 22 }}>
+        <div style={{ fontWeight: hero ? 800 : 700, fontSize: hero ? 16.5 : 14.5, marginBottom: 12, color: hero ? '#1a4d36' : undefined }}>
+          {hero ? '★ ' : ''}{title}{hero ? ` — ${t('rechnung.leadMetric', 'die wichtigste Kennzahl')}` : ''}
+        </div>
         {rows.map((r, i) => (
           <div key={i} style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 12, marginBottom: 8 }}>
             <div style={{ width: isMobile ? 96 : 180, fontSize: 12.5, color: '#555', flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.item.label || r.item.project}</div>
             <div style={{ flex: 1, background: '#f1f0ee', borderRadius: 6, height: 28 }}>
               <div style={{ width: `${Math.max(3, Math.abs(vals[i]) / max * 100)}%`, background: r.color, height: 28, borderRadius: 6 }} />
             </div>
-            <div style={{ width: isMobile ? 80 : 120, textAlign: 'right', fontWeight: 700, fontSize: isMobile ? 12 : 13.5, flexShrink: 0 }}>{fmt(vals[i])}</div>
+            <div style={{ width: isMobile ? 80 : 120, textAlign: 'right', fontWeight: hero && i === bestIdx ? 800 : 700, fontSize: isMobile ? 12 : 13.5, flexShrink: 0, color: hero && i === bestIdx ? '#1a4d36' : undefined }}>{fmt(vals[i])}{hero && i === bestIdx ? ' ✓' : ''}</div>
           </div>
         ))}
       </div>
@@ -581,9 +586,9 @@ function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
         {block(t('rechnung.rentGrossBlock', 'Mieteinnahmen 10 Jahre (brutto)'), r => r.res?.sumR ?? 0, eur)}
         {block(t('rechnung.rentNetBlock', 'Mietertrag nach Kosten & Steuern'), r => r.res ? r.res.sumR - r.res.sumC - r.res.sumT : 0, eur)}
         {block(t('rechnung.valueGainBlock', 'Wertzuwachs 10 Jahre'), r => r.res ? r.res.propV[9] - r.res.pGross : 0, eur)}
-        {block(t('rechnung.gainPlusRentBlock', 'Wertzuwachs + Mietertrag'), r => r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : 0, eur)}
         {block(t('rechnung.equityAfter10yBlock', 'Eigenkapital nach 10 Jahren'), r => r.res?.ek10 ?? 0, eur)}
         {block(t('rechnung.annualYieldIrrBlock', 'Jährliche Rendite (IRR)'), r => (r.res?.irrV ?? 0) * 100, n => pct(n, 2))}
+        {block(t('rechnung.gainPlusRentBlock', 'Wertzuwachs + Mietertrag'), r => r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : 0, eur, true)}
       </Card>
     </>
   )

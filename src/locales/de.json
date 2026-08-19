@@ -4586,7 +4586,8 @@
     "rentGrossBlock": "Mieteinnahmen 10 Jahre (brutto)",
     "rentNetBlock": "Mietertrag nach Kosten & Steuern",
     "valueGainBlock": "Wertzuwachs 10 Jahre",
-    "gainPlusRentBlock": "Wertzuwachs + Mietertrag"
+    "gainPlusRentBlock": "Wertzuwachs + Mietertrag",
+    "leadMetric": "die wichtigste Kennzahl"
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",

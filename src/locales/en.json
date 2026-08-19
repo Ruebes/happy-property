@@ -4586,7 +4586,8 @@
     "rentGrossBlock": "Rental income 10 years (gross)",
     "rentNetBlock": "Rental income after costs & taxes",
     "valueGainBlock": "Value growth 10 years",
-    "gainPlusRentBlock": "Value growth + rental income"
+    "gainPlusRentBlock": "Value growth + rental income",
+    "leadMetric": "the key metric"
   },
   "automationRules": {
     "eventLeadCreated": "New lead",
