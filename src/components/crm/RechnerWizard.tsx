@@ -20,6 +20,27 @@ interface BasketItem { project: ProjectRow; unit: UnitRow }
 const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d : n }
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
+// Objektwerte: Vermietungsart, Saisonmodell, Verwaltung, Einrichtung.
+interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean }
+const perObjFrom = (pr?: Partial<CalcParams> | null): PerObj => ({
+  letType: pr?.letType === 'long' ? 'long' : 'short',
+  occ: pr?.season?.totalOcc ?? 0,
+  adr: pr?.season?.adrHigh ?? 0,
+  mgmtPct: pr?.mgmtPct ?? 25,
+  hotel: !!pr?.hotelConcept,
+  furnCost: pr?.furnCost ?? 0,
+  furnFree: !!pr?.furnFree,
+})
+const applyPerObj = (base: CalcParams, o: PerObj): CalcParams => ({
+  ...base,
+  letType: o.letType,
+  season: o.letType === 'short' && o.occ > 0 && o.adr > 0 ? { totalOcc: o.occ, adrHigh: o.adr } : null,
+  mgmtPct: o.mgmtPct,
+  hotelConcept: o.letType === 'short' ? o.hotel : false,
+  furnCost: o.furnCost,
+  furnFree: o.furnFree,
+})
+
 export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
   const { t } = useTranslation()
   const [projects, setProjects] = useState<ProjectRow[]>([])
@@ -33,6 +54,11 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   // hinzufuegen ... so dass auch im Postausgang weitere Objekte hinzugefuegt werden
   // koennen". Jetzt sind sie eine Liste, die waechst und schrumpft.
   const [keptItems, setKeptItems] = useState<CalcItem[]>([])
+  // Werte, die AM OBJEKT haengen und nicht global gelten duerfen. Vorher stuelpte
+  // das Speichern die Wizard-Werte ueber jedes Objekt - Sven trug fuer Kuutio 55 %
+  // Auslastung ein und Mamba verlor damit seine 70 % (18.8.). Ergebnis: beide
+  // Wohnungen hatten dieselbe Miete und die billigere gewann scheinbar die Rendite.
+  const [perObj, setPerObj] = useState<Record<string, PerObj>>({})
   const [p, setP] = useState<CalcParams>({ ...DEFAULT_PARAMS, month: 6, year: new Date().getFullYear() })
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -48,7 +74,9 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   useEffect(() => {
     const it0 = editCalc?.content?.items?.[0]
     if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params })
-    setKeptItems(editCalc?.content?.items ?? [])
+    const its = editCalc?.content?.items ?? []
+    setKeptItems(its)
+    setPerObj(Object.fromEntries(its.map((it, i) => [`k${i}`, perObjFrom(it.params)])))
   }, [editCalc])
 
   useEffect(() => { void (async () => {
@@ -66,6 +94,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id)).map(u => ({ project, unit: u }))
     const nb = [...basket, ...adds]; setBasket(nb); setSel(new Set())
+    setPerObj(prev => { const n = { ...prev }; for (const a of adds) if (!n[`b${a.unit.id}`]) n[`b${a.unit.id}`] = perObjFrom(p); return n })
     // Share-Deal-Felder aus dem Korb vorbefüllen
     if (p.dealType === 'share') {
       const totNet = nb.reduce((a, b) => a + (b.unit.price_net ?? 0), 0)
@@ -94,9 +123,12 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
       //    Preis/Schlafzimmer je Objekt bewahren → bestehenden Token aktualisieren. ──
       if (editCalc) {
         // Bestehende Objekte: Preis/Schlafzimmer je Objekt bewahren, geteilte Werte neu.
-        const kept = keptItems.map(it => ({
+        const kept = keptItems.map((it, i) => ({
           ...it,
-          params: { ...p, priceNet: it.params?.priceNet ?? p.priceNet, bedrooms: it.params?.bedrooms ?? p.bedrooms, dealType: it.params?.dealType ?? p.dealType },
+          params: applyPerObj(
+            { ...p, priceNet: it.params?.priceNet ?? p.priceNet, bedrooms: it.params?.bedrooms ?? p.bedrooms, dealType: it.params?.dealType ?? p.dealType },
+            perObj[`k${i}`] ?? perObjFrom(it.params),
+          ),
         }))
         // Neu dazugewaehlte Objekte wie beim Ersterstellen aufbauen.
         const added: CalcItem[] = basket.map(b => {
@@ -106,7 +138,8 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
             price_net: u.price_net, price_gross: u.price_gross,
             location: b.project.location ?? undefined, developer: b.project.developer ?? undefined,
-            params: { ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
+            params: applyPerObj({ ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
+              perObj[`b${u.id}`] ?? perObjFrom(p)),
           }
         })
         if (!kept.length && !added.length) { setErr(t('rechnerWizard.selectAtLeastOneUnit', 'Bitte mindestens eine Wohnung wählen.')); setBusy(false); return }
@@ -180,7 +213,8 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
             price_net: u.price_net, price_gross: u.price_gross,
             location: b.project.location ?? undefined, developer: b.project.developer ?? undefined,
-            params: { ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
+            params: applyPerObj({ ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
+              perObj[`b${u.id}`] ?? perObjFrom(p)),
           }
         })
       }
@@ -219,6 +253,55 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     } catch (e) {
       setErr(e instanceof Error ? e.message : t('rechnerWizard.genericError', 'Fehler'))
     } finally { setBusy(false) }
+  }
+
+  // Objektzeile: die Werte, die je Wohnung unterschiedlich sind. Ohne sie zog der
+  // Wizard seine globalen Werte ueber alle Objekte - der Vergleich zeigte dann
+  // fuer beide Wohnungen dieselbe Miete.
+  const objRow = (key: string, label: string) => {
+    const o = perObj[key] ?? perObjFrom(p)
+    const upd = (patch: Partial<PerObj>) => setPerObj(prev => ({ ...prev, [key]: { ...o, ...patch } }))
+    const cell = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400'
+    return (
+      <div key={key} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <span className="text-sm font-medium text-gray-800">{label}</span>
+          <div className="flex gap-1">
+            {(['short', 'long'] as const).map(lt => (
+              <button key={lt} type="button" onClick={() => upd({ letType: lt })}
+                className={`text-xs px-2.5 py-1 rounded-lg border ${o.letType === lt ? 'text-white border-transparent' : 'bg-white text-gray-600 border-gray-200'}`}
+                style={o.letType === lt ? { backgroundColor: '#ff795d' } : undefined}>
+                {lt === 'short' ? t('rechnerWizard.shortTerm', 'Kurzzeit') : t('rechnerWizard.longTerm', 'Langzeit')}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {o.letType === 'short' && (<>
+            <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.occLabel', 'Auslastung %')}</span>
+              <input type="number" value={o.occ || ''} onChange={e => upd({ occ: Number(e.target.value) })} className={cell} placeholder="70" /></label>
+            <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.adrLabel', '€ / Nacht Hochsaison')}</span>
+              <input type="number" value={o.adr || ''} onChange={e => upd({ adr: Number(e.target.value) })} className={cell} placeholder="400" /></label>
+          </>)}
+          <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.mgmtLabel', 'Verwaltung % der Miete')}</span>
+            <input type="number" value={o.mgmtPct} onChange={e => upd({ mgmtPct: Number(e.target.value) })} className={cell} /></label>
+          <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.furnLabel', 'Einrichtung € netto')}</span>
+            <input type="number" value={o.furnCost} onChange={e => upd({ furnCost: Number(e.target.value) })} className={cell} /></label>
+        </div>
+        <div className="flex flex-wrap gap-4 mt-2">
+          {o.letType === 'short' && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input type="checkbox" checked={o.hotel} onChange={e => upd({ hotel: e.target.checked })} className="accent-orange-500" />
+              {t('rechnerWizard.hotelConcept', 'Hotelkonzept (Betreiber übernimmt)')}
+            </label>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+            <input type="checkbox" checked={o.furnFree} onChange={e => upd({ furnFree: e.target.checked })} className="accent-orange-500" />
+            {t('rechnerWizard.furnFree', 'Einrichtung kostenfrei')}
+          </label>
+        </div>
+      </div>
+    )
   }
 
   // ── UI-Bausteine (inline → kein Fokus-Verlust) ──────────────────────────────
@@ -278,6 +361,11 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
                 )}
               </div>
               <p className="text-[11px] text-gray-400 mt-2">{t('rechnerWizard.addMoreHint', 'Unten kannst du weitere Objekte dazunehmen. Aus einer Einzelrechnung wird dadurch automatisch ein Vergleich - der Link zum Kunden bleibt derselbe.')}</p>
+              {keptItems.length > 0 && (
+                <div className="space-y-2 mt-3">
+                  {keptItems.map((it, i) => objRow(`k${i}`, it.label))}
+                </div>
+              )}
             </div>
           )}
           <div>
@@ -316,6 +404,11 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
               <button onClick={addToBasket} disabled={!sel.size} className="mt-2.5 px-3.5 py-1.5 rounded-xl text-white text-sm font-medium disabled:opacity-40" style={{ backgroundColor: '#ff795d' }}>
                 {t('rechnerWizard.addToSelection', '+ {{count}} zur Auswahl', { count: sel.size })}
               </button>
+            )}
+            {basket.length > 0 && (
+              <div className="space-y-2 mt-3">
+                {basket.map(b => objRow(`b${b.unit.id}`, `${b.project.name} · ${b.unit.unit_number}`))}
+              </div>
             )}
             {basket.length > 0 && (
               <div className="flex flex-wrap gap-2 mt-3">

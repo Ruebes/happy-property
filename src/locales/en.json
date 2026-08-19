@@ -4819,7 +4819,15 @@
     "addMoreHint": "You can add more properties below. A single calculation then becomes a comparison - the customer link stays the same.",
     "addObjectLabel": "Add another property",
     "editHint2": "Change values or add properties - saving updates the same calculation under the same link.",
-    "calcExtended": "{{n}} property/properties added - comparison and mail draft are in the outbox."
+    "calcExtended": "{{n}} property/properties added - comparison and mail draft are in the outbox.",
+    "shortTerm": "Short-term",
+    "longTerm": "Long-term",
+    "occLabel": "Occupancy %",
+    "adrLabel": "€ / night high season",
+    "mgmtLabel": "Management % of rent",
+    "furnLabel": "Furniture € net",
+    "hotelConcept": "Hotel concept (operator runs it)",
+    "furnFree": "Furniture free of charge"
   },
   "appointmentModal": {
     "stepBasis": "Basics",

@@ -4819,7 +4819,15 @@
     "addMoreHint": "Unten kannst du weitere Objekte dazunehmen. Aus einer Einzelrechnung wird dadurch automatisch ein Vergleich - der Link zum Kunden bleibt derselbe.",
     "addObjectLabel": "Weiteres Objekt hinzufügen",
     "editHint2": "Werte ändern oder Objekte ergänzen - Speichern aktualisiert dieselbe Berechnung unter demselben Link.",
-    "calcExtended": "{{n}} Objekt(e) ergänzt - Vergleich und Mail-Entwurf liegen im Postausgang."
+    "calcExtended": "{{n}} Objekt(e) ergänzt - Vergleich und Mail-Entwurf liegen im Postausgang.",
+    "shortTerm": "Kurzzeit",
+    "longTerm": "Langzeit",
+    "occLabel": "Auslastung %",
+    "adrLabel": "€ / Nacht Hochsaison",
+    "mgmtLabel": "Verwaltung % der Miete",
+    "furnLabel": "Einrichtung € netto",
+    "hotelConcept": "Hotelkonzept (Betreiber übernimmt)",
+    "furnFree": "Einrichtung kostenfrei"
   },
   "appointmentModal": {
     "stepBasis": "Basis",
