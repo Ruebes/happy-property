@@ -210,11 +210,16 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           <KV k={t('rechnung.totalCosts', 'Kosten gesamt')} v={eur(r.sumC)} />
           <KV k={t('rechnung.totalTaxes', 'Steuern gesamt')} v={eur(r.sumT)} />
           <KV k={t('rechnung.afterTaxIncome', 'Ertrag nach Steuern')} v={eur(r.sumCF)} />
+          {/* Gleiche Kennzahlen wie im Vergleich (Sven 19.8.): Mietertrag nach Kosten
+              & Steuern, Wertzuwachs und die Leitkennzahl Wertzuwachs + Mietertrag. */}
+          <KV k={t('rechnung.rentNet10y', 'Mietertrag nach Kosten & Steuern')} v={eur(r.sumR - r.sumC - r.sumT)} color={GREEN} />
           <KV k={t('rechnung.propertyValueY10', 'Immobilienwert J10')} v={eur(r.propV[9])} color={CORAL} />
+          <KV k={t('rechnung.valueGain10y', 'Wertzuwachs')} v={eur(r.propV[9] - r.pGross)} color={CORAL} />
           <KV k={t('rechnung.equityEndY10', 'EK Ende J10')} v={eur(r.ek10)} color={GREEN} />
-          <KV k={t('rechnung.totalReturn', 'Gesamtertrag')} v={eur(r.totRet)} color={GREEN} />
+          <KV k={t('rechnung.totalReturn', 'Gesamtertrag (inkl. Finanzierung)')} v={eur(r.totRet)} color={GREEN} />
           <KV k={t('rechnung.equityReturnCum10y', 'EK-Rendite kum. (10J)')} v={pct(r.roe10)} color={CORAL} />
           <KV k={t('rechnung.equityIrrAnnual', 'EK-IRR (jährlich)')} v={pct(r.irrV * 100, 2)} color={CORAL} />
+          <KV k={t('rechnung.gainPlusRent', 'Wertzuwachs + Mietertrag')} v={eur((r.propV[9] - r.pGross) + (r.sumR - r.sumC - r.sumT))} color={GREEN} strong />
         </Card>
       </div>
 
@@ -523,13 +528,25 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row(t('rechnung.rentNet10y', 'Mietertrag nach Kosten & Steuern'), r => eur(r.res ? r.res.sumR - r.res.sumC - r.res.sumT : null), rows.map(() => true))}
               {sect(t('rechnung.sectionAfter10y', 'NACH 10 JAHREN'))}
               {row(t('rechnung.valueGain10y', 'Wertzuwachs'), r => eur(r.res ? r.res.propV[9] - r.res.pGross : null))}
-              {row(t('rechnung.gainPlusRent', 'Wertzuwachs + Mietertrag'), r => eur(r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : null), gainBest)}
               {row(t('rechnung.totalReturn', 'Gesamtertrag (inkl. Finanzierung)'), r => eur(r.res?.totRet))}
               {row(t('rechnung.propertyValue', 'Immobilienwert'), r => eur(r.res?.propV[9]))}
               {row(t('rechnung.remainingDebt', 'Restschuld'), r => eur(r.res?.restL[9]))}
               {row(t('rechnung.equity', 'Eigenkapital'), r => eur(r.res?.ek10), ekBest)}
               {row(t('rechnung.yieldPaIrr', 'Rendite p.a. (IRR)'), r => pct((r.res?.irrV ?? 0) * 100, 2), irrBest)}
               {row(t('rechnung.equityReturnCum', 'EK-Rendite kum.'), r => pct(r.res?.roe10))}
+              {/* Leitkennzahl als Abschluss - Sven 19.8.: "waere im Vergleich die
+                  wichtigste Kennzahl, farblich markieren und als letzte setzen". */}
+              <tr>
+                <td style={{ ...lbl, background: '#f0f7f4', borderTop: '2px solid #2f6b4f', fontWeight: 800, color: '#1a4d36', fontSize: 14 }}>
+                  ★ {t('rechnung.gainPlusRent', 'Wertzuwachs + Mietertrag')}
+                </td>
+                {rows.map((r, i) => (
+                  <td key={i} style={{ ...td, background: '#f0f7f4', borderTop: '2px solid #2f6b4f', fontWeight: 800, fontSize: 15,
+                    color: gainBest[i] ? '#1a4d36' : '#4a4a4a' }}>
+                    {eur(r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : null)}{gainBest[i] ? ' ✓' : ''}
+                  </td>
+                ))}
+              </tr>
             </tbody>
           </table>
         </div>
