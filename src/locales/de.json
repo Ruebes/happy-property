@@ -4827,7 +4827,10 @@
     "mgmtLabel": "Verwaltung % der Miete",
     "furnLabel": "Einrichtung € netto",
     "hotelConcept": "Hotelkonzept (Betreiber übernimmt)",
-    "furnFree": "Einrichtung kostenfrei"
+    "furnFree": "Einrichtung kostenfrei",
+    "furnIncluded": "laut Projekt im Kaufpreis enthalten",
+    "furnFromProject": "aus Projekt: {{v}} € netto",
+    "furnMissing": "⚠ im Projekt nicht hinterlegt - bitte dort pflegen"
   },
   "appointmentModal": {
     "stepBasis": "Basis",

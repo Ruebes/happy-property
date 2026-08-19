@@ -4827,7 +4827,10 @@
     "mgmtLabel": "Management % of rent",
     "furnLabel": "Furniture € net",
     "hotelConcept": "Hotel concept (operator runs it)",
-    "furnFree": "Furniture free of charge"
+    "furnFree": "Furniture free of charge",
+    "furnIncluded": "included in the purchase price per project",
+    "furnFromProject": "from project: {{v}} € net",
+    "furnMissing": "⚠ not set in the project - please maintain it there"
   },
   "appointmentModal": {
     "stepBasis": "Basics",

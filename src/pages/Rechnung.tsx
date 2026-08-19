@@ -502,7 +502,11 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row(t('rechnung.grossYield', 'Bruttorendite'), r => pct(r.res?.yPct ?? null))}
               {sect(t('rechnung.sectionFinancing', 'FINANZIERUNG'))}
               {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
-              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.furnishingGross', 'Einrichtung (inkl. MwSt)'), r => r.res ? (r.res.furnFree ? t('rechnung.included', 'inklusive') : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnGross)}` : '–')) : '–')}
+              {/* Einrichtung NETTO ausweisen und die MwSt darunter - im Vergleich stand
+                  vorher der Bruttowert (25.000 → 29.750) und wirkte wie ein anderer
+                  Preis als in der Einzelrechnung (Sven 18.8.). */}
+              {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.furnishingNet', 'Einrichtung (netto)'), r => r.res ? (r.res.furnFree ? t('rechnung.included', 'inklusive') : (r.res.furnCost > 0 ? `+ ${eur(r.res.furnCost)}` : '–')) : '–')}
+              {rows.some(r => r.res && r.res.furnVat > 0) && row(t('rechnung.furnishingVat', 'MwSt auf Einrichtung (19%)'), r => r.res && r.res.furnVat > 0 ? `+ ${eur(r.res.furnVat)}` : '–')}
               {rows.some(r => r.res && (r.res.furnFree || r.res.furnCost > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => eur(r.res ? r.res.pGross + r.res.furnGross : null), rows.map(() => true))}
               {row(t('rechnung.equityPlusExtras', 'Eigenkapital + NK'), r => eur(r.res?.ekStart))}
               {row(t('rechnung.financingLabel', 'Finanzierung'), r => r.res && r.res.loan > 0 ? eur(r.res.loan) : t('rechnung.cash', 'Cash'))}
@@ -607,7 +611,8 @@ function SpecsCard({ rows }: { rows: Row[] }) {
             {row(t('rechnung.terrace', 'Terrasse'), r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
             {row(t('rechnung.floor', 'Etage'), r => r.item.floor != null ? `${r.item.floor}` : '–')}
             {row(t('rechnung.purchasePrice', 'Kaufpreis'), r => eur(r.item.price_gross ?? r.item.price_net))}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishingGross', 'Einrichtung (inkl. MwSt)'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(furnGrossOf(pa))}` : '–')) : '–' })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishingNet', 'Einrichtung (netto)'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost ?? 0)}` : '–')) : '–' })}
+            {rows.some(r => r.item.params && !r.item.params.furnFree && (r.item.params.furnCost ?? 0) > 0) && row(t('rechnung.furnishingVat', 'MwSt auf Einrichtung (19%)'), r => { const pa = r.item.params; return pa && !pa.furnFree && (pa.furnCost ?? 0) > 0 ? `+ ${eur(Math.round((pa.furnCost ?? 0) * 0.19))}` : '–' })}
             {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? furnGrossOf(pa) : 0; return eur(base + f) })}
           </tbody>
         </table>

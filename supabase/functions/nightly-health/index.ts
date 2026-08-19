@@ -453,12 +453,91 @@ const checkDirtyPhones: Check = {
   },
 }
 
+// ── Pruefung 15: Einrichtungspaket gepflegt? ────────────────────────────────
+// Sven 18.8.: "Es kann nicht sein, dass ploetzlich ein Preis fuer Moebel
+// auftaucht, den wir vorher nie definiert haben. Ich moechte solche Sachen
+// eigentlich nicht mehr kontrollieren muessen." Die Rechner nehmen den Wert seit
+// dem nur noch aus dem Projekt - fehlt er dort, rechnet die Wohnung mit 0 statt
+// mit einer erfundenen Zahl. Diese Pruefung meldet genau diese Luecken, damit
+// Angebote nicht still zu guenstig werden.
+const checkFurnitureData: Check = {
+  key: 'einrichtung_fehlt',
+  title: 'Einrichtungspaket im Projekt nicht hinterlegt',
+  run: async (sb) => {
+    const out: Finding[] = []
+    const { data: projs } = await sb.from('crm_projects')
+      .select('id, name, developer, furniture_cost, furniture_included')
+      .is('furniture_cost', null)
+    for (const p of (projs ?? []) as Array<{ id: string; name: string; developer: string | null; furniture_included: boolean | null }>) {
+      if (p.furniture_included) continue          // im Kaufpreis enthalten = gepflegt
+      const { count } = await sb.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', p.id)
+      if (!count) continue                         // Projekt ohne Wohnungen: egal
+      out.push({
+        check_key: 'einrichtung_fehlt', severity: 'mittel', entity_kind: 'projekt', entity_id: p.id, entity_label: p.name,
+        what_plain: `Bei ${p.name} (${p.developer ?? 'ohne Bautraeger'}) ist weder ein Preis fuer das Einrichtungspaket hinterlegt noch "im Kaufpreis enthalten" gesetzt. Jede Berechnung zu diesem Projekt rechnet die Einrichtung deshalb mit 0 Euro.`,
+        action: 'proposed',
+        fix_plain: 'Im Projekt entweder den Netto-Preis des Einrichtungspakets eintragen oder "Einrichtung im Kaufpreis enthalten" setzen.',
+      })
+    }
+    return out
+  },
+}
+
+// ── Pruefung 16: Standort und Bautraeger am Projekt ────────────────────────
+// Sven 18.8.: "Auch bei Mamba kennst du den Standort und den Developer. Trag das
+// nach und baue es so stabil, dass wir das immer stehen haben." Decks, Rechnungen
+// und Vergleiche ziehen Lage und Bautraeger aus dem Projekt - fehlt dort etwas,
+// steht beim Kunden ein Strich. Wo Koordinaten vorhanden sind, traegt der
+// Nachtlauf den Ort SELBST nach (Reverse-Geocoding), sonst meldet er die Luecke.
+const checkProjectBasics: Check = {
+  key: 'projekt_stammdaten',
+  title: 'Projekt ohne Standort oder Bautraeger',
+  run: async (sb, dryRun) => {
+    const out: Finding[] = []
+    const { data: projs } = await sb.from('crm_projects')
+      .select('id, name, developer, location, latitude, longitude')
+    for (const p of (projs ?? []) as Array<{ id: string; name: string; developer: string | null; location: string | null; latitude: number | null; longitude: number | null }>) {
+      const fehltOrt = !p.location || !String(p.location).trim()
+      const fehltDev = !p.developer || !String(p.developer).trim()
+      if (!fehltOrt && !fehltDev) continue
+      // Ort aus den Koordinaten selbst nachtragen, wenn welche da sind.
+      if (fehltOrt && p.latitude != null && p.longitude != null) {
+        try {
+          const r = await fetch(`https://photon.komoot.io/reverse?lat=${p.latitude}&lon=${p.longitude}&lang=en`)
+          const j = await r.json()
+          const pr = (j?.features ?? [])[0]?.properties ?? {}
+          const ort = pr.city || pr.district || pr.locality || pr.county
+          if (ort) {
+            const loc = /paphos/i.test(String(ort)) ? `${ort}, Zypern` : `${ort}, Paphos, Zypern`
+            if (!dryRun) await sb.from('crm_projects').update({ location: loc }).eq('id', p.id)
+            out.push({
+              check_key: 'projekt_stammdaten', severity: 'niedrig', entity_kind: 'projekt', entity_id: p.id, entity_label: p.name,
+              what_plain: `${p.name} hatte keine Ortsangabe, obwohl die Karte gepflegt ist.`,
+              action: dryRun ? 'proposed' : 'fixed',
+              fix_plain: `Ort aus den Koordinaten uebernommen: ${loc}.`,
+            })
+            continue
+          }
+        } catch { /* Geocoder nicht erreichbar: dann normal melden */ }
+      }
+      const fehlt = [fehltOrt ? 'Standort' : null, fehltDev ? 'Bautraeger' : null].filter(Boolean).join(' und ')
+      out.push({
+        check_key: 'projekt_stammdaten', severity: 'mittel', entity_kind: 'projekt', entity_id: p.id, entity_label: p.name,
+        what_plain: `Bei ${p.name} fehlt ${fehlt}. In Decks, Rechnungen und Vergleichen bleibt dieses Feld beim Kunden leer.`,
+        action: 'proposed',
+        fix_plain: 'Im Projekt Lage (Ort, Paphos, Zypern) und Bautraeger eintragen - oder den Google-Maps-Link setzen, dann traegt der Nachtlauf den Ort selbst nach.',
+      })
+    }
+    return out
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
   checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
-  checkDirtyPhones,
+  checkDirtyPhones, checkFurnitureData, checkProjectBasics,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────

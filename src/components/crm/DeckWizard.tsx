@@ -218,7 +218,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           deTaxPct:        pu.deTaxPct ?? calcParams.deTaxPct,
           yieldPct:        pu.yieldPct ?? calcParams.yieldPct,
           appreciationPct: pu.appreciationPct ?? calcParams.appreciationPct,
-          furnCost:        pu.furnCost ?? it.furnitureCost ?? calcParams.furnCost,
+          // Einrichtung: eigener Wert der Wohnung, sonst der des PROJEKTS, sonst 0.
+          // Nie der globale Wizard-Wert - der brachte Preise in Angebote, die im
+          // Projekt nie hinterlegt waren (Sven 18.8.).
+          furnCost:        pu.furnCost ?? it.furnitureCost ?? 0,
           furnFree:        pu.furnFree ?? it.furnitureIncluded ?? calcParams.furnFree,
           // Hotelkonzept nur bei Kurzzeit dieser Wohnung
           hotelConcept:    (pu.letType ?? calcParams.letType) === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false,
@@ -679,7 +682,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                             {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
                             {fin_ === 'yes' && calcParams.mode === 'tilg' && miniInput(t('crm.wizard.amort', 'Tilgung'), String(pu.amortPct ?? calcParams.amortPct ?? ''), v => setPu(b.unit.id, { amortPct: v }))}
                             {calcParams.res === 'de' && miniInput(t('crm.wizard.deTax', 'DE-Steuer'), String(pu.deTaxPct ?? calcParams.deTaxPct ?? ''), v => setPu(b.unit.id, { deTaxPct: v }), '1')}
-                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? calcParams.furnCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
                             {/* Verwaltung je Wohnung: Kurzzeit kostet ein Vielfaches von Langzeit */}
                             {miniInput(t('crm.wizard.mgmt', 'Verwaltung'),
                               String(pu.mgmtPct ?? (let_ === calcParams.letType ? calcParams.mgmtPct : defaultMgmtPct(let_, hc)) ?? ''),

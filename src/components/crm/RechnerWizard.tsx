@@ -13,7 +13,7 @@ import { NumberStepper } from '../NumberStepper'
 // Erzeugt eine property_calculations-Zeile + öffentlichen HTML-Link (Einzel/Vergleich).
 
 interface LeadLite { id: string; first_name: string; last_name: string }
-interface ProjectRow { id: string; name: string; developer: string | null; location: string | null }
+interface ProjectRow { id: string; name: string; developer: string | null; location: string | null; furniture_cost: number | null; furniture_included: boolean | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null; type: string | null }
 interface BasketItem { project: ProjectRow; unit: UnitRow }
 
@@ -65,7 +65,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   const [err, setErr] = useState('')
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, location').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, location, furniture_cost, furniture_included').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -94,7 +94,27 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id)).map(u => ({ project, unit: u }))
     const nb = [...basket, ...adds]; setBasket(nb); setSel(new Set())
-    setPerObj(prev => { const n = { ...prev }; for (const a of adds) if (!n[`b${a.unit.id}`]) n[`b${a.unit.id}`] = perObjFrom(p); return n })
+    // Einrichtung kommt aus dem PROJEKT, nicht aus dem globalen Feld: bei Mamba ist
+    // sie im Kaufpreis enthalten (600.000 netto inkl. Möbel), bei BAIA kostet sie
+    // 25.000 extra. Vorher stülpte der Wizard denselben Wert über jede Wohnung -
+    // Mamba trug dadurch 25.000 netto (29.750 brutto) zu Unrecht mit (Sven 18.8.).
+    setPerObj(prev => {
+      const n = { ...prev }
+      for (const a of adds) {
+        if (n[`b${a.unit.id}`]) continue
+        const pr = a.project
+        n[`b${a.unit.id}`] = {
+          ...perObjFrom(p),
+          // NIE auf das globale Feld zurückfallen: ein dort stehengebliebener Wert
+          // landete sonst bei jeder Wohnung, auch wenn im Projekt nie einer
+          // hinterlegt war (Sven 18.8.: "es kann nicht sein, dass plötzlich ein
+          // Preis für Möbel auftaucht, den wir vorher nie definiert haben").
+          furnCost: pr.furniture_included ? 0 : (pr.furniture_cost ?? 0),
+          furnFree: !!pr.furniture_included,
+        }
+      }
+      return n
+    })
     // Share-Deal-Felder aus dem Korb vorbefüllen
     if (p.dealType === 'share') {
       const totNet = nb.reduce((a, b) => a + (b.unit.price_net ?? 0), 0)
@@ -258,8 +278,14 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   // Objektzeile: die Werte, die je Wohnung unterschiedlich sind. Ohne sie zog der
   // Wizard seine globalen Werte ueber alle Objekte - der Vergleich zeigte dann
   // fuer beide Wohnungen dieselbe Miete.
-  const objRow = (key: string, label: string) => {
+  const objRow = (key: string, label: string, src?: { furniture_cost: number | null; furniture_included: boolean | null }) => {
     const o = perObj[key] ?? perObjFrom(p)
+    // Woher der Möbelwert kommt - damit nie unklar ist, ob eine Zahl aus dem
+    // Projekt stammt oder von Hand gesetzt wurde.
+    const furnSrc = !src ? null
+      : src.furniture_included ? t('rechnerWizard.furnIncluded', 'laut Projekt im Kaufpreis enthalten')
+      : src.furniture_cost != null ? t('rechnerWizard.furnFromProject', 'aus Projekt: {{v}} € netto', { v: src.furniture_cost.toLocaleString('de-DE') })
+      : t('rechnerWizard.furnMissing', '⚠ im Projekt nicht hinterlegt - bitte dort pflegen')
     const upd = (patch: Partial<PerObj>) => setPerObj(prev => ({ ...prev, [key]: { ...o, ...patch } }))
     const cell = 'w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400'
     return (
@@ -288,6 +314,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.furnLabel', 'Einrichtung € netto')}</span>
             <input type="number" value={o.furnCost} onChange={e => upd({ furnCost: Number(e.target.value) })} className={cell} /></label>
         </div>
+        {furnSrc && <p className="text-[11px] text-gray-400 mt-1">{furnSrc}</p>}
         <div className="flex flex-wrap gap-4 mt-2">
           {o.letType === 'short' && (
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -407,7 +434,8 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             )}
             {basket.length > 0 && (
               <div className="space-y-2 mt-3">
-                {basket.map(b => objRow(`b${b.unit.id}`, `${b.project.name} · ${b.unit.unit_number}`))}
+                {basket.map(b => objRow(`b${b.unit.id}`, `${b.project.name} · ${b.unit.unit_number}`,
+                  { furniture_cost: b.project.furniture_cost, furniture_included: b.project.furniture_included }))}
               </div>
             )}
             {basket.length > 0 && (
@@ -428,7 +456,8 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             <div className="grid sm:grid-cols-3 gap-3">
               {seg(t('rechnerWizard.dealTypeLabel', 'Kaufart'), 'dealType', [['single', t('rechnerWizard.dealTypeSingle', 'Einzelkauf')], ['share', t('rechnerWizard.dealTypeShare', 'Share-Deal')]])}
               {numF(t('rechnerWizard.discountLabel', 'Rabatt'), 'discountPct', '%', '0.5')}
-              {numF(t('rechnerWizard.furnitureCostLabel', 'Einrichtungspaket'), 'furnCost', '€', '500')}
+              {/* Einrichtung steht je Objekt oben - ein globales Feld hat den Wert
+                  frueher ueber alle Wohnungen gestuelpt. */}
             </div>
             {p.dealType === 'share' && (
               <div className="grid sm:grid-cols-4 gap-3 mt-3 p-3 rounded-xl bg-violet-50 border border-violet-100">
