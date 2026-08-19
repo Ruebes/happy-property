@@ -143,8 +143,16 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
       //    Preis/Schlafzimmer je Objekt bewahren → bestehenden Token aktualisieren. ──
       if (editCalc) {
         // Bestehende Objekte: Preis/Schlafzimmer je Objekt bewahren, geteilte Werte neu.
+        // Lage/Bautraeger haengen als Kopie am Objekt. Wurde das Projekt erst NACH
+        // dem Erstellen der Berechnung gepflegt (Fall Mamba, Sven 18.8.), blieb die
+        // Kopie leer und der Kunde sah einen Strich. Beim Speichern deshalb immer
+        // aus dem Projekt nachziehen.
+        const enrich = (it: CalcItem): CalcItem => {
+          const pr = projects.find(x => x.name === it.project)
+          return { ...it, location: it.location ?? pr?.location ?? undefined, developer: it.developer ?? pr?.developer ?? undefined }
+        }
         const kept = keptItems.map((it, i) => ({
-          ...it,
+          ...enrich(it),
           params: applyPerObj(
             { ...p, priceNet: it.params?.priceNet ?? p.priceNet, bedrooms: it.params?.bedrooms ?? p.bedrooms, dealType: it.params?.dealType ?? p.dealType },
             perObj[`k${i}`] ?? perObjFrom(it.params),

@@ -532,12 +532,46 @@ const checkProjectBasics: Check = {
   },
 }
 
+// ── Pruefung 17: Lage/Bautraeger in Kundendokumenten ────────────────────────
+// Lage und Bautraeger sind KOPIEN im Dokument. Wird das Projekt erst nach dem
+// Erstellen gepflegt, zeigt die Kundenseite einen Strich (Fall Mamba, 18.8.).
+// Der Nachtlauf zieht die Luecken selbst aus dem Projekt nach - still, jede Nacht.
+const checkCalcItemBasics: Check = {
+  key: 'rechnung_stammdaten',
+  title: 'Berechnungen ohne Lage/Bautraeger nachgezogen',
+  run: async (sb, dryRun) => {
+    const out: Finding[] = []
+    const { data: projs } = await sb.from('crm_projects').select('name, developer, location')
+    const byName = new Map((projs ?? []).map((p: { name: string; developer: string | null; location: string | null }) => [p.name, p]))
+    const { data: calcs } = await sb.from('property_calculations').select('token, title, content').order('created_at', { ascending: false }).limit(400)
+    for (const c of (calcs ?? []) as Array<{ token: string; title: string | null; content: { items?: Array<Record<string, unknown>> } | null }>) {
+      const items = c.content?.items ?? []
+      let changed = false
+      for (const it of items) {
+        const pr = byName.get(String(it.project ?? '')) as { developer: string | null; location: string | null } | undefined
+        if (!pr) continue
+        if (!it.location && pr.location) { it.location = pr.location; changed = true }
+        if (!it.developer && pr.developer) { it.developer = pr.developer; changed = true }
+      }
+      if (!changed) continue
+      if (!dryRun) await sb.from('property_calculations').update({ content: c.content }).eq('token', c.token)
+      out.push({
+        check_key: 'rechnung_stammdaten', severity: 'niedrig', entity_kind: 'rechnung', entity_id: c.token, entity_label: String(c.title ?? c.token),
+        what_plain: `In "${c.title ?? c.token}" fehlten Lage oder Bautraeger, obwohl das Projekt sie inzwischen kennt.`,
+        action: dryRun ? 'proposed' : 'fixed',
+        fix_plain: 'Aus dem Projekt nachgetragen - der Kundenlink zeigt die Daten jetzt an.',
+      })
+    }
+    return out
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
   checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
-  checkDirtyPhones, checkFurnitureData, checkProjectBasics,
+  checkDirtyPhones, checkFurnitureData, checkProjectBasics, checkCalcItemBasics,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────
