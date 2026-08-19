@@ -4484,7 +4484,7 @@
     "afterTaxIncome": "Ertrag nach Steuern",
     "propertyValueY10": "Immobilienwert J10",
     "equityEndY10": "EK Ende J10",
-    "totalReturn": "Gesamtertrag",
+    "totalReturn": "Gesamtertrag (inkl. Finanzierung)",
     "equityReturnCum10y": "EK-Rendite kum. (10J)",
     "equityIrrAnnual": "EK-IRR (jährlich)",
     "assumptionsParamsTitle": "Annahmen & Parameter",
@@ -4575,7 +4575,18 @@
     "livingArea": "Wohnfläche",
     "terrace": "Terrasse",
     "floor": "Etage",
-    "purchasePrice": "Kaufpreis"
+    "purchasePrice": "Kaufpreis",
+    "sectionRent10y": "MIETERTRAG (10 JAHRE)",
+    "rentGross10y": "Mieteinnahmen brutto",
+    "rentCosts10y": "Kosten (Verwaltung + Zinsen)",
+    "rentTaxes10y": "Steuern (Zypern + DE)",
+    "rentNet10y": "Mietertrag nach Kosten & Steuern",
+    "valueGain10y": "Wertzuwachs",
+    "gainPlusRent": "Wertzuwachs + Mietertrag",
+    "rentGrossBlock": "Mieteinnahmen 10 Jahre (brutto)",
+    "rentNetBlock": "Mietertrag nach Kosten & Steuern",
+    "valueGainBlock": "Wertzuwachs 10 Jahre",
+    "gainPlusRentBlock": "Wertzuwachs + Mietertrag"
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",

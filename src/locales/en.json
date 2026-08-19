@@ -4484,7 +4484,7 @@
     "afterTaxIncome": "Income after taxes",
     "propertyValueY10": "Property value Y10",
     "equityEndY10": "Equity end Y10",
-    "totalReturn": "Total return",
+    "totalReturn": "Total return (incl. financing)",
     "equityReturnCum10y": "Cumulative equity return (10Y)",
     "equityIrrAnnual": "Equity IRR (annual)",
     "assumptionsParamsTitle": "Assumptions & Parameters",
@@ -4575,7 +4575,18 @@
     "livingArea": "Living area",
     "terrace": "Terrace",
     "floor": "Floor",
-    "purchasePrice": "Purchase price"
+    "purchasePrice": "Purchase price",
+    "sectionRent10y": "RENTAL INCOME (10 YEARS)",
+    "rentGross10y": "Rental income gross",
+    "rentCosts10y": "Costs (management + interest)",
+    "rentTaxes10y": "Taxes (Cyprus + DE)",
+    "rentNet10y": "Rental income after costs & taxes",
+    "valueGain10y": "Value growth",
+    "gainPlusRent": "Value growth + rental income",
+    "rentGrossBlock": "Rental income 10 years (gross)",
+    "rentNetBlock": "Rental income after costs & taxes",
+    "valueGainBlock": "Value growth 10 years",
+    "gainPlusRentBlock": "Value growth + rental income"
   },
   "automationRules": {
     "eventLeadCreated": "New lead",

@@ -480,6 +480,7 @@ function CompareTable({ rows }: { rows: Row[] }) {
   const best = (vals: number[]) => { const v = Math.max(...vals); return vals.map(x => x === v) }
   const irrBest = best(rows.map(r => r.res?.irrV ?? -1))
   const ekBest = best(rows.map(r => r.res?.ek10 ?? -1))
+  const gainBest = best(rows.map(r => r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : -1))
   const row = (label: string, fn: (r: Row) => string, bold?: boolean[]) => (
     <tr><td style={lbl}>{label}</td>{rows.map((r, i) => <td key={i} style={{ ...td, fontWeight: bold?.[i] ? 800 : 500, color: bold?.[i] ? r.color : '#1a1a1a' }}>{fn(r)}</td>)}</tr>
   )
@@ -511,8 +512,19 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row(t('rechnung.equityPlusExtras', 'Eigenkapital + NK'), r => eur(r.res?.ekStart))}
               {row(t('rechnung.financingLabel', 'Finanzierung'), r => r.res && r.res.loan > 0 ? eur(r.res.loan) : t('rechnung.cash', 'Cash'))}
               {row(t('rechnung.cashflowYear1', 'Cashflow Jahr 1'), r => eur(r.res ? r.res.cfA[0] - (r.res.vatA[0] || 0) : null))}
+              {/* Mietertrag brutto vs. nach Kosten & Steuern und der Gesamtertrag als
+                  Wertzuwachs + Mietertrag (Sven 19.8.: "Im Vergleich fehlt mir noch die
+                  Kennzahl Wertsteigerung plus Mietertrag ... Mieteinnahmen vor und nach
+                  Steuern und Kosten"). Kosten = Verwaltung + Zinsen, Steuern = CY + DE. */}
+              {sect(t('rechnung.sectionRent10y', 'MIETERTRAG (10 JAHRE)'))}
+              {row(t('rechnung.rentGross10y', 'Mieteinnahmen brutto'), r => eur(r.res?.sumR))}
+              {row(t('rechnung.rentCosts10y', 'Kosten (Verwaltung + Zinsen)'), r => r.res ? `− ${eur(r.res.sumC)}` : '–')}
+              {row(t('rechnung.rentTaxes10y', 'Steuern (Zypern + DE)'), r => r.res ? `− ${eur(r.res.sumT)}` : '–')}
+              {row(t('rechnung.rentNet10y', 'Mietertrag nach Kosten & Steuern'), r => eur(r.res ? r.res.sumR - r.res.sumC - r.res.sumT : null), rows.map(() => true))}
               {sect(t('rechnung.sectionAfter10y', 'NACH 10 JAHREN'))}
-              {row(t('rechnung.totalReturn', 'Gesamtertrag'), r => eur(r.res?.totRet))}
+              {row(t('rechnung.valueGain10y', 'Wertzuwachs'), r => eur(r.res ? r.res.propV[9] - r.res.pGross : null))}
+              {row(t('rechnung.gainPlusRent', 'Wertzuwachs + Mietertrag'), r => eur(r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : null), gainBest)}
+              {row(t('rechnung.totalReturn', 'Gesamtertrag (inkl. Finanzierung)'), r => eur(r.res?.totRet))}
               {row(t('rechnung.propertyValue', 'Immobilienwert'), r => eur(r.res?.propV[9]))}
               {row(t('rechnung.remainingDebt', 'Restschuld'), r => eur(r.res?.restL[9]))}
               {row(t('rechnung.equity', 'Eigenkapital'), r => eur(r.res?.ek10), ekBest)}
@@ -549,8 +561,11 @@ function Bars({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
     <>
       <H2Section>{t('rechnung.yieldDevelopmentTitle', 'Rendite & Wertentwicklung')}</H2Section>
       <Card>
+        {block(t('rechnung.rentGrossBlock', 'Mieteinnahmen 10 Jahre (brutto)'), r => r.res?.sumR ?? 0, eur)}
+        {block(t('rechnung.rentNetBlock', 'Mietertrag nach Kosten & Steuern'), r => r.res ? r.res.sumR - r.res.sumC - r.res.sumT : 0, eur)}
+        {block(t('rechnung.valueGainBlock', 'Wertzuwachs 10 Jahre'), r => r.res ? r.res.propV[9] - r.res.pGross : 0, eur)}
+        {block(t('rechnung.gainPlusRentBlock', 'Wertzuwachs + Mietertrag'), r => r.res ? (r.res.propV[9] - r.res.pGross) + (r.res.sumR - r.res.sumC - r.res.sumT) : 0, eur)}
         {block(t('rechnung.equityAfter10yBlock', 'Eigenkapital nach 10 Jahren'), r => r.res?.ek10 ?? 0, eur)}
-        {block(t('rechnung.propertyValueAfter10yBlock', 'Immobilienwert nach 10 Jahren'), r => r.res?.propV[9] ?? 0, eur)}
         {block(t('rechnung.annualYieldIrrBlock', 'Jährliche Rendite (IRR)'), r => (r.res?.irrV ?? 0) * 100, n => pct(n, 2))}
       </Card>
     </>
