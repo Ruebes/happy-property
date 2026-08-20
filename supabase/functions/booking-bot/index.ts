@@ -1133,6 +1133,36 @@ Deno.serve(async (req) => {
       await book(admin, cc, lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }, slot, type)
       return json({ ok: true, booked: slot.label, type })
     }
+    // sweep: haengende Terminart-Fragen aufloesen. Slot steht fest, Lotte hat
+    // "WhatsApp oder Zoom?" gefragt, der Kunde antwortet nicht mehr - vorher
+    // entstand dann NIE ein Termin (Rainer, 19.8.). Neue Regel (Sven): nach
+    // 20 Minuten ohne Antwort automatisch als WhatsApp-Telefonat buchen.
+    // Laeuft alle 5 Minuten ueber pg_cron (Job booking-bot-sweep).
+    if (body.action === 'sweep') {
+      const cutoff = new Date(Date.now() - 20 * 60_000).toISOString()
+      const { data: stale } = await admin.from('booking_conversations')
+        .select('id, lead_id, deal_id, chosen_slot, updated_at')
+        .eq('state', 'awaiting_type').not('chosen_slot', 'is', null).lt('updated_at', cutoff)
+      const results: Array<{ lead_id: string; booked?: string; error?: string }> = []
+      for (const c of (stale ?? []) as Array<{ id: string; lead_id: string; deal_id: string | null; chosen_slot: Slot }>) {
+        try {
+          // Slot in der Vergangenheit? Dann nicht stumpf buchen, sondern an Sven melden.
+          if (new Date(c.chosen_slot.startIso).getTime() < Date.now()) {
+            await setConv(admin, c.id, { state: 'handoff', last_message: 'Terminart nie beantwortet, Slot inzwischen vorbei - bitte manuell klaeren.' })
+            results.push({ lead_id: c.lead_id, error: 'slot_vergangen' })
+            continue
+          }
+          const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', c.lead_id).maybeSingle()
+          await book(admin, c, lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }, c.chosen_slot, 'whatsapp')
+          results.push({ lead_id: c.lead_id, booked: c.chosen_slot.label })
+          console.log(`[booking-bot] sweep: ${c.chosen_slot.label} als WhatsApp gebucht (Lead ${c.lead_id})`)
+        } catch (e) {
+          console.error('[booking-bot] sweep:', e)
+          results.push({ lead_id: c.lead_id, error: e instanceof Error ? e.message : String(e) })
+        }
+      }
+      return json({ ok: true, swept: results.length, results })
+    }
     if (!body.lead_id) return json({ error: 'lead_id fehlt' }, 400)
     if (body.action === 'start') return await handleStart(admin, body.lead_id, body.deal_id ?? null, body.source ?? 'unknown')
     if (body.action === 'engage') return await handleEngage(admin, body.lead_id, body.text ?? '', body.force === true)
