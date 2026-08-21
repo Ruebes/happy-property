@@ -1,3 +1,4 @@
+import { Image } from '../_vendor/imagescript/ImageScript.js'
 // Zentrale Higgsfield-Anbindung (Bild-KI) für ALLE Edge Functions.
 //
 // Sven-Entscheidung (11.8.26): Higgsfield ist die EINZIGE Bild- und Video-KI.
@@ -75,7 +76,15 @@ export async function hfUploadImage(store: HfStore, bytes: Uint8Array, contentTy
   const mk = await fetch(`${HF_BASE}/media?type=image`, { method: 'POST', headers: hdrs(token, ws), body: '{}' })
   const md = await mk.json() as { id?: string; upload_url?: string }
   if (!mk.ok || !md.id || !md.upload_url) throw new Error(`Higgsfield media create: ${JSON.stringify(md).slice(0, 200)}`)
-  const put = await fetch(md.upload_url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: bytes })
+  // Die Presigned-URL ist auf image/png signiert - JEDER andere Content-Type
+  // bekommt ein S3-403 (gemessen 21.8.: image/jpeg 403, image/png 200).
+  // Nicht-PNG-Bytes deshalb vor dem Upload nach PNG wandeln.
+  let put_bytes = bytes
+  if (contentType !== 'image/png') {
+    const img = await Image.decode(bytes)
+    put_bytes = await img.encode()
+  }
+  const put = await fetch(md.upload_url, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: put_bytes as BodyInit })
   if (!put.ok) throw new Error(`Higgsfield media upload (${put.status}).`)
   return md.id
 }

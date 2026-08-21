@@ -3909,7 +3909,11 @@
       "setOk": "✅ Thumbnail ist auf dem Video gesetzt.",
       "setErr": "Setzen fehlgeschlagen: {{msg}}",
       "textHint": "Tipp: Text auf dem Bild lieber nachträglich im Schnittprogramm ergänzen - KI-Schrift ist oft fehlerhaft.",
-      "genTimeout": "Dauert ungewöhnlich lange - schau gleich in der Liste nach, das Bild erscheint dort, sobald es fertig ist."
+      "genTimeout": "Dauert ungewöhnlich lange - schau gleich in der Liste nach, das Bild erscheint dort, sobald es fertig ist.",
+      "addRef": "📎 Referenzbild (Fahne, Person, Produkt …)",
+      "refErr": "Referenzbild-Upload fehlgeschlagen.",
+      "refHint": "wird exakt so ins Bild übernommen",
+      "autoRefHint": "Sprüche werden als echter Text gerendert; Fahnen, Wappen und Wahrzeichen recherchiert das System automatisch als Referenz."
     },
     "social": {
       "title": "Social Media",

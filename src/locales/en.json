@@ -3909,7 +3909,11 @@
       "setOk": "✅ Thumbnail set on the video.",
       "setErr": "Setting failed: {{msg}}",
       "textHint": "Tip: add text to the image later in your editing tool - AI lettering is often flawed.",
-      "genTimeout": "Taking unusually long - check the list shortly, the image will appear there once ready."
+      "genTimeout": "Taking unusually long - check the list shortly, the image will appear there once ready.",
+      "addRef": "📎 Reference image (flag, person, product …)",
+      "refErr": "Reference upload failed.",
+      "refHint": "will appear exactly like this",
+      "autoRefHint": "Slogans are rendered as real text; flags, emblems and landmarks are researched automatically as references."
     },
     "social": {
       "title": "Social media",

@@ -324,6 +324,25 @@ async function svgToPng(svg: string): Promise<Uint8Array> {
   const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
   return r.render().asPng()
 }
+// Referenzbild fuer ein reales Symbol im Netz finden (Wikimedia Commons):
+// beste Quelle fuer Fahnen, Wappen, Wahrzeichen - lizenzfrei und korrekt.
+async function wikimediaImage(term: string): Promise<string | null> {
+  try {
+    const q = encodeURIComponent(term)
+    const r = await fetch(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${q}&gsrnamespace=6&gsrlimit=5&prop=imageinfo&iiprop=url|mime&iiurlwidth=1200&format=json`,
+      { headers: { 'User-Agent': 'HappyPropertyCRM/1.0 (thumbnail references)' } })
+    const j = await r.json() as { query?: { pages?: Record<string, { imageinfo?: Array<{ thumburl?: string; url?: string; mime?: string }> }> } }
+    const pages = Object.values(j.query?.pages ?? {})
+    for (const p of pages) {
+      const ii = p.imageinfo?.[0]
+      const mime = ii?.mime ?? ''
+      const url = ii?.thumburl || ii?.url
+      if (url && (mime.startsWith('image/png') || mime.startsWith('image/jpeg') || mime.includes('svg'))) return url
+    }
+    return null
+  } catch (e) { console.warn('[social-agent] wikimedia:', e); return null }
+}
+
 // Spruch als grosser, plakativer Text unten links aufs Thumbnail - gerendert
 // statt KI-gemalt (Muster wie composeCreative im Anzeigen-Studio).
 async function composeSlogan(photoBytes: Uint8Array, slogan: string): Promise<Uint8Array> {
@@ -723,15 +742,15 @@ Regeln:
           //    Tisch (Sven 21.8.). Ein Spruch wird ausserdem NIE von der KI gemalt
           //    (unleserliches Gekrakel), sondern anschliessend als echter Text
           //    aufs Bild gerendert.
-          let scene = prompt, slogan = ''
+          let scene = prompt, slogan = '', refSearch = ''
           try {
             const resp = await claude(anthropicKey, {
-              system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; the trained character reference provides their look. Include EVERY requested visual element (flags, props, place, mood - a Zypernfahne is the flag of Cyprus: white with a copper-orange island shape above two green olive branches). NO text/typography in the scene. Separately extract the exact slogan the user wants ON the image (empty string if none). Reply ONLY as JSON {"scene":"...","slogan":"..."} with no other words.',
+              system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; character reference images provide their look. Include EVERY requested visual element and refer to reference images where given (e.g. "the flag from the reference image"). NO text/typography in the scene. Separately extract: the exact slogan the user wants ON the image (empty string if none), and reference_search = a short English Wikimedia search term for any SPECIFIC real-world symbol/object the generator will hallucinate without a reference (a national flag, coat of arms, a specific landmark, a logo) - empty string if none. Reply ONLY as JSON {"scene":"...","slogan":"...","reference_search":""} with no other words.',
               messages: [{ role: 'user', content: prompt }], max_tokens: 1000,
             })
             const raw = ((resp.content as Array<{ type: string; text?: string }>) ?? []).find(b => b.type === 'text')?.text ?? ''
             const m = raw.match(/\{[\s\S]*\}/)
-            if (m) { const j = JSON.parse(m[0]) as { scene?: string; slogan?: string }; if (j.scene) scene = j.scene; slogan = (j.slogan ?? '').trim() }
+            if (m) { const j = JSON.parse(m[0]) as { scene?: string; slogan?: string; reference_search?: string }; if (j.scene) scene = j.scene; slogan = (j.slogan ?? '').trim(); refSearch = (j.reference_search ?? '').trim() }
           } catch (pe) { console.warn('[social-agent] thumbnail prompt rewrite:', pe) }
 
           const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
@@ -741,7 +760,38 @@ Regeln:
             aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
           }
           if (soulId) params.custom_reference_id = soulId
-          let bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
+          // Exakte Symbole (Fahnen, Wappen, Logos, Wahrzeichen) kann KEIN
+          // Bildmodell aus der Beschreibung treffen - es halluziniert (Sven 21.8.,
+          // Zypernfahne). Deshalb: (a) selbst hochgeladene Referenzbilder
+          // (body.ref_urls aus dem Studio-Upload) und (b) automatisch im Netz
+          // recherchierte Referenzen (Wikimedia) gehen als ECHTE Referenzbilder an
+          // nano_banana (Multi-Referenz). Ohne Referenzen bleibt es beim
+          // Soul-Modell mit trainierter Persona.
+          const refUrls: string[] = Array.isArray(body.ref_urls) ? (body.ref_urls as string[]).filter(u => typeof u === 'string' && /^https:\/\//.test(u)).slice(0, 3) : []
+          let searchedRef: string | null = null
+          if (refSearch) searchedRef = await wikimediaImage(refSearch)
+          let bytes: Uint8Array
+          if (refUrls.length || searchedRef) {
+            const refs: Array<{ id: string }> = []
+            const personaFoto = persona === 'sven'
+              ? 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/sven-termin.jpg'
+              : persona === 'lotte' ? 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg' : null
+            const pushRef = async (url: string) => {
+              const b = new Uint8Array(await (await fetch(url)).arrayBuffer())
+              refs.push({ id: await hfUploadImage(sb, b, 'image/auto') })   // Helfer wandelt nach PNG
+            }
+            if (personaFoto) await pushRef(personaFoto)
+            for (const u of refUrls) await pushRef(u)
+            if (searchedRef) await pushRef(searchedRef)
+            const who2 = persona === 'sven' ? ' The man from the first reference image is the main subject (same face, same person).'
+              : persona === 'lotte' ? ' The chocolate labrador from the first reference image is the main subject (same dog).' : ''
+            bytes = await hfGenerateBytes(sb, 'nano_banana', {
+              prompt: `${scene}.${who2} Objects and symbols shown in the other reference images must appear EXACTLY as depicted there (accurate shapes, colours and details - especially flags and emblems). Photorealistic, natural lighting, no text, no watermark.`,
+              aspect_ratio: PLAT_ASPECT[platform], image_references: refs,
+            })
+          } else {
+            bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
+          }
           // 2) Spruch als gerenderter Text (gestochen scharf, korrekte Umlaute).
           if (slogan) {
             try { bytes = await composeSlogan(bytes, slogan) }
@@ -765,7 +815,7 @@ Regeln:
     // Debug: Prompt-Umschreibung isoliert testen (synchron, kein Bild).
     if (body.action === 'thumbnail_rewrite_test') {
       const resp = await claude(anthropicKey, {
-        system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; the trained character reference provides their look. Include EVERY requested visual element (flags, props, place, mood - a Zypernfahne is the flag of Cyprus: white with a copper-orange island shape above two green olive branches). NO text/typography in the scene. Separately extract the exact slogan the user wants ON the image (empty string if none). Reply ONLY as JSON {"scene":"...","slogan":"..."} with no other words.',
+        system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; character reference images provide their look. Include EVERY requested visual element and refer to reference images where given (e.g. "the flag from the reference image"). NO text/typography in the scene. Separately extract: the exact slogan the user wants ON the image (empty string if none), and reference_search = a short English Wikimedia search term for any SPECIFIC real-world symbol/object the generator will hallucinate without a reference (a national flag, coat of arms, a specific landmark, a logo) - empty string if none. Reply ONLY as JSON {"scene":"...","slogan":"...","reference_search":""} with no other words.',
         messages: [{ role: 'user', content: String(body.prompt ?? '') }], max_tokens: 1000,
       })
       return json({ ok: true, resp })

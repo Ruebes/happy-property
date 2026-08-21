@@ -49,6 +49,29 @@ export default function ThumbnailStudio() {
   const [pickFor, setPickFor] = useState<ThumbItem | null>(null)
   const [settingVid, setSettingVid] = useState('')
   const [toast, setToast] = useState('')
+  // Eigene Referenzbilder (Sven 21.8.): "diese Fahne einbauen, diese Person
+  // soll dies oder jenes machen". Bis 3 Bilder, gehen als ref_urls mit - der
+  // Server reicht sie als echte Referenzen an die Bild-KI weiter.
+  const [refs, setRefs] = useState<Array<{ url: string; name: string }>>([])
+  const [refBusy, setRefBusy] = useState(false)
+  const refInput = useRef<HTMLInputElement>(null)
+  const uploadRefs = async (files: FileList | null) => {
+    if (!files?.length) return
+    setRefBusy(true)
+    try {
+      for (const f of Array.from(files).slice(0, 3 - refs.length)) {
+        const ext = (f.name.split('.').pop() || 'png').toLowerCase()
+        const path = `thumb-refs/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+        const { error } = await supabase.storage.from('ad-creatives').upload(path, f, { cacheControl: '3600' })
+        if (error) throw error
+        const url = supabase.storage.from('ad-creatives').getPublicUrl(path).data.publicUrl
+        setRefs(prev => [...prev, { url, name: f.name }])
+      }
+    } catch (e) {
+      console.error('[ThumbnailStudio] ref upload:', e)
+      showToast(t('crm.thumbs.refErr', 'Referenzbild-Upload fehlgeschlagen.'))
+    } finally { setRefBusy(false); if (refInput.current) refInput.current.value = '' }
+  }
   const endRef = useRef<HTMLDivElement | null>(null)
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 3500) }
@@ -74,7 +97,8 @@ export default function ThumbnailStudio() {
       // Hintergrund-Job + Polling: Soul-Bilder brauchen oft >60 s und Safari
       // bricht Anfragen nach 60 s ab („Failed to send a request …", 21.8.).
       const { data, error } = await supabase.functions.invoke('social-agent', {
-        body: { action: 'thumbnail_generate', prompt: p, platform, persona, user_id: profile?.id ?? null },
+        body: { action: 'thumbnail_generate', prompt: p, platform, persona, user_id: profile?.id ?? null,
+          ...(refs.length ? { ref_urls: refs.map(r => r.url) } : {}) },
       })
       if (error) throw error
       const d = data as { ok?: boolean; id?: string | null; error?: string } | null
@@ -234,9 +258,24 @@ export default function ThumbnailStudio() {
               {busy ? '…' : t('crm.thumbs.go', 'Erstellen')}
             </button>
           </div>
+          <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <input ref={refInput} type="file" accept="image/*" multiple className="hidden" onChange={e => void uploadRefs(e.target.files)} />
+            <button type="button" onClick={() => refInput.current?.click()} disabled={refBusy || refs.length >= 3}
+              className="text-xs px-3 py-1.5 rounded-full border border-gray-200 text-gray-600 hover:border-gray-300 disabled:opacity-40">
+              {refBusy ? '…' : t('crm.thumbs.addRef', '📎 Referenzbild (Fahne, Person, Produkt …)')}
+            </button>
+            {refs.map((r, i) => (
+              <span key={r.url} className="inline-flex items-center gap-1.5 text-xs bg-gray-100 rounded-full pl-1 pr-2 py-1">
+                <img src={r.url} alt="" className="w-6 h-6 rounded-full object-cover" />
+                {r.name.slice(0, 18)}
+                <button type="button" onClick={() => setRefs(prev => prev.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500">×</button>
+              </span>
+            ))}
+            {refs.length > 0 && <span className="text-[11px] text-gray-400">{t('crm.thumbs.refHint', 'wird exakt so ins Bild übernommen')}</span>}
+          </div>
           {err && <p className="text-xs text-red-600 mt-1.5">{err}</p>}
           <p className="text-[11px] text-gray-400 mt-1.5">
-            {t('crm.thumbs.textHint', 'Tipp: Text auf dem Bild lieber nachträglich im Schnittprogramm ergänzen - KI-Schrift ist oft fehlerhaft.')}
+            {t('crm.thumbs.autoRefHint', 'Sprüche werden als echter Text gerendert; Fahnen, Wappen und Wahrzeichen recherchiert das System automatisch als Referenz.')}
           </p>
         </div>
       </div>
