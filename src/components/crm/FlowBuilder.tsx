@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges,
+  ReactFlow, Background, Controls, addEdge, applyNodeChanges, applyEdgeChanges, MarkerType, ConnectionLineType,
   Handle, Position,
   type Node, type Edge, type NodeProps, type Connection, type NodeChange, type EdgeChange,
 } from '@xyflow/react'
@@ -46,6 +46,9 @@ function nodeSummary(type: string, d: Record<string, unknown>, lists: Array<{ va
   return ''
 }
 
+// Verbindungspunkte: gross genug zum Treffen, mit weissem Rand wie in n8n.
+const HANDLE = '!w-3 !h-3 !border-2 !border-white hover:!scale-125 transition-transform'
+
 // ── Custom Node ──────────────────────────────────────────────────────────────
 function FlowNode({ id, type, data, selected }: NodeProps) {
   const meta = NODE_META[type ?? 'trigger'] ?? NODE_META.trigger
@@ -53,8 +56,13 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
   const lists = (d.__lists as Array<{ value: string; label: string }> | undefined) ?? []
   const summary = nodeSummary(type ?? '', d, lists)
   return (
-    <div className={`rounded-xl border-2 px-3 py-2 shadow-sm min-w-[150px] max-w-[220px] ${meta.color} ${selected ? 'ring-2 ring-orange-400' : ''}`}>
-      {type !== 'trigger' && <Handle type="target" position={Position.Top} className="!bg-gray-400" />}
+    <div className={`relative rounded-xl border-2 px-3 py-2.5 shadow-sm min-w-[168px] max-w-[230px] ${meta.color} ${selected ? 'ring-2 ring-orange-400' : ''}`}>
+      {/* Verbindungen laufen wie in n8n von LINKS nach RECHTS. Die Punkte sind
+          bewusst gross und farbig - die alten 6px-Punkte oben/unten waren kaum
+          zu treffen (Sven 21.8.). */}
+      {type !== 'trigger' && (
+        <Handle type="target" position={Position.Left} className={HANDLE + ' !bg-white !border-gray-400'} />
+      )}
       <div className="flex items-center gap-1.5">
         <span>{meta.icon}</span>
         <span className="text-xs font-bold text-gray-800">{meta.labelDe}</span>
@@ -62,12 +70,13 @@ function FlowNode({ id, type, data, selected }: NodeProps) {
       {summary && <p className="text-[10px] text-gray-500 mt-0.5 truncate" title={summary}>{summary}</p>}
       {type === 'split' ? (
         <>
-          <div className="flex justify-between text-[9px] font-semibold mt-1 px-0.5"><span className="text-emerald-600">✓ Ja</span><span className="text-rose-500">✗ Nein</span></div>
-          <Handle id="yes" type="source" position={Position.Bottom} style={{ left: '25%' }} className="!bg-emerald-500" />
-          <Handle id="no" type="source" position={Position.Bottom} style={{ left: '75%' }} className="!bg-rose-400" />
+          <span className="absolute -right-1 top-[30%] -translate-y-1/2 translate-x-full pl-3 text-[9px] font-semibold text-emerald-600">Ja</span>
+          <span className="absolute -right-1 top-[72%] -translate-y-1/2 translate-x-full pl-3 text-[9px] font-semibold text-rose-500">Nein</span>
+          <Handle id="yes" type="source" position={Position.Right} style={{ top: '30%' }} className={HANDLE + ' !bg-emerald-500 !border-emerald-600'} />
+          <Handle id="no" type="source" position={Position.Right} style={{ top: '72%' }} className={HANDLE + ' !bg-rose-400 !border-rose-500'} />
         </>
       ) : (
-        <Handle type="source" position={Position.Bottom} className="!bg-gray-400" />
+        <Handle type="source" position={Position.Right} className={HANDLE + ' !bg-orange-400 !border-orange-500'} />
       )}
       <span className="hidden">{id}</span>
     </div>
@@ -114,10 +123,17 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
         setTriggerPhase(w.trigger_config?.phase ?? ''); setTriggerList(w.trigger_config?.list_id ?? '')
         const g = w.graph ?? { nodes: [], edges: [] }
         let ns = (g.nodes ?? []) as Node[]
-        if (!ns.length) ns = [{ id: 'start', type: 'trigger', position: { x: 250, y: 40 }, data: {} }]
+        if (!ns.length) ns = [{ id: 'start', type: 'trigger', position: { x: 60, y: 140 }, data: {} }]
         // Listen-Optionen in die Node-Daten spiegeln (für die Kurz-Zusammenfassung)
         setNodes(ns.map(n => ({ ...n, data: { ...(n.data ?? {}), __lists: listOpts } })))
-        setEdges((g.edges ?? []) as Edge[])
+        // Alte Flows hatten dünne Linien ohne Pfeil - beim Laden auf den neuen
+        // Stil heben, damit ein bestehender Flow nicht anders aussieht als ein neuer.
+        setEdges(((g.edges ?? []) as Edge[]).map(e => ({
+          ...e, type: e.type ?? 'smoothstep', animated: true,
+          markerEnd: e.markerEnd ?? { type: MarkerType.ArrowClosed, width: 18, height: 18,
+            color: e.sourceHandle === 'yes' ? '#10b981' : e.sourceHandle === 'no' ? '#fb7185' : '#94a3b8' },
+          style: { strokeWidth: 2, stroke: e.sourceHandle === 'yes' ? '#10b981' : e.sourceHandle === 'no' ? '#fb7185' : '#94a3b8', ...(e.style ?? {}) },
+        })))
       }
       const rs = (runs as Array<{ status: string }> | null) ?? []
       setRunStats({ active: rs.filter(r => r.status === 'active').length, completed: rs.filter(r => r.status === 'completed').length })
@@ -126,11 +142,20 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
 
   const onNodesChange = useCallback((ch: NodeChange[]) => setNodes(ns => applyNodeChanges(ch, ns)), [])
   const onEdgesChange = useCallback((ch: EdgeChange[]) => setEdges(es => applyEdgeChanges(ch, es)), [])
-  const onConnect = useCallback((c: Connection) => setEdges(es => addEdge({ ...c, animated: true }, es)), [])
+  // Neue Verbindung: weiche Kurve mit Pfeilspitze. Ja-/Nein-Zweige eines Splits
+  // bekommen ihre Farbe, damit man den Weg auf einen Blick liest.
+  const onConnect = useCallback((c: Connection) => setEdges(es => addEdge({
+    ...c, type: 'smoothstep', animated: true,
+    markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18,
+      color: c.sourceHandle === 'yes' ? '#10b981' : c.sourceHandle === 'no' ? '#fb7185' : '#94a3b8' },
+    style: { strokeWidth: 2, stroke: c.sourceHandle === 'yes' ? '#10b981' : c.sourceHandle === 'no' ? '#fb7185' : '#94a3b8' },
+  }, es)), [])
 
   const addNode = (type: string) => {
     const id = `${type}-${newId()}`
-    const maxY = nodes.reduce((m, n) => Math.max(m, n.position.y), 0)
+    // Fluss laeuft nach rechts: neuer Knoten neben dem bisher letzten.
+    const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x), 0)
+    const lastY = nodes.reduce((y, n) => n.position.x >= maxX ? n.position.y : y, 40)
     const defaults: Record<string, Record<string, unknown>> = {
       delay: { amount: 1, unit: 'days' },
       email: { subject: '', html: '' },
@@ -138,7 +163,7 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
       list_update: { op: 'add', list_id: '' },
       split: { condition: 'email_opened' },
     }
-    setNodes(ns => [...ns, { id, type, position: { x: 250, y: maxY + 120 }, data: { ...(defaults[type] ?? {}), __lists: lists } }])
+    setNodes(ns => [...ns, { id, type, position: { x: maxX + 260, y: lastY }, data: { ...(defaults[type] ?? {}), __lists: lists } }])
     setSelId(id)
   }
 
@@ -237,7 +262,7 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
               <div className="mt-2"><CustomSelect value={triggerPhase} onChange={setTriggerPhase} options={[{ value: '', label: t('crm.flow2.pickPhase', 'Phase wählen …') }, ...PHASES]} /></div>
             )}
           </div>
-          <p className="text-[10px] text-gray-400 pt-2">{t('crm.flow2.hint', 'Knoten unten/oben per Drag an den Punkten verbinden. Split: linker Punkt = Ja, rechter = Nein.')}</p>
+          <p className="text-[10px] text-gray-400 pt-2">{t('crm.flow2.hint2', 'Vom orangenen Punkt rechts auf den Punkt links am nächsten Knoten ziehen. Beim Split: oben = Ja, unten = Nein.')}</p>
         </div>
 
         {/* Canvas */}
@@ -246,6 +271,9 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
             nodes={nodes} edges={edges} nodeTypes={nodeTypes}
             onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
             onNodeClick={(_, n) => setSelId(n.id)} onPaneClick={() => setSelId(null)}
+            connectionLineType={ConnectionLineType.SmoothStep}
+            connectionLineStyle={{ strokeWidth: 2, stroke: '#fb923c' }}
+            defaultEdgeOptions={{ type: 'smoothstep', animated: true }}
             fitView proOptions={{ hideAttribution: true }}>
             <Background gap={18} />
             <Controls showInteractive={false} />

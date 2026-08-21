@@ -4163,7 +4163,8 @@
       "trManualHint": "Kontakte von Hand einschreiben",
       "trList2": "Eintrag in Liste",
       "trListHint": "startet, sobald sich jemand einträgt",
-      "noLists": "Noch keine Empfängerliste angelegt."
+      "noLists": "Noch keine Empfängerliste angelegt.",
+      "hint2": "Vom orangenen Punkt rechts auf den Punkt links am nächsten Knoten ziehen. Beim Split: oben = Ja, unten = Nein."
     },
     "sim": {
       "title": "Strategie-Simulator",

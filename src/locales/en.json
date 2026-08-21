@@ -4163,7 +4163,8 @@
       "trManualHint": "enrol contacts by hand",
       "trList2": "Added to list",
       "trListHint": "starts as soon as someone joins",
-      "noLists": "No recipient list created yet."
+      "noLists": "No recipient list created yet.",
+      "hint2": "Drag from the orange dot on the right to the dot on the left of the next node. On a split: top = yes, bottom = no."
     },
     "sim": {
       "title": "Strategy Simulator",

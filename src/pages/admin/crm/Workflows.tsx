@@ -93,7 +93,7 @@ export default function Workflows() {
     try {
       const { data, error } = await supabase.from('funnel_workflows')
         .insert({ name: t('crm.flow2.newName', 'Neuer Flow'), status: 'draft', trigger_type: 'manual', created_by: profile?.id ?? null,
-          graph: { nodes: [{ id: 'start', type: 'trigger', position: { x: 250, y: 40 }, data: {} }], edges: [] } })
+          graph: { nodes: [{ id: 'start', type: 'trigger', position: { x: 60, y: 140 }, data: {} }], edges: [] } })
         .select('id').single()
       if (error) throw error
       setFlowEditing((data as { id: string }).id)
