@@ -324,6 +324,35 @@ async function svgToPng(svg: string): Promise<Uint8Array> {
   const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
   return r.render().asPng()
 }
+// Spruch als grosser, plakativer Text unten links aufs Thumbnail - gerendert
+// statt KI-gemalt (Muster wie composeCreative im Anzeigen-Studio).
+async function composeSlogan(photoBytes: Uint8Array, slogan: string): Promise<Uint8Array> {
+  const img = await Image.decode(photoBytes)
+  const W = img.width, H = img.height
+  const words = slogan.trim().split(/\s+/)
+  const lines: string[] = []; let cur = ''
+  for (const w of words) { if ((`${cur} ${w}`).trim().length > 16 && cur) { lines.push(cur); cur = w } else cur = (`${cur} ${w}`).trim() }
+  if (cur) lines.push(cur)
+  const fs = Math.round(Math.min(W, H) * 0.11)
+  const lh = Math.round(fs * 1.14)
+  const padX = Math.round(W * 0.045), padY = Math.round(fs * 0.55)
+  const boxH = lines.length * lh + padY * 2 - (lh - fs)
+  const wMax = Math.max(...lines.map(l => l.length))
+  const boxW = Math.min(W - padX, Math.round(wMax * fs * 0.60) + padX * 2)
+  const y0 = H - boxH - Math.round(H * 0.06)
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+    <rect x="${padX / 2}" y="${y0}" width="${boxW}" height="${boxH}" rx="${Math.round(fs * 0.28)}" fill="#e02424"/>
+    <text font-family="Open Sans" font-size="${fs}" font-weight="700" fill="#ffffff">${lines.map((l, i) =>
+      `<tspan x="${padX / 2 + padX}" y="${y0 + padY + fs - Math.round(fs * 0.12) + i * lh}">${esc(l)}</tspan>`).join('')}</text>
+  </svg>`
+  await ensureResvg()
+  const fontBuffers = await loadFonts()
+  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } }).render().asPng()
+  img.composite(await Image.decode(png), 0, 0)
+  return await img.encodeJPEG(92)
+}
+
 const CMP_W = 1080, CMP_H = 1350
 const xesc = (s: string) => (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 function xwrap(s: string, max: number): string[] {
@@ -688,16 +717,39 @@ Regeln:
       if (!thumbId) return json({ error: 'Konnte Auftrag nicht anlegen.' }, 500)
       const work = async () => {
         try {
+          // 1) Wunsch in einen sauberen Bild-Prompt uebersetzen. Vorher ging der
+          //    deutsche Satz („Ich hätte gern ein Thumbnail von …") ROH an die
+          //    Bild-KI - halbe Anweisungen wie Fahne oder Spruch fielen unter den
+          //    Tisch (Sven 21.8.). Ein Spruch wird ausserdem NIE von der KI gemalt
+          //    (unleserliches Gekrakel), sondern anschliessend als echter Text
+          //    aufs Bild gerendert.
+          let scene = prompt, slogan = ''
+          try {
+            const resp = await claude(anthropicKey, {
+              system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; the trained character reference provides their look. Include EVERY requested visual element (flags, props, place, mood - a Zypernfahne is the flag of Cyprus: white with a copper-orange island shape above two green olive branches). NO text/typography in the scene. Separately extract the exact slogan the user wants ON the image (empty string if none). Reply ONLY as JSON {"scene":"...","slogan":"..."} with no other words.',
+              messages: [{ role: 'user', content: prompt }], max_tokens: 1000,
+            })
+            const raw = ((resp.content as Array<{ type: string; text?: string }>) ?? []).find(b => b.type === 'text')?.text ?? ''
+            const m = raw.match(/\{[\s\S]*\}/)
+            if (m) { const j = JSON.parse(m[0]) as { scene?: string; slogan?: string }; if (j.scene) scene = j.scene; slogan = (j.slogan ?? '').trim() }
+          } catch (pe) { console.warn('[social-agent] thumbnail prompt rewrite:', pe) }
+
           const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
             : persona === 'lotte' ? " The image shows Lotte, Sven's chocolate labrador and office boss (the trained character), as the main subject." : ''
           const params: Record<string, unknown> = {
-            prompt: `${prompt}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no watermark.`,
+            prompt: `${scene}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no text, no watermark.`,
             aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
           }
           if (soulId) params.custom_reference_id = soulId
-          const bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
-          const path = `thumbnails/${Date.now()}-${platform}.png`
-          const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+          let bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
+          // 2) Spruch als gerenderter Text (gestochen scharf, korrekte Umlaute).
+          if (slogan) {
+            try { bytes = await composeSlogan(bytes, slogan) }
+            catch (ce) { console.error('[social-agent] thumbnail slogan:', ce) /* Bild ohne Text statt gar nichts */ }
+          }
+          const ext = slogan ? 'jpg' : 'png'
+          const path = `thumbnails/${Date.now()}-${platform}.${ext}`
+          const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: slogan ? 'image/jpeg' : 'image/png', upsert: true })
           if (upErr) throw new Error(`Upload: ${upErr.message}`)
           const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
           await sb.from('thumbnail_creations').update({ image_url: url }).eq('id', thumbId)
@@ -708,6 +760,15 @@ Regeln:
       }
       if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(work()); else await work()
       return json({ ok: true, pending: true, id: thumbId, platform })
+    }
+
+    // Debug: Prompt-Umschreibung isoliert testen (synchron, kein Bild).
+    if (body.action === 'thumbnail_rewrite_test') {
+      const resp = await claude(anthropicKey, {
+        system: 'You turn a German thumbnail wish into a compact ENGLISH image prompt (max 60 words) for a photorealistic generator. Context: "Lotte" is a chocolate labrador dog (never a person), "Sven" is the male founder of Happy Property; the trained character reference provides their look. Include EVERY requested visual element (flags, props, place, mood - a Zypernfahne is the flag of Cyprus: white with a copper-orange island shape above two green olive branches). NO text/typography in the scene. Separately extract the exact slogan the user wants ON the image (empty string if none). Reply ONLY as JSON {"scene":"...","slogan":"..."} with no other words.',
+        messages: [{ role: 'user', content: String(body.prompt ?? '') }], max_tokens: 1000,
+      })
+      return json({ ok: true, resp })
     }
 
     // Status eines Thumbnail-Jobs (Frontend-Polling alle paar Sekunden).
