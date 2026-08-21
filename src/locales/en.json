@@ -2695,7 +2695,14 @@
       "mailSubjectNew": "Appointment confirmation",
       "waInperson": "We meet in person",
       "vwSuffix": "{{name}} (property manager)",
-      "zoomAutoFailed": "Could not create Zoom link: {{e}}"
+      "zoomAutoFailed": "Could not create Zoom link: {{e}}",
+      "guestAdd": "+ Add someone who is not in the system",
+      "guestTitle": "Guest - not saved as a contact",
+      "guestName": "Name",
+      "guestMail": "Email (optional)",
+      "guestPhone": "Mobile (optional)",
+      "guestSave": "Add to appointment",
+      "guestHint": "Without contact details the name only appears in the appointment and calendar - no invitation goes out."
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",

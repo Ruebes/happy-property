@@ -293,6 +293,11 @@ export default function AppointmentModal({
     Array.isArray(appointment?.attendees) ? (appointment!.attendees as Attendee[]) : [],
   )
   const [bcQuery, setBcQuery] = useState('')
+  // Gast ohne Kundenakte: Sven 21.8. - "Termin mit einem Freund, der nicht im
+  // System ist". Wird NUR am Termin gespeichert, es entsteht kein Lead und kein
+  // Kontakt.
+  const [guestOpen, setGuestOpen] = useState(false)
+  const [guest, setGuest] = useState({ name: '', email: '', phone: '' })
   const [bcResults, setBcResults] = useState<Array<{ id: string; first_name: string; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language?: string | null }>>([])
   const [bcLoading, setBcLoading] = useState(false)
   const bcDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -372,6 +377,16 @@ export default function AppointmentModal({
     setBcResults([]); setBcQuery('')
   }
   const removeAttendee = (name: string) => setAttendees(prev => prev.filter(a => a.name !== name))
+
+  // Gast übernehmen: landet nur in attendees am Termin - kein Lead, kein Kontakt.
+  const addGuest = () => {
+    const name = guest.name.trim()
+    if (!name) return
+    const mail = guest.email.trim(), tel = guest.phone.replace(/[^\d+]/g, '')
+    if (attendees.some(a => a.name === name)) { setGuest({ name: '', email: '', phone: '' }); setGuestOpen(false); return }
+    setAttendees(prev => [...prev, { name, email: mail || null, phone: tel || null, company: null, language: 'de' }])
+    setGuest({ name: '', email: '', phone: '' }); setGuestOpen(false)
+  }
 
   // Orts-Suche (Photon/OSM via place-search) — Treffer wird zum Google-Maps-Link
   const [placeResults, setPlaceResults] = useState<Array<{ name: string; display: string; lat: number; lon: number }>>([])
@@ -1361,6 +1376,42 @@ export default function AppointmentModal({
                       </li>
                     ))}
                   </ul>
+                )}
+                {/* Gast ohne Kundenakte - steht nur an diesem Termin. */}
+                {!guestOpen ? (
+                  <button type="button" onClick={() => setGuestOpen(true)}
+                    className="mt-2 text-xs font-medium text-gray-600 hover:text-gray-900 underline underline-offset-2">
+                    {t('crm.appt.guestAdd', '+ Jemanden eintragen, der nicht im System ist')}
+                  </button>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-600 mb-2">
+                      {t('crm.appt.guestTitle', 'Gast - wird nicht als Kontakt gespeichert')}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <input value={guest.name} onChange={e => setGuest(g => ({ ...g, name: e.target.value }))}
+                        placeholder={t('crm.appt.guestName', 'Name')}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                      <input value={guest.email} onChange={e => setGuest(g => ({ ...g, email: e.target.value }))}
+                        placeholder={t('crm.appt.guestMail', 'E-Mail (optional)')}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                      <input value={guest.phone} onChange={e => setGuest(g => ({ ...g, phone: e.target.value }))}
+                        placeholder={t('crm.appt.guestPhone', 'Handy (optional)')}
+                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40" />
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <button type="button" onClick={addGuest} disabled={!guest.name.trim()}
+                        className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold disabled:opacity-40"
+                        style={{ backgroundColor: '#ff795d' }}>
+                        {t('crm.appt.guestSave', 'Zum Termin hinzufügen')}
+                      </button>
+                      <button type="button" onClick={() => { setGuestOpen(false); setGuest({ name: '', email: '', phone: '' }) }}
+                        className="text-xs text-gray-500 hover:text-gray-800">{t('common.cancel', 'Abbrechen')}</button>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-2">
+                      {t('crm.appt.guestHint', 'Ohne Kontaktdaten steht der Name nur im Termin und im Kalender - eine Einladung geht dann nicht raus.')}
+                    </p>
+                  </div>
                 )}
                 <p className="text-xs text-gray-400 mt-2">
                   {t('crm.appt.attendeesHint', 'Teilnehmer bekommen die Einladung per E-Mail (und WhatsApp, falls Nummer hinterlegt).')}

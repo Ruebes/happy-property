@@ -2695,7 +2695,14 @@
       "mailSubjectNew": "Terminbestätigung",
       "waInperson": "Wir treffen uns vor Ort",
       "vwSuffix": "{{name}} (Verwaltung)",
-      "zoomAutoFailed": "Zoom-Link konnte nicht erzeugt werden: {{e}}"
+      "zoomAutoFailed": "Zoom-Link konnte nicht erzeugt werden: {{e}}",
+      "guestAdd": "+ Jemanden eintragen, der nicht im System ist",
+      "guestTitle": "Gast - wird nicht als Kontakt gespeichert",
+      "guestName": "Name",
+      "guestMail": "E-Mail (optional)",
+      "guestPhone": "Handy (optional)",
+      "guestSave": "Zum Termin hinzufügen",
+      "guestHint": "Ohne Kontaktdaten steht der Name nur im Termin und im Kalender - eine Einladung geht dann nicht raus."
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",
