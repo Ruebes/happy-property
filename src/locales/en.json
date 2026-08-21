@@ -4126,7 +4126,7 @@
       "nSplit": "Split (if/then)",
       "palette": "Blocks",
       "trigger": "Trigger",
-      "trManual": "Manual / list",
+      "trManual": "Start manually",
       "trFunnel": "New funnel lead",
       "trPhase": "Pipeline phase",
       "trList": "List entry",
@@ -4159,7 +4159,11 @@
       "already": "Contact is already running in this workflow.",
       "enrollErr": "Enrollment failed.",
       "listEmpty": "This list has no subscribers.",
-      "allEnrolled": "All subscribers of this list are already enrolled."
+      "allEnrolled": "All subscribers of this list are already enrolled.",
+      "trManualHint": "enrol contacts by hand",
+      "trList2": "Added to list",
+      "trListHint": "starts as soon as someone joins",
+      "noLists": "No recipient list created yet."
     },
     "sim": {
       "title": "Strategy Simulator",

@@ -58,9 +58,38 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
+    // ── Auslöser „Eintrag in Liste" ───────────────────────────────
+    // Aktive Workflows mit trigger_type='list' schreiben neue Mitglieder ihrer
+    // Empfängerliste selbst ein. Vorher liefen solche Flows nur, wenn jemand die
+    // Kontakte von Hand hinzugefügt hat - der Auslöser war reine Anzeige
+    // (Sven 21.8.).
+    let enrolled = 0
+    try {
+      const { data: listWfs } = await sb.from('funnel_workflows')
+        .select('id, trigger_config').eq('status', 'active').eq('trigger_type', 'list')
+      for (const w of (listWfs ?? []) as Array<{ id: string; trigger_config: { list_id?: string } | null }>) {
+        const listId = w.trigger_config?.list_id
+        if (!listId) continue
+        const { data: mem } = await sb.from('newsletter_list_members').select('subscriber_id').eq('list_id', listId)
+        const subIds = ((mem ?? []) as Array<{ subscriber_id: string }>).map(m => m.subscriber_id)
+        if (!subIds.length) continue
+        // Wer schon einmal in diesem Flow war, kommt nicht erneut rein - egal ob
+        // laufend, fertig oder gestoppt. Sonst startet der Flow bei jedem Lauf neu.
+        const { data: had } = await sb.from('funnel_workflow_runs')
+          .select('subscriber_id').eq('workflow_id', w.id).not('subscriber_id', 'is', null)
+        const seen = new Set(((had ?? []) as Array<{ subscriber_id: string }>).map(r => r.subscriber_id))
+        const fresh = subIds.filter(id => !seen.has(id))
+        if (!fresh.length) continue
+        const { error } = await sb.from('funnel_workflow_runs')
+          .insert(fresh.map(id => ({ workflow_id: w.id, subscriber_id: id })))
+        if (error) console.warn('[run-workflows] Listen-Auslöser:', error.message)
+        else { enrolled += fresh.length; console.log(`[run-workflows] ${fresh.length} neue aus Liste ${listId} eingeschrieben`) }
+      }
+    } catch (e) { console.warn('[run-workflows] Listen-Auslöser:', e) }
+
     const { data: claimed } = await sb.rpc('claim_workflow_runs', { p_limit: 50 })
     const runs = (claimed ?? []) as Run[]
-    const out = { claimed: runs.length, completed: 0, waiting: 0, sent_email: 0, sent_wa: 0, stopped: 0, errors: [] as string[] }
+    const out = { claimed: runs.length, enrolled, completed: 0, waiting: 0, sent_email: 0, sent_wa: 0, stopped: 0, errors: [] as string[] }
 
     // Workflows cachen (mehrere Laeufe teilen einen Workflow)
     const wfCache = new Map<string, { status: string; graph: Graph } | null>()

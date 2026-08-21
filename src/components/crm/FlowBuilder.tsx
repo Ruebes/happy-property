@@ -88,6 +88,7 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
   const [status, setStatus] = useState('draft')
   const [triggerType, setTriggerType] = useState('manual')
   const [triggerPhase, setTriggerPhase] = useState('')
+  const [triggerList, setTriggerList] = useState('')     // Empfängerliste beim Auslöser „Liste"
   const [selId, setSelId] = useState<string | null>(null)
   const [lists, setLists] = useState<Array<{ value: string; label: string }>>([])
   const [saving, setSaving] = useState(false)
@@ -107,9 +108,10 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
       ])
       const listOpts = (((nl as Array<{ id: string; name: string }> | null) ?? [])).map(l => ({ value: l.id, label: l.name }))
       setLists(listOpts)
-      const w = wf as { name: string; status: string; trigger_type: string; trigger_config: { phase?: string } | null; graph: { nodes?: Node[]; edges?: Edge[] } | null } | null
+      const w = wf as { name: string; status: string; trigger_type: string; trigger_config: { phase?: string; list_id?: string } | null; graph: { nodes?: Node[]; edges?: Edge[] } | null } | null
       if (w) {
-        setName(w.name); setStatus(w.status); setTriggerType(w.trigger_type); setTriggerPhase(w.trigger_config?.phase ?? '')
+        setName(w.name); setStatus(w.status); setTriggerType(w.trigger_type)
+        setTriggerPhase(w.trigger_config?.phase ?? ''); setTriggerList(w.trigger_config?.list_id ?? '')
         const g = w.graph ?? { nodes: [], edges: [] }
         let ns = (g.nodes ?? []) as Node[]
         if (!ns.length) ns = [{ id: 'start', type: 'trigger', position: { x: 250, y: 40 }, data: {} }]
@@ -161,7 +163,8 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
         name: name.trim() || 'Workflow',
         graph: { nodes: cleanNodes, edges: cleanEdges },
         trigger_type: triggerType,
-        trigger_config: triggerType === 'pipeline_phase' ? { phase: triggerPhase } : {},
+        trigger_config: triggerType === 'pipeline_phase' ? { phase: triggerPhase }
+                      : triggerType === 'list' ? { list_id: triggerList } : {},
         updated_at: new Date().toISOString(),
       }
       if (newStatus) patch.status = newStatus
@@ -215,10 +218,21 @@ export default function FlowBuilder({ workflowId, onClose }: Props) {
           <div className="pt-3 border-t border-gray-100">
             <p className="text-[11px] font-semibold text-gray-400 uppercase mb-1">{t('crm.flow2.trigger', 'Auslöser')}</p>
             <CustomSelect value={triggerType} onChange={setTriggerType} options={[
-              { value: 'manual', label: t('crm.flow2.trManual', 'Manuell / Liste') },
+              { value: 'manual', label: t('crm.flow2.trManual', 'Manuell starten'), hint: t('crm.flow2.trManualHint', 'Kontakte von Hand einschreiben') },
+              { value: 'list', label: t('crm.flow2.trList2', 'Eintrag in Liste'), hint: t('crm.flow2.trListHint', 'startet, sobald sich jemand einträgt') },
               { value: 'funnel_signup', label: t('crm.flow2.trFunnel', 'Neuer Funnel-Lead') },
               { value: 'pipeline_phase', label: t('crm.flow2.trPhase', 'Pipeline-Phase') },
             ]} />
+            {/* Auslöser „Liste": alle Empfängerlisten zur Auswahl - vorher gab es
+                dafür gar kein Feld und der Flow wusste nicht, welche Liste gemeint
+                ist (Sven 21.8.). */}
+            {triggerType === 'list' && (
+              <div className="mt-2">
+                <CustomSelect value={triggerList} onChange={setTriggerList}
+                  options={[{ value: '', label: t('crm.flow.pickList', 'Liste wählen …') }, ...lists]} />
+                {!lists.length && <p className="text-[11px] text-amber-600 mt-1">{t('crm.flow2.noLists', 'Noch keine Empfängerliste angelegt.')}</p>}
+              </div>
+            )}
             {triggerType === 'pipeline_phase' && (
               <div className="mt-2"><CustomSelect value={triggerPhase} onChange={setTriggerPhase} options={[{ value: '', label: t('crm.flow2.pickPhase', 'Phase wählen …') }, ...PHASES]} /></div>
             )}

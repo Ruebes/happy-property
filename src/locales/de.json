@@ -4126,7 +4126,7 @@
       "nSplit": "Split (Wenn/Dann)",
       "palette": "Bausteine",
       "trigger": "Auslöser",
-      "trManual": "Manuell / Liste",
+      "trManual": "Manuell starten",
       "trFunnel": "Neuer Funnel-Lead",
       "trPhase": "Pipeline-Phase",
       "trList": "Listen-Eintritt",
@@ -4159,7 +4159,11 @@
       "already": "Kontakt läuft bereits in diesem Workflow.",
       "enrollErr": "Einschreiben fehlgeschlagen.",
       "listEmpty": "Diese Liste hat keine Abonnenten.",
-      "allEnrolled": "Alle Abonnenten dieser Liste laufen bereits."
+      "allEnrolled": "Alle Abonnenten dieser Liste laufen bereits.",
+      "trManualHint": "Kontakte von Hand einschreiben",
+      "trList2": "Eintrag in Liste",
+      "trListHint": "startet, sobald sich jemand einträgt",
+      "noLists": "Noch keine Empfängerliste angelegt."
     },
     "sim": {
       "title": "Strategie-Simulator",

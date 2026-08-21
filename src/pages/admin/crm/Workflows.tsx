@@ -115,7 +115,7 @@ export default function Workflows() {
     manual: t('crm.flow2.trManual', 'Manuell / Liste'),
     funnel_signup: t('crm.flow2.trFunnel', 'Neuer Funnel-Lead'),
     pipeline_phase: t('crm.flow2.trPhase', 'Pipeline-Phase'),
-    list: t('crm.flow2.trList', 'Listen-Eintritt'),
+    list: t('crm.flow2.trList2', 'Eintrag in Liste'),
   }
 
   const createWorkflow = async () => {
