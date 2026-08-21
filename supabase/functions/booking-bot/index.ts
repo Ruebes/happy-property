@@ -253,9 +253,16 @@ const LOTTE_BILDER = [
 ]
 const lotteBild = () => LOTTE_BILDER[Math.floor(Math.random() * LOTTE_BILDER.length)]
 
-function withSignoff(text: string): string {
+// Es gibt Faelle, in denen sich SVEN selbst meldet statt Lotte: Leute, die ihn
+// noch gar nicht kennen (Meta-Fragebogen, 21.8.). Dann seine Unterschrift und
+// sein Foto - eine Assistentin mit Hundefoto wirkt beim Erstkontakt zu flapsig.
+const SVEN_BILD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/sven-termin.jpg'
+const SVEN_QUELLEN = ['meta_formular']
+
+function withSignoff(text: string, asSven = false): string {
   // Vorhandene Gruesse nicht doppeln — einige Texte signieren selbst.
-  return /(liebe grüße|viele grüße|beste grüße|\blg\b|bis dann)/i.test(text) ? text : `${text}\n\nLiebe Grüße\nLotte 🐾`
+  if (/(liebe grüße|viele grüße|beste grüße|\blg\b|bis dann)/i.test(text)) return text
+  return asSven ? `${text}\n\nViele Grüße\nSven` : `${text}\n\nLiebe Grüße\nLotte 🐾`
 }
 
 // Ein Client fuer den Versand. Bewusst modulweit und faul angelegt: sendWa hat
@@ -271,8 +278,8 @@ function normText(t: string): string {
     .trim()
 }
 
-async function sendWa(phone: string, text: string): Promise<void> {
-  const full = withSignoff(text)
+async function sendWa(phone: string, text: string, asSven = false): Promise<void> {
+  const full = withSignoff(text, asSven)
   // Ueber send-whatsapp statt direkt an Timelines: nur dort sitzen Bild-Upload,
   // Verkleinerung, JPEG-Wandlung und der 2-MB-Guard.
   const { data, error } = await sendClient().functions.invoke('send-whatsapp', {
@@ -282,7 +289,7 @@ async function sendWa(phone: string, text: string): Promise<void> {
       // persona_image statt file_url: ein Deck-Titelbild oder eine YouTube-Vorschau
       // im Text hat Vorrang. Sonst schickt der Bot ein Hundefoto, wo der Kunde die
       // Immobilie sehen soll.
-      persona_image: lotteBild(),
+      persona_image: asSven ? SVEN_BILD : lotteBild(),
     },
   })
   if (error) throw new Error(`send-whatsapp: ${error.message}`)
@@ -656,7 +663,7 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
   if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })
   else await admin.from('booking_conversations').insert({ lead_id: leadId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg, expires_at: expires })
-  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  await sendWa(phone, msg, SVEN_QUELLEN.includes(source)); await logWa(admin, leadId, msg, 'outbound')
   return json({ ok: true, nudged: stage, source })
 }
 
@@ -700,8 +707,11 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
 
   // Eröffnungstext je Auslöser (editierbar in booking_bot_messages).
-  const key = source === 'erstkontakt' ? 'erstkontakt_0' : source === 'deck_viewed' ? 'deck_viewed_0' : 'no_show_0'
-  const fallback = source === 'erstkontakt'
+  const key = source === 'meta_formular' ? 'meta_formular_0'
+    : source === 'erstkontakt' ? 'erstkontakt_0' : source === 'deck_viewed' ? 'deck_viewed_0' : 'no_show_0'
+  const fallback = source === 'meta_formular'
+    ? 'Hallo {{vorname}}, hier ist Sven von Happy Property.'
+    : source === 'erstkontakt'
     ? 'Hey {{vorname}}, danke für deine Anfrage! Leider ist keine Terminbuchung angekommen — lass es uns direkt lösen, ich hätte zwei Zeiten frei:'
     : source === 'deck_viewed'
     ? 'Hey {{vorname}}, schön, dass du dir die Objekte angeschaut hast! Was ist dein Favorit — wollen wir gemeinsam draufschauen? Ich hätte zwei Zeiten frei:'
@@ -713,7 +723,7 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
     .insert({ lead_id: leadId, deal_id: dealId, source, state: 'awaiting_choice', proposed_slots: slots, last_message: msg,
               ...(source === 'no_show' ? { expires_at: new Date(Date.now() + 16 * 24 * 3600e3).toISOString() } : {}) })
     .select('id').single()
-  await sendWa(phone, msg); await logWa(admin, leadId, msg, 'outbound')
+  await sendWa(phone, msg, SVEN_QUELLEN.includes(source)); await logWa(admin, leadId, msg, 'outbound')
 
   // No-Show: 5 weitere Nudge-Stufen planen (Tag 1/2/3/5/14). process-scheduled-messages
   // ruft dafür booking-bot nudge; buchen/Opt-Out storniert sie automatisch (Trigger).
