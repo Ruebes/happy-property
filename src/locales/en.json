@@ -2694,7 +2694,8 @@
       "mailSubjectEdit": "Appointment change",
       "mailSubjectNew": "Appointment confirmation",
       "waInperson": "We meet in person",
-      "vwSuffix": "{{name}} (property manager)"
+      "vwSuffix": "{{name}} (property manager)",
+      "zoomAutoFailed": "Could not create Zoom link: {{e}}"
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",

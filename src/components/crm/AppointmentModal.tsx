@@ -511,11 +511,33 @@ export default function AppointmentModal({
       const start_time = startD.toISOString()
       const end_time   = endD.toISOString()
 
+      // Zoom-Termin ohne Link? Dann den Link jetzt AUTOMATISCH erzeugen - der
+      // manuelle Knopf wurde in der Praxis uebersehen und der Termin stand ohne
+      // Einwahl im Kalender (Giona, 21.8.). Scheitert Zoom, wird trotzdem
+      // gespeichert und der Fehler angezeigt - lieber Termin ohne Link als gar
+      // kein Termin.
+      let autoZoomLink = zoomLink, autoZoomMeetingId = zoomMeetingId
+      if (apptType === 'zoom' && !zoomLink) {
+        try {
+          const [vH, vM] = von.split(':').map(Number)
+          const [bH, bM] = bis.split(':').map(Number)
+          const { data: zm, error: zErr } = await supabase.functions.invoke('create-zoom-meeting', {
+            body: { title: title || t('crm.appt.defaultZoomTitle', 'Beratungsgespräch'),
+              start_time: startD.toISOString(), duration_minutes: Math.max(30, (bH * 60 + bM) - (vH * 60 + vM)) },
+          })
+          if (zErr || (zm as { error?: string } | null)?.error) throw new Error((zm as { error?: string } | null)?.error || zErr?.message)
+          autoZoomLink = (zm as { join_url?: string }).join_url ?? ''
+          autoZoomMeetingId = (zm as { meeting_id?: string | null }).meeting_id ?? null
+          setZoomLink(autoZoomLink); setZoomMeetingId(autoZoomMeetingId); setZoomGenerated(true)
+        } catch (e) {
+          warnings.push(t('crm.appt.zoomAutoFailed', 'Zoom-Link konnte nicht erzeugt werden: {{e}}', { e: e instanceof Error ? e.message : String(e) }))
+        }
+      }
       // Nur die zum gewählten Typ gehörenden Detail-Felder speichern — beim
       // Typwechsel im Edit-Modus dürfen keine alten Zoom-Links/Adressen kleben bleiben.
-      const effZoomLink      = apptType === 'zoom' ? zoomLink : ''
+      const effZoomLink      = apptType === 'zoom' ? autoZoomLink : ''
       const effZoomPassword  = apptType === 'zoom' ? zoomPassword : ''
-      const effZoomMeetingId = apptType === 'zoom' ? zoomMeetingId : null
+      const effZoomMeetingId = apptType === 'zoom' ? autoZoomMeetingId : null
       const effLocation      = apptType === 'inperson' ? location : ''
       const effLocationUrl   = apptType === 'inperson' ? locationUrl : ''
       const effPhone         = (apptType === 'phone' || apptType === 'whatsapp') ? phoneNumber : ''

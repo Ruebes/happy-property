@@ -2694,7 +2694,8 @@
       "mailSubjectEdit": "Terminänderung",
       "mailSubjectNew": "Terminbestätigung",
       "waInperson": "Wir treffen uns vor Ort",
-      "vwSuffix": "{{name}} (Verwaltung)"
+      "vwSuffix": "{{name}} (Verwaltung)",
+      "zoomAutoFailed": "Zoom-Link konnte nicht erzeugt werden: {{e}}"
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",
