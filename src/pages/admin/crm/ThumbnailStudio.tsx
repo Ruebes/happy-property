@@ -71,13 +71,24 @@ export default function ThumbnailStudio() {
     if (!p || busy) return
     setBusy(true); setErr('')
     try {
+      // Hintergrund-Job + Polling: Soul-Bilder brauchen oft >60 s und Safari
+      // bricht Anfragen nach 60 s ab („Failed to send a request …", 21.8.).
       const { data, error } = await supabase.functions.invoke('social-agent', {
         body: { action: 'thumbnail_generate', prompt: p, platform, persona, user_id: profile?.id ?? null },
       })
       if (error) throw error
-      const d = data as { ok?: boolean; id?: string | null; url?: string; error?: string } | null
-      if (!d?.ok || !d.url) throw new Error(d?.error || t('crm.thumbs.genErr', 'Generierung fehlgeschlagen.'))
-      setItems(list => [...list, { id: d.id ?? null, platform, prompt: p, persona, image_url: d.url!, video_id: null, created_at: new Date().toISOString() }])
+      const d = data as { ok?: boolean; id?: string | null; error?: string } | null
+      if (!d?.ok || !d.id) throw new Error(d?.error || t('crm.thumbs.genErr', 'Generierung fehlgeschlagen.'))
+      let url = ''
+      for (let i = 0; i < 75; i++) {                       // bis ~5 Minuten
+        await new Promise(r => setTimeout(r, 4000))
+        const { data: st } = await supabase.functions.invoke('social-agent', { body: { action: 'thumbnail_status', id: d.id } })
+        const sd = st as { status?: string; url?: string; error?: string } | null
+        if (sd?.status === 'done' && sd.url) { url = sd.url; break }
+        if (sd?.status === 'error') throw new Error(sd.error || t('crm.thumbs.genErr', 'Generierung fehlgeschlagen.'))
+      }
+      if (!url) throw new Error(t('crm.thumbs.genTimeout', 'Dauert ungewöhnlich lange - schau gleich in der Liste nach, das Bild erscheint dort, sobald es fertig ist.'))
+      setItems(list => [...list, { id: d.id ?? null, platform, prompt: p, persona, image_url: url, video_id: null, created_at: new Date().toISOString() }])
       setPrompt('')
     } catch (e) {
       console.error('[ThumbnailStudio] generate:', e)

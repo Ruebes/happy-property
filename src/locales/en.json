@@ -3908,7 +3908,8 @@
       "videosErr": "Could not load the video list.",
       "setOk": "✅ Thumbnail set on the video.",
       "setErr": "Setting failed: {{msg}}",
-      "textHint": "Tip: add text to the image later in your editing tool - AI lettering is often flawed."
+      "textHint": "Tip: add text to the image later in your editing tool - AI lettering is often flawed.",
+      "genTimeout": "Taking unusually long - check the list shortly, the image will appear there once ready."
     },
     "social": {
       "title": "Social media",

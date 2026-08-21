@@ -674,32 +674,57 @@ Regeln:
       const PLAT_ASPECT: Record<string, string> = { youtube: '16:9', instagram: '3:4', story: '9:16', facebook: '1:1', linkedin: '16:9' }
       const platform = Object.keys(PLAT_ASPECT).includes(String(body.platform)) ? String(body.platform) : 'youtube'
       const persona = ['sven', 'lotte', 'none'].includes(String(body.persona)) ? String(body.persona) : 'sven'
-      try {
-        const cfg = await personaCfg(sb)
-        const soulId = persona === 'sven' ? cfg.sven_soul_id : persona === 'lotte' ? cfg.lotte_soul_id : undefined
-        if (persona !== 'none' && !soulId) return json({ error: 'Soul-ID fehlt in den Einstellungen (social_persona_refs).' }, 500)
-        const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
-          : persona === 'lotte' ? " The image shows Lotte, Sven's chocolate labrador and office boss (the trained character), as the main subject." : ''
-        const params: Record<string, unknown> = {
-          prompt: `${prompt}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no watermark.`,
-          aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
+      // Im HINTERGRUND generieren: Soul-Bilder brauchen oft laenger als 60 s,
+      // und Safari bricht jede Anfrage nach 60 s hart ab („Failed to send a
+      // request to the Edge Function" — Sven/Leonard, 21.8.). Deshalb: Zeile
+      // sofort anlegen, Job im Hintergrund, Frontend fragt thumbnail_status.
+      const cfg = await personaCfg(sb)
+      const soulId = persona === 'sven' ? cfg.sven_soul_id : persona === 'lotte' ? cfg.lotte_soul_id : undefined
+      if (persona !== 'none' && !soulId) return json({ error: 'Soul-ID fehlt in den Einstellungen (social_persona_refs).' }, 500)
+      const { data: row } = await sb.from('thumbnail_creations')
+        .insert({ platform, prompt, persona, image_url: null, created_by: typeof body.user_id === 'string' && body.user_id ? body.user_id : null })
+        .select('id').maybeSingle()
+      const thumbId = (row as { id?: string } | null)?.id
+      if (!thumbId) return json({ error: 'Konnte Auftrag nicht anlegen.' }, 500)
+      const work = async () => {
+        try {
+          const who = persona === 'sven' ? ' The image shows Sven Rüprich, founder of Happy Property (the trained character), as the main subject.'
+            : persona === 'lotte' ? " The image shows Lotte, Sven's chocolate labrador and office boss (the trained character), as the main subject." : ''
+          const params: Record<string, unknown> = {
+            prompt: `${prompt}.${who} Eye-catching social media thumbnail composition, expressive, photorealistic, natural lighting, crisp details, no watermark.`,
+            aspect_ratio: PLAT_ASPECT[platform], quality: '2k',
+          }
+          if (soulId) params.custom_reference_id = soulId
+          const bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
+          const path = `thumbnails/${Date.now()}-${platform}.png`
+          const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+          if (upErr) throw new Error(`Upload: ${upErr.message}`)
+          const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+          await sb.from('thumbnail_creations').update({ image_url: url }).eq('id', thumbId)
+        } catch (e) {
+          console.error('[social-agent] thumbnail bg:', e)
+          await sb.from('thumbnail_creations').update({ error: (e instanceof Error ? e.message : String(e)).slice(0, 300) }).eq('id', thumbId)
         }
-        if (soulId) params.custom_reference_id = soulId
-        const bytes = await hfGenerateBytes(sb, 'text2image_soul_v2', params)
-        const path = `thumbnails/${Date.now()}-${platform}.png`
-        const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
-        if (upErr) return json({ error: `Upload: ${upErr.message}` }, 500)
-        const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
-        const { data: row } = await sb.from('thumbnail_creations')
-          .insert({ platform, prompt, persona, image_url: url, created_by: typeof body.user_id === 'string' && body.user_id ? body.user_id : null })
-          .select('id').maybeSingle()
-        return json({ ok: true, id: (row as { id?: string } | null)?.id ?? null, url, platform })
-      } catch (e) { return json({ error: (e as Error).message }, 500) }
+      }
+      if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(work()); else await work()
+      return json({ ok: true, pending: true, id: thumbId, platform })
+    }
+
+    // Status eines Thumbnail-Jobs (Frontend-Polling alle paar Sekunden).
+    if (body.action === 'thumbnail_status') {
+      const { data } = await sb.from('thumbnail_creations').select('image_url, error').eq('id', String(body.id ?? '')).maybeSingle()
+      const r = data as { image_url: string | null; error?: string | null } | null
+      if (!r) return json({ status: 'unknown' })
+      if (r.error) return json({ status: 'error', error: r.error })
+      if (r.image_url) return json({ status: 'done', url: r.image_url })
+      return json({ status: 'pending' })
     }
 
     if (body.action === 'thumbnail_list') {
+      // Laufende/gescheiterte Jobs haben image_url null - nicht listen.
       const { data } = await sb.from('thumbnail_creations')
         .select('id, platform, prompt, persona, image_url, video_id, created_at')
+        .not('image_url', 'is', null)
         .order('created_at', { ascending: true }).limit(50)
       return json({ ok: true, items: data ?? [] })
     }

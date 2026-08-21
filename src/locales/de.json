@@ -3908,7 +3908,8 @@
       "videosErr": "Videoliste konnte nicht geladen werden.",
       "setOk": "✅ Thumbnail ist auf dem Video gesetzt.",
       "setErr": "Setzen fehlgeschlagen: {{msg}}",
-      "textHint": "Tipp: Text auf dem Bild lieber nachträglich im Schnittprogramm ergänzen - KI-Schrift ist oft fehlerhaft."
+      "textHint": "Tipp: Text auf dem Bild lieber nachträglich im Schnittprogramm ergänzen - KI-Schrift ist oft fehlerhaft.",
+      "genTimeout": "Dauert ungewöhnlich lange - schau gleich in der Liste nach, das Bild erscheint dort, sobald es fertig ist."
     },
     "social": {
       "title": "Social Media",
