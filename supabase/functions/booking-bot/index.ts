@@ -63,11 +63,14 @@ function berlinDateStr(iso: string): string {
 }
 
 // Verfügbarkeitsfenster je Wochentag (Berlin-Stunden). Wochenende = 17–20.
+// Buchungsfenster in DEUTSCHER Zeit (der ganze Bot rechnet in Europe/Berlin).
+// Sven denkt in Zypern-Zeit, die genau eine Stunde vorgeht:
+//   Mo-Fr: letzter Terminbeginn 21:00 Zypern = 20:00 deutscher Zeit, Ende 20:30
+//          -> Fenster-Ende 20.5 (die zweite Zahl ist das spaeteste ENDE).
+//   Sa/So: unveraendert 17-20 deutscher Zeit = 18-21 Zypern.
 function windowFor(wd: number): [number, number] | null {
-  // Ende = spaetestes ENDE eines Termins. Bei [11,19] fiel ein 19:00-Termin raus
-  // (19:30 > 19:00) - Roni wollte genau das, Sven sagte zu (22.8.). Jetzt bis 20.
-  if (wd >= 1 && wd <= 5) return [11, 20]   // Mo–Fr 11–20
-  return [17, 20]                            // Sa+So 17–20
+  if (wd >= 1 && wd <= 5) return [11, 20.5]   // Mo–Fr 11:00–20:30 dt. = 12:00–21:30 Zypern
+  return [17, 20]                              // Sa+So 17–20 dt. = 18–21 Zypern
 }
 
 interface Slot { startIso: string; endIso: string; label: string }
