@@ -997,9 +997,9 @@ export default function PropertyDetail() {
     if (!window.confirm(t('documents.deleteConfirm'))) return
     const { error: rmErr } = await supabase.storage.from('documents').remove([doc.file_url])
     if (rmErr) console.error('[PropertyDetail] deleteDoc storage:', rmErr)
-    const { error } = await supabase.from('documents').delete().eq('id', doc.id)
-    if (error) {
-      console.error('[PropertyDetail] deleteDoc:', error)
+    const { data: gone, error } = await supabase.from('documents').delete().eq('id', doc.id).select('id')
+    if (error || !gone?.length) {
+      console.error('[PropertyDetail] deleteDoc:', error ?? 'keine Zeile geloescht (Rechte?)')
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
     }
@@ -1266,9 +1266,9 @@ export default function PropertyDetail() {
       const { error: rmErr } = await supabase.storage.from('unit-documents').remove(paths)
       if (rmErr) console.error('[PropertyDetail] handleDeletePaymentEntry storage:', rmErr)
     }
-    const { error } = await supabase.from('crm_unit_payments').delete().eq('id', payId)
-    if (error) {
-      console.error('[PropertyDetail] handleDeletePaymentEntry:', error)
+    const { data: goneP, error } = await supabase.from('crm_unit_payments').delete().eq('id', payId).select('id')
+    if (error || !goneP?.length) {
+      console.error('[PropertyDetail] handleDeletePaymentEntry:', error ?? 'keine Zeile geloescht (Rechte?)')
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
     }
@@ -1435,12 +1435,16 @@ export default function PropertyDetail() {
     if (!window.confirm(t('propertyDetail.contracts.deleteDocConfirm', '„{{name}}" löschen?', { name: doc.name }))) return
     const { error: rmErr } = await supabase.storage.from('unit-documents').remove([doc.file_path])
     if (rmErr) console.error('[PropertyDetail] handleDeleteEigDoc storage:', rmErr)
-    const { error } = await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
-    if (error) {
-      console.error('[PropertyDetail] handleDeleteEigDoc:', error)
+    // .select() erzwingen: ohne die zurueckgegebenen Zeilen bleibt eine von RLS
+    // geblockte Loeschung unsichtbar - PostgREST meldet dann 0 Zeilen OHNE Fehler,
+    // und die Oberflaeche tat so, als sei alles gut (Thorsten Brendel, 22.8.).
+    const { data: gone, error } = await supabase.from('crm_unit_documents').delete().eq('id', doc.id).select('id')
+    if (error || !gone?.length) {
+      console.error('[PropertyDetail] handleDeleteEigDoc:', error ?? 'keine Zeile geloescht (Rechte?)')
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
     }
+    setToast({ msg: t('success.deleted') })
     await fetchUnitPayments()
   }
 
