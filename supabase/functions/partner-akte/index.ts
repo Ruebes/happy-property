@@ -190,6 +190,13 @@ Deno.serve(async (req) => {
         try {
           const since = share.last_notified_at
           const nowIso = new Date().toISOString()
+          // Drossel (Sven 22.8.: "da soll nichts alle 10 Minuten in den Versand
+          // gehen"): Der Scan laeuft alle 10 Minuten, GESENDET wird aber
+          // fruehestens 4 Stunden nach der letzten Meldung - neue Ereignisse
+          // sammeln sich bis dahin zu EINER Sammelnachricht.
+          if (since && Date.now() - new Date(since).getTime() < 4 * 3600e3) {
+            results.push({ share: share.id, throttled: true }); continue
+          }
           const [{ data: acts }, { data: calcs }, { data: decks }, { data: appts }] = await Promise.all([
             sb.from('activities').select('type, direction, subject, created_at, auto').eq('lead_id', share.lead_id).gt('created_at', since).order('created_at', { ascending: true }).limit(20),
             sb.from('property_calculations').select('title, token, created_at').eq('lead_id', share.lead_id).gt('created_at', since),

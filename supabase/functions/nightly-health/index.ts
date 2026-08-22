@@ -100,10 +100,15 @@ const checkDuplicateUnits: Check = {
   title: 'Dieselbe Wohnungsnummer zweimal im selben Projekt',
   run: async (sb) => {
     const { data: units } = await sb.from('crm_project_units')
-      .select('id, unit_number, project_id, size_sqm, price_gross, project:crm_projects(name)')
+      .select('id, unit_number, project_id, block, size_sqm, price_gross, project:crm_projects(name)')
     const seen = new Map<string, Array<Record<string, unknown>>>()
     for (const u of (units ?? []) as Array<Record<string, unknown>>) {
-      const key = `${u.project_id}|${String(u.unit_number ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      // Baugebiet/Block gehoert zum Schluessel: Developer wie Motive Point (Venara)
+      // fuehren mehrere Gebiete mit je eigener Nummer 1..n - "Villa 1" in DIAMOND
+      // und "Villa 1" in SEA CAVES sind ZWEI Wohnungen, keine Dublette. Genau so
+      // kommen die Daten vom Developer (Sven 22.8.), der Check meldete das
+      // faelschlich jede Nacht als Fehler.
+      const key = `${u.project_id}|${String(u.block ?? '').toLowerCase().trim()}|${String(u.unit_number ?? '').toLowerCase().replace(/[^a-z0-9]/g, '')}`
       if (!seen.has(key)) seen.set(key, [])
       seen.get(key)!.push(u)
     }
@@ -111,7 +116,8 @@ const checkDuplicateUnits: Check = {
     for (const [, list] of seen) {
       if (list.length < 2) continue
       const proj = (list[0].project as { name?: string } | null)?.name ?? '?'
-      const num  = list[0].unit_number
+      const blk  = String(list[0].block ?? '').trim()
+      const num  = `${list[0].unit_number}${blk ? ` (${blk})` : ''}`
       const varianten = list.map(u => `${u.size_sqm ?? '?'} m² / ${u.price_gross ?? '?'} €`).join('  ·  ')
       out.push({
         check_key: 'wohnung_doppelt', severity: 'kritisch',
@@ -560,6 +566,31 @@ const checkCalcItemBasics: Check = {
         what_plain: `In "${c.title ?? c.token}" fehlten Lage oder Bautraeger, obwohl das Projekt sie inzwischen kennt.`,
         action: dryRun ? 'proposed' : 'fixed',
         fix_plain: 'Aus dem Projekt nachgetragen - der Kundenlink zeigt die Daten jetzt an.',
+      })
+    }
+    return out
+  },
+}
+
+// ── Pruefung 17: Zeitplan-Jobs, die still scheitern ─────────────────────────
+// hp-partner-akte lief tagelang bei JEDEM Start auf einen Fehler (kaputte
+// Anfuehrungszeichen im Job-Kommando) - 1008 Fehllaeufe, ohne dass es irgendwo
+// auftauchte (Sven 22.8.). Diese Pruefung meldet jeden Job, dessen letzte
+// Laeufe mehrheitlich scheitern.
+const checkCronHealth: Check = {
+  key: 'zeitplan_kaputt',
+  title: 'Automatischer Zeitplan-Job scheitert',
+  run: async (sb) => {
+    const out: Finding[] = []
+    const { data } = await sb.rpc('health_cron_failures')
+    for (const r of ((data ?? []) as Array<{ jobname: string; fails: number; total: number; last_error: string | null }>)) {
+      if (r.fails === 0 || r.total === 0) continue
+      if (r.fails / r.total < 0.5) continue          // vereinzelte Wackler nicht melden
+      out.push({
+        check_key: 'zeitplan_kaputt', severity: 'kritisch', entity_kind: 'system', entity_id: r.jobname, entity_label: r.jobname,
+        what_plain: `Der Zeitplan-Job "${r.jobname}" ist in den letzten 24 Stunden ${r.fails} von ${r.total} Mal gescheitert. Was er erledigen soll, bleibt seitdem liegen. Letzter Fehler: ${(r.last_error ?? '?').slice(0, 160)}`,
+        action: 'proposed',
+        fix_plain: 'Job-Kommando pruefen (haeufigste Ursache: kaputte Anfuehrungszeichen beim Anlegen - mit Dollar-Quoting neu planen).',
       })
     }
     return out
