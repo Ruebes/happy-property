@@ -36,6 +36,7 @@ const CORS = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 const GRAPH = 'https://graph.facebook.com/v21.0'
+const PAGE_ID = '556440087559971'   // Immobilien in Zypern - Happy Property
 
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -71,11 +72,11 @@ const normPhone = (v: string) => v.replace(/[^0-9+]/g, '')
 
 // Ein Lead aus Meta ins CRM übernehmen. Gibt zurück, was passiert ist, damit der
 // Aufrufer eine ehrliche Bilanz bekommt (angelegt / ergänzt / übersprungen).
-async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<'created' | 'updated' | 'skipped'> {
+async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<{ status: 'created' | 'updated' | 'skipped'; leadId?: string }> {
   const fields = raw.field_data ?? []
   const email = (pick(fields, 'email') || '').toLowerCase()
   const phone = normPhone(pick(fields, 'phone'))
-  if (!email && !phone) return 'skipped'          // ohne Kontaktweg wertlos
+  if (!email && !phone) return { status: 'skipped' }          // ohne Kontaktweg wertlos
 
   let first = pick(fields, 'first_name')
   let last  = pick(fields, 'last_name')
@@ -113,13 +114,24 @@ async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<'created
       const { data: alt } = await admin.from('leads').select('id').contains('alt_phones', [phone]).limit(1)
       if (alt?.length) leadId = (alt[0] as { id: string }).id
     }
+    // Letzte 9 Ziffern vergleichen: gespeicherte Nummern haben oft eine doppelte
+    // Laendervorwahl oder Leerzeichen ("+49491715260389"), der exakte Vergleich
+    // uebersieht dieselbe Person dann komplett.
+    if (!leadId) {
+      const tail = phone.replace(/\D/g, '').slice(-9)
+      if (tail.length === 9) {
+        const { data: like } = await admin.from('leads').select('id')
+          .or(`phone.like.%${tail},whatsapp.like.%${tail}`).limit(1)
+        if (like?.length) leadId = (like[0] as { id: string }).id
+      }
+    }
   }
 
   let ergebnis: 'created' | 'updated'
   if (leadId) {
     const { data: old } = await admin.from('leads').select('notes').eq('id', leadId).maybeSingle()
     const prev = (old as { notes?: string } | null)?.notes ?? ''
-    if (prev.includes(`Meta-Lead-ID: ${raw.id}`)) return 'skipped'    // schon drin
+    if (prev.includes(`Meta-Lead-ID: ${raw.id}`)) return { status: 'skipped', leadId }    // schon drin
     await admin.from('leads').update({
       notes: `${prev ? prev + '\n\n' : ''}${notiz}\nMeta-Lead-ID: ${raw.id}`,
     }).eq('id', leadId)
@@ -133,7 +145,7 @@ async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<'created
       utm_campaign: raw.campaign_name ?? null, utm_content: raw.ad_name ?? null,
       notes: `${notiz}\nMeta-Lead-ID: ${raw.id}`,
     }).select('id').single()
-    if (error) { console.error('[meta-leads-sync] Lead-Insert:', error.message); return 'skipped' }
+    if (error) { console.error('[meta-leads-sync] Lead-Insert:', error.message); return { status: 'skipped' } }
     leadId = (nl as { id: string }).id
     ergebnis = 'created'
   }
@@ -147,7 +159,7 @@ async function upsertLead(admin: SupabaseClient, raw: RawLead): Promise<'created
       auto: true,
     })
   } catch (e) { console.warn('[meta-leads-sync] Aktivität:', e) }
-  return ergebnis
+  return { status: ergebnis, leadId }
 }
 
 // CSV aus dem Werbeanzeigenmanager. Meta exportiert je nach Sprache mit Komma
@@ -187,6 +199,70 @@ function parseCsv(csv: string): RawLead[] {
   })
 }
 
+
+// ── Anschluss: Pipeline, Sequenz, Terminanfrage ─────────────────────────────
+// Sven 23.8.: "Baue es so, dass du diese Leads im besten Fall immer sofort
+// abholst und denen eine WhatsApp sendest, wenn WhatsApp nicht geht, dann per
+// Mail. Ziel: Termin machen." Die Anfrage kommt von SVEN persoenlich (Quelle
+// meta_formular im booking-bot), nicht von Lotte - die Leute kennen ihn nicht.
+async function starteErstkontakt(admin: SupabaseClient, leadId: string): Promise<string> {
+  // 1. Deal in der Pipeline (Phase Erstkontakt), falls noch keiner offen ist
+  const { data: vorhanden } = await admin.from('deals').select('id')
+    .eq('lead_id', leadId).not('phase', 'in', '(archiviert,deal_verloren)').limit(1)
+  let dealId = (vorhanden?.[0] as { id: string } | undefined)?.id ?? null
+  if (!dealId) {
+    const { data: nd } = await admin.from('deals')
+      .insert({ lead_id: leadId, phase: 'erstkontakt', source: 'meta_lead_form', phase_changed_at: new Date().toISOString() })
+      .select('id').single()
+    dealId = (nd as { id: string } | null)?.id ?? null
+  }
+
+  // 2. Erstkontakt-Sequenz planen (Tag 1/3/5/14) …
+  try { await admin.functions.invoke('schedule-message', { body: { lead_id: leadId, deal_id: dealId, event_type: 'erstkontakt' } }) }
+  catch (e) { console.warn('[meta-leads-sync] schedule-message:', e) }
+  // … und die 20-Minuten-Stufe streichen: sie wuerde direkt neben Svens
+  // persoenlicher Nachricht fast dasselbe von Lotte schicken.
+  try {
+    await admin.from('scheduled_messages')
+      .update({ status: 'cancelled', error_message: 'Ersetzt durch persoenliche Erstkontakt-WhatsApp von Sven' })
+      .eq('lead_id', leadId).eq('status', 'pending')
+      .lt('scheduled_at', new Date(Date.now() + 90 * 60e3).toISOString())
+  } catch (e) { console.warn('[meta-leads-sync] 20-Min-Stufe:', e) }
+
+  // 3. Terminanfrage: zuerst WhatsApp ueber den Termin-Bot (echte freie Slots,
+  //    Dialog laeuft danach automatisch weiter).
+  const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', leadId).maybeSingle()
+  const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null } | null
+  if (l?.whatsapp || l?.phone) {
+    try {
+      const { data } = await admin.functions.invoke('booking-bot', { body: { action: 'start', lead_id: leadId, deal_id: dealId, source: 'meta_formular' } })
+      const r = data as { ok?: boolean; skipped?: string } | null
+      if (r?.ok && !r.skipped) return 'whatsapp'
+      console.warn('[meta-leads-sync] Bot uebersprungen:', r?.skipped)
+    } catch (e) { console.warn('[meta-leads-sync] booking-bot:', e) }
+  }
+
+  // 4. Kein WhatsApp moeglich (keine Nummer, Nummer ungueltig, Bot blockiert)
+  //    -> derselbe Inhalt per Mail, mit dem persoenlichen Buchungslink.
+  if (l?.email) {
+    const name = (l.first_name ?? '').trim()
+    const link = 'https://portal.happy-property.com/buchen/sven360'
+    const html = `<div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:16px;line-height:1.6;color:#2b2b2b;max-width:600px;margin:0 auto">`
+      + `<p style="margin:0 0 16px">Moin${name ? ` ${name}` : ''},</p>`
+      + `<p style="margin:0 0 16px">vielen Dank für das Ausfüllen unseres Fragebogens und dein Interesse an Immobilien auf der Insel, wo die Götter Urlaub machen.</p>`
+      + `<p style="margin:0 0 16px">Ich bin Sven, ich lebe hier auf Zypern und begleite deutschsprachige Kapitalanleger und Auswanderer beim Immobilienkauf. Ich freue mich, deine persönliche Situation einmal in Ruhe mit dir zu besprechen - per WhatsApp-Anruf oder Zoom, ganz wie es dir lieber ist. Rechne mit etwa 15 Minuten, unverbindlich.</p>`
+      + `<p style="margin:0 0 22px"><a href="${link}" style="display:inline-block;background:#ff795d;color:#ffffff;font-weight:700;text-decoration:none;padding:13px 26px;border-radius:8px">Termin aussuchen →</a></p>`
+      + `<p style="margin:0 0 6px">Viele Grüße</p><p style="margin:0"><strong>Sven · Happy Property Cyprus</strong></p></div>`
+    try {
+      await admin.functions.invoke('send-email', { body: {
+        to: l.email, subject: 'Dein Fragebogen - lass uns kurz sprechen', html, lead_id: leadId,
+      } })
+      return 'email'
+    } catch (e) { console.warn('[meta-leads-sync] Mail-Fallback:', e) }
+  }
+  return 'kein_kontaktweg'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
@@ -200,13 +276,15 @@ Deno.serve(async (req) => {
       const leads = parseCsv(body.csv)
       if (!leads.length) return json({ error: 'CSV enthält keine Zeilen' }, 400)
       let created = 0, updated = 0, skipped = 0
+      const kontaktiert: string[] = []
       for (const l of leads) {
         if (body.form_name && !l.form_name) l.form_name = body.form_name
         const r = await upsertLead(admin, l)
-        if (r === 'created') created++; else if (r === 'updated') updated++; else skipped++
+        if (r.status === 'created') { created++; if (r.leadId) kontaktiert.push(await starteErstkontakt(admin, r.leadId)) }
+        else if (r.status === 'updated') updated++; else skipped++
       }
       console.log(`[meta-leads-sync] CSV: ${created} neu, ${updated} ergänzt, ${skipped} übersprungen`)
-      return json({ success: true, gelesen: leads.length, angelegt: created, ergaenzt: updated, uebersprungen: skipped })
+      return json({ success: true, gelesen: leads.length, angelegt: created, ergaenzt: updated, uebersprungen: skipped, kontaktiert })
     }
 
     // ── Graph-API-Abruf ───────────────────────────────────────────
@@ -240,9 +318,33 @@ Deno.serve(async (req) => {
         for (const id of ids) if (id && !formIds.includes(id)) formIds.push(id)
       }
     }
-    if (!formIds.length) return json({ success: true, hinweis: 'Keine Lead-Formulare an den Anzeigen gefunden.', angelegt: 0 })
+    // Zusaetzlich ALLE Formulare der Seite: der Weg ueber die Anzeigen findet nur
+    // Formulare AKTIVER Anzeigen - laeuft eine Kampagne aus, blieben die Leads der
+    // letzten Tage unentdeckt liegen (gemessen 23.8.: der Anzeigen-Weg fand nur das
+    // frische, leere Formular, waehrend im alten 14 Leads lagen).
+    try {
+      // leadgen_forms verlangt einen SEITEN-Token - den holt der System-User-Token
+      // ueber /me/accounts (gemessen 23.8.: mit dem System-Token direkt kommt
+      // "(#190) This method must be called with a Page Access Token").
+      let pageToken = token
+      try {
+        const acc = await fetch(`${GRAPH}/me/accounts?fields=id,access_token&access_token=${token}`)
+        const aj = await acc.json() as { data?: Array<{ id: string; access_token?: string }> }
+        const own = (aj.data ?? []).find(p => p.id === PAGE_ID) ?? (aj.data ?? [])[0]
+        if (own?.access_token) pageToken = own.access_token
+      } catch (e) { console.warn('[meta-leads-sync] Seiten-Token:', e) }
+      const pf = await fetch(`${GRAPH}/${PAGE_ID}/leadgen_forms?fields=id,name,leads_count&limit=100&access_token=${pageToken}`)
+      const pj = await pf.json() as { data?: Array<{ id: string; leads_count?: number }>; error?: { message: string } }
+      if (pj.error) console.warn('[meta-leads-sync] Seiten-Formulare:', pj.error.message)
+      for (const f of (pj.data ?? [])) {
+        if ((f.leads_count ?? 0) > 0 && !formIds.includes(f.id)) formIds.push(f.id)
+      }
+    } catch (e) { console.warn('[meta-leads-sync] Seiten-Formulare:', e) }
+
+    if (!formIds.length) return json({ success: true, hinweis: 'Keine Lead-Formulare gefunden.', angelegt: 0 })
 
     let created = 0, updated = 0, skipped = 0
+    const kontaktiert: string[] = []
     const fehler: string[] = []
     for (const fid of formIds) {
       let url = `${GRAPH}/${fid}/leads?fields=id,created_time,field_data,ad_id,ad_name,campaign_name,form_id&filtering=[{"field":"time_created","operator":"GREATER_THAN","value":${since}}]&limit=100&access_token=${token}`
@@ -252,13 +354,14 @@ Deno.serve(async (req) => {
         if (j?.error) { fehler.push(`Formular ${fid}: ${j.error.message}`); break }
         for (const l of (j?.data ?? []) as RawLead[]) {
           const r = await upsertLead(admin, l)
-          if (r === 'created') created++; else if (r === 'updated') updated++; else skipped++
+          if (r.status === 'created') { created++; if (r.leadId) kontaktiert.push(await starteErstkontakt(admin, r.leadId)) }
+          else if (r.status === 'updated') updated++; else skipped++
         }
         url = j?.paging?.next ?? ''
       }
     }
-    console.log(`[meta-leads-sync] ${created} neu, ${updated} ergänzt, ${skipped} übersprungen, ${formIds.length} Formulare`)
-    return json({ success: fehler.length === 0, formulare: formIds.length, angelegt: created, ergaenzt: updated, uebersprungen: skipped,
+    console.log(`[meta-leads-sync] ${created} neu, ${updated} ergänzt, ${skipped} übersprungen, ${formIds.length} Formulare, kontaktiert: ${kontaktiert.join(',') || '-'}`)
+    return json({ success: fehler.length === 0, formulare: formIds.length, angelegt: created, ergaenzt: updated, uebersprungen: skipped, kontaktiert,
       ...(fehler.length ? { fehler, hinweis: 'Fehlen Rechte, im Meta Business Manager einen System-User-Token mit leads_retrieval + pages_manage_ads erzeugen.' } : {}) })
 
   } catch (err) {
