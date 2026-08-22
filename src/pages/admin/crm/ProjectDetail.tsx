@@ -973,8 +973,10 @@ export default function ProjectDetail() {
 
   async function handleDeleteDoc(doc: CrmUnitDocument) {
     if (!editUnit || !window.confirm(t('crm.pd.confirmDeleteDoc'))) return
-    await supabase.storage.from('unit-documents').remove([doc.file_path])
-    await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
+    // DB zuerst (mit Pruefung), Datei danach - sonst Datei weg, Zeile bleibt.
+    const { data: gone, error } = await supabase.from('crm_unit_documents').delete().eq('id', doc.id).select('id')
+    if (error || !gone?.length) { console.error('[ProjectDetail] handleDeleteDoc:', error ?? 'RLS'); return }
+    await supabase.storage.from('unit-documents').remove([doc.file_path]).catch(() => null)
     await fetchDocuments(editUnit.id)
   }
 

@@ -109,8 +109,10 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
 
   async function handleDelete(photo: ConstructionPhoto) {
     if (!window.confirm(t('crm.pd.confirmDeleteConstructionPhoto'))) return
-    await supabase.storage.from('construction-photos').remove([photo.file_path])
-    await supabase.from('construction_photos').delete().eq('id', photo.id)
+    // DB zuerst (mit Pruefung), Datei danach - sonst Foto weg, Zeile bleibt.
+    const { data: gone, error } = await supabase.from('construction_photos').delete().eq('id', photo.id).select('id')
+    if (error || !gone?.length) { console.error('[ConstructionPhotos] delete:', error ?? 'RLS'); return }
+    await supabase.storage.from('construction-photos').remove([photo.file_path]).catch(() => null)
     await fetchPhotos()
   }
 

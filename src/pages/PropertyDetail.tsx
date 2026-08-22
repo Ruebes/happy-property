@@ -995,14 +995,16 @@ export default function PropertyDetail() {
 
   async function deleteDoc(doc: DocRecord) {
     if (!window.confirm(t('documents.deleteConfirm'))) return
-    const { error: rmErr } = await supabase.storage.from('documents').remove([doc.file_url])
-    if (rmErr) console.error('[PropertyDetail] deleteDoc storage:', rmErr)
+    // ERST die DB-Zeile (mit Ergebnis-Pruefung), DANN die Datei: umgekehrt war
+    // bei einer geblockten Loeschung die Datei schon weg, die Zeile zeigte ins Leere.
     const { data: gone, error } = await supabase.from('documents').delete().eq('id', doc.id).select('id')
     if (error || !gone?.length) {
       console.error('[PropertyDetail] deleteDoc:', error ?? 'keine Zeile geloescht (Rechte?)')
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
     }
+    const { error: rmErr } = await supabase.storage.from('documents').remove([doc.file_url])
+    if (rmErr) console.error('[PropertyDetail] deleteDoc storage:', rmErr)
     setToast({ msg: t('success.deleted') })
     fetchDocs()
   }
@@ -1433,8 +1435,6 @@ export default function PropertyDetail() {
 
   async function handleDeleteEigDoc(doc: CrmUnitDocument) {
     if (!window.confirm(t('propertyDetail.contracts.deleteDocConfirm', '„{{name}}" löschen?', { name: doc.name }))) return
-    const { error: rmErr } = await supabase.storage.from('unit-documents').remove([doc.file_path])
-    if (rmErr) console.error('[PropertyDetail] handleDeleteEigDoc storage:', rmErr)
     // .select() erzwingen: ohne die zurueckgegebenen Zeilen bleibt eine von RLS
     // geblockte Loeschung unsichtbar - PostgREST meldet dann 0 Zeilen OHNE Fehler,
     // und die Oberflaeche tat so, als sei alles gut (Thorsten Brendel, 22.8.).
@@ -1444,6 +1444,8 @@ export default function PropertyDetail() {
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
     }
+    const { error: rmErr } = await supabase.storage.from('unit-documents').remove([doc.file_path])
+    if (rmErr) console.error('[PropertyDetail] handleDeleteEigDoc storage:', rmErr)
     setToast({ msg: t('success.deleted') })
     await fetchUnitPayments()
   }

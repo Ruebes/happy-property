@@ -709,8 +709,10 @@ export default function LeadDetail() {
   // ── Unit-Dokument löschen ─────────────────────────────────────────────────────
   const handleDeleteUnitDoc = async (doc: CrmUnitDocument) => {
     if (!window.confirm(t('leadDetail.confirmDeleteDoc', 'Dokument wirklich löschen?'))) return
-    await supabase.storage.from('unit-documents').remove([doc.file_path])
-    await supabase.from('crm_unit_documents').delete().eq('id', doc.id)
+    // DB zuerst (mit Pruefung), Datei danach - sonst Datei weg, Zeile bleibt.
+    const { data: gone, error } = await supabase.from('crm_unit_documents').delete().eq('id', doc.id).select('id')
+    if (error || !gone?.length) { showToast(`❌ ${t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.')}`); return }
+    await supabase.storage.from('unit-documents').remove([doc.file_path]).catch(() => null)
     await fetchAll(true)
   }
 
