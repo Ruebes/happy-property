@@ -64,7 +64,9 @@ function berlinDateStr(iso: string): string {
 
 // Verfügbarkeitsfenster je Wochentag (Berlin-Stunden). Wochenende = 17–20.
 function windowFor(wd: number): [number, number] | null {
-  if (wd >= 1 && wd <= 5) return [11, 19]   // Mo–Fr 11–19
+  // Ende = spaetestes ENDE eines Termins. Bei [11,19] fiel ein 19:00-Termin raus
+  // (19:30 > 19:00) - Roni wollte genau das, Sven sagte zu (22.8.). Jetzt bis 20.
+  if (wd >= 1 && wd <= 5) return [11, 20]   // Mo–Fr 11–20
   return [17, 20]                            // Sa+So 17–20
 }
 
@@ -317,6 +319,7 @@ async function classify(state: string, slots: Slot[], text: string, verlauf: Tur
   const sys = `Du interpretierst die WhatsApp-Antwort eines Kunden im Terminbuchungs-Dialog (deutsch). Zustand: ${state}. Vorgeschlagene Slots: ${slots.map((s, i) => `[${i}] ${s.label}`).join(' | ') || 'keine'}.
 HEUTE ist ${WDN[tp.wd]}, der ${todayStr} (Europe/Berlin). Rechne relative/teilweise Datumsangaben in KONKRETE Kalenderdaten um.
 Kontext: Es ist ein kurzes, unverbindliches Beratungsgespräch (ca. 15 Min) DIREKT mit Sven persönlich (Immobilien-Investment-Berater bei Happy Property Cyprus, Zypern).
+Nachrichten mit dem Präfix "[Sven persönlich]" hat SVEN SELBST geschrieben, nicht du. Seine Zusagen sind verbindlich und stehen ÜBER deinen Verfügbarkeits-Vorschlägen: Sagt er einen Termin zu ("Doch Montag 19:00 passt", "den mache ich frei"), dann gilt genau dieser Termin — schlage NIE Alternativen dazu vor und frage ihn nicht erneut ab.
 Du siehst den bisherigen Gesprächsverlauf. Nutze ihn: Widerspricht die neue Nachricht dem, was du zuletzt geschrieben hast, hat der Kunde deine letzte Antwort NICHT akzeptiert — dann darf sie auf keinen Fall wiederholt werden. Wiederholt der Kunde seine Frage, war deine Antwort unbrauchbar → intent=content, damit Sven übernimmt.
 Gib NUR das Tool emit_intent zurück. intent-Werte:
 - pick_slot: Kunde wählt einen vorgeschlagenen Slot (pick_index 0 oder 1).
@@ -779,13 +782,19 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   // Die letzten Züge als echten Dialog mitgeben, chronologisch aufsteigend.
   let verlauf: Turn[] = []
   try {
-    const { data: hist } = await admin.from('activities').select('direction, content')
+    const { data: hist } = await admin.from('activities').select('direction, content, auto')
       .eq('lead_id', leadId).eq('type', 'whatsapp')
       .order('created_at', { ascending: false }).limit(7)
-    verlauf = ((hist ?? []) as Array<{ direction: string; content: string | null }>)
+    // Von Hand geschriebene Nachrichten (auto=false) sind SVEN selbst, nicht der
+    // Bot. Ohne die Kennzeichnung las der Bot Svens "Den mache ich frei" als
+    // eigene Zeile und schlug munter weiter Alternativen vor (Roni, 22.8.).
+    verlauf = ((hist ?? []) as Array<{ direction: string; content: string | null; auto: boolean | null }>)
       .filter(h => (h.content ?? '').trim())
       .reverse()
-      .map(h => ({ role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const, content: (h.content ?? '').slice(0, 700) }))
+      .map(h => ({
+        role: h.direction === 'outbound' ? 'assistant' as const : 'user' as const,
+        content: (h.direction === 'outbound' && h.auto === false ? '[Sven persönlich] ' : '') + (h.content ?? '').slice(0, 700),
+      }))
     // Endende user-Züge abschneiden: das ist die gerade eingegangene Nachricht,
     // die classify selbst anhängt — sie stünde sonst zweimal im Prompt.
     while (verlauf.length && verlauf[verlauf.length - 1].role === 'user') verlauf.pop()
