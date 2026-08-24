@@ -597,6 +597,34 @@ const checkCronHealth: Check = {
   },
 }
 
+// ── Pruefung 18: WhatsApp-Kontingent ────────────────────────────────────────
+// TimelinesAI zaehlt JEDE per API gesendete Nachricht gegen ein Monatslimit
+// (aktueller Tarif: 50 verschiedene Empfaenger). Ist es alle, scheitert jeder
+// automatische Versand still - Sven merkte es erst, als eine Antwort an eine
+// Kundin nicht rausging (24.8.).
+const checkWaQuota: Check = {
+  key: 'whatsapp_kontingent',
+  title: 'WhatsApp-Monatskontingent fast aufgebraucht',
+  run: async (sb) => {
+    const monatsStart = new Date(); monatsStart.setDate(1); monatsStart.setHours(0, 0, 0, 0)
+    const { data } = await sb.from('wa_sent').select('phone').gt('sent_at', monatsStart.toISOString())
+    const distinct = new Set(((data ?? []) as Array<{ phone: string }>).map(r => r.phone)).size
+    const LIMIT = 50
+    if (distinct < LIMIT * 0.8) return []
+    const { count: wartend } = await sb.from('scheduled_messages')
+      .select('id', { count: 'exact', head: true }).eq('status', 'pending').in('type', ['whatsapp', 'both'])
+    return [{
+      check_key: 'whatsapp_kontingent', severity: distinct >= LIMIT ? 'kritisch' : 'mittel',
+      entity_kind: 'system', entity_id: 'timelines_quota', entity_label: 'WhatsApp-Versand',
+      what_plain: distinct >= LIMIT
+        ? `Das WhatsApp-Monatskontingent ist aufgebraucht (${distinct} von ${LIMIT} Empfaengern). Es geht KEINE automatische WhatsApp mehr raus - aktuell warten ${wartend ?? 0} Nachrichten.`
+        : `Vom WhatsApp-Monatskontingent sind ${distinct} von ${LIMIT} Empfaengern verbraucht. Bei diesem Tempo ist es vor Monatsende alle.`,
+      action: 'proposed',
+      fix_plain: 'Tarif bei TimelinesAI hochstufen (app.timelines.ai/account/subscription) - oder bis zum Monatswechsel warten, dann setzt das Kontingent zurueck.',
+    }]
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,

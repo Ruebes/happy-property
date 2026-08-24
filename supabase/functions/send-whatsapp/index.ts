@@ -447,7 +447,15 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ success: okResults.length > 0, sent: okResults.length, results,
         ...(allSkipped ? { skipped_duplicate: true } : {}),
-        ...(okResults.length === 0 && firstErr ? { error: `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'}): ${JSON.stringify(firstErr.data ?? '').slice(0, 180)}` } : {}),
+        // Tarif-Limit als KLARTEXT: TimelinesAI zaehlt jede per API gesendete
+        // Nachricht als "mass sending" (50/Monat im aktuellen Tarif). Vorher stand
+        // im CRM nur ein technischer 403-Text, und niemand wusste, dass schlicht
+        // das Kontingent alle ist (Sven 24.8., Fall Nikola Weber).
+        ...(okResults.length === 0 && firstErr ? { error:
+          /quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? ''))
+            ? 'WhatsApp-Monatskontingent bei TimelinesAI ist aufgebraucht (50 Nachrichten im aktuellen Tarif). Bis zum Monatswechsel geht kein automatischer Versand mehr - Tarif unter app.timelines.ai/account/subscription hochstufen.'
+            : `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'}): ${JSON.stringify(firstErr.data ?? '').slice(0, 180)}`,
+          ...(/quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? '')) ? { quota_exceeded: true } : {}) } : {}),
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
         // ein gescheiterter Anhang faellt sonst nie auf.
         attached: !!fileUidCache || linkFallback, ...(linkFallback ? { attach_as_link: true } : {}),
