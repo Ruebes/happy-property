@@ -19,8 +19,12 @@ interface PLead {
   name: string
   email: string | null
   phone: string | null
-  // mine=false → ein anderer Partner (by) hat zuerst geantwortet: Karte ist gesperrt.
+  // Eigene Antwort (immer bearbeitbar) …
   review: { status: string | null; next_contact_at: string | null; note: string | null; mine?: boolean; by?: string } | null
+  // … und die der Kollegen, nur zur Ansicht. Frueher sperrte die erste Antwort die
+  // Karte fuer alle anderen (Sven 23.8.: "auch wenn einer von beiden kommentiert,
+  // sollte der andere noch seinen Kommentar abgeben können").
+  peer_reviews?: Array<{ by: string; status: string | null; note: string | null; next_contact_at: string | null; updated_at?: string | null }>
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -33,7 +37,7 @@ const STATUS_OPTS = [
   { key: 'nicht_erreicht', label: 'Noch nicht erreicht', cls: 'bg-amber-50 text-amber-700 border-amber-200', active: 'bg-amber-500 text-white border-amber-500' },
 ]
 
-function LeadCard({ lead, token, onSaved, onConflict }: { lead: PLead; token: string; onSaved: (leadId: string, review: PLead['review']) => void; onConflict: () => void }) {
+function LeadCard({ lead, token, onSaved }: { lead: PLead; token: string; onSaved: (leadId: string, review: PLead['review']) => void }) {
   const [status, setStatus] = useState<string>(lead.review?.status ?? '')
   const [nextAt, setNextAt] = useState<string>(lead.review?.next_contact_at ? lead.review.next_contact_at.slice(0, 10) : '')
   const [note, setNote] = useState<string>(lead.review?.note ?? '')
@@ -53,12 +57,6 @@ function LeadCard({ lead, token, onSaved, onConflict }: { lead: PLead; token: st
         body: { action: 'save', token, lead_id: lead.lead_id, status, next_contact_at: status === 'nicht_erreicht' && nextAt ? nextAt : undefined, note: note || undefined },
       })
       const d = (data ?? {}) as { ok?: boolean; error?: string; by?: string }
-      // Zuerst-gewinnt: jemand anderes war schneller → Liste neu laden, Karte sperrt sich.
-      if (d.error === 'already_reviewed' || (error && error.message?.includes('409'))) {
-        setErr(`${d.by ?? 'Dein Kollege'} hat diesen Kontakt gerade schon beantwortet — Liste wird aktualisiert.`)
-        setTimeout(onConflict, 1500)
-        return
-      }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
       onSaved(lead.lead_id, { status, next_contact_at: status === 'nicht_erreicht' && nextAt ? `${nextAt}T00:00:00Z` : null, note: note || null, mine: true })
       setSaved(true); setTimeout(() => setSaved(false), 2500)
@@ -66,28 +64,6 @@ function LeadCard({ lead, token, onSaved, onConflict }: { lead: PLead; token: st
       console.error('[PartnerReview] save:', e)
       setErr('Speichern fehlgeschlagen — bitte nochmal versuchen.')
     } finally { setBusy(false) }
-  }
-
-  // Ein anderer Partner war zuerst → nur noch anzeigen, nicht mehr ändern.
-  if (lead.review && lead.review.mine === false) {
-    return (
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 opacity-80">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <p className="font-semibold text-gray-900">{lead.name}</p>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {lead.email}{lead.email && lead.phone && ' · '}{lead.phone}
-            </p>
-          </div>
-          <span className="text-[11px] px-2 py-1 rounded-full bg-blue-50 text-blue-700 font-medium">✓ von {lead.review.by ?? 'Partner'} beantwortet</span>
-        </div>
-        <p className="text-sm text-gray-700 mt-3">
-          <b>{STATUS_LABEL[lead.review.status ?? ''] ?? lead.review.status}</b>
-          {lead.review.next_contact_at && <> · nächste Kontaktaufnahme {new Date(lead.review.next_contact_at).toLocaleDateString('de-DE')}</>}
-        </p>
-        {lead.review.note && <p className="text-sm text-gray-500 mt-1">„{lead.review.note}"</p>}
-      </div>
-    )
   }
 
   return (
@@ -105,6 +81,20 @@ function LeadCard({ lead, token, onSaved, onConflict }: { lead: PLead; token: st
           <span className="text-[11px] px-2 py-1 rounded-full bg-gray-100 text-gray-500">zuletzt gemeldet ✓</span>
         )}
       </div>
+
+      {/* Was die Kollegen gemeldet haben - zur Ansicht, blockiert nichts. */}
+      {(lead.peer_reviews ?? []).length > 0 && (
+        <div className="mt-3 rounded-xl bg-blue-50/60 border border-blue-100 px-3 py-2 space-y-1">
+          {(lead.peer_reviews ?? []).map((p, i) => (
+            <p key={i} className="text-[12.5px] text-blue-900">
+              <b>{p.by}</b>: {STATUS_LABEL[p.status ?? ''] ?? p.status}
+              {p.next_contact_at && <> · nächste Kontaktaufnahme {new Date(p.next_contact_at).toLocaleDateString('de-DE')}</>}
+              {p.updated_at && <span className="text-blue-700/70"> · {new Date(p.updated_at).toLocaleDateString('de-DE')}</span>}
+              {p.note && <span className="block text-blue-800/80">„{p.note}"</span>}
+            </p>
+          ))}
+        </div>
+      )}
 
       <div className="flex gap-2 mt-4 flex-wrap">
         {STATUS_OPTS.map(o => (
@@ -201,7 +191,7 @@ export default function PartnerReview() {
             </div>
           ) : (
             <div className="space-y-4">
-              {leads.map(l => <LeadCard key={l.lead_id} lead={l} token={token} onSaved={onSaved} onConflict={() => void load()} />)}
+              {leads.map(l => <LeadCard key={l.lead_id} lead={l} token={token} onSaved={onSaved} />)}
             </div>
           )
         )}

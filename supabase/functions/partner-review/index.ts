@@ -64,10 +64,14 @@ Deno.serve(async (req) => {
         sb.from('partner_reviews').select('lead_id, contact_id, status, next_contact_at, note, updated_at')
           .in('lead_id', leadIds).in('contact_id', poolIds).order('updated_at', { ascending: true }),
       ])
-      // Erste (älteste) Antwort je Lead gewinnt.
-      const rev = new Map<string, { contact_id: string; status: string | null; next_contact_at: string | null; note: string | null }>()
-      for (const r of (reviews ?? []) as Array<{ lead_id: string; contact_id: string; status: string | null; next_contact_at: string | null; note: string | null }>) {
-        if (!rev.has(r.lead_id)) rev.set(r.lead_id, r)
+      // EIGENE Antwort und die der anderen getrennt halten: der Partner soll seine
+      // eigene bearbeiten koennen und dabei sehen, was der Kollege gemeldet hat.
+      type Rev = { lead_id: string; contact_id: string; status: string | null; next_contact_at: string | null; note: string | null; updated_at?: string }
+      const rev = new Map<string, Rev>()                    // eigene Antwort
+      const others = new Map<string, Rev[]>()               // Antworten der Kollegen
+      for (const r of (reviews ?? []) as Rev[]) {
+        if (r.contact_id === tok.contact_id) rev.set(r.lead_id, r)
+        else others.set(r.lead_id, [...(others.get(r.lead_id) ?? []), r])
       }
       const out = ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null }>).map(l => {
         const r = rev.get(l.id) ?? null
@@ -77,9 +81,14 @@ Deno.serve(async (req) => {
           email: l.email, phone: l.whatsapp || l.phone,
           review: r ? {
             status: r.status, next_contact_at: r.next_contact_at, note: r.note,
-            mine: r.contact_id === tok.contact_id,
-            by: r.contact_id === tok.contact_id ? tok.partnerName : (peerName.get(r.contact_id) ?? 'Partner'),
+            mine: true, by: tok.partnerName,
           } : null,
+          // Was die Kollegen zu diesem Lead gemeldet haben - nur zur Ansicht.
+          peer_reviews: (others.get(l.id) ?? []).map(o => ({
+            by: peerName.get(o.contact_id) ?? 'Partner',
+            status: o.status, note: o.note, next_contact_at: o.next_contact_at,
+            updated_at: o.updated_at ?? null,
+          })),
         }
       })
       out.sort((a, b) => a.name.localeCompare(b.name))
@@ -94,18 +103,13 @@ Deno.serve(async (req) => {
       const nextAt = status === 'nicht_erreicht' && body.next_contact_at ? new Date(body.next_contact_at).toISOString() : null
       const note = (body.note ?? '').trim().slice(0, 2000) || null
 
-      // Zuerst-gewinnt: Hat ein Peer (z.B. Burkhard vor Ioulia) diesen Lead schon
-      // beantwortet, gilt dessen Antwort — der Zweite bekommt einen Hinweis.
-      if (tok.peers.length) {
-        const { data: peerRev } = await sb.from('partner_reviews')
-          .select('contact_id, status')
-          .eq('lead_id', leadId).in('contact_id', tok.peers.map(p => p.contact_id)).limit(1)
-        const pr = (peerRev as Array<{ contact_id: string; status: string | null }> | null)?.[0]
-        if (pr) {
-          const byName = tok.peers.find(p => p.contact_id === pr.contact_id)?.name ?? 'Partner'
-          return json({ error: 'already_reviewed', by: byName, status: pr.status }, 409)
-        }
-      }
+      // Jeder Partner antwortet fuer sich - IMMER. Frueher galt "wer zuerst
+      // kommt": hatte Ioulia einen Lead schon bewertet, bekam Burkhard eine
+      // Fehlermeldung und konnte gar nichts mehr sagen (Sven 23.8.). Beide
+      // Sichtweisen sind aber wertvoll, und eine Woche spaeter kann alles anders
+      // sein. Die Antworten stehen nebeneinander (eigene Zeile je Partner durch
+      // den Schluessel lead_id+contact_id), und eine erneute Antwort desselben
+      // Partners aktualisiert nur seine eigene.
 
       const { error: ue } = await sb.from('partner_reviews').upsert({
         lead_id: leadId, contact_id: tok.contact_id, status, next_contact_at: nextAt, note, updated_at: new Date().toISOString(),
