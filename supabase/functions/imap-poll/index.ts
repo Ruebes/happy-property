@@ -371,8 +371,11 @@ Deno.serve(async (req) => {
           // Link oder direkt im Mailtext. Ohne PDF wird die Rechnung trotzdem
           // erfasst; die KI liest dann den Text statt des Dokuments.
           const looksInvoice = invoiceSubject
+          // storeDevMail stoesst die Rechnungs-Analyse selbst an (fin_analyze).
           if (dom && (devCache.has(dom) || looksInvoice)) {
-            if (await storeDevMail(supabase, uid, fetched, addr, subject, devCache.get(dom) ?? null)) result.tasks += 0, (result as unknown as { dev?: number }).dev = ((result as unknown as { dev?: number }).dev ?? 0) + 1
+            if (await storeDevMail(supabase, uid, fetched, addr, subject, devCache.get(dom) ?? null)) {
+              (result as unknown as { dev?: number }).dev = ((result as unknown as { dev?: number }).dev ?? 0) + 1
+            }
             continue
           }
           skip('unbekannter_absender', `${addr} | ${subject.slice(0, 40)}`); continue   // Fremd-Mail (Newsletter, Bank, …) → ignorieren

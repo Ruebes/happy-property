@@ -308,11 +308,28 @@ Deno.serve(async (req: Request) => {
         // Nur Buchungen im ZEITFENSTER um den Mail-Eingang (21 Tage zurück):
         // sonst heftet sich eine NEUE, unbezahlte Rechnung an eine zufällig
         // betragsgleiche ALTE Zahlung (Giona RE0105 → Juli-Buchung, 9.8.26).
-        const { data: cand } = await supabase.from('fin_transactions').select('id').lt('amount', 0)
-          .gte('amount', -(inv.amount * 1.005)).lte('amount', -(inv.amount * 0.995)).is('doc_url', null)
+        // FREMDWAEHRUNG: Fast alle Software-Abos rechnen in USD ab, abgebucht
+        // wird in EUR (TimelinesAI: 60 USD -> 53,49 EUR). Mit der engen
+        // 0,5-%-Spanne fand der Abgleich davon KEINE einzige. Deshalb: bei
+        // Fremdwaehrung eine breite Spanne durchsuchen und den Treffer ueber
+        // den Haendlernamen absichern.
+        const fremd = (inv.currency ?? 'EUR').toUpperCase() !== 'EUR'
+        const von = fremd ? inv.amount * 0.75 : inv.amount * 0.995
+        const bis = fremd ? inv.amount * 1.25 : inv.amount * 1.005
+        const { data: cands } = await supabase.from('fin_transactions')
+          .select('id, counterparty, reference, amount, booked_at').lt('amount', 0)
+          .gte('amount', -bis).lte('amount', -von).is('doc_url', null)
           .gte('booked_at', new Date(Date.now() - 21 * 86400e3).toISOString())
-          .order('booked_at', { ascending: false }).limit(1)
-        txId = (cand?.[0] as { id: string } | undefined)?.id ?? null
+          .order('booked_at', { ascending: false }).limit(20)
+        const liste = (cands ?? []) as Array<{ id: string; counterparty: string | null; reference: string | null; amount: number }>
+        const woerter = (inv.vendor ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3)
+        const passtName = (t: { counterparty: string | null; reference: string | null }) =>
+          woerter.some(w => `${t.counterparty ?? ''} ${t.reference ?? ''}`.toLowerCase().includes(w))
+        // Erst der Treffer, bei dem AUCH der Name passt - sonst der betragsnaechste.
+        const mitName = liste.find(passtName)
+        const nachBetrag = liste.slice().sort((a, b) =>
+          Math.abs(Math.abs(a.amount) - inv.amount!) - Math.abs(Math.abs(b.amount) - inv.amount!))[0]
+        txId = (mitName ?? (fremd ? null : nachBetrag))?.id ?? null
       }
       if (txId) {
         // Zuordnung als VORSCHLAG eintragen, nicht als vollendete Tatsache
