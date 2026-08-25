@@ -28,8 +28,13 @@ export default function DevMails() {
   const [note, setNote] = useState('')
 
   const load = useCallback(async () => {
+    // Verbuchte Rechnungen ausblenden: sobald ein Beleg unter "Buchhaltung"
+    // einer Zahlung zugeordnet und bestaetigt wurde, hat die Mail hier nichts
+    // mehr verloren (Sven 25.8.: "dann ist sie einfach weg"). Die Datei bleibt
+    // an der Buchung haengen - geloescht wird ein Beleg nie.
     const { data, error } = await supabase.from('partner_mails')
       .select('id, from_addr, from_domain, subject, body, attachments, assigned_lead_id, read_at, created_at, developer:crm_developers(name)')
+      .is('archived_at', null)
       .order('created_at', { ascending: false }).limit(30)
     if (error) { console.error('[DevMails] load:', error); return }
     setMails((data as unknown as PartnerMail[]) ?? [])

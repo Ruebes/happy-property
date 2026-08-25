@@ -4115,7 +4115,16 @@
       "in": "Einnahmen",
       "out": "Ausgaben",
       "net": "Saldo",
-      "topCats": "Größte Ausgaben-Kategorien"
+      "topCats": "Größte Ausgaben-Kategorien",
+      "matchTitle": "Belege zuordnen",
+      "matchHint": "Diese Rechnungen sind per Mail eingegangen und passen zu einer Zahlung. Bitte kurz bestätigen.",
+      "matchConfirm": "Passt",
+      "matchReject": "Passt nicht",
+      "matchSure": "sicherer Treffer",
+      "matchOk": "wahrscheinlich",
+      "matchWeak": "unsicher - bitte prüfen",
+      "docOpen": "Beleg ansehen",
+      "noFile": "kein Dokument"
     },
     "flow2": {
       "title": "Flows",

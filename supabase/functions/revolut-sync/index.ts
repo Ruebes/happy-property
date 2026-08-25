@@ -315,8 +315,31 @@ Deno.serve(async (req: Request) => {
         txId = (cand?.[0] as { id: string } | undefined)?.id ?? null
       }
       if (txId) {
-        await supabase.from('fin_transactions').update({ doc_url: pdf?.url ?? null, doc_name: (pdf?.name ?? m.subject).slice(0, 200), partner_mail_id: m.id }).eq('id', txId)
-        return json({ success: true, fin_class: 'sven', matched_tx: txId })
+        // Zuordnung als VORSCHLAG eintragen, nicht als vollendete Tatsache
+        // (Sven 25.8.: "Auf jeden Fall möchte ich das unter Buchhaltung
+        // bestätigen"). Sicher ist der Treffer nur, wenn ausser dem Betrag auch
+        // der Haendlername zur Buchung passt und die Zahlung nahe am
+        // Rechnungseingang liegt - das steht als Begruendung dabei.
+        const { data: txRow } = await supabase.from('fin_transactions')
+          .select('counterparty, reference, booked_at, amount').eq('id', txId).maybeSingle()
+        const tx = txRow as { counterparty: string | null; reference: string | null; booked_at: string; amount: number } | null
+        const vendorWords = (inv.vendor ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3)
+        const txText = `${tx?.counterparty ?? ''} ${tx?.reference ?? ''}`.toLowerCase()
+        const vendorHit = vendorWords.some(w => txText.includes(w))
+        const tage = tx ? Math.abs(Date.now() - new Date(tx.booked_at).getTime()) / 86400e3 : 99
+        const betragExakt = tx ? Math.abs(Math.abs(Number(tx.amount)) - (inv.amount ?? 0)) < 0.01 : false
+        const score = (vendorHit ? 0.5 : 0) + (betragExakt ? 0.35 : 0.15) + (tage <= 7 ? 0.15 : tage <= 21 ? 0.05 : 0)
+        const gruende = [
+          betragExakt ? `Betrag stimmt exakt (${(inv.amount ?? 0).toFixed(2)} ${inv.currency ?? 'EUR'})` : 'Betrag passt ungefähr',
+          vendorHit ? `Zahlungsempfänger "${tx?.counterparty ?? ''}" passt zum Rechnungssteller "${inv.vendor ?? ''}"` : `Zahlungsempfänger "${tx?.counterparty ?? ''}" weicht vom Rechnungssteller "${inv.vendor ?? ''}" ab`,
+          `Zahlung ${Math.round(tage)} Tage vom Rechnungseingang entfernt`,
+        ].join(' · ')
+        await supabase.from('fin_transactions').update({
+          doc_url: pdf?.url ?? null, doc_name: (pdf?.name ?? m.subject).slice(0, 200), partner_mail_id: m.id,
+          doc_match_status: 'vorschlag', doc_match_score: Math.min(1, score), doc_match_reason: gruende.slice(0, 500),
+        }).eq('id', txId)
+        await supabase.from('partner_mails').update({ fin_tx_id: txId }).eq('id', m.id)
+        return json({ success: true, fin_class: 'sven', matched_tx: txId, score: Math.min(1, score) })
       }
       await supabase.from('fin_payables').insert({
         partner_mail_id: m.id, vendor: (inv.vendor ?? m.from_addr).slice(0, 200), title: ((inv.title ?? m.subject) || 'Rechnung').slice(0, 200),

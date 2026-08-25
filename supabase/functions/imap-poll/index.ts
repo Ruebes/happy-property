@@ -221,7 +221,8 @@ Deno.serve(async (req) => {
   const imap = new Imap()
   const reqBody = await req.json().catch(() => ({} as Record<string, unknown>))
   const mode = (reqBody.mode as string) || 'poll'
-  const result = { scanned: 0, tasks: 0, leads: 0, skipped: 0, errors: [] as string[] }
+  const result = { scanned: 0, tasks: 0, leads: 0, skipped: 0, errors: [] as string[], skipped_reasons: {} as Record<string, number>, seen_from: [] as string[] }
+  const skip = (grund: string, von?: string) => { result.skipped++; result.skipped_reasons[grund] = (result.skipped_reasons[grund] ?? 0) + 1; if (von && result.seen_from.length < 25) result.seen_from.push(`${von} · ${grund}`) }
   try {
     await imap.connect()
     const li = await imap.login(Deno.env.get('IMAP_USER') ?? '', Deno.env.get('IMAP_PASS') ?? '')
@@ -320,7 +321,7 @@ Deno.serve(async (req) => {
     for (const uid of uids) {
       try {
         const { data: seen } = await supabase.from('task_mail_processed').select('uid').eq('uid', uid).maybeSingle()
-        if (seen) { result.skipped++; continue }
+        if (seen) { skip('bereits_verarbeitet'); continue }
         const fetched = await imap.cmd(`UID FETCH ${uid} (BODY.PEEK[])`)
         const subject = decodeMimeWords(header(fetched, 'Subject'))
         const token = subject.match(/\[#([a-f0-9]{8,20})\]/i)?.[1]
@@ -332,7 +333,7 @@ Deno.serve(async (req) => {
           const { data: asg } = await supabase.from('crm_task_assignees')
             .select('id, task_id, profile_id, ext_name, task:crm_tasks!inner(created_by)')
             .eq('token', token).maybeSingle()
-          if (!asg) { result.skipped++; continue }
+          if (!asg) { skip('keine_zuordnung'); continue }
           let label = asg.ext_name || 'Extern'
           if (asg.profile_id) { const { data: p } = await supabase.from('profiles').select('full_name').eq('id', asg.profile_id).single(); label = p?.full_name || label }
           const bodyText = (extractPlain(fetched) || '(leere Antwort)').slice(0, 4000)
@@ -348,12 +349,17 @@ Deno.serve(async (req) => {
 
         // (2) Kundenantwort → Absender gegen leads.email prüfen.
         const addr = fromAddress(fetched)
-        if (!addr || !addr.includes('@')) { result.skipped++; continue }
+        if (!addr || !addr.includes('@')) { skip('kein_absender'); continue }
         // NIEMALS unsere eigene Adresse als Kunde behandeln: sonst würde jede Mail,
         // die wir selbst von info@ verschicken und die im Postfach landet, als
         // „Kundenantwort" fehlverbucht (ein Test-Lead trug info@happy-property.com).
         const own = (Deno.env.get('IMAP_USER') ?? '').trim().toLowerCase()
-        if (addr === own || /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr)) { result.skipped++; continue }
+        // Rechnungs-Stichwort im Betreff? Dann NICHT am no-reply-Absender scheitern:
+        // Anthropic, Stripe, Apple & Co. verschicken Belege ausnahmslos von
+        // no-reply-Adressen - deren Rechnungen kamen deshalb nie im CRM an
+        // (Sven 25.8.: "Es liegt z.B. eine RE von Claude drin").
+        const invoiceSubject = /rechnung|invoice|receipt|quittung|zahlungsbest|payment (confirmation|receipt)|beleg|billing/i.test(`${subject}`)
+        if (addr === own || (!invoiceSubject && /(^|@)(no-?reply|mailer-daemon|postmaster)\b/.test(addr))) { skip(addr === own ? 'eigene_adresse' : 'no_reply_ohne_rechnung', addr); continue }
         const leadId = await findLead(supabase, addr)
         if (!leadId) {
           // Developer-Mail? Absender-Domain gegen die Bauträger-Kontakte prüfen.
@@ -361,12 +367,15 @@ Deno.serve(async (req) => {
           if (!devCache) devCache = await devDomains(supabase)
           // Rechnung erkennbar? Domain der Geschäftspartner/Bauträger ODER
           // Rechnungs-Stichwort + Datei-Anhang.
-          const looksInvoice = /rechnung|invoice|receipt|zahlungsbest|payment confirmation|beleg/i.test(`${subject}`) && /filename=/i.test(fetched)
+          // Anhang ist KEINE Pflicht mehr: Anthropic & Co. schicken den Beleg als
+          // Link oder direkt im Mailtext. Ohne PDF wird die Rechnung trotzdem
+          // erfasst; die KI liest dann den Text statt des Dokuments.
+          const looksInvoice = invoiceSubject
           if (dom && (devCache.has(dom) || looksInvoice)) {
             if (await storeDevMail(supabase, uid, fetched, addr, subject, devCache.get(dom) ?? null)) result.tasks += 0, (result as unknown as { dev?: number }).dev = ((result as unknown as { dev?: number }).dev ?? 0) + 1
             continue
           }
-          result.skipped++; continue   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
+          skip('unbekannter_absender', `${addr} | ${subject.slice(0, 40)}`); continue   // Fremd-Mail (Newsletter, Bank, …) → ignorieren
         }
         const bodyText = (extractPlain(fetched) || '(leere Nachricht)').slice(0, 4000)
         await supabase.from('activities').insert({

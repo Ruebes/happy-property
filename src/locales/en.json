@@ -4115,7 +4115,16 @@
       "in": "Income",
       "out": "Expenses",
       "net": "Net",
-      "topCats": "Largest expense categories"
+      "topCats": "Largest expense categories",
+      "matchTitle": "Match receipts",
+      "matchHint": "These invoices arrived by mail and match a payment. Please confirm.",
+      "matchConfirm": "Correct",
+      "matchReject": "Not a match",
+      "matchSure": "certain match",
+      "matchOk": "likely",
+      "matchWeak": "uncertain - please check",
+      "docOpen": "open receipt",
+      "noFile": "no document"
     },
     "flow2": {
       "title": "Flows",

@@ -14,6 +14,10 @@ interface FinTx {
   counterparty: string; reference: string; category: string | null
   category_source: string | null; doc_url: string | null; doc_name: string | null
   doc_status: string | null
+  // Beleg-Zuordnung als Vorschlag: das System schlaegt vor, Sven bestaetigt
+  // (Sven 25.8.). doc_match_status: vorschlag | bestaetigt | verworfen
+  doc_match_status: string | null; doc_match_score: number | null; doc_match_reason: string | null
+  partner_mail_id: string | null
 }
 interface Payable {
   id: string; vendor: string; title: string; amount: number | null; currency: string
@@ -54,6 +58,7 @@ export default function Finance() {
   }, [])
   useEffect(() => { void fetchAll() }, [fetchAll])
 
+  const vorschlaege = useMemo(() => txs.filter(x => x.doc_match_status === 'vorschlag'), [txs])
   const months = useMemo(() => Array.from(new Set(txs.map(x => x.booked_at.slice(0, 7)))).sort().reverse(), [txs])
   const [onlyNoDoc, setOnlyNoDoc] = useState(false)
   const [txSearch, setTxSearch] = useState('')
@@ -74,6 +79,33 @@ export default function Finance() {
     const { error } = await supabase.from('fin_transactions').update({ doc_status: v || null }).eq('id', tx.id)
     if (error) showToast(`❌ ${error.message}`)
   }
+  // Vorschlag bestätigen: Beleg bleibt an der Buchung, die Mail verschwindet aus
+  // dem Posteingang (archiviert - die Datei selbst bleibt am Vorgang erhalten,
+  // Belege duerfen nicht einfach weg).
+  const confirmMatch = async (tx: FinTx) => {
+    setBusy(tx.id)
+    const { error } = await supabase.from('fin_transactions')
+      .update({ doc_match_status: 'bestaetigt' }).eq('id', tx.id)
+    if (!error && tx.partner_mail_id) {
+      await supabase.from('partner_mails').update({ archived_at: new Date().toISOString() }).eq('id', tx.partner_mail_id)
+    }
+    setBusy('')
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_match_status: 'bestaetigt' } : x))
+    showToast('✓ Beleg zugeordnet - die Rechnung ist aus dem Posteingang raus')
+  }
+
+  // Vorschlag verwerfen: Beleg wieder abhängen, Mail bleibt im Posteingang.
+  const rejectMatch = async (tx: FinTx) => {
+    setBusy(tx.id)
+    const { error } = await supabase.from('fin_transactions')
+      .update({ doc_match_status: 'verworfen', doc_url: null, doc_name: null, partner_mail_id: null }).eq('id', tx.id)
+    setBusy('')
+    if (error) { showToast(`❌ ${error.message}`); return }
+    setTxs(arr => arr.map(x => x.id === tx.id ? { ...x, doc_match_status: 'verworfen', doc_url: null, doc_name: null } : x))
+    showToast('Vorschlag verworfen - die Rechnung liegt weiter im Posteingang')
+  }
+
   // Beleg manuell an eine Buchung hängen (PDF oder Bild, max 15 MB)
   const uploadDoc = async (tx: FinTx, file: File) => {
     if (file.size > 15 * 1048576) { showToast(`❌ ${t('crm.fin.docTooBig', 'Datei zu groß (max. 15 MB)')}`); return }
@@ -228,6 +260,52 @@ export default function Finance() {
             <button key={k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-lg text-sm font-medium ${tab === k ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{l}</button>
           ))}
         </div>
+
+        {/* Vorschlaege zuerst: eingegangene Rechnungen, die das System einer Zahlung
+            zuordnen will. Sven bestaetigt oder verwirft - erst danach gilt der
+            Beleg als verbucht und die Mail verschwindet aus dem Posteingang. */}
+        {!loading && vorschlaege.length > 0 && (
+          <div className="bg-white rounded-2xl border-2 border-amber-200 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-amber-50 border-b border-amber-100">
+              <p className="font-semibold text-amber-900">🧾 {t('crm.fin.matchTitle', 'Belege zuordnen')} ({vorschlaege.length})</p>
+              <p className="text-xs text-amber-800/80 mt-0.5">{t('crm.fin.matchHint', 'Diese Rechnungen sind per Mail eingegangen und passen zu einer Zahlung. Bitte kurz bestätigen.')}</p>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {vorschlaege.map(x => (
+                <div key={x.id} className="p-4 flex flex-wrap items-start gap-3">
+                  <div className="flex-1 min-w-[260px]">
+                    <p className="font-medium text-gray-900">
+                      {new Date(x.booked_at).toLocaleDateString('de-DE')} · {x.counterparty || '—'} · <span className="font-semibold">{eur(x.amount)}</span>
+                    </p>
+                    <p className="text-sm text-gray-600 mt-0.5">
+                      {x.doc_url
+                        ? <a href={x.doc_url} target="_blank" rel="noreferrer" className="text-orange-600 hover:underline">📎 {x.doc_name || t('crm.fin.docOpen', 'Beleg ansehen')}</a>
+                        : <span className="text-gray-400">{t('crm.fin.noFile', 'kein Dokument')}</span>}
+                    </p>
+                    {x.doc_match_reason && <p className="text-xs text-gray-500 mt-1">{x.doc_match_reason}</p>}
+                    {x.doc_match_score != null && (
+                      <p className="text-xs mt-1">
+                        <span className={`px-2 py-0.5 rounded-full font-medium ${Number(x.doc_match_score) >= 0.85 ? 'bg-emerald-50 text-emerald-700' : Number(x.doc_match_score) >= 0.6 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-600'}`}>
+                          {Number(x.doc_match_score) >= 0.85 ? t('crm.fin.matchSure', 'sicherer Treffer') : Number(x.doc_match_score) >= 0.6 ? t('crm.fin.matchOk', 'wahrscheinlich') : t('crm.fin.matchWeak', 'unsicher - bitte prüfen')}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button onClick={() => void confirmMatch(x)} disabled={busy === x.id}
+                      className="px-4 py-2 rounded-xl text-white text-sm font-semibold disabled:opacity-50" style={{ backgroundColor: '#2f6b4f' }}>
+                      ✓ {t('crm.fin.matchConfirm', 'Passt')}
+                    </button>
+                    <button onClick={() => void rejectMatch(x)} disabled={busy === x.id}
+                      className="px-3 py-2 rounded-xl text-sm border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                      {t('crm.fin.matchReject', 'Passt nicht')}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div className="flex justify-center py-16"><div className="w-8 h-8 border-4 border-orange-300 border-t-orange-500 rounded-full animate-spin" /></div>
