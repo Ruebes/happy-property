@@ -601,9 +601,20 @@ async function computeSlotsAmPm(admin: SupabaseClient): Promise<Slot[]> {
   return out.slice(0, 2)
 }
 // Editierbaren Bot-Text laden (booking_bot_messages, Fallback = mitgegebener Default).
-async function botText(admin: SupabaseClient, key: string, fallback: string): Promise<string> {
-  try { const { data } = await admin.from('booking_bot_messages').select('intro').eq('key', key).maybeSingle()
-    const t = (data as { intro?: string } | null)?.intro; return (t && t.trim()) ? t : fallback } catch { return fallback }
+// Nimmt den ersten Schluessel, zu dem ein gepflegter Text existiert. So kann ein
+// Sonderfall (z.B. Mail nie geoeffnet) pro Stufe verfeinert werden, muss aber nicht:
+// ohne Stufen-Text greift der generische, ohne den der Standardtext der Stufe.
+async function botText(admin: SupabaseClient, key: string | string[], fallback: string): Promise<string> {
+  const keys = Array.isArray(key) ? key : [key]
+  try {
+    const { data } = await admin.from('booking_bot_messages').select('key, intro').in('key', keys)
+    const rows = (data ?? []) as { key: string; intro: string | null }[]
+    for (const k of keys) {
+      const t = rows.find((r) => r.key === k)?.intro
+      if (t && t.trim()) return t
+    }
+    return fallback
+  } catch { return fallback }
 }
 const fillName = (t: string, first: string | null) => t.replace(/\{\{\s*vorname\s*\}\}/gi, first || 'du')
 function buildProposal(intro: string, slots: Slot[], isFinal: boolean): string {
@@ -634,16 +645,14 @@ async function recentlyAcqMessaged(admin: SupabaseClient, leadId: string, hours 
 }
 
 // Nachfass-Texte zur Immobilienauswahl UNTERSTELLEN, dass der Kunde die Vorschlaege
-// gesehen hat ("Hattest du schon Zeit, dir Svens Vorschlaege anzuschauen?"). Diese
-// Nudges hingen bisher rein am Phasenwechsel und liefen nach 24 h los - auch wenn die
-// Mail zu dem Zeitpunkt noch gar nicht raus war oder der Kunde sie nie geoeffnet hat
-// (Roni Schroeter, 25.8.: Phase 24.8. 17:49 gewechselt, Mail erst 25.8. 04:21 raus,
-// nie geoeffnet, WhatsApp trotzdem punkt 24 h spaeter).
-// Regel jetzt: erst fragen, wenn der Kunde die Unterlagen wirklich geoeffnet hat.
-// Solange nicht, wird der Nudge taeglich vertagt; nach VERTAG_MAX_TAGE fragt der Bot
-// mit einem Text, der nichts unterstellt (ist die Mail angekommen?).
+// gesehen hat ("Hattest du schon Zeit, dir Svens Vorschlaege anzuschauen?"). Die Kette
+// haengt aber nur am Phasenwechsel (24 h / 3 / 5 / 10 / 14 / 30 Tage) und laeuft auch,
+// wenn der Kunde nie geoeffnet hat (Roni Schroeter, 25.8.: Phase 24.8. 17:49 gewechselt,
+// Mail erst 25.8. 04:21 raus, nie geoeffnet, WhatsApp trotzdem punkt 24 h spaeter).
+// Die Kette bleibt in ihrem Takt - nur der TEXT richtet sich jetzt danach, ob der Kunde
+// die Unterlagen wirklich gesehen hat. Einzige Ausnahme: liegt die Mail noch gar nicht
+// beim Kunden, wird die Stufe vertagt, denn dann gibt es nichts zu fragen.
 const SICHT_QUELLEN = ['immobilienauswahl', 'deck_viewed']
-const VERTAG_MAX_TAGE = 4
 type SichtLage = { warten: false; gesehen: boolean } | { warten: true; grund: string }
 
 async function unterlagenLage(admin: SupabaseClient, leadId: string): Promise<SichtLage> {
@@ -657,19 +666,17 @@ async function unterlagenLage(admin: SupabaseClient, leadId: string): Promise<Si
     .filter((d): d is string => !!d)
     .sort()
   if (!raus.length) return { warten: true, grund: 'unterlagen_nicht_raus' }
-  const seit = new Date(raus[0]).getTime()
   // 2. Hat der Kunde sie nach dem Versand geoeffnet oder angesehen?
+  const seit = new Date(raus[0]).getTime()
   const { data: ev } = await admin.from('engagement_events').select('id')
     .eq('lead_id', leadId).in('type', ['email_open', 'deck_view'])
     .gte('occurred_at', new Date(seit - 5 * 60000).toISOString()).limit(1)
-  if (ev && ev.length) return { warten: false, gesehen: true }
-  // 3. Nicht geoeffnet: erst vertagen, nach einigen Tagen neutral nachfragen.
-  if (Date.now() - seit < VERTAG_MAX_TAGE * 864e5) return { warten: true, grund: 'wartet_auf_oeffnung' }
-  return { warten: false, gesehen: false }
+  return { warten: false, gesehen: !!(ev && ev.length) }
 }
 
-// Vertagt einen Nudge um 24 h (im Sendefenster 9-20 Uhr deutscher Zeit), statt ihn
-// ersatzlos ausfallen zu lassen.
+// Vertagt eine Stufe um 24 h (im Sendefenster 9-20 Uhr deutscher Zeit), statt sie
+// ersatzlos ausfallen zu lassen. Nur fuer den Fall "Unterlagen noch nicht raus" -
+// die naechsten Stufen der Kette laufen unabhaengig weiter.
 async function vertageNudge(admin: SupabaseClient, leadId: string, stage: number, source: string): Promise<void> {
   try {
     const { data: pend } = await admin.from('scheduled_messages').select('id')
@@ -720,13 +727,14 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
   const isFinal = stage >= 5
   // Fragt dieser Nudge nach den Unterlagen? Dann muss der Kunde sie auch gesehen haben.
-  let textKey = `${source}_${stage}`
+  // Nicht geoeffnet -> Text, der nichts unterstellt. Stufenspezifisch, sonst generisch.
+  const keys = [`${source}_${stage}`]
   if (SICHT_QUELLEN.includes(source) && !introOverride) {
     const lage = await unterlagenLage(admin, leadId)
     if (lage.warten) { await vertageNudge(admin, leadId, stage, source); return json({ ok: true, skipped: lage.grund }) }
-    if (!lage.gesehen) textKey = `${source}_ungeoeffnet`
+    if (!lage.gesehen) keys.unshift(`${source}_ungeoeffnet_${stage}`, `${source}_ungeoeffnet`)
   }
-  const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, textKey, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
+  const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, keys, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
   const msg = buildProposal(intro, slots, isFinal)
   const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
   if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })
