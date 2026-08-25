@@ -358,6 +358,19 @@ Deno.serve(async (req: Request) => {
         await supabase.from('partner_mails').update({ fin_tx_id: txId }).eq('id', m.id)
         return json({ success: true, fin_class: 'sven', matched_tx: txId, score: Math.min(1, score) })
       }
+      // Doppelt-Schutz: dieselbe Mail darf NICHT zweimal in den Ausgangskorb.
+      // Beim erneuten Analysieren fand die Suche keine belegfreie Buchung mehr
+      // (die Rechnung hing ja bereits dran) und legte sie als offene Forderung
+      // an - IONOS lag danach zweimal im System (Sven 25.8.).
+      const { data: schonDa } = await supabase.from('fin_payables')
+        .select('id').eq('partner_mail_id', m.id).limit(1)
+      if (schonDa?.length) return json({ success: true, fin_class: 'sven', payable: 'bereits_vorhanden' })
+      // Haengt der Beleg dieser Mail schon an einer Buchung? Dann ist sie bezahlt
+      // und gehoert nicht in den Ausgangskorb.
+      const { data: schonVerbucht } = await supabase.from('fin_transactions')
+        .select('id').eq('partner_mail_id', m.id).limit(1)
+      if (schonVerbucht?.length) return json({ success: true, fin_class: 'sven', matched_tx: (schonVerbucht[0] as { id: string }).id, bereits_zugeordnet: true })
+
       await supabase.from('fin_payables').insert({
         partner_mail_id: m.id, vendor: (inv.vendor ?? m.from_addr).slice(0, 200), title: ((inv.title ?? m.subject) || 'Rechnung').slice(0, 200),
         amount: inv.amount ?? null, currency: (inv.currency ?? 'EUR').slice(0, 3).toUpperCase(),

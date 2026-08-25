@@ -633,6 +633,61 @@ async function recentlyAcqMessaged(admin: SupabaseClient, leadId: string, hours 
   } catch { return false }
 }
 
+// Nachfass-Texte zur Immobilienauswahl UNTERSTELLEN, dass der Kunde die Vorschlaege
+// gesehen hat ("Hattest du schon Zeit, dir Svens Vorschlaege anzuschauen?"). Diese
+// Nudges hingen bisher rein am Phasenwechsel und liefen nach 24 h los - auch wenn die
+// Mail zu dem Zeitpunkt noch gar nicht raus war oder der Kunde sie nie geoeffnet hat
+// (Roni Schroeter, 25.8.: Phase 24.8. 17:49 gewechselt, Mail erst 25.8. 04:21 raus,
+// nie geoeffnet, WhatsApp trotzdem punkt 24 h spaeter).
+// Regel jetzt: erst fragen, wenn der Kunde die Unterlagen wirklich geoeffnet hat.
+// Solange nicht, wird der Nudge taeglich vertagt; nach VERTAG_MAX_TAGE fragt der Bot
+// mit einem Text, der nichts unterstellt (ist die Mail angekommen?).
+const SICHT_QUELLEN = ['immobilienauswahl', 'deck_viewed']
+const VERTAG_MAX_TAGE = 4
+type SichtLage = { warten: false; gesehen: boolean } | { warten: true; grund: string }
+
+async function unterlagenLage(admin: SupabaseClient, leadId: string): Promise<SichtLage> {
+  // 1. Sind die Vorschlaege ueberhaupt raus?
+  const { data: ob } = await admin.from('deck_outbox')
+    .select('email_sent_at, sent_at').eq('lead_id', leadId)
+    .order('created_at', { ascending: false }).limit(5)
+  const raus = (ob ?? [])
+    .map((r) => (r as { email_sent_at: string | null; sent_at: string | null }))
+    .map((r) => r.email_sent_at ?? r.sent_at)
+    .filter((d): d is string => !!d)
+    .sort()
+  if (!raus.length) return { warten: true, grund: 'unterlagen_nicht_raus' }
+  const seit = new Date(raus[0]).getTime()
+  // 2. Hat der Kunde sie nach dem Versand geoeffnet oder angesehen?
+  const { data: ev } = await admin.from('engagement_events').select('id')
+    .eq('lead_id', leadId).in('type', ['email_open', 'deck_view'])
+    .gte('occurred_at', new Date(seit - 5 * 60000).toISOString()).limit(1)
+  if (ev && ev.length) return { warten: false, gesehen: true }
+  // 3. Nicht geoeffnet: erst vertagen, nach einigen Tagen neutral nachfragen.
+  if (Date.now() - seit < VERTAG_MAX_TAGE * 864e5) return { warten: true, grund: 'wartet_auf_oeffnung' }
+  return { warten: false, gesehen: false }
+}
+
+// Vertagt einen Nudge um 24 h (im Sendefenster 9-20 Uhr deutscher Zeit), statt ihn
+// ersatzlos ausfallen zu lassen.
+async function vertageNudge(admin: SupabaseClient, leadId: string, stage: number, source: string): Promise<void> {
+  try {
+    const { data: pend } = await admin.from('scheduled_messages').select('id')
+      .eq('lead_id', leadId).eq('event_type', 'bot_nudge').eq('bot_nudge_stage', stage)
+      .eq('bot_nudge_source', source).eq('status', 'pending').limit(1)
+    if (pend && pend.length) return
+    const ziel = new Date(Date.now() + 864e5)
+    const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hour12: false, hour: '2-digit' }).format(ziel))
+    if (h < 9) ziel.setUTCHours(ziel.getUTCHours() + (9 - h))
+    else if (h >= 20) ziel.setUTCHours(ziel.getUTCHours() - (h - 19))
+    await admin.from('scheduled_messages').insert({
+      lead_id: leadId, type: 'whatsapp', event_type: 'bot_nudge',
+      bot_nudge_stage: stage, bot_nudge_source: source, status: 'pending',
+      scheduled_at: ziel.toISOString(),
+    })
+  } catch (e) { console.warn('[booking-bot] vertageNudge:', e) }
+}
+
 async function handleNudge(admin: SupabaseClient, leadId: string, stage: number, source: string, introOverride?: string): Promise<Response> {
   const { data: st } = await admin.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
   if ((st as { value?: string } | null)?.value !== 'true') return json({ ok: true, skipped: 'disabled' })
@@ -664,7 +719,14 @@ async function handleNudge(admin: SupabaseClient, leadId: string, stage: number,
   const slots = await computeSlotsAmPm(admin)
   if (slots.length < 2) return json({ ok: true, skipped: 'no_slots' })
   const isFinal = stage >= 5
-  const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, `${source}_${stage}`, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
+  // Fragt dieser Nudge nach den Unterlagen? Dann muss der Kunde sie auch gesehen haben.
+  let textKey = `${source}_${stage}`
+  if (SICHT_QUELLEN.includes(source) && !introOverride) {
+    const lage = await unterlagenLage(admin, leadId)
+    if (lage.warten) { await vertageNudge(admin, leadId, stage, source); return json({ ok: true, skipped: lage.grund }) }
+    if (!lage.gesehen) textKey = `${source}_ungeoeffnet`
+  }
+  const intro = fillName((introOverride && introOverride.trim()) ? introOverride : await botText(admin, textKey, 'Hi {{vorname}}, wollen wir kurz sprechen? Ich hätte zwei Zeiten frei:'), l.first_name)
   const msg = buildProposal(intro, slots, isFinal)
   const expires = new Date(Date.now() + 4 * 24 * 3600e3).toISOString()   // rollend, damit späte Antworten greifen
   if (c) await setConv(admin, c.id, { proposed_slots: slots, last_message: msg, expires_at: expires })

@@ -682,7 +682,7 @@ function BotMessagesCard({ stage, onToast }: { stage: string; onToast: (m: strin
   const shown = rows.filter(r =>
     stage === 'no_show'          ? r.key.startsWith('no_show_') :
     stage === 'erstkontakt'      ? r.key.startsWith('erstkontakt') :
-    stage === 'immobilienauswahl' ? (r.key.startsWith('immobilienauswahl_') || r.key === 'deck_viewed_0') : false)
+    stage === 'immobilienauswahl' ? (r.key.startsWith('immobilienauswahl_') || r.key === 'deck_viewed_0' || r.key === 'deck_viewed_ungeoeffnet') : false)
   if (!shown.length) return null
   // Die WhatsApps (Bot) in EINEM Kästchen unter den Mails — mit 🤝-Überschrift.
   return (
