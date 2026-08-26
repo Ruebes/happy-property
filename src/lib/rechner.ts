@@ -111,16 +111,49 @@ export function applySeason(p: CalcParams): CalcParams {
 //   beguenstigt = netto × MIN(Grenze / Wohnflaeche, 1). Ohne Wohnflaeche (0/null)
 // gilt alles als unterhalb der Grenze → komplett 5 %.
 export type VatMode = 'standard19' | 'reduced130' | 'reduced200'
-export interface VatSplit { netReduced: number; netStandard: number; vatReduced: number; vatStandard: number; vat: number; gross: number }
+export interface VatSplit {
+  netReduced: number; netStandard: number; vatReduced: number; vatStandard: number; vat: number; gross: number
+  // Warum die Beguenstigung ganz entfaellt (leer = sie greift).
+  entfallen?: 'wert' | 'flaeche'
+}
+// Grenzen der aktuellen zyprischen Regelung (seit 16.6.2023):
+//  - 5 % nur auf die ersten 130 m² UND die ersten 350.000 EUR
+//  - Voraussetzung: Wohnflaeche <= 190 m² UND Kaufpreis <= 475.000 EUR
+//  - Wird eine der beiden Voraussetzungen gerissen, gilt fuer die GESAMTE
+//    Immobilie 19 % - nicht nur fuer den ueberschiessenden Teil.
+// Die Uebergangsregelung (reduced200) kennt diese Wertgrenzen nicht: dort gelten
+// 5 % auf die ersten 200 m², unabhaengig vom Kaufpreis.
+export const VAT_CAP_SQM = 130
+export const VAT_CAP_WERT = 350000
+export const VAT_MAX_SQM = 190
+export const VAT_MAX_WERT = 475000
+
 export function vatSplit(net: number, mode: VatMode | undefined, livingSqm?: number | null): VatSplit {
-  if (!mode || mode === 'standard19') {
+  const alles19 = (grund?: 'wert' | 'flaeche'): VatSplit => {
     // Bit-genau wie bisher: brutto = round(netto × 1,19), MwSt = brutto − netto.
     const gross = Math.round(net * 1.19)
     const vat = gross - net
-    return { netReduced: 0, netStandard: net, vatReduced: 0, vatStandard: vat, vat, gross }
+    return { netReduced: 0, netStandard: net, vatReduced: 0, vatStandard: vat, vat, gross, entfallen: grund }
   }
-  const cap = mode === 'reduced130' ? 130 : 200
-  const share = (livingSqm && livingSqm > 0) ? Math.min(cap / livingSqm, 1) : 1
+  if (!mode || mode === 'standard19') return alles19()
+
+  if (mode === 'reduced130') {
+    // Ausschlusskriterien zuerst - sie kippen die Beguenstigung komplett.
+    if (net > VAT_MAX_WERT) return alles19('wert')
+    if (livingSqm && livingSqm > VAT_MAX_SQM) return alles19('flaeche')
+    // Innerhalb der Grenzen: 5 % auf den kleineren der beiden Deckel
+    // (Flaechenanteil bis 130 m² bzw. Wertanteil bis 350.000 EUR).
+    const flaechenAnteil = (livingSqm && livingSqm > 0) ? Math.min(VAT_CAP_SQM / livingSqm, 1) : 1
+    const netReduced = Math.min(Math.round(net * flaechenAnteil), VAT_CAP_WERT)
+    const netStandard = net - netReduced
+    const vatReduced = Math.round(netReduced * 0.05)
+    const vatStandard = Math.round(netStandard * 0.19)
+    const vat = vatReduced + vatStandard
+    return { netReduced, netStandard, vatReduced, vatStandard, vat, gross: net + vat }
+  }
+
+  // Uebergangsregelung: 5 % bis 200 m², ohne Wertgrenze.
+  const share = (livingSqm && livingSqm > 0) ? Math.min(200 / livingSqm, 1) : 1
   const netReduced = Math.round(net * share)
   const netStandard = net - netReduced
   const vatReduced = Math.round(netReduced * 0.05)

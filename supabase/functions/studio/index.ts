@@ -32,6 +32,7 @@ import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import { hfGenerateBytes, hfShrinkUrl, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, CI_LOOK, loadCiFonts } from '../_shared/brand.ts'
+import { checkAd, composeMessage, COPY_PLAYBOOK, issuesForPrompt, type AdCopy, type AdIssue } from '../_shared/adCopy.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -68,6 +69,10 @@ interface Draft {
   bg_url?: string
   /** von Sven hochgeladene Vorlage — Bild-Änderungen setzen wieder darauf auf */
   base_image?: string
+  /** benannte Textbausteine; fehlen, sobald Sven die Caption von Hand ändert */
+  copy?: AdCopy | null
+  /** Restmängel aus der harten Prüfung (Blocker wurden vorher nachgebessert) */
+  issues?: AdIssue[]
   overlay?: Overlay | null
   cards?: Card[]
 }
@@ -105,6 +110,18 @@ const parseJson = <T>(text: string): T => {
   const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}')
   if (s >= 0 && e > s) return JSON.parse(cleaned.slice(s, e + 1)) as T
   throw new Error('Antwort der KI war kein gültiges JSON')
+}
+
+// Claude + JSON in einem: liefert die KI kaputtes JSON (kommt bei langen
+// Antworten mit Anführungszeichen vor), wird EINMAL mit dem Fehler nachgefragt.
+async function askJson<T>(prompt: string): Promise<T> {
+  const raw = await claude(prompt)
+  try { return parseJson<T>(raw) } catch (e) {
+    const why = e instanceof Error ? e.message : String(e)
+    console.warn('[studio] JSON kaputt, frage nach:', why)
+    return parseJson<T>(await claude(
+      `${prompt}\n\nDeine letzte Antwort war KEIN gültiges JSON (${why}). Antworte erneut, NUR mit gültigem JSON, ohne Fließtext davor oder danach. Doppelte Anführungszeichen dürfen NUR die JSON-Struktur bilden, im Text stattdessen "..." als typografische Zeichen oder gar keine.`))
+  }
 }
 
 // Store-Adapter für _shared/higgsfield.ts (liest/schreibt connector_secrets).
@@ -227,6 +244,15 @@ function capBadge(text: string): string {
   return (sp > 30 ? cut.slice(0, sp) : cut).replace(/[,;:.\-]$/, '')
 }
 
+const cleanCopy = (c: AdCopy | undefined | null): AdCopy => ({
+  hook: deDash(c?.hook ?? ''),
+  problem: deDash(c?.problem ?? ''),
+  mechanism: deDash(c?.mechanism ?? ''),
+  proof: deDash(c?.proof ?? ''),
+  benefits: (c?.benefits ?? []).map(b => deDash(b ?? '').replace(/^[\s✅✔️☑️•\-–—*]+/u, '').trim()).filter(Boolean).slice(0, 4),
+  cta: deDash(c?.cta ?? ''),
+})
+
 function cleanOverlay(ov: Overlay | null | undefined): Overlay | null {
   if (!ov) return null
   return {
@@ -310,6 +336,52 @@ Deno.serve(async (req) => {
       return json({ status: 'pending' })
     }
 
+    // ── Agentur-Review ───────────────────────────────────────────────────────
+    // Zweiter Blick auf den fertigen Entwurf, wie ihn ein Creative Director
+    // macht: Note plus konkrete Mängel mit Lösungsvorschlag. Läuft im Frontend
+    // parallel zum Bild-Job, kostet also keine spürbare Zeit.
+    if (mode === 'review') {
+      const draft = body.draft as Draft | undefined
+      if (!draft) throw new Error('draft fehlt')
+      // Deterministische Prüfung zuerst — die zählt immer, egal was die KI sagt.
+      const hard = checkAd(draft)
+      let ai: { score?: number; verdict?: string; issues?: AdIssue[]; strengths?: string[] } = {}
+      try {
+        ai = await askJson(`Du bist Creative Director einer Performance-Marketing-Agentur und prüfst eine Meta-Anzeige für Happy Property (Immobilien-Investment Zypern, deutschsprachige Kapitalanleger, Ziel: kostenloses Beratungsgespräch als Lead).
+
+${COPY_PLAYBOOK}
+${creativeRules ? `\nGELERNTE REGELN (Svens Korrekturen, haben Vorrang vor deinem Geschmack):\n${creativeRules}` : ''}
+ENTWURF:
+${JSON.stringify({ format: draft.format, headline: draft.headline, message: draft.message, overlay: draft.overlay, cards: draft.cards })}
+
+Bewerte streng, aber nur, was die Conversion betrifft. Keine Geschmacksfragen, keine Lobhudelei.
+Antworte NUR mit JSON:
+{
+  "score": 0-100 (unter 60 = so nicht schalten, 60-79 = geht, aber Luft nach oben, ab 80 = stark),
+  "verdict": "ein Satz, was diese Anzeige leistet oder eben nicht",
+  "issues": [{"severity":"blocker"|"hinweis","field":"hook|message|benefits|cta|overlay|bild|headline","problem":"was konkret schwach ist","fix":"was stattdessen dastehen sollte"}],
+  "strengths": ["max. 3 kurze Punkte, die wirklich tragen"]
+}`)
+      } catch (e) {
+        console.warn('[studio] review:', e)
+      }
+      const aiIssues = (ai.issues ?? []).filter(i => i?.problem).map(i => ({
+        severity: i.severity === 'blocker' ? 'blocker' as const : 'hinweis' as const,
+        field: String(i.field ?? 'allgemein'), problem: String(i.problem), fix: String(i.fix ?? ''),
+      }))
+      const issues = [...hard, ...aiIssues]
+      let score = Math.max(0, Math.min(100, Math.round(Number(ai.score ?? 70))))
+      // NUR die deterministischen Blocker deckeln die Note und sperren das
+      // Anlegen. Die KI vergibt "blocker" grosszügig — das ist als Hinweis wertvoll,
+      // darf aber nicht ungeprüft eine Anzeige verhindern.
+      const blocked = hard.some(i => i.severity === 'blocker')
+      if (blocked) score = Math.min(score, 49)
+      return json({
+        success: true, score, verdict: String(ai.verdict ?? ''),
+        issues, strengths: (ai.strengths ?? []).map(String).slice(0, 3), blocked,
+      })
+    }
+
     // ── Entwurf erzeugen ─────────────────────────────────────────────────────
     if (mode === 'generate') {
       const brief = String(body.brief ?? '').trim().slice(0, 2000)
@@ -346,13 +418,14 @@ Deno.serve(async (req) => {
       const plan = parseJson<{
         format: 'single' | 'carousel'
         headline: string
-        message: string
+        copy: AdCopy
         image_prompt?: string
         personas?: string[]
         overlay?: Overlay | null
         cards?: Array<{ title: string; description: string; image_url: string }>
       }>(await claude(`Du bist der Anzeigen-Texter von Happy Property (Immobilien-Investment Zypern, Zielgruppe deutschsprachige Kapitalanleger, Du-Ansprache, Stil der bisherigen Gewinner-Ads: emotionaler Einstieg über Schmerzpunkte wie Steuern/Bürokratie/Wetter, dann Zypern-Vorteile mit ✅-Aufzählung, klare Aufforderung zum kostenlosen Beratungsgespräch über den Online-Terminkalender). JEDE Anzeige muss sofort klarmachen: Wir verkaufen Immobilien-Investments auf Zypern, Ziel ist ein kostenloses Beratungsgespräch (Lead).
-SCHREIBREGEL: NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (–) verwenden, immer den normalen Bindestrich "-" (auch bei Zahlenspannen: "8-12 %", nicht "8–12 %").
+
+${COPY_PLAYBOOK}
 
 AUFTRAG von Sven:
 """${brief}"""
@@ -366,18 +439,58 @@ Antworte NUR mit JSON:
 {
   "format": "single" | "carousel"  (Karussell wenn der Auftrag Projekte/mehrere Karten nahelegt),
   "headline": "max. 40 Zeichen",
-  "message": "die komplette Caption (Hauptext) im Gewinner-Stil, mit Absätzen und ✅",
+  "copy": {
+    "hook": "erste Zeile, max. 60 Zeichen, nennt Ergebnis ODER Schmerzpunkt",
+    "problem": "1-2 Sätze zum Schmerzpunkt, Du-Ansprache",
+    "mechanism": "1-2 Sätze, WIE es funktioniert",
+    "proof": "ein Beleg MIT ZAHL (Steuersatz, Rendite, Anzahl Kunden, Zeitraum)",
+    "benefits": ["3 Vorteile, je max. 60 Zeichen, mindestens zwei davon mit Zahl"],
+    "cta": "nächster Schritt MIT Aufwand, z.B. '30 Minuten Videocall, unverbindlich'"
+  },
   "image_prompt": "NUR bei single: deutscher Prompt für das HINTERGRUND-Foto. Ohne Basisbild: Szene mit Sven — Pose UND KLEIDUNG des Referenzfotos UNVERÄNDERT lassen, NUR die Umgebung passend zum Auftrag (Mittelmeer/Neubau/Zypern-Immobilien). Mit Basisbild: die gewünschte Veränderung des Basisbilds. KEIN Text im Foto",
   "overlay": NUR bei single — der TEXT AUF dem Bild (wird gestochen scharf gerendert, KEIN KI-Text): {"badge": "kurze knackige Bild-Headline, max. 55 Zeichen (roter Badge)", "subheadline": "1 Satz, max. 80 Zeichen (dunkelblau)", "checks": [2-4 kurze Vorteils-Punkte, je max. 55 Zeichen]}. Nennt der Auftrag konkrete Bild-Headline/Subheadline/Checkmark-Texte, übernimm sie WÖRTLICH. Nur wenn der Auftrag ausdrücklich "nur Foto ohne Text" will: null,
   "personas": ["sven" und/oder "lotte" NUR wenn sie laut Auftrag ins Bild sollen, sonst []],
   "cards": [NUR bei carousel, 2-6 Karten: {"title": "max. 35 Zeichen", "description": "max. 60 Zeichen", "image_url": "eine der echten Projekt-Foto-URLs"}]
 }`))
 
-      const draft: Draft = { format: plan.format, headline: deDash(plan.headline), message: deDash(plan.message) }
+      // ── Struktur + harte Prüfung ────────────────────────────────────────
+      // Die KI liefert Bausteine, die Caption baut composeMessage. Was die
+      // Prüfung mit einem Blocker quittiert, geht EINMAL automatisch zur
+      // Korrektur zurück — Sven sieht nur, was die Regeln besteht.
+      let headline = deDash(plan.headline ?? '')
+      let copy = cleanCopy(plan.copy)
+      let overlay = cleanOverlay(plan.overlay)
+      let cards = (plan.cards ?? []).slice(0, 6)
+      const runCheck = () => checkAd({ headline, message: composeMessage(copy), copy, overlay, cards })
+      let issues = runCheck()
+      if (issues.some(i => i.severity === 'blocker')) {
+        try {
+          const fixed = parseJson<{ headline?: string; copy?: AdCopy; overlay?: Overlay | null; cards?: Card[] }>(
+            await claude(`Du bist der Werbetexter von Happy Property. Dieser Anzeigen-Entwurf hat die Qualitätsprüfung NICHT bestanden.
+
+${COPY_PLAYBOOK}
+
+ENTWURF:
+${JSON.stringify({ headline, copy, overlay, cards })}
+
+MÄNGEL (alle beheben, Inhalt und Aussage sonst beibehalten):
+${issuesForPrompt(issues.filter(i => i.severity === 'blocker'))}
+
+Antworte NUR mit JSON im GLEICHEN Aufbau: {"headline":"...","copy":{"hook","problem","mechanism","proof","benefits","cta"},"overlay":{...} oder null,"cards":[...]}`))
+          if (fixed.headline) headline = deDash(fixed.headline)
+          if (fixed.copy) copy = cleanCopy(fixed.copy)
+          if (fixed.overlay !== undefined) overlay = cleanOverlay(fixed.overlay)
+          if (Array.isArray(fixed.cards) && fixed.cards.length) cards = fixed.cards.slice(0, 6)
+          issues = runCheck()
+        } catch (e) {
+          console.warn('[studio] Nachbesserung fehlgeschlagen:', e)
+        }
+      }
+
+      const draft: Draft = { format: plan.format, headline, message: composeMessage(copy), copy, issues }
       if (plan.format === 'single' || baseImage) {
         draft.format = 'single'
-        const ov = cleanOverlay(plan.overlay)
-        draft.overlay = hasOverlayText(ov) ? ov : null
+        draft.overlay = hasOverlayText(overlay) ? overlay : null
         // Vorlage im Entwurf merken: spaetere Chat-Aenderungen am Bild muessen
         // wieder AUF DER VORLAGE aufsetzen, nicht auf dem KI-Ergebnis.
         if (baseImage) draft.base_image = baseImage
@@ -405,7 +518,7 @@ Antworte NUR mit JSON:
         const jobId = await startImageJob(bases, prompt, draft.overlay)
         return json({ success: true, draft, image_job: jobId })
       }
-      draft.cards = (plan.cards ?? []).slice(0, 6)
+      draft.cards = cards
       if (!draft.cards.length) throw new Error('Zum genannten Projekt habe ich keine Fotos — bitte Fotos im Projekt hinterlegen (oder Drive-Sync abwarten) und nochmal versuchen')
       return json({ success: true, draft })
     }
@@ -416,9 +529,10 @@ Antworte NUR mit JSON:
       const instruction = String(body.instruction ?? '').trim().slice(0, 1000)
       if (!draft || !instruction) throw new Error('draft/instruction fehlt')
 
-      const decision = parseJson<{ target: 'caption' | 'image' | 'overlay' | 'cards'; headline?: string; message?: string; image_prompt?: string; overlay?: Overlay | null; cards?: Card[] }>(
+      const decision = parseJson<{ target: 'caption' | 'image' | 'overlay' | 'cards'; headline?: string; copy?: AdCopy; image_prompt?: string; overlay?: Overlay | null; cards?: Card[] }>(
         await claude(`Sven bearbeitet einen Anzeigen-Entwurf per Chat. Entscheide, was er ändern will, und liefere die Änderung.
-SCHREIBREGEL für alle Texte: NIEMALS Gedankenstrich (—) oder Bis-Strich (–), immer normaler Bindestrich "-" (auch "8-12 %").
+
+${COPY_PLAYBOOK}
 
 AKTUELLER ENTWURF:
 ${JSON.stringify(draft)}
@@ -428,19 +542,21 @@ SVENS ANWEISUNG:
 """${instruction}"""
 ${creativeRules ? `\nGELERNTE BILD-REGELN (bei image_prompt beachten):\n${creativeRules}` : ''}
 Antworte NUR mit JSON:
-- Text-/Caption-Änderung (Haupttext UNTER der Anzeige): {"target":"caption","headline":"...","message":"..."} (beides vollständig, mit der Änderung umgesetzt)
+- Text-/Caption-Änderung (Haupttext UNTER der Anzeige): {"target":"caption","headline":"...","copy":{"hook":"...","problem":"...","mechanism":"...","proof":"...","benefits":["...","...","..."],"cta":"..."}} — IMMER alle Bausteine vollständig liefern. Die Caption wird daraus zusammengebaut.
 - Änderung des TEXTS AUF DEM BILD (Badge/Subheadline/Checkmarks): {"target":"overlay","overlay":{"badge":"...","subheadline":"...","checks":["..."]}} — IMMER das komplette Overlay liefern (auch unveränderte Teile). Der Badge sitzt oben links und ist auf 55 Zeichen / 2 Zeilen begrenzt. Beschwert sich Sven, dass der Text im Bild stört oder ueber Gesicht/Motiv liegt, kuerze den Badge deutlich (Ziel: eine Zeile, max. 30 Zeichen) — das ist eine overlay-Änderung, kein neues Foto.
 - FOTO-Änderung (Motiv/Umgebung, nur bei format=single): {"target":"image","image_prompt":"deutscher Prompt: Pose UND Kleidung des Mannes unverändert lassen, Änderung laut Anweisung, fotorealistisch-dokumentarisch, kein Text im Bild"}
 - Karten-Änderung (nur bei format=carousel): {"target":"cards","cards":[...komplette aktualisierte Kartenliste, image_url beibehalten...]}
-Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für den Haupt-Teil und lege headline/message ZUSÄTZLICH bei — sie werden immer übernommen, wenn vorhanden.`))
+Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für den Haupt-Teil und lege headline/copy ZUSÄTZLICH bei — sie werden immer übernommen, wenn vorhanden.`))
 
       const updated: Draft = { ...draft }
-      // headline/message werden IMMER übernommen, wenn geliefert (kombinierte Anweisungen)
+      // headline/copy werden IMMER übernommen, wenn geliefert (kombinierte Anweisungen)
       if (decision.headline) updated.headline = deDash(decision.headline)
-      if (decision.message) updated.message = deDash(decision.message)
+      if (decision.copy) {
+        updated.copy = cleanCopy(decision.copy)
+        updated.message = composeMessage(updated.copy)
+      }
       if (decision.target === 'caption') {
         updated.headline = deDash(decision.headline ?? draft.headline)
-        updated.message = deDash(decision.message ?? draft.message)
       } else if (decision.target === 'overlay' && draft.format === 'single') {
         // Text AUF dem Bild ändern: kein neues KI-Foto nötig — Overlay neu
         // rendern und aufs vorhandene Hintergrundfoto komponieren (synchron, schnell).
@@ -457,6 +573,7 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
             updated.bg_url = draft.bg_url ?? draft.image_url
           }
         }
+        updated.issues = checkAd(updated)
         return json({ success: true, draft: updated, changed: 'overlay' })
       } else if (decision.target === 'image' && draft.format === 'single') {
         // Neues FOTO im Hintergrund — altes Bild bleibt sichtbar, bis das neue da
@@ -470,10 +587,12 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
           `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. ${FRAMING}`,
           updated.overlay,
         )
+        updated.issues = checkAd(updated)
         return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {
         updated.cards = (decision.cards ?? draft.cards ?? []).slice(0, 6)
       }
+      updated.issues = checkAd(updated)
       return json({ success: true, draft: updated, changed: decision.target })
     }
 
@@ -481,6 +600,18 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
     if (mode === 'publish') {
       const draft = body.draft as Draft | undefined
       if (!draft?.headline || !draft?.message) throw new Error('draft unvollständig')
+
+      // Qualitäts-Sperre: was gegen Meta-Regeln oder unsere harten Textregeln
+      // verstösst, geht nicht als Anzeige raus. Sven kann bewusst übergehen
+      // (force), dann liegt die Entscheidung dokumentiert bei ihm.
+      const blockers = checkAd(draft).filter(i => i.severity === 'blocker')
+      if (blockers.length && body.force !== true) {
+        return json({
+          error: 'quality_blocked',
+          hint: `Die Anzeige verstösst gegen ${blockers.length === 1 ? 'eine harte Regel' : `${blockers.length} harte Regeln`}: ${blockers.map(b => b.problem).join(' ')}`,
+          issues: blockers,
+        }, 400)
+      }
 
       const { data: st } = await supabase.from('ad_settings').select('system_campaign_id').eq('id', 'default').maybeSingle()
       const sysCampaign = (st as { system_campaign_id?: string } | null)?.system_campaign_id

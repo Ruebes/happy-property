@@ -10,6 +10,8 @@ import { supabase } from '../../lib/supabase'
 // die Anzeige PAUSIERT in der System-Kampagne (Edge Function ad-studio).
 
 interface Card { title: string; description: string; image_url: string }
+interface Issue { severity: 'blocker' | 'hinweis'; field: string; problem: string; fix: string }
+interface Review { score: number; verdict: string; issues: Issue[]; strengths: string[]; blocked: boolean }
 interface Overlay { badge?: string; subheadline?: string; checks?: string[] }
 interface Draft {
   format: 'single' | 'carousel'
@@ -20,6 +22,10 @@ interface Draft {
   bg_url?: string
   /** hochgeladene Vorlage — Bild-Änderungen per Chat setzen wieder darauf auf */
   base_image?: string
+  /** benannte Textbausteine vom Server; null, sobald die Caption von Hand editiert wurde */
+  copy?: unknown
+  /** Restmängel aus der harten Prüfung */
+  issues?: Issue[]
   overlay?: Overlay | null
   cards?: Card[]
 }
@@ -27,6 +33,12 @@ interface Draft {
 interface Props {
   onPublished: () => void           // Werbemanager neu laden (neue Ad im Katalog)
   showToast: (msg: string) => void
+}
+
+/** Fehler der Edge Function inkl. Nutzdaten (z.B. die Mängelliste der Sperre). */
+class CallError extends Error {
+  detail?: Record<string, unknown>
+  constructor(message: string, detail?: Record<string, unknown>) { super(message); this.detail = detail }
 }
 
 export default function AdStudio({ onPublished, showToast }: Props) {
@@ -41,6 +53,9 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   const [busy, setBusy] = useState<'generate' | 'refine' | 'publish' | null>(null)
   const [imgBusy, setImgBusy] = useState(false)   // Bild wird im Hintergrund erstellt
   const [lastChange, setLastChange] = useState('')
+  const [review, setReview] = useState<Review | null>(null)   // Agentur-Review
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [blockers, setBlockers] = useState<Issue[] | null>(null)   // Sperre beim Anlegen
   const [baseImage, setBaseImage] = useState('')  // eigenes hochgeladenes Basisbild (URL)
   const [uploading, setUploading] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -74,11 +89,11 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     if (error) {
       // Netzwerk-Ebene (gar nicht angekommen) von Function-Fehlern unterscheiden:
       // die Klartext-Meldung der Function steckt bei non-2xx im Response-Body.
-      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null) as { error?: unknown; hint?: unknown } | null
+      const detail = await (error as { context?: Response }).context?.json?.().catch(() => null) as Record<string, unknown> | null
       if (detail && typeof detail.error === 'string') {
         // hint (verständliche Erklärung) hat Vorrang vor dem Fehlercode —
         // sonst sieht Giona kryptisches „app_dev_mode" statt der Anleitung.
-        throw new Error(typeof detail.hint === 'string' && detail.hint ? detail.hint : detail.error)
+        throw new CallError(typeof detail.hint === 'string' && detail.hint ? detail.hint : detail.error, detail)
       }
       if (/Failed to send/i.test(error.message ?? '')) {
         if (!retried) {
@@ -117,6 +132,24 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     } finally { setImgBusy(false) }
   }
 
+  // Agentur-Review: zweiter Blick auf den fertigen Entwurf. Läuft absichtlich
+  // NEBEN dem Bild-Job — das Bild braucht ohnehin gut eine Minute, die Prüfung
+  // ist in ~15 s durch und kostet damit keine wahrnehmbare Zeit.
+  const runReview = async (d: Draft) => {
+    setReviewBusy(true)
+    try {
+      const r = await call({ mode: 'review', draft: d })
+      setReview({
+        score: Number(r.score ?? 0), verdict: String(r.verdict ?? ''),
+        issues: (r.issues as Issue[] | undefined) ?? [], strengths: (r.strengths as string[] | undefined) ?? [],
+        blocked: r.blocked === true,
+      })
+    } catch (err) {
+      console.error('[AdStudio] review:', err)   // Review ist Kür, nicht Pflicht
+      setReview(null)
+    } finally { setReviewBusy(false) }
+  }
+
   const generate = async () => {
     if (!brief.trim() || busy || imgBusy || uploading) return
     setBusy('generate')
@@ -126,6 +159,9 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       const d = await call({ mode: 'generate', brief: brief.trim(), ...(imageBrief.trim() ? { image_brief: imageBrief.trim() } : {}), ...(baseImage ? { base_image: baseImage } : {}) })
       setDraft(d.draft as Draft)
       setLastChange('')
+      setReview(null)
+      setBlockers(null)
+      void runReview(d.draft as Draft)
       jobId = d.image_job ? String(d.image_job) : null
     } catch (err) {
       console.error('[AdStudio] generate:', err)
@@ -145,6 +181,8 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       setDraft(d.draft as Draft)
       setLastChange(String(d.changed ?? ''))
       setChat('')
+      setBlockers(null)
+      void runReview(d.draft as Draft)
       jobId = d.image_job ? String(d.image_job) : null
     } catch (err) {
       console.error('[AdStudio] refine:', err)
@@ -155,20 +193,30 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     if (jobId) await runImageJob(jobId)
   }
 
-  const publish = async () => {
+  const publish = async (force = false) => {
     if (!draft || busy) return
     setBusy('publish')
     try {
-      await call({ mode: 'publish', draft })
+      await call({ mode: 'publish', draft, ...(force ? { force: true } : {}) })
+      setBlockers(null)
       showToast(t('crm.studio.published', '✅ Anzeige gespeichert — liegt unter „Vorbereitete Anzeigen" und ist noch NICHT veröffentlicht'))
       setDraft(null)
       setBrief('')
       setImageBrief('')
       setBaseImage('')
+      setReview(null)
       onPublished()
     } catch (err) {
       console.error('[AdStudio] publish:', err)
-      showToast(`❌ ${err instanceof Error ? err.message : t('crm.studio.error', 'Das hat nicht geklappt')}`)
+      // Qualitäts-Sperre: Mängel anzeigen statt nur meckern, mit der Möglichkeit
+      // bewusst zu übergehen.
+      const det = err instanceof CallError ? err.detail : undefined
+      if (det?.error === 'quality_blocked') {
+        setBlockers((det.issues as Issue[] | undefined) ?? [])
+        showToast(`⛔ ${t('crm.studio.blocked', 'Die Anzeige verstößt gegen harte Regeln — siehe Prüfung unten')}`)
+      } else {
+        showToast(`❌ ${err instanceof Error ? err.message : t('crm.studio.error', 'Das hat nicht geklappt')}`)
+      }
     } finally {
       setBusy(null)
     }
@@ -275,7 +323,8 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           <input value={draft.headline} onChange={e => setDraft(d => d ? { ...d, headline: e.target.value } : d)}
             className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-base font-semibold mb-3 bg-white" />
           <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{t('crm.studio.caption', 'Caption (frei editierbar)')}</label>
-          <textarea value={draft.message} onChange={e => setDraft(d => d ? { ...d, message: e.target.value } : d)} rows={10}
+          <textarea value={draft.message}
+            onChange={e => { setDraft(d => d ? { ...d, message: e.target.value, copy: null } : d); setReview(null) }} rows={10}
             className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base bg-white resize-y leading-relaxed" />
 
           {/* Chat-Bearbeitung */}
@@ -296,13 +345,62 @@ export default function AdStudio({ onPublished, showToast }: Props) {
           {draft.base_image && !imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatOnBase', 'Bild-Änderungen per Chat setzen wieder auf deiner hochgeladenen Vorlage auf.')}</p>}
           {lastChange && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.changed', 'Zuletzt geändert')}: {lastChange === 'caption' ? t('crm.studio.caption', 'Caption') : lastChange === 'image' ? t('crm.studio.image', 'Bild') : t('crm.studio.cards', 'Karten')}</p>}
 
+          {/* ── Agentur-Prüfung ────────────────────────────────────────── */}
+          {(reviewBusy || review || blockers) && (
+            <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm font-bold text-gray-800">🕵️ {t('crm.studio.reviewTitle', 'Agentur-Prüfung')}</span>
+                {reviewBusy && <span className="text-xs text-gray-400 flex items-center gap-1.5">{spinner}{t('crm.studio.reviewBusy', 'prüft …')}</span>}
+                {review && !reviewBusy && (
+                  <span className="px-2.5 py-1 rounded-lg text-xs font-bold text-white"
+                    style={{ backgroundColor: review.score >= 80 ? '#1a2332' : review.score >= 60 ? '#C2A15E' : '#ff795d' }}>
+                    {review.score}/100 · {review.score >= 80
+                      ? t('crm.studio.scoreStrong', 'stark')
+                      : review.score >= 60 ? t('crm.studio.scoreOk', 'geht, Luft nach oben') : t('crm.studio.scoreWeak', 'so nicht schalten')}
+                  </span>
+                )}
+                <button onClick={() => draft && void runReview(draft)} disabled={reviewBusy || busy !== null}
+                  className="ml-auto px-2.5 py-1 rounded-lg text-xs text-gray-600 border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
+                  {t('crm.studio.reviewAgain', 'Neu prüfen')}
+                </button>
+              </div>
+              {review?.verdict && <p className="mt-2 text-sm text-gray-700 leading-snug">{review.verdict}</p>}
+              {(blockers ?? []).length > 0 && (
+                <p className="mt-3 text-xs font-semibold text-[#ff795d]">
+                  {t('crm.studio.blockedHint', 'Diese Punkte verhindern das Anlegen:')}
+                </p>
+              )}
+              <ul className="mt-2 space-y-2">
+                {[...(blockers ?? []), ...(review?.issues ?? [])].map((i, n) => (
+                  <li key={n} className="text-xs leading-snug pl-3 border-l-2"
+                    style={{ borderColor: i.severity === 'blocker' ? '#ff795d' : '#e6dfd0' }}>
+                    <span className="font-semibold text-gray-700">{i.field}</span>
+                    <span className="text-gray-600"> · {i.problem}</span>
+                    {i.fix && <span className="block text-gray-400 mt-0.5">→ {i.fix}</span>}
+                  </li>
+                ))}
+              </ul>
+              {review?.strengths?.length ? (
+                <p className="mt-3 text-[11px] text-gray-400">
+                  {t('crm.studio.strengths', 'Trägt schon')}: {review.strengths.join(' · ')}
+                </p>
+              ) : null}
+            </div>
+          )}
+
           <div className="flex gap-2 mt-3">
-            <button onClick={() => void publish()} disabled={busy !== null || imgBusy || (draft.format === 'single' && !draft.image_url)}
+            <button onClick={() => void publish()} disabled={busy !== null || imgBusy || reviewBusy || (draft.format === 'single' && !draft.image_url)}
               className="px-4 py-2 rounded-lg text-sm font-semibold text-white flex items-center gap-1.5 disabled:opacity-60" style={{ backgroundColor: '#16a34a' }}>
               {busy === 'publish' && spinner}
               ✅ {t('crm.studio.publish', 'Als Anzeige anlegen (pausiert)')}
             </button>
-            <button onClick={() => { setDraft(null); setLastChange('') }} disabled={busy !== null || imgBusy}
+            {(blockers ?? []).length > 0 && (
+              <button onClick={() => void publish(true)} disabled={busy !== null || imgBusy}
+                className="px-3 py-2 rounded-lg text-sm font-medium border border-[#ff795d] text-[#ff795d] hover:bg-[#fff0ec] disabled:opacity-50">
+                {t('crm.studio.publishAnyway', 'Trotzdem anlegen')}
+              </button>
+            )}
+            <button onClick={() => { setDraft(null); setLastChange(''); setReview(null); setBlockers(null) }} disabled={busy !== null || imgBusy}
               className="px-3 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
               {t('crm.ads.audienceDiscard', 'Verwerfen')}
             </button>

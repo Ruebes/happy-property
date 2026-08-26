@@ -533,14 +533,24 @@ Deno.serve(async (req) => {
     // MIN(130/Flaeche, 1); ohne gepflegte Wohnflaeche gilt alles als beguenstigt).
     // Die Einrichtung ist bewegliches Inventar und traegt IMMER 19 %.
     // Gleiche Mathematik wie vatSplit in src/lib/rechner.ts (Rendite-Rechner).
-    const VAT_CAP_SQM = 130
+    // Grenzen der aktuellen Regelung (seit 16.6.2023): 5 % nur auf die ersten
+    // 130 m² UND die ersten 350.000 EUR; Voraussetzung Wohnflaeche <= 190 m² und
+    // Kaufpreis <= 475.000 EUR. Wird eine Voraussetzung gerissen, gilt fuer die
+    // GESAMTE Immobilie 19 % (Infinity 203: 499.000 > 475.000 -> voll 19 %).
+    // Gleiche Mathematik wie vatSplit in src/lib/rechner.ts.
+    const VAT_CAP_SQM = 130, VAT_CAP_WERT = 350000, VAT_MAX_SQM = 190, VAT_MAX_WERT = 475000
     const vatSplitDeck = (net: number, sqm: number | null | undefined) => {
+      if (net > VAT_MAX_WERT || (sqm && sqm > VAT_MAX_SQM)) {
+        const vatStandard = Math.round(net * 0.19)
+        return { netReduced: 0, netStandard: net, vatReduced: 0, vatStandard, vat: vatStandard,
+                 entfallen: net > VAT_MAX_WERT ? 'wert' : 'flaeche' }
+      }
       const share = (sqm && sqm > 0) ? Math.min(VAT_CAP_SQM / sqm, 1) : 1
-      const netReduced = Math.round(net * share)
+      const netReduced = Math.min(Math.round(net * share), VAT_CAP_WERT)
       const netStandard = net - netReduced
       const vatReduced = Math.round(netReduced * 0.05)
       const vatStandard = Math.round(netStandard * 0.19)
-      return { netReduced, netStandard, vatReduced, vatStandard, vat: vatReduced + vatStandard }
+      return { netReduced, netStandard, vatReduced, vatStandard, vat: vatReduced + vatStandard, entfallen: null as string | null }
     }
     const angleTone = isEigennutz ? 'lifestyle' : angle
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
@@ -649,13 +659,37 @@ Deno.serve(async (req) => {
           const totalNet = baseNet + furnNet
           const v = vatFor(baseNet, furnNet, sqm)
           const brutto = totalNet + v.vat
+          if (isEigennutz && v.split?.entfallen) {
+            // Beguenstigung gekippt - eine ehrliche 19 %-Zeile plus Begruendung.
+            return [
+              { label: furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
+              { label: v.split.entfallen === 'wert'
+                  ? `MwSt 19 % (Kaufpreis über ${eur(VAT_MAX_WERT)} — 5 %-Regelung gilt nicht)`
+                  : `MwSt 19 % (Wohnfläche über ${VAT_MAX_SQM} m² — 5 %-Regelung gilt nicht)`,
+                value: eur(v.split.vatStandard) },
+              ...(furnNet > 0 ? [{ label: 'Einrichtungspaket (netto)', value: eur(furnNet) },
+                                 { label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) }] : []),
+              { label: 'MwSt gesamt', value: eur(v.vat) },
+              { label: 'Bruttopreis', value: eur(totalNet + v.vat), strong: true },
+            ]
+          }
           if (isEigennutz && v.split) {
             // Aufgeschluesselt (Sven 26.8.): beguenstigter und regulaerer Anteil getrennt.
             const lines: Array<{ label: string; value: string; strong?: boolean }> = [
               { label: modus === 'included' ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
-              { label: `MwSt 5 % auf ${eur(v.split.netReduced)}${v.split.netStandard > 0 ? ' (bis 130 m² Wohnfläche)' : ''}`, value: eur(v.split.vatReduced) },
+              { label: `MwSt 5 % auf ${eur(v.split.netReduced)}${v.split.netStandard > 0 ? (v.split.netReduced >= VAT_CAP_WERT ? ` (Höchstbetrag der 5 %-Regelung)` : ` (Anteil bis ${VAT_CAP_SQM} m² Wohnfläche)`) : ''}`, value: eur(v.split.vatReduced) },
             ]
-            if (v.split.netStandard > 0) lines.push({ label: `MwSt 19 % auf ${eur(v.split.netStandard)} (über 130 m²)`, value: eur(v.split.vatStandard) })
+            if (v.split.netStandard > 0) {
+              // Warum faellt der Rest unter 19 %? Ueber der Flaechengrenze, ueber dem
+              // Wertdeckel von 350.000 EUR - oder beides. Das Label muss den echten
+              // Grund nennen, sonst steht "über 130 m²" an einer 112-m²-Wohnung.
+              const ueberFlaeche = !!(sqm && sqm > VAT_CAP_SQM)
+              const ueberWert = v.split.netReduced >= VAT_CAP_WERT
+              const grund = ueberFlaeche && ueberWert ? `über ${VAT_CAP_SQM} m² und über ${eur(VAT_CAP_WERT)}`
+                : ueberFlaeche ? `über ${VAT_CAP_SQM} m² Wohnfläche`
+                : `Anteil über ${eur(VAT_CAP_WERT)} — die 5 %-Regelung deckt höchstens diesen Betrag`
+              lines.push({ label: `MwSt 19 % auf ${eur(v.split.netStandard)} (${grund})`, value: eur(v.split.vatStandard) })
+            }
             if (furnNet > 0) {
               lines.push({ label: 'Einrichtungspaket (netto)', value: eur(furnNet) })
               lines.push({ label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) })
@@ -926,6 +960,31 @@ Deno.serve(async (req) => {
         blocks = JSON.parse(txt) as Array<Record<string, unknown>>
         console.warn(`[generate-deck] falsche Wohnungsnummer(n) korrigiert: ${[...falsch].join(', ')} → ${echt}`)
       }
+    }
+
+    // Karte deterministisch erzwingen: Liegen Kartendaten vor, MUSS ein map-Block
+    // ins Deck - die KI liess ihn wiederholt weg (Sven 26.8.: "Google Maps nicht
+    // drin, das hatte ich auch schon geschrieben").
+    if ((body.images?.map || body.images?.mapUrl || body.images?.mapLat) && !blocks.some(b => b.type === 'map')) {
+      const nachFacts = blocks.findIndex(b => b.type === 'facts')
+      const pos = nachFacts >= 0 ? nachFacts + 1 : Math.min(6, blocks.length)
+      const mapBlock: Record<string, unknown> = {
+        type: 'map', kicker: 'Lage',
+        headline: projName ? `${projName} auf der Karte` : 'Die Lage auf der Karte',
+      }
+      // Bild/Link direkt setzen - die Bildzuweisung oben lief bereits durch, ein
+      // nachtraeglich eingefuegter Block bliebe sonst leer.
+      if (body.images?.mapLat && body.images?.mapLng) {
+        mapBlock.mapLat = body.images.mapLat; mapBlock.mapLng = body.images.mapLng
+        if (body.images.mapQuery) mapBlock.mapQuery = body.images.mapQuery
+      } else if (body.images?.map) {
+        mapBlock.image = body.images.map
+        if (body.images.mapMarker) mapBlock.mapMarker = body.images.mapMarker
+      }
+      if (projName) mapBlock.mapLabel = projName
+      if (body.images?.mapUrl) mapBlock.mapUrl = body.images.mapUrl
+      blocks.splice(pos, 0, mapBlock)
+      console.log('[generate-deck] map-Block ergänzt (KI hatte ihn weggelassen)')
     }
 
     scrubNarrative(blocks, furnStatusIncluded)
