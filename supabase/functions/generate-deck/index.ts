@@ -965,7 +965,8 @@ Deno.serve(async (req) => {
     // Karte deterministisch erzwingen: Liegen Kartendaten vor, MUSS ein map-Block
     // ins Deck - die KI liess ihn wiederholt weg (Sven 26.8.: "Google Maps nicht
     // drin, das hatte ich auch schon geschrieben").
-    if ((body.images?.map || body.images?.mapUrl || body.images?.mapLat) && !blocks.some(b => b.type === 'map')) {
+    const projLocation = (projRow?.location ?? '').trim()
+    if ((body.images?.map || body.images?.mapLat || body.images?.mapQuery || projLocation) && !blocks.some(b => b.type === 'map')) {
       const nachFacts = blocks.findIndex(b => b.type === 'facts')
       const pos = nachFacts >= 0 ? nachFacts + 1 : Math.min(6, blocks.length)
       const mapBlock: Record<string, unknown> = {
@@ -980,6 +981,10 @@ Deno.serve(async (req) => {
       } else if (body.images?.map) {
         mapBlock.image = body.images.map
         if (body.images.mapMarker) mapBlock.mapMarker = body.images.mapMarker
+      } else if (body.images?.mapQuery || projLocation) {
+        // Kein Kartenbild im Drive: aus der gepflegten Ortsangabe eine echte
+        // eingebettete Karte bauen, statt einen leeren Block zu zeigen.
+        mapBlock.mapQuery = body.images?.mapQuery || `${projName ? projName + ', ' : ''}${projLocation}`
       }
       if (projName) mapBlock.mapLabel = projName
       if (body.images?.mapUrl) mapBlock.mapUrl = body.images.mapUrl
