@@ -3692,7 +3692,15 @@
       "mgmt": "Verwaltung",
       "season": "Saisonmodell",
       "seasonResult": "Jahresmiete",
-      "seasonYieldUnit": "Bruttorendite dieser Wohnung"
+      "seasonYieldUnit": "Bruttorendite dieser Wohnung",
+      "furnMode": "Möbel",
+      "furnNone": "Ohne",
+      "furnIncl": "Mit",
+      "furnOpt": "Optional",
+      "furnPriceIncl": "Deck-Preis: {{p}} netto (Preisspalte des Bauträgers inkl. Möbel)",
+      "furnPriceMissing": "⚠ Kein Möbelpreis hinterlegt — es gilt {{p}} netto ohne Möbel. Bitte am Objekt pflegen.",
+      "furnPriceOpt": "Deck-Preis: {{p}} netto + Möbelpaket separat ausgewiesen",
+      "furnPriceNone": "Deck-Preis: {{p}} netto — Möbel kommen im Deck nicht vor"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",

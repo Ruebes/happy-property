@@ -3692,7 +3692,15 @@
       "mgmt": "Management",
       "season": "Season model",
       "seasonResult": "Annual rent",
-      "seasonYieldUnit": "gross yield of this apartment"
+      "seasonYieldUnit": "gross yield of this apartment",
+      "furnMode": "Furniture",
+      "furnNone": "Without",
+      "furnIncl": "Included",
+      "furnOpt": "Optional",
+      "furnPriceIncl": "Deck price: {{p}} net (developer price column incl. furniture)",
+      "furnPriceMissing": "⚠ No furnished price on file — {{p}} net without furniture applies. Please maintain it on the unit.",
+      "furnPriceOpt": "Deck price: {{p}} net + furniture package shown separately",
+      "furnPriceNone": "Deck price: {{p}} net — furniture does not appear in the deck"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",

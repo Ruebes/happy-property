@@ -37,6 +37,13 @@ ZUSAMMENGEFASSTE / COMPOSITE-EINHEITEN: Manche Listen fassen mehrere Teile (z.B.
 
 PREIS-EINORDNUNG: Ein einzelner Preis OHNE ausdrücklichen MwSt-/VAT-Hinweis ist der NETTOPREIS → price_net. Nur wenn die Liste „inkl. MwSt/VAT" o.ä. ausweist → price_gross.
 
+MEHRERE PREISSPALTEN (häufig bei zyprischen Bauträgern!): Viele Listen führen je Einheit ZWEI oder mehr Preise nebeneinander — typisch „Off-plan" bzw. „Under Construction" (ohne Möbel) UND daneben „Including furniture and appliance prices" bzw. „All-inclusive" (mit Möbeln/Geräten). Beispiel MITO ARCA, Wohnung 101: 400800 und 417800; die Fußnote sagt „This price does not include VAT, furnitures and appliances and PR related various fees".
+- price_net = der Preis OHNE Möbel (die günstigere Spalte, Off-plan/Under Construction).
+- price_net_furnished = der Preis MIT Möbeln/Geräten (die All-inclusive-Spalte), falls vorhanden.
+Ordne die Spalten anhand der Spaltenüberschriften und Fußnoten zu, NICHT nach Position. Gibt es nur EINE Preisspalte, lass price_net_furnished weg. Separate Gebühren (z.B. „PR related various fees") gehören in KEINE der beiden Preisspalten — vermerke sie in note.
+
+FUSSNOTEN: Lies Fuß- und Kopfnoten, Sternchen-Hinweise und Legenden mit. Steht dort ein Möbelpaket-Preis (z.B. „Furniture package at 30.000 EUR + 19% VAT"), gib ihn im Feld furniture_package_net des ERSTEN Eintrags an und zitiere die Fußnote wörtlich in note.
+
 WICHTIG: Nur Werte aus der Liste, nichts erfinden/schätzen. Fehlende Felder weglassen. Zahlen ohne Tausenderpunkte und ohne Währungssymbol. Rufe das Tool emit_units mit dem Array auf.`
 
 const TOOL = {
@@ -59,6 +66,8 @@ const TOOL = {
             size_sqm:    { type: 'number' },
             terrace_sqm: { type: 'number' },
             price_net:   { type: 'number' },
+            price_net_furnished: { type: 'number' },
+            furniture_package_net: { type: 'number' },
             price_gross: { type: 'number' },
             vat_rate:    { type: 'number' },
             availability:{ type: 'string', enum: ['available', 'reserved', 'sold'] },
@@ -165,7 +174,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       // Namens-Normalisierung: Penthouse-Suffix „(P)" und Sonderzeichen ignorieren,
       // sonst matcht „C-301 (P)" (Liste) nicht auf „C-301" (Bestand) → Duplikate.
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s*\(p\)\s*$/, '').replace(/[^a-z0-9]/g, '')
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_gross, status').eq('project_id', body.project_id)
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, status').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
@@ -189,7 +198,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       const listByNum = new Map<string, Unit>()
       for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_gross: number | null; status: string | null }
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; status: string | null }
       const driveAll  = (existing ?? []).filter(r => (r as ExRow).source === 'drive_import') as ExRow[]
       const driveFree = driveAll.filter(r => !dealLinked.has(r.id))   // löschbar (Deal-Units bleiben)
       // Developer liefern oft BLOCK-Teillisten (Luma: „A&B" und „C&D" getrennt).
@@ -226,9 +235,13 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         const lu = listByNum.get(norm(r.unit_number))
         if (!lu) continue
         const newNet = num(lu.price_net), newGross = num(lu.price_gross)
+        // Zweite Preisspalte des Bautraegers (inkl. Moebel/Geraete) - der Deck-Wizard
+        // nimmt sie, wenn Sven "mit Moebeln" waehlt (ARCA 101: 400.800 / 417.800).
+        const newFurn = num(lu.price_net_furnished)
         const patch: Record<string, number | string> = {}
         if (newNet != null && Number(newNet) !== Number(r.price_net)) patch.price_net = newNet
         if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
+        if (newFurn != null && Number(newFurn) !== Number(r.price_net_furnished)) patch.price_net_furnished = newFurn
         // REAKTIVIERUNG: Der Bauträger führt die Unit wieder mit Preis (available),
         // bei uns steht sie noch sold/reserved (z.B. freigegebene Reservierung oder
         // wieder eröffneter Block) → zurück in den anbietbaren Zustand.
@@ -266,12 +279,24 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
           size_sqm:    num(u.size_sqm),
           terrace_sqm: num(u.terrace_sqm),
           price_net:   num(u.price_net),
+          price_net_furnished: num(u.price_net_furnished),
           price_gross: num(u.price_gross),
           vat_rate:    num(u.vat_rate) ?? 19,
           status:      'proposal',   // nur verfügbare Units → im Wizard vorschlagbar
           source:      'drive_import',
           sort_order:  i,
         }))
+      // Moebelpaket-Preis aus der Fussnote (z.B. "Furniture package at 30.000 EUR +
+      // 19% VAT") am PROJEKT hinterlegen - vorher las das niemand aus der Liste.
+      const furnPkg = units.map(u => num(u.furniture_package_net)).find(v => v != null && Number(v) > 0)
+      if (furnPkg != null) {
+        const { data: pr } = await supabase.from('crm_projects').select('furniture_cost, furniture_included').eq('id', body.project_id).maybeSingle()
+        const cur = pr as { furniture_cost?: number | null; furniture_included?: boolean | null } | null
+        if (cur?.furniture_cost == null && !cur?.furniture_included) {
+          await supabase.from('crm_projects').update({ furniture_cost: furnPkg, furniture_included: false }).eq('id', body.project_id)
+          console.log(`[parse-pricelist] Möbelpaket aus Fußnote übernommen: ${furnPkg} € netto`)
+        }
+      }
       if (dupSkipped.length) console.warn(`[parse-pricelist] Dubletten in Liste übersprungen (nur erste je Nummer behalten): ${dupSkipped.join(', ')}`)
       if (rows.length) {
         const { error, count } = await supabase.from('crm_project_units').insert(rows, { count: 'exact' })
