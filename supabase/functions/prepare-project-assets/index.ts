@@ -868,6 +868,11 @@ Deno.serve(async (req) => {
         du.linen    && { url: du.linen,    label: 'Wäsche-Liste' },
         du.spec     && { url: du.spec,     label: 'Ausstattungs-Spezifikation' },
         du.payment  && { url: du.payment,  label: 'Zahlungsplan (Payment Plan) — exakte Raten/Prozente übernehmen' },
+        // Die Preisliste stand bisher NICHT in dieser Liste - genau dort steht aber,
+        // was der Preis enthaelt (z.B. woertlich "Furniture package at 30.000 EUR +
+        // 19% VAT" bei Arbeo Park, oder die zweite All-inclusive-Preisspalte bei
+        // MITO). Ohne sie hat das Deck Moebel als inklusive behauptet (Sven 26.8.).
+        du.pricelist && { url: du.pricelist, label: 'Preisliste — Fuss-/Kopfnoten, Sternchen-Hinweise, Legenden mehrerer Preisspalten und Zusatzkosten WÖRTLICH übernehmen' },
       ].filter(Boolean)
       if (!docs.length && !assets.spec_text) return json({ ok: true, action, facts_chars: 0, skipped: true, note: 'keine Dokumente' })
 

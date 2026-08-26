@@ -52,7 +52,7 @@ REGELN:
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
 3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
 4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
-4b. AUSSTATTUNG: Sobald im Input ein Einrichtungspaket / Ausstattung / Möbelliste / Geschirr / Besteck (cutlery) / Wäsche (linen) steht, MUSST du das prominent zeigen — als ein bis zwei "inventory"-Blöcke (ein bis zwei Seiten). Empfehlung: Block 1 = Möbel, Geräte & Premium-Marken (gruppiert, z.B. Wohnen, Küche & Geräte, Schlafen, Bad — mit den echten Markennamen aus den Fakten wie BOSCH, Neff, GROHE, LAUFEN, Samsung, Tomasella, DUPEN); Block 2 = die Komplett-Checkliste (Geschirr & Besteck mit Stückzahlen, Wäsche & Bettwäsche). Botschaft durchgängig: schlüsselfertig & voll möbliert, sofort bezugs- und vermietfertig — der Kunde packt nur die Koffer. Nutze NUR die im Input gelisteten Gegenstände/Marken, erfinde nichts dazu.
+4b. AUSSTATTUNG: Sobald im Input ein Einrichtungspaket / Ausstattung / Möbelliste / Geschirr / Besteck (cutlery) / Wäsche (linen) steht, MUSST du das prominent zeigen — als ein bis zwei "inventory"-Blöcke (ein bis zwei Seiten). Empfehlung: Block 1 = Möbel, Geräte & Premium-Marken (gruppiert, z.B. Wohnen, Küche & Geräte, Schlafen, Bad — mit den echten Markennamen aus den Fakten wie BOSCH, Neff, GROHE, LAUFEN, Samsung, Tomasella, DUPEN); Block 2 = die Komplett-Checkliste (Geschirr & Besteck mit Stückzahlen, Wäsche & Bettwäsche). Ein inventory-Block beschreibt AUSSCHLIESSLICH, WAS zum Paket gehört — NIEMALS, OB es im Kaufpreis enthalten ist. Ob die Einrichtung im Preis steckt, sagt allein der Abschnitt „EINRICHTUNG" in den Fakten; fehlt er, schreibst du dazu gar nichts. STRIKT VERBOTEN ohne ausdrückliche Deckung durch diesen Abschnitt: „schlüsselfertig", „voll möbliert", „komplett eingerichtet", „sofort bezugsfertig", „der Kunde packt nur die Koffer", „im Kaufpreis enthalten" und jede sinngemäße Formulierung. Nutze NUR die im Input gelisteten Gegenstände/Marken, erfinde nichts dazu.
 4c. ZAHLUNGSPLAN (payment) — HART: Alle Beträge und Prozente kommen AUSSCHLIESSLICH aus den Zahlungsplan-Daten der Fakten UND dem Kaufpreis GENAU DIESER Wohnung. Prozente müssen rechnerisch zum Kaufpreis passen (z.B. 30 % von 430.000 € = 129.000 €, NICHT 300.000 €). Übernimm NIEMALS Zahlen aus dem Kunden-Briefing/Anschreiben (z.B. „300k Eigenkapital") in den Zahlungsplan — das Briefing beschreibt den Kunden, nicht den Preis dieses Objekts. Liegen keine echten Raten/Prozente in den Fakten vor: nutze nur die Prozentstufen und schreibe als value „gemäß Bauträger-Konditionen" statt einen Betrag zu erfinden. Plausibilität prüfen: kein einzelner Schritt darf größer als der Kaufpreis sein, Summe der Schritte = 100 % des Preises.
 4d. ZAHLUNGSPLAN-NARRATIV (kicker, headline, intro, note, phase-label/title, advantage) — HART, gleiche Klasse wie 5b: Beschreibe NUR die Stufen sachlich. Erfinde KEINE Aussage über das ZEITLICHE Verhältnis der Zahlungen zum Baufortschritt, die nicht WÖRTLICH in den Fakten steht. STRIKT VERBOTEN (nie schreiben, egal wie verkaufsfördernd): „du zahlst erst nach Fertigstellung", „erst wenn gebaut wurde", „der Löwenanteil/Großteil kommt bei oder nach der Übergabe", „du finanzierst keinen Baufortschritt, den du nicht siehst", „du zahlst nicht auf Kredit des Bauträgers", „nach echtem Baufortschritt — jede Phase muss abgeschlossen sein, bevor die nächste Rate fällig wird", „das schützt dich/deine Liquidität", „Planungssicherheit" — und jede andere Käufer-Schutz- oder Sicherheits-Story rund um den Zahlungsplan. Grund: Zypern-Neubau wird typischerweise BAUFORTSCHRITTS-BEGLEITEND und front-lastig gezahlt (Reservierung + Anzahlung bei Vertragsunterzeichnung, weitere Raten WÄHREND des Baus), NICHT nachgelagert — solche Sicherheits-Narrative sind faktisch falsch. Erlaubte neutrale Headlines: „Der Zahlungsplan im Überblick", „430.000 € — in klaren Stufen", „Transparent über die Bauphasen verteilt". Phase-Labels nur, wenn die Phasen wörtlich in den Fakten stehen; sonst generisch (Reservierung / Bei Vertrag / Baufortschritt / Bei Übergabe).
 4e. PREIS (unit-Block) — HART: Stehen im Input "VERBINDLICHE PREISANGABEN", setze sie EXAKT als priceLines (gleiche Labels + Werte, Reihenfolge: Nettopreis, MwSt, Bruttopreis[strong:true], dann Einrichtung). Rechne NICHTS selbst, runde nichts, erfinde keinen Preis. Wiederhole den Preis NICHT in anderen Blöcken (kein „X € netto" im letter/feature/cta). Ohne verbindliche Preisangaben: lass priceLines weg.
@@ -92,21 +92,66 @@ const FORBIDDEN_PAYMENT: RegExp[] = [
   /(löwenanteil|großteil)[^.!?]*(übergabe|fertig)/i,
   /jede phase muss abgeschlossen sein,? bevor die nächste rate/i,
 ]
+// Moebel-Behauptungen: greifen NUR, wenn die Stammdaten die Einrichtung nicht als
+// im Preis enthalten ausweisen. Deterministischer Backstop hinter der Prompt-Regel -
+// das Deck fuer Holger Rumiantcev schrieb "Einrichtungspaket vollstaendig im
+// Kaufpreis enthalten", obwohl der Preis die Moebel gar nicht enthielt (Sven 26.8.).
+const FORBIDDEN_FURNITURE: RegExp[] = [
+  /schlüsselfertig/i,
+  /voll(ständig)?\s+möbliert/i,
+  /komplett\s+eingerichtet/i,
+  /(möbel|einrichtung|einrichtungspaket)[^.!?]*(im (kauf)?preis|inklusive|enthalten)/i,
+  /(im (kauf)?preis|inklusive)[^.!?]*(möbel|einrichtung)/i,
+  /nur (noch )?die koffer|packst (du )?die koffer/i,
+  /sofort bezugs-? ?(und vermiet)?(bereit|fertig)/i,
+]
+// Verneinte Saetze sind erwuenscht ("NICHT im Kaufpreis enthalten") - die duerfen bleiben.
+const VERNEINT = /\b(nicht|kein[e]?[nmrs]?|ohne|optional|extra|Aufpreis|zusätzlich|separat)\b/i
+
 function dropBadSentences(s: unknown, res: RegExp[]): string {
   if (typeof s !== 'string' || !s) return typeof s === 'string' ? s : ''
   const parts = s.split(/(?<=[.!?…])\s+/)
-  const kept = parts.filter(p => !res.some(re => re.test(p)))
+  const kept = parts.filter(p => !res.some(re => re.test(p) && !VERNEINT.test(p)))
   return kept.join(' ').trim()
 }
-function scrubNarrative(blocks: Array<Record<string, unknown>>): void {
+function scrubNarrative(blocks: Array<Record<string, unknown>>, furnIncluded = true): void {
+  const furnRes = furnIncluded ? [] : FORBIDDEN_FURNITURE
   for (const b of blocks) {
     const isPay = b.type === 'payment'
-    const res = isPay ? [...FORBIDDEN_GLOBAL, ...FORBIDDEN_PAYMENT] : FORBIDDEN_GLOBAL
+    const res = [...FORBIDDEN_GLOBAL, ...furnRes, ...(isPay ? FORBIDDEN_PAYMENT : [])]
     for (const f of ['intro', 'note', 'text', 'quote']) {
       if (typeof b[f] === 'string') b[f] = dropBadSentences(b[f], res)
     }
     if (Array.isArray(b.paragraphs)) {
       b.paragraphs = (b.paragraphs as unknown[]).map(p => dropBadSentences(p, res)).filter(Boolean)
+    }
+    // Kurztexte tragen die Ausstattungs-Behauptung genauso oft wie Fliesstext:
+    // specs, Karten und Inventar-Punkte muessen mitgeprueft werden.
+    for (const listKey of ['specs', 'items', 'bullets']) {
+      if (Array.isArray(b[listKey])) {
+        b[listKey] = (b[listKey] as unknown[]).filter(x => typeof x !== 'string' || !furnRes.some(re => re.test(x) && !VERNEINT.test(x)))
+      }
+    }
+    for (const grpKey of ['groups', 'cards', 'cols']) {
+      const arr = b[grpKey]
+      if (!Array.isArray(arr)) continue
+      for (const g of arr as Array<Record<string, unknown>>) {
+        if (!g || typeof g !== 'object') continue
+        for (const f of ['text', 'title', 'note']) {
+          if (typeof g[f] === 'string') g[f] = dropBadSentences(g[f], res)
+        }
+        if (Array.isArray(g.items)) {
+          g.items = (g.items as unknown[]).filter(x => typeof x !== 'string' || !furnRes.some(re => re.test(x) && !VERNEINT.test(x)))
+        }
+      }
+    }
+    // Headline/Kicker eines Ausstattungs-Blocks duerfen die Behauptung ebenso wenig tragen.
+    if (!furnIncluded) {
+      for (const f of ['headline', 'tagline']) {
+        if (typeof b[f] === 'string' && furnRes.some(re => re.test(b[f] as string) && !VERNEINT.test(b[f] as string))) {
+          b[f] = b.type === 'inventory' ? 'Die Ausstattung im Überblick' : ''
+        }
+      }
     }
     for (const phKey of ['phase1', 'phase2']) {
       const ph = b[phKey] as Record<string, unknown> | undefined
@@ -457,6 +502,10 @@ Deno.serve(async (req) => {
     // Parallel: Netto/MwSt/Brutto je Wohnung für die priceSummary-Box im Zahlungsplan
     // (MwSt-Berechnung im payment-Block = Standard, nicht der KI überlassen).
     const priceSummaryByUnit: Record<string, { net: string; vatRate: string; vat: string; gross: string }> = {}
+    // Traegt der Kaufpreis die Einrichtung? Steuert den Moebel-Backstop im Scrubber.
+    // Default true = nicht filtern, solange nichts Gegenteiliges bekannt ist; der
+    // Preisblock unten setzt den echten Wert aus den Projekt-Stammdaten.
+    let furnStatusIncluded = true
     // Rohe Preisbasis (netto/brutto) EINER Einzelwohnung — für die absoluten Beträge je
     // Zahlungsplan-Stufe. Nur gesetzt, wenn genau eine Wohnung mit Preis vorliegt.
     let payBasis: { net: number; gross: number } | null = null
@@ -541,6 +590,7 @@ Deno.serve(async (req) => {
               lines.push({ label: 'Einrichtungspaket (netto)', value: eur(furnNet) })
               lines.push({ label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) })
             } else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+            else lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
             lines.push({ label: 'MwSt gesamt', value: eur(v.vat) })
             lines.push({ label: 'Bruttopreis', value: eur(brutto), strong: true })
             return lines
@@ -552,6 +602,8 @@ Deno.serve(async (req) => {
           ]
           if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(furnNet + Math.round(furnNet * 0.19))} brutto` })
           else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+          // Schweigen las der Kunde bisher als "ist dabei" - deshalb immer benennen.
+          else lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
           return lines
         }
         const priced = unitList.filter(u => u.price_net > 0)
@@ -565,6 +617,24 @@ Deno.serve(async (req) => {
         }
         // Bei Eigennutz die 5%-Basis explizit als Fakt mitgeben, damit die KI den GESAMTEN
         // Zahlungsplan (Reservierung/Anzahlung/Raten) + Intro auf 5 % rechnet, nicht 19 %.
+        // HARTE BINDUNG an die Stammdaten: Ob die Einrichtung im Preis steckt, sagt
+        // das CRM-Feld furniture_included - NICHT die Prospekt-Prosa. Vorher schrieb
+        // die KI "Einrichtungspaket vollstaendig im Kaufpreis enthalten", obwohl der
+        // Preis die Moebel gar nicht enthielt (Sven 26.8., Infinity 203 + Arbeo Park:
+        // Preisliste sagt woertlich "Furniture package at 30.000 + 19% VAT").
+        {
+          const furnBeispiel = priced.length > 0 ? furnFor(priced[0].bedrooms) : furnDefault
+          // Dritter Zustand: sind BEIDE Stammdatenfelder ungepflegt, ist der Status
+          // schlicht unbekannt - dann darf das Deck in KEINE Richtung behaupten.
+          const furnUnbekannt = !furnIncluded && furnBeispiel <= 0 && !furnByBed
+          // Nur ein ausdrueckliches "enthalten" erlaubt Moebel-Aussagen im Text.
+          furnStatusIncluded = furnIncluded
+          extraFacts += furnUnbekannt
+            ? `\n\n=== EINRICHTUNG: UNBEKANNT (HART) ===\nOb Moebel im Kaufpreis enthalten sind, ist in den Stammdaten NICHT gepflegt. Triff dazu KEINE Aussage - weder enthalten noch Aufpreis. Verboten sind "schluesselfertig", "moebliert", "komplett eingerichtet", "bezugsfertig" und jede sinngemaesse Formulierung. Fest verbaute Ausstattung (Kueche, Schraenke, Sanitaer, Klima) darfst du beschreiben, wenn die Fakten sie belegen.`
+            : furnIncluded
+            ? `\n\n=== EINRICHTUNG: IM KAUFPREIS ENTHALTEN (HART) ===\nDie Einrichtung ist laut Stammdaten Teil des Kaufpreises. So darfst du es schreiben.`
+            : `\n\n=== EINRICHTUNG: NICHT IM KAUFPREIS (HART, HOECHSTE PRIORITAET) ===\nDie Moebel/das Einrichtungspaket sind NICHT im genannten Kaufpreis enthalten, sondern kosten${furnBeispiel > 0 ? ` ${eur(furnBeispiel)} netto` : ''} EXTRA (plus 19 % MwSt). STRIKT VERBOTEN sind daher: "schluesselfertig moebliert", "voll moebliert", "komplett eingerichtet", "Einrichtung im Kaufpreis enthalten", "im Preis inklusive", "du packst nur die Koffer" oder jede sinngemaesse Formulierung, die den Eindruck erweckt, Moebel seien im Preis. Beschreibe das Einrichtungspaket ausschliesslich als OPTIONAL und KOSTENPFLICHTIG. Fest verbaute Ausstattung (Kueche, Einbauschraenke, Sanitaer, Klimatisierung) darfst du als enthalten beschreiben, wenn die Fakten das hergeben - Moebel niemals. Diese Regel schlaegt jede anderslautende Formulierung in den Projekt-Fakten.`
+        }
         if (isEigennutz && priced.length > 0) {
           const bruttoJeUnit = priced.map(u => {
             const furnNet = furnFor(u.bedrooms)
@@ -750,7 +820,10 @@ Deno.serve(async (req) => {
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
     }
     assignImages(blocks, body.images, projName)
-    scrubNarrative(blocks)   // Wahrheits-Backstop (erfundene Zahlungs-/Garantie-/Auslastungs-Sätze raus)
+    // Wahrheits-Backstop: erfundene Zahlungs-/Garantie-/Auslastungs-Saetze raus - und
+    // Moebel-Behauptungen, sobald die Stammdaten die Einrichtung NICHT als enthalten
+    // ausweisen (furnStatusIncluded wird beim Preisaufbau gesetzt).
+    scrubNarrative(blocks, furnStatusIncluded)
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
     injectLocationAndMarina(blocks, projRow?.name || projName, projRow)

@@ -12,14 +12,19 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
-const PROMPT = `Du bekommst PDFs zu einem Immobilien-Projekt auf Zypern (z.B. Developer-Broschüre, Einrichtungspaket, Preisliste). Extrahiere die wichtigsten FAKTEN für ein Verkaufs-Deck — auf Deutsch, kompakt, in klaren Stichpunkten. Struktur:
+const PROMPT = `Du bekommst PDFs zu einem Immobilien-Projekt auf Zypern (z.B. Developer-Broschüre, Einrichtungspaket, Preisliste). Extrahiere die FAKTEN für ein Verkaufs-Deck — auf Deutsch, VOLLSTÄNDIG statt kompakt: lieber zu lang als zu kurz. Was du hier weglässt, kann später niemand mehr nachschlagen. Struktur:
 
 PROJEKT: Developer/Bauträger, Lage, Konzept, Anzahl Einheiten, Architektur/Stil, Fertigstellung, Garantie.
 AMENITIES & BESONDERHEITEN: gemeinschaftliche Anlagen (Pool, Gym, Dachterrasse …), Bauqualität, Nachhaltigkeit (PV o.ä.), Sicherheit.
-EINRICHTUNGSPAKET: was ist enthalten (Möbel, Geräte, Küche, Marken), für welche Wohnungsgrößen.
+EINRICHTUNGSPAKET: was gehört dazu (Möbel, Geräte, Küche, Marken), für welche Wohnungsgrößen — UND vor allem: kostet es Aufpreis oder ist es im Kaufpreis enthalten? Suche dafür gezielt nach Formulierungen wie "furniture package at ... + VAT", "all-inclusive price", "includes furniture and appliances", "fully furnished", "turn-key". Nenne den Betrag, wenn einer dasteht. Unterscheide strikt zwischen FEST VERBAUTER Ausstattung (Küche, Einbauschränke, Sanitär, Klimaanlage — meist im Preis) und BEWEGLICHEN Möbeln (meist Aufpreis). Steht dazu nichts, schreibe das ausdrücklich unter UNKLAR.
+PREISE & ZUSATZKOSTEN: Hat die Preisliste MEHRERE Preisspalten je Wohnung (z.B. off-plan / all-inclusive / under construction / completed)? Dann jede Spalte benennen und erklären, was sie enthält — wörtlich nach der Legende/Fußnote. Ebenso: Anwaltskosten, PR-Antrag, Möbelpaket, Sonderausstattung.
 HIGHLIGHTS: 3–5 stärkste Verkaufsargumente.
 
-WICHTIG: NUR Fakten aus den Dokumenten, NICHTS erfinden. Wenn etwas nicht drinsteht, weglassen. Keine doppelten Anführungszeichen verwenden. Antworte als reiner Text (kein JSON).
+BELEGE (Pflicht): Liste am Ende zu JEDER Aussage über Ausstattung, Möblierung, Preise, Zusatzkosten, Fertigstellung und Garantie den wörtlichen Quellsatz mit Dokumentnamen, Format: [Preisliste] Furniture package at 30.000 EUR + 19% VAT. Ohne Beleg keine Aussage.
+
+UNKLAR: Alles, was du nicht eindeutig belegen kannst, hier als Stichpunkt auflisten statt es wegzulassen oder zu raten. Prüfe dabei ausdrücklich: Sind Möbel im Preis? Gibt es mehrere Preisvarianten? Was genau ist fest verbaut?
+
+WICHTIG: NUR Fakten aus den Dokumenten, NICHTS erfinden. Fasse NIE zu einer stärkeren Aussage zusammen, als der Text hergibt: aus "Küchen und Einbauschränke sind ausgestattet" wird NIEMALS "vollständig schlüsselfertig" oder "voll möbliert" — das sind verschiedene Dinge. Wenn etwas nicht drinsteht, gehört es unter UNKLAR, nicht weggelassen und erst recht nicht ergänzt. Keine doppelten Anführungszeichen verwenden. Antworte als reiner Text (kein JSON).
 
 APARTMENT-SICHERHEIT: Wenn es um eine Apartment-Wohnanlage geht und eine Spezifikation projektweite oder reine Villen-Merkmale enthält (eigener Privatgarten, Keller/Basement, privater Pool im Boden, interne Wendeltreppe zwischen Etagen), übernimm diese NICHT — sie gelten nicht für eine Wohnung. Aus der Spezifikation NUR Dinge übernehmen, die in einer Wohnung Sinn ergeben: Möbel-/Geräte-Marken, Küche, Bäder, Böden, Klima/Heizung, Fenster, Material-/Bauqualität, Sicherheit, Energie.`
 
@@ -31,13 +36,17 @@ Deno.serve(async (req) => {
     const { docs, spec_text, context } = await req.json() as { docs?: Array<{ url: string; label?: string }>; spec_text?: string; context?: string }
     if (!docs?.length && !spec_text?.trim()) return json({ error: 'docs oder spec_text fehlt' }, 400)
 
-    const content: unknown[] = (docs ?? []).slice(0, 4).map(d => ({
+    // Vorher schnitt slice(0, 4) still Dokumente ab - der Zahlungsplan (letzter
+    // Eintrag) fiel damit regelmaessig heraus, ohne dass es jemand sah.
+    const alle = docs ?? []
+    if (alle.length > 8) console.warn('[extract-project-facts] verworfen:', alle.slice(8).map(d => d.label ?? d.url).join(', '))
+    const content: unknown[] = alle.slice(0, 8).map(d => ({
       type:   'document',
       source: { type: 'url', url: d.url },
       title:  d.label ?? 'Dokument',
     }))
     if (context?.trim())   content.push({ type: 'text', text: `KONTEXT: ${context.trim()}` })
-    if (spec_text?.trim()) content.push({ type: 'text', text: `AUSSTATTUNGS-SPEZIFIKATION (Rohtext, ggf. projektweit — apartment-sicher filtern):\n${spec_text.trim().slice(0, 8000)}` })
+    if (spec_text?.trim()) content.push({ type: 'text', text: `AUSSTATTUNGS-SPEZIFIKATION (Rohtext, ggf. projektweit — apartment-sicher filtern):\n${spec_text.trim().slice(0, 30000)}` })
     content.push({ type: 'text', text: PROMPT })
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -50,7 +59,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model:      'claude-sonnet-4-6',
-        max_tokens: 3000,
+        max_tokens: 12000,
         messages:   [{ role: 'user', content }],
       }),
     })
