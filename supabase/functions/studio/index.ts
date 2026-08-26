@@ -45,6 +45,11 @@ const PAGE_ID = '556440087559971'
 const SVEN_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
 // Echtes Lotte-Foto als Persona-Referenz (für „Lotte mit ins Bild")
 const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg'
+
+// Bildaufbau-Regel fuer ALLE Einzelbilder: oben bleibt Platz fuer den roten
+// Badge, unten fuer das Creme-Panel. Ohne diese Ansage landete der Text
+// mitten im Gesicht (Sven, 26.8.26).
+const FRAMING = 'Photorealistic documentary style, natural light, no text, no watermark. Framing: keep the top 20 percent and the bottom 30 percent of the frame free of faces and important detail (sky, wall, open space) - text banners are placed there. The main subject sits in the middle of the frame.'
 const URL_TAGS = 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}'
 const LINK = 'https://portal.happy-property.com/termin'
 
@@ -60,6 +65,8 @@ interface Draft {
   image_url?: string
   /** rohes Hintergrundfoto OHNE Overlay — Basis für Text-/Bild-Änderungen */
   bg_url?: string
+  /** von Sven hochgeladene Vorlage — Bild-Änderungen setzen wieder darauf auf */
+  base_image?: string
   overlay?: Overlay | null
   cards?: Card[]
 }
@@ -169,7 +176,7 @@ function overlaySvg(ov: Overlay): string {
   const parts: string[] = []
   // Badge oben links (rot, weiße Bold-Schrift)
   if (ov.badge?.trim()) {
-    const lines = xwrap(ov.badge, 30).slice(0, 3)
+    const lines = xwrap(ov.badge, 30).slice(0, 2)   // 3 Zeilen deckten das Gesicht zu
     const fs = 42, lh = 54, padX = 30, padY = 20
     const wMax = Math.max(...lines.map(l => l.length))
     const bw = Math.min(W - 96, Math.round(wMax * fs * 0.62) + padX * 2)
@@ -213,6 +220,30 @@ async function composeCreative(photoBytes: Uint8Array, ov: Overlay): Promise<Uin
   base.composite(await Image.decode(ovPng), 0, 0)
   return await base.encodeJPEG(92)
 }
+// Svens Schreibregel: nie Gedankenstrich/Bis-Strich. Die KI haelt sich im
+// Overlay nicht zuverlaessig daran, deshalb hier hart nachziehen.
+const deDash = (s: string): string => (s ?? '').replace(/[\u2013\u2014]/g, '-')
+
+// Der rote Badge sitzt oben im Bild. Wird er zu lang, waechst er auf drei Zeilen
+// und liegt dann ueber dem Gesicht (Sven, 26.8.26). Deshalb hart auf zwei
+// Zeilen begrenzen: max. 55 Zeichen, notfalls am letzten Wort abgeschnitten.
+function capBadge(text: string): string {
+  const t = deDash(text).trim()
+  if (t.length <= 55) return t
+  const cut = t.slice(0, 55)
+  const sp = cut.lastIndexOf(' ')
+  return (sp > 30 ? cut.slice(0, sp) : cut).replace(/[,;:.\-]$/, '')
+}
+
+function cleanOverlay(ov: Overlay | null | undefined): Overlay | null {
+  if (!ov) return null
+  return {
+    badge: ov.badge ? capBadge(ov.badge) : ov.badge,
+    subheadline: ov.subheadline ? deDash(ov.subheadline) : ov.subheadline,
+    checks: (ov.checks ?? []).map(c => deDash(c ?? '')),
+  }
+}
+
 const hasOverlayText = (ov: Overlay | null | undefined): ov is Overlay =>
   !!ov && (!!ov.badge?.trim() || !!ov.subheadline?.trim() || (ov.checks ?? []).some(c => c?.trim()))
 
@@ -350,10 +381,14 @@ Antworte NUR mit JSON:
   "cards": [NUR bei carousel, 2-6 Karten: {"title": "max. 35 Zeichen", "description": "max. 60 Zeichen", "image_url": "eine der echten Projekt-Foto-URLs"}]
 }`))
 
-      const draft: Draft = { format: plan.format, headline: plan.headline, message: plan.message }
+      const draft: Draft = { format: plan.format, headline: deDash(plan.headline), message: deDash(plan.message) }
       if (plan.format === 'single' || baseImage) {
         draft.format = 'single'
-        draft.overlay = hasOverlayText(plan.overlay) ? plan.overlay : null
+        const ov = cleanOverlay(plan.overlay)
+        draft.overlay = hasOverlayText(ov) ? ov : null
+        // Vorlage im Entwurf merken: spaetere Chat-Aenderungen am Bild muessen
+        // wieder AUF DER VORLAGE aufsetzen, nicht auf dem KI-Ergebnis.
+        if (baseImage) draft.base_image = baseImage
         // Text sofort zurück, Bild im Hintergrund → Frontend pollt image_status.
         const personas = Array.isArray(plan.personas) ? plan.personas.filter(p => p === 'sven' || p === 'lotte') : []
         let bases: string[]
@@ -368,12 +403,12 @@ Antworte NUR mit JSON:
             personas.includes('sven') ? 'One reference photo shows Sven Rüprich (real person) - his face must match that reference exactly.' : '',
             personas.includes('lotte') ? "One reference shows Lotte, Sven's chocolate labrador - she must match that reference exactly." : '',
           ].filter(Boolean).join(' ')
-          prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} Photorealistic, natural light, no text, no watermark.`
+          prompt = `${bases.length > 1 ? 'The FIRST reference is the base image to edit and build upon.' : 'Edit the reference image.'} ${plan.image_prompt ?? brief}. ${personaNote} ${FRAMING}`
         } else {
           bases = [SVEN_PHOTO]
           // Pose UND Kleidung unangetastet lassen — je mehr das Modell am
           // Menschen ändert, desto künstlicher wirkt das Ergebnis (12.8.).
-          prompt = `Same man as in the reference photo. Keep his face, pose AND clothing EXACTLY as in the reference - change ONLY the surroundings. ${plan.image_prompt ?? 'Umgebung: modernes Neubauprojekt am Mittelmeer auf Zypern, Meer im Hintergrund'}. Photorealistic documentary style, natural light, no text, no watermark.`
+          prompt = `Same man as in the reference photo. Keep his face, pose AND clothing EXACTLY as in the reference - change ONLY the surroundings. ${plan.image_prompt ?? 'Umgebung: modernes Neubauprojekt am Mittelmeer auf Zypern, Meer im Hintergrund'}. ${FRAMING}`
         }
         const jobId = await startImageJob(bases, prompt, draft.overlay)
         return json({ success: true, draft, image_job: jobId })
@@ -395,28 +430,30 @@ SCHREIBREGEL für alle Texte: NIEMALS Gedankenstrich (—) oder Bis-Strich (–)
 
 AKTUELLER ENTWURF:
 ${JSON.stringify(draft)}
+${draft.base_image ? '\nHINWEIS: Sven hat eine EIGENE BILD-VORLAGE hochgeladen. Bild-Aenderungen setzen immer wieder auf DIESER Vorlage auf, nicht auf dem zuletzt erzeugten Bild. Beschreibe im image_prompt also die gewuenschte Veraenderung DER VORLAGE.' : ''}
 
 SVENS ANWEISUNG:
 """${instruction}"""
 ${creativeRules ? `\nGELERNTE BILD-REGELN (bei image_prompt beachten):\n${creativeRules}` : ''}
 Antworte NUR mit JSON:
 - Text-/Caption-Änderung (Haupttext UNTER der Anzeige): {"target":"caption","headline":"...","message":"..."} (beides vollständig, mit der Änderung umgesetzt)
-- Änderung des TEXTS AUF DEM BILD (Badge/Subheadline/Checkmarks): {"target":"overlay","overlay":{"badge":"...","subheadline":"...","checks":["..."]}} — IMMER das komplette Overlay liefern (auch unveränderte Teile)
+- Änderung des TEXTS AUF DEM BILD (Badge/Subheadline/Checkmarks): {"target":"overlay","overlay":{"badge":"...","subheadline":"...","checks":["..."]}} — IMMER das komplette Overlay liefern (auch unveränderte Teile). Der Badge sitzt oben links und ist auf 55 Zeichen / 2 Zeilen begrenzt. Beschwert sich Sven, dass der Text im Bild stört oder ueber Gesicht/Motiv liegt, kuerze den Badge deutlich (Ziel: eine Zeile, max. 30 Zeichen) — das ist eine overlay-Änderung, kein neues Foto.
 - FOTO-Änderung (Motiv/Umgebung, nur bei format=single): {"target":"image","image_prompt":"deutscher Prompt: Pose UND Kleidung des Mannes unverändert lassen, Änderung laut Anweisung, fotorealistisch-dokumentarisch, kein Text im Bild"}
 - Karten-Änderung (nur bei format=carousel): {"target":"cards","cards":[...komplette aktualisierte Kartenliste, image_url beibehalten...]}
 Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für den Haupt-Teil und lege headline/message ZUSÄTZLICH bei — sie werden immer übernommen, wenn vorhanden.`))
 
       const updated: Draft = { ...draft }
       // headline/message werden IMMER übernommen, wenn geliefert (kombinierte Anweisungen)
-      if (decision.headline) updated.headline = decision.headline
-      if (decision.message) updated.message = decision.message
+      if (decision.headline) updated.headline = deDash(decision.headline)
+      if (decision.message) updated.message = deDash(decision.message)
       if (decision.target === 'caption') {
-        updated.headline = decision.headline ?? draft.headline
-        updated.message = decision.message ?? draft.message
+        updated.headline = deDash(decision.headline ?? draft.headline)
+        updated.message = deDash(decision.message ?? draft.message)
       } else if (decision.target === 'overlay' && draft.format === 'single') {
         // Text AUF dem Bild ändern: kein neues KI-Foto nötig — Overlay neu
         // rendern und aufs vorhandene Hintergrundfoto komponieren (synchron, schnell).
-        updated.overlay = hasOverlayText(decision.overlay) ? decision.overlay : null
+        const ovNew = cleanOverlay(decision.overlay)
+        updated.overlay = hasOverlayText(ovNew) ? ovNew : null
         const bg = draft.bg_url ?? draft.image_url
         if (bg) {
           const res = await fetch(bg)
@@ -433,10 +470,13 @@ Betrifft die Anweisung MEHRERES (z.B. Karten UND Headline), liefere target für 
         // Neues FOTO im Hintergrund — altes Bild bleibt sichtbar, bis das neue da
         // ist. Basis ist das ROHE Hintergrundfoto (ohne Overlay), das Overlay
         // wird aufs neue Foto wieder draufgerendert.
+        // Mit eigener Vorlage IMMER wieder von der Vorlage ausgehen — sonst
+        // driftet das Bild mit jeder Runde weiter von Svens Foto weg (26.8.26).
+        const editBase = draft.base_image ?? draft.bg_url ?? draft.image_url ?? SVEN_PHOTO
         const jobId = await startImageJob(
-          [draft.bg_url ?? draft.image_url ?? SVEN_PHOTO],
-          `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. Photorealistic, no text, no watermark.`,
-          draft.overlay,
+          [editBase],
+          `Edit the reference image: ${decision.image_prompt ?? instruction}. Keep everything else intact. ${FRAMING}`,
+          updated.overlay,
         )
         return json({ success: true, draft: updated, changed: 'image', image_job: jobId })
       } else if (decision.target === 'cards' && draft.format === 'carousel') {

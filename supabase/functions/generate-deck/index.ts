@@ -114,6 +114,63 @@ function dropBadSentences(s: unknown, res: RegExp[]): string {
   const kept = parts.filter(p => !res.some(re => re.test(p) && !VERNEINT.test(p)))
   return kept.join(' ').trim()
 }
+// Bei "ohne Moebel" fliegt jede Moebel-Erwaehnung raus - auch ganze inventory-Bloecke,
+// die nur davon handeln. Sven verkauft solche Objekte ohne Einrichtung; ein Deck, das
+// Moebel auch nur als Option zeigt, verwirrt den Kunden (Sven 26.8.).
+const MOEBEL_WORT = /möbel|möbliert|einrichtungspaket|einrichtung|geschirr|besteck|bettwäsche|wäschepaket|cutlery|linen|sofa|matratze|bettrahmen/i
+const FEST_VERBAUT = /küche|einbauschrank|einbauschränke|sanitär|klima|boden|böden|fenster|dusche|wc|armatur|schrankfront/i
+function dropFurnitureBlocks(blocks: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return blocks.filter(b => {
+    const txt = JSON.stringify(b)
+    if (!MOEBEL_WORT.test(txt)) return true
+    // Inventar-/Ausstattungsbloecke: nur behalten, wenn sie ueberwiegend fest
+    // Verbautes zeigen; reine Moebelbloecke fliegen ganz raus.
+    if (b.type === 'inventory' || b.type === 'unit_extra') {
+      const moebel = (txt.match(MOEBEL_WORT) ?? []).length
+      const fest = (txt.match(FEST_VERBAUT) ?? []).length
+      return fest > moebel
+    }
+    return true
+  })
+}
+function stripFurnitureWords(blocks: Array<Record<string, unknown>>): void {
+  const raus = (s: unknown) => typeof s === 'string'
+    ? s.split(/(?<=[.!?…])\s+/).filter(p => !(MOEBEL_WORT.test(p) && !FEST_VERBAUT.test(p))).join(' ').trim()
+    : s
+  for (const b of blocks) {
+    for (const f of ['intro', 'note', 'text', 'quote', 'headline', 'tagline', 'nickname', 'kicker']) {
+      if (typeof b[f] === 'string') {
+        const neu = raus(b[f])
+        b[f] = (f === 'headline' || f === 'kicker' || f === 'nickname' || f === 'tagline') && !neu ? undefined : neu
+      }
+    }
+    if (Array.isArray(b.paragraphs)) b.paragraphs = (b.paragraphs as unknown[]).map(raus).filter(Boolean)
+    for (const listKey of ['specs', 'items', 'bullets']) {
+      if (Array.isArray(b[listKey])) {
+        b[listKey] = (b[listKey] as unknown[]).filter(x => {
+          const t = typeof x === 'string' ? x : JSON.stringify(x)
+          return !(MOEBEL_WORT.test(t) && !FEST_VERBAUT.test(t))
+        })
+      }
+    }
+    for (const grpKey of ['groups', 'cards', 'cols', 'steps']) {
+      if (!Array.isArray(b[grpKey])) continue
+      b[grpKey] = (b[grpKey] as Array<Record<string, unknown>>).filter(g => {
+        if (!g || typeof g !== 'object') return true
+        for (const f of ['text', 'title', 'note']) if (typeof g[f] === 'string') g[f] = raus(g[f])
+        if (Array.isArray(g.items)) {
+          g.items = (g.items as unknown[]).filter(x => {
+            const t = typeof x === 'string' ? x : JSON.stringify(x)
+            return !(MOEBEL_WORT.test(t) && !FEST_VERBAUT.test(t))
+          })
+        }
+        const t = JSON.stringify(g)
+        return !(MOEBEL_WORT.test(t) && !FEST_VERBAUT.test(t))
+      })
+    }
+  }
+}
+
 function scrubNarrative(blocks: Array<Record<string, unknown>>, furnIncluded = true): void {
   const furnRes = furnIncluded ? [] : FORBIDDEN_FURNITURE
   for (const b of blocks) {
@@ -454,6 +511,12 @@ Deno.serve(async (req) => {
       units?: Array<{ unit_number?: string; price_net?: number | null }>
       generic?: boolean
       background?: boolean
+      // Moebel-Modus je Deck (Sven waehlt im Wizard):
+      //  'none'     = ohne Moebel verkauft - Moebel kommen im Deck NICHT vor
+      //  'included' = Preis enthaelt die Moebel (zweite Preisspalte des Bautraegers)
+      //  'optional' = Grundpreis + separat ausgewiesenes Moebelpaket
+      // Fehlt der Wert, entscheiden wie bisher die Projekt-Stammdaten.
+      furniture_mode?: 'none' | 'included' | 'optional'
     }
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
@@ -506,6 +569,7 @@ Deno.serve(async (req) => {
     // Default true = nicht filtern, solange nichts Gegenteiliges bekannt ist; der
     // Preisblock unten setzt den echten Wert aus den Projekt-Stammdaten.
     let furnStatusIncluded = true
+    let furnModus: 'none' | 'included' | 'optional' = body.furniture_mode ?? 'optional'
     // Rohe Preisbasis (netto/brutto) EINER Einzelwohnung — für die absoluten Beträge je
     // Zahlungsplan-Stufe. Nur gesetzt, wenn genau eine Wohnung mit Preis vorliegt.
     let payBasis: { net: number; gross: number } | null = null
@@ -562,7 +626,11 @@ Deno.serve(async (req) => {
         const furnByBed = (p as { calc_defaults?: { furniture_by_bedrooms?: Record<string, number> } } | null)?.calc_defaults?.furniture_by_bedrooms ?? null
         // Möbel-Nettopreis je Wohnung: ZIMMERABHÄNGIG (furniture_by_bedrooms, z.B.
         // 1-SZ 17.000 / 2-SZ 19.000) mit Fallback auf den projektweiten furniture_cost.
+        // Der ausdrueckliche Wunsch aus dem Wizard schlaegt die Projekt-Stammdaten.
+        const modus: 'none' | 'included' | 'optional' = body.furniture_mode
+          ?? (furnIncluded ? 'included' : 'optional')
         const furnFor = (bedrooms: number | null): number => {
+          if (modus === 'none' || modus === 'included') return 0
           if (furnIncluded) return 0
           if (furnByBed && bedrooms != null && furnByBed[String(bedrooms)] != null) return Number(furnByBed[String(bedrooms)]) || 0
           return furnDefault
@@ -582,28 +650,29 @@ Deno.serve(async (req) => {
           if (isEigennutz && v.split) {
             // Aufgeschluesselt (Sven 26.8.): beguenstigter und regulaerer Anteil getrennt.
             const lines: Array<{ label: string; value: string; strong?: boolean }> = [
-              { label: furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
+              { label: modus === 'included' ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
               { label: `MwSt 5 % auf ${eur(v.split.netReduced)}${v.split.netStandard > 0 ? ' (bis 130 m² Wohnfläche)' : ''}`, value: eur(v.split.vatReduced) },
             ]
             if (v.split.netStandard > 0) lines.push({ label: `MwSt 19 % auf ${eur(v.split.netStandard)} (über 130 m²)`, value: eur(v.split.vatStandard) })
             if (furnNet > 0) {
               lines.push({ label: 'Einrichtungspaket (netto)', value: eur(furnNet) })
               lines.push({ label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) })
-            } else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
-            else lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
+            } else if (modus === 'included') lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+            else if (modus === 'optional') lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
             lines.push({ label: 'MwSt gesamt', value: eur(v.vat) })
             lines.push({ label: 'Bruttopreis', value: eur(brutto), strong: true })
             return lines
           }
           const lines: Array<{ label: string; value: string; strong?: boolean }> = [
-            { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
+            { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (modus === 'included' ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
             { label: `zzgl. MwSt (${vatPct})`, value: eur(v.vat) },
             { label: 'Bruttopreis', value: eur(brutto), strong: true },
           ]
           if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(furnNet + Math.round(furnNet * 0.19))} brutto` })
-          else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+          else if (modus === 'included') lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
           // Schweigen las der Kunde bisher als "ist dabei" - deshalb immer benennen.
-          else lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
+          // Bei 'none' bleibt die Zeile weg: das Objekt wird ohne Moebel verkauft.
+          else if (modus === 'optional') lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
           return lines
         }
         const priced = unitList.filter(u => u.price_net > 0)
@@ -626,10 +695,14 @@ Deno.serve(async (req) => {
           const furnBeispiel = priced.length > 0 ? furnFor(priced[0].bedrooms) : furnDefault
           // Dritter Zustand: sind BEIDE Stammdatenfelder ungepflegt, ist der Status
           // schlicht unbekannt - dann darf das Deck in KEINE Richtung behaupten.
-          const furnUnbekannt = !furnIncluded && furnBeispiel <= 0 && !furnByBed
+          const furnUnbekannt = modus === 'optional' && !furnIncluded && furnBeispiel <= 0 && !furnByBed
           // Nur ein ausdrueckliches "enthalten" erlaubt Moebel-Aussagen im Text.
-          furnStatusIncluded = furnIncluded
-          extraFacts += furnUnbekannt
+          furnStatusIncluded = modus === 'included'
+          furnModus = modus
+          if (modus === 'none') {
+            // Sven verkauft dieses Objekt OHNE Moebel - das Deck erwaehnt sie gar nicht.
+            extraFacts += `\n\n=== EINRICHTUNG: KOMMT IM DECK NICHT VOR (HART, HOECHSTE PRIORITAET) ===\nDieses Objekt wird OHNE Moebel verkauft. Erwaehne Moebel, Einrichtungspakete, Moebelmarken, Geschirr, Besteck oder Waesche mit KEINEM Wort - kein inventory-Block dazu, keine Aufzaehlung, kein Nebensatz, auch nicht als Option oder Aufpreis. Ignoriere alle Moebel-, Geschirr- und Waescheangaben in den Fakten vollstaendig. Fest verbaute Ausstattung (Kueche, Einbauschraenke, Sanitaer, Klimatisierung, Boeden, Fenster) darfst und sollst du beschreiben, wenn die Fakten sie belegen - das ist keine Moeblierung.`
+          } else extraFacts += furnUnbekannt
             ? `\n\n=== EINRICHTUNG: UNBEKANNT (HART) ===\nOb Moebel im Kaufpreis enthalten sind, ist in den Stammdaten NICHT gepflegt. Triff dazu KEINE Aussage - weder enthalten noch Aufpreis. Verboten sind "schluesselfertig", "moebliert", "komplett eingerichtet", "bezugsfertig" und jede sinngemaesse Formulierung. Fest verbaute Ausstattung (Kueche, Schraenke, Sanitaer, Klima) darfst du beschreiben, wenn die Fakten sie belegen.`
             : furnIncluded
             ? `\n\n=== EINRICHTUNG: IM KAUFPREIS ENTHALTEN (HART) ===\nDie Einrichtung ist laut Stammdaten Teil des Kaufpreises. So darfst du es schreiben.`
@@ -824,6 +897,12 @@ Deno.serve(async (req) => {
     // Moebel-Behauptungen, sobald die Stammdaten die Einrichtung NICHT als enthalten
     // ausweisen (furnStatusIncluded wird beim Preisaufbau gesetzt).
     scrubNarrative(blocks, furnStatusIncluded)
+    if (furnModus === 'none') {
+      const vorher = blocks.length
+      blocks = dropFurnitureBlocks(blocks)
+      stripFurnitureWords(blocks)
+      if (blocks.length !== vorher) console.log(`[generate-deck] ohne Möbel: ${vorher - blocks.length} Möbel-Block/Blöcke entfernt`)
+    }
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
     injectLocationAndMarina(blocks, projRow?.name || projName, projRow)

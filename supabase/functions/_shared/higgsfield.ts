@@ -124,8 +124,9 @@ export async function hfGenerateBytes(store: HfStore, jobType: string, params: R
   const sub = await fetch(`${HF_BASE}/images/${jobType}/generations`, { method: 'POST', headers: hdr, body: JSON.stringify({ params }) })
   const sd = await sub.json() as { id?: string }
   if (!sub.ok || !sd.id) throw new Error(`Higgsfield submit: ${JSON.stringify(sd).slice(0, 200)}`)
-  // Typisch ~15-40 s; Deckel 150 s, damit die Edge-Wallclock nicht reisst.
-  for (let i = 0; i < 30; i++) {
+  // Typisch ~30-90 s. Deckel 240 s: bei Higgsfield-Last liefen Jobs wiederholt
+  // in den alten 150-s-Deckel (26.8.26), obwohl das Bild kurz danach fertig war.
+  for (let i = 0; i < 48; i++) {
     await new Promise(res => setTimeout(res, 5000))
     const jr = await fetch(`${HF_BASE}/jobs/${sd.id}`, { headers: hdr })
     const j = await jr.json() as { status?: string; result_url?: string }
@@ -136,5 +137,5 @@ export async function hfGenerateBytes(store: HfStore, jobType: string, params: R
     }
     if (j.status === 'failed' || j.status === 'canceled') throw new Error(`Higgsfield-Job ${j.status}.`)
   }
-  throw new Error('Higgsfield-Timeout (150 s).')
+  throw new Error('Higgsfield-Timeout (240 s).')
 }

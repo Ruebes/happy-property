@@ -18,6 +18,8 @@ interface Draft {
   image_url?: string
   /** rohes Hintergrundfoto ohne Text-Overlay (Server nutzt es für Änderungen) */
   bg_url?: string
+  /** hochgeladene Vorlage — Bild-Änderungen per Chat setzen wieder darauf auf */
+  base_image?: string
   overlay?: Overlay | null
   cards?: Card[]
 }
@@ -95,7 +97,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   // Bild-Job pollen: der Text kommt sofort, das KI-Bild entsteht im Hintergrund
   // (verhindert Gateway-Timeouts bei langsameren Verbindungen).
   const pollImage = async (jobId: string): Promise<{ url: string; bg: string | null }> => {
-    for (let i = 0; i < 45; i++) {
+    for (let i = 0; i < 75; i++) {   // 5 Min - der Server gibt nach 240 s auf
       await new Promise(r => setTimeout(r, 4000))
       const s = await call({ mode: 'image_status', job: jobId })
       if (s.status === 'done' && s.image_url) return { url: String(s.image_url), bg: s.bg_url ? String(s.bg_url) : null }
@@ -116,7 +118,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
   }
 
   const generate = async () => {
-    if (!brief.trim() || busy || imgBusy) return
+    if (!brief.trim() || busy || imgBusy || uploading) return
     setBusy('generate')
     setDraft(null)
     let jobId: string | null = null
@@ -228,12 +230,13 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       </div>
 
       <div className="mt-3">
-        <button onClick={() => void generate()} disabled={busy !== null || !brief.trim()}
+        <button onClick={() => void generate()} disabled={busy !== null || uploading || !brief.trim()}
           className="px-6 py-3 rounded-xl text-base font-semibold text-white flex items-center gap-2 disabled:opacity-60"
           style={{ backgroundColor: '#ff795d' }}>
           {busy === 'generate' && spinner}
           ✨ {t('crm.studio.cta', 'Anzeige erstellen')}
         </button>
+        {uploading && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.waitUpload', 'Basisbild lädt noch hoch — gleich geht es los.')}</p>}
       </div>
       {busy === 'generate' && (
         <p className="mt-2 text-[11px] text-gray-400">{t('crm.studio.generating', 'Erstelle Copy und Bildmaterial — bei KI-Bildern dauert das bis zu einer Minute …')}</p>
@@ -289,6 +292,8 @@ export default function AdStudio({ onPublished, showToast }: Props) {
               💬 {t('crm.studio.chatCta', 'Ändern')}
             </button>
           </div>
+          {imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatBlocked', 'Das Bild wird gerade erstellt — Änderungen per Chat gehen gleich wieder.')}</p>}
+          {draft.base_image && !imgBusy && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.chatOnBase', 'Bild-Änderungen per Chat setzen wieder auf deiner hochgeladenen Vorlage auf.')}</p>}
           {lastChange && <p className="mt-1 text-[11px] text-gray-400">{t('crm.studio.changed', 'Zuletzt geändert')}: {lastChange === 'caption' ? t('crm.studio.caption', 'Caption') : lastChange === 'image' ? t('crm.studio.image', 'Bild') : t('crm.studio.cards', 'Karten')}</p>}
 
           <div className="flex gap-2 mt-3">

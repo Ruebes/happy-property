@@ -17,7 +17,7 @@ import { rentFromSeason } from '../../lib/strategy'
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
 interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
-interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null }
+interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
@@ -44,6 +44,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     mgmtPct?: number; season?: { totalOcc: number; adrHigh: number } | null
     // MwSt-Regelung je Wohnung (Sven waehlt manuell; Default Standard 19 %)
     vatMode?: import('../../lib/rechner').VatMode; livingSqm?: number | null
+    // Moebel je Wohnung: 'none' = ohne Moebel verkauft (kommen im Deck nicht vor),
+    // 'included' = zweite Preisspalte des Bautraegers (price_net_furnished),
+    // 'optional' = Grundpreis + separat ausgewiesenes Moebelpaket.
+    furnMode?: 'none' | 'included' | 'optional'
   }
   const [perUnit, setPerUnit] = useState<Record<string, PerUnit>>({})
   const setPu = (id: string, patch: Partial<PerUnit>) =>
@@ -120,7 +124,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // UND an einen aktiven Deal gebundene Wohnungen werden ausgeblendet (= schon weg).
     const [{ data }, { data: dealRows }] = await Promise.all([
       supabase.from('crm_project_units')
-        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor')
+        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_net_furnished, price_gross, floor')
         // Zugewiesene Wohnungen (property_id = im Kundenportal materialisiert) sind
         // verkauft und NIE anbietbar — Status allein reicht nicht (Sven 14.8.).
         .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').is('property_id', null).order('unit_number'),
@@ -168,7 +172,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // Grundrisse je Wohnung (nach Etage), Dubletten raus
     const floorplans = [...new Set(items.map(it => (a.floorplans ?? []).find(f => f.floor === it.unit.floor)?.url).filter(Boolean) as string[])]
     const images = { renders: a.renders ?? [], gallery: a.gallery ?? [], floorplan: floorplans[0] ?? (a.floorplans ?? [])[0]?.url, floorplans, map: a.map ?? undefined, mapUrl: a.mapUrl ?? undefined, mapMarker: a.mapMarker ?? undefined, mapLat: first.lat ?? undefined, mapLng: first.lng ?? undefined }
-    const units = items.map(it => ({ unit_number: it.unit.unit_number, price_net: it.unit.price_net }))
+    // Moebel-Modus (Sven waehlt je Wohnung): bei "mit Moebeln" gilt die ZWEITE
+    // Preisspalte des Bautraegers (price_net_furnished, z.B. ARCA 101: 400.800 ohne /
+    // 417.800 mit) - nicht Grundpreis plus geschaetztes Moebelpaket.
+    const modeOf = (it: BasketItem): 'none' | 'included' | 'optional' =>
+      perUnit[it.unit.id]?.furnMode ?? (it.furnitureIncluded ? 'included' : 'none')
+    const priceOf = (it: BasketItem) =>
+      modeOf(it) === 'included' ? (it.unit.price_net_furnished ?? it.unit.price_net) : it.unit.price_net
+    const units = items.map(it => ({ unit_number: it.unit.unit_number, price_net: priceOf(it) }))
+    // Ein Deck traegt EINEN Modus - der der ersten Wohnung.
+    const furnitureMode = modeOf(first)
     const label = items.length > 1 ? `${first.projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})` : `${first.projectName} · ${first.unit.unit_number}`
     // letztes Deck dieses Projekts für den Lead merken → auf NEUES Token pollen
     const { data: prev } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
@@ -180,7 +193,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     }
     const { error } = await supabase.functions.invoke('generate-deck', { body: {
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
-      facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId,
+      facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId, furniture_mode: furnitureMode,
       unit_id: items.length === 1 ? first.unit.id : null, units,
       month_label: new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }),
     } })
@@ -652,6 +665,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                     {basket.map(b => {
                       const pu = perUnit[b.unit.id] ?? {}
                       const ff  = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
+                      // Standard: enthaelt der Projektpreis die Moebel laut Stammdaten,
+                      // gilt "mit" - sonst "ohne". Sven kann je Wohnung umschalten.
+                      const fm: 'none' | 'included' | 'optional' = pu.furnMode ?? (b.furnitureIncluded ? 'included' : 'none')
                       const hc  = pu.hotelConcept ?? calcParams.hotelConcept
                       const let_ = pu.letType ?? calcParams.letType
                       const fin_ = pu.fin ?? calcParams.fin
@@ -678,6 +694,25 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                           <div className="flex flex-wrap gap-3">
                             {puSeg(t('crm.wizard.letType', 'Vermietung'), let_, [['short', t('crm.wizard.short', 'Kurz')], ['long', t('crm.wizard.long', 'Lang')]], v => setPu(b.unit.id, { letType: v as 'short' | 'long' }))}
                             {puSeg(t('crm.wizard.fin', 'Finanzierung'), fin_, [['yes', t('crm.wizard.finYes', 'Ja')], ['no', t('crm.wizard.finNo', 'Cash')]], v => setPu(b.unit.id, { fin: v as 'yes' | 'no' }))}
+                            {/* Moebel je Wohnung: bestimmt den PREIS im Deck. "Mit" nimmt die
+                                zweite Preisspalte des Bautraegers, "Ohne" laesst Moebel im Deck
+                                komplett weg, "Optional" weist sie separat aus. */}
+                            {puSeg(t('crm.wizard.furnMode', 'Möbel'), fm,
+                              [['none', t('crm.wizard.furnNone', 'Ohne')],
+                               ['included', t('crm.wizard.furnIncl', 'Mit')],
+                               ['optional', t('crm.wizard.furnOpt', 'Optional')]],
+                              v => setPu(b.unit.id, { furnMode: v as 'none' | 'included' | 'optional' }))}
+                          </div>
+                          {/* Welcher Preis im Deck landet - sichtbar, damit nie unklar ist,
+                              woher die Zahl kommt. */}
+                          <div className="text-[11px] text-gray-500">
+                            {fm === 'included'
+                              ? (b.unit.price_net_furnished != null
+                                  ? t('crm.wizard.furnPriceIncl', 'Deck-Preis: {{p}} netto (Preisspalte des Bauträgers inkl. Möbel)', { p: eur(b.unit.price_net_furnished) })
+                                  : t('crm.wizard.furnPriceMissing', '⚠ Kein Möbelpreis hinterlegt — es gilt {{p}} netto ohne Möbel. Bitte am Objekt pflegen.', { p: eur(b.unit.price_net) }))
+                              : fm === 'optional'
+                                ? t('crm.wizard.furnPriceOpt', 'Deck-Preis: {{p}} netto + Möbelpaket separat ausgewiesen', { p: eur(b.unit.price_net) })
+                                : t('crm.wizard.furnPriceNone', 'Deck-Preis: {{p}} netto — Möbel kommen im Deck nicht vor', { p: eur(b.unit.price_net) })}
                           </div>
                           <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-3">
                             {fin_ === 'yes' && miniInput(t('crm.wizard.equity', 'Eigenkapital'), String(pu.equity ?? calcParams.equity ?? ''), v => setPu(b.unit.id, { equity: v }), '1000', '€')}
