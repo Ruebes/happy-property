@@ -425,13 +425,37 @@ Deno.serve(async (req) => {
       if (sentAllParts && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
     }
 
+    const okResults = results.filter(r => (r as { ok?: boolean }).ok)
+
     // ── Aktivität in CRM loggen ───────────────────────────────────
+    // Der Betreff MUSS erkennbar machen, WER die Nachricht bekommen hat. Ging sie
+    // an jemand anderen als den Kunden (interne Uebergabe an einen Partner), stand
+    // hier vorher nur "WhatsApp: no_show" in der Kundenakte - im Posteingang sah
+    // das aus, als haette der Kunde die interne Nachricht bekommen (Sven 26.8.,
+    // Fall Holger Rumiantcev an Burkhard Bade). Gesendet wurde immer korrekt an
+    // den Empfaenger, nur das Protokoll war irrefuehrend.
     if (lead_id) {
+      let anKunde = true
+      try {
+        // NUR die am Lead gespeicherten Nummern zaehlen als "der Kunde". lead_data
+        // traegt die ZIELnummer des Aufrufers - die hier mitzuzaehlen machte den
+        // Vergleich immer wahr und jede interne Uebergabe sah wieder wie eine
+        // Kundennachricht aus.
+        const { data: ld } = await supabase.from('leads').select('phone, whatsapp').eq('id', lead_id).maybeSingle()
+        const l = ld as { phone?: string | null; whatsapp?: string | null } | null
+        // Vergleich ueber die letzten 9 Ziffern - Laendervorwahlen sind uneinheitlich
+        // gepflegt (doppelte Vorwahl kam schon vor, Fall Koenig).
+        const tail = (x: string) => x.replace(/[^0-9]/g, '').slice(-9)
+        const kunde = [l?.whatsapp, l?.phone].filter(Boolean).map(x => tail(String(x))).filter(x => x.length === 9)
+        const ziele = okResults.map(r => tail(String((r as { phone?: string }).phone ?? ''))).filter(x => x.length === 9)
+        if (kunde.length && ziele.length) anKunde = ziele.some(z => kunde.includes(z))
+      } catch { /* im Zweifel als Kundennachricht protokollieren */ }
+      const empfaenger = recipients.map(r => r.name).filter(Boolean).join(', ')
       await supabase.from('activities').insert({
         lead_id,
         type:         'whatsapp',
         direction:    'outbound',
-        subject:      `WhatsApp: ${event_type}`,
+        subject:      anKunde ? `WhatsApp: ${event_type}` : `Intern an ${empfaenger || 'Partner'} (nicht an den Kunden)`,
         content:      message,
         completed_at: new Date().toISOString(),
         auto:         auto === true,
@@ -441,7 +465,6 @@ Deno.serve(async (req) => {
     // Erfolg NUR, wenn mindestens ein Versand wirklich ok war. Vorher stand hier
     // pauschal success:true — ein TimelinesAI-Fehler wurde verschluckt und der
     // Aufrufer loggte "gesendet", obwohl nichts raus war (Rainer, 7.8.26).
-    const okResults = results.filter(r => (r as { ok?: boolean }).ok)
     const firstErr = results.find(r => !(r as { ok?: boolean }).ok) as { status?: number; data?: unknown } | undefined
     const allSkipped = okResults.length > 0 && okResults.every(r => ((r as { data?: { skipped?: string } }).data?.skipped) === 'duplicate')
     return new Response(

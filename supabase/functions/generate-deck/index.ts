@@ -413,12 +413,27 @@ Deno.serve(async (req) => {
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
     const angle     = body.angle || 'investment'
-    // Eigennutz (Erstwohnsitz) → reduzierte MwSt 5 % + Wohn-/Lifestyle-Ton; Investment → 19 % + ROI-Ton.
-    // (Zyprische 5%-Regelung für Eigennutzer, Übergangsfrist bis 31.12.2026; qualifiziert der Kunde,
-    //  wählt Sven im Wizard "Eigennutz".) angleTone gibt der KI weiter den bekannten lifestyle/investment-Ton.
+    // Eigennutz (Erstwohnsitz) → gesetzliche 130-m²-Regel (s.u.) + Wohn-/Lifestyle-Ton;
+    // Investment → 19 % pauschal + ROI-Ton. Qualifiziert der Kunde, waehlt Sven im
+    // Wizard "Eigennutz" (manuelle Entscheidung - das System prueft keinen Anspruch).
+    // angleTone gibt der KI weiter den bekannten lifestyle/investment-Ton.
     const isEigennutz = angle === 'eigennutz'
     const vatRate   = isEigennutz ? 0.05 : 0.19
     const vatPct    = isEigennutz ? '5 %' : '19 %'
+    // Eigennutz rechnet NACH GESETZ (Sven 26.8.): 5 % nur auf den Wohnflaechen-Anteil
+    // bis 130 m², darueber 19 % - proportional am Nettopreis (beguenstigt = netto x
+    // MIN(130/Flaeche, 1); ohne gepflegte Wohnflaeche gilt alles als beguenstigt).
+    // Die Einrichtung ist bewegliches Inventar und traegt IMMER 19 %.
+    // Gleiche Mathematik wie vatSplit in src/lib/rechner.ts (Rendite-Rechner).
+    const VAT_CAP_SQM = 130
+    const vatSplitDeck = (net: number, sqm: number | null | undefined) => {
+      const share = (sqm && sqm > 0) ? Math.min(VAT_CAP_SQM / sqm, 1) : 1
+      const netReduced = Math.round(net * share)
+      const netStandard = net - netReduced
+      const vatReduced = Math.round(netReduced * 0.05)
+      const vatStandard = Math.round(netStandard * 0.19)
+      return { netReduced, netStandard, vatReduced, vatStandard, vat: vatReduced + vatStandard }
+    }
     const angleTone = isEigennutz ? 'lifestyle' : angle
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
 
@@ -458,20 +473,21 @@ Deno.serve(async (req) => {
     let extraFacts = ''
     if (body.project_id) {
       try {
-        let unitList: Array<{ unit_number: string; price_net: number; bedrooms: number | null }> = []
-        // Alle Wohnungen des Projekts (Zimmerzahl je Wohnung) für die zimmer-
-        // abhängige Möbel-Kalkulation als Map bereitstellen.
-        const { data: allU } = await sbRules.from('crm_project_units').select('unit_number, bedrooms').eq('project_id', body.project_id)
+        let unitList: Array<{ unit_number: string; price_net: number; bedrooms: number | null; size_sqm: number | null }> = []
+        // Alle Wohnungen des Projekts (Zimmerzahl + Wohnflaeche je Wohnung) für die
+        // Möbel-Kalkulation und die 130-m²-MwSt-Regel als Map bereitstellen.
+        const { data: allU } = await sbRules.from('crm_project_units').select('unit_number, bedrooms, size_sqm').eq('project_id', body.project_id)
         const bedByUnit = new Map<string, number | null>()
-        for (const u of (allU ?? []) as Array<{ unit_number?: string; bedrooms?: number | null }>) {
-          if (u.unit_number) bedByUnit.set(normU(u.unit_number), u.bedrooms ?? null)
+        const sqmByUnit = new Map<string, number | null>()
+        for (const u of (allU ?? []) as Array<{ unit_number?: string; bedrooms?: number | null; size_sqm?: number | null }>) {
+          if (u.unit_number) { bedByUnit.set(normU(u.unit_number), u.bedrooms ?? null); sqmByUnit.set(normU(u.unit_number), u.size_sqm ?? null) }
         }
         if (body.units?.length) {
-          unitList = body.units.filter(u => u.unit_number).map(u => ({ unit_number: String(u.unit_number), price_net: Number(u.price_net) || 0, bedrooms: bedByUnit.get(normU(u.unit_number)) ?? null }))
+          unitList = body.units.filter(u => u.unit_number).map(u => ({ unit_number: String(u.unit_number), price_net: Number(u.price_net) || 0, bedrooms: bedByUnit.get(normU(u.unit_number)) ?? null, size_sqm: sqmByUnit.get(normU(u.unit_number)) ?? null }))
         } else if (body.unit_id) {
-          const { data: u } = await sbRules.from('crm_project_units').select('unit_number, price_net, bedrooms').eq('id', body.unit_id).maybeSingle()
-          const uu = u as { unit_number?: string; price_net?: number; bedrooms?: number | null } | null
-          if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0, bedrooms: uu.bedrooms ?? null }]
+          const { data: u } = await sbRules.from('crm_project_units').select('unit_number, price_net, bedrooms, size_sqm').eq('id', body.unit_id).maybeSingle()
+          const uu = u as { unit_number?: string; price_net?: number; bedrooms?: number | null; size_sqm?: number | null } | null
+          if (uu?.unit_number) unitList = [{ unit_number: uu.unit_number, price_net: Number(uu.price_net) || 0, bedrooms: uu.bedrooms ?? null, size_sqm: uu.size_sqm ?? null }]
         }
         const { data: p } = await sbRules.from('crm_projects').select('furniture_cost, furniture_included, completion_date, calc_defaults, deck_assets').eq('id', body.project_id).maybeSingle()
         // Hinterlegte Grundrisse je Wohnung einsammeln (Nummer exakt, sonst Zimmertyp "<n>br").
@@ -502,32 +518,60 @@ Deno.serve(async (req) => {
           if (furnByBed && bedrooms != null && furnByBed[String(bedrooms)] != null) return Number(furnByBed[String(bedrooms)]) || 0
           return furnDefault
         }
-        const buildLines = (baseNet: number, furnNet: number) => {
+        // Gesamt-MwSt je Wohnung: Investment pauschal 19 %; Eigennutz nach Gesetz
+        // (130-m²-Regel auf die Immobilie, Einrichtung immer 19 %).
+        const vatFor = (baseNet: number, furnNet: number, sqm: number | null) => {
+          if (!isEigennutz) return { vat: Math.round((baseNet + furnNet) * vatRate), mixed: false, split: null as null | ReturnType<typeof vatSplitDeck>, furnVat: 0 }
+          const split = vatSplitDeck(baseNet, sqm)
+          const furnVat = Math.round(furnNet * 0.19)
+          return { vat: split.vat + furnVat, mixed: split.netStandard > 0 || furnVat > 0, split, furnVat }
+        }
+        const buildLines = (baseNet: number, furnNet: number, sqm: number | null) => {
           const totalNet = baseNet + furnNet
-          const vat = Math.round(totalNet * vatRate)
-          const brutto = totalNet + vat
+          const v = vatFor(baseNet, furnNet, sqm)
+          const brutto = totalNet + v.vat
+          if (isEigennutz && v.split) {
+            // Aufgeschluesselt (Sven 26.8.): beguenstigter und regulaerer Anteil getrennt.
+            const lines: Array<{ label: string; value: string; strong?: boolean }> = [
+              { label: furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
+              { label: `MwSt 5 % auf ${eur(v.split.netReduced)}${v.split.netStandard > 0 ? ' (bis 130 m² Wohnfläche)' : ''}`, value: eur(v.split.vatReduced) },
+            ]
+            if (v.split.netStandard > 0) lines.push({ label: `MwSt 19 % auf ${eur(v.split.netStandard)} (über 130 m²)`, value: eur(v.split.vatStandard) })
+            if (furnNet > 0) {
+              lines.push({ label: 'Einrichtungspaket (netto)', value: eur(furnNet) })
+              lines.push({ label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) })
+            } else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+            lines.push({ label: 'MwSt gesamt', value: eur(v.vat) })
+            lines.push({ label: 'Bruttopreis', value: eur(brutto), strong: true })
+            return lines
+          }
           const lines: Array<{ label: string; value: string; strong?: boolean }> = [
             { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
-            { label: `zzgl. MwSt (${vatPct})`, value: eur(vat) },
+            { label: `zzgl. MwSt (${vatPct})`, value: eur(v.vat) },
             { label: 'Bruttopreis', value: eur(brutto), strong: true },
           ]
-          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(Math.round(furnNet * (1 + vatRate)))} brutto` })
+          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(furnNet + Math.round(furnNet * 0.19))} brutto` })
           else if (furnIncluded) lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
           return lines
         }
         const priced = unitList.filter(u => u.price_net > 0)
         for (const u of priced) {
           const furnNet = furnFor(u.bedrooms)
-          priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net, furnNet)
+          priceLinesByUnit[normU(u.unit_number)] = buildLines(u.price_net, furnNet, u.size_sqm)
           const totalNet = u.price_net + furnNet
-          const vat = Math.round(totalNet * vatRate)
-          priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: vatPct, vat: eur(vat), gross: eur(totalNet + vat) }
-          if (priced.length === 1) payBasis = { net: totalNet, gross: totalNet + vat }
+          const v = vatFor(u.price_net, furnNet, u.size_sqm)
+          priceSummaryByUnit[normU(u.unit_number)] = { net: eur(totalNet), vatRate: v.mixed ? '5 %/19 %' : vatPct, vat: eur(v.vat), gross: eur(totalNet + v.vat) }
+          if (priced.length === 1) payBasis = { net: totalNet, gross: totalNet + v.vat }
         }
         // Bei Eigennutz die 5%-Basis explizit als Fakt mitgeben, damit die KI den GESAMTEN
         // Zahlungsplan (Reservierung/Anzahlung/Raten) + Intro auf 5 % rechnet, nicht 19 %.
         if (isEigennutz && priced.length > 0) {
-          extraFacts += `\n\n=== MWST-BASIS: 5 % (EIGENNUTZ / ERSTWOHNSITZ) — HART ===\nAlle Brutto-Beträge, der Bruttopreis UND der gesamte Zahlungsplan (Reservierung, Anzahlung, alle Raten, Summen) sind auf Basis 5 % MwSt zu rechnen — NICHT 19 %. Im 'payment'-Block als note der Hinweis: Der reduzierte MwSt-Satz von 5 % setzt einen nachgewiesenen Eigennutz/Erstwohnsitz in Zypern voraus (Übergangsregelung, Steuerberater-Vorbehalt).`
+          const bruttoJeUnit = priced.map(u => {
+            const furnNet = furnFor(u.bedrooms)
+            const v = vatFor(u.price_net, furnNet, u.size_sqm)
+            return `Wohnung ${u.unit_number}: Bruttopreis ${eur(u.price_net + furnNet + v.vat)}`
+          }).join(' · ')
+          extraFacts += `\n\n=== MWST-BASIS EIGENNUTZ (GESETZLICHE REGELUNG) — HART ===\nDie MwSt ist bereits EXAKT berechnet: 5 % auf den Wohnflaechen-Anteil bis 130 m², 19 % auf den Anteil darueber, 19 % auf die Einrichtung. NICHT selbst rechnen. Der gesamte Zahlungsplan (Reservierung, Anzahlung, alle Raten, Summen) rechnet auf diesen Bruttopreisen: ${bruttoJeUnit}. Im 'payment'-Block als note der Hinweis: Der reduzierte MwSt-Satz von 5 % setzt einen nachgewiesenen Eigennutz/Erstwohnsitz in Zypern voraus und gilt bis 130 m² Wohnflaeche (Steuerberater-Vorbehalt).`
         }
         if (priced.length === 1) {
           extraFacts += `\n\n=== VERBINDLICHE PREISANGABEN (im 'unit'-Block GENAU so darstellen, NICHT selbst rechnen, NICHT woanders wiederholen) ===\n${priceLinesByUnit[normU(priced[0].unit_number)].map(l => `${l.label}: ${l.value}`).join('\n')}`
