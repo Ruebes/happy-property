@@ -31,6 +31,7 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
 import { hfGenerateBytes, hfShrinkUrl, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
+import { CI, CI_FONT, CI_LOOK, loadCiFonts } from '../_shared/brand.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -46,10 +47,10 @@ const SVEN_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/p
 // Echtes Lotte-Foto als Persona-Referenz (für „Lotte mit ins Bild")
 const LOTTE_PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/Assets/wa/lotte1.jpg'
 
-// Bildaufbau-Regel fuer ALLE Einzelbilder: oben bleibt Platz fuer den roten
+// Bildaufbau-Regel fuer ALLE Einzelbilder: oben bleibt Platz fuer den Korall-
 // Badge, unten fuer das Creme-Panel. Ohne diese Ansage landete der Text
 // mitten im Gesicht (Sven, 26.8.26).
-const FRAMING = 'Photorealistic documentary style, natural light, no text, no watermark. Framing: keep the top 20 percent and the bottom 30 percent of the frame free of faces and important detail (sky, wall, open space) - text banners are placed there. The main subject sits in the middle of the frame.'
+const FRAMING = 'Photorealistic documentary style, natural light, no text, no watermark. Framing: keep the top 20 percent and the bottom 30 percent of the frame free of faces and important detail (sky, wall, open space) - text banners are placed there. The main subject sits in the middle of the frame. ' + CI_LOOK
 const URL_TAGS = 'utm_source=meta&utm_medium=paid&utm_campaign={{campaign.id}}&utm_term={{adset.id}}&utm_content={{ad.id}}'
 const LINK = 'https://portal.happy-property.com/termin'
 
@@ -143,21 +144,10 @@ async function generateImage(store: HfStore, bases: string[], prompt: string): P
 // nicht von der KI gemalt — gestochen scharf, korrekte Umlaute, CI-Farben.
 let _resvgReady: Promise<unknown> | null = null
 const ensureResvg = () => (_resvgReady ??= initWasm(fetch('https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm')))
-let _fontBufs: Uint8Array[] | null = null
-async function loadFonts(): Promise<Uint8Array[]> {
-  if (_fontBufs) return _fontBufs
-  const urls = [
-    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Bold.ttf',
-    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Regular.ttf',
-  ]
-  const bufs: Uint8Array[] = []
-  for (const u of urls) { try { const r = await fetch(u); if (r.ok) bufs.push(new Uint8Array(await r.arrayBuffer())) } catch { /* Font optional */ } }
-  return (_fontBufs = bufs)
-}
 async function svgToPng(svg: string): Promise<Uint8Array> {
   await ensureResvg()
-  const fontBuffers = await loadFonts()
-  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
+  const fontBuffers = await loadCiFonts()
+  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: CI_FONT.body, loadSystemFonts: false } })
   return r.render().asPng()
 }
 const xesc = (s: string) => (s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -167,22 +157,24 @@ function xwrap(s: string, max: number): string[] {
   if (cur) lines.push(cur); return lines.length ? lines : ['']
 }
 
-// Overlay-Layout (1080×1080, transparent): roter Badge mit Headline oben links,
-// unten cremefarbenes Panel mit dunkelblauer Subheadline + Checkmark-Zeilen —
-// die Optik der Landingpage-Heros (roter Badge / navy Subheadline / ✓-Punkte).
+// Overlay-Layout (1080×1080, transparent): Korall-Badge mit Headline oben links,
+// unten cremefarbenes Panel mit navy Subheadline + Checkmark-Zeilen. Farben und
+// Schriften kommen ALLE aus _shared/brand.ts (CI) — nichts hier hart setzen.
 function overlaySvg(ov: Overlay): string {
   const W = 1080, H = 1080
-  const F = 'font-family="Open Sans"'
+  const F = `font-family="${CI_FONT.body}"`
+  const FH = `font-family="${CI_FONT.heading}"`
   const parts: string[] = []
   // Badge oben links (rot, weiße Bold-Schrift)
   if (ov.badge?.trim()) {
     const lines = xwrap(ov.badge, 30).slice(0, 2)   // 3 Zeilen deckten das Gesicht zu
     const fs = 42, lh = 54, padX = 30, padY = 20
     const wMax = Math.max(...lines.map(l => l.length))
-    const bw = Math.min(W - 96, Math.round(wMax * fs * 0.62) + padX * 2)
+    // 0.58 statt 0.62: Playfair Display Bold läuft schmaler als die alte Sans.
+    const bw = Math.min(W - 96, Math.round(wMax * fs * 0.58) + padX * 2)
     const bh = lines.length * lh + padY * 2 - (lh - fs)
-    parts.push(`<rect x="48" y="48" width="${bw}" height="${bh}" rx="14" fill="#e02424"/>`)
-    parts.push(`<text ${F} font-size="${fs}" font-weight="700" fill="#ffffff">${lines.map((l, i) => `<tspan x="${48 + padX}" y="${48 + padY + fs - 6 + i * lh}">${xesc(l)}</tspan>`).join('')}</text>`)
+    parts.push(`<rect x="48" y="48" width="${bw}" height="${bh}" rx="14" fill="${CI.coral}"/>`)
+    parts.push(`<text ${FH} font-size="${fs}" font-weight="700" fill="${CI.white}">${lines.map((l, i) => `<tspan x="${48 + padX}" y="${48 + padY + fs - 6 + i * lh}">${xesc(l)}</tspan>`).join('')}</text>`)
   }
   // Unteres Panel (creme) mit Subheadline + Checks
   const checks = (ov.checks ?? []).map(c => (c ?? '').trim()).filter(Boolean).slice(0, 4)
@@ -192,18 +184,18 @@ function overlaySvg(ov: Overlay): string {
     const checksH = checks.length * 56
     const panelH = 36 + subH + checksH + 30
     const py = H - panelH
-    parts.push(`<rect x="0" y="${py}" width="${W}" height="${panelH}" fill="#FAF6EC" fill-opacity="0.97"/>`)
-    parts.push(`<rect x="0" y="${py}" width="${W}" height="6" fill="#e02424"/>`)
+    parts.push(`<rect x="0" y="${py}" width="${W}" height="${panelH}" fill="${CI.cream}" fill-opacity="0.97"/>`)
+    parts.push(`<rect x="0" y="${py}" width="${W}" height="6" fill="${CI.coral}"/>`)
     let cy = py + 36
     if (subLines.length) {
-      parts.push(`<text ${F} font-size="40" font-weight="700" fill="#1a2332">${subLines.map((l, i) => `<tspan x="52" y="${cy + 34 + i * 52}">${xesc(l)}</tspan>`).join('')}</text>`)
+      parts.push(`<text ${FH} font-size="40" font-weight="700" fill="${CI.navy}">${subLines.map((l, i) => `<tspan x="52" y="${cy + 34 + i * 52}">${xesc(l)}</tspan>`).join('')}</text>`)
       cy += subH
     }
     checks.forEach((c, i) => {
       const yy = cy + i * 56 + 26
-      parts.push(`<circle cx="70" cy="${yy}" r="17" fill="#16a34a"/>`)
-      parts.push(`<path d="M ${62} ${yy} l 6 7 l 11 -13" stroke="#ffffff" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`)
-      parts.push(`<text ${F} x="100" y="${yy + 11}" font-size="31" fill="#1b1b22">${xesc(c.slice(0, 60))}</text>`)
+      parts.push(`<circle cx="70" cy="${yy}" r="17" fill="${CI.coral}"/>`)
+      parts.push(`<path d="M ${62} ${yy} l 6 7 l 11 -13" stroke="${CI.white}" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`)
+      parts.push(`<text ${F} x="100" y="${yy + 11}" font-size="31" fill="${CI.ink}">${xesc(c.slice(0, 60))}</text>`)
     })
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${parts.join('\n')}</svg>`

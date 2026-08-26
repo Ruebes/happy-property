@@ -102,6 +102,19 @@ supabase/functions/    # 14 Edge Functions (siehe unten)
 6. **Tailwind statt Inline-Styles:** Styling über Tailwind-Klassen, keine
    `style={{...}}`-Inline-Styles außer wo unvermeidbar (z.B. dynamische Werte).
 
+7. **CI ist zentral, nicht je Feature:** Farben und Schriften kommen im
+   Frontend aus `src/styles/globals.css` / `tailwind.config.js`
+   (Creme `#fffcf6`, Korall `#ff795d`, Navy `#1a2332`; Überschrift
+   *Playfair Display*, Fließtext *Montserrat*) und serverseitig aus
+   `supabase/functions/_shared/brand.ts` (`CI`, `CI_FONT`, `loadCiFonts`,
+   `CI_LOOK`). Wer Bilder, Grafiken oder Mails erzeugt, importiert von dort —
+   keine eigenen Hex-Werte, keine eigene Schriftliste.
+
+8. **`_shared/*` wirkt erst nach Redeploy JEDER importierenden Function:**
+   jede Edge Function bündelt ihre eigene Kopie. Nach einer Änderung
+   `grep -rln "_shared/<datei>" supabase/functions/` und alle Treffer neu
+   deployen.
+
 ## Bekannte Fallstricke (gelöste Bugs — nicht reproduzieren)
 
 ### #1 — Persistenter Session-/Spinner-Bug (auth.tsx)

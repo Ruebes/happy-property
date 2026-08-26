@@ -569,6 +569,8 @@ Deno.serve(async (req) => {
     // Default true = nicht filtern, solange nichts Gegenteiliges bekannt ist; der
     // Preisblock unten setzt den echten Wert aus den Projekt-Stammdaten.
     let furnStatusIncluded = true
+    // Die echten Wohnungsnummern dieses Decks (aus body.units/unit_id).
+    const unitNummern: string[] = (body.units ?? []).map(u => String(u.unit_number ?? '').trim()).filter(Boolean)
     let furnModus: 'none' | 'included' | 'optional' = body.furniture_mode ?? 'optional'
     // Rohe Preisbasis (netto/brutto) EINER Einzelwohnung — für die absoluten Beträge je
     // Zahlungsplan-Stufe. Nur gesetzt, wenn genau eine Wohnung mit Preis vorliegt.
@@ -686,6 +688,9 @@ Deno.serve(async (req) => {
         }
         // Bei Eigennutz die 5%-Basis explizit als Fakt mitgeben, damit die KI den GESAMTEN
         // Zahlungsplan (Reservierung/Anzahlung/Raten) + Intro auf 5 % rechnet, nicht 19 %.
+        if (priced.length === 1) {
+          extraFacts += `\n\n=== WOHNUNGSNUMMER: ${priced[0].unit_number} (HART) ===\nDieses Deck beschreibt AUSSCHLIESSLICH die Wohnung ${priced[0].unit_number}. Nenne in Ueberschriften, Fliesstext und Blocknamen NUR diese Nummer. Erfinde KEINE andere Wohnungsnummer und uebernimm keine Nummer aus Beispielen oder Preislisten-Zeilen anderer Einheiten.`
+        }
         // HARTE BINDUNG an die Stammdaten: Ob die Einrichtung im Preis steckt, sagt
         // das CRM-Feld furniture_included - NICHT die Prospekt-Prosa. Vorher schrieb
         // die KI "Einrichtungspaket vollstaendig im Kaufpreis enthalten", obwohl der
@@ -896,6 +901,33 @@ Deno.serve(async (req) => {
     // Wahrheits-Backstop: erfundene Zahlungs-/Garantie-/Auslastungs-Saetze raus - und
     // Moebel-Behauptungen, sobald die Stammdaten die Einrichtung NICHT als enthalten
     // ausweisen (furnStatusIncluded wird beim Preisaufbau gesetzt).
+    // Die Wohnungsnummer darf die KI NICHT erfinden. Sie schrieb "Apartment 303",
+    // obwohl 203 angefragt war - beide Nummern stehen nirgends in den Fakten
+    // (Sven 26.8.). Deshalb deterministisch: unit-Bloecke bekommen die echte
+    // Nummer, und falsche Nummern werden im gesamten Text ersetzt.
+    if (unitNummern.length === 1) {
+      const echt = unitNummern[0]
+      const falsch = new Set<string>()
+      for (const b of blocks) {
+        if (b.type === 'unit' && typeof b.number === 'string' && b.number.trim() !== echt) {
+          falsch.add(b.number.trim()); b.number = echt
+        }
+      }
+      // Jede im Text genannte Wohnungsnummer, die nicht die echte ist, korrigieren.
+      const roh = JSON.stringify(blocks)
+      for (const m of roh.matchAll(/(?:Apartment|Wohnung|Einheit|Apt\.?)\s+([A-Za-z]?-?\d{1,4}[a-zA-Z]?)/g)) {
+        if (m[1] !== echt) falsch.add(m[1])
+      }
+      if (falsch.size) {
+        let txt = roh
+        for (const f of falsch) {
+          txt = txt.replace(new RegExp(`((?:Apartment|Wohnung|Einheit|Apt\\.?)\\s+)${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), `$1${echt}`)
+        }
+        blocks = JSON.parse(txt) as Array<Record<string, unknown>>
+        console.warn(`[generate-deck] falsche Wohnungsnummer(n) korrigiert: ${[...falsch].join(', ')} → ${echt}`)
+      }
+    }
+
     scrubNarrative(blocks, furnStatusIncluded)
     if (furnModus === 'none') {
       const vorher = blocks.length

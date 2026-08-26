@@ -25,6 +25,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
+import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -306,22 +307,10 @@ function ensureResvg(): Promise<unknown> {
   if (!_resvgReady) _resvgReady = initWasm(fetch('https://unpkg.com/@resvg/resvg-wasm@2.6.2/index_bg.wasm'))
   return _resvgReady
 }
-let _fontBufs: Uint8Array[] | null = null
-async function loadFonts(): Promise<Uint8Array[]> {
-  if (_fontBufs) return _fontBufs
-  const urls = [
-    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Bold.ttf',
-    'https://cdn.jsdelivr.net/gh/googlefonts/opensans@main/fonts/ttf/OpenSans-Regular.ttf',
-  ]
-  const bufs: Uint8Array[] = []
-  for (const u of urls) { try { const r = await fetch(u); if (r.ok) bufs.push(new Uint8Array(await r.arrayBuffer())) } catch { /* Font optional */ } }
-  _fontBufs = bufs
-  return bufs
-}
 async function svgToPng(svg: string): Promise<Uint8Array> {
   await ensureResvg()
-  const fontBuffers = await loadFonts()
-  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } })
+  const fontBuffers = await loadCiFonts()
+  const r = new Resvg(svg, { fitTo: { mode: 'width', value: 1080 }, font: { fontBuffers, defaultFontFamily: CI_FONT.body, loadSystemFonts: false } })
   return r.render().asPng()
 }
 // Referenzbild fuer ein reales Symbol im Netz finden (Wikimedia Commons):
@@ -361,13 +350,13 @@ async function composeSlogan(photoBytes: Uint8Array, slogan: string): Promise<Ui
   const y0 = H - boxH - Math.round(H * 0.06)
   const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-    <rect x="${padX / 2}" y="${y0}" width="${boxW}" height="${boxH}" rx="${Math.round(fs * 0.28)}" fill="#e02424"/>
-    <text font-family="Open Sans" font-size="${fs}" font-weight="700" fill="#ffffff">${lines.map((l, i) =>
+    <rect x="${padX / 2}" y="${y0}" width="${boxW}" height="${boxH}" rx="${Math.round(fs * 0.28)}" fill="${CI.coral}"/>
+    <text font-family="${CI_FONT.heading}" font-size="${fs}" font-weight="700" fill="${CI.white}">${lines.map((l, i) =>
       `<tspan x="${padX / 2 + padX}" y="${y0 + padY + fs - Math.round(fs * 0.12) + i * lh}">${esc(l)}</tspan>`).join('')}</text>
   </svg>`
   await ensureResvg()
-  const fontBuffers = await loadFonts()
-  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: { fontBuffers, defaultFontFamily: 'Open Sans', loadSystemFonts: false } }).render().asPng()
+  const fontBuffers = await loadCiFonts()
+  const png = new Resvg(svg, { fitTo: { mode: 'width', value: W }, font: { fontBuffers, defaultFontFamily: CI_FONT.body, loadSystemFonts: false } }).render().asPng()
   img.composite(await Image.decode(png), 0, 0)
   return await img.encodeJPEG(92)
 }
@@ -384,27 +373,28 @@ function xtspan(lines: string[], x: number, y: number, lh: number): string {
 }
 interface CmpSlide { kind?: string; kicker?: string; title?: string; subtitle?: string; metric?: string; de?: string; de_note?: string; cy?: string; cy_note?: string; cta?: string }
 function cmpSlideSvg(s: CmpSlide): string {
-  const F = 'font-family="Open Sans"'
-  const brand = `<text ${F} x="540" y="1290" font-size="26" fill="#94a3b8" text-anchor="middle" letter-spacing="2">happy-property.com</text>`
+  const F = `font-family="${CI_FONT.body}"`
+  const FH = `font-family="${CI_FONT.heading}"`
+  const brand = `<text ${F} x="540" y="1290" font-size="26" fill="${CI.mute}" text-anchor="middle" letter-spacing="2">happy-property.com</text>`
   if ((s.kind ?? 'compare') === 'cover') {
     const title = xwrap(s.title ?? 'Deutschland vs. Zypern', 16)
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
-      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#0e7490"/></linearGradient></defs>
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${CI.navyDeep}"/><stop offset="1" stop-color="${CI.navy}"/></linearGradient></defs>
       <rect width="${CMP_W}" height="${CMP_H}" fill="url(#g)"/>
-      <text ${F} x="540" y="330" font-size="34" fill="#ff795d" font-weight="700" text-anchor="middle" letter-spacing="6">${xesc((s.kicker ?? 'STEUERVERGLEICH').toUpperCase())}</text>
-      <text ${F} font-size="94" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(title, 540, 560, 108)}</text>
-      <text ${F} font-size="38" fill="#cbd5e1" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 34), 540, 560 + title.length * 108 + 60, 52)}</text>
+      <text ${F} x="540" y="330" font-size="34" fill="${CI.coral}" font-weight="700" text-anchor="middle" letter-spacing="6">${xesc((s.kicker ?? 'STEUERVERGLEICH').toUpperCase())}</text>
+      <text ${FH} font-size="94" fill="${CI.cream}" font-weight="700" text-anchor="middle">${xtspan(title, 540, 560, 108)}</text>
+      <text ${F} font-size="38" fill="${CI.line}" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 34), 540, 560 + title.length * 108 + 60, 52)}</text>
       ${brand}</svg>`
   }
   if (s.kind === 'cta') {
     const title = xwrap(s.title ?? 'Weniger Steuern. Mehr Rendite.', 18)
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
-      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#134e4a"/></linearGradient></defs>
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${CI.navyDeep}"/><stop offset="1" stop-color="${CI.navySoft}"/></linearGradient></defs>
       <rect width="${CMP_W}" height="${CMP_H}" fill="url(#g)"/>
-      <text ${F} font-size="80" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(title, 540, 470, 96)}</text>
-      <text ${F} font-size="38" fill="#cbd5e1" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 32), 540, 470 + title.length * 96 + 70, 52)}</text>
-      <rect x="240" y="960" width="600" height="120" rx="60" fill="#ff795d"/>
-      <text ${F} x="540" y="1038" font-size="40" fill="#ffffff" font-weight="700" text-anchor="middle">${xesc(s.cta ?? 'Jetzt Termin sichern')}</text>
+      <text ${FH} font-size="80" fill="${CI.cream}" font-weight="700" text-anchor="middle">${xtspan(title, 540, 470, 96)}</text>
+      <text ${F} font-size="38" fill="${CI.line}" text-anchor="middle">${xtspan(xwrap(s.subtitle ?? '', 32), 540, 470 + title.length * 96 + 70, 52)}</text>
+      <rect x="240" y="960" width="600" height="120" rx="60" fill="${CI.coral}"/>
+      <text ${F} x="540" y="1038" font-size="40" fill="${CI.white}" font-weight="700" text-anchor="middle">${xesc(s.cta ?? 'Jetzt Termin sichern')}</text>
       ${brand}</svg>`
   }
   // compare
@@ -412,20 +402,20 @@ function cmpSlideSvg(s: CmpSlide): string {
   const deVal = xwrap(s.de ?? '', 12), cyVal = xwrap(s.cy ?? '', 12)
   const deNote = xwrap(s.de_note ?? '', 26), cyNote = xwrap(s.cy_note ?? '', 26)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${CMP_W}" height="${CMP_H}" viewBox="0 0 ${CMP_W} ${CMP_H}">
-    <rect width="${CMP_W}" height="${CMP_H}" fill="#0f172a"/>
-    <text ${F} x="540" y="150" font-size="30" fill="#94a3b8" font-weight="700" text-anchor="middle" letter-spacing="6">DEUTSCHLAND  vs  ZYPERN</text>
-    <text ${F} font-size="72" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(metric, 540, 268, 82)}</text>
-    <rect x="70" y="392" width="440" height="720" rx="30" fill="#1e293b"/>
-    <rect x="70" y="392" width="440" height="92" rx="30" fill="#b91c1c"/><rect x="70" y="440" width="440" height="44" fill="#b91c1c"/>
-    <text ${F} x="290" y="453" font-size="34" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="2">DEUTSCHLAND</text>
-    <text ${F} font-size="66" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(deVal, 290, 640, 76)}</text>
-    <text ${F} font-size="30" fill="#cbd5e1" text-anchor="middle">${xtspan(deNote, 290, 640 + deVal.length * 76 + 40, 40)}</text>
-    <rect x="570" y="392" width="440" height="720" rx="30" fill="#0e7490"/>
-    <rect x="570" y="392" width="440" height="92" rx="30" fill="#0d9488"/><rect x="570" y="440" width="440" height="44" fill="#0d9488"/>
-    <text ${F} x="790" y="453" font-size="34" fill="#ffffff" font-weight="700" text-anchor="middle" letter-spacing="2">ZYPERN</text>
-    <text ${F} font-size="66" fill="#ffffff" font-weight="700" text-anchor="middle">${xtspan(cyVal, 790, 640, 76)}</text>
-    <text ${F} font-size="30" fill="#d1fae5" text-anchor="middle">${xtspan(cyNote, 790, 640 + cyVal.length * 76 + 40, 40)}</text>
-    <circle cx="540" cy="752" r="54" fill="#ffffff"/><text ${F} x="540" y="768" font-size="36" fill="#0f172a" font-weight="700" text-anchor="middle">vs</text>
+    <rect width="${CMP_W}" height="${CMP_H}" fill="${CI.navyDeep}"/>
+    <text ${F} x="540" y="150" font-size="30" fill="${CI.mute}" font-weight="700" text-anchor="middle" letter-spacing="6">DEUTSCHLAND  vs  ZYPERN</text>
+    <text ${FH} font-size="72" fill="${CI.cream}" font-weight="700" text-anchor="middle">${xtspan(metric, 540, 268, 82)}</text>
+    <rect x="70" y="392" width="440" height="720" rx="30" fill="${CI.navySoft}"/>
+    <rect x="70" y="392" width="440" height="92" rx="30" fill="${CI.mute}"/><rect x="70" y="440" width="440" height="44" fill="${CI.mute}"/>
+    <text ${F} x="290" y="453" font-size="34" fill="${CI.white}" font-weight="700" text-anchor="middle" letter-spacing="2">DEUTSCHLAND</text>
+    <text ${FH} font-size="66" fill="${CI.cream}" font-weight="700" text-anchor="middle">${xtspan(deVal, 290, 640, 76)}</text>
+    <text ${F} font-size="30" fill="${CI.line}" text-anchor="middle">${xtspan(deNote, 290, 640 + deVal.length * 76 + 40, 40)}</text>
+    <rect x="570" y="392" width="440" height="720" rx="30" fill="${CI.navySoft}"/>
+    <rect x="570" y="392" width="440" height="92" rx="30" fill="${CI.coral}"/><rect x="570" y="440" width="440" height="44" fill="${CI.coral}"/>
+    <text ${F} x="790" y="453" font-size="34" fill="${CI.white}" font-weight="700" text-anchor="middle" letter-spacing="2">ZYPERN</text>
+    <text ${FH} font-size="66" fill="${CI.cream}" font-weight="700" text-anchor="middle">${xtspan(cyVal, 790, 640, 76)}</text>
+    <text ${F} font-size="30" fill="${CI.line}" text-anchor="middle">${xtspan(cyNote, 790, 640 + cyVal.length * 76 + 40, 40)}</text>
+    <circle cx="540" cy="752" r="54" fill="${CI.cream}"/><text ${F} x="540" y="768" font-size="36" fill="${CI.navy}" font-weight="700" text-anchor="middle">vs</text>
     ${brand}</svg>`
 }
 async function renderComparison(sb: SupabaseClient, postId: string, slides: CmpSlide[], replace: boolean): Promise<string[]> {
