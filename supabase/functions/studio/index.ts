@@ -30,7 +30,7 @@ import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { requireAdsAccess, AdsAuthError } from '../_shared/adsAuth.ts'
-import { hfGenerateBytes, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
+import { hfGenerateBytes, hfShrinkUrl, hfUploadImage, type HfStore } from '../_shared/higgsfield.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -119,7 +119,9 @@ function hfStoreFrom(sb: SupabaseClient): HfStore {
 async function generateImage(store: HfStore, bases: string[], prompt: string): Promise<Uint8Array> {
   const refs: Array<{ id: string }> = []
   for (const url of bases.slice(0, 3)) {
-    const r = await fetch(url)
+    // Verkleinerte Fassung holen (Bildtransformation) — das Original ist bis zu
+    // 21 Megapixel gross und killt die Edge-Instanz beim Dekodieren.
+    const r = await fetch(hfShrinkUrl(url))
     if (!r.ok) throw new Error(`Basisbild ${r.status}`)
     const bytes = new Uint8Array(await r.arrayBuffer())
     refs.push({ id: await hfUploadImage(store, bytes, r.headers.get('content-type') || 'image/jpeg') })
@@ -289,6 +291,10 @@ Deno.serve(async (req) => {
     if (mode === 'generate') {
       const brief = String(body.brief ?? '').trim().slice(0, 2000)
       if (!brief) throw new Error('brief fehlt')
+      // Zweiter, eigener Auftrag NUR fuer das Bild (Sven-Wunsch 26.8.26): links
+      // beschreibt er die Anzeige/Caption, rechts das Motiv bzw. wie ein
+      // hochgeladenes Bild veraendert werden soll.
+      const imageBrief = String(body.image_brief ?? '').trim().slice(0, 1000)
       // Optionales EIGENES Basisbild (Sven lädt ein Foto hoch, das als Grundlage
       // dient). Nur eigene Storage-URLs zulassen (kein Fremd-Fetch).
       const baseImage = typeof body.base_image === 'string' && body.base_image.startsWith(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/`)
@@ -327,7 +333,8 @@ SCHREIBREGEL: NIEMALS Gedankenstrich/Halbgeviertstrich (—) oder Bis-Strich (�
 
 AUFTRAG von Sven:
 """${brief}"""
-${baseImage ? `\nWICHTIG: Sven hat ein EIGENES BASISBILD hochgeladen, das als Grundlage des Anzeigenbilds dient. Wähle format=single. image_prompt beschreibt dann, WIE dieses Basisbild laut Auftrag verändert/ergänzt werden soll (z.B. Personen/Objekte hinzufügen, Stil ändern) — NICHT eine komplett neue Szene. Sollen Sven und/oder seine Hündin Lotte ins Bild, liste sie in "personas".` : ''}
+${imageBrief ? `\nBILD-AUFTRAG von Sven (gilt NUR fuer das Anzeigenbild, nicht fuer die Caption):\n"""${imageBrief}"""\nDer image_prompt MUSS diesen Bild-Auftrag umsetzen. Gleichzeitig muss das Motiv thematisch zur Caption und zum Auftrag oben passen - beides ist EINE Anzeige, kein Widerspruch. Wenn der Bild-Auftrag ein Format nahelegt (einzelnes Motiv vs. mehrere Projektfotos), richte dich danach.` : ''}
+${baseImage ? `\nWICHTIG: Sven hat ein EIGENES BASISBILD hochgeladen, das als Grundlage des Anzeigenbilds dient. Wähle format=single. image_prompt beschreibt dann, WIE dieses Basisbild laut Bild-Auftrag (falls vorhanden, sonst laut Auftrag) verändert/ergänzt werden soll (z.B. Personen/Objekte hinzufügen, Stil ändern) — NICHT eine komplett neue Szene. Sollen Sven und/oder seine Hündin Lotte ins Bild, liste sie in "personas".` : ''}
 
 Verfügbare Projekte mit ECHTEN Fotos (für Karussells IMMER diese echten Foto-URLs verwenden). Sven nennt Projekte oft über den BAUTRÄGER oder mit Tippfehlern — ordne selbstständig dem passenden Projekt aus der Liste zu (z.B. „Luma" = Bauträger von Genesis/Emerald Park/Skala, „MITO"/„Mito Mama" = Bauträger Mito, gemeint ist meist Mamba). Findest du kein passendes Projekt, wähle format=carousel NICHT mit erfundenen URLs, sondern liefere cards=[] — der Fehler sagt Sven dann, dass Fotos fehlen:
 ${projectInfo || '(keine Projektfotos vorhanden)'}

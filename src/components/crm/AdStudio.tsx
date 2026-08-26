@@ -30,6 +30,10 @@ interface Props {
 export default function AdStudio({ onPublished, showToast }: Props) {
   const { t } = useTranslation()
   const [brief, setBrief] = useState('')
+  // Zweites Fenster: eigener Auftrag fuer das Bild (Motiv bzw. Aenderung am
+  // hochgeladenen Basisbild). Der Server verlangt trotzdem, dass Motiv und
+  // Caption thematisch zusammenpassen.
+  const [imageBrief, setImageBrief] = useState('')
   const [draft, setDraft] = useState<Draft | null>(null)
   const [chat, setChat] = useState('')
   const [busy, setBusy] = useState<'generate' | 'refine' | 'publish' | null>(null)
@@ -117,7 +121,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
     setDraft(null)
     let jobId: string | null = null
     try {
-      const d = await call({ mode: 'generate', brief: brief.trim(), ...(baseImage ? { base_image: baseImage } : {}) })
+      const d = await call({ mode: 'generate', brief: brief.trim(), ...(imageBrief.trim() ? { image_brief: imageBrief.trim() } : {}), ...(baseImage ? { base_image: baseImage } : {}) })
       setDraft(d.draft as Draft)
       setLastChange('')
       jobId = d.image_job ? String(d.image_job) : null
@@ -157,6 +161,7 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       showToast(t('crm.studio.published', '✅ Anzeige gespeichert — liegt unter „Vorbereitete Anzeigen" und ist noch NICHT veröffentlicht'))
       setDraft(null)
       setBrief('')
+      setImageBrief('')
       setBaseImage('')
       onPublished()
     } catch (err) {
@@ -175,37 +180,60 @@ export default function AdStudio({ onPublished, showToast }: Props) {
       <p className="text-sm text-gray-400 mb-3">
         {t('crm.studio.sub', 'Beschreibe die Anzeige, die du willst — z.B. „Erstelle mir ein Karussell vom Projekt Luma" oder „Einzelbild: ich am Strand, Thema Steuern sparen". Danach bearbeitest du alles per Chat.')}
       </p>
-      <div className="flex flex-wrap gap-2">
-        <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={3}
-          placeholder={t('crm.studio.briefPh', 'Was soll die Anzeige zeigen und bewerben?')}
-          className="flex-1 min-w-[280px] border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+      {/* Zwei Fenster nebeneinander: links die Anzeige/Caption (mit optionalem
+          Basisbild darunter), rechts der eigene Auftrag fuer das Bild. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+            {t('crm.studio.briefLabel', '1. Anzeige & Text')}
+          </label>
+          <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={7}
+            placeholder={t('crm.studio.briefPh', 'Was soll die Anzeige zeigen und bewerben?')}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+          {/* Eigenes Basisbild (optional): hochladen → die KI verändert DIESES Bild */}
+          <div className="mt-2 flex items-center gap-3 flex-wrap">
+            <input ref={fileRef} type="file" accept="image/*" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; if (f) void uploadBase(f) }} />
+            {baseImage ? (
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl pl-1.5 pr-2 py-1.5">
+                <img src={baseImage} alt="" className="w-12 h-12 rounded-lg object-cover" />
+                <div>
+                  <p className="text-xs font-medium text-gray-700">{t('crm.studio.baseImgSet', 'Eigenes Basisbild aktiv')}</p>
+                  <p className="text-[10px] text-gray-400">{t('crm.studio.baseImgHint3', 'Rechts beschreiben, was daran verändert werden soll')}</p>
+                </div>
+                <button onClick={() => setBaseImage('')} className="w-6 h-6 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 text-sm" title={t('crm.studio.baseImgRemove', 'Basisbild entfernen')}>×</button>
+              </div>
+            ) : (
+              <button onClick={() => fileRef.current?.click()} disabled={uploading || busy !== null}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                {uploading ? `⏳ ${t('crm.studio.uploading', 'Lädt hoch …')}` : `📷 ${t('crm.studio.baseImgBtn', 'Eigenes Bild als Basis hochladen (optional)')}`}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+            {t('crm.studio.imgBriefLabel', '2. Bild')}
+          </label>
+          <textarea value={imageBrief} onChange={e => setImageBrief(e.target.value)} rows={7}
+            placeholder={baseImage
+              ? t('crm.studio.imgBriefPhBase', 'Wie soll das hochgeladene Bild angepasst werden? z.B. „Lotte und mich dazustellen", „Umgebung: Neubau am Meer", „warmes Abendlicht"')
+              : t('crm.studio.imgBriefPh', 'Was soll auf dem Bild zu sehen sein? z.B. „ich auf einer Dachterrasse über Paphos, Meer im Hintergrund"')}
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40 resize-y" />
+          <p className="mt-2 text-[11px] text-gray-400">
+            {t('crm.studio.imgBriefHint', 'Optional. Bleibt das Feld leer, wählt die KI das Motiv passend zur Caption. Das Bild wird in jedem Fall thematisch auf die Anzeige abgestimmt.')}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-3">
         <button onClick={() => void generate()} disabled={busy !== null || !brief.trim()}
-          className="px-6 py-3 rounded-xl text-base font-semibold text-white self-start flex items-center gap-2 disabled:opacity-60"
+          className="px-6 py-3 rounded-xl text-base font-semibold text-white flex items-center gap-2 disabled:opacity-60"
           style={{ backgroundColor: '#ff795d' }}>
           {busy === 'generate' && spinner}
           ✨ {t('crm.studio.cta', 'Anzeige erstellen')}
         </button>
-      </div>
-      {/* Eigenes Basisbild (optional): hochladen → die KI verändert DIESES Bild */}
-      <div className="mt-2 flex items-center gap-3 flex-wrap">
-        <input ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={e => { const f = e.target.files?.[0]; if (f) void uploadBase(f) }} />
-        {baseImage ? (
-          <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl pl-1.5 pr-2 py-1.5">
-            <img src={baseImage} alt="" className="w-12 h-12 rounded-lg object-cover" />
-            <div>
-              <p className="text-xs font-medium text-gray-700">{t('crm.studio.baseImgSet', 'Eigenes Basisbild aktiv')}</p>
-              <p className="text-[10px] text-gray-400">{t('crm.studio.baseImgHint2', 'Im Text oben beschreiben, was verändert werden soll')}</p>
-            </div>
-            <button onClick={() => setBaseImage('')} className="w-6 h-6 rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 text-sm" title={t('crm.studio.baseImgRemove', 'Basisbild entfernen')}>×</button>
-          </div>
-        ) : (
-          <button onClick={() => fileRef.current?.click()} disabled={uploading || busy !== null}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium border border-dashed border-gray-300 text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-            {uploading ? `⏳ ${t('crm.studio.uploading', 'Lädt hoch …')}` : `📷 ${t('crm.studio.baseImgBtn', 'Eigenes Bild als Basis hochladen (optional)')}`}
-          </button>
-        )}
-        {baseImage && <p className="text-[10px] text-gray-400">{t('crm.studio.baseImgTip', 'z.B. „füge Lotte und mich hinzu", „stell einen Tisch dazu", „im 80er-Jahre-Stil"')}</p>}
       </div>
       {busy === 'generate' && (
         <p className="mt-2 text-[11px] text-gray-400">{t('crm.studio.generating', 'Erstelle Copy und Bildmaterial — bei KI-Bildern dauert das bis zu einer Minute …')}</p>

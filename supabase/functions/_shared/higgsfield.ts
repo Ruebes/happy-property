@@ -68,6 +68,21 @@ function hdrs(token: string, ws: string): Record<string, string> {
   return { Authorization: `Bearer ${token}`, 'hf-workspace-id': ws, 'Content-Type': 'application/json' }
 }
 
+// Grosse Bilder NIE roh in die Edge Function laden: ein 5672x3781-Foto wird beim
+// Dekodieren zu ~86 MB RGBA und reisst das Speicherlimit ("Memory limit exceeded"
+// killt die Instanz, der Bild-Job bleibt dann fuer immer haengen — 26.8.26).
+// Eigene Storage-URLs deshalb ueber die Supabase-Bildtransformation ziehen, die
+// serverseitig auf Kantenlaenge MAX_EDGE verkleinert (Pro-Tarif, seit 19.7.).
+export const MAX_EDGE = 1536
+export function hfShrinkUrl(url: string, max = MAX_EDGE): string {
+  const marker = '/storage/v1/object/public/'
+  const i = url.indexOf(marker)
+  if (i < 0) return url
+  const path = url.slice(i + marker.length)
+  if (path.includes('?')) return url
+  return `${url.slice(0, i)}/storage/v1/render/image/public/${path}?width=${max}&height=${max}&resize=contain`
+}
+
 // Rohbild-Bytes zu Higgsfield hochladen → Media-ID (UUID), nutzbar als
 // params.image_references = [{ id }]. Flow: POST /media?type=image liefert eine
 // presignte S3-PUT-URL, dann die Bytes hochladen. Content-Type flexibel (jpeg/png).
@@ -82,10 +97,21 @@ export async function hfUploadImage(store: HfStore, bytes: Uint8Array, contentTy
   let put_bytes = bytes
   if (contentType !== 'image/png') {
     const img = await Image.decode(bytes)
+    // Vor dem PNG-Encode verkleinern: als Referenzbild reichen 1536 px, und ein
+    // ungebremster Encode einer Handy-Aufnahme sprengt den Edge-Speicher.
+    if (img.width > MAX_EDGE || img.height > MAX_EDGE) {
+      if (img.width >= img.height) img.resize(MAX_EDGE, Image.RESIZE_AUTO)
+      else img.resize(Image.RESIZE_AUTO, MAX_EDGE)
+    }
     put_bytes = await img.encode()
   }
   const put = await fetch(md.upload_url, { method: 'PUT', headers: { 'Content-Type': 'image/png' }, body: put_bytes as BodyInit })
-  if (!put.ok) throw new Error(`Higgsfield media upload (${put.status}).`)
+  if (!put.ok) {
+    // S3 sagt im Body, WAS nicht stimmt (SignatureDoesNotMatch / AccessDenied /
+    // Request has expired). Ohne den Body ist ein 403 nicht diagnostizierbar.
+    const why = (await put.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)
+    throw new Error(`Higgsfield media upload (${put.status}) ct=${contentType} bytes=${put_bytes.length}: ${why}`)
+  }
   return md.id
 }
 
