@@ -42,6 +42,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // Verwaltung + Saisonmodell JE WOHNUNG (Sven 15.8.): sonst laesst sich eine
     // Kurzzeit- und eine Langzeit-Wohnung nicht in EINER Berechnung abbilden.
     mgmtPct?: number; season?: { totalOcc: number; adrHigh: number } | null
+    // MwSt-Regelung je Wohnung (Sven waehlt manuell; Default Standard 19 %)
+    vatMode?: import('../../lib/rechner').VatMode; livingSqm?: number | null
   }
   const [perUnit, setPerUnit] = useState<Record<string, PerUnit>>({})
   const setPu = (id: string, patch: Partial<PerUnit>) =>
@@ -100,6 +102,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         yieldPct, bedrooms: b.unit.bedrooms ?? 2,
         deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
         res: calcParams.res,
+        vatMode: pu.vatMode, livingSqm: pu.livingSqm ?? b.unit.size_sqm ?? null,
       },
     }
   })

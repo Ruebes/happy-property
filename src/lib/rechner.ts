@@ -59,6 +59,9 @@ export interface CalcParams {
   ppVals: number[]         // 10× Sondertilgung pro Jahr
   // Saisonmodell Kurzzeit (optional): statt pauschaler Bruttorendite
   season?: { totalOcc: number; adrHigh: number } | null
+  // MwSt-Regelung (optional, Default standard19 = heutiges Verhalten)
+  vatMode?: VatMode
+  livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
 }
 
 // ── Saisonmodell Kurzzeitvermietung (Paphos-Marktprofil) ─────────────────────
@@ -92,10 +95,38 @@ export function seasonBreakdown(cfg: { totalOcc: number; adrHigh: number }): { r
 export function applySeason(p: CalcParams): CalcParams {
   const sn = p.season
   if (!sn || p.letType !== 'short' || p.dealType !== 'single' || !(sn.totalOcc > 0) || !(sn.adrHigh > 0)) return p
-  const basis = Math.round((p.priceNet || 0) * 1.19)
+  const basis = vatSplit(p.priceNet || 0, p.vatMode, p.livingSqm).gross
   if (basis <= 0) return p
   const { rent } = seasonBreakdown(sn)
   return { ...p, yieldPct: Math.round(rent / basis * 10000) / 100 }
+}
+
+// ── MwSt-Regelung Zypern (Immobilienkauf) ────────────────────────────────────
+// Sven waehlt die Regelung MANUELL - das System entscheidet nie selbst, ob ein
+// Kaeufer Anspruch auf den reduzierten Satz hat. Drei Optionen:
+//   standard19  → gesamter Kaufpreis mit 19 % (heutiges Verhalten, Default)
+//   reduced130  → aktuelle Regelung: bis 130 m² Wohnflaeche 5 %, Rest 19 %
+//   reduced200  → Uebergangsregelung: bis 200 m² Wohnflaeche 5 %, Rest 19 %
+// Aufteilung des Nettopreises proportional zur Wohnflaeche:
+//   beguenstigt = netto × MIN(Grenze / Wohnflaeche, 1). Ohne Wohnflaeche (0/null)
+// gilt alles als unterhalb der Grenze → komplett 5 %.
+export type VatMode = 'standard19' | 'reduced130' | 'reduced200'
+export interface VatSplit { netReduced: number; netStandard: number; vatReduced: number; vatStandard: number; vat: number; gross: number }
+export function vatSplit(net: number, mode: VatMode | undefined, livingSqm?: number | null): VatSplit {
+  if (!mode || mode === 'standard19') {
+    // Bit-genau wie bisher: brutto = round(netto × 1,19), MwSt = brutto − netto.
+    const gross = Math.round(net * 1.19)
+    const vat = gross - net
+    return { netReduced: 0, netStandard: net, vatReduced: 0, vatStandard: vat, vat, gross }
+  }
+  const cap = mode === 'reduced130' ? 130 : 200
+  const share = (livingSqm && livingSqm > 0) ? Math.min(cap / livingSqm, 1) : 1
+  const netReduced = Math.round(net * share)
+  const netStandard = net - netReduced
+  const vatReduced = Math.round(netReduced * 0.05)
+  const vatStandard = Math.round(netStandard * 0.19)
+  const vat = vatReduced + vatStandard
+  return { netReduced, netStandard, vatReduced, vatStandard, vat, gross: net + vat }
 }
 
 // Verwaltungskosten unterscheiden sich je Vermietungsart drastisch (Svens
@@ -117,6 +148,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   termYears: 20, amortPct: 2, appreciationPct: 5, deTaxPct: 42, furnCost: 0, furnFree: false,
   ppVals: Array(10).fill(0),
   season: null,
+  vatMode: 'standard19', livingSqm: null,
 }
 
 // Zypern progressive Einkommensteuer (Banden)
@@ -168,6 +200,7 @@ export interface CalcResult {
   sumR: number; sumC: number; sumT: number; sumVat: number; sumPP: number; sumCF: number
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
+  vatMode: VatMode; livingSqm: number; vatDetail: VatSplit
 }
 
 export function compute(p: CalcParams): CalcResult { return computeCore(applySeason(p)) }
@@ -186,6 +219,8 @@ function computeCore(p: CalcParams): CalcResult {
   let pNetList: number, discountPct: number, discountAmt: number, pNet: number
   let pGrossList: number, pGross: number, vatAmt: number, costs: number, bedrooms: number
   let sdVatDrawn = 0, sdVatYears = 0, sdVatClawback = 0, sdNumUnits = 0, sdTotalSqm = 0, sdTotalTerr = 0
+  // Aufschluesselung der Kaufpreis-MwSt (auf den rabattierten Nettopreis)
+  let vatDetail: VatSplit = { netReduced: 0, netStandard: 0, vatReduced: 0, vatStandard: 0, vat: 0, gross: 0 }
 
   if (sdMode) {
     if (sdInputMode === 'units' && p.sdUnits.length > 0) {
@@ -216,9 +251,12 @@ function computeCore(p: CalcParams): CalcResult {
     discountPct = Math.max(0, Math.min(30, p.discountPct || 0))
     discountAmt = Math.round(pNetList * discountPct / 100)
     pNet = pNetList - discountAmt
-    pGrossList = Math.round(pNetList * 1.19)
-    pGross = Math.round(pNet * 1.19)
-    vatAmt = pGross - pNet
+    const vsL = vatSplit(pNetList, p.vatMode, p.livingSqm)
+    const vsN = vatSplit(pNet, p.vatMode, p.livingSqm)
+    pGrossList = vsL.gross
+    pGross = vsN.gross
+    vatAmt = vsN.vat
+    vatDetail = vsN
     costs = Math.round(pGross * 0.01)
     bedrooms = p.bedrooms || 2
   }
@@ -362,5 +400,6 @@ function computeCore(p: CalcParams): CalcResult {
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
+    vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,
   }
 }

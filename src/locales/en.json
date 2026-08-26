@@ -4614,7 +4614,16 @@
     "rentNetBlock": "Rental income after costs & taxes",
     "valueGainBlock": "Value growth 10 years",
     "gainPlusRentBlock": "Value growth + rental income",
-    "leadMetric": "the key metric"
+    "leadMetric": "the key metric",
+    "vatShareReduced": "Share at 5% VAT (net {{v}})",
+    "vatShareStandard": "Share at 19% VAT (net {{v}})",
+    "vatTotal": "Total VAT",
+    "vatMixed": "VAT (5%/19%)",
+    "vatModeLabel": "VAT scheme",
+    "vatMode130": "Reduced – 5% up to 130 m²",
+    "vatMode200": "Reduced – 5% up to 200 m²",
+    "vatShare5": "of which VAT at 5%",
+    "vatShare19": "of which VAT at 19%"
   },
   "automationRules": {
     "eventLeadCreated": "New lead",
@@ -4869,7 +4878,14 @@
     "furnFree": "Furniture free of charge",
     "furnIncluded": "included in the purchase price per project",
     "furnFromProject": "from project: {{v}} € net",
-    "furnMissing": "⚠ not set in the project - please maintain it there"
+    "furnMissing": "⚠ not set in the project - please maintain it there",
+    "vatModeLabel": "VAT scheme",
+    "vatStandard": "Standard – 19%",
+    "vatReduced130": "Reduced – 5% up to 130 m²",
+    "vatReduced200": "Reduced – 5% up to 200 m² (transitional rule)",
+    "livingSqmLabel": "Living area m²",
+    "vatPreview": "{{red}} € net at 5% + {{std}} € net at 19% → {{vat}} € VAT, gross {{gross}} €",
+    "vatNoSqm": "⚠ Without a living area the full price is treated as eligible (5%). Please enter the living area."
   },
   "appointmentModal": {
     "stepBasis": "Basics",

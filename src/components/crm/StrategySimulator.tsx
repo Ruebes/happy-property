@@ -132,6 +132,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
           calc: {
             mgmtPct: p.mgmtPct, hotelConcept: p.hotelConcept, season,
             yieldPct: p.yieldPct, bedrooms: p.bedrooms, deTaxPct: p.deTaxPct, res: p.res,
+            // MwSt-Regelung der Einzelberechnung mitnehmen - sonst rechnet die
+            // Strategie 19 %, waehrend die Einzelrechnung 5/19 gemischt zeigt.
+            vatMode: p.vatMode, livingSqm: p.livingSqm,
           },
         }
       }))

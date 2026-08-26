@@ -191,7 +191,16 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
             <KV k={t('rechnung.discountPct', 'Rabatt {{pct}}', { pct: pct(r.discountPct) })} v={`−${eur(r.discountAmt)}`} color={GREEN} />
             <KV k={t('rechnung.purchasePriceNetAfterDiscount', 'Kaufpreis netto (nach Rabatt)')} v={eur(r.pNet)} />
           </>) : <KV k={t('rechnung.purchasePriceNet', 'Kaufpreis netto')} v={eur(r.pNet)} />}
-          <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+          {r.vatMode !== 'standard19' ? (<>
+            {/* Reduzierte MwSt (Sven waehlt die Regelung manuell): transparente
+                Aufschluesselung - beguenstigter und regulaerer Netto-Anteil werden
+                proportional zur Wohnflaeche gebildet (Grenze 130 bzw. 200 m²). */}
+            <KV k={t('rechnung.vatShareReduced', 'Anteil zu 5% MwSt (netto {{v}})', { v: eur(r.vatDetail.netReduced) })} v={eur(r.vatDetail.vatReduced)} />
+            {r.vatDetail.netStandard > 0 && <KV k={t('rechnung.vatShareStandard', 'Anteil zu 19% MwSt (netto {{v}})', { v: eur(r.vatDetail.netStandard) })} v={eur(r.vatDetail.vatStandard)} />}
+            <KV k={t('rechnung.vatTotal', 'Umsatzsteuer gesamt')} v={eur(r.vatAmt)} />
+          </>) : (
+            <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+          )}
           <KV k={t('rechnung.purchasePriceGross', 'Kaufpreis brutto')} v={eur(r.pGross)} />
           {/* Transparente Gesamtkosten: Kaufpreis brutto + Einrichtung (netto + MwSt)
               = Gesamtpreis brutto. Bei inkludierter Einrichtung (z.B. Infinity)
@@ -242,7 +251,10 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
           <div>
             <KV k={t('rechnung.letType', 'Vermietungsart')} v={r.letT === 'short' ? t('rechnung.shortTermVatRefund', 'Kurzzeit (USt.-Erstattung ~24 Mon.)') : t('rechnung.longTerm', 'Langzeit')} />
             <KV k={t('rechnung.handover', 'Schlüsselübergabe')} v={`${String(r.km).padStart(2, '0')}/${r.ky} – ${t('rechnung.y1MonthsShort', 'J1: {{n}} Mon.', { n: r.mF })}`} />
-            <KV k={t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+            {r.vatMode !== 'standard19' && <KV k={t('rechnung.vatModeLabel', 'MwSt-Regelung')} v={(r.vatMode === 'reduced130'
+              ? t('rechnung.vatMode130', 'Reduziert – 5% bis 130 m²')
+              : t('rechnung.vatMode200', 'Reduziert – 5% bis 200 m²')) + (r.livingSqm > 0 ? ` (${r.livingSqm} m²)` : '')} />}
+            <KV k={r.vatMode !== 'standard19' ? t('rechnung.vatMixed', 'Umsatzsteuer (5%/19%)') : t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
             <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
             <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
             <KV k={t('rechnung.rentGrowthAnnual', 'Mietsteigerung p.a.')} v={pct(r.rG)} />
@@ -507,6 +519,15 @@ function CompareTable({ rows }: { rows: Row[] }) {
               {row(t('rechnung.appreciationAnnual', 'Wertsteigerung p.a.'), r => pct(r.res?.appP ?? null))}
               {row(t('rechnung.grossYield', 'Bruttorendite'), r => pct(r.res?.yPct ?? null))}
               {sect(t('rechnung.sectionFinancing', 'FINANZIERUNG'))}
+              {/* Sobald EIN Objekt mit reduzierter MwSt rechnet, zeigt der Vergleich die
+                  Aufschluesselung fuer alle - sonst saehe der Kunde nicht, warum zwei
+                  gleich teure Wohnungen unterschiedliche Bruttopreise haben. */}
+              {rows.some(x => x.res && x.res.vatMode !== 'standard19') && (<>
+                {row(t('rechnung.purchasePriceNet', 'Kaufpreis netto'), r => eur(r.res?.pNet))}
+                {row(t('rechnung.vatShare5', 'davon MwSt 5%-Anteil'), r => r.res ? (r.res.vatMode !== 'standard19' ? `+ ${eur(r.res.vatDetail.vatReduced)}` : '–') : '–')}
+                {row(t('rechnung.vatShare19', 'davon MwSt 19%-Anteil'), r => r.res ? (r.res.vatMode !== 'standard19' ? (r.res.vatDetail.vatStandard > 0 ? `+ ${eur(r.res.vatDetail.vatStandard)}` : '–') : `+ ${eur(r.res.vatAmt)}`) : '–')}
+                {row(t('rechnung.vatTotal', 'Umsatzsteuer gesamt'), r => r.res ? `+ ${eur(r.res.vatAmt)}` : '–')}
+              </>)}
               {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
               {/* Einrichtung NETTO ausweisen und die MwSt darunter - im Vergleich stand
                   vorher der Bruttowert (25.000 → 29.750) und wirkte wie ein anderer

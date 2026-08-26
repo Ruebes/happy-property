@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, type CalcParams, type CalcResult } from './rechner'
+import { DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, type CalcParams, type CalcResult } from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
 // Wird vom CRM-Simulator UND von der öffentlichen Kundenseite /strategie/:token
@@ -154,8 +154,10 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     hotelConcept: hotel, season,
     mgmtPct: fromCalc.mgmtPct ?? defaultMgmtPct(u.letType, hotel),
     equity: ekForUnit,
-    // Miete kommt aus dem Simulator (monatlich) → als Bruttorendite an die Engine
-    yieldPct: u.priceNet > 0 ? (u.rent * 12) / Math.round(u.priceNet * 1.19) * 100 : 0,
+    // Miete kommt aus dem Simulator (monatlich) → als Bruttorendite an die Engine.
+    // Brutto nach der MwSt-Regelung der Einzelberechnung (Sven waehlt sie manuell) -
+    // sonst rechnete die Strategie mit 19 %, die Einzelrechnung aber mit 5/19 gemischt.
+    yieldPct: u.priceNet > 0 ? (u.rent * 12) / vatSplit(u.priceNet, fromCalc.vatMode, fromCalc.livingSqm).gross * 100 : 0,
     // Zeitachsen-Parameter setzt IMMER die Strategie (gelten über alle Wohnungen)
     rentGrowth: p.rentGrowth, interestPct: p.interest, termYears: p.termYears,
     appreciationPct: p.growth, deTaxPct: p.deTaxPct,

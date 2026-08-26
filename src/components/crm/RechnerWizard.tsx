@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
-import { DEFAULT_PARAMS, compute, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
+import { DEFAULT_PARAMS, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 
@@ -21,8 +21,10 @@ const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
 // Objektwerte: Vermietungsart, Saisonmodell, Verwaltung, Einrichtung.
-interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean }
-const perObjFrom = (pr?: Partial<CalcParams> | null): PerObj => ({
+interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean; vatMode: VatMode; livingSqm: number }
+// fallbackSqm: Wohnflaeche aus dem CRM-Objekt, wenn die (aeltere) Berechnung noch
+// kein eigenes livingSqm gespeichert hat.
+const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null): PerObj => ({
   letType: pr?.letType === 'long' ? 'long' : 'short',
   occ: pr?.season?.totalOcc ?? 0,
   adr: pr?.season?.adrHigh ?? 0,
@@ -30,6 +32,11 @@ const perObjFrom = (pr?: Partial<CalcParams> | null): PerObj => ({
   hotel: !!pr?.hotelConcept,
   furnCost: pr?.furnCost ?? 0,
   furnFree: !!pr?.furnFree,
+  vatMode: pr?.vatMode ?? 'standard19',
+  // 'livingSqm: null' ist eine GESPEICHERTE Entscheidung (keine Flaeche = alles
+  // beguenstigt) - nur wenn das Feld ganz fehlt (Alt-Berechnung), aus dem
+  // CRM-Objekt vorbelegen.
+  livingSqm: pr && 'livingSqm' in pr ? (pr.livingSqm ?? 0) : (fallbackSqm ?? 0),
 })
 const applyPerObj = (base: CalcParams, o: PerObj): CalcParams => ({
   ...base,
@@ -39,6 +46,8 @@ const applyPerObj = (base: CalcParams, o: PerObj): CalcParams => ({
   hotelConcept: o.letType === 'short' ? o.hotel : false,
   furnCost: o.furnCost,
   furnFree: o.furnFree,
+  vatMode: o.vatMode,
+  livingSqm: o.livingSqm > 0 ? o.livingSqm : null,
 })
 
 export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
@@ -76,7 +85,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params })
     const its = editCalc?.content?.items ?? []
     setKeptItems(its)
-    setPerObj(Object.fromEntries(its.map((it, i) => [`k${i}`, perObjFrom(it.params)])))
+    setPerObj(Object.fromEntries(its.map((it, i) => [`k${i}`, perObjFrom(it.params, it.size_sqm)])))
   }, [editCalc])
 
   useEffect(() => { void (async () => {
@@ -111,6 +120,10 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           // Preis für Möbel auftaucht, den wir vorher nie definiert haben").
           furnCost: pr.furniture_included ? 0 : (pr.furniture_cost ?? 0),
           furnFree: !!pr.furniture_included,
+          // MwSt-Regelung ist eine manuelle Entscheidung JE Objekt - nie vom
+          // (im Bearbeiten-Modus aus dem ersten Objekt geseedeten) p erben.
+          vatMode: 'standard19',
+          livingSqm: a.unit.size_sqm ?? 0,
         }
       }
       return n
@@ -123,12 +136,40 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     }
   }
   const removeFromBasket = (uid: string) => setBasket(b => b.filter(x => x.unit.id !== uid))
+  // Bestandsobjekt entfernen: perObj ist mit k0..kN indexgekeyt - beim Filtern
+  // MUESSEN die Keys mitruecken, sonst erbt der Nachbar die Objektwerte des
+  // geloeschten Objekts (seit vatMode/livingSqm dranhaengen, veraendert das den
+  // Kaufpreis des falschen Objekts).
+  const removeKeptItem = (i: number) => {
+    setKeptItems(list => list.filter((_, j) => j !== i))
+    setPerObj(prev => {
+      const n: Record<string, PerObj> = {}
+      for (const [k, v] of Object.entries(prev)) {
+        if (!k.startsWith('k')) { n[k] = v; continue }
+        const idx = Number(k.slice(1))
+        if (Number.isNaN(idx) || idx === i) continue
+        n[idx > i ? `k${idx - 1}` : k] = v
+      }
+      return n
+    })
+  }
   const set = (k: keyof CalcParams, v: number | string | boolean | number[]) => setP(prev => ({ ...prev, [k]: v }) as CalcParams)
 
   // „MwSt-Erstattung als Sondertilgung“: USt.-Betrag im Erstattungsjahr als Sondertilgung setzen
   const applyVatPrepay = () => {
     const refUnit = basket[0]?.unit
-    const preview = compute({ ...p, dealType: p.dealType, priceNet: refUnit?.price_net ?? p.priceNet, bedrooms: refUnit?.bedrooms ?? p.bedrooms })
+    // Objektwerte der Referenz-Wohnung anwenden - sonst rechnet die Vorschau die
+    // Erstattung mit 19 %, obwohl fuer das Objekt die 5%-Regelung gewaehlt ist.
+    // Referenz: erstes Korb-Objekt, im Bearbeiten-Modus das erste Bestandsobjekt -
+    // jeweils mit den LIVE-Objektwerten (perObj), nicht dem gespeicherten Stand.
+    const kept0 = keptItems[0]
+    const refObj = refUnit ? perObj[`b${refUnit.id}`] : (kept0 ? perObj['k0'] : undefined)
+    const base = {
+      ...p, dealType: p.dealType,
+      priceNet: refUnit?.price_net ?? kept0?.params?.priceNet ?? p.priceNet,
+      bedrooms: refUnit?.bedrooms ?? kept0?.params?.bedrooms ?? p.bedrooms,
+    }
+    const preview = compute(refObj ? applyPerObj(base, refObj) : base)
     const vatIdx = preview.vatA.findIndex(v => v > 0)
     if (vatIdx < 0) { setErr(t('rechnerWizard.noVatRefundCalculated', 'Keine USt.-Erstattung berechnet — dafür Kurzzeit-Vermietung wählen.')); return }
     const pp = [...p.ppVals]; pp[vatIdx] = Math.round(preview.vatAmt)
@@ -323,6 +364,39 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             <input type="number" value={o.furnCost} onChange={e => upd({ furnCost: Number(e.target.value) })} className={cell} /></label>
         </div>
         {furnSrc && <p className="text-[11px] text-gray-400 mt-1">{furnSrc}</p>}
+        {/* MwSt-Regelung: Sven waehlt MANUELL - das System prueft keinen Anspruch.
+            Bei reduzierter Regelung teilt die Engine den Nettopreis proportional zur
+            Wohnflaeche in 5 %- und 19 %-Anteil (Grenze 130 bzw. 200 m²). */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+          <label className="block col-span-2"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.vatModeLabel', 'MwSt-Regelung')}</span>
+            <select value={o.vatMode} onChange={e => upd({ vatMode: e.target.value as VatMode })} className={cell}>
+              <option value="standard19">{t('rechnerWizard.vatStandard', 'Standard – 19 %')}</option>
+              <option value="reduced130">{t('rechnerWizard.vatReduced130', 'Reduziert – 5 % bis 130 m²')}</option>
+              <option value="reduced200">{t('rechnerWizard.vatReduced200', 'Reduziert – 5 % bis 200 m² (Übergangsregelung)')}</option>
+            </select></label>
+          {o.vatMode !== 'standard19' && (
+            <label className="block"><span className="block text-[11px] text-gray-500 mb-0.5">{t('rechnerWizard.livingSqmLabel', 'Wohnfläche m²')}</span>
+              <input type="number" value={o.livingSqm || ''} onChange={e => upd({ livingSqm: Number(e.target.value) })} className={cell} placeholder="130" /></label>
+          )}
+        </div>
+        {o.vatMode !== 'standard19' && (() => {
+          const it = keptItems.find((_, i) => `k${i}` === key)
+          const bu = basket.find(b => `b${b.unit.id}` === key)
+          const netRaw = bu?.unit.price_net ?? it?.params?.priceNet ?? it?.price_net ?? 0
+          if (!netRaw) return null
+          // Wie die Engine: Rabatt zuerst abziehen, dann splitten.
+          const dPct = Math.max(0, Math.min(30, p.discountPct || 0))
+          const netAfter = netRaw - Math.round(netRaw * dPct / 100)
+          const v = vatSplit(netAfter, o.vatMode, o.livingSqm > 0 ? o.livingSqm : null)
+          return (
+            <p className="text-[11px] text-gray-400 mt-1">
+              {o.livingSqm > 0
+                ? t('rechnerWizard.vatPreview', '{{red}} € netto zu 5 % + {{std}} € netto zu 19 % → {{vat}} € MwSt, brutto {{gross}} €',
+                    { red: eur0(v.netReduced), std: eur0(v.netStandard), vat: eur0(v.vat), gross: eur0(v.gross) })
+                : t('rechnerWizard.vatNoSqm', '⚠ Ohne Wohnfläche gilt der gesamte Preis als begünstigt (5 %). Bitte Wohnfläche eintragen.')}
+            </p>
+          )
+        })()}
         <div className="flex flex-wrap gap-4 mt-2">
           {o.letType === 'short' && (
             <label className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -387,7 +461,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
                 {keptItems.map((it, i) => (
                   <span key={i} className="inline-flex items-center gap-1.5 text-xs bg-gray-100 rounded-xl px-2.5 py-1.5">
                     {it.label}
-                    <button onClick={() => setKeptItems(list => list.filter((_, j) => j !== i))}
+                    <button onClick={() => removeKeptItem(i)}
                       title={t('rechnerWizard.removeObject', 'Objekt entfernen')} className="text-gray-400 hover:text-red-500">×</button>
                   </span>
                 ))}

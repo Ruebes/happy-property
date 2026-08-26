@@ -4614,7 +4614,16 @@
     "rentNetBlock": "Mietertrag nach Kosten & Steuern",
     "valueGainBlock": "Wertzuwachs 10 Jahre",
     "gainPlusRentBlock": "Wertzuwachs + Mietertrag",
-    "leadMetric": "die wichtigste Kennzahl"
+    "leadMetric": "die wichtigste Kennzahl",
+    "vatShareReduced": "Anteil zu 5% MwSt (netto {{v}})",
+    "vatShareStandard": "Anteil zu 19% MwSt (netto {{v}})",
+    "vatTotal": "Umsatzsteuer gesamt",
+    "vatMixed": "Umsatzsteuer (5%/19%)",
+    "vatModeLabel": "MwSt-Regelung",
+    "vatMode130": "Reduziert – 5% bis 130 m²",
+    "vatMode200": "Reduziert – 5% bis 200 m²",
+    "vatShare5": "davon MwSt 5%-Anteil",
+    "vatShare19": "davon MwSt 19%-Anteil"
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",
@@ -4869,7 +4878,14 @@
     "furnFree": "Einrichtung kostenfrei",
     "furnIncluded": "laut Projekt im Kaufpreis enthalten",
     "furnFromProject": "aus Projekt: {{v}} € netto",
-    "furnMissing": "⚠ im Projekt nicht hinterlegt - bitte dort pflegen"
+    "furnMissing": "⚠ im Projekt nicht hinterlegt - bitte dort pflegen",
+    "vatModeLabel": "MwSt-Regelung",
+    "vatStandard": "Standard – 19 %",
+    "vatReduced130": "Reduziert – 5 % bis 130 m²",
+    "vatReduced200": "Reduziert – 5 % bis 200 m² (Übergangsregelung)",
+    "livingSqmLabel": "Wohnfläche m²",
+    "vatPreview": "{{red}} € netto zu 5 % + {{std}} € netto zu 19 % → {{vat}} € MwSt, brutto {{gross}} €",
+    "vatNoSqm": "⚠ Ohne Wohnfläche gilt der gesamte Preis als begünstigt (5 %). Bitte Wohnfläche eintragen."
   },
   "appointmentModal": {
     "stepBasis": "Basis",
