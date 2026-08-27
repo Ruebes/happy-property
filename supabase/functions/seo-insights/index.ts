@@ -484,6 +484,15 @@ Deno.serve(async (req) => {
       return json({ success: true })
     }
 
+    // ── Setup-Auskunft: welche SA-Adresse muss in die Search Console? ──
+    if (body.action === 'gsc_setup') {
+      const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') ?? ''
+      let email = ''
+      try { email = (JSON.parse(raw) as { client_email?: string }).client_email ?? '' } catch { /* leer */ }
+      const gsc = await fetchGsc()
+      return json({ success: true, service_account: email, gsc_status: gsc.status })
+    }
+
     // ── Tages-Schnappschuss ──
     if (body.action === 'snapshot') {
       const result = await buildSnapshot(sb)
