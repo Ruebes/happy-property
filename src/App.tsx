@@ -86,6 +86,7 @@ const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/Invo
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const WebAnalytics          = lazy(() => import('./pages/admin/crm/WebAnalytics'))
+const Seo                   = lazy(() => import('./pages/admin/crm/Seo'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
 const Workflows             = lazy(() => import('./pages/admin/crm/Workflows'))
@@ -176,6 +177,7 @@ export default function App() {
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
               <Route path="/admin/crm/webanalytics"      element={<WebAnalytics />} />
+              <Route path="/admin/crm/seo"               element={<Seo />} />
             </Route>
 
             {/* ── Funnel & Newsletter (Recht 'funnel') ── */}
