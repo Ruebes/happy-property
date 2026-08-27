@@ -30,4 +30,4 @@ const res = await fetch(`https://api.supabase.com/v1/projects/${PROJECT_REF}/dat
 const body = await res.text()
 if (!res.ok) { console.error('❌', res.status, body.slice(0, 500)); process.exit(1) }
 console.log('✅ Migration angewendet:', file)
-if (body && body !== '[]') console.log(body.slice(0, 1000))
+if (body && body !== '[]') console.log(body.slice(0, 20000))

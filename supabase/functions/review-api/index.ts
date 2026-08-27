@@ -123,12 +123,14 @@ function lotteText(name: string, lang: string, url: string): string {
     return `Hi ${first}, Lotte from Happy Property here 🧡\n\n` +
       `We want to get better - and for that we need you. You've been through the whole journey with Sven and Lotte: how was it for you?\n\n` +
       `Here's our short questionnaire (2-3 minutes):\n${url}\n\n` +
-      `At the end you can - if you like - write a short review for our website and upload a photo of yourself. Only with your permission, promised - and you can withdraw it anytime.\n\nThank you! 🙏`
+      `At the end you can - if you like - write a short review for our website and upload a photo of yourself. Only with your permission, promised - and you can withdraw it anytime.\n\n` +
+      `And most importantly: we truly appreciate suggestions for improvement - tell us honestly what we can do better.\n\nThank you! 🙏`
   }
   return `Hallo ${first}, hier ist Lotte von Happy Property 🧡\n\n` +
     `Wir wollen besser werden - und dafür brauchen wir dich. Du hast den ganzen Weg mit Sven und Lotte erlebt: Wie war er für dich?\n\n` +
     `Hier geht's zu unserem kurzen Fragebogen (2-3 Minuten):\n${url}\n\n` +
-    `Am Ende kannst du - wenn du magst - eine kleine Bewertung für unsere Website schreiben und ein Foto von dir hochladen. Nur mit deiner Erlaubnis, versprochen - und du kannst sie jederzeit wieder zurückziehen.\n\nDanke dir! 🙏`
+    `Am Ende kannst du - wenn du magst - eine kleine Bewertung für unsere Website schreiben und ein Foto von dir hochladen. Nur mit deiner Erlaubnis, versprochen - und du kannst sie jederzeit wieder zurückziehen.\n\n` +
+    `Und ganz wichtig: Wir freuen uns sehr über Verbesserungsvorschläge - sag uns ehrlich, was wir besser machen können.\n\nDanke dir! 🙏`
 }
 
 Deno.serve(async (req) => {
@@ -335,10 +337,26 @@ Deno.serve(async (req) => {
             if (taskId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
           }
           if (row.lead_id) {
+            // Kompletter Fragebogen in die Kundenakte - Sven liest ihn dort und
+            // antwortet direkt ueber den WhatsApp-Composer der Akte.
+            const labels: Record<string, string> = {
+              q1: 'Zooms & Treffen: alles verständlich beantwortet?',
+              q2: 'Exposés verständlich & vollständig?',
+              q3: 'Kaufprozess eindeutig erklärt?',
+              q4: 'Immer gut beraten & aufgehoben gefühlt?',
+              q5: 'Was können Lotte & Sven verbessern?',
+            }
+            const bones = (n?: number) => n ? `${'🦴'.repeat(n)} (${n}/5)` : '- keine Angabe -'
+            const lines: string[] = []
+            for (const k of ['q1', 'q2', 'q3', 'q4', 'q5']) {
+              lines.push(`${labels[k]}\n${bones(questionRatings[k])}${answers[k] ? `\n„${answers[k]}"` : ''}`)
+            }
+            lines.push(`Website-Bewertung: ${bones(finalRating ?? undefined)}${reviewText ? `\n„${reviewText}"` : ''}`)
+            lines.push(`Weiterempfehlen: ${recommend === true ? 'Ja 🎉' : recommend === false ? 'Eher nicht' : '- keine Angabe -'}`)
             await sb.from('activities').insert({
               lead_id: row.lead_id, type: 'note', direction: 'inbound', auto: true,
-              subject: 'Bewertungs-Fragebogen ausgefüllt',
-              content: `Antworten eingegangen${reviewText ? `, Bewertung: „${reviewText.slice(0, 200)}"` : ''}${rating >= 1 ? `, ${rating}/5 Sterne` : ''}.`,
+              subject: '🦴 Bewertungs-Fragebogen ausgefüllt',
+              content: lines.join('\n\n'),
             })
           }
         } catch (e) { console.warn('[review-api] Benachrichtigung fehlgeschlagen:', e) }
