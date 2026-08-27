@@ -178,7 +178,7 @@ window.hpwa=function(cmd,name,meta){ if(cmd==='event'&&name){ push({ t:'custom',
 // ── Session-Replay via rrweb (maskiert alle Eingaben) ───────────────────────
 function flushReplay(sync){
   if(!replayBuf.length) return;
-  var body=JSON.stringify({ a:'replay', sid:sid, seq:replaySeq++, events:replayBuf.splice(0,replayBuf.length) });
+  var body=JSON.stringify({ a:'replay', sid:sid, vis:visitor, site:location.hostname, seq:replaySeq++, events:replayBuf.splice(0,replayBuf.length) });
   // WICHTIG: kein keepalive/sendBeacon fuer grosse Chunks — beide haben ein
   // 64-KB-Limit und der DOM-Snapshot (Chunk 0) ist deutlich groesser. Ein
   // verlorener Chunk 0 = Replay nicht abspielbar (weisser Player).
@@ -305,17 +305,34 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
   }
 }
 
-async function handleReplay(sid: string, seq: number, events: unknown[]): Promise<void> {
+async function handleReplay(sid: string, seq: number, events: unknown[], site: string, visitor: string): Promise<void> {
   if (!sid || !UUID_RE.test(sid) || !Array.isArray(events) || !events.length) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  // Nur fuer bekannte Sessions annehmen (kein blindes Insert von Fremd-IDs).
   const { data: sess } = await supabase.from('web_sessions').select('id, has_replay').eq('id', sid).maybeSingle()
-  if (!sess) return
+  // Ohne Startbild (Full-Snapshot, rrweb-Typ 2) ist ein Replay nicht abspielbar.
+  // Fragmente von Sessions, deren Snapshot nie ankam (alte gecachte Tracker,
+  // verlorener Chunk 0), werden verworfen — sonst stehen im Dashboard
+  // "Replay"-Eintraege, die nur einen weissen Player zeigen.
+  const hasSnapshot = events.some(e => (e as { type?: number }).type === 2)
+  if (!hasSnapshot && !(sess as { has_replay: boolean } | null)?.has_replay) return
+  if (!sess) {
+    // Race: der Snapshot-Chunk (Seq 0) kommt oft VOR dem ersten Batch-Upsert an.
+    // Ohne Stub ginge genau der Chunk verloren, ohne den das Replay nicht
+    // abspielbar ist. Der Batch-Upsert ueberschreibt den Stub gleich mit echten
+    // Daten. Ohne site kein Stub — dann kein blindes Insert von Fremd-IDs.
+    if (!site) return
+    const { error: stubErr } = await supabase.from('web_sessions').upsert({
+      id: sid,
+      visitor_id: String(visitor ?? '').slice(0, 64) || 'unbekannt',
+      site: String(site).slice(0, 120),
+    }, { onConflict: 'id', ignoreDuplicates: true })
+    if (stubErr) { console.warn('[wa-track] replay stub:', stubErr.message); return }
+  }
   const { error } = await supabase.from('web_replay_chunks').insert({
     session_id: sid, seq: Number(seq) || 0, events,
   })
   if (error) { console.warn('[wa-track] replay insert:', error.message); return }
-  if (!(sess as { has_replay: boolean }).has_replay) {
+  if (!(sess as { has_replay: boolean } | null)?.has_replay) {
     await supabase.from('web_sessions').update({ has_replay: true }).eq('id', sid)
   }
 }
@@ -329,7 +346,8 @@ Deno.serve(async (req) => {
       if (url.pathname.endsWith('/t.js')) {
         const base = `${Deno.env.get('SUPABASE_URL')}/functions/v1/wa-track`
         return new Response(trackerJs(base), {
-          headers: { ...CORS, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600' },
+          // Kurz cachen: Tracker-Fixes muessen zuegig bei allen Besuchern ankommen.
+          headers: { ...CORS, 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' },
         })
       }
       if (url.pathname.endsWith('/r.js')) {
@@ -348,14 +366,14 @@ Deno.serve(async (req) => {
       const data = JSON.parse(body || '{}') as {
         a?: string
         session?: SessionInfo; events?: TrackEvent[]
-        sid?: string; seq?: number
+        sid?: string; seq?: number; site?: string; vis?: string
       } & { events?: TrackEvent[] }
       if (data.a === 'batch' && data.session) {
         await handleBatch(data.session, data.events ?? [], ua)
         return json({ success: true })
       }
       if (data.a === 'replay' && data.sid) {
-        await handleReplay(data.sid, data.seq ?? 0, (data as { events?: unknown[] }).events ?? [])
+        await handleReplay(data.sid, data.seq ?? 0, (data as { events?: unknown[] }).events ?? [], data.site ?? '', data.vis ?? '')
         return json({ success: true })
       }
       return json({ error: 'unknown action' }, 400)
