@@ -750,12 +750,25 @@ function BookMode({ blocks, onClose }: { blocks: DeckBlock[]; onClose: () => voi
 }
 
 export default function Deck() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [book, setBook] = useState(false)
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
+
+  // Empfängersprache: Das Deck liegt hinter einem Token, es gibt keinen Login -
+  // die Sprache kommt serverseitig aus dem Lead. Ohne das blieben alle festen
+  // Bausteine (Folge-mir-Block, Beschriftungen, Kontaktkarte) deutsch, obwohl der
+  // Deck-Text englisch war (Sven 27.8.).
+  useEffect(() => { void (async () => {
+    if (!token) return
+    try {
+      const { data } = await supabase.rpc('get_deck_lang', { p_token: token })
+      const lang = typeof data === 'string' ? data : 'de'
+      if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
+    } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
+  })() }, [token, i18n])
 
   useEffect(() => {
     let cancelled = false

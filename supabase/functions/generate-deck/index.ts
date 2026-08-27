@@ -8,6 +8,7 @@
 // Bild-Slots (Stufe 1: Platzhalter zum Beurteilen der Texte/Struktur).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { translateOutbound } from '../_shared/translate.ts'
 import { jsonrepair } from 'https://esm.sh/jsonrepair@3.8.0'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
@@ -258,16 +259,17 @@ const roadKm  = (luft: number) => luft * 1.1                       // grobe Stra
 const fmtKm   = (km: number) => km < 2 ? `${km.toFixed(1).replace('.', ',')} km` : `${Math.round(km)} km`
 const driveMin = (km: number) => Math.max(4, Math.round(km * 1.3))
 
-function distanceChips(lat: number, lng: number): Array<{ min: string; label: string }> {
+function distanceChips(lat: number, lng: number, lang: 'de' | 'en' = 'de'): Array<{ min: string; label: string }> {
+  const ca = lang === 'en' ? 'approx.' : 'ca.'
   const chips: Array<{ min: string; label: string }> = []
   const beach = BEACHES
     .map(b => ({ ...b, km: roadKm(haversineKm(lat, lng, b.lat, b.lng)) }))
     .sort((a, b) => a.km - b.km)[0]
-  chips.push({ min: `ca. ${fmtKm(beach.km)}`, label: `Strand (${beach.label})` })
+  chips.push({ min: `${ca} ${fmtKm(beach.km)}`, label: lang === 'en' ? `Beach (${beach.label})` : `Strand (${beach.label})` })
   for (const p of POIS) {
-    chips.push({ min: `ca. ${fmtKm(roadKm(haversineKm(lat, lng, p.lat, p.lng)))}`, label: p.label })
+    chips.push({ min: `${ca} ${fmtKm(roadKm(haversineKm(lat, lng, p.lat, p.lng)))}`, label: lang === 'en' ? chipLabelEn(p.label) : p.label })
   }
-  chips.push({ min: `ca. ${fmtKm(roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng)))}`, label: 'Neue Paphos-Marina (geplant)' })
+  chips.push({ min: `${ca} ${fmtKm(roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng)))}`, label: lang === 'en' ? 'New Paphos Marina (planned)' : 'Neue Paphos-Marina (geplant)' })
   return chips
 }
 
@@ -284,29 +286,59 @@ const MARINA_TEXTS = {
   note: 'Zuschlag geplant Ende 2026, Baubeginn April 2027 (Kathimerini, 2026). Quellen: Gov.cy (2025); Knight Frank (2018–2025); Zentralbank Zypern RPPI (2026); Financial Mirror (2021). Wertentwicklung = historische Erfahrungswerte, keine Garantie.',
 }
 
-function buildMarinaBlocks(projName: string, fromSub: string, lat?: number | null, lng?: number | null): Array<Record<string, unknown>> {
+// Englische Fassung: Die Marina-Sektion und die Entfernungs-Chips setzt das System
+// DETERMINISTISCH ein - sie laufen nie durch die KI und blieben deshalb deutsch,
+// auch wenn der Rest des Decks englisch war (Sven 27.8., Deck fuer Agustin).
+const MARINA_TEXTS_EN = {
+  featureKicker:  'Location · The new Paphos Marina',
+  featureHeadline: 'After 19 years, it is finally being built.',
+  featureText: 'This is the model of the new Paphos Marina at Potima Bay (Kissonerga): a site of around 165,000 m² with up to 1,000 berths on water and on land, plus residential and commercial space right on the harbour basin - a project estimated at around 200 million EUR (Gov.cy, 2025; Deputy Ministry of Tourism, 2024). After 19 years of delay the process has reached its decisive stage: four international bidders have submitted offers (StockWatch, 2026), the contract is due to be awarded in late 2026 and construction is scheduled to start in April 2027 (Kathimerini, 2026). What matters for you as a buyer is the timing: prices around projects of this scale typically start moving when the contract is awarded - not when the marina opens. Buying before the award still means buying at pre-marina terms.',
+  featureQuote: 'Harbour locations: +59 % premium worldwide (Knight Frank). Limassol: +102.7 % over the marina decade.',
+  valuePct: '+51 %',
+  valueText: 'Waterfront is the best-documented price driver in real estate: Knight Frank measures an average premium of +51 % for waterfront properties over comparable inland locations (Waterfront Homes, 2025) - harbour locations lead the field at +59 % (Knight Frank, 2018). Cyprus has already shown it: during the Limassol marina decade from 2015 to 2025, apartment prices there rose by +102.7 %, the highest figure of any district on the island (Central Bank of Cyprus RPPI, 2026). That same script is now beginning in Paphos - still at pre-marina prices.',
+  note: 'Contract award scheduled for late 2026, construction start April 2027 (Kathimerini, 2026). Sources: Gov.cy (2025); Knight Frank (2018-2025); Central Bank of Cyprus RPPI (2026); Financial Mirror (2021). Price development = historical experience, not a guarantee.',
+}
+const CHIP_LABELS_EN: Record<string, string> = {
+  'Neue Paphos-Marina (geplant)': 'New Paphos Marina (planned)',
+  'Flughafen Paphos': 'Paphos Airport', 'Kings Avenue Mall': 'Kings Avenue Mall',
+  'Hafen Paphos': 'Paphos Harbour', 'Altstadt Paphos': 'Paphos Old Town',
+  'Krankenhaus': 'Hospital', 'Supermarkt': 'Supermarket',
+}
+const chipLabelEn = (label: string): string => {
+  if (CHIP_LABELS_EN[label]) return CHIP_LABELS_EN[label]
+  // "Strand (Coral Bay)" -> "Beach (Coral Bay)" - Eigennamen bleiben stehen.
+  const m = label.match(/^Strand\s*\((.+)\)$/)
+  if (m) return `Beach (${m[1]})`
+  return label
+}
+
+function buildMarinaBlocks(projName: string, fromSub: string, lat?: number | null, lng?: number | null, lang: 'de' | 'en' = 'de'): Array<Record<string, unknown>> {
+  const T = lang === 'en' ? MARINA_TEXTS_EN : MARINA_TEXTS
   const out: Array<Record<string, unknown>> = [{
     type: 'feature',
-    kicker: MARINA_TEXTS.featureKicker,
-    headline: MARINA_TEXTS.featureHeadline,
+    kicker: T.featureKicker,
+    headline: T.featureHeadline,
     image: MARINA_MODEL,
-    text: MARINA_TEXTS.featureText,
-    quote: MARINA_TEXTS.featureQuote,
+    text: T.featureText,
+    quote: T.featureQuote,
     link: MARINA_ARTICLE,
-    linkLabel: 'Zum Zeitungsartikel',
+    linkLabel: lang === 'en' ? 'Read the news article' : 'Zum Zeitungsartikel',
   }]
   if (lat != null && lng != null) {
     const km  = roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng))
     out.push({
       type: 'marina',
-      kicker: 'Lage · Neue Paphos-Marina',
-      headline: `Nur die Küste entlang: ca. ${fmtKm(km)} zur Marina.`,
-      fromLabel: projName || 'Projekt', fromSub,
-      toLabel: 'Paphos-Marina', toSub: 'Potima Bay · Kissonerga',
-      distance: `ca. ${fmtKm(km)}`, drive: `ca. ${driveMin(km)} Min mit dem Auto`,
-      valuePct: MARINA_TEXTS.valuePct,
-      valueText: MARINA_TEXTS.valueText,
-      note: MARINA_TEXTS.note,
+      kicker: lang === 'en' ? 'Location · New Paphos Marina' : 'Lage · Neue Paphos-Marina',
+      headline: lang === 'en'
+        ? `Just along the coast: approx. ${fmtKm(km)} to the marina.`
+        : `Nur die Küste entlang: ca. ${fmtKm(km)} zur Marina.`,
+      fromLabel: projName || (lang === 'en' ? 'Project' : 'Projekt'), fromSub,
+      toLabel: lang === 'en' ? 'Paphos Marina' : 'Paphos-Marina', toSub: 'Potima Bay · Kissonerga',
+      distance: `${lang === 'en' ? 'approx.' : 'ca.'} ${fmtKm(km)}`,
+      drive: lang === 'en' ? `approx. ${driveMin(km)} min by car` : `ca. ${driveMin(km)} Min mit dem Auto`,
+      valuePct: T.valuePct,
+      valueText: T.valueText,
+      note: T.note,
     })
   }
   return out
@@ -321,6 +353,7 @@ function injectLocationAndMarina(
   blocks: Array<Record<string, unknown>>,
   projName: string,
   proj?: { location?: string | null; latitude?: number | null; longitude?: number | null } | null,
+  lang: 'de' | 'en' = 'de',
 ): void {
   const lat = proj?.latitude, lng = proj?.longitude
   const fi = blocks.findIndex(b => b.type === 'facts')
@@ -328,7 +361,7 @@ function injectLocationAndMarina(
     const fb = blocks[fi] as Record<string, unknown>
     const aiItems = (Array.isArray(fb.items) ? fb.items as Array<{ min?: string; label?: string }> : [])
       .filter(it => !/km|min/i.test(String(it.min ?? ''))).slice(0, 2)
-    fb.items = [...distanceChips(lat, lng), ...aiItems]
+    fb.items = [...distanceChips(lat, lng, lang), ...aiItems]
   }
   // Feature (Story) und schematischer marina-Block werden GETRENNT geprüft:
   // Ein KI-gebauter Marina-Feature (z.B. via Mamba-Regel) darf den schematischen
@@ -341,7 +374,7 @@ function injectLocationAndMarina(
     let at = fi >= 0 ? fi + 1 : Math.min(4, blocks.length - 1)
     while (at < blocks.length && blocks[at].type === 'columns') at++
     const fromSub = (proj?.location ?? '').split(',')[0].trim() || 'Region Paphos'
-    let ins = buildMarinaBlocks(projName, fromSub, lat, lng)
+    let ins = buildMarinaBlocks(projName, fromSub, lat, lng, lang)
     if (marinaFeatureAt >= 0) {
       ins = ins.filter(b => b.type === 'marina')   // Story existiert schon → nur Schema ergänzen
       at = marinaFeatureAt + 1                      // direkt hinter den vorhandenen Marina-Feature
@@ -468,7 +501,17 @@ const BILD_REGELN: Array<{ re: RegExp; cats: string[] }> = [
   { re: /architekt|fassade|geb[äa]ude|bauweise|konstruktion/i,     cats: ['fassade'] },
 ]
 
-function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
+// Passt ein Grundriss-Label zur Wohnungsart? "Maisonette A2b" gehoert nie in ein
+// Villa-Deck, "Villa 3" nie in ein Apartment-Deck.
+const APARTMENT_WORT = /maisonette|apartment|wohnung|studio|block\s*[a-z]\b|penthouse/i
+const VILLA_WORT = /villa|haus|house|bungalow/i
+function passtZuTyp(label: string, typ: string): boolean {
+  if (!label) return true
+  if (typ === 'villa') return !APARTMENT_WORT.test(label) || VILLA_WORT.test(label)
+  return !VILLA_WORT.test(label) || APARTMENT_WORT.test(label)
+}
+
+function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string, unitTyp?: string): void {
   const renders = images?.renders ?? []
   const gal = images?.gallery ?? []
   let ri = 0, pi = 0, fpi = 0
@@ -545,7 +588,19 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
     // Grundriss: NIEMALS auf ein beliebiges Render ausweichen. Fehlt der Plan, bleibt
     // das Bild leer — ein Café-/Sauna-Foto unter der Überschrift „Grundriss" ist
     // schlimmer als gar keins (genau so kam Jessicas Café-Bild ins Deck).
-    if (t === 'floorplan') { const fps = images?.floorplans ?? []; const fp = (fps.length ? fps[fpi++ % fps.length] : images?.floorplan); if (fp) b.image = fp; else delete b.image }
+    // Grundriss: NIE einer aus einer anderen Wohnungsart. Das Villa-Deck fuer
+    // Agustin zeigte den Plan einer "Maisonette A2b" - ein Doppelapartment aus
+    // Block A (Sven 27.8.). Passt kein Plan zum Typ, bleibt der Block ohne Bild.
+    if (t === 'floorplan') {
+      const fps = images?.floorplans ?? []
+      const passend = unitTyp
+        ? fps.filter(f => passtZuTyp(typeof f === 'string' ? '' : String((f as { label?: string }).label ?? ''), unitTyp))
+        : fps
+      const quelle = passend.length ? passend : (unitTyp && fps.length ? [] : fps)
+      const fp = quelle.length ? quelle[fpi++ % quelle.length] : (unitTyp ? null : images?.floorplan)
+      const url = typeof fp === 'string' ? fp : (fp as { url?: string } | null)?.url
+      if (url) b.image = url; else delete b.image
+    }
     if (t === 'gallery' && Array.isArray(b.items)) {
       for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
     }
@@ -748,6 +803,25 @@ Deno.serve(async (req) => {
           const furnVat = Math.round(furnNet * 0.19)
           return { vat: split.vat + furnVat, mixed: split.netStandard > 0 || furnVat > 0, split, furnVat }
         }
+        // Labels der Preiszeilen: Der Preisblock wird deterministisch gebaut und lief
+        // deshalb nie durch die Uebersetzung - er blieb deutsch, waehrend das restliche
+        // Deck englisch war (Sven 27.8.).
+        const EN = deckLang === 'en'
+        const L = {
+          nettoImmo: EN ? 'Net price (property)' : 'Nettopreis Immobilie',
+          nettoInklMoebel: EN ? 'Net price (incl. furniture)' : 'Nettopreis (inkl. Möbel)',
+          netto: EN ? 'Net price' : 'Nettopreis',
+          nettoInklEinr: EN ? 'Net price (incl. furnishing)' : 'Nettopreis (inkl. Einrichtung)',
+          mwstGesamt: EN ? 'VAT total' : 'MwSt gesamt',
+          brutto: EN ? 'Gross price' : 'Bruttopreis',
+          einrichtungNetto: EN ? 'Furniture package (net)' : 'Einrichtungspaket (netto)',
+          mwstEinr: EN ? 'VAT 19 % on furniture' : 'MwSt 19 % auf Einrichtung',
+          einrichtung: EN ? 'Furnishing' : 'Einrichtung',
+          imPreis: EN ? 'included in the purchase price' : 'im Kaufpreis enthalten',
+          nichtImPreis: EN ? 'not included - price on request' : 'nicht im Kaufpreis - Preis auf Anfrage',
+          davonEinr: EN ? 'of which furniture package' : 'davon Einrichtungspaket',
+          zzglMwst: (pct: string) => EN ? `plus VAT (${pct})` : `zzgl. MwSt (${pct})`,
+        }
         const buildLines = (baseNet: number, furnNet: number, sqm: number | null) => {
           const totalNet = baseNet + furnNet
           const v = vatFor(baseNet, furnNet, sqm)
@@ -755,22 +829,24 @@ Deno.serve(async (req) => {
           if (isEigennutz && v.split?.entfallen) {
             // Beguenstigung gekippt - eine ehrliche 19 %-Zeile plus Begruendung.
             return [
-              { label: furnIncluded ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
+              { label: furnIncluded ? L.nettoInklMoebel : L.nettoImmo, value: eur(baseNet) },
               { label: v.split.entfallen === 'wert'
-                  ? `MwSt 19 % (Kaufpreis über ${eur(VAT_MAX_WERT)} — 5 %-Regelung gilt nicht)`
-                  : `MwSt 19 % (Wohnfläche über ${VAT_MAX_SQM} m² — 5 %-Regelung gilt nicht)`,
+                  ? (EN ? `VAT 19 % (purchase price above ${eur(VAT_MAX_WERT)} — reduced rate does not apply)`
+                        : `MwSt 19 % (Kaufpreis über ${eur(VAT_MAX_WERT)} — 5 %-Regelung gilt nicht)`)
+                  : (EN ? `VAT 19 % (living area above ${VAT_MAX_SQM} m² — reduced rate does not apply)`
+                        : `MwSt 19 % (Wohnfläche über ${VAT_MAX_SQM} m² — 5 %-Regelung gilt nicht)`),
                 value: eur(v.split.vatStandard) },
-              ...(furnNet > 0 ? [{ label: 'Einrichtungspaket (netto)', value: eur(furnNet) },
+              ...(furnNet > 0 ? [{ label: L.einrichtungNetto, value: eur(furnNet) },
                                  { label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) }] : []),
-              { label: 'MwSt gesamt', value: eur(v.vat) },
-              { label: 'Bruttopreis', value: eur(totalNet + v.vat), strong: true },
+              { label: L.mwstGesamt, value: eur(v.vat) },
+              { label: L.brutto, value: eur(totalNet + v.vat), strong: true },
             ]
           }
           if (isEigennutz && v.split) {
             // Aufgeschluesselt (Sven 26.8.): beguenstigter und regulaerer Anteil getrennt.
             const lines: Array<{ label: string; value: string; strong?: boolean }> = [
-              { label: modus === 'included' ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis Immobilie', value: eur(baseNet) },
-              { label: `MwSt 5 % auf ${eur(v.split.netReduced)}${v.split.netStandard > 0 ? (v.split.netReduced >= VAT_CAP_WERT ? ` (Höchstbetrag der 5 %-Regelung)` : ` (Anteil bis ${VAT_CAP_SQM} m² Wohnfläche)`) : ''}`, value: eur(v.split.vatReduced) },
+              { label: modus === 'included' ? L.nettoInklMoebel : L.nettoImmo, value: eur(baseNet) },
+              { label: (EN ? `VAT 5 % on ${eur(v.split.netReduced)}` : `MwSt 5 % auf ${eur(v.split.netReduced)}`) + (v.split.netStandard > 0 ? (v.split.netReduced >= VAT_CAP_WERT ? (EN ? ' (cap of the reduced rate)' : ' (Höchstbetrag der 5 %-Regelung)') : (EN ? ` (share up to ${VAT_CAP_SQM} m² living area)` : ` (Anteil bis ${VAT_CAP_SQM} m² Wohnfläche)`)) : ''), value: eur(v.split.vatReduced) },
             ]
             if (v.split.netStandard > 0) {
               // Warum faellt der Rest unter 19 %? Ueber der Flaechengrenze, ueber dem
@@ -778,30 +854,31 @@ Deno.serve(async (req) => {
               // Grund nennen, sonst steht "über 130 m²" an einer 112-m²-Wohnung.
               const ueberFlaeche = !!(sqm && sqm > VAT_CAP_SQM)
               const ueberWert = v.split.netReduced >= VAT_CAP_WERT
-              const grund = ueberFlaeche && ueberWert ? `über ${VAT_CAP_SQM} m² und über ${eur(VAT_CAP_WERT)}`
-                : ueberFlaeche ? `über ${VAT_CAP_SQM} m² Wohnfläche`
-                : `Anteil über ${eur(VAT_CAP_WERT)} — die 5 %-Regelung deckt höchstens diesen Betrag`
-              lines.push({ label: `MwSt 19 % auf ${eur(v.split.netStandard)} (${grund})`, value: eur(v.split.vatStandard) })
+              const grund = ueberFlaeche && ueberWert
+                ? (EN ? `above ${VAT_CAP_SQM} m² and above ${eur(VAT_CAP_WERT)}` : `über ${VAT_CAP_SQM} m² und über ${eur(VAT_CAP_WERT)}`)
+                : ueberFlaeche ? (EN ? `above ${VAT_CAP_SQM} m² living area` : `über ${VAT_CAP_SQM} m² Wohnfläche`)
+                : (EN ? `share above ${eur(VAT_CAP_WERT)} — the reduced rate covers no more than this amount` : `Anteil über ${eur(VAT_CAP_WERT)} — die 5 %-Regelung deckt höchstens diesen Betrag`)
+              lines.push({ label: (EN ? `VAT 19 % on ${eur(v.split.netStandard)} (${grund})` : `MwSt 19 % auf ${eur(v.split.netStandard)} (${grund})`), value: eur(v.split.vatStandard) })
             }
             if (furnNet > 0) {
-              lines.push({ label: 'Einrichtungspaket (netto)', value: eur(furnNet) })
-              lines.push({ label: 'MwSt 19 % auf Einrichtung', value: eur(v.furnVat) })
-            } else if (modus === 'included') lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
-            else if (modus === 'optional') lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
-            lines.push({ label: 'MwSt gesamt', value: eur(v.vat) })
-            lines.push({ label: 'Bruttopreis', value: eur(brutto), strong: true })
+              lines.push({ label: L.einrichtungNetto, value: eur(furnNet) })
+              lines.push({ label: L.mwstEinr, value: eur(v.furnVat) })
+            } else if (modus === 'included') lines.push({ label: L.einrichtung, value: L.imPreis })
+            else if (modus === 'optional') lines.push({ label: EN ? 'Furniture package' : 'Einrichtungspaket', value: L.nichtImPreis })
+            lines.push({ label: L.mwstGesamt, value: eur(v.vat) })
+            lines.push({ label: L.brutto, value: eur(brutto), strong: true })
             return lines
           }
           const lines: Array<{ label: string; value: string; strong?: boolean }> = [
-            { label: furnNet > 0 ? 'Nettopreis (inkl. Einrichtung)' : (modus === 'included' ? 'Nettopreis (inkl. Möbel)' : 'Nettopreis'), value: eur(totalNet) },
-            { label: `zzgl. MwSt (${vatPct})`, value: eur(v.vat) },
+            { label: furnNet > 0 ? L.nettoInklEinr : (modus === 'included' ? L.nettoInklMoebel : L.netto), value: eur(totalNet) },
+            { label: L.zzglMwst(vatPct), value: eur(v.vat) },
             { label: 'Bruttopreis', value: eur(brutto), strong: true },
           ]
-          if (furnNet > 0) lines.push({ label: 'davon Einrichtungspaket', value: `${eur(furnNet)} netto · ${eur(furnNet + Math.round(furnNet * 0.19))} brutto` })
-          else if (modus === 'included') lines.push({ label: 'Einrichtung', value: 'im Kaufpreis enthalten' })
+          if (furnNet > 0) lines.push({ label: L.davonEinr, value: EN ? `${eur(furnNet)} net · ${eur(furnNet + Math.round(furnNet * 0.19))} gross` : `${eur(furnNet)} netto · ${eur(furnNet + Math.round(furnNet * 0.19))} brutto` })
+          else if (modus === 'included') lines.push({ label: L.einrichtung, value: L.imPreis })
           // Schweigen las der Kunde bisher als "ist dabei" - deshalb immer benennen.
           // Bei 'none' bleibt die Zeile weg: das Objekt wird ohne Moebel verkauft.
-          else if (modus === 'optional') lines.push({ label: 'Einrichtungspaket', value: 'nicht im Kaufpreis - Preis auf Anfrage' })
+          else if (modus === 'optional') lines.push({ label: EN ? 'Furniture package' : 'Einrichtungspaket', value: L.nichtImPreis })
           return lines
         }
         const priced = unitList.filter(u => u.price_net > 0)
@@ -1024,7 +1101,15 @@ Deno.serve(async (req) => {
         }
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
     }
-    assignImages(blocks, body.images, projName)
+    // Wohnungsart dieses Decks - entscheidet, welche Grundrisse ueberhaupt passen.
+    let deckUnitTyp = ''
+    if (body.unit_id) {
+      try {
+        const { data } = await sbRules.from('crm_project_units').select('type').eq('id', body.unit_id).maybeSingle()
+        deckUnitTyp = String((data as { type?: string } | null)?.type ?? '')
+      } catch { /* ohne Typ wird nicht gefiltert */ }
+    }
+    assignImages(blocks, body.images, projName, deckUnitTyp)
     // Wahrheits-Backstop: erfundene Zahlungs-/Garantie-/Auslastungs-Saetze raus - und
     // Moebel-Behauptungen, sobald die Stammdaten die Einrichtung NICHT als enthalten
     // ausweisen (furnStatusIncluded wird beim Preisaufbau gesetzt).
@@ -1094,7 +1179,7 @@ Deno.serve(async (req) => {
     }
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
-    injectLocationAndMarina(blocks, projRow?.name || projName, projRow)
+    injectLocationAndMarina(blocks, projRow?.name || projName, projRow, deckLang)
     // Projekt-Video (falls hinterlegt) nach der Lage-Sektion einsetzen.
     injectVideo(blocks, projRow?.video_url)
     // Zahlungsplan sicherstellen: eigener payment_schedule des Projekts, sonst — bei
@@ -1181,7 +1266,16 @@ Deno.serve(async (req) => {
       // Reihenfolge: zuerst Außen/Projekt (Sven: „immer Außenbilder zeigen"),
       // dann ein Rundgang durch die Wohnung. Jedes Bild trägt sein echtes
       // Vision-Label als Titel → Beschriftung passt garantiert zum Bildinhalt.
-      const GROUPS: Array<{ cats: string[]; kicker: string; headline: string }> = [
+      const galEN = deckLang === 'en'
+      const GROUPS: Array<{ cats: string[]; kicker: string; headline: string }> = galEN ? [
+        { cats: ['fassade', 'aussenbereich', 'aussicht'], kicker: 'Project',   headline: 'Exterior & Setting' },
+        { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Interiors',  headline: 'Living & Dining' },
+        { cats: ['kueche'],                             kicker: 'Interiors',  headline: 'Kitchen' },
+        { cats: ['schlafzimmer'],                       kicker: 'Interiors',  headline: 'Bedrooms' },
+        { cats: ['badezimmer'],                         kicker: 'Interiors',  headline: 'Bathrooms' },
+        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Pool & Sundeck' },
+        { cats: ['lobby', 'gym'],                       kicker: 'Amenities',  headline: 'Lobby & Communal Areas' },
+      ] : [
         { cats: ['fassade', 'aussenbereich', 'aussicht'], kicker: 'Projekt',  headline: 'Außenansicht & Lage' },
         { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Innenräume', headline: 'Wohnen & Essen' },
         { cats: ['kueche'],                             kicker: 'Innenräume', headline: 'Küche' },
@@ -1201,7 +1295,7 @@ Deno.serve(async (req) => {
       // Konnten die Bilder nicht in Räume einsortiert werden (z.B. große Fotos, die
       // Vision ablehnt) → trotzdem eine saubere Sammel-Bildstrecke zeigen.
       if (!galleryBlocks.length && gal.length) {
-        galleryBlocks.push({ type: 'gallery', kicker: 'Projekt', headline: 'Eindrücke', items: gal.slice(0, 6).map(x => ({ image: x.url, title: x.label || undefined })) })
+        galleryBlocks.push({ type: 'gallery', kicker: galEN ? 'Project' : 'Projekt', headline: galEN ? 'Impressions' : 'Eindrücke', items: gal.slice(0, 6).map(x => ({ image: x.url, title: x.label || undefined })) })
       }
       if (galleryBlocks.length) {
         const filtered = blocks.filter(b => b.type !== 'gallery')   // Modell-Galerien ersetzen
@@ -1210,6 +1304,49 @@ Deno.serve(async (req) => {
         blocks = [...filtered.slice(0, at), ...galleryBlocks, ...filtered.slice(at)]
       }
     }
+
+    // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
+    // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer
+    // Kasten mit Ueberschrift stehen (Sven 27.8.).
+    {
+      const vorher = blocks.length
+      blocks = blocks.filter(b => b.type !== 'floorplan' || b.image)
+      if (blocks.length !== vorher) console.log('[generate-deck] leeren Grundriss-Block entfernt (kein passender Plan)')
+    }
+
+    // ── Auffang fuer deterministische deutsche Texte ────────────────────────
+    // Bild-Beschriftungen kommen als deutsche Vision-Labels aus der Datenbank und
+    // laufen nie durch die KI - im englischen Deck standen sie deutsch unter den
+    // Fotos (Sven 27.8.). Hier werden sie zusammen uebersetzt: ein Aufruf, alle
+    // Labels, Reihenfolge bleibt erhalten.
+    if (deckLang === 'en') {
+      const felder: Array<{ obj: Record<string, unknown>; key: string }> = []
+      const deutsch = (v: unknown) => typeof v === 'string' && v.trim() && /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Außen|Innen)\b/.test(v)
+      for (const b of blocks) {
+        for (const k of ['headline', 'kicker', 'title', 'note', 'caption']) if (deutsch(b[k])) felder.push({ obj: b, key: k })
+        for (const arrKey of ['items', 'cards', 'cols', 'groups']) {
+          if (!Array.isArray(b[arrKey])) continue
+          for (const it of b[arrKey] as Array<Record<string, unknown>>) {
+            if (!it || typeof it !== 'object') continue
+            for (const k of ['title', 'label', 'caption', 'text']) if (deutsch(it[k])) felder.push({ obj: it, key: k })
+          }
+        }
+      }
+      if (felder.length) {
+        try {
+          const roh = felder.map(f => String(f.obj[f.key]))
+          const tr = await translateOutbound({ subject: null, body: JSON.stringify(roh), whatsapp: null }, 'en')
+          const neu = JSON.parse(tr.body ?? '[]') as string[]
+          if (Array.isArray(neu) && neu.length === felder.length) {
+            felder.forEach((f, i) => { if (typeof neu[i] === 'string' && neu[i].trim()) f.obj[f.key] = neu[i] })
+            console.log(`[generate-deck] ${felder.length} feste Beschriftungen ins Englische übersetzt`)
+          } else console.warn('[generate-deck] Label-Übersetzung verworfen: Anzahl passt nicht')
+        } catch (err) {
+          console.warn('[generate-deck] Label-Übersetzung fehlgeschlagen:', err instanceof Error ? err.message : String(err))
+        }
+      }
+    }
+
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
