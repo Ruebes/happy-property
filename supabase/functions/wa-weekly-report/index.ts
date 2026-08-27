@@ -48,6 +48,8 @@ const cyDateStr = (d: Date) =>
   new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
 const deDate = (d: Date) =>
   new Intl.DateTimeFormat('de-DE', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric' }).format(d)
+const deDateTime = (d: Date) =>
+  new Intl.DateTimeFormat('de-DE', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(d) + ' Uhr'
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const fmtNum = (n: number) => new Intl.NumberFormat('de-DE').format(n)
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')} min`
@@ -79,6 +81,9 @@ interface ReportData {
   appointmentsPrev: number
   deckViews: number
   leadSessions: number
+  /** Zeitpunkt der ersten Web-Session ueberhaupt — solange das juenger ist als
+   *  der Wochenanfang, decken die Web-Zahlen keine volle Woche ab. */
+  trackingSince: Date | null
 }
 
 async function collect(supabase: ReturnType<typeof createClient>): Promise<ReportData> {
@@ -126,6 +131,11 @@ async function collect(supabase: ReturnType<typeof createClient>): Promise<Repor
     .select('id', { count: 'exact', head: true })
     .not('lead_id', 'is', null).gte('started_at', p.p_from).lt('started_at', p.p_to)
 
+  const { data: firstSess } = await supabase.from('web_sessions')
+    .select('started_at').order('started_at', { ascending: true }).limit(1)
+  const trackingSince = firstSess?.length
+    ? new Date((firstSess[0] as { started_at: string }).started_at) : null
+
   const empty: Kpis = { sessions: 0, visitors: 0, pageviews: 0, clicks: 0, avg_duration_s: 0, bounce_pct: 0, avg_scroll_pct: 0, with_replay: 0 }
   return {
     from, to, prevFrom,
@@ -141,6 +151,7 @@ async function collect(supabase: ReturnType<typeof createClient>): Promise<Repor
     appointments, appointmentsPrev,
     deckViews: deckViews ?? 0,
     leadSessions: leadSessions ?? 0,
+    trackingSince,
   }
 }
 
@@ -160,6 +171,8 @@ async function analyze(data: ReportData): Promise<Analysis> {
 
   const compact = {
     zeitraum: `${deDate(data.from)}–${deDate(data.to)}`,
+    web_tracking_aktiv_seit: data.trackingSince ? data.trackingSince.toISOString() : null,
+    hinweis: 'Web-KPIs zaehlen erst ab web_tracking_aktiv_seit; Funnel-/Termin-Zahlen decken die volle Woche ab. NICHT direkt vergleichen, wenn der Tracking-Start in der Woche liegt.',
     web: { diese_woche: data.kpis, vorwoche: data.kpisPrev, sites: data.siteKpis, top_seiten: data.pages, quellen: data.sources, geraete: data.devices },
     termin_funnel: { diese_woche: data.funnel, vorwoche: data.funnelPrev },
     termine_gebucht: { diese_woche: data.appointments, vorwoche: data.appointmentsPrev },
@@ -310,14 +323,24 @@ function buildHtml(data: ReportData, a: Analysis, kw: number): string {
     ${kpi('Termine gebucht', fmtNum(data.appointments), delta(data.appointments, data.appointmentsPrev))}
   </tr></table>
 
+  ${data.trackingSince && data.trackingSince.getTime() > data.from.getTime() + 3600e3 ? `
+  <div style="background:${CI.coralSoft};border:1px solid ${CI.coral};border-radius:12px;padding:12px 16px;margin:14px 0;font-size:13px;color:${CI.ink};line-height:1.5">
+    ⚠️ <b>Achtung, zwei Zeiträume:</b> Das Website-Tracking läuft erst seit
+    <b>${deDateTime(data.trackingSince)}</b> — Besucher, Sitzungen, Dauer und
+    Absprungrate zählen nur ab diesem Zeitpunkt. Die Funnel- und Termin-Zahlen
+    stammen aus dem CRM und decken die <b>volle Woche</b> ab. Deshalb können
+    z.&nbsp;B. mehr Funnel-Aufrufe als Website-Besucher erscheinen. Ab dem
+    nächsten Sonntagsreport passt beides zusammen.
+  </div>` : ''}
+
   ${card('Sitzungen pro Tag', barChart(data.daily))}
 
-  ${data.siteKpis.length ? card('Websites im Vergleich',
+  ${data.siteKpis.length ? card('Websites im Vergleich (seit Tracking-Start)',
     `<table style="width:100%;border-collapse:collapse"><tr>
       ${['Website', 'Besucher', 'Sitzungen', 'Aufrufe', 'Ø Dauer', 'Absprung'].map((h, i) => `<th style="padding:7px 10px;font-size:11px;color:${CI.mute};text-transform:uppercase;text-align:${i ? 'right' : 'left'};border-bottom:2px solid ${CI.line}">${h}</th>`).join('')}
     </tr>${tableRows(siteRows, [1, 2, 3, 4, 5])}</table>`) : ''}
 
-  ${card('Termin-Funnel', funnelChart(data.funnel) +
+  ${card('Termin-Funnel (volle Woche, CRM-Daten)', funnelChart(data.funnel) +
     (data.funnel ? `<p style="font-size:12px;color:${CI.mute};margin:10px 0 0">Zusätzlich ${fmtNum(data.funnel.direct_sessions)} Direkteinstiege (Newsletter/Links) mit ${fmtNum(data.funnel.direct_bookings)} Buchungen · ${fmtNum(data.deckViews)} Exposé-Ansichten · ${fmtNum(data.leadSessions)} Website-Besuche erkannter Kunden</p>` : ''))}
 
   ${card('Warum wurde nicht gebucht?', `<p style="font-size:14px;line-height:1.65;color:${CI.ink};margin:0">${esc(a.nicht_gebucht)}</p>`)}
