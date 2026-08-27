@@ -452,6 +452,7 @@ export default function WebAnalytics() {
       const { from, to } = periodRange(period, customFrom, customTo)
       let q = supabase.from('web_sessions')
         .select('id, visitor_id, site, entry_path, referrer, utm, device, browser, os, lead_id, started_at, duration_s, pageviews, clicks, max_scroll_pct, has_replay, leads(first_name, last_name)')
+        .eq('is_bot', false)
         .gte('started_at', from.toISOString())
         .lt('started_at', to.toISOString())
         .order('started_at', { ascending: false })

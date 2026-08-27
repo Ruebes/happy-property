@@ -25,6 +25,27 @@ const json = (b: unknown, s = 200) =>
 
 const BOT_RE = /bot|crawl|spider|slurp|headless|lighthouse|pingdom|facebookexternal|preview|monitor|scanner|curl|wget/i
 
+// Mail-Sicherheits-Scanner (SafeLinks & Co.): echte Browser aus US-Rechen-
+// zentren. Zielgruppe ist DACH — US-/UTC-Zeitzonen werden als Bot markiert
+// (gespeichert, aber aus allen Auswertungen gefiltert, Migration 20260827_wa_bots).
+const BOT_TZ_RE = /^(America|US)\//
+const isBotTz = (tz: string) => BOT_TZ_RE.test(tz) || tz === 'UTC'
+
+// IP-Sperrliste (crm_settings.wa_blocked_ips, Komma-Liste): Svens eigene
+// Besuche werden gar nicht erst gespeichert. 5 Minuten im Isolate gecacht.
+let blockedIpsCache: { ips: Set<string>; ts: number } | null = null
+async function isBlockedIp(supabase: ReturnType<typeof createClient>, ip: string): Promise<boolean> {
+  if (!ip) return false
+  if (!blockedIpsCache || Date.now() - blockedIpsCache.ts > 5 * 60 * 1000) {
+    try {
+      const { data } = await supabase.from('crm_settings').select('value').eq('key', 'wa_blocked_ips').maybeSingle()
+      const list = ((data as { value?: string } | null)?.value ?? '').split(',').map(s => s.trim()).filter(Boolean)
+      blockedIpsCache = { ips: new Set(list), ts: Date.now() }
+    } catch { blockedIpsCache = { ips: new Set(), ts: Date.now() } }
+  }
+  return blockedIpsCache.ips.has(ip)
+}
+
 // ── User-Agent grob parsen (reicht fuer Geraete-/Browser-Split) ──────────────
 function parseUa(ua: string): { device: string; browser: string; os: string } {
   const device = /ipad|tablet/i.test(ua) ? 'Tablet'
@@ -86,6 +107,15 @@ if (document.prerendering) {
   return;
 }
 var API='${base}';
+// Opt-out fuer interne Nutzer: Seite EINMAL mit ?hpwa=aus aufrufen →
+// dieses Geraet wird auf dieser Website dauerhaft nicht mehr getrackt.
+// Rueckgaengig: ?hpwa=an
+try {
+  var _oo = new URLSearchParams(location.search).get('hpwa');
+  if (_oo === 'aus') { localStorage.setItem('_hpwa_off', '1'); alert('Web-Tracking ist fuer dieses Geraet auf ' + location.hostname + ' jetzt AUS.'); }
+  if (_oo === 'an')  { localStorage.removeItem('_hpwa_off'); alert('Web-Tracking ist fuer dieses Geraet auf ' + location.hostname + ' wieder AN.'); }
+  if (localStorage.getItem('_hpwa_off') === '1') return;
+} catch (e) {}
 var MAX_REPLAY_MS=20*60*1000; // Replay-Deckel pro Session
 function uid(){ try { return crypto.randomUUID(); } catch(e){ return 'xxxxxxxxyxxxxyxxxyxxxxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return (c=='x'?r:(r&3|8)).toString(16)}) } }
 function store(s,k,v){ try{ if(v===undefined) return s.getItem(k); s.setItem(k,v); }catch(e){} }
@@ -263,6 +293,7 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
     screen_w: session.screen_w ?? null, screen_h: session.screen_h ?? null,
     lang: (session.lang ?? '').slice(0, 20) || null,
     tz: (session.tz ?? '').slice(0, 60) || null,
+    is_bot: isBotTz(String(session.tz ?? '')),
     user_agent: ua.slice(0, 400),
     last_seen_at: new Date().toISOString(),
     duration_s: Math.max(ex?.duration_s ?? 0, Math.min(Number(session.active_s) || 0, 6 * 3600)),
@@ -308,7 +339,9 @@ async function handleBatch(session: SessionInfo, events: TrackEvent[], ua: strin
 async function handleReplay(sid: string, seq: number, events: unknown[], site: string, visitor: string): Promise<void> {
   if (!sid || !UUID_RE.test(sid) || !Array.isArray(events) || !events.length) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const { data: sess } = await supabase.from('web_sessions').select('id, has_replay').eq('id', sid).maybeSingle()
+  const { data: sess } = await supabase.from('web_sessions').select('id, has_replay, is_bot').eq('id', sid).maybeSingle()
+  // Bot-Sessions (Mail-Scanner): keine Replays speichern — nur Speicherballast.
+  if ((sess as { is_bot?: boolean } | null)?.is_bot) return
   // Ohne Startbild (Full-Snapshot, rrweb-Typ 2) ist ein Replay nicht abspielbar.
   // Fragmente von Sessions, deren Snapshot nie ankam (alte gecachte Tracker,
   // verlorener Chunk 0), werden verworfen — sonst stehen im Dashboard
@@ -362,6 +395,10 @@ Deno.serve(async (req) => {
     if (req.method === 'POST') {
       const ua = req.headers.get('user-agent') ?? ''
       if (BOT_RE.test(ua)) return new Response(null, { status: 204, headers: CORS })
+      // Interne Besucher (Sven & Team) per IP-Sperrliste komplett ignorieren.
+      const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim()
+      const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      if (await isBlockedIp(sb, ip)) return new Response(null, { status: 204, headers: CORS })
       const body = await req.text()
       const data = JSON.parse(body || '{}') as {
         a?: string
