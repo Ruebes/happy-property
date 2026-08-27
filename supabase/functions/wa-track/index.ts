@@ -72,6 +72,19 @@ function trackerJs(base: string): string {
 'use strict';
 if (window.__hpwa) return; window.__hpwa = 1;
 if (/${BOT_RE.source}/i.test(navigator.userAgent)) return;
+// Nur das Top-Fenster tracken — eingebettete iframes derselben Site wuerden
+// sonst Geister-Sessions erzeugen.
+if (window.top !== window.self) return;
+// Prerender (Chrome/WP Speculative Loading): erst tracken, wenn die Seite
+// wirklich aktiviert wird — sonst zaehlt jeder vorgeladene Link als Besuch.
+if (document.prerendering) {
+  window.__hpwa = 0; // Guard freigeben, Script laedt sich bei Aktivierung neu
+  document.addEventListener('prerenderingchange', function(){
+    var s=document.createElement('script');
+    s.src='${base}/t.js'; document.head.appendChild(s);
+  }, { once: true });
+  return;
+}
 var API='${base}';
 var MAX_REPLAY_MS=20*60*1000; // Replay-Deckel pro Session
 function uid(){ try { return crypto.randomUUID(); } catch(e){ return 'xxxxxxxxyxxxxyxxxyxxxxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0;return (c=='x'?r:(r&3|8)).toString(16)}) } }
@@ -166,8 +179,11 @@ window.hpwa=function(cmd,name,meta){ if(cmd==='event'&&name){ push({ t:'custom',
 function flushReplay(sync){
   if(!replayBuf.length) return;
   var body=JSON.stringify({ a:'replay', sid:sid, seq:replaySeq++, events:replayBuf.splice(0,replayBuf.length) });
-  if(sync && navigator.sendBeacon){ navigator.sendBeacon(API, new Blob([body],{type:'text/plain'})); return; }
-  try{ fetch(API,{method:'POST',headers:{'Content-Type':'text/plain'},body:body,keepalive:true}).catch(function(){}); }catch(e){}
+  // WICHTIG: kein keepalive/sendBeacon fuer grosse Chunks — beide haben ein
+  // 64-KB-Limit und der DOM-Snapshot (Chunk 0) ist deutlich groesser. Ein
+  // verlorener Chunk 0 = Replay nicht abspielbar (weisser Player).
+  if(sync && navigator.sendBeacon && body.length<60000){ navigator.sendBeacon(API, new Blob([body],{type:'text/plain'})); return; }
+  try{ fetch(API,{method:'POST',headers:{'Content-Type':'text/plain'},body:body,keepalive:body.length<60000}).catch(function(){}); }catch(e){}
 }
 function startReplay(){
   if(!window.rrwebRecord) return;
@@ -177,6 +193,9 @@ function startReplay(){
       emit:function(ev){
         if(Date.now()-replayStarted>MAX_REPLAY_MS){ if(stop) stop(); return; }
         replayBuf.push(ev);
+        // Snapshot (Typ 2) sofort hochladen — er ist die Grundlage des Replays
+        // und darf nicht im Puffer haengen, falls der Besucher schnell weg ist.
+        if(ev.type===2){ flushReplay(); return; }
         if(replayBuf.length>=120) flushReplay();
       },
       maskAllInputs:true,

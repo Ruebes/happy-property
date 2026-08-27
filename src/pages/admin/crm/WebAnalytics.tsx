@@ -145,10 +145,12 @@ function SessionModal({ session, onClose }: SessionModalProps) {
         const chunks = (data as unknown as { seq: number; events: unknown[] }[]) ?? []
         const all = chunks.flatMap(c => c.events)
         if (cancelled || !playerRef.current) return
-        if (all.length < 2) { setReplayState('error'); return }
+        // Ohne Full-Snapshot (rrweb-Eventtyp 2) kann der Player nichts rendern —
+        // passiert bei alten/unvollstaendigen Aufzeichnungen.
+        const hasSnapshot = all.some(e => (e as { type?: number }).type === 2)
+        if (all.length < 2 || !hasSnapshot) { setReplayState('error'); return }
         const { default: rrwebPlayer } = await import('rrweb-player')
         if (cancelled || !playerRef.current) return
-        playerRef.current.innerHTML = ''
         playerInstance.current = new rrwebPlayer({
           target: playerRef.current,
           props: {
@@ -171,6 +173,9 @@ function SessionModal({ session, onClose }: SessionModalProps) {
       cancelled = true
       try { playerInstance.current?.$destroy() } catch { /* egal */ }
       playerInstance.current = null
+      // Svelte-eigenen Container leeren — React rendert hier NIE Kinder rein
+      // (sonst crasht Reacts removeChild beim naechsten Re-Render).
+      if (playerRef.current) playerRef.current.innerHTML = ''
     }
   }, [session.id, session.has_replay])
 
@@ -183,12 +188,12 @@ function SessionModal({ session, onClose }: SessionModalProps) {
         <div className="flex items-start justify-between mb-4">
           <div>
             <h2 className="text-lg font-bold text-gray-900">
-              {leadName || t('crm.wa.visitor', 'Besucher')} · {session.site}
+              {leadName || t('crm.webstats.visitor', 'Besucher')} · {session.site}
             </h2>
             <p className="text-sm text-gray-500">
               {new Date(session.started_at).toLocaleString('de-DE')} · {session.device} / {session.browser} / {session.os}
-              {' · '}{t('crm.wa.duration', 'Dauer')} {fmtDur(session.duration_s)}
-              {' · '}{session.pageviews} {t('crm.wa.pages', 'Seiten')} · {session.clicks} {t('crm.wa.clicks', 'Klicks')}
+              {' · '}{t('crm.webstats.duration', 'Dauer')} {fmtDur(session.duration_s)}
+              {' · '}{session.pageviews} {t('crm.webstats.pages', 'Seiten')} · {session.clicks} {t('crm.webstats.clicks', 'Klicks')}
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
@@ -196,19 +201,24 @@ function SessionModal({ session, onClose }: SessionModalProps) {
 
         {session.has_replay && (
           <div className="mb-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">🎬 {t('crm.wa.replay', 'Session-Replay')}</h3>
-            <div ref={playerRef} className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 min-h-[200px] flex items-center justify-center">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">🎬 {t('crm.webstats.replay', 'Session-Replay')}</h3>
+            {/* Wrapper ist React-Territorium; das ref-Div gehoert exklusiv dem
+                rrweb-Player (Svelte). Beide mischen = removeChild-Crash. */}
+            <div className="rounded-xl overflow-hidden border border-gray-200 bg-gray-50 min-h-[100px]">
               {replayState === 'loading' && (
-                <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
+                <div className="flex justify-center py-10">
+                  <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
+                </div>
               )}
               {replayState === 'error' && (
-                <p className="text-sm text-gray-400 py-8">{t('crm.wa.replayError', 'Replay konnte nicht geladen werden.')}</p>
+                <p className="text-sm text-gray-400 py-8 text-center">{t('crm.webstats.replayError', 'Diese Aufzeichnung ist unvollständig und kann nicht abgespielt werden.')}</p>
               )}
+              <div ref={playerRef} />
             </div>
           </div>
         )}
 
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('crm.wa.timeline', 'Verlauf')}</h3>
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('crm.webstats.timeline', 'Verlauf')}</h3>
         {loading ? (
           <div className="flex justify-center py-8">
             <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
@@ -225,14 +235,14 @@ function SessionModal({ session, onClose }: SessionModalProps) {
                   <span className="shrink-0">{icon}</span>
                   <span className="text-gray-700 break-all">
                     {e.type === 'pageview' && <>{e.path}</>}
-                    {e.type === 'click' && <>{t('crm.wa.clickOn', 'Klick auf')} <span className="font-medium">{e.txt || e.selector || '?'}</span> <span className="text-gray-400">({e.path})</span></>}
-                    {e.type === 'scroll' && <>{t('crm.wa.scrolledTo', 'Gescrollt bis')} {(e.meta as { pct?: number } | null)?.pct ?? '?'}%</>}
+                    {e.type === 'click' && <>{t('crm.webstats.clickOn', 'Klick auf')} <span className="font-medium">{e.txt || e.selector || '?'}</span> <span className="text-gray-400">({e.path})</span></>}
+                    {e.type === 'scroll' && <>{t('crm.webstats.scrolledTo', 'Gescrollt bis')} {(e.meta as { pct?: number } | null)?.pct ?? '?'}%</>}
                     {isCustom && <span className="font-medium text-orange-600">{e.type.slice(2)}</span>}
                   </span>
                 </div>
               )
             })}
-            {events.length === 0 && <p className="text-sm text-gray-400">{t('crm.wa.noEvents', 'Keine Ereignisse.')}</p>}
+            {events.length === 0 && <p className="text-sm text-gray-400">{t('crm.webstats.noEvents', 'Keine Ereignisse.')}</p>}
           </div>
         )}
       </div>
@@ -384,42 +394,42 @@ export default function WebAnalytics() {
 
   // ── UI-Bausteine ───────────────────────────────────────────────────────────
   const PERIODS: { id: Period; label: string }[] = [
-    { id: 'today',     label: t('crm.wa.period.today', 'Heute') },
-    { id: 'yesterday', label: t('crm.wa.period.yesterday', 'Gestern') },
-    { id: 'week',      label: t('crm.wa.period.week', '7 Tage') },
-    { id: 'month',     label: t('crm.wa.period.month', '30 Tage') },
-    { id: 'quarter',   label: t('crm.wa.period.quarter', '90 Tage') },
-    { id: 'custom',    label: t('crm.wa.period.custom', 'Benutzerdefiniert') },
+    { id: 'today',     label: t('crm.webstats.period.today', 'Heute') },
+    { id: 'yesterday', label: t('crm.webstats.period.yesterday', 'Gestern') },
+    { id: 'week',      label: t('crm.webstats.period.week', '7 Tage') },
+    { id: 'month',     label: t('crm.webstats.period.month', '30 Tage') },
+    { id: 'quarter',   label: t('crm.webstats.period.quarter', '90 Tage') },
+    { id: 'custom',    label: t('crm.webstats.period.custom', 'Benutzerdefiniert') },
   ]
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'overview', label: t('crm.wa.tab.overview', 'Übersicht') },
-    { id: 'heatmap',  label: t('crm.wa.tab.heatmap', 'Heatmap') },
-    { id: 'visitors', label: t('crm.wa.tab.visitors', 'Besucher & Replays') },
+    { id: 'overview', label: t('crm.webstats.tab.overview', 'Übersicht') },
+    { id: 'heatmap',  label: t('crm.webstats.tab.heatmap', 'Heatmap') },
+    { id: 'visitors', label: t('crm.webstats.tab.visitors', 'Besucher & Replays') },
   ]
 
   const maxDaily = Math.max(1, ...daily.map(d => d.sessions))
   const sourceOf = (s: SessionRow) => {
     if (s.utm?.utm_source || s.utm?.src) return s.utm.utm_source || s.utm.src
     try { if (s.referrer) return new URL(s.referrer).hostname.replace('www.', '') } catch { /* kaputter Referrer */ }
-    return t('crm.wa.direct', 'direkt')
+    return t('crm.webstats.direct', 'direkt')
   }
 
   const kpiCards: { label: string; value: string }[] = kpis ? [
-    { label: t('crm.wa.kpi.visitors', 'Besucher'),      value: fmtNum(kpis.visitors) },
-    { label: t('crm.wa.kpi.sessions', 'Sitzungen'),     value: fmtNum(kpis.sessions) },
-    { label: t('crm.wa.kpi.pageviews', 'Seitenaufrufe'), value: fmtNum(kpis.pageviews) },
-    { label: t('crm.wa.kpi.avgDuration', 'Ø Dauer'),    value: fmtDur(kpis.avg_duration_s) },
-    { label: t('crm.wa.kpi.bounce', 'Absprungrate'),    value: `${kpis.bounce_pct}%` },
-    { label: t('crm.wa.kpi.scroll', 'Ø Scrolltiefe'),   value: `${kpis.avg_scroll_pct}%` },
-    { label: t('crm.wa.kpi.clicks', 'Klicks'),          value: fmtNum(kpis.clicks) },
-    { label: t('crm.wa.kpi.replays', 'Replays'),        value: fmtNum(kpis.with_replay) },
+    { label: t('crm.webstats.kpi.visitors', 'Besucher'),      value: fmtNum(kpis.visitors) },
+    { label: t('crm.webstats.kpi.sessions', 'Sitzungen'),     value: fmtNum(kpis.sessions) },
+    { label: t('crm.webstats.kpi.pageviews', 'Seitenaufrufe'), value: fmtNum(kpis.pageviews) },
+    { label: t('crm.webstats.kpi.avgDuration', 'Ø Dauer'),    value: fmtDur(kpis.avg_duration_s) },
+    { label: t('crm.webstats.kpi.bounce', 'Absprungrate'),    value: `${kpis.bounce_pct}%` },
+    { label: t('crm.webstats.kpi.scroll', 'Ø Scrolltiefe'),   value: `${kpis.avg_scroll_pct}%` },
+    { label: t('crm.webstats.kpi.clicks', 'Klicks'),          value: fmtNum(kpis.clicks) },
+    { label: t('crm.webstats.kpi.replays', 'Replays'),        value: fmtNum(kpis.with_replay) },
   ] : []
 
   return (
     <DashboardLayout basePath="/admin/crm">
       <div className="space-y-6">
         <div className="flex items-center justify-between flex-wrap gap-3">
-          <h1 className="text-2xl font-bold text-gray-900">{t('crm.wa.title', 'Web-Analytics')}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{t('crm.webstats.title', 'Web-Analytics')}</h1>
           <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
             {TABS.map(tb => (
               <button key={tb.id} onClick={() => setTab(tb.id)}
@@ -444,7 +454,7 @@ export default function WebAnalytics() {
           ))}
           <select value={site} onChange={e => setSite(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
-            <option value="">{t('crm.wa.allSites', 'Alle Websites')}</option>
+            <option value="">{t('crm.webstats.allSites', 'Alle Websites')}</option>
             {sites.map(s => <option key={s.site} value={s.site}>{s.site} ({s.sessions})</option>)}
           </select>
         </div>
@@ -476,9 +486,9 @@ export default function WebAnalytics() {
 
             {/* Verlauf */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.wa.trend', 'Sitzungen pro Tag')}</h3>
+              <h3 className="text-sm font-semibold text-gray-700 mb-3">{t('crm.webstats.trend', 'Sitzungen pro Tag')}</h3>
               {daily.length === 0 ? (
-                <p className="text-sm text-gray-400">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
+                <p className="text-sm text-gray-400">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
               ) : (
                 <div className="flex items-end gap-1 h-36">
                   {daily.map(d => (
@@ -497,7 +507,7 @@ export default function WebAnalytics() {
             <div className="grid md:grid-cols-2 gap-4">
               {/* Top-Seiten */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.wa.topPages', 'Top-Seiten')}</h3>
+                <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.webstats.topPages', 'Top-Seiten')}</h3>
                 <table className="w-full text-sm">
                   <tbody className="divide-y divide-gray-50">
                     {pages.map((p, i) => (
@@ -505,25 +515,25 @@ export default function WebAnalytics() {
                         <td className="px-5 py-2 text-gray-700 break-all">
                           {!site && <span className="text-gray-400 text-xs">{p.site}</span>}<br className={site ? 'hidden' : ''} />{p.path}
                         </td>
-                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{fmtNum(p.views)} <span className="text-xs text-gray-400">{t('crm.wa.views', 'Aufrufe')}</span></td>
+                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{fmtNum(p.views)} <span className="text-xs text-gray-400">{t('crm.webstats.views', 'Aufrufe')}</span></td>
                       </tr>
                     ))}
-                    {pages.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
+                    {pages.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
                   </tbody>
                 </table>
               </div>
               {/* Quellen */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.wa.sources', 'Quellen')}</h3>
+                <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.webstats.sources', 'Quellen')}</h3>
                 <table className="w-full text-sm">
                   <tbody className="divide-y divide-gray-50">
                     {sources.map((s, i) => (
                       <tr key={i} className="hover:bg-gray-50">
                         <td className="px-5 py-2 text-gray-700">{s.source}</td>
-                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{fmtNum(s.sessions)} <span className="text-xs text-gray-400">{t('crm.wa.sessionsShort', 'Sitzungen')}</span></td>
+                        <td className="px-3 py-2 text-right text-gray-500 whitespace-nowrap">{fmtNum(s.sessions)} <span className="text-xs text-gray-400">{t('crm.webstats.sessionsShort', 'Sitzungen')}</span></td>
                       </tr>
                     ))}
-                    {sources.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
+                    {sources.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -531,7 +541,7 @@ export default function WebAnalytics() {
 
             {/* Geräte */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.wa.devices', 'Geräte & Browser')}</h3>
+              <h3 className="text-sm font-semibold text-gray-700 px-5 pt-4 pb-2">{t('crm.webstats.devices', 'Geräte & Browser')}</h3>
               <table className="w-full text-sm">
                 <tbody className="divide-y divide-gray-50">
                   {devices.map((d, i) => (
@@ -541,7 +551,7 @@ export default function WebAnalytics() {
                       <td className="px-3 py-2 text-right text-gray-500">{fmtNum(d.sessions)}</td>
                     </tr>
                   ))}
-                  {devices.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
+                  {devices.length === 0 && <tr><td className="px-5 py-4 text-gray-400">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -555,7 +565,7 @@ export default function WebAnalytics() {
               <select value={heatSite} onChange={e => { setHeatSite(e.target.value); setHeatPath('') }}
                 className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
                 {sites.map(s => <option key={s.site} value={s.site}>{s.site}</option>)}
-                {sites.length === 0 && <option value="">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</option>}
+                {sites.length === 0 && <option value="">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</option>}
               </select>
               <select value={heatPath} onChange={e => setHeatPath(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white max-w-xs">
@@ -566,12 +576,12 @@ export default function WebAnalytics() {
                   <button key={ty} onClick={() => setHeatType(ty)}
                     className="px-3 py-1 rounded-md text-sm font-medium"
                     style={heatType === ty ? { backgroundColor: '#fff', color: '#1a2332' } : { color: '#6b7280' }}>
-                    {ty === 'click' ? t('crm.wa.heatClicks', 'Klicks') : t('crm.wa.heatMoves', 'Bewegung')}
+                    {ty === 'click' ? t('crm.webstats.heatClicks', 'Klicks') : t('crm.webstats.heatMoves', 'Bewegung')}
                   </button>
                 ))}
               </div>
               <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-                {([['', t('crm.wa.all', 'Alle')], ['Desktop', 'Desktop'], ['Mobil', 'Mobil']] as const).map(([v, l]) => (
+                {([['', t('crm.webstats.all', 'Alle')], ['Desktop', 'Desktop'], ['Mobil', 'Mobil']] as const).map(([v, l]) => (
                   <button key={v} onClick={() => setHeatDevice(v as '' | 'Desktop' | 'Mobil')}
                     className="px-3 py-1 rounded-md text-sm font-medium"
                     style={heatDevice === v ? { backgroundColor: '#fff', color: '#1a2332' } : { color: '#6b7280' }}>
@@ -579,19 +589,19 @@ export default function WebAnalytics() {
                   </button>
                 ))}
               </div>
-              <span className="text-sm text-gray-500">{fmtNum(heatPoints.length)} {t('crm.wa.points', 'Punkte')}</span>
+              <span className="text-sm text-gray-500">{fmtNum(heatPoints.length)} {t('crm.webstats.points', 'Punkte')}</span>
             </div>
 
             {scrollDepth && scrollDepth.sessions > 0 && (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('crm.wa.scrollDepth', 'Scrolltiefe')} ({scrollDepth.sessions} {t('crm.wa.sessionsShort', 'Sitzungen')})</h3>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">{t('crm.webstats.scrollDepth', 'Scrolltiefe')} ({scrollDepth.sessions} {t('crm.webstats.sessionsShort', 'Sitzungen')})</h3>
                 <div className="flex gap-2">
                   {[['25%', scrollDepth.p25], ['50%', scrollDepth.p50], ['75%', scrollDepth.p75], ['100%', scrollDepth.p100]].map(([l, v]) => (
                     <div key={l as string} className="flex-1">
                       <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
                         <div className="h-full rounded-full" style={{ width: `${v}%`, backgroundColor: '#ff795d' }} />
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">{l}: {v}% {t('crm.wa.reach', 'erreichen')}</p>
+                      <p className="text-xs text-gray-500 mt-1">{l}: {v}% {t('crm.webstats.reach', 'erreichen')}</p>
                     </div>
                   ))}
                 </div>
@@ -604,7 +614,7 @@ export default function WebAnalytics() {
                   <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
                 </div>
               ) : heatPoints.length === 0 ? (
-                <p className="text-sm text-gray-400 py-8 text-center">{t('crm.wa.noHeatData', 'Für diese Seite liegen im Zeitraum keine Daten vor.')}</p>
+                <p className="text-sm text-gray-400 py-8 text-center">{t('crm.webstats.noHeatData', 'Für diese Seite liegen im Zeitraum keine Daten vor.')}</p>
               ) : (
                 <div className="relative mx-auto" style={{ width: frameW, height: frameH }}>
                   <iframe src={`https://${heatSite}${heatPath}`} title="Heatmap"
@@ -614,7 +624,7 @@ export default function WebAnalytics() {
                   <canvas ref={heatCanvasRef} className="absolute inset-0 pointer-events-none" style={{ opacity: 0.9 }} />
                 </div>
               )}
-              <p className="text-xs text-gray-400 mt-2">{t('crm.wa.heatHint', 'Seiten-Vorschau live von der Website; Punkte werden auf die Seitenbreite skaliert.')}</p>
+              <p className="text-xs text-gray-400 mt-2">{t('crm.webstats.heatHint', 'Seiten-Vorschau live von der Website; Punkte werden auf die Seitenbreite skaliert.')}</p>
             </div>
           </>
         )}
@@ -625,11 +635,11 @@ export default function WebAnalytics() {
             <div className="flex gap-3 items-center text-sm">
               <label className="flex items-center gap-2 text-gray-600">
                 <input type="checkbox" checked={onlyLeads} onChange={e => setOnlyLeads(e.target.checked)} className="rounded" />
-                {t('crm.wa.onlyLeads', 'Nur erkannte Kunden')}
+                {t('crm.webstats.onlyLeads', 'Nur erkannte Kunden')}
               </label>
               <label className="flex items-center gap-2 text-gray-600">
                 <input type="checkbox" checked={onlyReplay} onChange={e => setOnlyReplay(e.target.checked)} className="rounded" />
-                {t('crm.wa.onlyReplay', 'Nur mit Replay')}
+                {t('crm.webstats.onlyReplay', 'Nur mit Replay')}
               </label>
             </div>
             {loading ? (
@@ -637,19 +647,19 @@ export default function WebAnalytics() {
                 <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
               </div>
             ) : sessions.length === 0 ? (
-              <p className="text-gray-400 text-center py-16">{t('crm.wa.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
+              <p className="text-gray-400 text-center py-16">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
             ) : (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.time', 'Zeit')}</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.visitor', 'Besucher')}</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.site', 'Website')}</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.source', 'Quelle')}</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.device', 'Gerät')}</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.pages', 'Seiten')}</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.wa.duration', 'Dauer')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.time', 'Zeit')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.visitor', 'Besucher')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.site', 'Website')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.source', 'Quelle')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.device', 'Gerät')}</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.pages', 'Seiten')}</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.duration', 'Dauer')}</th>
                       <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase"></th>
                     </tr>
                   </thead>
