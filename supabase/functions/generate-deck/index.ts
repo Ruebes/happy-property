@@ -1331,54 +1331,44 @@ Deno.serve(async (req) => {
       if (blocks.length !== vorher) console.log('[generate-deck] leeren Grundriss-Block entfernt (kein passender Plan)')
     }
 
-    // ── Auffang fuer deterministische deutsche Texte ────────────────────────
-    // Bild-Beschriftungen kommen als deutsche Vision-Labels aus der Datenbank und
-    // laufen nie durch die KI - im englischen Deck standen sie deutsch unter den
-    // Fotos (Sven 27.8.). Hier werden sie zusammen uebersetzt: ein Aufruf, alle
-    // Labels, Reihenfolge bleibt erhalten.
+    // ── Auffang: KEIN deutscher Text im englischen Deck ──────────────────────
+    // Rekursiv ueber ALLE Felder, nicht nur ueber eine Feldliste - vorher rutschten
+    // einzelne Woerter durch, weil sie in einem nicht geprueften Feld standen
+    // ("schluesselfertig" mitten im englischen Absatz, Sven 27.8.). Betroffen sind
+    // deterministisch gesetzte Texte (Bild-Labels aus der Datenbank) ebenso wie
+    // Woerter, die die KI aus den deutschen Fakten uebernommen hat.
     if (deckLang === 'en') {
-      const felder: Array<{ obj: Record<string, unknown>; key: string }> = []
-      const deutsch = (v: unknown) => typeof v === 'string' && v.trim() && /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Aussen|Innen|raumhoh\w*|bodentief\w*|schluesselfertig|Fussboden\w*|Wohnzimmer|Schlafzimmer|Kueche|Terrasse|Grundstueck|Bautraeger|Uebergabe|Wertsteigerung|Zahlungsplan)\b/i.test(v)
-      for (const b of blocks) {
-        for (const k of ['headline', 'kicker', 'title', 'note', 'caption', 'text', 'intro', 'tagline', 'quote', 'nickname', 'linkLabel', 'sumLabel', 'advantage']) {
-          if (deutsch(b[k])) felder.push({ obj: b, key: k })
-        }
-        if (Array.isArray(b.paragraphs)) {
-          (b.paragraphs as unknown[]).forEach((v, i) => {
-            if (deutsch(v)) felder.push({ obj: b.paragraphs as unknown as Record<string, unknown>, key: String(i) })
+      const DEUTSCH = /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Aussen|Innen|raumhoh\w*|bodentief\w*|schluesselfertig|Fussboden\w*|Wohnzimmer|Schlafzimmer|Kueche|Terrasse|Grundstueck|Bautraeger|Uebergabe|Wertsteigerung|Zahlungsplan)\b/i
+      const traeger: Array<{ o: Record<string | number, unknown>; k: string | number }> = []
+      const sammle = (n: unknown) => {
+        if (Array.isArray(n)) {
+          n.forEach((v, i) => {
+            if (typeof v === 'string') { if (DEUTSCH.test(v) && !v.startsWith('http')) traeger.push({ o: n as unknown as Record<string | number, unknown>, k: i }) }
+            else sammle(v)
           })
-        }
-        for (const phKey of ['phase1', 'phase2']) {
-          const ph = b[phKey] as Record<string, unknown> | undefined
-          if (ph && typeof ph === 'object') {
-            for (const k of ['title', 'label', 'advantage', 'sumLabel']) if (deutsch(ph[k])) felder.push({ obj: ph, key: k })
-            if (Array.isArray(ph.rows)) for (const r of ph.rows as Array<Record<string, unknown>>) {
-              for (const k of ['label', 'sub']) if (deutsch(r[k])) felder.push({ obj: r, key: k })
-            }
-          }
-        }
-        for (const arrKey of ['items', 'cards', 'cols', 'groups']) {
-          if (!Array.isArray(b[arrKey])) continue
-          for (const it of b[arrKey] as Array<Record<string, unknown>>) {
-            if (!it || typeof it !== 'object') continue
-            for (const k of ['title', 'label', 'caption', 'text', 'strong', 'sub', 'value']) if (deutsch(it[k])) felder.push({ obj: it, key: k })
+        } else if (n && typeof n === 'object') {
+          for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
+            if (typeof v === 'string') { if (DEUTSCH.test(v) && !v.startsWith('http')) traeger.push({ o: n as Record<string | number, unknown>, k }) }
+            else sammle(v)
           }
         }
       }
-      if (felder.length) {
+      sammle(blocks)
+      if (traeger.length) {
         try {
-          const roh = felder.map(f => String(f.obj[f.key]))
+          const roh = traeger.map(t => String(t.o[t.k]))
           const tr = await translateOutbound({ subject: null, body: JSON.stringify(roh), whatsapp: null }, 'en')
-          const neu = JSON.parse(tr.body ?? '[]') as string[]
-          if (Array.isArray(neu) && neu.length === felder.length) {
-            felder.forEach((f, i) => { if (typeof neu[i] === 'string' && neu[i].trim()) f.obj[f.key] = neu[i] })
-            console.log(`[generate-deck] ${felder.length} feste Beschriftungen ins Englische übersetzt`)
-          } else console.warn('[generate-deck] Label-Übersetzung verworfen: Anzahl passt nicht')
+          const out = JSON.parse(tr.body ?? '[]') as string[]
+          if (Array.isArray(out) && out.length === traeger.length) {
+            traeger.forEach((t, i) => { if (typeof out[i] === 'string' && out[i].trim()) t.o[t.k] = out[i] })
+            console.log(`[generate-deck] ${traeger.length} deutsche Textstellen ins Englische uebersetzt`)
+          } else console.warn('[generate-deck] Uebersetzung verworfen: Anzahl passt nicht')
         } catch (err) {
-          console.warn('[generate-deck] Label-Übersetzung fehlgeschlagen:', err instanceof Error ? err.message : String(err))
+          console.warn('[generate-deck] Uebersetzung fehlgeschlagen:', err instanceof Error ? err.message : String(err))
         }
       }
     }
+
 
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
