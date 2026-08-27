@@ -27,6 +27,7 @@ Pro Einheit:
 - bedrooms: Anzahl Schlafzimmer als Zahl (Studio=0)
 - bathrooms: Anzahl Bäder als Zahl falls angegeben
 - size_sqm: Innen-/Wohnfläche in m² als Zahl
+- plot_sqm: GRUNDSTUECKSGROESSE in m² als Zahl - nur bei Villen/Haeusern. Spaltenueberschriften: "Plot", "Plot Size", "Plot Area", "Land Area", "Grundstueck", "Parzelle", "Oikopedo". NICHT verwechseln mit der Wohnflaeche (Internal/Covered Area) oder dem Garten (Garden). Fuehrt die Liste eine solche Spalte, MUSS der Wert uebernommen werden. Bei Wohnungen weglassen.
 - terrace_sqm: Außen-/Terrassen-/Balkonfläche in m² als Zahl falls angegeben. WICHTIG: Hat die Liste MEHRERE Außenflächen-Spalten (z.B. "Covered Veranda" UND "Uncovered Veranda/Roof garden"), dann ist terrace_sqm die SUMME aller Außenflächen-Spalten — nicht nur eine davon. Lagerraum (Storage) zählt NICHT dazu.
 - price_net: Nettopreis (ohne MwSt) als reine Zahl ohne Punkte/Währung
 - price_gross: Bruttopreis (inkl. MwSt) als reine Zahl, falls angegeben
@@ -65,6 +66,7 @@ const TOOL = {
             bathrooms:   { type: 'number' },
             size_sqm:    { type: 'number' },
             terrace_sqm: { type: 'number' },
+            plot_sqm:    { type: 'number' },
             price_net:   { type: 'number' },
             price_net_furnished: { type: 'number' },
             furniture_package_net: { type: 'number' },
@@ -174,7 +176,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       // Namens-Normalisierung: Penthouse-Suffix „(P)" und Sonderzeichen ignorieren,
       // sonst matcht „C-301 (P)" (Liste) nicht auf „C-301" (Bestand) → Duplikate.
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s*\(p\)\s*$/, '').replace(/[^a-z0-9]/g, '')
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, status').eq('project_id', body.project_id)
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, plot_sqm, status').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
@@ -198,7 +200,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       const listByNum = new Map<string, Unit>()
       for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; status: string | null }
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; plot_sqm: number | null; status: string | null }
       const driveAll  = (existing ?? []).filter(r => (r as ExRow).source === 'drive_import') as ExRow[]
       const driveFree = driveAll.filter(r => !dealLinked.has(r.id))   // löschbar (Deal-Units bleiben)
       // Developer liefern oft BLOCK-Teillisten (Luma: „A&B" und „C&D" getrennt).
@@ -242,6 +244,9 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         if (newNet != null && Number(newNet) !== Number(r.price_net)) patch.price_net = newNet
         if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
         if (newFurn != null && Number(newFurn) !== Number(r.price_net_furnished)) patch.price_net_furnished = newFurn
+        // Grundstuecksgroesse bei Villen nachtragen (Sven 26.8.).
+        const newPlot = num(lu.plot_sqm)
+        if (newPlot != null && Number(newPlot) !== Number(r.plot_sqm)) patch.plot_sqm = newPlot
         // REAKTIVIERUNG: Der Bauträger führt die Unit wieder mit Preis (available),
         // bei uns steht sie noch sold/reserved (z.B. freigegebene Reservierung oder
         // wieder eröffneter Block) → zurück in den anbietbaren Zustand.
@@ -278,6 +283,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
           bathrooms:   int(u.bathrooms) ?? 1,
           size_sqm:    num(u.size_sqm),
           terrace_sqm: num(u.terrace_sqm),
+          plot_sqm:    num(u.plot_sqm),
           price_net:   num(u.price_net),
           price_net_furnished: num(u.price_net_furnished),
           price_gross: num(u.price_gross),

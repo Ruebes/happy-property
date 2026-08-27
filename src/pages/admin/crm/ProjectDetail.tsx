@@ -76,7 +76,7 @@ const EMPTY_FORM = {
   block: '', unit_number: '',
   type: 'apartment' as UnitType, status: 'active' as UnitStatus,
   bedrooms: 1, bathrooms: 1,
-  size_sqm: '', terrace_sqm: '', floor: '',
+  size_sqm: '', terrace_sqm: '', plot_sqm: '', floor: '',
   price_net: '', price_gross: '', vat_rate: '5',
   is_furnished: false, handover_date: '',
   notes: '',
@@ -154,6 +154,7 @@ function UnitCard({
             <p>
               📐 {unit.size_sqm} m²
               {unit.terrace_sqm != null ? ` · ${unit.terrace_sqm} m² ${t('crm.pd.terrace')}` : ''}
+              {unit.plot_sqm != null ? ` · ${unit.plot_sqm} m² ${t('crm.pd.plot', 'Grundstück')}` : ''}
             </p>
           )}
           {(unit.bedrooms > 0 || unit.bathrooms > 0) && (
@@ -600,6 +601,7 @@ export default function ProjectDetail() {
       bathrooms:    unit.bathrooms,
       size_sqm:     unit.size_sqm?.toString()     ?? '',
       terrace_sqm:  unit.terrace_sqm?.toString()  ?? '',
+      plot_sqm:     unit.plot_sqm?.toString()     ?? '',
       floor:        unit.floor?.toString()         ?? '',
       price_net:    unit.price_net?.toString()     ?? '',
       price_gross:  unit.price_gross?.toString()   ?? '',
@@ -758,6 +760,7 @@ export default function ProjectDetail() {
         bathrooms:    form.bathrooms,
         size_sqm:     form.size_sqm    ? parseFloat(form.size_sqm)   : null,
         terrace_sqm:  form.terrace_sqm ? parseFloat(form.terrace_sqm): null,
+        plot_sqm:     form.plot_sqm ? parseFloat(form.plot_sqm) : null,
         floor:        form.floor       ? parseInt(form.floor)         : null,
         price_net:    form.price_net   ? parseFloat(form.price_net)   : null,
         price_gross:  form.price_gross ? parseFloat(form.price_gross) : null,
@@ -1283,6 +1286,19 @@ export default function ProjectDetail() {
                         onChange={e => setForm(f => ({ ...f, terrace_sqm: e.target.value }))}
                       />
                     </div>
+                    {/* Grundstueck: nur bei Villen/Haeusern relevant (Sven 26.8.) */}
+                    {form.type === 'villa' && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unitEdit.plotArea', 'Grundstück m²')}</label>
+                        <input
+                          type="number" min="0" step="0.01"
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:border-[#ff795d]"
+                          placeholder="278"
+                          value={form.plot_sqm}
+                          onChange={e => setForm(f => ({ ...f, plot_sqm: e.target.value }))}
+                        />
+                      </div>
+                    )}
                     <div>
                       <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.unit.floor')}</label>
                       <input

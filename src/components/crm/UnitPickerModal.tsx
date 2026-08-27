@@ -289,6 +289,9 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
                             {unit.size_sqm != null && (
                               <span>📐 {unit.size_sqm} m²</span>
                             )}
+                            {unit.plot_sqm != null && (
+                              <span>🏡 {t('unitPickerModal.plotLabel', '{{size}} m² Grundstück', { size: unit.plot_sqm })}</span>
+                            )}
                             {unit.terrace_sqm != null && (
                               <span>🌿 {t('unitPickerModal.terraceLabel', '{{size}} m² Terr.', { size: unit.terrace_sqm })}</span>
                             )}

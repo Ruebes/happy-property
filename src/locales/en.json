@@ -2300,7 +2300,8 @@
       "checkingAccess": "Checking portal access …",
       "alreadyHasAccess": "already has portal access — no need to resend.",
       "willCreateOwner": "An owner account will be created automatically after saving.",
-      "saveAndCreateOwner": "✓ Save & create owner"
+      "saveAndCreateOwner": "✓ Save & create owner",
+      "plotArea": "Plot m²"
     },
     "dealProject": {
       "title": "Selected Projects",
@@ -3001,7 +3002,8 @@
       "unitDealLinked": "This unit is linked to a deal — remove it there first, then delete.",
       "unitDeleteConfirm": "Really delete unit {{n}}?",
       "confirmDeletePayment": "Really delete this payment?",
-      "unitDelete": "Delete unit"
+      "unitDelete": "Delete unit",
+      "plot": "plot"
     },
     "prep": {
       "startingSoon": "Appointment starting soon",
@@ -5190,7 +5192,8 @@
     "reasonTaken": "Taken · {{name}}",
     "mineBadge": "This client's unit",
     "confirmReserve": "Reserve",
-    "confirmSell": "Mark as sold"
+    "confirmSell": "Mark as sold",
+    "plotLabel": "{{size}} m² plot"
   },
   "deckChat": {
     "title": "Edit deck",

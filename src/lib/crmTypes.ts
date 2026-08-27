@@ -415,6 +415,8 @@ export interface CrmProjectUnit {
   bathrooms:      number
   size_sqm:       number | null
   terrace_sqm:    number | null
+  /** Grundstuecksgroesse in m² - bei Villen/Haeusern aus der Preisliste, sonst null. */
+  plot_sqm:       number | null
   price_net:      number | null
   price_gross:    number | null
   vat_rate:       number

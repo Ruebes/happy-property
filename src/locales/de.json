@@ -2300,7 +2300,8 @@
       "checkingAccess": "Prüfe Portalzugang …",
       "alreadyHasAccess": "hat bereits Portalzugang — kein erneuter Versand nötig.",
       "willCreateOwner": "Nach dem Speichern wird automatisch ein Eigentümer-Account erstellt.",
-      "saveAndCreateOwner": "✓ Speichern & Eigentümer anlegen"
+      "saveAndCreateOwner": "✓ Speichern & Eigentümer anlegen",
+      "plotArea": "Grundstück m²"
     },
     "dealProject": {
       "title": "Ausgewählte Projekte",
@@ -3001,7 +3002,8 @@
       "unitDealLinked": "Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.",
       "unitDeleteConfirm": "Einheit {{n}} wirklich löschen?",
       "confirmDeletePayment": "Diese Zahlung wirklich löschen?",
-      "unitDelete": "Einheit löschen"
+      "unitDelete": "Einheit löschen",
+      "plot": "Grundstück"
     },
     "prep": {
       "startingSoon": "Termin in Kürze",
@@ -5190,7 +5192,8 @@
     "reasonTaken": "Vergeben · {{name}}",
     "mineBadge": "Einheit dieses Kunden",
     "confirmReserve": "Reservieren",
-    "confirmSell": "Als verkauft übernehmen"
+    "confirmSell": "Als verkauft übernehmen",
+    "plotLabel": "{{size}} m² Grundstück"
   },
   "deckChat": {
     "title": "Deck anpassen",

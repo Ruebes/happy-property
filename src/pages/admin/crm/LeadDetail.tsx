@@ -200,7 +200,7 @@ export default function LeadDetail() {
   const [savingUnit,          setSavingUnit]          = useState(false)
   const [unitEditForm,        setUnitEditForm]        = useState({
     unit_number: '', block: '', type: 'apartment', floor: '',
-    bedrooms: '', bathrooms: '', size_sqm: '', terrace_sqm: '',
+    bedrooms: '', bathrooms: '', size_sqm: '', terrace_sqm: '', plot_sqm: '',
     price_net: '', price_gross: '', vat_rate: '0',
     status: 'active', is_furnished: false, rental_type: '',
     handover_date: '', notes: '',
@@ -1559,6 +1559,7 @@ export default function LeadDetail() {
         bathrooms:     parseInt(unitEditForm.bathrooms)|| 0,
         size_sqm:      unitEditForm.size_sqm           ? parseFloat(unitEditForm.size_sqm)     : null,
         terrace_sqm:   unitEditForm.terrace_sqm        ? parseFloat(unitEditForm.terrace_sqm)  : null,
+        plot_sqm:      unitEditForm.plot_sqm           ? parseFloat(unitEditForm.plot_sqm)     : null,
         price_net:     unitEditForm.price_net          ? parseFloat(unitEditForm.price_net)    : null,
         price_gross:   unitEditForm.price_gross        ? parseFloat(unitEditForm.price_gross)  : null,
         vat_rate:      parseFloat(unitEditForm.vat_rate) || 0,
@@ -1796,6 +1797,7 @@ export default function LeadDetail() {
       bathrooms:     String(unit.bathrooms),
       size_sqm:      unit.size_sqm      != null ? String(unit.size_sqm)     : '',
       terrace_sqm:   unit.terrace_sqm   != null ? String(unit.terrace_sqm)  : '',
+      plot_sqm:      unit.plot_sqm      != null ? String(unit.plot_sqm)     : '',
       price_net:     unit.price_net     != null ? String(unit.price_net)    : '',
       price_gross:   unit.price_gross   != null ? String(unit.price_gross)  : '',
       vat_rate:      String(unit.vat_rate ?? 0),
@@ -1875,6 +1877,7 @@ export default function LeadDetail() {
       bathrooms:     '0',
       size_sqm:      '',
       terrace_sqm:   '',
+      plot_sqm:      '',
       price_net:     dp?.price_net != null ? String(dp.price_net) : '',
       price_gross:   '',
       vat_rate:      '0',
@@ -4458,6 +4461,7 @@ export default function LeadDetail() {
                     bathrooms:     '0',
                     size_sqm:      '',
                     terrace_sqm:   '',
+      plot_sqm:      '',
                     price_net:     dp?.price_net != null ? String(dp.price_net) : '',
                     price_gross:   '',
                     vat_rate:      '0',
@@ -4681,6 +4685,15 @@ export default function LeadDetail() {
                     placeholder="0"
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
                 </div>
+                {unitEditForm.type === 'villa' && (
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.plotArea', 'Grundstück m²')}</label>
+                    <input type="number" value={unitEditForm.plot_sqm}
+                      onChange={e => setUnitEditForm(f => ({ ...f, plot_sqm: e.target.value }))}
+                      placeholder="278"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400" />
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">{t('crm.unitEdit.vat')}</label>
                   <input type="number" value={unitEditForm.vat_rate}
