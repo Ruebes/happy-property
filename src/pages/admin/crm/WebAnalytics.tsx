@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { rebuild, createCache } from 'rrweb-snapshot'
 import 'rrweb-player/dist/style.css'
 
 // ── Typen ────────────────────────────────────────────────────────────────────
@@ -297,6 +298,10 @@ export default function WebAnalytics() {
   const [scrollDepth, setScrollDepth] = useState<ScrollDepth | null>(null)
   const [heatLoading, setHeatLoading] = useState(false)
   const heatCanvasRef = useRef<HTMLCanvasElement>(null)
+  // Seiten-Hintergrund: DOM-Snapshot aus einer Replay-Aufzeichnung (wie
+  // Mouseflow). Live-iframes der Ziel-Seiten rendern nicht zuverlaessig.
+  const snapshotFrameRef = useRef<HTMLIFrameElement>(null)
+  const [snapshotState, setSnapshotState] = useState<'loading' | 'ready' | 'none'>('none')
 
   // Besucher
   const [sessions, setSessions] = useState<SessionRow[]>([])
@@ -369,6 +374,53 @@ export default function WebAnalytics() {
   }, [heatSite, heatPath, heatType, heatDevice, period, customFrom, customTo])
 
   useEffect(() => { if (tab === 'heatmap') void fetchHeatmap() }, [tab, fetchHeatmap])
+
+  // Seiten-Schnappschuss (rrweb-Snapshot aus den Replays) als Heatmap-Hintergrund
+  // in den iframe rendern — zeigt die Seite so, wie Besucher sie sahen.
+  useEffect(() => {
+    if (tab !== 'heatmap' || !heatSite || !heatPath) return
+    let cancelled = false
+    const loadSnapshot = async () => {
+      setSnapshotState('loading')
+      try {
+        let q = supabase.from('web_sessions')
+          .select('id, device')
+          .eq('site', heatSite).eq('entry_path', heatPath).eq('has_replay', true)
+          .order('started_at', { ascending: false }).limit(10)
+        if (heatDevice) q = q.eq('device', heatDevice)
+        const { data: sess, error } = await q
+        if (error) throw error
+        const list = (sess as unknown as { id: string; device: string | null }[]) ?? []
+        // Desktop-Aufnahme bevorzugen — das Layout passt zur breiten Vorschau.
+        const ordered = heatDevice ? list
+          : [...list.filter(x => x.device === 'Desktop'), ...list.filter(x => x.device !== 'Desktop')]
+        for (const cand of ordered) {
+          const { data: ch } = await supabase.from('web_replay_chunks')
+            .select('events').eq('session_id', cand.id).eq('seq', 0).limit(1)
+          const events = (((ch as unknown as { events: unknown[] }[]) ?? [])[0]?.events ?? []) as { type: number; data?: { node?: unknown } }[]
+          const snap = events.find(e => e.type === 2)
+          if (!snap?.data?.node) continue
+          if (cancelled) return
+          // ref-iframe ist immer gemountet; kurz warten, falls React noch rendert
+          for (let i = 0; i < 10 && !snapshotFrameRef.current?.contentDocument; i++) {
+            await new Promise(r => setTimeout(r, 50))
+          }
+          const doc = snapshotFrameRef.current?.contentDocument
+          if (cancelled || !doc) return
+          doc.open(); doc.write('<!DOCTYPE html><html><head></head><body></body></html>'); doc.close()
+          rebuild(snap.data.node as Parameters<typeof rebuild>[0], { doc, cache: createCache() })
+          if (!cancelled) setSnapshotState('ready')
+          return
+        }
+        if (!cancelled) setSnapshotState('none')
+      } catch (err) {
+        console.error('[WebAnalytics] snapshot:', err)
+        if (!cancelled) setSnapshotState('none')
+      }
+    }
+    void loadSnapshot()
+    return () => { cancelled = true }
+  }, [tab, heatSite, heatPath, heatDevice])
 
   // Heatmap-Vorauswahl: erste Site + meistbesuchte Seite
   useEffect(() => {
@@ -668,19 +720,29 @@ export default function WebAnalytics() {
               ) : heatPoints.length === 0 ? (
                 <p className="text-sm text-gray-400 py-8 text-center">{t('crm.webstats.noHeatData', 'Für diese Seite liegen im Zeitraum keine Daten vor.')}</p>
               ) : (
-                <div className="relative mx-auto" style={{ width: frameW, height: frameH }}>
-                  {/* Mit Scripts laden — die .de-Landingpages bauen ihren Inhalt per JS
-                      auf (Loader), ohne JS bleibt der Frame weiss. Der Tracker selbst
-                      laeuft in iframes nicht (window.top-Guard in t.js). Der Canvas
-                      faengt alle Klicks ab, damit niemand IM Vorschau-Frame navigiert. */}
-                  <iframe src={`https://${heatSite}${heatPath}`} title="Heatmap"
+                <div className="relative mx-auto overflow-hidden rounded-lg" style={{ width: frameW, height: frameH }}>
+                  {/* Hintergrund: rekonstruierter Seiten-Schnappschuss aus den
+                      Session-Replays (zuverlaessig, gleiche Ansicht wie der Besucher).
+                      Fallback ohne Snapshot: Live-Einbettung der Seite. Der Canvas
+                      faengt alle Klicks ab, damit niemand IM Frame navigiert. */}
+                  <iframe ref={snapshotFrameRef} title="Heatmap-Snapshot"
                     width={frameW} height={frameH}
-                    className="absolute inset-0 border-0 rounded-lg bg-white"
-                    sandbox="allow-scripts allow-same-origin" scrolling="no" />
+                    className="absolute inset-0 border-0 bg-white" scrolling="no" />
+                  {snapshotState === 'none' && (
+                    <iframe src={`https://${heatSite}${heatPath}`} title="Heatmap-Live"
+                      width={frameW} height={frameH}
+                      className="absolute inset-0 border-0 bg-white"
+                      sandbox="allow-scripts allow-same-origin" scrolling="no" />
+                  )}
+                  {snapshotState === 'loading' && (
+                    <div className="absolute inset-x-0 top-6 flex justify-center">
+                      <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
+                    </div>
+                  )}
                   <canvas ref={heatCanvasRef} className="absolute inset-0 cursor-default" style={{ opacity: 0.9 }} />
                 </div>
               )}
-              <p className="text-xs text-gray-400 mt-2">{t('crm.webstats.heatHint', 'Seiten-Vorschau live von der Website; Punkte werden auf die Seitenbreite skaliert.')}</p>
+              <p className="text-xs text-gray-400 mt-2">{t('crm.webstats.heatHint', 'Hintergrund: die Seite, wie sie zuletzt bei einem echten Besucher aufgezeichnet wurde. Punkte werden auf die Seitenbreite skaliert.')}</p>
             </div>
           </>
         )}

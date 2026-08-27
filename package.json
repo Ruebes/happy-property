@@ -17,7 +17,8 @@
     "react-dom": "^18.3.1",
     "react-i18next": "^14.1.2",
     "react-router-dom": "^6.23.1",
-    "rrweb-player": "^0.7.14"
+    "rrweb-player": "^0.7.14",
+    "rrweb-snapshot": "^1.1.14"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
