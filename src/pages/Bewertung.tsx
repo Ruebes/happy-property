@@ -166,9 +166,20 @@ export default function Bewertung() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase.functions.invoke('review-api', { body: { action: 'view', token } })
-      if (error) throw error
-      const d = data as { ok?: boolean; error?: string; review?: ReviewState } | null
+      // index.html startet den view-Fetch schon beim Seitenaufruf (Prefetch) —
+      // hier nur noch abholen statt neu anfragen. Fallback: normaler Invoke.
+      type ViewResp = { ok?: boolean; error?: string; review?: ReviewState } | null
+      const w = window as unknown as { __reviewPrefetch?: Promise<unknown> }
+      let d: ViewResp = null
+      if (w.__reviewPrefetch) {
+        d = (await w.__reviewPrefetch) as ViewResp
+        delete w.__reviewPrefetch
+      }
+      if (!d?.ok) {
+        const { data, error } = await supabase.functions.invoke('review-api', { body: { action: 'view', token } })
+        if (error) throw error
+        d = data as ViewResp
+      }
       if (!d?.ok || !d.review) throw new Error(d?.error || 'invalid')
       setState(d.review)
       setAnswers(d.review.answers ?? {})

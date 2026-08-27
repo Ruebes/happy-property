@@ -20,6 +20,7 @@
     <!-- Splash-Screen Farbe für Android -->
     <meta name="application-name" content="Happy Property" />
 
+    <link rel="preconnect" href="https://vjlwgajmtqlwjjreowbu.supabase.co" crossorigin />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -29,6 +30,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Bewertungs-Fragebogen: Daten SOFORT laden, waehrend das App-Bundle noch
+         unterwegs ist. Ueberbrueckt Bundle-Download + Edge-Cold-Start parallel
+         statt nacheinander — die Seite steht, sobald das JS da ist. -->
+    <script>
+      (function () {
+        var m = location.pathname.match(/^\/bewertung\/([A-Za-z0-9]+)\/?$/);
+        if (!m) return;
+        window.__reviewPrefetch = fetch(
+          'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/review-api',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'view', token: m[1] }) }
+        ).then(function (r) { return r.json() }).catch(function () { return null });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <!-- Web-Analytics (eigenes Tracking, Edge Function wa-track).
          Nur Kundenseiten — der Admin-/CRM-Bereich wird nicht getrackt. -->
