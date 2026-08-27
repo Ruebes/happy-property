@@ -66,11 +66,11 @@ Deno.serve(async (req: Request) => {
         whatsapp: wt ? subst(wt.message_template ?? '', vars) : null,
       }, lang)
       if (mt && l.email) {
-        await callFn('send-email', { to: l.email, subject: tr.subject ?? '', html: tr.body ?? '', lead_id: d.lead_id, lang })
+        await callFn('send-email', { already_translated: true, to: l.email, subject: tr.subject ?? '', html: tr.body ?? '', lead_id: d.lead_id, lang })
       }
       if (wt && phone && tr.whatsapp) {
         // Geht automatisch an einen Kunden (Deal in 'hold') → Lotte als Absenderin.
-        await callFn('send-whatsapp', { event_type: 'hold_reengagement', override_text: tr.whatsapp, lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone }, persona_image: lotteBild() })
+        await callFn('send-whatsapp', { already_translated: true, event_type: 'hold_reengagement', override_text: tr.whatsapp, lead_id: d.lead_id, lead_data: { lead_name: vars.name, lead_phone: phone }, persona_image: lotteBild() })
       }
       await supabase.from('deals').update({ last_hold_msg_at: new Date(now).toISOString() }).eq('id', d.id)
       holdSent++

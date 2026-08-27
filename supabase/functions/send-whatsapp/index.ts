@@ -1,4 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { translateOutbound } from '../_shared/translate.ts'
+import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
 
 const corsHeaders = {
@@ -88,6 +90,8 @@ Deno.serve(async (req) => {
       lead_data,     // { lead_name, lead_phone, lead_email, lead_whatsapp, … }
       extra_data,    // { developers, notes, project_name, commission_amount, … }
       lead_id,       // für Aktivitäts-Log (optional)
+      lang,          // Empfängersprache (de|en); fehlt sie, wird sie je Nummer aufgelöst
+      already_translated,  // true = Aufrufer hat selbst übersetzt
       override_text, // wenn gesetzt: überschreibt Template-Substitution (no_show preview)
       file_url,      // optionaler Bild-/Dokument-Anhang (DIREKTER Download-Link!)
       file_name,     // Dateiname des Anhangs (bei file_url Pflicht laut TimelinesAI)
@@ -239,6 +243,9 @@ Deno.serve(async (req) => {
       // sind nicht betroffen (Key = Nummer + Text-Hash).
       // Anhang in den Doppel-Schutz einrechnen: sonst gilt "zweite Datei, gleicher
       // Text" faelschlich als Wiederholung und die Folgedatei bleibt liegen.
+      // WICHTIG: Der Doppel-Schutz hasht den DEUTSCHEN Quelltext. Würde man den
+      // übersetzten Text hashen, ergäbe derselbe deutsche Satz bei jedem Lauf ein
+      // leicht anderes Englisch - der Kunde bekäme die Nachricht mehrfach.
       const bh = typeof message === 'string' ? bodyHash(message + (attachName ?? attachUrl ?? '')) : ''
       if (!allow_duplicate && bh) {
         const win = new Date(Date.now() - DEDUP_HOURS * 3600_000).toISOString()
@@ -370,6 +377,22 @@ Deno.serve(async (req) => {
           attachError = e instanceof Error ? e.message : String(e)
         }
       }
+      // ── Empfängersprache ──────────────────────────────────────────
+      // Steht der Empfänger auf Englisch, wird hier übersetzt - erst JETZT, also
+      // nach Platzhaltern und Doppel-Schutz, aber VOR dem Zuschneiden: der
+      // englische Text kann länger werden und muss neu geteilt werden.
+      {
+        const ziel = (lang === 'en' || lang === 'de') ? lang : await resolveLang(supabase, { phone: recipient.phone, lead_id })
+        if (ziel === 'en' && !already_translated && typeof message === 'string' && message.trim()) {
+          try {
+            const tr = await translateOutbound({ subject: null, body: null, whatsapp: message }, 'en')
+            if (tr.whatsapp) message = tr.whatsapp
+          } catch (err) {
+            console.warn('[send-whatsapp] Übersetzung fehlgeschlagen, sende Deutsch:', err instanceof Error ? err.message : String(err))
+          }
+        }
+      }
+
       // ── Text in TimelinesAI-taugliche Teile schneiden ─────────────
       // Haengt ein Bild dran, wird der ERSTE Teil zur Bildunterschrift — und
       // WhatsApp deckelt Unterschriften bei ~1024 Zeichen. Deshalb dort frueher

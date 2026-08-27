@@ -2837,7 +2837,7 @@ export default function LeadDetail() {
                       )}
                       <div className="flex gap-2">
                         <dt className="text-gray-500 w-28 flex-shrink-0">{t('crm.language', 'Sprache')}</dt>
-                        <dd className="text-gray-900">{lead.language.toUpperCase()}</dd>
+                        <dd className="text-gray-900">{(lead.language ?? 'de').toUpperCase()}</dd>
                       </div>
                       {lead.assignee && (
                         <div className="flex gap-2">
@@ -4346,7 +4346,7 @@ export default function LeadDetail() {
       {/* ── Sales-Deck-Wizard ────────────────────────────────────────── */}
       {showWizard && lead && (
         <DeckWizard
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email }}
+          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, language: lead.language }}
           onClose={() => setShowWizard(false)}
           onDone={(msg) => { setShowWizard(false); showToast(msg) }}
         />

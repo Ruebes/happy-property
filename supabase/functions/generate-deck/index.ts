@@ -572,6 +572,9 @@ Deno.serve(async (req) => {
       //  'optional' = Grundpreis + separat ausgewiesenes Moebelpaket
       // Fehlt der Wert, entscheiden wie bisher die Projekt-Stammdaten.
       furniture_mode?: 'none' | 'included' | 'optional'
+      // Sprache des Kunden: 'en' erzeugt das komplette Deck auf Englisch
+      // (Sven 26.8.). Fehlt der Wert, wird sie am Lead aufgeloest.
+      lang?: 'de' | 'en'
     }
     const generic   = body.generic === true
     const recipient = generic ? '' : (body.recipient_name?.trim() || 'den Kunden')
@@ -609,6 +612,22 @@ Deno.serve(async (req) => {
     }
     const angleTone = isEigennutz ? 'lifestyle' : angle
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
+
+    // ── Deck-Sprache ─────────────────────────────────────────────────────────
+    // Die Fakten und alle Vorgaben bleiben deutsch - nur das ERGEBNIS wird
+    // englisch. So muss weder das Faktenmaterial noch das Regelwerk doppelt
+    // gepflegt werden.
+    let deckLang: 'de' | 'en' = body.lang === 'en' ? 'en' : 'de'
+    if (!body.lang && body.lead_id) {
+      try {
+        const sbL = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+        const { data } = await sbL.from('leads').select('language').eq('id', body.lead_id).maybeSingle()
+        if ((data as { language?: string } | null)?.language === 'en') deckLang = 'en'
+      } catch { /* im Zweifel deutsch */ }
+    }
+    const langHinweis = deckLang === 'en'
+      ? `\n\n=== SPRACHE: ENGLISCH (HART, HOECHSTE PRIORITAET) ===\nDer Empfaenger dieses Decks spricht Englisch. Schreibe JEDEN sichtbaren Text auf ENGLISCH: Ueberschriften, Kicker, Taglines, Fliesstext, Aufzaehlungen, Bildunterschriften, Labels der Preiszeilen, Zahlungsplan-Bezeichnungen, Handlungsaufforderungen. Die FAKTEN unten stehen auf Deutsch - uebersetze ihren Inhalt, uebernimm ihn nicht woertlich. NICHT uebersetzt werden: Eigennamen (Projekt- und Bautraegernamen, Ortsnamen, Wohnungsnummern, Markennamen), Zahlen, Preise, Flaechen und Datumsangaben. Waehrungsformat bleibt europaeisch (z.B. 499.000 EUR). Verwende britisches Englisch und dieselbe Ansprache wie im Deutschen: persoenlich und direkt (du -> you).`
+      : ''
 
     // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
     // gar kein Foto gibt - das System stopfte dann irgendein Bild darunter (Sven
@@ -849,7 +868,7 @@ Deno.serve(async (req) => {
         }
       } catch { /* best effort — ohne Preisangaben generiert die KI wie bisher */ }
     }
-    const factsAug = body.facts.trim() + extraFacts + bildFakten
+    const factsAug = body.facts.trim() + extraFacts + bildFakten + langHinweis
 
     const userMsg = learnedBlock + (generic ? [
       `GENERISCHES PROJEKT-DECK — KEIN spezifischer Kunde. Dieses Deck wird live im Zoom geteilt.`,

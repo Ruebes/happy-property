@@ -14,6 +14,8 @@ import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
+import { translateOutbound } from '../_shared/translate.ts'
+import { resolveLang } from '../_shared/recipientLang.ts'
 import { withSocialFooter } from '../_shared/socialFooter.ts'
 
 const CORS = {
@@ -85,14 +87,15 @@ Deno.serve(async (req: Request) => {
       open_token?:      string | null   // Deck-Token → Mail-Öffnungs-Pixel (Engagement-Tracking)
       auto?:            boolean          // true = Automatik → im Posteingang ausgeblendet (Default false)
       from_name?:       string           // Anzeigename des Absenders (Adresse bleibt smtpUser), z.B. „Lotte · Happy Property"
-      lang?:            string           // Empfängersprache (de|en) → Social-Footer in passender Sprache
+      lang?:            string           // Empfängersprache (de|en); fehlt sie, wird sie am Empfänger aufgelöst
+      already_translated?: boolean       // true = Aufrufer hat selbst übersetzt (keine zweite Runde durch die KI)
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
       // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
       attachments?:     Array<{ filename: string; content_base64: string; content_type?: string }> | null
     }
 
-    const { to, lead_id, deal_id, attach_category, open_token, auto, from_name, lang } = body
+    const { to, lead_id, deal_id, attach_category, open_token, auto, from_name, lang, already_translated } = body
     let { subject = '', html = '' } = body
 
     if (!to) {
@@ -190,9 +193,26 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // ── Empfängersprache ─────────────────────────────────────────────────────
+    // Sven schreibt deutsch; steht der Empfänger auf Englisch, wird HIER übersetzt
+    // (Sven 26.8.). Zentral, damit alle Sendewege es erben und niemand daran denken
+    // muss. Wichtig: erst NACH dem Einsetzen der Platzhalter, sonst zerlegt die KI
+    // {{vorname}} & Co. — und VOR Footer und Öffnungs-Pixel, damit deren Links und
+    // Tracking-URLs nicht durch die Übersetzung laufen.
+    const zielSprache = (lang === 'en' || lang === 'de') ? lang : await resolveLang(supabase, { email: to, lead_id })
+    if (zielSprache === 'en' && !already_translated) {
+      try {
+        const tr = await translateOutbound({ subject, body: html, whatsapp: null }, 'en')
+        if (tr.subject) subject = tr.subject
+        if (tr.body) html = tr.body
+      } catch (err) {
+        console.warn('[send-email] Übersetzung fehlgeschlagen, sende Deutsch:', err instanceof Error ? err.message : String(err))
+      }
+    }
+
     // „Folge uns"-Social-Footer an ALLE Mails (die nicht schon Social-Links haben,
     // z.B. Deck-/Newsletter-Mails) — zentral, deckt alle send-email-Aufrufer ab.
-    html = withSocialFooter(html, lang === 'en' ? 'en' : 'de')
+    html = withSocialFooter(html, zielSprache)
 
     // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
     // track-engagement (Engagement-Tracking fürs CRM-Dashboard).

@@ -172,11 +172,11 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   const subject = `${tr.subject ?? subjectDe} [#${a.token}]`
 
   if (wantMail && email) {
-    await supabase.functions.invoke('send-email', { body: { to: email, subject, from_name: LOTTE_FROM, html: tr.body ?? mailHtml(first, introMail, task, link, bossImg, contacts), lang } })
+    await supabase.functions.invoke('send-email', { body: { already_translated: true, to: email, subject, from_name: LOTTE_FROM, html: tr.body ?? mailHtml(first, introMail, task, link, bossImg, contacts), lang } })
       .catch((e: unknown) => console.warn('[task-notify] mail:', e))
   }
   if (wantWa && phone) {
-    await supabase.functions.invoke('send-whatsapp', { body: {
+    await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
       event_type: `task_${kind}`, override_text: tr.whatsapp ?? waText(introWa, task, link, contacts),
       lead_data: { lead_name: name || 'Empfänger', lead_phone: phone },
       persona_image: bossImg,   // Lotte als Chefin
@@ -248,7 +248,7 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   if (phone) {
     // Nummer VOR dem Aufruf pruefen: send-whatsapp nutzt ??, ein Leerstring wuerde
     // die Empfaengeraufloesung kippen statt sauber abzubrechen.
-    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: {
+    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
       event_type: 'subtask_done', override_text: `${waText}\n\nLiebe Grüße\nLotte 🐾`,
       lead_data: { lead_name: g.full_name ?? 'Team', lead_phone: phone },
       persona_image: await lotteBossBild(supabase),   // Lotte meldet zurück
@@ -259,7 +259,7 @@ async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   } else if (g.email) {
     // Rueckfallebene, damit die Meldung nicht still verschwindet, wenn im Profil
     // keine Telefonnummer hinterlegt ist.
-    const { error: mailErr } = await supabase.functions.invoke('send-email', { body: {
+    const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { already_translated: true,
       // Zeilenumbrueche aus dem Titel raus: der Betreff geht ungeprueft in den
       // Mail-Header, ein CR/LF darin waere eine Header-Injektion.
       to: g.email, from_name: LOTTE_FROM, subject: `Zuarbeit erledigt: ${task.title.replace(/[\r\n]+/g, ' ').slice(0, 160)}`,

@@ -15,7 +15,7 @@ import { rentFromSeason } from '../../lib/strategy'
 // personalisiertes Deck (Hintergrund + Polling) und legt EINE Begleit-Mail in den
 // Postausgang (Freigabe durch Sven).
 
-interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
+interface LeadLite { id: string; first_name: string; last_name: string; email: string | null; language?: string | null }
 interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
@@ -194,6 +194,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     const { error } = await supabase.functions.invoke('generate-deck', { body: {
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
       facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId, furniture_mode: furnitureMode,
+      // Kundensprache: englischsprachige Kunden bekommen das Deck auf Englisch.
+      lang: lead.language === 'en' ? 'en' : 'de',
       unit_id: items.length === 1 ? first.unit.id : null, units,
       month_label: new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }),
     } })

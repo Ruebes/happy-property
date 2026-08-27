@@ -85,7 +85,7 @@ async function sendWhatsApp(params: {
   alsLotte?:    boolean          // true = Kunde → Lotte-Bild (nachrangig hinter Vorlagen-/Deck-Bild)
 }): Promise<void> {
   const { data, error } = await params.supabase.functions.invoke('send-whatsapp', {
-    body: {
+    body: { already_translated: true,
       event_type: 'scheduled', override_text: params.message,
       lead_data: { lead_name: params.name ?? 'Kunde', lead_phone: params.phone },
       ...(params.imageUrl ? { file_url: params.imageUrl, file_name: 'bild.jpg' } : {}),
@@ -277,7 +277,7 @@ Deno.serve(async (req: Request) => {
         </p>
         <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
       </div>`
-      await supabase.functions.invoke('send-email', { body: {
+      await supabase.functions.invoke('send-email', { body: { already_translated: true,
         to: l.email, subject: de_ ? '🔑 Dein Zugang zum Happy Property Portal' : '🔑 Your access to the Happy Property portal',
         html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en', lead_id: l.id,
       } }).catch(e => console.warn('[process-scheduled] Portal-Mail:', e))
@@ -285,7 +285,7 @@ Deno.serve(async (req: Request) => {
         const waText = de_
           ? `Hallo ${first} 🐾\n\nhier ist Lotte von Happy Property! Dein persönlicher Zugang zum *Happy Property Portal* ist bereit 🎉\n\nDort verwaltest du künftig deine Immobilien, verfolgst den Baufortschritt, siehst deine Renditen, lädst Unterlagen für den Steuerberater herunter und erreichst direkt unsere Verwaltung.\n\nDeine Zugangsdaten kommen gerade separat per E-Mail. 📬\n\n${PORTAL}/login\n\nLiebe Grüße, Lotte`
           : `Hi ${first} 🐾\n\nLotte from Happy Property here! Your personal access to the *Happy Property portal* is ready 🎉\n\nManage your properties, follow the construction progress, view your returns, download documents for your tax advisor and reach our property management directly.\n\nYour login details are arriving by email right now. 📬\n\n${PORTAL}/login\n\nBest, Lotte`
-        await supabase.functions.invoke('send-whatsapp', { body: {
+        await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
           event_type: 'portal_zugang', override_text: waText,
           lead_data: { lead_name: first, lead_phone: l.phone }, persona_image: lotteBild(),
         } }).catch(e => console.warn('[process-scheduled] Portal-WA:', e))

@@ -49,13 +49,25 @@ function useIsMobile(): boolean {
 }
 
 export default function Rechnung() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { token } = useParams<{ token: string }>()
   const [content, setContent] = useState<CalcContent | null>(null)
   const [meta, setMeta] = useState<{ recipient_name?: string; title?: string; with_calc?: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const isMobile = useIsMobile()
+
+  // Empfängersprache: Die Berechnung liegt hinter einem Token, es gibt keinen
+  // Login - die Sprache kommt deshalb serverseitig aus dem Lead (Sven 26.8.:
+  // englischsprachige Kunden bekommen alles auf Englisch).
+  useEffect(() => { void (async () => {
+    if (!token) return
+    try {
+      const { data } = await supabase.rpc('get_calculation_lang', { p_token: token })
+      const lang = typeof data === 'string' ? data : 'de'
+      if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
+    } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
+  })() }, [token, i18n])
 
   useEffect(() => { void (async () => {
     if (!token) return
