@@ -43,8 +43,15 @@ export default defineConfig({
         // dürfen niemals aus dem Cache kommen (würde Login-Loops und veraltete
         // Daten verursachen).
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff2}'],
-        // Supabase explizit ausschließen
-        navigateFallbackDenylist: [/^\/auth\//],
+        // Supabase explizit ausschließen — und ALLE öffentlichen Kunden-/Token-
+        // Seiten: die dürfen nie aus dem Service-Worker-Cache kommen, sonst
+        // sehen Kunden nach einem Deploy die alte Version, bis der SW irgendwann
+        // aktualisiert (Sven 27.8.: Bewertungs-Fragebogen zeigte alten Stand).
+        navigateFallbackDenylist: [
+          /^\/auth\//,
+          /^\/(bewertung|deck|rechnung|re|strategie|akte|partner|termin|sign|buchen|zusage|abmelden|anmelden|report|seo-report)(\/|$)/,
+          /^\/(t|s)\//,
+        ],
         runtimeCaching: [
           {
             // Google Fonts: Cache first (ändert sich nie)
