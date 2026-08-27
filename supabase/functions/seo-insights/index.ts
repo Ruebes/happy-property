@@ -490,7 +490,14 @@ Deno.serve(async (req) => {
       let email = ''
       try { email = (JSON.parse(raw) as { client_email?: string }).client_email ?? '' } catch { /* leer */ }
       const gsc = await fetchGsc()
-      return json({ success: true, service_account: email, gsc_status: gsc.status })
+      // Zusaetzlich: welche Properties sieht der SA ueberhaupt?
+      let sites: unknown = 'kein_token'
+      try {
+        const tok = await gscToken()
+        const r = await fetch('https://www.googleapis.com/webmasters/v3/sites', { headers: { Authorization: `Bearer ${tok}` } })
+        sites = await r.json()
+      } catch (err) { sites = String(err) }
+      return json({ success: true, service_account: email, gsc_status: gsc.status, sites })
     }
 
     // ── Tages-Schnappschuss ──
@@ -518,7 +525,7 @@ Deno.serve(async (req) => {
         .insert({ week_start: weekStart, week_end: weekEnd, html, stats: { cur: data.cur, organic: data.organic, analysis }, sent_to: to })
         .select('token').single()
       if (error) throw error
-      const link = `${Deno.env.get('SUPABASE_URL')}/functions/v1/seo-insights?t=${saved.token}`
+      const link = `https://portal.happy-property.com/seo-report/${saved.token}`
       const mailed = await sendReportMail(to, `SEO-Wochenbericht ${deDate(data.from)}–${deDate(data.to)}`, link, analysis.zusammenfassung)
       console.log(`[seo-insights] Report ${weekStart}: gespeichert, Mail=${mailed}`)
       return json({ success: true, token: saved.token, mailed })
