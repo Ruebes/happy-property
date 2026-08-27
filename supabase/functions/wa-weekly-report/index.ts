@@ -322,7 +322,7 @@ function buildHtml(data: ReportData, a: Analysis, kw: number): string {
 
   <p style="font-size:12px;color:${CI.mute};text-align:center;margin-top:24px">
     Automatisch erstellt · Details, Heatmaps &amp; Session-Replays im CRM unter
-    <a href="https://www.happy-property.com/admin/crm/webanalytics" style="color:${CI.coral}">Web-Analytics</a>
+    <a href="https://portal.happy-property.com/admin/crm/webanalytics" style="color:${CI.coral}">Web-Analytics</a>
   </p>
 </div></body></html>`
 }
@@ -411,7 +411,7 @@ Deno.serve(async (req) => {
     const token = (report as { token: string }).token
     // Ausgeliefert wird ueber das CRM-Frontend (/report/:token) — die
     // functions-Domain erzwingt text/plain fuer HTML-Antworten.
-    const link = `https://www.happy-property.com/report/${token}`
+    const link = `https://portal.happy-property.com/report/${token}`
 
     const recipients = (Deno.env.get('WA_REPORT_RECIPIENTS') ?? DEFAULT_RECIPIENTS.join(','))
       .split(',').map(s => s.trim()).filter(Boolean)
