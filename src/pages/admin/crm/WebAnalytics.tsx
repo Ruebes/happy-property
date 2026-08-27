@@ -669,11 +669,15 @@ export default function WebAnalytics() {
                 <p className="text-sm text-gray-400 py-8 text-center">{t('crm.webstats.noHeatData', 'Für diese Seite liegen im Zeitraum keine Daten vor.')}</p>
               ) : (
                 <div className="relative mx-auto" style={{ width: frameW, height: frameH }}>
+                  {/* Mit Scripts laden — die .de-Landingpages bauen ihren Inhalt per JS
+                      auf (Loader), ohne JS bleibt der Frame weiss. Der Tracker selbst
+                      laeuft in iframes nicht (window.top-Guard in t.js). Der Canvas
+                      faengt alle Klicks ab, damit niemand IM Vorschau-Frame navigiert. */}
                   <iframe src={`https://${heatSite}${heatPath}`} title="Heatmap"
                     width={frameW} height={frameH}
-                    className="absolute inset-0 border-0 rounded-lg bg-gray-50"
-                    sandbox="allow-same-origin" scrolling="no" />
-                  <canvas ref={heatCanvasRef} className="absolute inset-0 pointer-events-none" style={{ opacity: 0.9 }} />
+                    className="absolute inset-0 border-0 rounded-lg bg-white"
+                    sandbox="allow-scripts allow-same-origin" scrolling="no" />
+                  <canvas ref={heatCanvasRef} className="absolute inset-0 cursor-default" style={{ opacity: 0.9 }} />
                 </div>
               )}
               <p className="text-xs text-gray-400 mt-2">{t('crm.webstats.heatHint', 'Seiten-Vorschau live von der Website; Punkte werden auf die Seitenbreite skaliert.')}</p>
