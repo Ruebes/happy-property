@@ -84,6 +84,17 @@ interface ReportData {
   /** Zeitpunkt der ersten Web-Session ueberhaupt — solange das juenger ist als
    *  der Wochenanfang, decken die Web-Zahlen keine volle Woche ab. */
   trackingSince: Date | null
+  /** Besucher-Typen (hp_wa_segments): segment → Anzahl Sessions */
+  segments: Record<string, number>
+}
+
+const SEGMENT_LABELS: Record<string, { label: string; desc: string }> = {
+  gebucht:        { label: '✅ Termin gebucht',      desc: 'Haben über den Funnel gebucht' },
+  funnel_abbruch: { label: '🚪 Funnel abgebrochen',  desc: 'Waren im Termin-Funnel, haben nicht gebucht' },
+  interessent:    { label: '📖 Echte Interessenten', desc: 'Über 1 Min. aktiv, mehrere Seiten oder tief gescrollt — kein Termin' },
+  expose_jaeger:  { label: '🏠 Exposé-Jäger',        desc: 'Nur Objekte/Rechner/Exposés angesehen, unter 2 Min.' },
+  kurzbesucher:   { label: '👀 Kurzbesucher',        desc: 'Kurz umgesehen, wenig gelesen' },
+  absprung:       { label: '💨 Sofort weg',          desc: 'Direkt wieder abgesprungen' },
 }
 
 async function collect(supabase: ReturnType<typeof createClient>): Promise<ReportData> {
@@ -136,6 +147,12 @@ async function collect(supabase: ReturnType<typeof createClient>): Promise<Repor
   const trackingSince = firstSess?.length
     ? new Date((firstSess[0] as { started_at: string }).started_at) : null
 
+  const { data: segRows } = await supabase.rpc('hp_wa_segments', p)
+  const segments: Record<string, number> = {}
+  for (const r of ((segRows as { segment: string }[]) ?? [])) {
+    segments[r.segment] = (segments[r.segment] ?? 0) + 1
+  }
+
   const empty: Kpis = { sessions: 0, visitors: 0, pageviews: 0, clicks: 0, avg_duration_s: 0, bounce_pct: 0, avg_scroll_pct: 0, with_replay: 0 }
   return {
     from, to, prevFrom,
@@ -152,6 +169,7 @@ async function collect(supabase: ReturnType<typeof createClient>): Promise<Repor
     deckViews: deckViews ?? 0,
     leadSessions: leadSessions ?? 0,
     trackingSince,
+    segments,
   }
 }
 
@@ -174,6 +192,8 @@ async function analyze(data: ReportData): Promise<Analysis> {
     web_tracking_aktiv_seit: data.trackingSince ? data.trackingSince.toISOString() : null,
     hinweis: 'Web-KPIs zaehlen erst ab web_tracking_aktiv_seit; Funnel-/Termin-Zahlen decken die volle Woche ab. NICHT direkt vergleichen, wenn der Tracking-Start in der Woche liegt.',
     web: { diese_woche: data.kpis, vorwoche: data.kpisPrev, sites: data.siteKpis, top_seiten: data.pages, quellen: data.sources, geraete: data.devices },
+    besucher_typen: data.segments,
+    besucher_typen_legende: 'gebucht=Funnel-Buchung; funnel_abbruch=im /termin-Funnel ohne Buchung; interessent=>60s aktiv + mehrere Seiten/tiefes Scrollen ohne Termin (WICHTIGSTE Zielgruppe fuer Verbesserungen); expose_jaeger=nur Objekt-/Rechner-/Expose-Seiten <2min; kurzbesucher/absprung=kaum Engagement',
     termin_funnel: { diese_woche: data.funnel, vorwoche: data.funnelPrev },
     termine_gebucht: { diese_woche: data.appointments, vorwoche: data.appointmentsPrev },
     deck_ansichten: data.deckViews,
@@ -339,6 +359,14 @@ function buildHtml(data: ReportData, a: Analysis, kw: number): string {
     `<table style="width:100%;border-collapse:collapse"><tr>
       ${['Website', 'Besucher', 'Sitzungen', 'Aufrufe', 'Ø Dauer', 'Absprung'].map((h, i) => `<th style="padding:7px 10px;font-size:11px;color:${CI.mute};text-transform:uppercase;text-align:${i ? 'right' : 'left'};border-bottom:2px solid ${CI.line}">${h}</th>`).join('')}
     </tr>${tableRows(siteRows, [1, 2, 3, 4, 5])}</table>`) : ''}
+
+  ${Object.keys(data.segments).length ? card('Besucher-Typen (seit Tracking-Start)',
+    `<table style="width:100%;border-collapse:collapse">${
+      Object.entries(data.segments).sort((a, b) => b[1] - a[1]).map(([k, n]) => {
+        const m = SEGMENT_LABELS[k] ?? { label: k, desc: '' }
+        return `<tr><td style="padding:7px 10px;border-bottom:1px solid ${CI.line};font-size:13px;color:${CI.ink}">${m.label}<br><span style="color:${CI.mute};font-size:11px">${m.desc}</span></td><td style="padding:7px 10px;border-bottom:1px solid ${CI.line};font-size:15px;font-weight:700;text-align:right;color:${CI.navy}">${fmtNum(n)}</td></tr>`
+      }).join('')
+    }</table>`) : ''}
 
   ${card('Termin-Funnel (volle Woche, CRM-Daten)', funnelChart(data.funnel) +
     (data.funnel ? `<p style="font-size:12px;color:${CI.mute};margin:10px 0 0">Zusätzlich ${fmtNum(data.funnel.direct_sessions)} Direkteinstiege (Newsletter/Links) mit ${fmtNum(data.funnel.direct_bookings)} Buchungen · ${fmtNum(data.deckViews)} Exposé-Ansichten · ${fmtNum(data.leadSessions)} Website-Besuche erkannter Kunden</p>` : ''))}

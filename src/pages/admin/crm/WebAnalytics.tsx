@@ -38,6 +38,18 @@ interface ScrollDepth { sessions: number; p25: number; p50: number; p75: number;
 type Period = 'today' | 'yesterday' | 'week' | 'month' | 'quarter' | 'custom'
 type Tab = 'overview' | 'heatmap' | 'visitors'
 
+// ── Besucher-Typen (Heuristik aus hp_wa_segments, Regeln in der Migration) ───
+type Segment = 'gebucht' | 'funnel_abbruch' | 'interessent' | 'expose_jaeger' | 'kurzbesucher' | 'absprung'
+const SEGMENTS: { id: Segment; icon: string; label: string; desc: string; color: string }[] = [
+  { id: 'gebucht',        icon: '✅', label: 'Termin gebucht',      desc: 'Haben über den Funnel gebucht', color: '#1f9d55' },
+  { id: 'funnel_abbruch', icon: '🚪', label: 'Funnel abgebrochen',  desc: 'Waren im Termin-Funnel, haben nicht gebucht', color: '#d97706' },
+  { id: 'interessent',    icon: '📖', label: 'Echte Interessenten', desc: 'Über 1 Min. aktiv, mehrere Seiten oder tief gescrollt — aber kein Termin', color: '#ff795d' },
+  { id: 'expose_jaeger',  icon: '🏠', label: 'Exposé-Jäger',        desc: 'Nur Objekte/Rechner/Exposés angesehen, unter 2 Min.', color: '#6366f1' },
+  { id: 'kurzbesucher',   icon: '👀', label: 'Kurzbesucher',        desc: 'Kurz umgesehen, wenig gelesen', color: '#9ca3af' },
+  { id: 'absprung',       icon: '💨', label: 'Sofort weg',          desc: 'Direkt wieder abgesprungen', color: '#d1d5db' },
+]
+const segMeta = (id: string) => SEGMENTS.find(s => s.id === id)
+
 function periodRange(p: Period, from: string, to: string): { from: Date; to: Date } {
   const now = new Date()
   const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
@@ -291,6 +303,9 @@ export default function WebAnalytics() {
   const [onlyLeads, setOnlyLeads] = useState(false)
   const [onlyReplay, setOnlyReplay] = useState(false)
   const [selected, setSelected] = useState<SessionRow | null>(null)
+  // Besucher-Typen: session_id → Segment (gleicher Zeitraum/Site-Filter)
+  const [segments, setSegments] = useState<Record<string, Segment>>({})
+  const [segFilter, setSegFilter] = useState<Segment | ''>('')
 
   // ── Übersicht laden ────────────────────────────────────────────────────────
   const fetchOverview = useCallback(async () => {
@@ -298,13 +313,14 @@ export default function WebAnalytics() {
     try {
       const { from, to } = periodRange(period, customFrom, customTo)
       const p = { p_from: from.toISOString(), p_to: to.toISOString(), p_site: site || null }
-      const [k, d, pg, so, de, si] = await Promise.all([
+      const [k, d, pg, so, de, si, sg] = await Promise.all([
         supabase.rpc('hp_wa_kpis', p),
         supabase.rpc('hp_wa_daily', p),
         supabase.rpc('hp_wa_pages', { ...p, p_limit: 20 }),
         supabase.rpc('hp_wa_sources', p),
         supabase.rpc('hp_wa_devices', p),
         supabase.rpc('hp_wa_sites', { p_from: from.toISOString(), p_to: to.toISOString() }),
+        supabase.rpc('hp_wa_segments', p),
       ])
       setKpis((k.data as Kpis) ?? null)
       setDaily((d.data as DailyRow[]) ?? [])
@@ -312,6 +328,9 @@ export default function WebAnalytics() {
       setSources((so.data as SourceRow[]) ?? [])
       setDevices((de.data as DeviceRow[]) ?? [])
       setSites((si.data as SiteRow[]) ?? [])
+      const segMap: Record<string, Segment> = {}
+      for (const row of ((sg.data as { session_id: string; segment: Segment }[]) ?? [])) segMap[row.session_id] = row.segment
+      setSegments(segMap)
     } catch (err) {
       console.error('[WebAnalytics] fetchOverview:', err)
       setKpis(null); setDaily([]); setPages([]); setSources([]); setDevices([])
@@ -417,6 +436,7 @@ export default function WebAnalytics() {
   ]
 
   const maxDaily = Math.max(1, ...daily.map(d => d.sessions))
+  const visibleSessions = segFilter ? sessions.filter(s => segments[s.id] === segFilter) : sessions
   const sourceOf = (s: SessionRow) => {
     if (s.utm?.utm_source || s.utm?.src) return s.utm.utm_source || s.utm.src
     try { if (s.referrer) return new URL(s.referrer).hostname.replace('www.', '') } catch { /* kaputter Referrer */ }
@@ -491,6 +511,29 @@ export default function WebAnalytics() {
                   <p className="text-2xl font-bold text-gray-900 mt-1">{c.value}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Besucher-Typen: wer waren die Leute — und wer haette buchen koennen? */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">{t('crm.webstats.segments', 'Besucher-Typen')}</h3>
+              <p className="text-xs text-gray-400 mb-3">{t('crm.webstats.segmentsHint', 'Automatisch nach Verhalten eingeordnet (Lesezeit, Scrolltiefe, Seiten, Funnel). Klick auf eine Kachel zeigt die einzelnen Besucher.')}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {SEGMENTS.map(sg => {
+                  const n = Object.values(segments).filter(v => v === sg.id).length
+                  const total = Object.keys(segments).length || 1
+                  return (
+                    <button key={sg.id} title={sg.desc}
+                      onClick={() => { setSegFilter(sg.id); setTab('visitors') }}
+                      className="text-left rounded-xl border p-3 hover:shadow-md transition-shadow"
+                      style={{ borderColor: n ? sg.color : '#e5e7eb', backgroundColor: n ? `${sg.color}12` : '#fafafa' }}>
+                      <div className="text-lg">{sg.icon}</div>
+                      <div className="text-xl font-bold text-gray-900">{n}</div>
+                      <div className="text-[11px] leading-tight text-gray-600">{sg.label}</div>
+                      <div className="text-[10px] text-gray-400">{Math.round((n / total) * 100)}%</div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
 
             {/* Verlauf */}
@@ -641,7 +684,12 @@ export default function WebAnalytics() {
         {/* ── Tab: Besucher ── */}
         {tab === 'visitors' && (
           <>
-            <div className="flex gap-3 items-center text-sm">
+            <div className="flex gap-3 items-center text-sm flex-wrap">
+              <select value={segFilter} onChange={e => setSegFilter(e.target.value as Segment | '')}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40">
+                <option value="">{t('crm.webstats.allSegments', 'Alle Besucher-Typen')}</option>
+                {SEGMENTS.map(sg => <option key={sg.id} value={sg.id}>{sg.icon} {sg.label}</option>)}
+              </select>
               <label className="flex items-center gap-2 text-gray-600">
                 <input type="checkbox" checked={onlyLeads} onChange={e => setOnlyLeads(e.target.checked)} className="rounded" />
                 {t('crm.webstats.onlyLeads', 'Nur erkannte Kunden')}
@@ -655,8 +703,10 @@ export default function WebAnalytics() {
               <div className="flex justify-center py-16">
                 <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
               </div>
-            ) : sessions.length === 0 ? (
-              <p className="text-gray-400 text-center py-16">{t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
+            ) : visibleSessions.length === 0 ? (
+              <p className="text-gray-400 text-center py-16">{segFilter
+                ? t('crm.webstats.noSegmentData', 'Keine Besucher dieses Typs im Zeitraum.')
+                : t('crm.webstats.noData', 'Noch keine Daten — das Tracking sammelt ab jetzt.')}</p>
             ) : (
               <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-x-auto">
                 <table className="w-full text-sm">
@@ -664,6 +714,7 @@ export default function WebAnalytics() {
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.time', 'Zeit')}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.visitor', 'Besucher')}</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.type', 'Typ')}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.site', 'Website')}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.source', 'Quelle')}</th>
                       <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{t('crm.webstats.device', 'Gerät')}</th>
@@ -673,8 +724,9 @@ export default function WebAnalytics() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {sessions.map(s => {
+                    {visibleSessions.map(s => {
                       const leadName = s.leads ? `${s.leads.first_name ?? ''} ${s.leads.last_name ?? ''}`.trim() : ''
+                      const sm = segMeta(segments[s.id] ?? '')
                       return (
                         <tr key={s.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setSelected(s)}>
                           <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">{new Date(s.started_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
@@ -682,6 +734,9 @@ export default function WebAnalytics() {
                             {leadName
                               ? <span className="font-medium text-gray-900">👤 {leadName}</span>
                               : <span className="text-gray-500 font-mono text-xs">{s.visitor_id.slice(0, 8)}</span>}
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            {sm && <span title={sm.desc} className="inline-block px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: `${sm.color}1a`, color: sm.color }}>{sm.icon} {sm.label}</span>}
                           </td>
                           <td className="px-4 py-2.5 text-gray-700">{s.site}<span className="text-gray-400 text-xs block truncate max-w-[160px]">{s.entry_path}</span></td>
                           <td className="px-4 py-2.5 text-gray-600">{sourceOf(s)}</td>
