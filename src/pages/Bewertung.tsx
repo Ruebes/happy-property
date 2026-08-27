@@ -10,7 +10,7 @@ import { supabase } from '../lib/supabase'
 
 interface ReviewState {
   recipient_name: string; language: string; status: string
-  answers: Record<string, string>; rating: number | null
+  answers: Record<string, string>; question_ratings: Record<string, number>; rating: number | null
   review_text: string | null; photo_url: string | null; consent: boolean
   recommend: boolean | null; affiliate_url: string | null
 }
@@ -33,6 +33,26 @@ const QUESTIONS: { key: string; de: string; en: string }[] = [
     en: 'Is there anything else Lotte and Sven could improve?' },
 ]
 
+// Textbausteine fuer die Website-Bewertung - ein Klick pro Satz
+const SNIPPETS: Record<'de' | 'en', string[]> = {
+  de: [
+    'Wir haben uns von Anfang an bestens betreut gefühlt.',
+    'Alle Zahlen waren transparent und nachvollziehbar.',
+    'Jede Frage wurde schnell und verständlich beantwortet.',
+    'Der ganze Kaufprozess war einfacher als gedacht.',
+    'Lotte und Sven waren immer erreichbar.',
+    'Klare Empfehlung für alle, die auf Zypern investieren wollen.',
+  ],
+  en: [
+    'We felt in great hands from day one.',
+    'All numbers were transparent and easy to verify.',
+    'Every question was answered quickly and clearly.',
+    'The whole buying process was easier than expected.',
+    'Lotte and Sven were always available.',
+    'A clear recommendation for anyone investing in Cyprus.',
+  ],
+}
+
 const T = {
   de: {
     title: 'Deine Meinung zählt',
@@ -40,6 +60,8 @@ const T = {
     reviewHead: 'Deine Bewertung für unsere Website',
     reviewIntro: 'Gern möchten wir deine Erfahrungen mit anderen Menschen teilen und auf unserer Website veröffentlichen. Wir würden uns über 2-3 Sätze freuen - und wenn du magst, auch über ein Bild von dir. Wir veröffentlichen nur den Vornamen. Vielen Dank, Lotte & Sven 🐾',
     reviewPlaceholder: 'Deine Erfahrung mit Happy Property …',
+    answerPlaceholder: 'Magst du etwas ergänzen? (optional)',
+    snippetsLabel: 'Oder klick dir deine Bewertung zusammen:',
     ratingLabel: 'Deine Gesamtbewertung in Hundesnacks',
     recommendHead: 'Eine letzte Frage',
     recommendQ: 'Würdest du wieder mit Happy Property kaufen - oder Freunden die Zusammenarbeit mit Lotte und Sven empfehlen?',
@@ -71,6 +93,8 @@ const T = {
     reviewHead: 'Your review for our website',
     reviewIntro: 'We would love to share your experience with others and publish it on our website. A short review of 2-3 sentences would make us very happy - and if you like, add a photo of yourself. We only publish your first name. Thank you, Lotte & Sven 🐾',
     reviewPlaceholder: 'Your experience with Happy Property …',
+    answerPlaceholder: 'Anything to add? (optional)',
+    snippetsLabel: 'Or build your review with one click:',
     ratingLabel: 'Your overall rating in dog treats',
     recommendHead: 'One last question',
     recommendQ: 'Would you buy with Happy Property again - or recommend working with Lotte and Sven to friends?',
@@ -124,6 +148,7 @@ export default function Bewertung() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [questionRatings, setQuestionRatings] = useState<Record<string, number>>({})
   const [reviewText, setReviewText] = useState('')
   const [rating, setRating] = useState(0)
   const [consent, setConsent] = useState(false)
@@ -147,6 +172,7 @@ export default function Bewertung() {
       if (!d?.ok || !d.review) throw new Error(d?.error || 'invalid')
       setState(d.review)
       setAnswers(d.review.answers ?? {})
+      setQuestionRatings(d.review.question_ratings ?? {})
       setReviewText(d.review.review_text ?? '')
       setRating(d.review.rating ?? 0)
       setConsent(d.review.consent)
@@ -177,7 +203,7 @@ export default function Bewertung() {
     setSending(true)
     try {
       const { data, error } = await supabase.functions.invoke('review-api', { body: {
-        action: 'submit', token, answers, rating: rating || undefined,
+        action: 'submit', token, answers, question_ratings: questionRatings, rating: rating || undefined,
         review_text: reviewText, consent, recommend,
         ...(photo ? { photo_base64: photo.base64, photo_mime: photo.mime } : {}),
       } })
@@ -259,14 +285,24 @@ export default function Bewertung() {
       <div className="space-y-5">
         {QUESTIONS.map((q, i) => (
           <div key={q.key} className="bg-white rounded-2xl shadow-sm p-5">
-            <label className="block text-sm font-medium text-hp-slate mb-2">
+            <label className="block text-sm font-medium text-hp-slate mb-3">
               <span className="text-hp-highlight font-semibold mr-1.5">{i + 1}.</span>{q[lang]}
             </label>
+            {/* 5 Knochen je Frage - Antwort per Klick, Text nur optional (Svens Vorgabe) */}
+            <div className="flex items-center gap-1.5 mb-3">
+              {[1, 2, 3, 4, 5].map(n => (
+                <button key={n} type="button"
+                  onClick={() => setQuestionRatings(r => ({ ...r, [q.key]: n }))}
+                  className={`text-2xl leading-none transition-transform hover:scale-110 ${n <= (questionRatings[q.key] ?? 0) ? '' : 'grayscale opacity-35'}`}
+                  aria-label={`${n}/5`}>🦴</button>
+              ))}
+            </div>
             <textarea
               value={answers[q.key] ?? ''}
               onChange={e => setAnswers(a => ({ ...a, [q.key]: e.target.value }))}
-              rows={3}
-              className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-hp-highlight/40"
+              rows={2}
+              placeholder={t.answerPlaceholder}
+              className="w-full border border-gray-200 rounded-xl p-3 text-sm placeholder:text-gray-300 focus:outline-none focus:ring-2 focus:ring-hp-highlight/40"
             />
           </div>
         ))}
@@ -291,6 +327,20 @@ export default function Bewertung() {
             placeholder={t.reviewPlaceholder}
             className="w-full border border-gray-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-hp-highlight/40"
           />
+          {/* Textbausteine: ein Klick haengt den Satz an - niemand MUSS tippen */}
+          <p className="text-xs text-gray-400 mt-3 mb-2">{t.snippetsLabel}</p>
+          <div className="flex flex-wrap gap-2">
+            {SNIPPETS[lang].map(sn => {
+              const used = reviewText.includes(sn)
+              return (
+                <button key={sn} type="button" disabled={used}
+                  onClick={() => setReviewText(v => (v.trim() ? v.trim() + ' ' : '') + sn)}
+                  className={`text-xs px-3 py-1.5 rounded-full border text-left ${used ? 'border-gray-100 text-gray-300' : 'border-gray-200 text-gray-600 hover:border-hp-highlight hover:text-hp-highlight'}`}>
+                  + {sn}
+                </button>
+              )
+            })}
+          </div>
         </div>
 
         {/* Foto */}

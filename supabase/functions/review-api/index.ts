@@ -32,6 +32,7 @@ const HAPPY_LOTTE     = 'Assets/wa/Happy_Lotte.jpg'     // Absenderbild der Affi
 interface ReviewRow {
   id: string; lead_id: string | null; token: string; recipient_name: string
   language: string; status: string; answers: Record<string, string>
+  question_ratings: Record<string, number>
   rating: number | null; review_text: string | null; photo_path: string | null
   consent_given_at: string | null; consent_revoked_at: string | null
   published: boolean; sent_at: string | null; submitted_at: string | null; created_at: string
@@ -261,7 +262,8 @@ Deno.serve(async (req) => {
       }
       return json({ ok: true, review: {
         recipient_name: row.recipient_name, language: row.language, status: row.status,
-        answers: row.answers, rating: row.rating, review_text: row.review_text,
+        answers: row.answers, question_ratings: row.question_ratings ?? {},
+        rating: row.rating, review_text: row.review_text,
         photo_url: publicPhotoUrl(row.photo_path),
         consent: !!row.consent_given_at && !row.consent_revoked_at,
         recommend: row.recommend, affiliate_url: affiliateUrl,
@@ -271,9 +273,13 @@ Deno.serve(async (req) => {
     if (action === 'submit') {
       const answers: Record<string, string> = {}
       const rawAnswers = (body.answers ?? {}) as Record<string, unknown>
+      const questionRatings: Record<string, number> = {}
+      const rawQr = (body.question_ratings ?? {}) as Record<string, unknown>
       for (const k of ['q1', 'q2', 'q3', 'q4', 'q5']) {
         const v = String(rawAnswers[k] ?? '').trim()
         if (v) answers[k] = v.slice(0, 4000)
+        const r = Number(rawQr[k])
+        if (r >= 1 && r <= 5) questionRatings[k] = Math.round(r)
       }
       const reviewText = String(body.review_text ?? '').trim().slice(0, 2000) || null
       const rating = Number(body.rating)
@@ -299,7 +305,7 @@ Deno.serve(async (req) => {
       // die Website — alles darunter bleibt intern (nur Feedback fuer Lotte & Sven).
       const autoPublish = finalRating === 5 && consent && !!reviewText
       const { error: ue } = await sb.from('review_requests').update({
-        answers, review_text: reviewText,
+        answers, question_ratings: questionRatings, review_text: reviewText,
         rating: finalRating,
         photo_path: photoPath,
         recommend,

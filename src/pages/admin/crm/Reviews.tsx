@@ -11,6 +11,7 @@ import { supabase } from '../../../lib/supabase'
 interface ReviewReq {
   id: string; lead_id: string | null; token: string; recipient_name: string
   language: string; status: string; answers: Record<string, string>
+  question_ratings: Record<string, number>
   rating: number | null; review_text: string | null; photo_url: string | null
   consent_given_at: string | null; consent_revoked_at: string | null
   published: boolean; sent_at: string | null; submitted_at: string | null
@@ -189,7 +190,10 @@ export default function Reviews() {
                     <div className="mt-4 border-t border-gray-100 pt-4 space-y-3 text-sm">
                       {Object.entries(QUESTION_LABELS).map(([k, label]) => (
                         <div key={k}>
-                          <p className="text-xs font-medium text-gray-400">{label}</p>
+                          <p className="text-xs font-medium text-gray-400">
+                            {label}
+                            {r.question_ratings?.[k] ? <span className="ml-2" title={`${r.question_ratings[k]}/5`}>{'🦴'.repeat(r.question_ratings[k])}</span> : null}
+                          </p>
                           <p className="text-gray-700 whitespace-pre-wrap">{r.answers?.[k] || t('crm.reviews.noAnswer')}</p>
                         </div>
                       ))}
