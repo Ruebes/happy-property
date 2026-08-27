@@ -93,9 +93,9 @@ async function ensureAffiliate(sb: SupabaseClient, row: ReviewRow): Promise<stri
           `Here is your personal referral link:\n${url}\n\n` +
           `How it works: share the link with friends. If someone books a call through it and ends up buying a property with us, you receive 1,000 € as a thank-you 💛\n\n` +
           `Thank you for spreading the word!\nYour Lotte 🐾`
-        : `Hallo ${first} 🐾 wie schoen, dass du Happy Property weiterempfehlen moechtest!\n\n` +
-          `Hier ist dein persoenlicher Empfehlungs-Link:\n${url}\n\n` +
-          `So funktioniert's: Teile den Link mit Freunden. Bucht jemand darueber ein Gespraech und kauft am Ende eine Immobilie ueber uns, bekommst du 1.000 € als Dankeschoen 💛\n\n` +
+        : `Hallo ${first} 🐾 wie schön, dass du Happy Property weiterempfehlen möchtest!\n\n` +
+          `Hier ist dein persönlicher Empfehlungs-Link:\n${url}\n\n` +
+          `So funktioniert's: Teile den Link mit Freunden. Bucht jemand darüber ein Gespräch und kauft am Ende eine Immobilie über uns, bekommst du 1.000 € als Dankeschön 💛\n\n` +
           `Danke, dass du uns weitersagst!\nDeine Lotte 🐾`
       const base = Deno.env.get('SUPABASE_URL')!
       let img = `${base}/storage/v1/object/public/${HAPPY_LOTTE}`
@@ -125,9 +125,9 @@ function lotteText(name: string, lang: string, url: string): string {
       `At the end you can - if you like - write a short review for our website and upload a photo of yourself. Only with your permission, promised - and you can withdraw it anytime.\n\nThank you! 🙏`
   }
   return `Hallo ${first}, hier ist Lotte von Happy Property 🧡\n\n` +
-    `Wir wollen besser werden - und dafuer brauchen wir dich. Du hast den ganzen Weg mit Sven und Lotte erlebt: Wie war er fuer dich?\n\n` +
+    `Wir wollen besser werden - und dafür brauchen wir dich. Du hast den ganzen Weg mit Sven und Lotte erlebt: Wie war er für dich?\n\n` +
     `Hier geht's zu unserem kurzen Fragebogen (2-3 Minuten):\n${url}\n\n` +
-    `Am Ende kannst du - wenn du magst - eine kleine Bewertung fuer unsere Website schreiben und ein Foto von dir hochladen. Nur mit deiner Erlaubnis, versprochen - und du kannst sie jederzeit wieder zurueckziehen.\n\nDanke dir! 🙏`
+    `Am Ende kannst du - wenn du magst - eine kleine Bewertung für unsere Website schreiben und ein Foto von dir hochladen. Nur mit deiner Erlaubnis, versprochen - und du kannst sie jederzeit wieder zurückziehen.\n\nDanke dir! 🙏`
 }
 
 Deno.serve(async (req) => {
@@ -225,7 +225,7 @@ Deno.serve(async (req) => {
         if (!r) return json({ error: 'Nicht gefunden.' }, 404)
         const row = r as ReviewRow
         if (published && (row.consent_revoked_at || !row.consent_given_at))
-          return json({ error: 'Keine (gueltige) Einwilligung — kann nicht veroeffentlicht werden.' }, 400)
+          return json({ error: 'Keine (gültige) Einwilligung - kann nicht veröffentlicht werden.' }, 400)
         if (published && !row.review_text)
           return json({ error: 'Keine Bewertung vorhanden.' }, 400)
         if (published && row.rating !== 5)
@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
         const { data: r } = await sb.from('review_requests').select('status, photo_path').eq('id', id).maybeSingle()
         if (!r) return json({ error: 'Nicht gefunden.' }, 404)
         if ((r as { status: string }).status === 'submitted')
-          return json({ error: 'Eingegangene Bewertungen werden nicht geloescht.' }, 400)
+          return json({ error: 'Eingegangene Bewertungen werden nicht gelöscht.' }, 400)
         await sb.from('review_requests').delete().eq('id', id)
         return json({ ok: true })
       }
@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
     const token = String(body.token ?? '').trim()
     if (!token) return json({ error: 'Token fehlt.' }, 400)
     const { data: reqRow } = await sb.from('review_requests').select('*').eq('token', token).maybeSingle()
-    if (!reqRow) return json({ error: 'Link ungueltig.' }, 404)
+    if (!reqRow) return json({ error: 'Link ungültig.' }, 404)
     const row = reqRow as ReviewRow
 
     if (action === 'view') {
@@ -286,7 +286,7 @@ Deno.serve(async (req) => {
         const mime = String(body.photo_mime ?? 'image/jpeg')
         const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg'
         const bytes = Uint8Array.from(atob(b64.replace(/^data:[^,]+,/, '')), c => c.charCodeAt(0))
-        if (bytes.length > 5 * 1024 * 1024) return json({ error: 'Foto zu gross (max. 5 MB).' }, 400)
+        if (bytes.length > 5 * 1024 * 1024) return json({ error: 'Foto zu groß (max. 5 MB).' }, 400)
         photoPath = `${row.id}.${ext}`
         const { error: upErr } = await sb.storage.from(BUCKET).upload(photoPath, bytes, { contentType: mime, upsert: true })
         if (upErr) return json({ error: 'Foto-Upload fehlgeschlagen: ' + upErr.message }, 500)
@@ -322,7 +322,7 @@ Deno.serve(async (req) => {
           if (adminId) {
             const { data: task } = await sb.from('crm_tasks').insert({
               title: `⭐ Bewertung von ${row.recipient_name} eingegangen`.slice(0, 200),
-              description: `Fragebogen ausgefuellt${reviewText ? ' + Website-Bewertung geschrieben' : ''}${photoPath ? ' + Foto hochgeladen' : ''}.\n\nPruefen & freigeben: ${PORTAL}/admin/crm/reviews`,
+              description: `Fragebogen ausgefüllt${reviewText ? ' + Website-Bewertung geschrieben' : ''}${photoPath ? ' + Foto hochgeladen' : ''}.\n\nPrüfen & freigeben: ${PORTAL}/admin/crm/reviews`,
               status: 'offen', created_by: adminId, source: 'review',
             }).select('id').single()
             const taskId = (task as { id: string } | null)?.id
@@ -331,7 +331,7 @@ Deno.serve(async (req) => {
           if (row.lead_id) {
             await sb.from('activities').insert({
               lead_id: row.lead_id, type: 'note', direction: 'inbound', auto: true,
-              subject: 'Bewertungs-Fragebogen ausgefuellt',
+              subject: 'Bewertungs-Fragebogen ausgefüllt',
               content: `Antworten eingegangen${reviewText ? `, Bewertung: „${reviewText.slice(0, 200)}"` : ''}${rating >= 1 ? `, ${rating}/5 Sterne` : ''}.`,
             })
           }

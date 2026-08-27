@@ -138,7 +138,7 @@ async function buildAbrechnungPdf(opts: {
   ]
   for (const l of notes) { t(l, M, y, 8.5, body, GREY); y -= 12 }
   y -= 20
-  t('Vielen Dank für deine Empfehlung! – Lotte & Sven, Happy Property', M, y, 10, bold, NAVY)
+  t('Vielen Dank für deine Empfehlung! - Lotte & Sven, Happy Property', M, y, 10, bold, NAVY)
 
   // Fusszeile
   page.drawLine({ start: { x: M, y: 70 }, end: { x: W - M, y: 70 }, thickness: 0.5, color: LINE })
@@ -214,7 +214,7 @@ async function settle(sb: SupabaseClient, payout: Payout): Promise<{ ok: boolean
     const first = aff.name.split(/\s+/)[0]
     await sb.functions.invoke('send-whatsapp', { body: {
       event_type: 'affiliate_abrechnung',
-      override_text: `Hallo ${first} 🐾 tolle Nachrichten: Deine Empfehlung hat gekauft! Deine Tippgeber-Provision von ${eur(Number(payout.amount) || AMOUNT)} ist unterwegs — die Abrechnung ${docNo} ${aff.email ? 'habe ich dir gerade per Mail geschickt' : `findest du hier: ${docUrl}`}. Liebe Grüße, Lotte 🐾`,
+      override_text: `Hallo ${first} 🐾 tolle Nachrichten: Deine Empfehlung hat gekauft! Deine Tippgeber-Provision von ${eur(Number(payout.amount) || AMOUNT)} ist unterwegs - die Abrechnung ${docNo} ${aff.email ? 'habe ich dir gerade per Mail geschickt' : `findest du hier: ${docUrl}`}. Liebe Grüße, Lotte 🐾`,
       already_translated: true, lang: 'de',
       lead_data: { lead_name: aff.name, lead_phone: aff.whatsapp },
     } })
@@ -261,7 +261,7 @@ Deno.serve(async (req) => {
           if (adminId) {
             const { data: task } = await sb.from('crm_tasks').insert({
               title: `💶 Tippgeber-Auszahlung 1.000 € freigeben`,
-              description: `Geworbener Kunde hat gekauft (Provision erhalten). Abrechnung wurde automatisch verschickt.\n\nAuszahlung ausloesen: ${PORTAL}/admin/crm/affiliates`,
+              description: `Geworbener Kunde hat gekauft (Provision erhalten). Abrechnung wurde automatisch verschickt.\n\nAuszahlung auslösen: ${PORTAL}/admin/crm/affiliates`,
               status: 'offen', created_by: adminId, source: 'affiliate',
             }).select('id').single()
             const taskId = (task as { id: string } | null)?.id
@@ -333,7 +333,7 @@ Deno.serve(async (req) => {
 
       // Lotte schickt den Link (WhatsApp bevorzugt, sonst Mail)
       const first = aff.name.split(/\s+/)[0]
-      const msg = `Hallo ${first} 🐾 hier kommt deine Auszahlung: Ueber diesen Revolut-Link kannst du dir deine ${eur(Number(payout.amount) || AMOUNT)} Tippgeber-Provision direkt auf dein Konto holen — einfach oeffnen und deine Bankverbindung eintragen:\n\n${d.url}\n\nDer Link ist ein paar Tage gueltig. Danke dir! Liebe Gruesse, Lotte 🐾`
+      const msg = `Hallo ${first} 🐾 hier kommt deine Auszahlung: Über diesen Revolut-Link kannst du dir deine ${eur(Number(payout.amount) || AMOUNT)} Tippgeber-Provision direkt auf dein Konto holen - einfach öffnen und deine Bankverbindung eintragen:\n\n${d.url}\n\nDer Link ist ein paar Tage gültig. Danke dir! Liebe Grüße, Lotte 🐾`
       if (aff.whatsapp) {
         await sb.functions.invoke('send-whatsapp', { body: {
           event_type: 'affiliate_payout', override_text: msg, already_translated: true, lang: 'de',
