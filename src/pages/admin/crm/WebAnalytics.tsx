@@ -149,6 +149,15 @@ function SessionModal({ session, onClose }: SessionModalProps) {
         // passiert bei alten/unvollstaendigen Aufzeichnungen.
         const hasSnapshot = all.some(e => (e as { type?: number }).type === 2)
         if (all.length < 2 || !hasSnapshot) { setReplayState('error'); return }
+        // Meta-Events mit kaputten Massen reparieren (width 0 = Aufnahme aus
+        // verstecktem/prerendertem Tab) — sonst rendert der Player 0px breit.
+        for (const e of all) {
+          const ev = e as { type?: number; data?: { width?: number; height?: number } }
+          if (ev.type === 4 && ev.data) {
+            if (!ev.data.width || ev.data.width < 50) ev.data.width = 1280
+            if (!ev.data.height || ev.data.height < 50 || ev.data.height > 5000) ev.data.height = 800
+          }
+        }
         const { default: rrwebPlayer } = await import('rrweb-player')
         if (cancelled || !playerRef.current) return
         playerInstance.current = new rrwebPlayer({
