@@ -409,9 +409,11 @@ Deno.serve(async (req) => {
       .select('token').single()
     if (insErr) throw new Error('Report speichern: ' + insErr.message)
     const token = (report as { token: string }).token
-    // Ausgeliefert wird ueber das CRM-Frontend (/report/:token) — die
-    // functions-Domain erzwingt text/plain fuer HTML-Antworten.
-    const link = `https://portal.happy-property.com/report/${token}`
+    // Ausgeliefert wird ueber die WP-Seite happy-property.de/wochenreport/
+    // (Viewer laedt das HTML per RPC hp_wa_report_html) — die Supabase-Domains
+    // (functions UND storage) erzwingen text/plain fuer HTML-Antworten.
+    // Alternativ funktioniert auch portal.happy-property.com/report/<token>.
+    const link = `https://happy-property.de/wochenreport/?t=${token}`
 
     const recipients = (Deno.env.get('WA_REPORT_RECIPIENTS') ?? DEFAULT_RECIPIENTS.join(','))
       .split(',').map(s => s.trim()).filter(Boolean)
