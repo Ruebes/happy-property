@@ -33,6 +33,15 @@ const json = (b: unknown, s = 200) =>
 const TZ = 'Asia/Nicosia'
 const DEFAULT_RECIPIENTS = ['sven@happy-property.com', 'giona.schauf@googlemail.com']
 
+// Klartext-Rollen der Websites (Sven, 27.8.): steuervorteil = Hauptseite,
+// happy-property.de = nur Kaltakquise/Landingpages, portal = Funnel + Kundenportal.
+const SITE_LABELS: Record<string, string> = {
+  'steuervorteil-zypern-immobilien.com': 'Hauptseite (steuervorteil…)',
+  'happy-property.de':                   'Kaltakquise & Landingpages (.de)',
+  'portal.happy-property.com':           'Kundenportal & Termin-Funnel',
+}
+const siteLabel = (s: string) => SITE_LABELS[s] ?? s
+
 const cyHour = (d = new Date()) =>
   Number(new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', hour12: false }).format(d)) % 24
 const cyDateStr = (d: Date) =>
@@ -159,7 +168,8 @@ async function analyze(data: ReportData): Promise<Analysis> {
   }
   const prompt =
     `Du bist Web-/Conversion-Analyst für Happy Property (Immobilien-Investments Zypern, deutschsprachige Kapitalanleger). ` +
-    `Getrackte Seiten: happy-property.com (CRM-Kundenseiten + Termin-Funnel /termin), happy-property.de (Landingpages) und steuervorteil-Landingpages. ` +
+    `Getrackte Seiten und ihre Rollen: steuervorteil-zypern-immobilien.com = HAUPTSEITE (Website), ` +
+    `happy-property.de = reine Kaltakquise-/Landingpages, portal.happy-property.com = Kundenportal + Termin-Funnel (/termin). ` +
     `Ziel-Conversion: gebuchter Beratungstermin über den Funnel.\n\n` +
     `Wochendaten (JSON):\n${JSON.stringify(compact)}\n\n` +
     `Funnel-Schritte in Reihenfolge: view → start → Fragen → contact_view → contact_submitted → slots_view → slot_picked → Buchung.\n\n` +
@@ -259,10 +269,11 @@ function buildHtml(data: ReportData, a: Analysis, kw: number): string {
       <div style="font-size:24px;font-weight:700;color:${CI.navy};margin-top:3px">${val}</div><div>${d}</div></div></td>`
 
   const siteRows = data.siteKpis.map(s => [
-    esc(s.site), fmtNum(s.kpis.visitors), fmtNum(s.kpis.sessions), fmtNum(s.kpis.pageviews),
+    `${esc(siteLabel(s.site))}<br><span style="color:${CI.mute};font-size:11px">${esc(s.site)}</span>`,
+    fmtNum(s.kpis.visitors), fmtNum(s.kpis.sessions), fmtNum(s.kpis.pageviews),
     fmtDur(s.kpis.avg_duration_s), `${s.kpis.bounce_pct}%`,
   ])
-  const pageRows = data.pages.map(pg => [`${esc(pg.site)}<span style="color:${CI.mute}">${esc(pg.path)}</span>`, fmtNum(pg.views)])
+  const pageRows = data.pages.map(pg => [`${esc(siteLabel(pg.site))}<span style="color:${CI.mute}">${esc(pg.path)}</span>`, fmtNum(pg.views)])
   const srcRows = data.sources.slice(0, 10).map(s => [esc(s.source), fmtNum(s.sessions)])
   const devAgg = new Map<string, number>()
   for (const d of data.devices) devAgg.set(d.device, (devAgg.get(d.device) ?? 0) + d.sessions)
