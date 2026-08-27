@@ -150,11 +150,11 @@ function UnitCard({
 
         {/* Details */}
         <div className="space-y-0.5 text-xs text-gray-500 mt-3">
-          {unit.size_sqm != null && (
+          {(unit.size_sqm != null || unit.plot_sqm != null) && (
             <p>
-              📐 {unit.size_sqm} m²
+              {unit.size_sqm != null ? `📐 ${unit.size_sqm} m²` : ''}
               {unit.terrace_sqm != null ? ` · ${unit.terrace_sqm} m² ${t('crm.pd.terrace')}` : ''}
-              {unit.plot_sqm != null ? ` · ${unit.plot_sqm} m² ${t('crm.pd.plot', 'Grundstück')}` : ''}
+              {unit.plot_sqm != null ? `${unit.size_sqm != null ? ' · ' : '🏡 '}${unit.plot_sqm} m² ${t('crm.pd.plot', 'Grundstück')}` : ''}
             </p>
           )}
           {(unit.bedrooms > 0 || unit.bathrooms > 0) && (

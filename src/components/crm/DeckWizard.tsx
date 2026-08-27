@@ -17,7 +17,7 @@ import { rentFromSeason } from '../../lib/strategy'
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null }
 interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
-interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; floor: number | null }
+interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
@@ -124,7 +124,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // UND an einen aktiven Deal gebundene Wohnungen werden ausgeblendet (= schon weg).
     const [{ data }, { data: dealRows }] = await Promise.all([
       supabase.from('crm_project_units')
-        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_net_furnished, price_gross, floor')
+        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, plot_sqm, price_net, price_net_furnished, price_gross, floor')
         // Zugewiesene Wohnungen (property_id = im Kundenportal materialisiert) sind
         // verkauft und NIE anbietbar — Status allein reicht nicht (Sven 14.8.).
         .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').is('property_id', null).order('unit_number'),
@@ -167,7 +167,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     if (!a?.facts) throw new Error(`${first.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
     const unitFacts = items.map(it => {
       const u = it.unit
-      return `\n\n=== WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.`
+      return `\n\n=== WOHNUNG: ${u.unit_number} ===\n${u.bedrooms ?? '?'} Schlafzimmer · ${u.size_sqm ?? '?'} m² Innenfläche${u.terrace_sqm ? ` + ${u.terrace_sqm} m² Außenfläche` : ''}${u.plot_sqm ? ` · ${u.plot_sqm} m² Grundstück` : ''}${u.floor != null ? ` · ${u.floor}. Etage` : ''}.`
     }).join('')
     // Grundrisse je Wohnung (nach Etage), Dubletten raus
     const floorplans = [...new Set(items.map(it => (a.floorplans ?? []).find(f => f.floor === it.unit.floor)?.url).filter(Boolean) as string[])]
@@ -534,7 +534,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                 {shownUnits.map(u => (
                   <label key={u.id} className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer ${sel.has(u.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`}>
                     <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} />
-                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m² · {eur(u.price_gross ?? u.price_net)}</span>
+                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m²{u.plot_sqm ? ` · 🏡 ${u.plot_sqm} m²` : ''} · {eur(u.price_gross ?? u.price_net)}</span>
                   </label>
                 ))}
               </div>

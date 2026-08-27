@@ -2570,6 +2570,9 @@ export default function LeadDetail() {
                             {pickedUnit.unit.size_sqm != null && (
                               <span>📐 {pickedUnit.unit.size_sqm} m²</span>
                             )}
+                            {pickedUnit.unit.plot_sqm != null && (
+                              <span>🏡 {pickedUnit.unit.plot_sqm} m² {t('crm.pd.plot', 'Grundstück')}</span>
+                            )}
                             {pickedUnit.unit.bedrooms > 0 && (
                               <span>🛏 {pickedUnit.unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')}</span>
                             )}
@@ -4432,6 +4435,7 @@ export default function LeadDetail() {
                   </div>
                   <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-x-3">
                     {unit.size_sqm != null && <span>📐 {unit.size_sqm} m²</span>}
+                    {unit.plot_sqm != null && <span>🏡 {unit.plot_sqm} m² {t('crm.pd.plot', 'Grundstück')}</span>}
                     {unit.bedrooms > 0 && <span>🛏 {unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')}</span>}
                     {unit.floor != null && <span>{t('crm.unit.floor')} {unit.floor}</span>}
                     {(unit.price_gross ?? unit.price_net) != null && (
