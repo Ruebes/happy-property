@@ -36,6 +36,21 @@ const THEMA_FEST: Record<string, string> = {
   X2QMXxHqdgw: 'projekte', // Sven Mamba Vlog: Projektbesichtigung vor Ort
 }
 
+// Erster Absatz der Videobeschreibung als "Antwort" - aber nur, wenn dort
+// wirklich etwas Eigenes steht. Der ueberall gleiche Kanal-Textbaustein
+// ("Auf diesem Kanal geht es um ...") liefert keine Antwort und wird ignoriert.
+function antwortAusBeschreibung(desc: string | undefined, titel: string): string | null {
+  const d = (desc ?? '').trim()
+  if (!d || d.startsWith('Auf diesem Kanal geht es um')) return null
+  let absatz = d.split(/\n\s*\n/)[0].replace(/#[\p{L}\p{N}_]+/gu, ' ').replace(/\s+/g, ' ').trim()
+  if (absatz.startsWith('Auf diesem Kanal geht es um')) return null
+  // Nur ein Echo des Titels (plus Hashtags) ist keine Antwort.
+  const norm = (x: string) => x.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  if (norm(absatz) === norm(titel) || norm(titel).startsWith(norm(absatz))) return null
+  if (absatz.length < 40) return null
+  return absatz.length > 420 ? absatz.slice(0, 417).trimEnd() + '…' : absatz
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -47,6 +62,7 @@ type Video = {
   title: string
   title_full: string
   published: string
+  answer: string | null
   url: string
   thumb: string
   thumb_api: string
@@ -138,7 +154,7 @@ async function apiVideos(): Promise<Video[] | null> {
   for (let i = 0; i < eindeutig.length; i += 50) {
     const d = await yt<{ items?: Array<{
       id: string
-      snippet?: { title?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> }
+      snippet?: { title?: string; publishedAt?: string; description?: string; thumbnails?: Record<string, { url?: string }> }
       contentDetails?: { duration?: string }
       statistics?: { viewCount?: string }
       status?: { privacyStatus?: string; uploadStatus?: string }
@@ -156,6 +172,7 @@ async function apiVideos(): Promise<Video[] | null> {
         title: titelOhneHashtags(vollerTitel),
         title_full: vollerTitel,
         published: v.snippet?.publishedAt ?? '',
+        answer: antwortAusBeschreibung(v.snippet?.description, vollerTitel),
         url: `https://www.youtube.com/watch?v=${v.id}`,
         thumb: `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
         thumb_api: bestesBild(v.snippet?.thumbnails),
@@ -185,6 +202,7 @@ async function rssVideos(): Promise<Video[]> {
       title: titelOhneHashtags(decode(title)),
       title_full: decode(title),
       published: published ?? '',
+      answer: antwortAusBeschreibung(decode(entry.match(/<media:description>([\s\S]*?)<\/media:description>/)?.[1] ?? ''), decode(title)),
       url: `https://www.youtube.com/watch?v=${id}`,
       thumb: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
       thumb_api: '',
