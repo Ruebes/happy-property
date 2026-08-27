@@ -451,13 +451,68 @@ function injectVideo(blocks: Array<Record<string, unknown>>, videoUrl?: string |
   blocks.splice(at, 0, vb)
 }
 
+// Welche Bildkategorie passt zu welchen Woertern im Blocktext? Reihenfolge zaehlt:
+// die erste Regel, die greift, gewinnt. Bisher bekam jeder Block einfach das
+// naechste Bild aus der Liste - ein Block ueber den Pool landete so unter einem
+// Fassadenfoto (Sven 26.8., The Cove).
+const BILD_REGELN: Array<{ re: RegExp; cats: string[] }> = [
+  { re: /\bpool|schwimm|sundeck|sonnendeck|planschen/i,           cats: ['pool', 'aussenbereich'] },
+  { re: /\bk[üu]che|kochen|kulinar|essbereich|esszimmer|dinner/i, cats: ['kueche', 'esszimmer', 'wohnzimmer'] },
+  { re: /schlafzimmer|schlafen|master|r[üu]ckzug|nachtruhe/i,      cats: ['schlafzimmer'] },
+  { re: /\bbad|badezimmer|dusche|wanne|sanit[äa]r|wellness/i,     cats: ['badezimmer'] },
+  { re: /wohnzimmer|wohnbereich|wohnen|lounge|sofa|kamin/i,        cats: ['wohnzimmer', 'esszimmer'] },
+  { re: /terrasse|veranda|garten|au[ßs]en|outdoor|bbq|grill/i,     cats: ['aussenbereich', 'fassade'] },
+  { re: /aussicht|blick|panorama|meer|sonnenunter|horizont/i,      cats: ['aussicht', 'aussenbereich', 'fassade'] },
+  { re: /\bgym|fitness|sport|yoga/i,                              cats: ['gym', 'lobby'] },
+  { re: /lobby|eingang|empfang|foyer/i,                            cats: ['lobby', 'fassade'] },
+  { re: /architekt|fassade|geb[äa]ude|bauweise|konstruktion/i,     cats: ['fassade'] },
+]
+
 function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   const renders = images?.renders ?? []
+  const gal = images?.gallery ?? []
   let ri = 0, pi = 0, fpi = 0
+  const verbraucht = new Set<string>()
   const nextRender = () => renders.length ? renders[ri++ % renders.length] : `https://picsum.photos/seed/deck${++pi}/1600/1000`
+  // Bild zum TEXT des Blocks suchen: erst ueber die Vision-Kategorie, sonst ueber
+  // das Bild-Label. Noch nicht verwendete Bilder haben Vorrang, damit sich nicht
+  // dasselbe Foto durchs ganze Deck zieht.
+  const passendesBild = (b: Record<string, unknown>): string | null => {
+    if (!gal.length) return null
+    const txt = [b.headline, b.kicker, b.intro, b.text, b.tagline, b.title]
+      .filter(x => typeof x === 'string').join(' ')
+    if (!txt.trim()) return null
+    const regel = BILD_REGELN.find(r => r.re.test(txt))
+    const kandidaten: Array<{ url: string; category: string; label: string }> = []
+    if (regel) {
+      for (const c of regel.cats) kandidaten.push(...gal.filter(x => x.category === c))
+    }
+    // Zusaetzlich ueber das Label suchen (z.B. "Poolbereich mit Lounge").
+    for (const w of txt.toLowerCase().match(/[a-zäöüß]{5,}/g) ?? []) {
+      for (const x of gal) if (x.label && x.label.toLowerCase().includes(w) && !kandidaten.includes(x)) kandidaten.push(x)
+    }
+    if (!kandidaten.length) return null
+    return (kandidaten.find(x => !verbraucht.has(x.url)) ?? kandidaten[0]).url
+  }
+  const bildFuer = (b: Record<string, unknown>): string => {
+    const treffer = passendesBild(b)
+    const url = treffer ?? nextRender()
+    verbraucht.add(url)
+    return url
+  }
+  // ZWEI DURCHGAENGE: Bloecke mit klarem Motivbezug ("Der Pool gehoert nur dir")
+  // waehlen ZUERST, danach die allgemeinen (cover, unit). Sonst greift sich das
+  // Cover das Poolfoto und der Pool-Block bekommt die Fassade (Sven 26.8.).
+  const bildBloecke = blocks.filter(b => ['cover', 'unit', 'columns', 'feature'].includes(b.type as string))
+  const hatBezug = (b: Record<string, unknown>) => {
+    const txt = [b.headline, b.kicker, b.intro, b.text, b.tagline, b.title].filter(x => typeof x === 'string').join(' ')
+    return BILD_REGELN.some(r => r.re.test(txt))
+  }
+  for (const b of bildBloecke.filter(hatBezug)) b.image = bildFuer(b)
+  for (const b of bildBloecke.filter(b => !hatBezug(b))) b.image = bildFuer(b)
+
   for (const b of blocks) {
     const t = b.type
-    if (t === 'cover' || t === 'unit' || t === 'columns' || t === 'feature') b.image = nextRender()
     // Cover: animierte Kamerafahrt (Higgsfield) statt Standbild, wenn vorhanden
     if (t === 'cover' && images?.heroVideo) b.video = images.heroVideo
     if (t === 'facts') {
@@ -554,6 +609,25 @@ Deno.serve(async (req) => {
     }
     const angleTone = isEigennutz ? 'lifestyle' : angle
     if (!body.facts?.trim()) return json({ error: 'facts fehlt' }, 400)
+
+    // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
+    // gar kein Foto gibt - das System stopfte dann irgendein Bild darunter (Sven
+    // 26.8., The Cove: 4 Bilder, nur Fassade und Aussenbereich). Sie soll nur
+    // ueber das schreiben, was sich auch zeigen laesst.
+    const galIn = body.images?.gallery ?? []
+    const rendIn = body.images?.renders ?? []
+    let bildFakten = ''
+    if (galIn.length || rendIn.length) {
+      const katListe = [...new Set(galIn.map(g => g.category).filter(Boolean))]
+      const labels = galIn.map(g => g.label).filter(Boolean).slice(0, 20)
+      bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck existieren ${galIn.length || rendIn.length} Fotos.`
+      if (katListe.length) bildFakten += `\nMotive: ${katListe.join(', ')}.`
+      if (labels.length) bildFakten += `\nBildinhalte: ${labels.join(' | ')}.`
+      bildFakten += `\nBaue KEINEN eigenen Block (feature/columns) ueber ein Motiv, das hier NICHT vorkommt - ein Block ueber die Kueche ohne Kuechenfoto bekommt zwangslaeufig ein unpassendes Bild. Gibt es nur Aussenmotive, dann beschreibe Architektur, Lage und Aussenbereiche und halte dich bei Innenraeumen an den Text ohne eigenen Bildblock.`
+      if (galIn.length + rendIn.length < 6) {
+        bildFakten += `\nDer Bildbestand ist KLEIN: baue hoechstens ${Math.max(2, galIn.length || rendIn.length)} bebilderte feature/columns-Bloecke, sonst wiederholen sich die Fotos sichtbar.`
+      }
+    }
 
     // Gelernte Vorgaben (deck_ai_rules, kind='deck') → fließen in JEDES Deck ein (Auto-Grab +
     // Feinschliff). Global (project_id null) immer; projektspezifische nur für DIESES Projekt.
@@ -775,7 +849,7 @@ Deno.serve(async (req) => {
         }
       } catch { /* best effort — ohne Preisangaben generiert die KI wie bisher */ }
     }
-    const factsAug = body.facts.trim() + extraFacts
+    const factsAug = body.facts.trim() + extraFacts + bildFakten
 
     const userMsg = learnedBlock + (generic ? [
       `GENERISCHES PROJEKT-DECK — KEIN spezifischer Kunde. Dieses Deck wird live im Zoom geteilt.`,
