@@ -24,3 +24,12 @@ verify_jwt = false
 # timelines-webhook aufgerufen (Service-Role, kein User-JWT).
 [functions.booking-bot]
 verify_jwt = false
+
+# Bewertungs-API: öffentlicher Fragebogen (/bewertung/:token) + Website-Widget
+# (public_list wird ohne Login von happy-property.de abgerufen).
+[functions.review-api]
+verify_jwt = false
+
+# Tippgeber-Programm: Cron-Scan (Provision erhalten → Abrechnung) kommt ohne JWT.
+[functions.affiliate-api]
+verify_jwt = false

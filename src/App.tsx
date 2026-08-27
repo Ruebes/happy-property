@@ -36,6 +36,7 @@ const AnalyticsReport = lazy(() => import('./pages/Report'))
 const SeoReportPage   = lazy(() => import('./pages/SeoReport'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
+const Bewertung = lazy(() => import('./pages/Bewertung'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
 const Anmelden = lazy(() => import('./pages/Anmelden'))
 const PartnerReview = lazy(() => import('./pages/PartnerReview'))
@@ -88,6 +89,8 @@ const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
 const WebAnalytics          = lazy(() => import('./pages/admin/crm/WebAnalytics'))
 const Seo                   = lazy(() => import('./pages/admin/crm/Seo'))
+const CrmReviews            = lazy(() => import('./pages/admin/crm/Reviews'))
+const CrmAffiliates         = lazy(() => import('./pages/admin/crm/Affiliates'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
 const Workflows             = lazy(() => import('./pages/admin/crm/Workflows'))
@@ -167,6 +170,8 @@ export default function App() {
             <Route path="/re/:token" element={<Invoice />} />
             {/* Öffentliche Aufgaben-Aktion (per Token, kein Login) */}
             <Route path="/t/:token" element={<TaskAction />} />
+            {/* Öffentlicher Bewertungs-Fragebogen (per Token, kein Login) */}
+            <Route path="/bewertung/:token" element={<Bewertung />} />
             {/* Persönlicher Buchungslink (öffentlich, z.B. /buchen/sven360) */}
             <Route path="/buchen/:slug" element={<BookingPage />} />
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
@@ -180,6 +185,8 @@ export default function App() {
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
               <Route path="/admin/crm/webanalytics"      element={<WebAnalytics />} />
               <Route path="/admin/crm/seo"               element={<Seo />} />
+              <Route path="/admin/crm/reviews"           element={<CrmReviews />} />
+              <Route path="/admin/crm/affiliates"        element={<CrmAffiliates />} />
             </Route>
 
             {/* ── Funnel & Newsletter (Recht 'funnel') ── */}

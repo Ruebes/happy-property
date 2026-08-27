@@ -271,6 +271,27 @@ Deno.serve(async (req) => {
         await admin.from('leads').update(patch).eq('id', leadId)
       }
       if (!leadId) return json({ error: 'lead_failed' }, 500)
+      // Affiliate-Attribution: /termin?ref=<code> → Tippgeber am Lead vermerken.
+      // Nur die ERSTE Zuordnung zaehlt; der Tippgeber selbst wird nie sein eigener Kunde.
+      const refCode = String((utm as Record<string, string>).ref ?? '').trim().toLowerCase()
+      if (refCode) {
+        try {
+          const { data: aff } = await admin.from('affiliates').select('id, name, lead_id').eq('code', refCode).eq('active', true).maybeSingle()
+          const a = aff as { id: string; name: string; lead_id: string | null } | null
+          if (a && a.lead_id !== leadId) {
+            const { data: cur } = await admin.from('leads').select('referred_by_affiliate').eq('id', leadId).maybeSingle()
+            if (!(cur as { referred_by_affiliate?: string | null } | null)?.referred_by_affiliate) {
+              await admin.from('leads').update({ referred_by_affiliate: a.id }).eq('id', leadId)
+              await admin.from('activities').insert({
+                lead_id: leadId, type: 'note', direction: 'inbound', auto: true,
+                subject: '🤝 Empfehlung (Tippgeber)',
+                content: `Geworben von ${a.name} (Empfehlungs-Code ${refCode}). Bei Provisionseingang: 1.000 € Tippgeber-Provision.`,
+                completed_at: new Date().toISOString(),
+              })
+            }
+          }
+        } catch (e) { console.warn('[funnel-api] Affiliate-Attribution fehlgeschlagen:', e) }
+      }
       try {
         await admin.from('activities').insert({
           lead_id: leadId, type: 'note', direction: 'inbound',

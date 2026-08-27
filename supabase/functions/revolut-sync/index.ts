@@ -392,6 +392,30 @@ Deno.serve(async (req: Request) => {
     const tok = await tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken })
     const accessToken = tok.access_token as string
 
+    // ── Payout-Link (Tippgeber-Auszahlung): Empfänger trägt seine Bankdaten
+    // selbst bei Revolut ein, Betrag + Verwendungszweck sind fest vorgegeben ──
+    if (body.action === 'payout_link') {
+      const b = body as unknown as { amount?: number; counterparty_name?: string; reference?: string; request_id?: string }
+      const amount = Number(b.amount)
+      const cpName = String(b.counterparty_name ?? '').trim().slice(0, 100)
+      const reference = String(b.reference ?? 'Happy Property').slice(0, 100)
+      const requestId = String(b.request_id ?? crypto.randomUUID())
+      if (!amount || amount <= 0 || !cpName) return json({ error: 'amount/counterparty_name fehlen' }, 400)
+      const accs = await (await fetch(`${API}/accounts`, { headers: { Authorization: `Bearer ${accessToken}` } })).json() as Array<{ id: string; currency: string; state: string; balance: number }>
+      const acc = accs.find(a => a.currency === 'EUR' && a.state === 'active')
+      if (!acc) return json({ error: 'Kein aktives EUR-Konto bei Revolut' }, 400)
+      if (acc.balance < amount) return json({ error: `Kontostand zu niedrig (${acc.balance.toFixed(2)} EUR verfügbar)` }, 400)
+      const r = await fetch(`${API}/payout-links`, { method: 'POST', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ counterparty_name: cpName, request_id: requestId, account_id: acc.id, amount, currency: 'EUR', reference }) })
+      const d = await r.json().catch(() => ({})) as { id?: string; url?: string; state?: string; message?: string }
+      if (!r.ok || !d.id) {
+        const hint = r.status === 403 ? ' — Payout-Links sind für diesen API-Zugang nicht freigeschaltet (Revolut Business → Settings → API)' : ''
+        return json({ error: `Payout-Link fehlgeschlagen: ${d.message ?? r.status}${hint}` }, 502)
+      }
+      console.log(`[revolut-sync] Payout-Link erstellt: ${cpName} ${amount} EUR (${d.id})`)
+      return json({ success: true, id: d.id, url: d.url ?? null, state: d.state ?? null })
+    }
+
     // Vorprüfung OHNE Zahlung: alles Read-only (Konto, Deckung, Empfänger-Status)
     if (body.action === 'pay_preflight') {
       const { data: pRow } = await supabase.from('fin_payables').select('*').eq('id', body.payable_id ?? '').maybeSingle()
