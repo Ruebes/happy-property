@@ -538,6 +538,12 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
     return (kandidaten.find(x => !verbraucht.has(x.url)) ?? kandidaten[0]).url
   }
   const bildFuer = (b: Record<string, unknown>): string => {
+    // Hat der Block schon ein GEWOLLTES Bild (z.B. das Marina-Modell aus einer
+    // gelernten Vorgabe), bleibt es stehen. Vorher ueberschrieb die Zuordnung es
+    // mit einem beliebigen Render - im Marina-Abschnitt stand ein Esszimmer
+    // (Sven 27.8.).
+    const vorhanden = typeof b.image === 'string' ? b.image.trim() : ''
+    if (vorhanden.startsWith('http')) { verbraucht.add(vorhanden); return vorhanden }
     const treffer = passendesBild(b)
     const url = treffer ?? nextRender()
     verbraucht.add(url)
@@ -681,7 +687,7 @@ Deno.serve(async (req) => {
       } catch { /* im Zweifel deutsch */ }
     }
     const langHinweis = deckLang === 'en'
-      ? `\n\n=== SPRACHE: ENGLISCH (HART, HOECHSTE PRIORITAET) ===\nDer Empfaenger dieses Decks spricht Englisch. Schreibe JEDEN sichtbaren Text auf ENGLISCH: Ueberschriften, Kicker, Taglines, Fliesstext, Aufzaehlungen, Bildunterschriften, Labels der Preiszeilen, Zahlungsplan-Bezeichnungen, Handlungsaufforderungen. Die FAKTEN unten stehen auf Deutsch - uebersetze ihren Inhalt, uebernimm ihn nicht woertlich. NICHT uebersetzt werden: Eigennamen (Projekt- und Bautraegernamen, Ortsnamen, Wohnungsnummern, Markennamen), Zahlen, Preise, Flaechen und Datumsangaben. Waehrungsformat bleibt europaeisch (z.B. 499.000 EUR). Verwende britisches Englisch und dieselbe Ansprache wie im Deutschen: persoenlich und direkt (du -> you).`
+      ? `\n\n=== SPRACHE: ENGLISCH (HART, HOECHSTE PRIORITAET) ===\nDer Empfaenger dieses Decks spricht Englisch. Schreibe JEDEN sichtbaren Text auf ENGLISCH: Ueberschriften, Kicker, Taglines, Fliesstext, Aufzaehlungen, Bildunterschriften, Labels der Preiszeilen, Zahlungsplan-Bezeichnungen, Handlungsaufforderungen. Die FAKTEN unten stehen auf Deutsch - uebersetze ihren Inhalt, uebernimm ihn nicht woertlich. NICHT uebersetzt werden: Eigennamen (Projekt- und Bautraegernamen, Ortsnamen, Wohnungsnummern, Markennamen), Zahlen, Preise, Flaechen und Datumsangaben. Waehrungsformat bleibt europaeisch (z.B. 499.000 EUR). Verwende britisches Englisch und dieselbe Ansprache wie im Deutschen: persoenlich und direkt (du -> you). Lass KEIN einzelnes deutsches Wort im englischen Satz stehen - auch nicht Fachbegriffe wie "raumhoch", "bodentief" oder "Fussbodenheizung"; uebersetze sie (floor-to-ceiling, underfloor heating).`
       : ''
 
     // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
@@ -1305,6 +1311,17 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Marina-Abschnitte tragen IMMER das Marina-Modell. Die KI baut wegen der
+    // gelernten Mamba-Vorgabe einen eigenen feature-Block dazu; ohne diese Regel
+    // landet dort ein beliebiges Innenraum-Render (Sven 27.8.: Esszimmer).
+    for (const b of blocks) {
+      const txt = `${b.kicker ?? ''} ${b.headline ?? ''}`
+      if (/marina/i.test(txt) && b.type !== 'marina' && b.image !== MARINA_MODEL) {
+        b.image = MARINA_MODEL
+        console.log('[generate-deck] Marina-Abschnitt: Modellbild gesetzt')
+      }
+    }
+
     // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
     // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer
     // Kasten mit Ueberschrift stehen (Sven 27.8.).
@@ -1321,14 +1338,30 @@ Deno.serve(async (req) => {
     // Labels, Reihenfolge bleibt erhalten.
     if (deckLang === 'en') {
       const felder: Array<{ obj: Record<string, unknown>; key: string }> = []
-      const deutsch = (v: unknown) => typeof v === 'string' && v.trim() && /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Außen|Innen)\b/.test(v)
+      const deutsch = (v: unknown) => typeof v === 'string' && v.trim() && /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Aussen|Innen|raumhoh\w*|bodentief\w*|schluesselfertig|Fussboden\w*|Wohnzimmer|Schlafzimmer|Kueche|Terrasse|Grundstueck|Bautraeger|Uebergabe|Wertsteigerung|Zahlungsplan)\b/i.test(v)
       for (const b of blocks) {
-        for (const k of ['headline', 'kicker', 'title', 'note', 'caption']) if (deutsch(b[k])) felder.push({ obj: b, key: k })
+        for (const k of ['headline', 'kicker', 'title', 'note', 'caption', 'text', 'intro', 'tagline', 'quote', 'nickname', 'linkLabel', 'sumLabel', 'advantage']) {
+          if (deutsch(b[k])) felder.push({ obj: b, key: k })
+        }
+        if (Array.isArray(b.paragraphs)) {
+          (b.paragraphs as unknown[]).forEach((v, i) => {
+            if (deutsch(v)) felder.push({ obj: b.paragraphs as unknown as Record<string, unknown>, key: String(i) })
+          })
+        }
+        for (const phKey of ['phase1', 'phase2']) {
+          const ph = b[phKey] as Record<string, unknown> | undefined
+          if (ph && typeof ph === 'object') {
+            for (const k of ['title', 'label', 'advantage', 'sumLabel']) if (deutsch(ph[k])) felder.push({ obj: ph, key: k })
+            if (Array.isArray(ph.rows)) for (const r of ph.rows as Array<Record<string, unknown>>) {
+              for (const k of ['label', 'sub']) if (deutsch(r[k])) felder.push({ obj: r, key: k })
+            }
+          }
+        }
         for (const arrKey of ['items', 'cards', 'cols', 'groups']) {
           if (!Array.isArray(b[arrKey])) continue
           for (const it of b[arrKey] as Array<Record<string, unknown>>) {
             if (!it || typeof it !== 'object') continue
-            for (const k of ['title', 'label', 'caption', 'text']) if (deutsch(it[k])) felder.push({ obj: it, key: k })
+            for (const k of ['title', 'label', 'caption', 'text', 'strong', 'sub', 'value']) if (deutsch(it[k])) felder.push({ obj: it, key: k })
           }
         }
       }
