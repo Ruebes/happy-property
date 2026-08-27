@@ -32,6 +32,7 @@ const Profile = lazy(() => import('./pages/Profile'))
 const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Strategie = lazy(() => import('./pages/Strategie'))
+const AnalyticsReport = lazy(() => import('./pages/Report'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
@@ -84,6 +85,7 @@ const CrmInvoices           = lazy(() => import('./pages/admin/crm/Invoices'))
 const CrmInvoiceSettings    = lazy(() => import('./pages/admin/crm/settings/InvoiceSettings'))
 const CrmCalendar           = lazy(() => import('./pages/admin/crm/Calendar'))
 const Statistics            = lazy(() => import('./pages/admin/crm/Statistics'))
+const WebAnalytics          = lazy(() => import('./pages/admin/crm/WebAnalytics'))
 const FunnelStats           = lazy(() => import('./pages/admin/crm/FunnelStats'))
 const FunnelEditor          = lazy(() => import('./pages/admin/crm/FunnelEditor'))
 const Workflows             = lazy(() => import('./pages/admin/crm/Workflows'))
@@ -152,6 +154,7 @@ export default function App() {
             {/* Kurzlink-Weiterleitung (WhatsApp-taugliche kurze URLs) */}
             <Route path="/s/:code" element={<ShortLink />} />
             <Route path="/revolut" element={<RevolutCallback />} />
+            <Route path="/report/:token" element={<AnalyticsReport />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
             {/* Öffentliche Rendite-Rechnung / Immobilienvergleich (per Token, kein Login) */}
@@ -172,6 +175,7 @@ export default function App() {
               <Route path="/admin/users"                 element={<AdminUsers />} />
               <Route path="/admin/verwaltungen"          element={<AdminVerwaltungen />} />
               <Route path="/admin/crm/statistics"        element={<Statistics />} />
+              <Route path="/admin/crm/webanalytics"      element={<WebAnalytics />} />
             </Route>
 
             {/* ── Funnel & Newsletter (Recht 'funnel') ── */}

@@ -30,5 +30,15 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- Web-Analytics (eigenes Tracking, Edge Function wa-track).
+         Nur Kundenseiten — der Admin-/CRM-Bereich wird nicht getrackt. -->
+    <script>
+      if (!/^\/(admin|login|set-password|report)/.test(location.pathname)) {
+        var _hpwaS = document.createElement('script');
+        _hpwaS.src = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/wa-track/t.js';
+        _hpwaS.defer = true;
+        document.head.appendChild(_hpwaS);
+      }
+    </script>
   </body>
 </html>

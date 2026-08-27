@@ -314,6 +314,8 @@ export default function Funnel() {
       }
       if (!d?.ok) throw new Error(d?.error || 'Buchung fehlgeschlagen')
       setPhase('done')
+      // Web-Analytics: Buchung als Conversion markieren (fire-and-forget).
+      ;(window as unknown as { hpwa?: (c: string, n: string) => void }).hpwa?.('event', 'booking_done')
     } catch {
       setError(t('funnel.err_generic', 'Das hat leider nicht geklappt. Bitte versuche es noch einmal.'))
     } finally { setBusy(false) }

@@ -240,3 +240,14 @@ do $$ begin
     end if;
   end if;
 end $$;
+
+-- ── Oeffentlicher Report-Abruf per Token (/report/:token im Frontend) ────────
+-- security definer: anon kommt NUR ueber den 64-Zeichen-Token an genau einen
+-- Report — kein Tabellen-Select fuer anon. (Hintergrund: die functions-Domain
+-- liefert text/html als text/plain aus, daher rendert das CRM den Report.)
+create or replace function public.hp_wa_report_html(p_token text)
+returns text language sql stable security definer set search_path = public as $$
+  select html from public.web_reports where token = p_token;
+$$;
+revoke all on function public.hp_wa_report_html(text) from public;
+grant execute on function public.hp_wa_report_html(text) to anon, authenticated, service_role;
