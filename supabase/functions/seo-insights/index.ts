@@ -98,8 +98,10 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('pkcs8', buf, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
 }
 async function gscToken(): Promise<string> {
-  const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
-  if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON nicht gesetzt')
+  // Eigener GSC-Schluessel (Projekt premium-summit, Svens Konto) hat Vorrang;
+  // der Drive-SA (abstract-sunset, fremdes Projekt ohne API-Zugriff) ist Fallback.
+  const raw = Deno.env.get('GSC_SERVICE_ACCOUNT_JSON') ?? Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+  if (!raw) throw new Error('GSC_SERVICE_ACCOUNT_JSON nicht gesetzt')
   const sa = JSON.parse(raw) as { client_email: string; private_key: string }
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
@@ -486,7 +488,7 @@ Deno.serve(async (req) => {
 
     // ── Setup-Auskunft: welche SA-Adresse muss in die Search Console? ──
     if (body.action === 'gsc_setup') {
-      const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') ?? ''
+      const raw = Deno.env.get('GSC_SERVICE_ACCOUNT_JSON') ?? Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') ?? ''
       let email = ''
       try { email = (JSON.parse(raw) as { client_email?: string }).client_email ?? '' } catch { /* leer */ }
       const gsc = await fetchGsc()
