@@ -399,7 +399,14 @@ function FloorplanBlock(b: Extract<DeckBlock, { type: 'floorplan' }>) {
           ganzen Lageplans). Sonst: Grundriss-Bild VOLLBREIT, object-contain = nicht verzerrt. */}
       {b.rooms && b.rooms.length
         ? <FloorplanSchematic rooms={b.rooms} note={b.planNote} />
-        : <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />}
+        : (
+          <>
+            <Img src={b.image} className="w-full h-auto max-h-[660px] object-contain bg-white rounded-xl border border-gray-200 p-3 md:p-5" />
+            {/* Flächen-/Maß-Note (hp-floorplan): echte m² als Text statt KI-gemalter
+                Maßketten — der image-Zweig ließ planNote bisher stumm unter den Tisch fallen. */}
+            {b.planNote && <p className="text-[12px] text-gray-500 mt-3 max-w-3xl">{b.planNote}</p>}
+          </>
+        )}
       {b.stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-8">
           {b.stats.map((s, i) => (

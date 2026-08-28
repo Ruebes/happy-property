@@ -161,6 +161,37 @@ async function fetchGsc(): Promise<GscData> {
   return { status: 'wartet_auf_freigabe' }          // SA ist noch nicht als GSC-Nutzer eingetragen
 }
 
+// ── Google-Noten (Lighthouse ueber die PageSpeed-API) ────────────────────────
+// Mit PSI_API_KEY stabil (25.000 Abrufe/Tag frei); ohne Schluessel wird es
+// versucht, das gemeinsame Kontingent ist aber oft erschoepft.
+const NOTEN_SEITEN = ['/', '/non-dom-status-zypern/', '/steuerliche-vorteile/']
+interface Noten { perf: number | null; seo: number | null; a11y: number | null; bp: number | null }
+async function fetchNoten(): Promise<{ status: string; seiten: Record<string, Noten> }> {
+  const key = Deno.env.get('PSI_API_KEY') ?? ''
+  const seiten: Record<string, Noten> = {}
+  let fehler = ''
+  await Promise.all(NOTEN_SEITEN.map(async (pfad) => {
+    const u = new URL('https://www.googleapis.com/pagespeedonline/v5/runPagespeed')
+    u.searchParams.set('url', BASE + pfad)
+    u.searchParams.set('strategy', 'mobile')
+    for (const c of ['performance', 'seo', 'accessibility', 'best-practices']) u.searchParams.append('category', c)
+    if (key) u.searchParams.set('key', key)
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 60000)
+      const r = await fetch(u, { signal: ctrl.signal })
+      clearTimeout(timer)
+      const d = await r.json() as { error?: { message?: string }; lighthouseResult?: { categories?: Record<string, { score?: number }> } }
+      if (!r.ok || !d.lighthouseResult) { fehler = d.error?.message ?? `HTTP ${r.status}`; return }
+      const cat = d.lighthouseResult.categories ?? {}
+      const n = (k: string) => cat[k]?.score != null ? Math.round((cat[k].score as number) * 100) : null
+      seiten[pfad] = { perf: n('performance'), seo: n('seo'), a11y: n('accessibility'), bp: n('best-practices') }
+    } catch (err) { fehler = err instanceof Error ? err.message : String(err) }
+  }))
+  const ok = Object.keys(seiten).length
+  return { status: ok === NOTEN_SEITEN.length ? 'ok' : ok > 0 ? `teilweise: ${fehler}` : `fehler: ${fehler}`, seiten }
+}
+
 // ── Tages-Schnappschuss: Sitemap crawlen ─────────────────────────────────────
 async function fetchText(url: string, timeoutMs = 20000): Promise<{ ok: boolean; status: number; text: string; ttfbMs: number }> {
   const ctrl = new AbortController()
@@ -218,6 +249,8 @@ async function buildSnapshot(sb: SupabaseClient): Promise<Record<string, unknown
   const robots = await fetchText(`${BASE}/robots.txt`)
   metrics.robots_ai_ok = robots.ok && !/disallow:\s*\/\s*$/im.test(robots.text)
   const gsc = await fetchGsc()
+  const noten = await fetchNoten()
+  ;(metrics as Record<string, unknown>).lighthouse = noten
   const day = cyDateStr(new Date())
   const { error } = await sb.from('seo_snapshots')
     .upsert({ day, site: SITE, metrics, gsc }, { onConflict: 'day' })
@@ -266,9 +299,11 @@ async function collectWeek(sb: SupabaseClient) {
     daily.set(day, d)
   }
 
-  const { data: snaps } = await sb.from('seo_snapshots').select('day, metrics, gsc').order('day', { ascending: false }).limit(8)
+  const { data: snaps } = await sb.from('seo_snapshots').select('day, metrics, gsc').order('day', { ascending: false }).limit(35)
   const snapNow = snaps?.[0] ?? null
   const snapWeekAgo = snaps?.find(s => s.day <= cyDateStr(from)) ?? snaps?.[snaps.length - 1] ?? null
+  const monatsGrenze = cyDateStr(new Date(to.getTime() - 28 * 86400_000))
+  const snapMonthAgo = snaps?.find(s => s.day <= monatsGrenze) ?? null
 
   // Organische Besuche aus dem Eigenbau-Analytics, nach Suchsystem
   const organic = { google: 0, bing: 0, ki: 0 }
@@ -280,7 +315,7 @@ async function collectWeek(sb: SupabaseClient) {
     else if (/bing\./.test(ref)) organic.bing++
     else if (/chatgpt|openai|perplexity|claude|copilot/.test(ref)) organic.ki++
   }
-  return { from, to, cur: agg(cur), prev: agg(prev), topAiPages, daily: [...daily.entries()].sort(), snapNow, snapWeekAgo, organic }
+  return { from, to, cur: agg(cur), prev: agg(prev), topAiPages, daily: [...daily.entries()].sort(), snapNow, snapWeekAgo, snapMonthAgo, organic }
 }
 
 type WeekData = Awaited<ReturnType<typeof collectWeek>>
@@ -362,6 +397,40 @@ function dailyChart(daily: WeekData['daily']): string {
     `<rect x="${pad + 110}" y="6" width="10" height="10" rx="2" fill="${CI.coral}"/><text x="${pad + 125}" y="15" font-size="11" fill="${CI.mute}">KI (ChatGPT, Claude, Perplexity)</text></svg>`
 }
 
+function notenZelle(now: number | null, woche: number | null, monat: number | null): string {
+  if (now == null) return '<td style="padding:6px 8px;text-align:right;color:#999">–</td>'
+  const d = (alt: number | null, label: string) =>
+    alt != null && alt !== now
+      ? ` <span style="font-size:11px;color:${now >= alt ? '#1f9d55' : '#d33'}">${now >= alt ? '▲' : '▼'}${Math.abs(now - alt)} ${label}</span>`
+      : ''
+  return `<td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums"><b>${now}</b>${d(woche, 'W')}${d(monat, 'M')}</td>`
+}
+function notenBlock(data: WeekData): string {
+  type LH = { status?: string; seiten?: Record<string, { perf: number | null; seo: number | null; a11y: number | null; bp: number | null }> }
+  const jetzt = ((data.snapNow?.metrics ?? {}) as { lighthouse?: LH }).lighthouse
+  const woche = ((data.snapWeekAgo?.metrics ?? {}) as { lighthouse?: LH }).lighthouse
+  const monat = ((data.snapMonthAgo?.metrics ?? {}) as { lighthouse?: LH }).lighthouse
+  if (!jetzt?.seiten || !Object.keys(jetzt.seiten).length) {
+    return `<p style="font-size:14px;color:${CI.mute}">Noch keine Noten erfasst${jetzt?.status ? ` (${esc(jetzt.status)})` : ''}. ` +
+      `Stabil wird die Messung mit einem eigenen PageSpeed-API-Schlüssel (PSI_API_KEY).</p>`
+  }
+  const zeile = (pfad: string) => {
+    const j = jetzt.seiten?.[pfad]; if (!j) return ''
+    const w = woche?.seiten?.[pfad]; const m = monat?.seiten?.[pfad]
+    return `<tr><td style="padding:6px 8px 6px 0">${esc(pfad)}</td>` +
+      notenZelle(j.perf, w?.perf ?? null, m?.perf ?? null) +
+      notenZelle(j.seo, w?.seo ?? null, m?.seo ?? null) +
+      notenZelle(j.a11y, w?.a11y ?? null, m?.a11y ?? null) +
+      notenZelle(j.bp, w?.bp ?? null, m?.bp ?? null) + '</tr>'
+  }
+  return `<table style="width:100%;border-collapse:collapse;font-size:14px">` +
+    `<tr style="color:${CI.mute};font-size:11px;text-transform:uppercase;letter-spacing:1px">` +
+    `<td>Seite</td><td style="text-align:right">Tempo</td><td style="text-align:right">SEO</td>` +
+    `<td style="text-align:right">Barrierefrei</td><td style="text-align:right">Praxis</td></tr>` +
+    NOTEN_SEITEN.map(zeile).join('') + `</table>` +
+    `<p style="margin:10px 0 0;font-size:12px;color:${CI.mute}">▲/▼ = Veränderung zur Vorwoche (W) und zum Vormonat (M). Quelle: Google PageSpeed, Handy-Modus.</p>`
+}
+
 function renderHtml(data: WeekData, analysis: Analysis): string {
   const card = (inner: string) =>
     `<div style="background:#fff;border:1px solid #e8e4dc;border-radius:14px;padding:22px 24px;margin-bottom:18px">${inner}</div>`
@@ -417,6 +486,7 @@ function renderHtml(data: WeekData, analysis: Analysis): string {
       `<p style="margin:12px 0 0;font-size:12px;color:${CI.mute}">* Live-Abrufe = eine KI hat die Seite in dem Moment geladen, ` +
       `in dem ein Mensch ihr eine Frage gestellt hat — das direkteste Signal für KI-Sichtbarkeit.</p>`) +
     card(h2('Diese Seiten lesen die KIs am häufigsten') + aiPages) +
+    card(h2('Google-Noten (Lighthouse, mobil)') + notenBlock(data)) +
     card(h2('Google Search Console') + gscBlock) +
     card(h2('Seiten-Gesundheit') +
       `<table style="width:100%;border-collapse:collapse;font-size:14px">` +

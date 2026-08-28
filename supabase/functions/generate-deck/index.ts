@@ -613,6 +613,107 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
   }
 }
 
+// ── Bild-Text-ENDKONTROLLE (Sven 28.8.26: „Bilder passen oftmals nicht zum Text") ──
+// Nach der Zuordnung prueft EIN Vision-Call alle Text-Bild-Paare der unit/feature/
+// columns-Bloecke. Unpassende Bilder werden gegen ein passendes, noch unbenutztes
+// Galerie-Bild getauscht (Kategorie kommt vom Modell, Tausch bleibt deterministisch).
+// Best-effort: jeder Fehler laesst das Deck unveraendert.
+const AUDIT_CATS = ['fassade', 'aussenbereich', 'aussicht', 'pool', 'wohnzimmer', 'esszimmer', 'kueche', 'schlafzimmer', 'badezimmer', 'gym', 'lobby']
+async function auditBlockImages(blocks: Array<Record<string, unknown>>, gal: Array<{ url: string; category: string; label: string }>): Promise<void> {
+  if (!gal.length) return
+  const kandidatenBloecke = blocks.filter(b =>
+    ['unit', 'feature', 'columns'].includes(String(b.type)) &&
+    typeof b.image === 'string' && (b.image as string).startsWith('http') &&
+    b.image !== MARINA_MODEL,
+  ).slice(0, 10)
+  if (!kandidatenBloecke.length) return
+  const thumb = (u: string) => {
+    const marker = '/storage/v1/object/public/'
+    const i = u.indexOf(marker)
+    if (i < 0 || u.includes('?')) return u
+    return `${u.slice(0, i)}/storage/v1/render/image/public/${u.slice(i + marker.length)}?width=512&height=512&resize=contain`
+  }
+  // Bilder selbst laden + als base64 schicken (URL-Quellen laufen bei Anthropic in
+  // Download-Timeouts, gleiche Lehre wie categorizeImages 20.6.).
+  const imgs = await Promise.all(kandidatenBloecke.map(async b => {
+    try {
+      const r = await fetch(thumb(String(b.image)))
+      if (!r.ok) return null
+      const mime = (r.headers.get('content-type') ?? 'image/jpeg').split(';')[0]
+      const bytes = new Uint8Array(await r.arrayBuffer())
+      let bin = ''
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+      return { mime: mime.startsWith('image/') ? mime : 'image/jpeg', b64: btoa(bin) }
+    } catch { return null }
+  }))
+  const content: Array<Record<string, unknown>> = []
+  const geprueft: Array<Record<string, unknown>> = []
+  kandidatenBloecke.forEach((b, i) => {
+    const im = imgs[i]
+    if (!im) return
+    const thema = [b.kicker, b.headline, b.title, b.tagline].filter(x => typeof x === 'string').join(' — ').slice(0, 180)
+    if (!thema.trim()) return
+    content.push({ type: 'text', text: `PAAR ${geprueft.length}: Thema/Überschrift: „${thema}"` })
+    content.push({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } })
+    geprueft.push(b)
+  })
+  if (!geprueft.length) return
+  content.push({ type: 'text', text: 'Prüfe je Paar, ob das BILD inhaltlich zur Überschrift passt (Pool-Text braucht Poolbild, Küchen-Text Küche/Essbereich, Aussichts-Text einen Ausblick, Fassaden-/Architektur-Text ein Außenbild). Sei tolerant: ein stimmiges Stimmungsbild ist ok — melde NUR klare Fehlgriffe (Yoga-Raum unter „Einrichtungspaket", Esszimmer unter „Marina"). Gib bei Fehlgriffen die passende Kategorie an.' })
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6', max_tokens: 1500,
+        tools: [{
+          name: 'emit_audit',
+          description: 'Bild-Text-Abgleich je Paar.',
+          input_schema: {
+            type: 'object',
+            properties: {
+              items: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    index:    { type: 'integer' },
+                    matches:  { type: 'boolean' },
+                    category: { type: 'string', enum: AUDIT_CATS, description: 'Bei matches=false: welche Bild-Kategorie zum Text passen würde.' },
+                  },
+                  required: ['index', 'matches'],
+                },
+              },
+            },
+            required: ['items'],
+          },
+        }],
+        tool_choice: { type: 'tool', name: 'emit_audit' },
+        messages: [{ role: 'user', content }],
+      }),
+    })
+    if (!res.ok) { console.warn(`[generate-deck] Bild-Audit: Anthropic ${res.status}`); return }
+    const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: Array<{ index?: number; matches?: boolean; category?: string }> } }> }
+    const items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items ?? []
+    const belegt = new Set(blocks.map(b => b.image).filter(x => typeof x === 'string') as string[])
+    let getauscht = 0
+    for (const it of items) {
+      if (it.matches !== false || typeof it.index !== 'number') continue
+      const b = geprueft[it.index]
+      if (!b) continue
+      const ersatz = gal.find(x => x.category === it.category && !belegt.has(x.url)) ?? gal.find(x => x.category === it.category)
+      if (ersatz) {
+        console.log(`[generate-deck] Bild-Audit: „${String(b.headline ?? b.kicker ?? '').slice(0, 60)}" → ${it.category} (${ersatz.label || ersatz.url.slice(-24)})`)
+        b.image = ersatz.url
+        belegt.add(ersatz.url)
+        getauscht++
+      }
+    }
+    if (getauscht) console.log(`[generate-deck] Bild-Audit: ${getauscht} Bild(er) getauscht`)
+  } catch (e) {
+    console.warn('[generate-deck] Bild-Audit uebersprungen:', e instanceof Error ? e.message : String(e))
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
@@ -743,6 +844,7 @@ Deno.serve(async (req) => {
     // existiert, kommt er ins Deck. Quelle: crm_projects.deck_assets.floorplans
     // (Map Wohnungsnummer → Bild-URL, Fallback-Key "<n>br" je Zimmertyp).
     const floorplanByUnit: Record<string, string> = {}
+    const floorplanNoteByUnit: Record<string, string> = {}
     // Wohnungen im Deck, fuer die NIRGENDS ein HP-Grundriss hinterlegt ist — wird
     // in der Antwort gemeldet (Grundriss-Garantie: Luecken sichtbar machen).
     let missingFloorplans: string[] = []
@@ -772,8 +874,11 @@ Deno.serve(async (req) => {
         // Hinterlegte Grundrisse je Wohnung einsammeln (Nummer exakt, sonst Zimmertyp "<n>br").
         // Quelle: deck_assets.unit_floorplans (Record) — NICHT deck_assets.floorplans, das ist
         // bei manchen Projekten ein Etagen-Array aus dem Drive-Import.
-        const daFp = (p as { deck_assets?: { unit_floorplans?: Record<string, string>; floorplans?: unknown } } | null)?.deck_assets
+        const daFp = (p as { deck_assets?: { unit_floorplans?: Record<string, string>; unit_floorplan_notes?: Record<string, string>; floorplans?: unknown } } | null)?.deck_assets
         const rawFp = daFp?.unit_floorplans ?? ((daFp && !Array.isArray(daFp.floorplans)) ? (daFp.floorplans as Record<string, string> | undefined) : undefined) ?? {}
+        // hp-floorplan legt je Wohnung eine deterministische Flächen-Note ab (echte
+        // m² statt KI-gemalter Maßketten) — die kommt als planNote unter den Plan.
+        for (const [k, v] of Object.entries(daFp?.unit_floorplan_notes ?? {})) if (typeof v === 'string') floorplanNoteByUnit[normU(k)] = v
         // Keys normalisiert (lowercase) indizieren — die Mapping-Keys sind großgeschrieben
         // (z.B. 'C-202'), der Lookup nutzt normU (lowercase). Ohne das griff der Grundriss
         // nicht und der Block behielt ein KI-Bild (z.B. Yoga-Raum statt Grundriss).
@@ -1253,7 +1358,10 @@ Deno.serve(async (req) => {
       fpBlocks.forEach((fb, i) => {
         const key = fpKeys.length === 1 ? fpKeys[0] : fpKeys[Math.min(i, fpKeys.length - 1)]
         const url = floorplanByUnit[key]
-        if (url) { fb.image = url; delete fb.rooms }
+        if (url) {
+          fb.image = url; delete fb.rooms
+          if (floorplanNoteByUnit[key]) fb.planNote = floorplanNoteByUnit[key]
+        }
         // Bei mehreren Wohnungen jeden Block klar der seinen zuordnen — sonst weiß
         // der Kunde nicht, welcher Plan zu welcher Wohnung gehört.
         const label = floorplanLabel[key]
@@ -1321,6 +1429,10 @@ Deno.serve(async (req) => {
         console.log('[generate-deck] Marina-Abschnitt: Modellbild gesetzt')
       }
     }
+
+    // Bild-Text-Endkontrolle: klar unpassende Bilder gegen passende Galerie-Bilder
+    // tauschen (EIN Vision-Call, best-effort).
+    await auditBlockImages(blocks, gal)
 
     // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
     // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer
