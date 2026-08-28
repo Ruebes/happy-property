@@ -340,19 +340,50 @@ Deno.serve(async (req: Request) => {
         const leadId = leadRow.id
         await adminClient.from('leads').update({ profile_id: userId }).eq('id', leadId).is('profile_id', null)
         const { data: deals } = await adminClient.from('deals')
-          .select('id, unit_id, property_id').eq('lead_id', leadId).not('unit_id', 'is', null)
-        for (const d of (deals ?? []) as Array<{ id: string; unit_id: string; property_id: string | null }>) {
+          .select('id, unit_id, property_id, phase, archived_from_phase').eq('lead_id', leadId).not('unit_id', 'is', null)
+        for (const d of (deals ?? []) as Array<{ id: string; unit_id: string; property_id: string | null; phase: string | null; archived_from_phase: string | null }>) {
+          // TOTE Deals überspringen: ein verlorener/abgebrochener Deal darf keine
+          // Wohnung ins Portal ziehen — die Unit kann längst jemand anderem gehören.
+          // Abgeschlossene Käufe sind archiviert MIT archived_from_phase='provision_erhalten'.
+          if (d.phase === 'deal_verloren') continue
+          if (d.phase === 'archiviert' && d.archived_from_phase !== 'provision_erhalten') continue
           const { data: unit } = await adminClient.from('crm_project_units')
             .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, floor, type, rental_type, is_furnished, price_net, price_gross, status, block, property_id, project:crm_projects(name, location)')
             .eq('id', d.unit_id).maybeSingle()
           if (!unit) continue
           const u = unit as Record<string, unknown> & { property_id?: string | null; project?: { name?: string; location?: string } | null }
           if (u.property_id) {
-            // Property existiert schon → Eigentümer auf den aktuellen Zugang setzen.
-            // KEIN .is('owner_id', null)-Guard mehr: die Property gehört zur Deal-Unit
-            // GENAU dieses Leads; ein zweiter/abweichender Account (andere Mail) bekam
-            // die Wohnung sonst nie zu sehen (owner_id blieb am alten/verwaisten Konto).
-            await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string)
+            // Property existiert schon. Eigentümer nur umhängen, wenn das gefahrlos ist:
+            // - owner leer oder schon dieser Nutzer → setzen
+            // - owner = verwaistes/inaktives Konto ODER Konto derselben Person
+            //   (Mail des alten Kontos gehört zu DIESEM Lead: Haupt- oder alt_emails,
+            //   der Zweitkonto-Fall) → übernehmen
+            // - sonst (aktives Konto einer ANDEREN Person, z.B. Unit später an jemand
+            //   anderen verkauft) → NICHT anfassen, nur loggen. Verhindert, dass ein
+            //   alter Deal einem echten Eigentümer die Wohnung im Portal wegnimmt.
+            const { data: propRow } = await adminClient.from('properties')
+              .select('owner_id').eq('id', u.property_id as string).maybeSingle()
+            const currentOwner = (propRow as { owner_id: string | null } | null)?.owner_id ?? null
+            let takeOver = !currentOwner || currentOwner === userId
+            if (!takeOver) {
+              const { data: oldProf } = await adminClient.from('profiles')
+                .select('id, email, is_active').eq('id', currentOwner).maybeSingle()
+              const op = oldProf as { id: string; email: string | null; is_active: boolean | null } | null
+              if (!op || op.is_active === false) takeOver = true
+              else {
+                const { data: leadMails } = await adminClient.from('leads')
+                  .select('email, alt_emails').eq('id', leadId).maybeSingle()
+                const lm = leadMails as { email: string | null; alt_emails: string[] | null } | null
+                const all = [lm?.email, ...(lm?.alt_emails ?? [])]
+                  .filter(Boolean).map(e => (e as string).trim().toLowerCase())
+                takeOver = !!op.email && all.includes(op.email.trim().toLowerCase())
+              }
+            }
+            if (takeOver) {
+              await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string)
+            } else {
+              console.warn(`[create-eigentuemer-access] Property ${u.property_id} gehört aktivem Fremdkonto ${currentOwner} — Zuordnung NICHT geändert (Deal ${d.id})`)
+            }
             continue
           }
           const loc = u.project?.location ?? null

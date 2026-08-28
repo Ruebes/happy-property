@@ -33,3 +33,19 @@ verify_jwt = false
 # Tippgeber-Programm: Cron-Scan (Provision erhalten → Abrechnung) kommt ohne JWT.
 [functions.affiliate-api]
 verify_jwt = false
+
+# Eigentümerportal-Kette: Cron ruft mit Service-Role-Bearer (kein Gateway-JWT),
+# der Portal-Bug-Report kommt mit User-JWT, den die Function selbst prüft.
+# In-Code-Guards vorhanden (Audit 28.08.2026) — Gateway muss offen bleiben,
+# damit ein Deploy ohne --no-verify-jwt die Crons nicht stilllegt.
+[functions.owner-content]
+verify_jwt = false
+
+[functions.create-eigentuemer-access]
+verify_jwt = false
+
+[functions.tasks-maintenance]
+verify_jwt = false
+
+[functions.process-scheduled-messages]
+verify_jwt = false

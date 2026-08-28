@@ -23,7 +23,7 @@ const isVideoUrl = (d: DownloadDoc) =>
   d.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(d.file_url)
 
 export default function EigentuemerDownloads() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const { profile } = useAuth()
   const [docs, setDocs] = useState<DownloadDoc[]>([])
   const [propLabels, setPropLabels] = useState<Record<string, string>>({})
@@ -81,7 +81,7 @@ export default function EigentuemerDownloads() {
               {d.property_id
                 ? `🏠 ${propLabels[d.property_id] ?? t('eigentuemer.downloads.yourUnit', 'Deine Wohnung')}`
                 : t('eigentuemer.downloads.forAll', 'Für alle Eigentümer')}
-              {' · '}{new Date(d.created_at).toLocaleDateString('de-DE')}
+              {' · '}{new Date(d.created_at).toLocaleDateString(i18n.language === 'en' ? 'en-GB' : 'de-DE')}
             </p>
             {d.description && (
               <p className="text-sm text-gray-600 mt-2 whitespace-pre-line">{d.description}</p>

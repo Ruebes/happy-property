@@ -192,9 +192,26 @@ async function logActivity(supabase: ReturnType<typeof createClient>, params: {
 
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
+// Läuft --no-verify-jwt: nur Cron (Service-Role-Bearer) oder eingeloggte Staff-
+// Nutzer (Admin-Button "Jetzt ausführen") dürfen den Lauf anstoßen.
+async function guardOk(req: Request): Promise<boolean> {
+  const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  if (!jwt) return false
+  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return true
+  const { data } = await createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!).auth.getUser(jwt)
+  const uid = data?.user?.id
+  if (!uid) return false
+  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const { data: prof } = await svc.from('profiles').select('role').eq('id', uid).maybeSingle()
+  return ['admin', 'verwalter', 'mitarbeiter'].includes((prof as { role?: string } | null)?.role ?? '')
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: CORS })
+  }
+  if (!(await guardOk(req))) {
+    return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: { ...CORS, 'Content-Type': 'application/json' } })
   }
 
   const supabase = createClient(
@@ -221,7 +238,12 @@ Deno.serve(async (req: Request) => {
     const { data: bugs } = await supabase.from('crm_tasks').select('id')
       .eq('source', 'bug_report').eq('status', 'erledigt').is('bug_done_notified_at', null).limit(10)
     for (const b of ((bugs ?? []) as { id: string }[])) {
-      await supabase.functions.invoke('owner-content', { body: { action: 'bug_done', task_id: b.id } })
+      // owner-content hat jetzt einen Staff/Service-Guard; edge-interner invoke sendet
+      // KEINEN eigenen Authorization-Header → Service-Role explizit mitgeben.
+      await supabase.functions.invoke('owner-content', {
+        body: { action: 'bug_done', task_id: b.id },
+        headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+      })
     }
   } catch (e) { console.warn('[process-scheduled] Bug-Fertigmeldung:', e) }
 

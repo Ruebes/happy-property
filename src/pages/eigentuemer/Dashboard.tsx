@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
@@ -29,6 +29,9 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [uploadWarn, setUploadWarn] = useState('')
+  // Bereits erfolgreich hochgeladene Bilder je Datei-Index merken: ein zweiter
+  // Sende-Versuch lädt sonst alles erneut hoch (Waisen im Storage).
+  const uploadedRef = useRef<Record<number, { name: string; url: string; path: string }>>({})
   const send = async () => {
     if (!text.trim() || busy) { if (!text.trim()) setErr(t('eigentuemer.bug.needText', 'Bitte beschreibe kurz das Problem.')); return }
     setBusy(true); setErr('')
@@ -36,6 +39,8 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
       const atts: Array<{ name: string; url: string; path: string }> = []
       let failedUploads = 0
       for (let i = 0; i < Math.min(files.length, 5); i++) {
+        const already = uploadedRef.current[i]
+        if (already) { atts.push(already); continue }
         const f = files[i]
         let blob: Blob = f
         try {
@@ -46,12 +51,15 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
           blob = (await new Promise<Blob | null>(res => c.toBlob(res, 'image/jpeg', 0.82))) ?? f
         } catch { /* Original nehmen */ }
         const path = `bug/${profile?.id ?? 'x'}/${Date.now()}-${i}.jpg`
-        const { error } = await supabase.storage.from('task-attachments').upload(path, blob, { contentType: 'image/jpeg' })
+        const contentType = blob === f ? (f.type || 'application/octet-stream') : 'image/jpeg'
+        const { error } = await supabase.storage.from('task-attachments').upload(path, blob, { contentType })
         if (error) {
           console.error('[Eigentuemer/Dashboard] bug upload:', error)
           failedUploads++
         } else {
-          atts.push({ name: f.name, url: `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`, path })
+          const att = { name: f.name, url: `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/task-attachments/${path}`, path }
+          uploadedRef.current[i] = att
+          atts.push(att)
         }
       }
       if (failedUploads > 0 && !uploadWarn) {
@@ -73,7 +81,7 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
         <textarea value={text} onChange={e => setText(e.target.value)} rows={4} autoFocus
           className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
           placeholder={t('eigentuemer.bug.ph', 'Beschreibe kurz, was passiert ist …')} />
-        <input type="file" accept="image/*" multiple onChange={e => { setFiles(Array.from(e.target.files ?? [])); setUploadWarn('') }}
+        <input type="file" accept="image/*" multiple onChange={e => { setFiles(Array.from(e.target.files ?? [])); setUploadWarn(''); uploadedRef.current = {} }}
           className="text-sm text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-gray-100 file:text-gray-700 file:cursor-pointer" />
         {files.length > 0 && <p className="text-[11px] text-gray-400">📎 {files.length} {t('eigentuemer.bug.files', 'Bild(er) ausgewählt')}</p>}
         {uploadWarn && <p className="text-sm text-amber-600">⚠️ {uploadWarn}</p>}
@@ -93,7 +101,7 @@ function BugModal({ onClose, onDone }: { onClose: () => void; onDone: (m: string
 const TYPE_ICON: Record<string, string> = { villa: '🏡', apartment: '🏢', studio: '🛋️' }
 
 export default function EigentuemerDashboard() {
-  const { t }       = useTranslation()
+  const { t, i18n } = useTranslation()
   const { profile } = useAuth()
 
   const [properties,    setProperties]    = useState<PropertyCard[]>([])
@@ -112,8 +120,13 @@ export default function EigentuemerDashboard() {
   useEffect(() => {
     if (!profile?.id) return
     let cancelled = false
-    // Sicherheits-Timeout: Spinner nie ewig hängen lassen (Safari/Query-Timing)
-    const safety = setTimeout(() => { if (!cancelled) setLoading(false) }, 12_000)
+    // Sicherheits-Timeout: Spinner nie ewig hängen lassen (Safari/Query-Timing).
+    // Wenn er zuschlägt, war die Query noch unterwegs → Fehlerzustand statt
+    // fälschlich "Du hast noch keine Objekte" anzeigen.
+    const safety = setTimeout(() => {
+      if (cancelled) return
+      setLoading(prev => { if (prev) setLoadError(true); return false })
+    }, 12_000)
 
     async function load() {
       setLoading(true)
@@ -139,6 +152,12 @@ export default function EigentuemerDashboard() {
 
         const propIds = propList.map(p => p.id)
 
+        // Objekte sind da → sofort anzeigen. Alles Weitere (Anreicherung, Zähler)
+        // ist Best-Effort: Fehler dort loggen, aber NIE die schon geladenen
+        // Objekte durch einen Fehler-Screen ersetzen (Muster wie Properties.tsx).
+        setProperties(propList)
+        setLoading(false)
+
         // 2a. Kanonische Unit-Daten (Projektname/Ort/Bild) aus der ZENTRALEN Tabelle
         // crm_project_units ziehen — nie die (evtl. leere/veraltete) properties-Kopie
         // anzeigen. Fixt u.a. den leeren Projektnamen („· 102" ohne Name).
@@ -146,61 +165,51 @@ export default function EigentuemerDashboard() {
           .from('crm_project_units')
           .select('property_id, project:crm_projects(name, images, location)')
           .in('property_id', propIds)
-        if (unitErr) throw unitErr
-        const metaMap: Record<string, { name?: string; city?: string; img?: string }> = {}
-        for (const u of (unitData ?? [])) {
-          const pid = (u as { property_id?: string | null }).property_id
-          if (!pid) continue
-          const proj = (u as { project?: { name?: string; images?: string[]; location?: string } | null }).project
-          const loc = proj?.location
-          metaMap[pid] = {
-            name: proj?.name || undefined,
-            city: (typeof loc === 'string' && !loc.startsWith('http')) ? loc : undefined,
-            img:  proj?.images?.[0],
+        if (unitErr) console.error('[Eigentuemer/Dashboard] units:', unitErr)
+        if (!cancelled && unitData) {
+          const metaMap: Record<string, { name?: string; city?: string; img?: string }> = {}
+          for (const u of unitData) {
+            const pid = (u as { property_id?: string | null }).property_id
+            if (!pid) continue
+            const proj = (u as { project?: { name?: string; images?: string[]; location?: string } | null }).project
+            const loc = proj?.location
+            metaMap[pid] = {
+              name: proj?.name || undefined,
+              city: (typeof loc === 'string' && !loc.startsWith('http')) ? loc : undefined,
+              img:  proj?.images?.[0],
+            }
           }
+          const enriched = propList.map(p => ({
+            ...p,
+            project_name: metaMap[p.id]?.name || p.project_name,
+            city:         p.city || metaMap[p.id]?.city || null,
+          }))
+          setProperties(enriched)
+          const imgMap: Record<string, string> = {}
+          for (const p of enriched) if (!p.images?.length && metaMap[p.id]?.img) imgMap[p.id] = metaMap[p.id]!.img!
+          setCrmImages(imgMap)
         }
-        const enriched = propList.map(p => ({
-          ...p,
-          project_name: metaMap[p.id]?.name || p.project_name,
-          city:         p.city || metaMap[p.id]?.city || null,
-        }))
-        if (cancelled) return
-        setProperties(enriched)
-        const imgMap: Record<string, string> = {}
-        for (const p of enriched) if (!p.images?.length && metaMap[p.id]?.img) imgMap[p.id] = metaMap[p.id]!.img!
-        setCrmImages(imgMap)
 
-        // 2b. Unit-IDs für CRM-Dokumente ermitteln
-        const { data: unitRows, error: unitRowsErr } = await supabase
-          .from('crm_project_units')
-          .select('id')
-          .in('property_id', propIds)
-        if (unitRowsErr) throw unitRowsErr
-        const unitIds = (unitRows ?? []).map((u: { id: string }) => u.id)
-
-        // 2c. Buchungen + Dokumente parallel zählen
-        const [bookRes, docRes, crmDocRes] = await Promise.all([
+        // 2b. Buchungen + Dokumente parallel zählen (Best-Effort; stornierte
+        // Buchungen zählen nicht mit). Der Dokumente-Zähler zählt NUR die
+        // documents-Tabelle — genau das, was die verlinkte Seite /dokumente zeigt.
+        const [bookRes, docRes] = await Promise.all([
           supabase
             .from('bookings')
             .select('*', { count: 'exact', head: true })
-            .in('property_id', propIds),
+            .in('property_id', propIds)
+            .neq('status', 'cancelled'),
           supabase
             .from('documents')
             .select('*', { count: 'exact', head: true })
             .in('property_id', propIds),
-          unitIds.length > 0
-            ? supabase
-                .from('crm_unit_documents')
-                .select('*', { count: 'exact', head: true })
-                .in('unit_id', unitIds)
-            : Promise.resolve({ count: 0, error: null }),
         ])
-        const countErr = bookRes.error || docRes.error || crmDocRes.error
-        if (countErr) throw countErr
+        if (bookRes.error) console.error('[Eigentuemer/Dashboard] bookings count:', bookRes.error)
+        if (docRes.error) console.error('[Eigentuemer/Dashboard] docs count:', docRes.error)
 
         if (cancelled) return
         setBookingCount(bookRes.count ?? 0)
-        setDocCount((docRes.count ?? 0) + (crmDocRes.count ?? 0))
+        setDocCount(docRes.count ?? 0)
       } catch (err) {
         console.error('[Eigentuemer/Dashboard] load:', err)
         if (!cancelled) setLoadError(true)
@@ -230,7 +239,14 @@ export default function EigentuemerDashboard() {
       })
   }, [profile?.id])
   const dismissNotif = async (id: string) => {
-    await supabase.from('owner_notifications').update({ read_at: new Date().toISOString() }).eq('id', id)
+    // .select() erzwingen: von RLS geblocktes Update liefert 0 Zeilen OHNE Fehler —
+    // die Meldung käme sonst beim nächsten Laden unsterblich wieder.
+    const { data: upd, error } = await supabase.from('owner_notifications')
+      .update({ read_at: new Date().toISOString() }).eq('id', id).select('id')
+    if (error || !upd?.length) {
+      console.error('[Eigentuemer/Dashboard] dismissNotif:', error ?? 'keine Zeile aktualisiert')
+      return
+    }
     setNotifs(n => n.filter(x => x.id !== id))
   }
 
@@ -392,19 +408,20 @@ export default function EigentuemerDashboard() {
                           <span className="text-5xl text-gray-300">{TYPE_ICON[p.type] ?? '🏠'}</span>
                         </div>
                       )}
-                      {/* Status-Badge oben links */}
-                      {(p.property_status === 'active') ? (
+                      {/* Status-Badge oben links — bei unbekanntem Status (NULL) KEIN
+                          Badge, statt fälschlich "Im Bau" zu behaupten */}
+                      {p.property_status === 'active' ? (
                         <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
                                          rounded-full bg-green-500 text-white shadow-sm flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-white inline-block" />
                           {t('eigentuemer.status.active', 'Aktiv')}
                         </span>
-                      ) : (
+                      ) : p.property_status === 'under_construction' ? (
                         <span className="absolute top-2 left-2 text-[10px] font-semibold px-2 py-0.5
                                          rounded-full bg-amber-500 text-white shadow-sm">
                           🏗 {t('eigentuemer.status.construction', 'Im Bau')}
                         </span>
-                      )}
+                      ) : null}
                       {/* Miettyp-Badge oben rechts — nur bei gesetztem Typ */}
                       {p.rental_type && (
                         <span className="absolute top-2 right-2 text-[10px] font-semibold px-2 py-0.5
@@ -469,7 +486,7 @@ export default function EigentuemerDashboard() {
                       <p className="font-semibold text-hp-black font-body text-sm">{d.title}
                         {isNew && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full text-white font-semibold" style={{ backgroundColor: '#ff795d' }}>{t('eigentuemer.news.new', 'NEU')}</span>}
                       </p>
-                      <p className="text-xs text-gray-400 mt-0.5">{new Date(d.created_at).toLocaleDateString('de-DE')}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{new Date(d.created_at).toLocaleDateString(i18n.language === 'en' ? 'en-GB' : 'de-DE')}</p>
                     </div>
                     {d.kind !== 'video' && (
                       <a href={d.file_url} target="_blank" rel="noreferrer"

@@ -61,7 +61,7 @@ function Toast({ msg, type = 'success', onClose }: {
 
 // ══════════════════════════════════════════════════════════════
 export default function Profile() {
-  const { t }       = useTranslation()
+  const { t, i18n } = useTranslation()
   const { profile, updatePassword } = useAuth()
 
   const isEigentuemer = profile?.role === 'eigentuemer'
@@ -71,6 +71,7 @@ export default function Profile() {
   // ── Profil-State ─────────────────────────────────────────
   const [data, setData]       = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(false)
   const [saving, setSaving]   = useState(false)
   const [toast, setToast]     = useState<{ msg: string; type?: 'success' | 'error' } | null>(null)
 
@@ -102,12 +103,16 @@ export default function Profile() {
   const fetchProfile = useCallback(async () => {
     if (!profile) return
     setLoading(true)
+    setLoadError(false)
     try {
-      const { data: row } = await supabase
+      const { data: row, error } = await supabase
         .from('profiles')
         .select('full_name, email, phone, language, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder')
         .eq('id', profile.id)
         .single()
+      // Fehler NICHT stumm schlucken: sonst rendert die Seite leer und der
+      // Speichern-Button wird wegen data=null zum wortlosen No-Op.
+      if (error) throw error
       if (row) {
         const d = row as ProfileData
         setData(d)
@@ -123,6 +128,7 @@ export default function Profile() {
       }
     } catch (err) {
       console.error('[Profile] fetchProfile:', err)
+      setLoadError(true)
     } finally {
       setLoading(false)
     }
@@ -152,12 +158,19 @@ export default function Profile() {
         updates.bank_account_holder = bankHolder.trim() || null
 
         if (ibanChanged && (oldIban || iban.trim())) {
-          await supabase.from('bank_change_notifications').insert({
+          // Sicherheitsmechanismus gegen betrügerische IBAN-Änderungen: schlägt
+          // die pending-Meldung fehl, wird NICHT gespeichert (kein stiller Ausfall).
+          const { error: bankErr } = await supabase.from('bank_change_notifications').insert({
             owner_id:        profile.id,
             old_iban_masked: oldIban ? maskIban(oldIban) : null,
             new_iban_masked: iban.trim() ? maskIban(iban.trim()) : null,
             status:          'pending',
           })
+          if (bankErr) {
+            console.error('[Profile] bank_change_notifications:', bankErr)
+            setToast({ msg: t('owner.bank.notifyFailed', 'Die Bankdaten-Änderung konnte nicht gemeldet werden. Bitte erneut versuchen.'), type: 'error' })
+            return
+          }
           supabase.functions.invoke('notify-bank-change', {
             body: {
               owner_name:      data.full_name,
@@ -165,12 +178,17 @@ export default function Profile() {
               new_iban_masked: iban.trim() ? maskIban(iban.trim()) : t('owner.bank.noIban'),
               changed_at:      new Date().toISOString(),
             },
-          }).catch(() => {})
+          }).then(({ error: nErr }) => { if (nErr) console.error('[Profile] notify-bank-change:', nErr) })
+            .catch((e) => console.error('[Profile] notify-bank-change:', e))
         }
       }
 
-      const { error } = await supabase.from('profiles').update(updates).eq('id', profile.id)
-      if (error) throw new Error(error.message)
+      // .select() erzwingen: RLS-geblocktes Update liefert 0 Zeilen ohne Fehler
+      const { data: upd, error } = await supabase.from('profiles').update(updates).eq('id', profile.id).select('id')
+      if (error || !upd?.length) throw new Error(error?.message ?? t('errors.saveFailed'))
+
+      // Sprachwechsel sofort wirksam machen (nicht erst nach Reload)
+      if (language !== i18n.language) void i18n.changeLanguage(language)
 
       setToast({ msg: t('profile.saved') })
       fetchProfile()
@@ -214,6 +232,25 @@ export default function Profile() {
         <div className="flex items-center justify-center py-32 text-gray-400 gap-3 font-body text-sm">
           <span className="w-5 h-5 border-2 border-gray-200 border-t-gray-400 rounded-full animate-spin" />
           {t('common.loading')}
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  // Ladefehler ehrlich anzeigen statt leerer Felder mit totem Speichern-Button
+  if (loadError || !data) {
+    return (
+      <DashboardLayout basePath={basePath}>
+        <div className="text-center py-24 px-6">
+          <div className="text-5xl mb-4">⚠️</div>
+          <p className="text-sm font-semibold text-gray-600 font-body">
+            {t('profile.loadError', 'Dein Profil konnte gerade nicht geladen werden.')}
+          </p>
+          <button onClick={() => fetchProfile()}
+            className="mt-4 px-5 py-2 rounded-full text-white text-sm font-semibold"
+            style={{ backgroundColor: 'var(--color-highlight)' }}>
+            {t('common.retry', 'Neu laden')}
+          </button>
         </div>
       </DashboardLayout>
     )

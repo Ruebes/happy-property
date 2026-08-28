@@ -18,8 +18,23 @@ const CORS = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 
+// Läuft --no-verify-jwt und ist destruktiv (löscht Aufgaben, Anhänge, Konten):
+// nur Cron (Service-Role-Bearer) oder eingeloggte Admins dürfen auslösen.
+async function isAdminOrService(req: Request): Promise<boolean> {
+  const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  if (!jwt) return false
+  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return true
+  const { data } = await createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!).auth.getUser(jwt)
+  const uid = data?.user?.id
+  if (!uid) return false
+  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const { data: prof } = await svc.from('profiles').select('role').eq('id', uid).maybeSingle()
+  return (prof as { role?: string } | null)?.role === 'admin'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  if (!(await isAdminOrService(req))) return json({ error: 'Nicht autorisiert' }, 401)
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
     // 1) Anhänge archivierter Aufgaben löschen (Storage + Zeilen)
@@ -51,8 +66,10 @@ Deno.serve(async (req) => {
         const { error } = await sb.from(table).delete().in('task_id', oldIds)
         if (error) console.warn(`[tasks-maintenance] ${table}:`, error.message)
       }
+      // Fehler hier nur loggen: ein Throw würde Schritt 3 (Karteileichen-Zyklus)
+      // für die ganze Woche ausfallen lassen.
       const { error } = await sb.from('crm_tasks').delete().in('id', oldIds)
-      if (error) throw error
+      if (error) console.warn('[tasks-maintenance] crm_tasks delete:', error.message)
     }
 
     // 3) Leere Eigentümer-Portale (Svens Karteileichen-Regel): Warnung nach
@@ -65,12 +82,23 @@ Deno.serve(async (req) => {
     for (const o of ((ownersRaw ?? []) as Array<{ id: string; full_name: string | null; email: string | null; language: string | null; created_at: string; portal_warned_3m_at: string | null; portal_warned_5m_at: string | null }>)) {
       const { count } = await sb.from('properties').select('id', { count: 'exact', head: true }).eq('owner_id', o.id)
       if ((count ?? 0) > 0) continue
-      if (o.email) {
-        const { data: ld } = await sb.from('leads').select('id').ilike('email', o.email).limit(1)
-        const leadId = (ld?.[0] as { id: string } | undefined)?.id
-        if (leadId) {
-          const { data: dl } = await sb.from('deals').select('id').eq('lead_id', leadId)
-            .not('phase', 'in', '(deal_verloren,archiviert)').limit(1)
+      // Kunden-Schutz: Leads über ALLE Wege matchen (profile_id, Haupt-Mail,
+      // alt_emails) — nicht nur die Haupt-Mail. Hat IRGENDEIN gematchter Lead
+      // einen Deal (egal welcher Phase), wird das Konto nie automatisch
+      // angefasst: Deal-Historie = echter Kunde, kein Karteileichen-Fall.
+      {
+        const leadIds = new Set<string>()
+        const { data: byProfile } = await sb.from('leads').select('id').eq('profile_id', o.id)
+        for (const r of (byProfile ?? []) as { id: string }[]) leadIds.add(r.id)
+        if (o.email) {
+          const mail = o.email.trim().toLowerCase()
+          const { data: byMail } = await sb.from('leads').select('id').ilike('email', mail)
+          for (const r of (byMail ?? []) as { id: string }[]) leadIds.add(r.id)
+          const { data: byAlt } = await sb.from('leads').select('id').contains('alt_emails', [mail])
+          for (const r of (byAlt ?? []) as { id: string }[]) leadIds.add(r.id)
+        }
+        if (leadIds.size) {
+          const { data: dl } = await sb.from('deals').select('id').in('lead_id', [...leadIds]).limit(1)
           if (dl && dl.length) continue
         }
       }
@@ -94,7 +122,13 @@ Deno.serve(async (req) => {
           <p>${de_ ? `Hallo ${first},` : `Hi ${first},`}</p><p>${bodyTxt}</p>
           <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
         </div>`
-        await sb.functions.invoke('send-email', { body: { to: o.email, subject: subj, html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en' } })
+        // Fehler (Transport ODER Fachfehler im Body) muss werfen — sonst wird der
+        // Warn-Marker gesetzt, obwohl nie eine Mail rausging.
+        const { data: mData, error } = await sb.functions.invoke('send-email', { body: { to: o.email, subject: subj, html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en' } })
+        const bodyErr = (mData as { error?: string; success?: boolean } | null)
+        if (error || bodyErr?.error || bodyErr?.success === false) {
+          throw new Error(error?.message ?? bodyErr?.error ?? 'send-email success=false')
+        }
       }
       const D = 864e5
       if (age > 180 * D && o.portal_warned_3m_at && o.portal_warned_5m_at && now - new Date(o.portal_warned_5m_at).getTime() > 21 * D) {

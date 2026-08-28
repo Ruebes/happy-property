@@ -27,6 +27,31 @@ const LOTTE_UPLOAD = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object
 
 interface Recipient { name: string; email: string | null; phone: string | null; lang: 'de' | 'en' }
 
+// Läuft --no-verify-jwt → Zugriff serverseitig prüfen. notify/compose/bug_done
+// sind Massen-Versand bzw. kosten KI-Tokens und dürfen NUR von Staff (Admin/
+// Verwalter/Mitarbeiter) oder intern (Service-Role-Bearer) ausgelöst werden.
+async function isStaffOrService(req: Request): Promise<boolean> {
+  const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  if (!jwt) return false
+  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return true
+  const { data } = await createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!).auth.getUser(jwt)
+  const uid = data?.user?.id
+  if (!uid) return false
+  const svc = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const { data: prof } = await svc.from('profiles').select('role').eq('id', uid).maybeSingle()
+  return ['admin', 'verwalter', 'mitarbeiter'].includes((prof as { role?: string } | null)?.role ?? '')
+}
+
+// send-email/send-whatsapp liefern Fachfehler teils als 200 mit { error } bzw.
+// success:false im Body — beides zählt als fehlgeschlagen.
+function invokeFailed(error: { message?: string } | null, data: unknown): string | null {
+  if (error) return error.message ?? 'invoke error'
+  const d = data as { error?: string; success?: boolean } | null
+  if (d?.error) return d.error
+  if (d?.success === false) return 'success=false'
+  return null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -65,6 +90,7 @@ Deno.serve(async (req) => {
 
     // ── Bug erledigt → Melder benachrichtigen (Portal-Push + Lotte Mail/WA) ──
     if (body.action === 'bug_done') {
+      if (!(await isStaffOrService(req))) return json({ error: 'Nicht autorisiert' }, 401)
       if (!body.task_id) return json({ error: 'task_id fehlt' }, 400)
       const { data: t } = await sb.from('crm_tasks')
         .select('id, title, status, source, reporter_profile_id, bug_done_notified_at')
@@ -86,13 +112,19 @@ Deno.serve(async (req) => {
       const nBody = de_
         ? `Sven hat deine Aufgabe erledigt: „${cleanTitle}". Bitte prüfe, ob jetzt alles funktioniert. Danke für deine Mithilfe, unser Portal besser zu machen! 🐾`
         : `Sven has completed your task: “${cleanTitle}”. Please check that everything works now. Thank you for helping us improve the portal! 🐾`
-      await sb.from('owner_notifications').insert({ profile_id: task.reporter_profile_id, task_id: task.id, title: nTitle, body: nBody })
+      // Portal-Banner nur einmal je Aufgabe (Retry nach Sendefehler darf nicht doppeln)
+      const { data: existingNotif } = await sb.from('owner_notifications').select('id').eq('task_id', task.id).limit(1)
+      if (!existingNotif?.length) {
+        const { error: nErr } = await sb.from('owner_notifications').insert({ profile_id: task.reporter_profile_id, task_id: task.id, title: nTitle, body: nBody })
+        if (nErr) console.warn('[owner-content] bug_done Portal-Meldung:', nErr.message)
+      }
       let phone = (rep.phone ?? '').trim()
       if (!phone && rep.email) {
         const { data: ld } = await sb.from('leads').select('phone').ilike('email', rep.email).limit(1)
         phone = ((ld?.[0] as { phone?: string | null } | undefined)?.phone ?? '').trim()
       }
       let sentAny = false
+      let attempted = false
       try {
         if (rep.email) {
           const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
@@ -107,18 +139,31 @@ Deno.serve(async (req) => {
             </p>
             <p style="font-size:13px;color:#6b7280;">${de_ ? 'Liebe Grüße' : 'Best regards'}<br/>Lotte 🐾</p>
           </div>`
-          const { error } = await sb.functions.invoke('send-email', { body: { to: rep.email, subject: nTitle, html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en' } })
-          if (!error) sentAny = true
+          attempted = true
+          const { data: mData, error } = await sb.functions.invoke('send-email', { body: { to: rep.email, subject: nTitle, html, from_name: 'Lotte · Happy Property', auto: true, lang: de_ ? 'de' : 'en' } })
+          const fail = invokeFailed(error, mData)
+          if (fail) console.warn('[owner-content] bug_done Mail:', fail)
+          else sentAny = true
         }
         if (phone) {
-          const { error } = await sb.functions.invoke('send-whatsapp', { body: {
+          attempted = true
+          const { data: wData, error } = await sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'bug_done', override_text: `${first} 🐾\n\n${nBody}\n\n${SITE}/eigentuemer/dashboard`,
             lead_data: { lead_name: first, lead_phone: phone }, persona_image: lotteBild(),
           } })
-          if (!error) sentAny = true
+          const fail = invokeFailed(error, wData)
+          if (fail) console.warn('[owner-content] bug_done WhatsApp:', fail)
+          else sentAny = true
         }
       } catch (e) { console.warn('[owner-content] bug_done Versand:', e) }
       if (!sentAny && !rep.email && !phone) console.warn('[owner-content] bug_done: Melder ohne Mail/Telefon — nur Portal-Meldung')
+      // Beide aktiven Kanäle fehlgeschlagen → Marker zurücksetzen, damit der
+      // 5-Min-Sweep es erneut versucht (Portal-Banner ist dann ggf. doppelt-sicher
+      // per upsert-artigem Insert nicht nötig — owner_notifications bleibt stehen).
+      if (attempted && !sentAny) {
+        await sb.from('crm_tasks').update({ bug_done_notified_at: null }).eq('id', task.id)
+        return json({ success: false, retry: true })
+      }
       return json({ success: true, notified: true, mail: !!rep.email, whatsapp: !!phone })
     }
 
@@ -126,6 +171,7 @@ Deno.serve(async (req) => {
     // Sven tippt ein paar Stichpunkte zum Upload; die KI formuliert daraus die
     // Nachricht, die Lotte an die Eigentümer schickt. Editierbar im Frontend.
     if (body.action === 'compose') {
+      if (!(await isStaffOrService(req))) return json({ error: 'Nicht autorisiert' }, 401)
       const b = body as unknown as { title?: string; kind?: string; bullets?: string }
       if (!b.title || !b.bullets?.trim()) return json({ error: 'title + bullets nötig' }, 400)
       const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
@@ -165,6 +211,7 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
     }
 
     if (body.action !== 'notify' || !body.doc_id) return json({ error: 'action=notify + doc_id nötig' }, 400)
+    if (!(await isStaffOrService(req))) return json({ error: 'Nicht autorisiert' }, 401)
     const test = body.test === true
     // Von Sven freigegebene KI-Texte (Stichpunkte-Flow); ohne sie greift der Standardtext.
     const custom = body as unknown as { message_de?: string; message_en?: string }
@@ -252,20 +299,22 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
       try {
         const to = test ? TEST_MAIL : (r.email ?? '')
         if (to) {
-          const { error } = await sb.functions.invoke('send-email', { body: {
+          const { data: mData, error } = await sb.functions.invoke('send-email', { body: {
             to, subject, html, from_name: 'Lotte · Happy Property', auto: true, lang: r.lang,
           } })
-          if (error) throw new Error(error.message)
+          const fail = invokeFailed(error, mData)
+          if (fail) throw new Error(fail)
           res.mail = true
         }
         const phone = test ? TEST_PHONE : (r.phone ?? '')
         if (phone) {
-          const { error } = await sb.functions.invoke('send-whatsapp', { body: {
+          const { data: wData, error } = await sb.functions.invoke('send-whatsapp', { body: {
             event_type: 'owner_document', override_text: waText,
             lead_data: { lead_name: r.name, lead_phone: phone },
             persona_image: LOTTE_UPLOAD,
           } })
-          if (error) throw new Error(error.message)
+          const fail = invokeFailed(error, wData)
+          if (fail) throw new Error(fail)
           res.whatsapp = true
         }
       } catch (err) {

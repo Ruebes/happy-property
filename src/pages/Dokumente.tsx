@@ -295,21 +295,17 @@ export default function Dokumente() {
   async function handleDelete(doc: Document) {
     if (!window.confirm(t('documents.deleteConfirm'))) return
 
-    // Remove file from storage
+    // ERST die DB-Zeile (mit Ergebnis-Prüfung — RLS-geblockte Löschung liefert
+    // 0 Zeilen OHNE Fehler), DANN die Datei. Umgekehrt war die Datei schon weg,
+    // während die Zeile stehen blieb und ins Leere zeigte.
+    const { data: gone, error: dbErr } = await supabase.from('documents').delete().eq('id', doc.id).select('id')
+    if (dbErr || !gone?.length) {
+      console.error('[Dokumente] handleDelete db:', dbErr ?? 'keine Zeile geloescht (Rechte?)')
+      setToast({ msg: t('dokumente.deleteFailed', 'Löschen fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
+      return
+    }
     const { error: storageErr } = await supabase.storage.from('documents').remove([doc.file_url])
-    if (storageErr) {
-      console.error('[Dokumente] handleDelete storage:', storageErr)
-      setToast({ msg: t('dokumente.deleteFailed', 'Löschen fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
-      return
-    }
-
-    // Remove DB record
-    const { error: dbErr } = await supabase.from('documents').delete().eq('id', doc.id)
-    if (dbErr) {
-      console.error('[Dokumente] handleDelete db:', dbErr)
-      setToast({ msg: t('dokumente.deleteFailed', 'Löschen fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
-      return
-    }
+    if (storageErr) console.error('[Dokumente] handleDelete storage:', storageErr)
 
     setToast({ msg: t('success.deleted') })
     fetchDocuments()

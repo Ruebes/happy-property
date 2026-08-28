@@ -290,7 +290,8 @@
       "subtitle": "Videos and documents from Sven — e.g. to forward to your tax advisor.",
       "new": "NEW",
       "open": "Open",
-      "allDownloads": "View all →"
+      "allDownloads": "View all →",
+      "loadError": "Could not be loaded."
     },
     "bug": {
       "title": "Report a problem",
@@ -303,7 +304,8 @@
       "sent": "Thank you! Your report reached Sven — you will be notified as soon as it is done. 🐾",
       "cardTitle": "Something not working?",
       "cardSub": "Let us know — with a screenshot if possible. We will take care of it and get back to you once fixed.",
-      "cardBtn": "Report a problem"
+      "cardBtn": "Report a problem",
+      "uploadFailed": "{{n}} image(s) could not be uploaded. You can still send the report without them."
     },
     "downloads": {
       "title": "Downloads",
@@ -816,7 +818,8 @@
     "countryPlaceholder": "Germany",
     "holderPlaceholder": "John Doe",
     "phonePlaceholder": "+1 555 …",
-    "zipPlaceholder": "12345"
+    "zipPlaceholder": "12345",
+    "loadError": "Your profile could not be loaded right now."
   },
   "setPassword": {
     "title": "Set your password",
@@ -848,7 +851,8 @@
       "holder": "Account holder",
       "masked": "Masked",
       "noIban": "No IBAN on file",
-      "changeWarning": "Changes to bank details will be automatically reported to all managers and must be confirmed."
+      "changeWarning": "Changes to bank details will be automatically reported to all managers and must be confirmed.",
+      "notifyFailed": "The bank details change could not be reported. Please try again."
     }
   },
   "notifications": {
@@ -983,7 +987,9 @@
         "paid": "Paid"
       },
       "creditorPlaceholder": "Stadtwerke München",
-      "pdfMaxSize": "PDF · max. 50 MB"
+      "pdfMaxSize": "PDF · max. 50 MB",
+      "onlyPdf": "Please choose a PDF file.",
+      "tooBig": "File too large (max. 50 MB)."
     },
     "income": {
       "comingSoon": "Income",
@@ -1080,7 +1086,8 @@
       "uploadInvoiceAiHint": "Upload invoice (optional — AI automatically reads the amount)",
       "savingEllipsis": "Saving…",
       "addBtn": "Add"
-    }
+    },
+    "loadPartialFailed": "Data could not be refreshed right now. Please reload."
   },
   "users": {
     "title": "User Management",

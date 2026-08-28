@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../components/DashboardLayout'
@@ -299,7 +299,17 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file || file.type !== 'application/pdf' || file.size > MAX_PDF) return
+    if (!file) return
+    // Abgelehnte Dateien nicht stumm verschlucken — sagen, WARUM nichts passiert
+    if (file.type !== 'application/pdf') {
+      setError(t('propertyDetail.invoices.onlyPdf', 'Bitte eine PDF-Datei auswählen.'))
+      return
+    }
+    if (file.size > MAX_PDF) {
+      setError(t('propertyDetail.invoices.tooBig', 'Datei zu groß (max. 50 MB).'))
+      return
+    }
+    setError('')
 
     setForm(f => ({ ...f, file }))
     setAiError(false)
@@ -343,6 +353,7 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
 
     setSaving(true)
     setError('')
+    let uploadedPath: string | null = null
     try {
       let fileUrl = doc?.file_url ?? ''
 
@@ -351,8 +362,10 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
         const path = `${propertyId}/${Date.now()}-${rand}-${sanitize(form.file.name)}`
         const { error: sErr } = await supabase.storage.from('documents').upload(path, form.file, { upsert: true })
         if (sErr) throw new Error(sErr.message)
-        if (doc?.file_url) await supabase.storage.from('documents').remove([doc.file_url])
+        uploadedPath = path
         fileUrl = path
+        // Alte Datei erst NACH erfolgreichem DB-Write löschen (s.u.) — sonst zeigt
+        // die Zeile bei einem fehlgeschlagenen Update auf eine gelöschte Datei.
       }
 
       const payload = {
@@ -372,8 +385,8 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
       }
 
       if (isEditing) {
-        const { error: uErr } = await supabase.from('documents').update(payload).eq('id', doc!.id)
-        if (uErr) throw new Error(uErr.message)
+        const { data: upd, error: uErr } = await supabase.from('documents').update(payload).eq('id', doc!.id).select('id')
+        if (uErr || !upd?.length) throw new Error(uErr?.message ?? t('errors.saveFailed'))
       } else {
         const { error: iErr } = await supabase.from('documents').insert({
           ...payload,
@@ -383,9 +396,18 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
         })
         if (iErr) throw new Error(iErr.message)
       }
+      // DB-Write erfolgreich → jetzt darf die ersetzte Alt-Datei weg
+      if (uploadedPath && doc?.file_url && doc.file_url !== uploadedPath) {
+        const { error: rmOld } = await supabase.storage.from('documents').remove([doc.file_url])
+        if (rmOld) console.warn('[InvoiceModal] Alt-Datei löschen:', rmOld.message)
+      }
 
       onSaved(t(isEditing ? 'propertyDetail.invoices.saved' : 'success.uploaded'))
     } catch (e) {
+      // DB-Write fehlgeschlagen → frisch hochgeladene Datei nicht verwaisen lassen
+      if (uploadedPath) {
+        void supabase.storage.from('documents').remove([uploadedPath])
+      }
       setError(e instanceof Error ? e.message : t('errors.saveFailed'))
     } finally {
       setSaving(false)
@@ -617,6 +639,10 @@ export default function PropertyDetail() {
   const { fmtDate, fmtCurrency, fmtNumber } = useDateFormat()
 
   const [property, setProperty]   = useState<PropertyFull | null>(null)
+  // Ref-Spiegel für fetchProperty: entscheidet ohne Dependency-Zyklus, ob der
+  // Vollbild-Spinner nötig ist (nur beim allerersten Laden).
+  const propertyRef = useRef<PropertyFull | null>(null)
+  useEffect(() => { propertyRef.current = property }, [property])
   const [loading, setLoading]     = useState(true)
   const [activeTab, setActiveTab] = useState<TabKey>('overview')
   // Bild-Lightbox: nach dem Öffnen durch alle Bilder der jeweiligen Strecke blättern.
@@ -801,7 +827,9 @@ export default function PropertyDetail() {
   // ── Fetch property ───────────────────────────────────────
   const fetchProperty = useCallback(async () => {
     if (!id) return
-    setLoading(true)
+    // Vollbild-Spinner NUR beim ersten Laden: Refetches nach Speichern/Löschen
+    // lassen die Seite stehen (sonst kann ein Hänger die ganze Seite blockieren).
+    setLoading(prev => prev || !propertyRef.current)
     const sel = '*, owner:owner_id(id, full_name, email, phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder, language, is_active), verwaltung:verwaltung_id(id, name, address_street, address_zip, address_city, address_country, phone, email, website, ansprechpartner, ansprechpartner_phone, ansprechpartner_email)'
     // Mit 1 Retry: ein einmaliger Aussetzer (langsame Antwort/Timing) heilt sich selbst,
     // statt die Seite leer/„nicht gefunden" zu lassen.
@@ -866,10 +894,13 @@ export default function PropertyDetail() {
   // Wenn eine Query in Safari durch navigator.locks-/Token-Refresh-Timing blockiert
   // (gleiche Klasse wie der alte CRM-Spinner-Deadlock), wird die Seite nach 12s
   // freigegeben; nachgeladene Daten erscheinen, sobald die Query doch zurückkommt.
+  // An `loading` gekoppelt (nicht nur an [id]): auch ein Refetch, der wieder in
+  // den Spinner geht, wird nach 12s zwangsweise freigegeben.
   useEffect(() => {
+    if (!loading) return
     const t = setTimeout(() => setLoading(prev => prev ? false : prev), 12_000)
     return () => clearTimeout(t)
-  }, [id])
+  }, [id, loading])
 
   useEffect(() => {
     if (canEdit) fetchContracts()
@@ -881,7 +912,7 @@ export default function PropertyDetail() {
     setUnitPayLoading(true)
     try {
       // Find the CRM unit linked to this property
-      const { data: unitData } = await supabase
+      const { data: unitData, error: unitErr } = await supabase
         .from('crm_project_units')
         .select(`
           id, project_id, images,
@@ -894,6 +925,14 @@ export default function PropertyDetail() {
         `)
         .eq('property_id', id)
         .maybeSingle()
+      // Query-FEHLER ist NICHT dasselbe wie "keine Einheit verknüpft": bei einem
+      // transienten Fehler die bereits angezeigten Daten stehen lassen statt den
+      // kompletten Eigentümer-Kern (Zahlplan/Verträge/Fotos) auf leer zu resetten.
+      if (unitErr) {
+        console.error('[PropertyDetail] fetchUnitPayments unit query:', unitErr)
+        setToast({ msg: t('propertyDetail.loadPartialFailed', 'Daten konnten gerade nicht aktualisiert werden. Bitte neu laden.'), type: 'error' })
+        return
+      }
       if (!unitData) {
         setLinkedUnitId(null)
         setLinkedProjectId(null)
@@ -941,19 +980,39 @@ export default function PropertyDetail() {
           .order('photo_date', { ascending: false, nullsFirst: false })
           .order('created_at', { ascending: false }),
       ])
-      setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
-      setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
-      setEigentuemerDocs((ownDocsRes.data ?? []) as CrmUnitDocument[])
-      const cPhotos = (constPhotosRes.data ?? []) as ConstructionPhoto[]
-      setConstructionPhotos(cPhotos)
-      // Bucket ist privat → signierte URLs erzeugen (path → URL)
+      // Teil-Fehler nicht als "leer" darstellen: fehlerhafte Ergebnisse loggen und
+      // den jeweils vorhandenen State behalten, nur fehlerfreie Ergebnisse setzen.
+      const partErrors: string[] = []
+      if (paysRes.error) partErrors.push('Zahlungen')
+      else setUnitPayments((paysRes.data ?? []) as CrmUnitPayment[])
+      if (docsRes.error) partErrors.push('Kaufverträge')
+      else setUnitKaufvertraege((docsRes.data ?? []) as CrmUnitDocument[])
+      if (ownDocsRes.error) partErrors.push('Dokumente')
+      else setEigentuemerDocs((ownDocsRes.data ?? []) as CrmUnitDocument[])
+      let cPhotos: ConstructionPhoto[] = constructionPhotos
+      if (constPhotosRes.error) partErrors.push('Baustellenfotos')
+      else {
+        cPhotos = (constPhotosRes.data ?? []) as ConstructionPhoto[]
+        setConstructionPhotos(cPhotos)
+      }
+      if (partErrors.length) {
+        console.error('[PropertyDetail] Teil-Queries fehlgeschlagen:', partErrors.join(', '),
+          paysRes.error ?? docsRes.error ?? ownDocsRes.error ?? constPhotosRes.error)
+        setToast({ msg: t('propertyDetail.loadPartialFailed', 'Daten konnten gerade nicht aktualisiert werden. Bitte neu laden.'), type: 'error' })
+      }
+      // Bucket ist privat → signierte URLs erzeugen (path → URL). 24h statt 1h:
+      // die PWA bleibt gern tagelang offen — abgelaufene URLs = "kaputte Bilder".
       if (cPhotos.length) {
-        const { data: signed } = await supabase.storage
+        const { data: signed, error: signErr } = await supabase.storage
           .from('construction-photos')
-          .createSignedUrls(cPhotos.map(p => p.file_path), 3600)
-        const map: Record<string, string> = {}
-        for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
-        setConstructionUrls(map)
+          .createSignedUrls(cPhotos.map(p => p.file_path), 86400)
+        if (signErr) {
+          console.error('[PropertyDetail] createSignedUrls construction:', signErr)
+        } else {
+          const map: Record<string, string> = {}
+          for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
+          setConstructionUrls(map)
+        }
       } else {
         setConstructionUrls({})
       }
@@ -979,11 +1038,41 @@ export default function PropertyDetail() {
     fetchUnitPayments()
   }, [fetchUnitPayments])
 
+  // PWA-Tab kommt nach Stunden zurück → signierte Baustellenfoto-URLs erneuern,
+  // sonst zeigen abgelaufene Links nur kaputte Bilder.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !constructionPhotos.length) return
+      void supabase.storage.from('construction-photos')
+        .createSignedUrls(constructionPhotos.map(p => p.file_path), 86400)
+        .then(({ data: signed, error }) => {
+          if (error) { console.warn('[PropertyDetail] Signed-URL-Refresh:', error); return }
+          const map: Record<string, string> = {}
+          for (const s of signed ?? []) { if (s.signedUrl && s.path) map[s.path] = s.signedUrl }
+          setConstructionUrls(map)
+        })
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [constructionPhotos])
+
+  // Safari blockt window.open NACH einem await (Popup-Blocker, Klick-Kontext weg).
+  // Deshalb: Fenster SOFORT synchron öffnen, URL nach dem await hineinsetzen.
+  async function openSignedInNewTab(bucket: string, filePath: string, expiry: number) {
+    const win = window.open('', '_blank')
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(filePath, expiry)
+    if (error || !data?.signedUrl) {
+      win?.close()
+      console.error('[PropertyDetail] openSignedInNewTab:', bucket, error)
+      setToast({ msg: t('errors.serverError'), type: 'error' })
+      return
+    }
+    if (win) win.location.href = data.signedUrl
+    else window.open(data.signedUrl, '_blank')
+  }
+
   async function openDoc(filePath: string) {
-    const { data, error } = await supabase.storage
-      .from('documents').createSignedUrl(filePath, 3600)
-    if (error || !data?.signedUrl) { setToast({ msg: t('errors.serverError'), type: 'error' }); return }
-    window.open(data.signedUrl, '_blank')
+    await openSignedInNewTab('documents', filePath, 3600)
   }
 
   async function downloadDoc(filePath: string, title: string) {
@@ -1056,18 +1145,20 @@ export default function PropertyDetail() {
     if (!deleteImgUrl || !id || !property) return
     const url = deleteImgUrl
     setDeleteImgUrl(null)
+    // ERST der DB-Write (mit Ergebnis-Prüfung), DANN die Datei — sonst zeigt die
+    // Bilderliste bei geblocktem Update auf eine bereits gelöschte Datei.
+    const newImages = property.images.filter(u => u !== url)
+    const { data: updRows, error } = await supabase.from('properties').update({ images: newImages }).eq('id', id).select('id')
+    if (error || !updRows?.length) {
+      console.error('[PropertyDetail] confirmDeleteImage:', error ?? 'keine Zeile aktualisiert (Rechte?)')
+      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
+      return
+    }
     // Extract storage path from public URL
     const pathPart = url.split('/property-images/')[1]
     if (pathPart) {
       const { error: rmErr } = await supabase.storage.from('property-images').remove([pathPart])
       if (rmErr) console.error('[PropertyDetail] confirmDeleteImage storage:', rmErr)
-    }
-    const newImages = property.images.filter(u => u !== url)
-    const { error } = await supabase.from('properties').update({ images: newImages }).eq('id', id)
-    if (error) {
-      console.error('[PropertyDetail] confirmDeleteImage:', error)
-      setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
-      return
     }
     setToast({ msg: t('success.deleted') })
     fetchProperty()
@@ -1182,10 +1273,7 @@ export default function PropertyDetail() {
 
   // ── Kaufunterlagen: file helpers ─────────────────────
   async function openUnitPaymentFile(filePath: string) {
-    const { data } = await supabase.storage
-      .from('unit-documents')
-      .createSignedUrl(filePath, 300)
-    if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+    await openSignedInNewTab('unit-documents', filePath, 300)
   }
 
   async function handleUploadPaymentFile(
@@ -1216,8 +1304,9 @@ export default function PropertyDetail() {
         } catch { /* silent – amount stays as-is */ }
       }
 
-      const { error: updErr } = await supabase.from('crm_unit_payments').update(update).eq('id', payId)
+      const { data: updRows, error: updErr } = await supabase.from('crm_unit_payments').update(update).eq('id', payId).select('id')
       if (updErr) throw updErr
+      if (!updRows?.length) throw new Error('Kein Schreibrecht (0 Zeilen aktualisiert)')
       void notifyOwner(file.name, 'Dokument')
       await fetchUnitPayments()
     } catch (err) {
@@ -1233,18 +1322,20 @@ export default function PropertyDetail() {
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
     const path = type === 'invoice' ? pay.invoice_path : pay.receipt_path
-    if (path) {
-      const { error: rmErr } = await supabase.storage.from('unit-documents').remove([path])
-      if (rmErr) console.error('[PropertyDetail] handleRemovePaymentFile storage:', rmErr)
-    }
+    // ERST die DB-Zeile (mit Ergebnis-Prüfung), DANN die Datei — sonst zeigt die
+    // Rate bei einem geblockten Update auf eine bereits gelöschte Datei.
     const update = type === 'invoice'
       ? { invoice_path: null, invoice_filename: null, invoice_filesize: null }
       : { receipt_path: null, receipt_filename: null, receipt_filesize: null }
-    const { error } = await supabase.from('crm_unit_payments').update(update).eq('id', payId)
-    if (error) {
-      console.error('[PropertyDetail] handleRemovePaymentFile:', error)
+    const { data: updRows, error } = await supabase.from('crm_unit_payments').update(update).eq('id', payId).select('id')
+    if (error || !updRows?.length) {
+      console.error('[PropertyDetail] handleRemovePaymentFile:', error ?? 'keine Zeile aktualisiert (Rechte?)')
       setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
       return
+    }
+    if (path) {
+      const { error: rmErr } = await supabase.storage.from('unit-documents').remove([path])
+      if (rmErr) console.error('[PropertyDetail] handleRemovePaymentFile storage:', rmErr)
     }
     await fetchUnitPayments()
   }
@@ -1263,16 +1354,18 @@ export default function PropertyDetail() {
     if (!window.confirm(t('propertyDetail.purchases.deleteEntryConfirm', 'Rate löschen? Hochgeladene Dateien werden ebenfalls entfernt.'))) return
     const pay = unitPayments.find(p => p.id === payId)
     if (!pay) return
-    const paths = [pay.invoice_path, pay.receipt_path].filter(Boolean) as string[]
-    if (paths.length) {
-      const { error: rmErr } = await supabase.storage.from('unit-documents').remove(paths)
-      if (rmErr) console.error('[PropertyDetail] handleDeletePaymentEntry storage:', rmErr)
-    }
+    // ERST die DB-Zeile (mit Ergebnis-Prüfung), DANN die Dateien — sonst sind bei
+    // einer geblockten Löschung die Dateien weg, die Rate zeigt ins Leere.
     const { data: goneP, error } = await supabase.from('crm_unit_payments').delete().eq('id', payId).select('id')
     if (error || !goneP?.length) {
       console.error('[PropertyDetail] handleDeletePaymentEntry:', error ?? 'keine Zeile geloescht (Rechte?)')
       setToast({ msg: t('propertyDetail.deleteFailed', 'Löschen fehlgeschlagen.'), type: 'error' })
       return
+    }
+    const paths = [pay.invoice_path, pay.receipt_path].filter(Boolean) as string[]
+    if (paths.length) {
+      const { error: rmErr } = await supabase.storage.from('unit-documents').remove(paths)
+      if (rmErr) console.error('[PropertyDetail] handleDeletePaymentEntry storage:', rmErr)
     }
     await fetchUnitPayments()
   }
@@ -1280,9 +1373,9 @@ export default function PropertyDetail() {
   async function handleSaveEditedAmount(payId: string) {
     const val = parseFloat(editingAmount.replace(',', '.'))
     if (isNaN(val) || val < 0) { setEditingPayId(null); return }
-    const { error } = await supabase.from('crm_unit_payments').update({ amount: val }).eq('id', payId)
-    if (error) {
-      console.error('[PropertyDetail] handleSaveEditedAmount:', error)
+    const { data: updRows, error } = await supabase.from('crm_unit_payments').update({ amount: val }).eq('id', payId).select('id')
+    if (error || !updRows?.length) {
+      console.error('[PropertyDetail] handleSaveEditedAmount:', error ?? 'keine Zeile aktualisiert (Rechte?)')
       setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
       return
     }
@@ -1335,7 +1428,11 @@ export default function PropertyDetail() {
         invoice_filename: invoiceFilename,
         invoice_filesize: invoiceFilesize,
       })
-      if (insertErr) throw new Error(insertErr.message)
+      if (insertErr) {
+        // hochgeladene Rechnung nicht verwaisen lassen
+        if (invoicePath) void supabase.storage.from('unit-documents').remove([invoicePath])
+        throw new Error(insertErr.message)
+      }
 
       setShowAddPayForm(false)
       setAddPayDesc('')
@@ -1368,10 +1465,10 @@ export default function PropertyDetail() {
 
   // ── Payment Plan: bezahlt markieren / entmarkieren ───────
   async function handleMarkAsPaid(payId: string, date: string) {
-    const { error } = await supabase.from('crm_unit_payments')
+    const { data: updRows, error } = await supabase.from('crm_unit_payments')
       .update({ is_paid: true, paid_date: date || new Date().toISOString().split('T')[0] })
-      .eq('id', payId)
-    if (error) {
+      .eq('id', payId).select('id')
+    if (error || !updRows?.length) {
       setToast({ msg: t('propertyDetail.purchases.markPaidFailed', 'Speichern fehlgeschlagen. Bitte erneut versuchen.'), type: 'error' })
       return
     }
@@ -1382,10 +1479,10 @@ export default function PropertyDetail() {
   }
 
   async function handleUnmarkAsPaid(payId: string) {
-    const { error } = await supabase.from('crm_unit_payments')
+    const { data: updRows, error } = await supabase.from('crm_unit_payments')
       .update({ is_paid: false, paid_date: null })
-      .eq('id', payId)
-    if (error) {
+      .eq('id', payId).select('id')
+    if (error || !updRows?.length) {
       setToast({ msg: t('propertyDetail.purchases.saveFailedShort', 'Speichern fehlgeschlagen.'), type: 'error' })
       return
     }
@@ -1416,7 +1513,11 @@ export default function PropertyDetail() {
         doc_type:    contractDocType,
         uploaded_by: profile.id,
       })
-      if (dbErr) throw dbErr
+      if (dbErr) {
+        // hochgeladene Datei nicht verwaisen lassen
+        void supabase.storage.from('unit-documents').remove([path])
+        throw dbErr
+      }
       void notifyOwner(docName, 'Dokument')
       setShowContractDoc(false)
       setContractDocFile(null)
@@ -1862,7 +1963,10 @@ export default function PropertyDetail() {
   // ── Tab: Verwaltung ───────────────────────────────────
   function renderVerwaltung() {
     const prop = p
-    const subjectLine = encodeURIComponent(prop.project_name + (prop.unit_number ? ' #' + prop.unit_number : ''))
+    // Kanonischer Name aus dem CRM (wie im Hero) — die properties-Kopie kann veraltet sein
+    const subjName = linkedProjectName || prop.project_name
+    const subjUnit = linkedUnit?.unit_number ?? prop.unit_number
+    const subjectLine = encodeURIComponent(subjName + (subjUnit ? ' #' + subjUnit : ''))
 
     return (
       <div className="space-y-6">
@@ -2088,12 +2192,11 @@ export default function PropertyDetail() {
     const otherCrmDocs   = eigentuemerDocs.filter(d => d.doc_type !== 'mietvertrag')
 
     async function openCrmDoc(path: string) {
-      const { data } = await supabase.storage.from('unit-documents').createSignedUrl(path, 300)
-      if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+      await openSignedInNewTab('unit-documents', path, 300)
     }
     async function downloadCrmDoc(path: string, name: string) {
-      const { data } = await supabase.storage.from('unit-documents').createSignedUrl(path, 60)
-      if (!data?.signedUrl) return
+      const { data, error } = await supabase.storage.from('unit-documents').createSignedUrl(path, 60)
+      if (error || !data?.signedUrl) { setToast({ msg: t('propertyDetail.purchases.downloadFailed', 'Download fehlgeschlagen.'), type: 'error' }); return }
       const a = document.createElement('a'); a.href = data.signedUrl; a.download = name; a.click()
     }
 
@@ -2115,7 +2218,9 @@ export default function PropertyDetail() {
                                text-gray-500 hover:border-gray-400 transition-colors" title={t('propertyDetail.contracts.download', 'Download')}>
               ↓
             </button>
-            {(canEdit || isEigentuemer) && (
+            {/* Eigentümer darf nur SELBST hochgeladene Dokumente löschen — nicht
+                den vom Admin hinterlegten Kaufvertrag o.ä. */}
+            {(canEdit || (isEigentuemer && doc.uploaded_by === profile?.id)) && (
               <button onClick={() => handleDeleteEigDoc(doc)}
                       className="text-xs px-2.5 py-1.5 rounded-lg border border-red-100
                                  text-red-400 hover:border-red-300 hover:text-red-600 transition-colors">
@@ -2371,12 +2476,16 @@ export default function PropertyDetail() {
       return
     }
     setExpandedInvoiceId(doc.id)
-    // Signed URL nur laden wenn noch nicht gecacht
-    if (!invoiceSignedUrls[doc.id] && doc.file_url) {
-      const { data } = await supabase.storage
+    // Bei JEDEM Aufklappen frisch signieren: der alte "für immer"-Cache lieferte
+    // nach Ablauf der Signatur (1h) nur noch ein kaputtes iframe.
+    if (doc.file_url) {
+      const { data, error } = await supabase.storage
         .from('documents')
         .createSignedUrl(doc.file_url, 3600)
-      if (data?.signedUrl) {
+      if (error || !data?.signedUrl) {
+        console.error('[PropertyDetail] invoice signed url:', error)
+        setToast({ msg: t('errors.serverError'), type: 'error' })
+      } else {
         setInvoiceSignedUrls(prev => ({ ...prev, [doc.id]: data.signedUrl }))
       }
     }
@@ -2464,9 +2573,9 @@ export default function PropertyDetail() {
                     const expanded = expandedInvoiceId === doc.id
                     const signedUrl = invoiceSignedUrls[doc.id]
                     return (
-                      <>
+                      <Fragment key={doc.id}>
                         {/* ── Haupt-Zeile (klickbar zum Aufklappen) ── */}
-                        <tr key={doc.id}
+                        <tr
                             onClick={() => toggleInvoice(doc)}
                             className={`cursor-pointer transition-colors select-none
                               ${expanded ? 'bg-blue-50/40' : 'hover:bg-gray-50'}
@@ -2681,7 +2790,7 @@ export default function PropertyDetail() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </Fragment>
                     )
                   })}
                 </tbody>
@@ -2721,16 +2830,28 @@ export default function PropertyDetail() {
 
   // ── Eigentümer per E-Mail benachrichtigen ─────────────
   async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
+    // Lädt der Eigentümer SELBST hoch, bekommt er keine "es wurde für Sie
+    // hochgeladen"-Mail über die eigene Aktion.
+    if (isEigentuemer) return
     const owner = property?.owner
     if (!owner?.email) return
     const firstName = owner.full_name?.split(' ')[0] || owner.full_name || 'Eigentümer'
+    // Dateiname escapen — er landet sonst roh im HTML der Mail
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const en = owner.language === 'en'
     try {
       await supabase.functions.invoke('send-email', {
         body: {
           to:      owner.email,
-          subject: 'Neue Datei in Ihrem Happy Property Portal',
-          html:    `<p>Hallo ${firstName},</p>
-<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${fileName}</em></p>
+          subject: en ? 'New file in your Happy Property portal' : 'Neue Datei in Ihrem Happy Property Portal',
+          lang:    en ? 'en' : 'de',
+          html: en
+            ? `<p>Hello ${esc(firstName)},</p>
+<p>a new <strong>${kind === 'Dokument' ? 'document' : kind === 'Bild' ? 'image' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
+<p>You can view it in your personal portal at any time.</p>
+<p>Best regards<br>Your Happy Property team</p>`
+            : `<p>Hallo ${esc(firstName)},</p>
+<p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${esc(fileName)}</em></p>
 <p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
 <p>Viele Grüße<br>Ihr Happy Property Team</p>`,
         },
@@ -2853,8 +2974,13 @@ export default function PropertyDetail() {
                       <img
                         src={mediaUrl}
                         alt={photo.file_name}
-                        className="w-full aspect-square object-cover cursor-pointer transition-transform hover:scale-105"
-                        onClick={() => setLightbox({ images: constructionImgs, index: Math.max(0, constructionImgs.indexOf(mediaUrl)) })}
+                        className={`w-full aspect-square object-cover ${mediaUrl ? 'cursor-pointer transition-transform hover:scale-105' : ''}`}
+                        onClick={() => {
+                          // Ohne gültige URL (Signatur fehlgeschlagen) nicht die
+                          // Lightbox mit dem falschen (ersten) Bild öffnen
+                          if (!mediaUrl) return
+                          setLightbox({ images: constructionImgs, index: Math.max(0, constructionImgs.indexOf(mediaUrl)) })
+                        }}
                       />
                     )}
                     {(photo.photo_date || photo.description) && (
@@ -3043,9 +3169,13 @@ export default function PropertyDetail() {
       </div>
     )
 
-    // Progressive disclosure: show row N only when row N-1 has invoice uploaded
-    const visiblePayments = unitPayments.filter((_, idx) => {
+    // Progressive disclosure: Folge-Rate erst zeigen, wenn die vorige eine Rechnung
+    // hat — ABER Raten mit eigenem Inhalt (bezahlt, Rechnung/Beleg, Betrag) IMMER
+    // zeigen. Sonst verschwinden bezahlte Raten, sobald jemand die Rechnung der
+    // ersten Rate entfernt, während die KPI-Summe sie weiter mitrechnet.
+    const visiblePayments = unitPayments.filter((pay, idx) => {
       if (idx === 0) return true
+      if (pay.is_paid || pay.invoice_path || pay.receipt_path || pay.amount > 0) return true
       return !!unitPayments[idx - 1].invoice_path
     })
 
@@ -3212,7 +3342,8 @@ export default function PropertyDetail() {
                       </div>
                     )
                   )}
-                  {(canEdit || isEigentuemer) && (
+                  {/* Ganze Rate löschen: Eigentümer nur bei selbst angelegten Raten */}
+                  {(canEdit || (isEigentuemer && pay.uploaded_by === profile?.id)) && (
                     <button
                       onClick={() => handleDeletePaymentEntry(pay.id)}
                       className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs transition-opacity ml-1" title={t('propertyDetail.purchases.deleteEntry', 'Eintrag löschen')}>🗑</button>
@@ -3456,7 +3587,9 @@ export default function PropertyDetail() {
       count: rechnungCount || undefined },
     { key: 'income',     label: t('propertyDetail.tabs.income') },
     { key: 'images',     label: t('propertyDetail.tabs.images'),
-      count: ((p.images?.length || 0) + crmProjectImages.length + crmUnitImages.length) || undefined },
+      // Zähler = was die Rolle wirklich sieht: "Sonstige Fotos" (p.images) nur für
+      // canEdit; Baustellenfotos sehen alle.
+      count: ((canEdit ? (p.images?.length || 0) : 0) + crmProjectImages.length + crmUnitImages.length + constructionPhotos.length) || undefined },
     { key: 'purchases',  label: t('propertyDetail.tabs.paymentPlan', 'Payment Plan'),
       count: unitPayments.length || undefined },
   ]

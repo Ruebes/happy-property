@@ -290,7 +290,8 @@
       "subtitle": "Videos und Unterlagen von Sven — z.B. zum Weiterleiten an deinen Steuerberater.",
       "new": "NEU",
       "open": "Öffnen",
-      "allDownloads": "Alle ansehen →"
+      "allDownloads": "Alle ansehen →",
+      "loadError": "Konnte nicht geladen werden."
     },
     "bug": {
       "title": "Problem melden",
@@ -303,7 +304,8 @@
       "sent": "Danke! Deine Meldung ist bei Sven gelandet — du bekommst Bescheid, sobald sie erledigt ist. 🐾",
       "cardTitle": "Etwas funktioniert nicht?",
       "cardSub": "Sag uns Bescheid — mit Screenshot, wenn möglich. Wir kümmern uns und melden uns, sobald es behoben ist.",
-      "cardBtn": "Problem melden"
+      "cardBtn": "Problem melden",
+      "uploadFailed": "{{n}} Bild(er) konnten nicht hochgeladen werden. Du kannst die Meldung trotzdem ohne diese Bilder senden."
     },
     "downloads": {
       "title": "Downloads",
@@ -816,7 +818,8 @@
     "countryPlaceholder": "Deutschland",
     "holderPlaceholder": "Max Mustermann",
     "phonePlaceholder": "+49 170 …",
-    "zipPlaceholder": "12345"
+    "zipPlaceholder": "12345",
+    "loadError": "Dein Profil konnte gerade nicht geladen werden."
   },
   "setPassword": {
     "title": "Passwort festlegen",
@@ -848,7 +851,8 @@
       "holder": "Kontoinhaber",
       "masked": "Maskiert",
       "noIban": "Keine IBAN hinterlegt",
-      "changeWarning": "Änderungen der Bankverbindung werden automatisch an alle Verwalter gemeldet und müssen bestätigt werden."
+      "changeWarning": "Änderungen der Bankverbindung werden automatisch an alle Verwalter gemeldet und müssen bestätigt werden.",
+      "notifyFailed": "Die Bankdaten-Änderung konnte nicht gemeldet werden. Bitte erneut versuchen."
     }
   },
   "notifications": {
@@ -983,7 +987,9 @@
         "paid": "Bezahlt"
       },
       "creditorPlaceholder": "Stadtwerke München",
-      "pdfMaxSize": "PDF · max. 50 MB"
+      "pdfMaxSize": "PDF · max. 50 MB",
+      "onlyPdf": "Bitte eine PDF-Datei auswählen.",
+      "tooBig": "Datei zu groß (max. 50 MB)."
     },
     "income": {
       "comingSoon": "Einnahmen",
@@ -1080,7 +1086,8 @@
       "uploadInvoiceAiHint": "Rechnung hochladen (optional — KI liest Betrag automatisch aus)",
       "savingEllipsis": "Speichern…",
       "addBtn": "Hinzufügen"
-    }
+    },
+    "loadPartialFailed": "Daten konnten gerade nicht aktualisiert werden. Bitte neu laden."
   },
   "users": {
     "title": "Nutzerverwaltung",

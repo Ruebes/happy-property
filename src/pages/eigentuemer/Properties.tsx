@@ -191,7 +191,7 @@ export default function EigentuemerProperties() {
               <div className="relative h-44 bg-gray-100 overflow-hidden">
                 {(p.images?.[0] || crmImages[p.id]) && !imgError.has(p.id) ? (
                   <img
-                    src={p.images?.[0] ?? crmImages[p.id]}
+                    src={p.images?.[0] || crmImages[p.id]}
                     alt={p.project_name}
                     onError={() => setImgError(s => new Set(s).add(p.id))}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
