@@ -98,6 +98,51 @@ async function uploadBytes(supabase: ReturnType<typeof createClient>, bytes: Uin
 }
 
 const isGDoc = (m: string) => m === 'application/vnd.google-apps.document'
+
+// ── Dropbox-Helfer (Kuutio Homes liefert per Dropbox statt Google Drive) ─────────
+// Auth: langlebiger Refresh-Token einer Dropbox-App in connector_secrets
+// (DROPBOX_APP_KEY / DROPBOX_APP_SECRET / DROPBOX_REFRESH_TOKEN). Der Refresh-Token
+// rotiert NICHT (anders als Higgsfield) — nur Access-Tokens (4 h) werden gemintet.
+type DbxEntry = { '.tag': string; name: string; path_lower?: string; path_display?: string; server_modified?: string; size?: number }
+async function dropboxToken(supabase: ReturnType<typeof createClient>): Promise<string | null> {
+  const get = async (key: string) => (((await supabase.from('connector_secrets').select('value').eq('key', key).maybeSingle()).data as { value?: string } | null)?.value ?? '').trim()
+  const [k, s, r] = await Promise.all([get('DROPBOX_APP_KEY'), get('DROPBOX_APP_SECRET'), get('DROPBOX_REFRESH_TOKEN')])
+  if (!k || !s || !r) return null
+  const res = await fetch('https://api.dropbox.com/oauth2/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: r, client_id: k, client_secret: s }),
+  })
+  const d = await res.json() as { access_token?: string; error_description?: string }
+  if (!d.access_token) throw new Error(`Dropbox-Token: ${d.error_description ?? JSON.stringify(d).slice(0, 120)}`)
+  return d.access_token
+}
+async function dropboxList(token: string, path: string, recursive: boolean): Promise<DbxEntry[]> {
+  const out: DbxEntry[] = []
+  let res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, recursive, limit: 1000 }),
+  })
+  let d = await res.json() as { entries?: DbxEntry[]; cursor?: string; has_more?: boolean; error_summary?: string }
+  if (!res.ok) throw new Error(`Dropbox list ${path}: ${d.error_summary ?? res.status}`)
+  out.push(...(d.entries ?? []))
+  while (d.has_more && d.cursor) {
+    res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
+      method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cursor: d.cursor }),
+    })
+    d = await res.json() as typeof d
+    if (!res.ok) break
+    out.push(...(d.entries ?? []))
+  }
+  return out
+}
+async function dropboxBytes(token: string, path: string): Promise<Uint8Array> {
+  const res = await fetch('https://content.dropboxapi.com/2/files/download', {
+    method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Dropbox-API-Arg': JSON.stringify({ path }) },
+  })
+  if (!res.ok) throw new Error(`Dropbox download ${res.status}`)
+  return new Uint8Array(await res.arrayBuffer())
+}
 // Google-Doc als Text exportieren (bzw. reine Textdatei direkt lesen).
 async function driveText(token: string, fileId: string, mimeType: string): Promise<string> {
   const url = isGDoc(mimeType)
@@ -383,7 +428,7 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string }
+    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number }
     const { project_id, action, folder_id, sync } = body
 
     // ── nightly: alle angebundenen Drive-Ordner durchsuchen (Cron ~04:00 CY) ─────
@@ -413,11 +458,17 @@ Deno.serve(async (req) => {
       const report: string[] = []
       const errors: string[] = []
       let synced = 0
-      // Wall-Time-Schutz der Edge-Runtime: pro Nacht max. 6 volle Preislisten-Syncs
-      // (je ~40s); weitere geaenderte Projekte laufen automatisch in der Folgenacht,
-      // weil ihr Zustand nicht fortgeschrieben wird.
+      let deferred = 0
+      // Wall-Time-Schutz der Edge-Runtime: pro DURCHLAUF max. 6 volle Preislisten-
+      // Syncs (je ~40s). Frueher hiess das „Rest naechste Nacht" — bei 20 geaenderten
+      // Projekten hinkte der Bestand tagelang hinterher (Report 28.8.: 20 changed,
+      // 6 synced). Jetzt VERKETTUNG: nach dem Durchlauf ruft sich die Funktion selbst
+      // erneut auf (frischer Worker, frisches Zeitbudget), bis alles synchron ist
+      // (Deckel 6 Durchlaeufe = 36 Syncs/Nacht). Mail erst am Ende, gesammelt.
       const MAX_SYNCS = 6
-      type NightlyState = { pricelist_id?: string; pricelist_mtime?: string; floorplans_newest?: string; last_run?: string }
+      const pass = Math.max(1, Number(body.pass) || 1)
+      const MAX_PASSES = 6
+      type NightlyState = { pricelist_id?: string; pricelist_mtime?: string; floorplans_newest?: string; last_run?: string; dbx_pricelist_path?: string; dbx_pricelist_mtime?: string; dbx_floorplans_newest?: string }
       for (const pr of (projs ?? []) as Array<{ id: string; name: string; developer?: string | null; drive_folder_id: string; deck_assets?: { drive_sync?: NightlyState } | null }>) {
         try {
           const kids = await listChildren(token, pr.drive_folder_id)
@@ -468,7 +519,8 @@ Deno.serve(async (req) => {
               syncNote = `Preislisten-Sync FEHLER: ${JSON.stringify(ps).slice(0, 160)}`
             }
           } else if (plChanged) {
-            syncNote = 'Preisliste geaendert · Sync folgt naechste Nacht (Nacht-Limit erreicht)'
+            deferred++
+            syncNote = 'Preisliste geaendert · Sync folgt im naechsten Durchlauf'
           }
           if (plChanged || fpChanged) {
             report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Dateien im Grundriss-Ordner (${fpCount} Dateien)` : null].filter(Boolean).join(' · ')}`)
@@ -491,29 +543,153 @@ Deno.serve(async (req) => {
           errors.push(`${pr.name}: ${e instanceof Error ? e.message : String(e)}`)
         }
       }
+      // ── Dropbox-Quellen (z.B. Kuutio Homes) — crm_projects.dropbox_path ────────
+      // Gleiches Prinzip wie Drive: neueste Preisliste im Projektpfad (rekursiv)
+      // + im Eltern-Ordner (Developer-Masterliste) suchen, bei Aenderung spiegeln
+      // und parse-pricelist create:true (= Verkaufte raus, Preise aktuell).
+      const { data: dbxProjsRaw } = await supabase.from('crm_projects')
+        .select('id, name, dropbox_path, deck_assets')
+        .not('dropbox_path', 'is', null)
+      const dbxProjs = (dbxProjsRaw ?? []) as Array<{ id: string; name: string; dropbox_path: string; deck_assets?: { drive_sync?: NightlyState; doc_urls?: Record<string, string> } | null }>
+      if (dbxProjs.length) {
+        let dbx: string | null = null
+        try { dbx = await dropboxToken(supabase) } catch (e) { if (pass === 1) errors.push(`Dropbox: ${e instanceof Error ? e.message : String(e)}`) }
+        if (!dbx) {
+          if (pass === 1) errors.push(`Dropbox nicht verbunden (connector_secrets DROPBOX_APP_KEY/APP_SECRET/REFRESH_TOKEN fehlen) — ${dbxProjs.length} Projekt(e) mit Dropbox-Quelle werden NICHT ueberwacht.`)
+        } else {
+          // Eltern-Ordner nur EINMAL je Pfad listen (viele Projekte teilen sich die
+          // Developer-Masterliste im selben Root-Ordner).
+          const parentCache = new Map<string, DbxEntry[]>()
+          for (const pr of dbxProjs) {
+            try {
+              const base = pr.dropbox_path.replace(/\/+$/, '')
+              const own = (await dropboxList(dbx, base, true)).filter(e => e['.tag'] === 'file')
+              const parent = base.split('/').slice(0, -1).join('/')
+              let parentFiles: DbxEntry[] = []
+              if (parent && parent !== '') {
+                if (!parentCache.has(parent)) {
+                  try { parentCache.set(parent, (await dropboxList(dbx, parent, false)).filter(e => e['.tag'] === 'file')) } catch { parentCache.set(parent, []) }
+                }
+                parentFiles = parentCache.get(parent) ?? []
+              }
+              const all = [...own, ...parentFiles]
+              // Mehrere Projekte koennen auf DENSELBEN Ordner zeigen (Kuutio: Master-
+              // Preisliste im Root fuer Projekte ohne eigenen Ordner). Damit dann nicht
+              // die Preisliste eines FREMDEN Projekts gewinnt: Kandidat muss den
+              // Projektnamen im Pfad tragen, direkt im Basis-/Elternordner liegen
+              // oder eine Master-/Gesamtliste sein.
+              const baseDepth = base.split('/').length
+              const passtZumProjekt = (f: DbxEntry) => {
+                const p = (f.path_display ?? f.path_lower ?? '').toLowerCase()
+                const depth = p.split('/').length
+                return p.includes(pr.name.toLowerCase()) || depth <= baseDepth + 1 || /master|gesamt|all\s*projects/i.test(f.name)
+              }
+              const newest = all
+                .filter(f => docType(f.name) === 'pricelist' && /\.(pdf|xlsx?|csv)$/i.test(f.name) && passtZumProjekt(f))
+                .sort((a, b) => (b.server_modified ?? '').localeCompare(a.server_modified ?? ''))[0]
+              const fpFiles = own.filter(f => /floor\s*plan|grundriss/i.test(f.path_display ?? f.name))
+              const fpNewest = fpFiles.map(f => f.server_modified ?? '').sort().pop() ?? ''
+
+              const state: NightlyState = pr.deck_assets?.drive_sync ?? {}
+              const plChanged = !!newest && ((newest.path_lower ?? '') !== (state.dbx_pricelist_path ?? '') || (newest.server_modified ?? '') !== (state.dbx_pricelist_mtime ?? ''))
+              const fpChanged = !!fpNewest && fpNewest !== (state.dbx_floorplans_newest ?? '')
+
+              let syncNote = ''
+              let syncOk = false
+              if (plChanged && synced < MAX_SYNCS) {
+                synced++
+                const bytes = await dropboxBytes(dbx, newest!.path_lower ?? '')
+                const mime = /\.pdf$/i.test(newest!.name) ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                const url = await uploadBytes(supabase, bytes, mime, `projects/${pr.id}/docs`, newest!.name)
+                const { data: fr } = await supabase.from('crm_projects').select('deck_assets').eq('id', pr.id).maybeSingle()
+                const daNow = ((fr as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+                const docUrls = { ...((daNow.doc_urls ?? {}) as Record<string, string>), pricelist: url }
+                await supabase.from('crm_projects').update({ deck_assets: { ...daNow, doc_urls: docUrls } }).eq('id', pr.id)
+                const ps = await callFn('parse-pricelist', { project_id: pr.id, create: true })
+                if (ps.ok === true) {
+                  syncOk = true
+                  syncNote = `Dropbox-Preisliste synchronisiert (${newest!.name}): ${ps.updated ?? 0} Preise aktualisiert, ${ps.deleted ?? 0} aus dem Angebot genommen, ${ps.created ?? 0} neu`
+                } else {
+                  syncNote = `Dropbox-Preislisten-Sync FEHLER: ${JSON.stringify(ps).slice(0, 160)}`
+                }
+              } else if (plChanged) {
+                deferred++
+                syncNote = 'Dropbox-Preisliste geaendert · Sync folgt im naechsten Durchlauf'
+              }
+              if (plChanged || fpChanged) {
+                report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Grundriss-Dateien in Dropbox (${fpFiles.length} Dateien)` : null].filter(Boolean).join(' · ')}`)
+              }
+              const advancePl = !plChanged || syncOk
+              const nextState: NightlyState = {
+                ...state,
+                dbx_pricelist_path:   advancePl ? (newest?.path_lower ?? state.dbx_pricelist_path) : state.dbx_pricelist_path,
+                dbx_pricelist_mtime:  advancePl ? (newest?.server_modified ?? state.dbx_pricelist_mtime) : state.dbx_pricelist_mtime,
+                dbx_floorplans_newest: fpNewest || state.dbx_floorplans_newest,
+                last_run: new Date().toISOString(),
+              }
+              const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', pr.id).maybeSingle()
+              const da = ((fresh as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+              await supabase.from('crm_projects').update({ deck_assets: { ...da, drive_sync: nextState } }).eq('id', pr.id)
+            } catch (e) {
+              errors.push(`${pr.name} (Dropbox): ${e instanceof Error ? e.message : String(e)}`)
+            }
+          }
+        }
+      }
+
+      // ── Verkettung + gesammelter Abschluss ─────────────────────────────────────
+      // Report/Fehler ueber alle Durchlaeufe in crm_settings sammeln; Mail und
+      // End-Report erst, wenn nichts mehr offen ist (oder der Durchlauf-Deckel greift).
+      type Accum = { report: string[]; errors: string[]; synced: number }
+      let acc: Accum = { report: [], errors: [], synced: 0 }
+      if (pass > 1) {
+        try {
+          const { data: a } = await supabase.from('crm_settings').select('value').eq('key', 'drive_sync_accum').maybeSingle()
+          const v = (a as { value?: string } | null)?.value
+          if (v) acc = JSON.parse(v) as Accum
+        } catch { /* dann eben frisch */ }
+      }
+      const allReport = [...acc.report, ...report]
+      const allErrors = [...acc.errors, ...errors]
+      const allSynced = acc.synced + synced
+      if (deferred > 0 && pass < MAX_PASSES) {
+        try {
+          await supabase.from('crm_settings').upsert({
+            key: 'drive_sync_accum',
+            value: JSON.stringify({ report: allReport, errors: allErrors, synced: allSynced }),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'key' })
+        } catch (e) { console.warn('[prepare-project-assets] nightly-Accum speichern fehlgeschlagen:', e) }
+        console.log(`[prepare-project-assets] nightly Durchlauf ${pass}: ${synced} Syncs, ${deferred} offen → verkette Durchlauf ${pass + 1}`)
+        // Frischer Worker = frisches Zeitbudget; der Aufruf antwortet sofort (background).
+        try { await callFn('prepare-project-assets', { action: 'nightly', pass: pass + 1, quiet: body.quiet }) }
+        catch (e) { console.error('[prepare-project-assets] nightly-Verkettung fehlgeschlagen:', e) }
+        return { projects: (projs ?? []).length, changed: report.length, synced, deferred, chained: true, pass }
+      }
+      try { await supabase.from('crm_settings').delete().eq('key', 'drive_sync_accum') } catch { /* unkritisch */ }
       // quiet=true (manueller Backfill): keine Mail, Report nur in DB/Antwort.
-      if ((report.length || errors.length) && body.quiet !== true) {
+      if ((allReport.length || allErrors.length) && body.quiet !== true) {
         try {
           await callFn('send-email', {
             to: 'sven@happy-property.com',
-            subject: `Drive-Sync: ${report.length} Projekt(e) mit Aenderungen`,
-            html: `<p>Naechtlicher Drive-Sync (Preislisten + Ordner-Ueberwachung):</p><p>${report.map(r => `• ${r}`).join('<br/>')}</p>${errors.length ? `<p><b>Fehler:</b><br/>${errors.map(r => `• ${r}`).join('<br/>')}</p>` : ''}`,
+            subject: `Drive-Sync: ${allReport.length} Projekt(e) mit Aenderungen`,
+            html: `<p>Naechtlicher Ordner-Sync (Google Drive + Dropbox — Preislisten, Verfuegbarkeit, Grundriss-Ordner):</p><p>${allReport.map(r => `• ${r}`).join('<br/>')}</p>${allErrors.length ? `<p><b>Fehler:</b><br/>${allErrors.map(r => `• ${r}`).join('<br/>')}</p>` : ''}`,
             auto: true,
             from_name: 'System · Happy Property',
           })
         } catch (e) { console.warn('[prepare-project-assets] nightly-Mail fehlgeschlagen:', e) }
       }
-      console.log(`[prepare-project-assets] nightly: ${(projs ?? []).length} Projekte, ${report.length} Aenderungen, ${synced} Syncs, ${errors.length} Fehler`)
+      console.log(`[prepare-project-assets] nightly: ${(projs ?? []).length + dbxProjs.length} Projekte, ${allReport.length} Aenderungen, ${allSynced} Syncs (Durchlaeufe: ${pass}), ${allErrors.length} Fehler`)
       // Ergebnis DB-sichtbar ablegen — der Lauf selbst antwortet dem Aufrufer sofort
       // (Hintergrund), also braucht es eine nachlesbare Spur jenseits der Logs.
       try {
         await supabase.from('crm_settings').upsert({
           key: 'drive_sync_last_report',
-          value: JSON.stringify({ at: new Date().toISOString(), projects: (projs ?? []).length, changed: report.length, synced, report: report.slice(0, 40), errors: errors.slice(0, 20) }),
+          value: JSON.stringify({ at: new Date().toISOString(), projects: (projs ?? []).length + dbxProjs.length, changed: allReport.length, synced: allSynced, passes: pass, report: allReport.slice(0, 40), errors: allErrors.slice(0, 20) }),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'key' })
       } catch (e) { console.warn('[prepare-project-assets] nightly-Report speichern fehlgeschlagen:', e) }
-      return { projects: (projs ?? []).length, changed: report.length, synced, report, errors }
+      return { projects: (projs ?? []).length + dbxProjs.length, changed: allReport.length, synced: allSynced, report: allReport, errors: allErrors }
       }   // ── Ende runNightly ──
 
       // Der volle Lauf dauert laenger als das Gateway-Fenster (~150s) → im Hintergrund

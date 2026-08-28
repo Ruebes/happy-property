@@ -1431,8 +1431,9 @@ Deno.serve(async (req) => {
     }
 
     // Bild-Text-Endkontrolle: klar unpassende Bilder gegen passende Galerie-Bilder
-    // tauschen (EIN Vision-Call, best-effort).
-    await auditBlockImages(blocks, gal)
+    // tauschen (EIN Vision-Call, best-effort — darf die Generierung NIE reissen).
+    try { await auditBlockImages(blocks, gal) }
+    catch (e) { console.warn('[generate-deck] Bild-Audit uebersprungen:', e instanceof Error ? e.message : String(e)) }
 
     // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
     // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer

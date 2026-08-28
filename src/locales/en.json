@@ -2271,7 +2271,19 @@
       "noFilterMatch": "No projects match the filter.",
       "unitsCount": "{{count}} units",
       "activeCount": "{{count}} active",
-      "unitsButton": "Apartments"
+      "unitsButton": "Apartments",
+      "hpfp": {
+        "title": "HP floor plans (automatic from the developer plan)",
+        "help": "Redraws the original floor plan in the Happy Property style (walls 1:1, no invented dimensions; real areas appear as text under the plan in the deck). The result flows into new decks automatically.",
+        "running": "being drawn…",
+        "error": "Error",
+        "done": "Floor plan available",
+        "unverified": "not verified - please review",
+        "missing": "no floor plan stored",
+        "redo": "Redraw",
+        "create": "Create",
+        "startFailed": "Start failed"
+      }
     },
     "unit": {
       "title": "Unit",

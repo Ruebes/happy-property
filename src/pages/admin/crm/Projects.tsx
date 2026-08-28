@@ -10,6 +10,7 @@ import { NumberStepper } from '../../../components/NumberStepper'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 import UnitImagesUploader from '../../../components/crm/UnitImagesUploader'
 import DeckChat from '../../../components/crm/DeckChat'
+import HpFloorplanPanel from '../../../components/crm/HpFloorplanPanel'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -737,6 +738,9 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                     {t('crm.project.deck.cached', 'Im Cache')}: {project.deck_assets.renders?.length ?? 0} Bilder · {project.deck_assets.floorplans?.length ?? 0} Grundrisse · {project.deck_assets.facts ? t('crm.project.deck.factsReady', 'Fakten ✓') : t('crm.project.deck.factsMissing', 'Fakten fehlen')}
                   </p>
                 )}
+
+                {/* HP-Grundrisse je Wohnung (hp-floorplan: Bauträger-Plan → HP-Stil) */}
+                {project?.id && <HpFloorplanPanel projectId={project.id} />}
 
                 {/* Generisches Projekt-Deck (zum Teilen im Zoom) */}
                 {project?.id && (project.deck_assets || form.drive_folder_id.trim()) && (

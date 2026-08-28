@@ -2271,7 +2271,19 @@
       "noFilterMatch": "Keine Projekte passen zum Filter.",
       "unitsCount": "{{count}} Units",
       "activeCount": "{{count}} aktiv",
-      "unitsButton": "Wohnungen"
+      "unitsButton": "Wohnungen",
+      "hpfp": {
+        "title": "HP-Grundrisse (automatisch aus dem Bauträger-Plan)",
+        "help": "Zeichnet den Original-Grundriss im Happy-Property-Stil nach (Wände 1:1, keine erfundenen Maße; echte Flächen stehen als Text unter dem Plan im Deck). Ergebnis fließt automatisch in neue Decks.",
+        "running": "wird gezeichnet…",
+        "error": "Fehler",
+        "done": "Grundriss vorhanden",
+        "unverified": "nicht verifiziert - bitte ansehen",
+        "missing": "kein Grundriss hinterlegt",
+        "redo": "Neu zeichnen",
+        "create": "Erzeugen",
+        "startFailed": "Start fehlgeschlagen"
+      }
     },
     "unit": {
       "title": "Unit",
