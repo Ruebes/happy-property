@@ -520,9 +520,11 @@ Deno.serve(async (req) => {
             }
           } else if (plChanged) {
             deferred++
-            syncNote = 'Preisliste geaendert · Sync folgt im naechsten Durchlauf'
+            // Nur melden, wenn die Verkettung am Deckel ist — sonst kommt fuer das
+            // Projekt im selben Lauf ohnehin noch die „synchronisiert"-Zeile.
+            if (pass >= MAX_PASSES) syncNote = 'Preisliste geaendert · Sync folgt naechste Nacht'
           }
-          if (plChanged || fpChanged) {
+          if (syncNote || fpChanged) {
             report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Dateien im Grundriss-Ordner (${fpCount} Dateien)` : null].filter(Boolean).join(' · ')}`)
           }
 
@@ -614,9 +616,9 @@ Deno.serve(async (req) => {
                 }
               } else if (plChanged) {
                 deferred++
-                syncNote = 'Dropbox-Preisliste geaendert · Sync folgt im naechsten Durchlauf'
+                if (pass >= MAX_PASSES) syncNote = 'Dropbox-Preisliste geaendert · Sync folgt naechste Nacht'
               }
-              if (plChanged || fpChanged) {
+              if (syncNote || fpChanged) {
                 report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Grundriss-Dateien in Dropbox (${fpFiles.length} Dateien)` : null].filter(Boolean).join(' · ')}`)
               }
               const advancePl = !plChanged || syncOk
