@@ -112,12 +112,24 @@ Deno.serve(async (req: Request) => {
     const { data: devRows } = await supabase.from('crm_developers').select('name')
     const devByLower = new Map<string, string>()
     for (const d of (devRows ?? []) as Array<{ name: string }>) devByLower.set(d.name.toLowerCase().trim(), d.name)
+    // Ordnername und Developer-Name schreiben sich selten identisch ("Kuutio" vs
+    // "Kuutio Homes", "Olias Home" vs "Olias Homes"). Exakter Vergleich legte dann
+    // einen ZWEITEN Bautraeger an — Projekte verteilten sich auf beide und jede
+    // Auswertung nach Bautraeger zerfiel. Deshalb zusaetzlich auf einen Kern
+    // vergleichen: nur Buchstaben/Ziffern, generische Zusaetze weg.
+    const devKey = (s: string) => s
+      .toLowerCase()
+      .replace(/\b(homes?|developers?|development?s?|properties|property|group|ltd|limited|estates?)\b/g, '')
+      .replace(/[^a-z0-9]/g, '')
+    const devByKey = new Map<string, string>()
+    for (const [, name] of devByLower) devByKey.set(devKey(name), name)
     const canonicalDeveloper = async (folderName: string): Promise<string> => {
       const key = folderName.toLowerCase().trim()
-      const hit = devByLower.get(key)
+      const hit = devByLower.get(key) ?? devByKey.get(devKey(folderName))
       if (hit) return hit
       if (!dry_run) await supabase.from('crm_developers').insert({ name: folderName, active: true })
       devByLower.set(key, folderName)
+      devByKey.set(devKey(folderName), folderName)
       return folderName
     }
 

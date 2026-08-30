@@ -515,22 +515,36 @@ export default function ProjectDetail() {
             unit.rental_type === 'long' ? 'longterm'
             : unit.rental_type === 'short' ? 'shortterm'
             : 'longterm'
-          // Nur Portal-Management-Felder synchronisieren — Specs leben in crm_project_units
+          // Portal-Kopie: properties.type ist NOT NULL ohne Default — fehlte es hier,
+          // scheiterte das INSERT still und der Kunde bekam KEIN Portal-Objekt.
+          // Fakten kommen aus der Unit (Quelle der Wahrheit), der DB-Trigger haelt sie danach nach.
           const propData = {
             project_name:    project?.name ?? '',
             unit_number:     unit.unit_number || null,
+            type:            (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+            bedrooms:        unit.bedrooms ?? 0,
+            bathrooms:       unit.bathrooms ?? null,
+            size_sqm:        unit.size_sqm ?? null,
+            terrace_sqm:     unit.terrace_sqm ?? null,
+            floor:           unit.floor ?? null,
+            block:           unit.block ?? null,
+            is_furnished:    unit.is_furnished ?? false,
+            purchase_price_net:   unit.price_net   ?? null,
+            purchase_price_gross: unit.price_gross ?? null,
             rental_type:     rentalType,
             city:            project?.location ?? null,
             property_status: unitBuildStatus,
           }
           if (unit.property_id) {
-            await supabase.from('properties').update(propData).eq('id', unit.property_id)
+            const { error: upErr } = await supabase.from('properties').update(propData).eq('id', unit.property_id)
+            if (upErr) throw upErr
           } else {
-            const { data: newProp } = await supabase
+            const { data: newProp, error: insErr } = await supabase
               .from('properties')
               .insert({ ...propData, owner_id: (ownerProfile as { id: string }).id, created_by: profile.id, images: [] })
               .select('id')
               .single()
+            if (insErr) throw insErr
             if (newProp) {
               const newPropId = (newProp as { id: string }).id
               await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)

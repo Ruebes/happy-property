@@ -102,6 +102,11 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
     const holder = unitHolders[u.id]
     const mine = !!currentLeadId && holder?.lead_id === currentLeadId
     if (mine) return { selectable: true, mine: true }
+    // Zugewiesen = im Kundenportal materialisiert (property_id) → NIE erneut anbietbar.
+    // Der Status allein reicht nicht: nach Archivierung des Deals faellt die Wohnung
+    // aus der Halter-Liste und stand sonst wieder zur Auswahl (Sven 14.8., gleiche
+    // Regel wie im Deck-Wizard).
+    if (u.property_id) return { selectable: false, reason: t('unitPickerModal.reasonAssigned', 'Verkauft · im Kundenportal') }
     if (u.status === 'sold') return { selectable: false, reason: t('unitPickerModal.reasonSold', 'Verkauft') }
     if (holder) return { selectable: false, reason: t('unitPickerModal.reasonTaken', 'Vergeben · {{name}}', { name: holder.name }) }
     if (u.status === 'reserved') return { selectable: false, reason: t('unitPickerModal.statusReserved', 'Reserviert') }

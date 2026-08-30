@@ -1904,8 +1904,9 @@ export default function LeadDetail() {
     setPickedUnit({ unit, projectName: project.name })
 
     try {
-      // 1. Einheit als zugewiesen/aktiv markieren
-      await supabase.from('crm_project_units').update({ status: 'active' }).eq('id', unit.id)
+      // 1. Bau-Status bleibt die Wahrheit des Projekts. Ein 'active' hier wuerde einen
+      //    bestehenden Verkaufsstatus (reserved/sold) loeschen — "verkauft" ergibt sich
+      //    aus der Zuordnung (property_id / deal.unit_id), nicht aus dem Statusfeld.
 
       // 2. unit_id immer speichern; property_id wenn vorhanden
       if (deal) {
@@ -1940,7 +1941,11 @@ export default function LeadDetail() {
           unit_number:          unit.unit_number || null,
           type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
           bedrooms:             unit.bedrooms ?? 0,
+          bathrooms:            unit.bathrooms ?? null,
           size_sqm:             unit.size_sqm ?? null,
+          terrace_sqm:          unit.terrace_sqm ?? null,
+          floor:                unit.floor ?? null,
+          block:                unit.block ?? null,
           is_furnished:         unit.is_furnished ?? false,
           rental_type:          rentalType,
           city:                 project.location ?? null,
