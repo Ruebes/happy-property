@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
-import { unitGross } from '../../lib/price'
+import { unitGross, unitNet } from '../../lib/price'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
@@ -146,7 +146,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const matchBed = (n: number | null) =>
     filterBed === 'all' ? true : filterBed === '4' ? (n ?? 0) >= 4 : String(n ?? '') === filterBed
   const shownUnits = units.filter(u => {
-    const price = unitGross(u) ?? 0
+    const price = unitNet(u) ?? 0
     if (!matchBed(u.bedrooms)) return false
     if (filterMin > 0 && price < filterMin) return false
     if (filterMax > 0 && price > filterMax) return false
@@ -361,7 +361,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           project: f.projectName, unit: l.items.map(it => it.unit.unit_number).join(', '),
           bedrooms: f.unit.bedrooms, size_sqm: f.unit.size_sqm, terrace_sqm: f.unit.terrace_sqm,
           floor: f.unit.floor,
-          price: l.items.length > 1 ? `${l.items.length} ${t('crm.wizard.apartments', 'Wohnungen')}` : eur(unitGross(f.unit)),
+          price: l.items.length > 1 ? `${l.items.length} ${t('crm.wizard.apartments', 'Wohnungen')}` : eur(unitNet(f.unit)),
           facts: (f.assets?.facts ?? '').slice(0, 2600),
           available_count: availByProject[f.projectId]?.available ?? null,
           total_count:     availByProject[f.projectId]?.total ?? null,
@@ -539,7 +539,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                 {shownUnits.map(u => (
                   <label key={u.id} className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer ${sel.has(u.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`}>
                     <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} />
-                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m²{u.plot_sqm ? ` · 🏡 ${u.plot_sqm} m²` : ''} · {eur(unitGross(u))}</span>
+                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m²{u.plot_sqm ? ` · 🏡 ${u.plot_sqm} m²` : ''} · {eur(unitNet(u))} netto</span>
                   </label>
                 ))}
               </div>
@@ -558,7 +558,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <div className="space-y-1">
                 {basket.map(b => (
                   <div key={b.unit.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-1.5">
-                    <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(unitGross(b.unit))}</span>
+                    <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(unitNet(b.unit))} netto</span>
                     <button onClick={() => removeFromBasket(b.unit.id)} className="text-gray-400 hover:text-red-500">✕</button>
                   </div>
                 ))}

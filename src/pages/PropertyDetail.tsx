@@ -5,7 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import ImageLightbox from '../components/ImageLightbox'
 import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
-import { unitGross, withVat } from '../lib/price'
+import { unitGross, unitNet, unitVatAmount, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto, CrmProjectUnit } from '../lib/crmTypes'
@@ -1614,7 +1614,13 @@ export default function PropertyDetail() {
                              : u?.rental_type === 'short' ? 'shortterm'
                              : (p.rental_type ?? 'longterm')
     const displayPriceGross  = unitGross(u) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate)
-    const displayPriceNet    = u?.price_net     ?? p.purchase_price_net
+    const displayPriceNet    = unitNet(u)   ?? p.purchase_price_net
+    // MwSt getrennt ausweisen — in der Kurzzeitvermietung wird sie erstattet.
+    const displayVatAmount   = unitVatAmount(u)
+                            ?? (p.purchase_price_gross != null && p.purchase_price_net != null
+                                  ? p.purchase_price_gross - p.purchase_price_net
+                                  : (displayPriceGross != null && displayPriceNet != null
+                                      ? displayPriceGross - displayPriceNet : null))
     const displayVatRate     = u?.vat_rate      ?? p.vat_rate
 
     return (
@@ -1660,16 +1666,16 @@ export default function PropertyDetail() {
               {t('propertyDetail.overview.purchaseData')}
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              {displayPriceGross && (
-                <Stat label={t('properties.purchasePrice.gross')}
-                      value={fmtCurrency(displayPriceGross)} />
-              )}
               {displayPriceNet && (
                 <Stat label={t('properties.purchasePrice.net')}
                       value={fmtCurrency(displayPriceNet)} />
               )}
-              <Stat label={t('properties.purchasePrice.vat')}
-                    value={`${displayVatRate} %`} />
+              <Stat label={t('propertyDetail.overview.vatAmount', 'MwSt ({{rate}} %)', { rate: displayVatRate })}
+                    value={displayVatAmount != null ? fmtCurrency(displayVatAmount) : null} />
+              {displayPriceGross && (
+                <Stat label={t('properties.purchasePrice.gross')}
+                      value={fmtCurrency(displayPriceGross)} />
+              )}
             </div>
           </div>
         )}
@@ -1701,8 +1707,10 @@ export default function PropertyDetail() {
                       <span>{fmtNumber(su.terrace_sqm, 1)} m² {t('propertyDetail.overview.terrace', 'Terrasse')}</span>
                     )}
                     {su.bedrooms > 0 && <span>{su.bedrooms} {t('crm.unitSelect.bedroomsAbbr', 'SZ')}</span>}
-                    {unitGross(su) != null && (
-                      <span className="font-semibold text-gray-700">{fmtCurrency(unitGross(su)!)}</span>
+                    {unitNet(su) != null && (
+                      <span className="font-semibold text-gray-700">
+                        {fmtCurrency(unitNet(su)!)} {t('crm.pd.netSuffix')}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -3727,8 +3735,11 @@ export default function PropertyDetail() {
           <Badge color="orange">{t(`properties.rental.${linkedUnit?.rental_type === 'long' ? 'longterm' : linkedUnit?.rental_type === 'short' ? 'shortterm' : (p.rental_type ?? 'longterm')}`)}</Badge>
           {(linkedUnit?.is_furnished ?? p.is_furnished) && <Badge color="green">🛋️ {t('properties.furnishedYes')}</Badge>}
           {p.owner && <Badge color="purple">{p.owner.full_name || p.owner.email}</Badge>}
-          {(unitGross(linkedUnit) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate)) && (
-            <Badge color="green">{fmtCurrency((unitGross(linkedUnit) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate))!)}</Badge>
+          {/* Kaufpreis NETTO im Kopf — die MwSt steht getrennt in den Kaufdaten. */}
+          {(unitNet(linkedUnit) ?? p.purchase_price_net) && (
+            <Badge color="green">
+              {fmtCurrency((unitNet(linkedUnit) ?? p.purchase_price_net)!)} {t('crm.pd.netSuffix')}
+            </Badge>
           )}
           {addressStr(p) && (
             <span className="text-xs font-body text-gray-400 self-center">📍 {addressStr(p)}</span>

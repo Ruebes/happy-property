@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { unitGross } from '../../../lib/price'
+import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel } from '../../../lib/crmTypes'
@@ -976,7 +976,7 @@ export default function LeadDetail() {
     const developer = deal?.developer ?? ''
     const projekt   = dealProjects[0]?.project?.name ?? deal?.property?.project_name ?? ''
     const wohnung   = pickedUnit?.unit.unit_number ?? deal?.property?.unit_number ?? ''
-    const preisNum  = unitGross(pickedUnit?.unit)
+    const preisNum  = unitNet(pickedUnit?.unit)
     const preis     = preisNum != null
       ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(preisNum)
       : ''
@@ -4447,9 +4447,9 @@ export default function LeadDetail() {
                     {unit.plot_sqm != null && <span>🏡 {unit.plot_sqm} m² {t('crm.pd.plot', 'Grundstück')}</span>}
                     {unit.bedrooms > 0 && <span>🛏 {unit.bedrooms} {t('crm.unitSelect.bedroomsAbbr')}</span>}
                     {unit.floor != null && <span>{t('crm.unit.floor')} {unit.floor}</span>}
-                    {unitGross(unit) != null && (
+                    {unitNet(unit) != null && (
                       <span className="font-semibold text-gray-700">
-                        💶 {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(unitGross(unit) ?? 0)}
+                        💶 {new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(unitNet(unit) ?? 0)} {t('crm.unitSelect.net', 'netto')}
                       </span>
                     )}
                   </div>

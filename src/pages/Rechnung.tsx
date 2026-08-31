@@ -480,7 +480,10 @@ function CompareCards({ rows, withCalc, isMobile }: { rows: Row[]; withCalc: boo
               <span style={{ opacity: 0.9 }}>{t('rechnung.equityIn10y', 'EK in 10 J.')}</span><strong>{eur(r.res.ek10)}</strong>
             </div>
           </>) : (
-            <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 800, marginTop: 8 }}>{eur(r.item.price_gross ?? r.item.price_net)}</div>
+            <div style={{ fontFamily: SERIF, fontSize: 26, fontWeight: 800, marginTop: 8 }}>
+              {eur(r.item.price_net ?? r.item.price_gross)}
+              <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.8 }}> {t('rechnung.netSuffix', 'netto')}</span>
+            </div>
           )}
         </div>
       ))}
@@ -680,10 +683,18 @@ function SpecsCard({ rows }: { rows: Row[] }) {
             {row(t('rechnung.livingArea', 'Wohnfläche'), r => r.item.size_sqm != null ? `${r.item.size_sqm} m²` : '–')}
             {row(t('rechnung.terrace', 'Terrasse'), r => r.item.terrace_sqm ? `${r.item.terrace_sqm} m²` : '–')}
             {row(t('rechnung.floor', 'Etage'), r => r.item.floor != null ? `${r.item.floor}` : '–')}
-            {row(t('rechnung.purchasePrice', 'Kaufpreis'), r => eur(r.item.price_gross ?? r.item.price_net))}
+            {/* Kaufpreis NETTO ausweisen und die MwSt getrennt zeigen: in der
+                Kurzzeitvermietung wird sie erstattet (Sven 31.8.). */}
+            {row(t('rechnung.purchasePriceNet', 'Kaufpreis (netto)'), r => eur(r.item.price_net ?? r.item.price_gross))}
+            {row(t('rechnung.purchasePriceVat', 'MwSt auf Kaufpreis'), r => {
+              const net = r.item.price_net ?? null, gross = r.item.price_gross ?? null
+              if (net == null) return '–'
+              const vat = gross != null ? gross - net : Math.round(net * 0.19)
+              return vat > 0 ? `+ ${eur(vat)}` : '–'
+            })}
             {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.furnishingNet', 'Einrichtung (netto)'), r => { const pa = r.item.params; return pa ? (pa.furnFree ? t('rechnung.included', 'inklusive') : ((pa.furnCost ?? 0) > 0 ? `+ ${eur(pa.furnCost ?? 0)}` : '–')) : '–' })}
             {rows.some(r => r.item.params && !r.item.params.furnFree && (r.item.params.furnCost ?? 0) > 0) && row(t('rechnung.furnishingVat', 'MwSt auf Einrichtung (19%)'), r => { const pa = r.item.params; return pa && !pa.furnFree && (pa.furnCost ?? 0) > 0 ? `+ ${eur(Math.round((pa.furnCost ?? 0) * 0.19))}` : '–' })}
-            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const base = r.item.price_gross ?? r.item.price_net ?? 0; const pa = r.item.params; const f = pa && !pa.furnFree ? furnGrossOf(pa) : 0; return eur(base + f) })}
+            {rows.some(r => r.item.params && (r.item.params.furnFree || (r.item.params.furnCost ?? 0) > 0)) && row(t('rechnung.totalPrice', 'Gesamtpreis'), r => { const net = r.item.price_net ?? 0; const base = r.item.price_gross ?? (net ? Math.round(net * 1.19) : 0); const pa = r.item.params; const f = pa && !pa.furnFree ? furnGrossOf(pa) : 0; return eur(base + f) })}
           </tbody>
         </table>
       </div>

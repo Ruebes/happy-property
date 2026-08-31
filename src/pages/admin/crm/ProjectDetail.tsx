@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { unitGross } from '../../../lib/price'
+import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
@@ -105,7 +105,7 @@ function UnitCard({
   onContextMenu?: (e: ReactMouseEvent) => void
 }) {
   const { t } = useTranslation()
-  const price = unitGross(unit)
+  const price = unitNet(unit)
   return (
     <div
       className="bg-white rounded-2xl border border-gray-100 shadow-sm
@@ -169,7 +169,7 @@ function UnitCard({
           )}
           {price != null && (
             <p className="font-semibold text-gray-700 mt-1">
-              💶 {fmtPrice(price)}
+              💶 {fmtPrice(price)}{t('crm.pd.netSuffix')}
             </p>
           )}
           {unit.handover_date && <p>📅 {t('crm.pd.handover')} {fmtDate(unit.handover_date)}</p>}

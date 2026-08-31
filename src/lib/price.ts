@@ -23,6 +23,16 @@ export function withVat(net: number | null | undefined, vatRate?: number | null)
   return Math.round(net * (1 + rate / 100))
 }
 
+/** Nettopreis einer Wohnung — der Preis, der ausgewiesen wird. Ist nur ein
+ *  Bruttopreis gepflegt, wird die MwSt herausgerechnet. */
+export function unitNet(u: PricedUnit | null | undefined): number | null {
+  if (!u) return null
+  if (u.price_net != null) return u.price_net
+  if (u.price_gross == null) return null
+  const rate = u.vat_rate ?? DEFAULT_VAT_RATE
+  return Math.round(u.price_gross / (1 + rate / 100))
+}
+
 /** Bruttopreis einer Wohnung — gepflegter Wert, sonst aus Netto + MwSt errechnet. */
 export function unitGross(u: PricedUnit | null | undefined): number | null {
   if (!u) return null
@@ -32,7 +42,7 @@ export function unitGross(u: PricedUnit | null | undefined): number | null {
 
 /** MwSt-Betrag der Wohnung (Brutto − Netto), null wenn kein Preis hinterlegt. */
 export function unitVatAmount(u: PricedUnit | null | undefined): number | null {
-  const gross = unitGross(u)
-  if (gross == null || u?.price_net == null) return null
-  return Math.round(gross - u.price_net)
+  const gross = unitGross(u), net = unitNet(u)
+  if (gross == null || net == null) return null
+  return Math.round(gross - net)
 }

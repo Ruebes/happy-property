@@ -9,7 +9,7 @@
 // Aufruf: supabase.functions.invoke('schedule-message', { body: { lead_id, deal_id?, event_type } })
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { unitGross } from '../_shared/price.ts'
+import { unitGross, unitNet, DEFAULT_VAT_RATE } from '../_shared/price.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -103,7 +103,7 @@ Deno.serve(async (req: Request) => {
       const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes, finanzierung_de_notes').eq('id', deal_id).maybeSingle()
       dealData = data as typeof dealData
     }
-    let unitNumber = '', objektName = '', kaufpreis = '', unitDevEmail = '', unitDevPhone = ''
+    let unitNumber = '', objektName = '', kaufpreis = '', kaufpreisBrutto = '', mwst = '', mwstSatz = '', unitDevEmail = '', unitDevPhone = ''
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -111,8 +111,13 @@ Deno.serve(async (req: Request) => {
       if (u) {
         unitNumber = u.unit_number ?? ''
         objektName = u.crm_projects?.name ?? ''
-        // Kaufpreis IMMER brutto: Preislisten sind netto, der Kunde zahlt inkl. MwSt.
-        kaufpreis  = eur(unitGross(u))
+        // Kaufpreis NETTO ausweisen und die MwSt getrennt danebenstellen — in der
+        // Kurzzeitvermietung bekommt der Käufer die MwSt erstattet (Sven 31.8.).
+        const net = unitNet(u), gross = unitGross(u)
+        kaufpreis       = eur(net)
+        kaufpreisBrutto = eur(gross)
+        mwst            = (net != null && gross != null) ? eur(gross - net) : ''
+        mwstSatz        = String(u.vat_rate ?? DEFAULT_VAT_RATE)
         // Developer-Kontakt der gewählten Unit (für dynamischen Empfänger 'unit_developer')
         const devName = u.crm_projects?.developer ?? ''
         if (devName) {
@@ -209,8 +214,12 @@ Deno.serve(async (req: Request) => {
       projekt:      objektName,
       unit:         unitNumber,
       wohnung:      unitNumber,
-      kaufpreis:    kaufpreis,
-      preis:        kaufpreis,
+      kaufpreis:        kaufpreis,        // netto — der ausgewiesene Kaufpreis
+      preis:            kaufpreis,
+      kaufpreis_netto:  kaufpreis,
+      mwst:             mwst,             // MwSt-Betrag in Euro
+      mwst_satz:        mwstSatz,         // 19 oder 5
+      kaufpreis_brutto: kaufpreisBrutto,
       drive_link:   lead.drive_folder_url ?? '',
       doc_vollmacht:  docVollmacht,
       doc_unterlagen: docUnterlagen,

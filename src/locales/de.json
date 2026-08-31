@@ -962,7 +962,8 @@
       "bathrooms": "Badezimmer",
       "subUnits": "Teil-Wohnungen",
       "subUnitsHint": "Kauf, Zahlungsplan und Vertrag laufen über die gesamte Wohnung. Ausgaben lassen sich beim Erfassen optional einer Teil-Wohnung zuordnen.",
-      "groundFloor": "Erdgeschoss"
+      "groundFloor": "Erdgeschoss",
+      "vatAmount": "MwSt ({{rate}} %)"
     },
     "contracts": {
       "activeContracts": "Aktive Verträge",
@@ -2391,7 +2392,8 @@
       "availableUnits": "Verfügbare Einheiten",
       "no": "Nr.",
       "bedroomsAbbr": "SZ",
-      "newUnit": "+ Neue Einheit anlegen"
+      "newUnit": "+ Neue Einheit anlegen",
+      "net": "netto"
     },
     "unitEdit": {
       "editTitle": "✏️ Einheit bearbeiten",
@@ -4619,7 +4621,7 @@
     "listPriceNet": "Listenpreis netto",
     "discountPct": "Rabatt {{pct}}",
     "purchasePriceNetAfterDiscount": "Kaufpreis netto (nach Rabatt)",
-    "purchasePriceNet": "Kaufpreis netto",
+    "purchasePriceNet": "Kaufpreis (netto)",
     "vat19": "Umsatzsteuer (19%)",
     "purchasePriceGross": "Kaufpreis brutto",
     "furnishing": "Einrichtung",
@@ -4751,7 +4753,9 @@
     "vatMode130": "Reduziert – 5% bis 130 m²",
     "vatMode200": "Reduziert – 5% bis 200 m²",
     "vatShare5": "davon MwSt 5%-Anteil",
-    "vatShare19": "davon MwSt 19%-Anteil"
+    "vatShare19": "davon MwSt 19%-Anteil",
+    "netSuffix": "netto",
+    "purchasePriceVat": "MwSt auf Kaufpreis"
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",

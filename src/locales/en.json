@@ -962,7 +962,8 @@
       "bathrooms": "Bathrooms",
       "subUnits": "Part units",
       "subUnitsHint": "Purchase, payment plan and contract apply to the whole property. Expenses can optionally be assigned to a part unit.",
-      "groundFloor": "Ground floor"
+      "groundFloor": "Ground floor",
+      "vatAmount": "VAT ({{rate}} %)"
     },
     "contracts": {
       "activeContracts": "Active contracts",
@@ -2391,7 +2392,8 @@
       "availableUnits": "Available units",
       "no": "No.",
       "bedroomsAbbr": "BR",
-      "newUnit": "+ Add New Unit"
+      "newUnit": "+ Add New Unit",
+      "net": "net"
     },
     "unitEdit": {
       "editTitle": "✏️ Edit Unit",
@@ -4619,7 +4621,7 @@
     "listPriceNet": "List price net",
     "discountPct": "Discount {{pct}}",
     "purchasePriceNetAfterDiscount": "Purchase price net (after discount)",
-    "purchasePriceNet": "Purchase price net",
+    "purchasePriceNet": "Purchase price (net)",
     "vat19": "VAT (19%)",
     "purchasePriceGross": "Purchase price gross",
     "furnishing": "Furnishing",
@@ -4751,7 +4753,9 @@
     "vatMode130": "Reduced – 5% up to 130 m²",
     "vatMode200": "Reduced – 5% up to 200 m²",
     "vatShare5": "of which VAT at 5%",
-    "vatShare19": "of which VAT at 19%"
+    "vatShare19": "of which VAT at 19%",
+    "netSuffix": "net",
+    "purchasePriceVat": "VAT on purchase price"
   },
   "automationRules": {
     "eventLeadCreated": "New lead",
