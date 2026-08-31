@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
+import { unitGross } from '../../lib/price'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
@@ -17,7 +18,7 @@ import { rentFromSeason } from '../../lib/strategy'
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null; language?: string | null }
 interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
-interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; floor: number | null }
+interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; vat_rate: number | null; floor: number | null }
 interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
@@ -124,10 +125,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // UND an einen aktiven Deal gebundene Wohnungen werden ausgeblendet (= schon weg).
     const [{ data }, { data: dealRows }] = await Promise.all([
       supabase.from('crm_project_units')
-        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, plot_sqm, price_net, price_net_furnished, price_gross, floor')
+        .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, plot_sqm, price_net, price_net_furnished, price_gross, vat_rate, floor')
         // Zugewiesene Wohnungen (property_id = im Kundenportal materialisiert) sind
         // verkauft und NIE anbietbar — Status allein reicht nicht (Sven 14.8.).
-        .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').is('property_id', null).order('unit_number'),
+        // Unter-Einheiten eines Doppelapartments (parent_unit_id) werden nie einzeln
+        // angeboten — verkauft wird immer die Eltern-Einheit.
+        .eq('project_id', projectId).not('status', 'in', '(sold,reserved)').is('property_id', null).is('parent_unit_id', null).order('unit_number'),
       supabase.from('deals').select('unit_id').is('archived_from_phase', null).neq('phase', 'deal_verloren').not('unit_id', 'is', null),
     ])
     const taken = new Set((dealRows ?? []).map(d => (d as { unit_id: string }).unit_id))
@@ -143,7 +146,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const matchBed = (n: number | null) =>
     filterBed === 'all' ? true : filterBed === '4' ? (n ?? 0) >= 4 : String(n ?? '') === filterBed
   const shownUnits = units.filter(u => {
-    const price = u.price_gross ?? u.price_net ?? 0
+    const price = unitGross(u) ?? 0
     if (!matchBed(u.bedrooms)) return false
     if (filterMin > 0 && price < filterMin) return false
     if (filterMax > 0 && price > filterMax) return false
@@ -257,7 +260,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         return {
           label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
           bedrooms: it.unit.bedrooms, size_sqm: it.unit.size_sqm, terrace_sqm: it.unit.terrace_sqm, floor: it.unit.floor,
-          price_net: it.unit.price_net, price_gross: it.unit.price_gross, params,
+          price_net: it.unit.price_net, price_gross: unitGross(it.unit), params,
         }
       }
 
@@ -358,7 +361,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           project: f.projectName, unit: l.items.map(it => it.unit.unit_number).join(', '),
           bedrooms: f.unit.bedrooms, size_sqm: f.unit.size_sqm, terrace_sqm: f.unit.terrace_sqm,
           floor: f.unit.floor,
-          price: l.items.length > 1 ? `${l.items.length} ${t('crm.wizard.apartments', 'Wohnungen')}` : eur(f.unit.price_gross ?? f.unit.price_net),
+          price: l.items.length > 1 ? `${l.items.length} ${t('crm.wizard.apartments', 'Wohnungen')}` : eur(unitGross(f.unit)),
           facts: (f.assets?.facts ?? '').slice(0, 2600),
           available_count: availByProject[f.projectId]?.available ?? null,
           total_count:     availByProject[f.projectId]?.total ?? null,
@@ -536,7 +539,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                 {shownUnits.map(u => (
                   <label key={u.id} className={`flex items-center gap-2 border rounded-lg px-3 py-2 text-sm cursor-pointer ${sel.has(u.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`}>
                     <input type="checkbox" checked={sel.has(u.id)} onChange={() => toggle(u.id)} />
-                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m²{u.plot_sqm ? ` · 🏡 ${u.plot_sqm} m²` : ''} · {eur(u.price_gross ?? u.price_net)}</span>
+                    <span><strong>{u.unit_number}</strong> · {u.bedrooms ?? '?'} SZ · {u.size_sqm ?? '?'} m²{u.plot_sqm ? ` · 🏡 ${u.plot_sqm} m²` : ''} · {eur(unitGross(u))}</span>
                   </label>
                 ))}
               </div>
@@ -555,7 +558,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
               <div className="space-y-1">
                 {basket.map(b => (
                   <div key={b.unit.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-1.5">
-                    <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(b.unit.price_gross ?? b.unit.price_net)}</span>
+                    <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(unitGross(b.unit))}</span>
                     <button onClick={() => removeFromBasket(b.unit.id)} className="text-gray-400 hover:text-red-500">✕</button>
                   </div>
                 ))}

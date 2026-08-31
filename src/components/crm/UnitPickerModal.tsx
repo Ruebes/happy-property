@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { unitGross } from '../../lib/price'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 
 interface Props {
@@ -118,6 +119,8 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
   const filteredProjects = projects
     .map(p => {
       const units = (p.units ?? []).filter(u => {
+        // Unter-Einheiten eines Doppelapartments: verkauft wird die Eltern-Einheit.
+        if (u.parent_unit_id) return false
         const matchesStatus = statusFilter === 'all' || u.status === statusFilter
         const matchesSearch = !q ||
           u.unit_number.toLowerCase().includes(q) ||
@@ -330,9 +333,9 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
                                   {t('unitPickerModal.priceNetLabel', 'Netto')} <strong className="text-gray-700">{fmtPrice(unit.price_net)}</strong>
                                 </span>
                               )}
-                              {unit.price_gross != null && (
+                              {unitGross(unit) != null && (
                                 <span className="text-gray-700 font-medium">
-                                  {t('unitPickerModal.priceGrossLabel', 'Brutto')} <strong>{fmtPrice(unit.price_gross)}</strong>
+                                  {t('unitPickerModal.priceGrossLabel', 'Brutto')} <strong>{fmtPrice(unitGross(unit))}</strong>
                                 </span>
                               )}
                               {unit.vat_rate > 0 && (
@@ -363,11 +366,9 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
                 {selectedUnit.project.name}
                 {selectedUnit.unit.block ? ` · ${t('unitPickerModal.blockLabel', 'Block {{block}}', { block: selectedUnit.unit.block })}` : ''}
                 {` · ${t('unitPickerModal.unitNumberLabel', 'Nr. {{number}}', { number: selectedUnit.unit.unit_number })}`}
-                {selectedUnit.unit.price_gross != null
-                  ? ` · ${fmtPrice(selectedUnit.unit.price_gross)}`
-                  : selectedUnit.unit.price_net != null
-                    ? ` · ${t('unitPickerModal.priceNetSuffix', '{{price}} netto', { price: fmtPrice(selectedUnit.unit.price_net) })}`
-                    : ''}
+                {unitGross(selectedUnit.unit) != null
+                  ? ` · ${fmtPrice(unitGross(selectedUnit.unit))}`
+                  : ''}
               </div>
               <div className="flex gap-3 shrink-0">
                 <button

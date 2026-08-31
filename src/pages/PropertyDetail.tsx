@@ -5,6 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import ImageLightbox from '../components/ImageLightbox'
 import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
+import { unitGross, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto, CrmProjectUnit } from '../lib/crmTypes'
@@ -1571,7 +1572,7 @@ export default function PropertyDetail() {
     const displayRentalType  = u?.rental_type === 'long'  ? 'longterm'
                              : u?.rental_type === 'short' ? 'shortterm'
                              : (p.rental_type ?? 'longterm')
-    const displayPriceGross  = u?.price_gross   ?? p.purchase_price_gross
+    const displayPriceGross  = unitGross(u) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate)
     const displayPriceNet    = u?.price_net     ?? p.purchase_price_net
     const displayVatRate     = u?.vat_rate      ?? p.vat_rate
 
@@ -3180,7 +3181,8 @@ export default function PropertyDetail() {
     })
 
     // Gesamtbetrag = Bruttokaufpreis der Immobilie (fix, immer sichtbar)
-    const grossTotal  = linkedUnit?.price_gross ?? property!.purchase_price_gross ?? 0
+    const grossTotal  = unitGross(linkedUnit) ?? property!.purchase_price_gross
+                     ?? withVat(property!.purchase_price_net, property!.vat_rate) ?? 0
     const totalPaid   = unitPayments.filter(p => p.is_paid).reduce((s, p) => s + p.amount, 0)
     const outstanding = grossTotal - totalPaid
     const pct         = grossTotal > 0 ? Math.min((totalPaid / grossTotal) * 100, 100) : 0
@@ -3638,8 +3640,8 @@ export default function PropertyDetail() {
           <Badge color="orange">{t(`properties.rental.${linkedUnit?.rental_type === 'long' ? 'longterm' : linkedUnit?.rental_type === 'short' ? 'shortterm' : (p.rental_type ?? 'longterm')}`)}</Badge>
           {(linkedUnit?.is_furnished ?? p.is_furnished) && <Badge color="green">🛋️ {t('properties.furnishedYes')}</Badge>}
           {p.owner && <Badge color="purple">{p.owner.full_name || p.owner.email}</Badge>}
-          {(linkedUnit?.price_gross ?? p.purchase_price_gross) && (
-            <Badge color="green">{fmtCurrency((linkedUnit?.price_gross ?? p.purchase_price_gross)!)}</Badge>
+          {(unitGross(linkedUnit) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate)) && (
+            <Badge color="green">{fmtCurrency((unitGross(linkedUnit) ?? p.purchase_price_gross ?? withVat(p.purchase_price_net, p.vat_rate))!)}</Badge>
           )}
           {addressStr(p) && (
             <span className="text-xs font-body text-gray-400 self-center">📍 {addressStr(p)}</span>

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { unitGross } from '../../../lib/price'
 import type { CrmProject, ProjectStatus, DeckAssetsCache } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
@@ -888,7 +889,7 @@ export default function Projects() {
         const bed = u.bedrooms ?? 0
         if (filterBed === '4' ? bed < 4 : String(u.bedrooms ?? '') !== filterBed) return false
       }
-      const price = u.price_gross ?? u.price_net ?? 0
+      const price = unitGross(u) ?? 0
       if (filterMin > 0 && price < filterMin) return false
       if (filterMax > 0 && price > filterMax) return false
       return true

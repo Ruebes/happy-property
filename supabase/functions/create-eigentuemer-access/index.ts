@@ -13,6 +13,7 @@
 //   APP_URL    = https://portal.happy-property.com  (Produktions-Portal; NIEMALS happy-property.app — tote Domain)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { unitGross } from '../_shared/price.ts'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
@@ -347,69 +348,79 @@ Deno.serve(async (req: Request) => {
           // Abgeschlossene Käufe sind archiviert MIT archived_from_phase='provision_erhalten'.
           if (d.phase === 'deal_verloren') continue
           if (d.phase === 'archiviert' && d.archived_from_phase !== 'provision_erhalten') continue
+          const UNIT_COLS = 'id, unit_number, bedrooms, size_sqm, terrace_sqm, floor, type, rental_type, is_furnished, price_net, price_gross, vat_rate, status, block, property_id, project:crm_projects(name, location)'
           const { data: unit } = await adminClient.from('crm_project_units')
-            .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, floor, type, rental_type, is_furnished, price_net, price_gross, status, block, property_id, project:crm_projects(name, location)')
-            .eq('id', d.unit_id).maybeSingle()
+            .select(UNIT_COLS).eq('id', d.unit_id).maybeSingle()
           if (!unit) continue
-          const u = unit as Record<string, unknown> & { property_id?: string | null; project?: { name?: string; location?: string } | null }
-          if (u.property_id) {
-            // Property existiert schon. Eigentümer nur umhängen, wenn das gefahrlos ist:
-            // - owner leer oder schon dieser Nutzer → setzen
-            // - owner = verwaistes/inaktives Konto ODER Konto derselben Person
-            //   (Mail des alten Kontos gehört zu DIESEM Lead: Haupt- oder alt_emails,
-            //   der Zweitkonto-Fall) → übernehmen
-            // - sonst (aktives Konto einer ANDEREN Person, z.B. Unit später an jemand
-            //   anderen verkauft) → NICHT anfassen, nur loggen. Verhindert, dass ein
-            //   alter Deal einem echten Eigentümer die Wohnung im Portal wegnimmt.
-            const { data: propRow } = await adminClient.from('properties')
-              .select('owner_id').eq('id', u.property_id as string).maybeSingle()
-            const currentOwner = (propRow as { owner_id: string | null } | null)?.owner_id ?? null
-            let takeOver = !currentOwner || currentOwner === userId
-            if (!takeOver) {
-              const { data: oldProf } = await adminClient.from('profiles')
-                .select('id, email, is_active').eq('id', currentOwner).maybeSingle()
-              const op = oldProf as { id: string; email: string | null; is_active: boolean | null } | null
-              if (!op || op.is_active === false) takeOver = true
-              else {
-                const { data: leadMails } = await adminClient.from('leads')
-                  .select('email, alt_emails').eq('id', leadId).maybeSingle()
-                const lm = leadMails as { email: string | null; alt_emails: string[] | null } | null
-                const all = [lm?.email, ...(lm?.alt_emails ?? [])]
-                  .filter(Boolean).map(e => (e as string).trim().toLowerCase())
-                takeOver = !!op.email && all.includes(op.email.trim().toLowerCase())
+          // Doppelapartment: gekauft wird EINE Bauträger-Einheit (z.B. Mamba A2),
+          // im Portal gehören dem Eigentümer die beiden Teil-Wohnungen (A2a, A2b).
+          // Gibt es Unter-Einheiten, werden DIESE materialisiert, nicht die Eltern.
+          const { data: children } = await adminClient.from('crm_project_units')
+            .select(UNIT_COLS).eq('parent_unit_id', d.unit_id).order('unit_number')
+          const unitsToLink = (children && children.length ? children : [unit]) as Array<Record<string, unknown>>
+          for (const rawUnit of unitsToLink) {
+            const u = rawUnit as Record<string, unknown> & { property_id?: string | null; project?: { name?: string; location?: string } | null }
+            if (u.property_id) {
+              // Property existiert schon. Eigentümer nur umhängen, wenn das gefahrlos ist:
+              // - owner leer oder schon dieser Nutzer → setzen
+              // - owner = verwaistes/inaktives Konto ODER Konto derselben Person
+              //   (Mail des alten Kontos gehört zu DIESEM Lead: Haupt- oder alt_emails,
+              //   der Zweitkonto-Fall) → übernehmen
+              // - sonst (aktives Konto einer ANDEREN Person, z.B. Unit später an jemand
+              //   anderen verkauft) → NICHT anfassen, nur loggen. Verhindert, dass ein
+              //   alter Deal einem echten Eigentümer die Wohnung im Portal wegnimmt.
+              const { data: propRow } = await adminClient.from('properties')
+                .select('owner_id').eq('id', u.property_id as string).maybeSingle()
+              const currentOwner = (propRow as { owner_id: string | null } | null)?.owner_id ?? null
+              let takeOver = !currentOwner || currentOwner === userId
+              if (!takeOver) {
+                const { data: oldProf } = await adminClient.from('profiles')
+                  .select('id, email, is_active').eq('id', currentOwner).maybeSingle()
+                const op = oldProf as { id: string; email: string | null; is_active: boolean | null } | null
+                if (!op || op.is_active === false) takeOver = true
+                else {
+                  const { data: leadMails } = await adminClient.from('leads')
+                    .select('email, alt_emails').eq('id', leadId).maybeSingle()
+                  const lm = leadMails as { email: string | null; alt_emails: string[] | null } | null
+                  const all = [lm?.email, ...(lm?.alt_emails ?? [])]
+                    .filter(Boolean).map(e => (e as string).trim().toLowerCase())
+                  takeOver = !!op.email && all.includes(op.email.trim().toLowerCase())
+                }
               }
+              if (takeOver) {
+                await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string)
+              } else {
+                console.warn(`[create-eigentuemer-access] Property ${u.property_id} gehört aktivem Fremdkonto ${currentOwner} — Zuordnung NICHT geändert (Deal ${d.id})`)
+              }
+              continue
             }
-            if (takeOver) {
-              await adminClient.from('properties').update({ owner_id: userId }).eq('id', u.property_id as string)
-            } else {
-              console.warn(`[create-eigentuemer-access] Property ${u.property_id} gehört aktivem Fremdkonto ${currentOwner} — Zuordnung NICHT geändert (Deal ${d.id})`)
+            const loc = u.project?.location ?? null
+            const { data: newProp } = await adminClient.from('properties').insert({
+              project_name:         u.project?.name ?? '',
+              unit_number:          (u.unit_number as string) ?? null,
+              type:                 (u.type as string) ?? 'apartment',
+              bedrooms:             (u.bedrooms as number) ?? 0,
+              size_sqm:             u.size_sqm ?? null,
+              terrace_sqm:          u.terrace_sqm ?? null,
+              floor:                u.floor ?? null,
+              block:                (u.block as string) ?? null,
+              is_furnished:         (u.is_furnished as boolean) ?? false,
+              rental_type:          u.rental_type === 'short' ? 'shortterm' : 'longterm',
+              city:                 (typeof loc === 'string' && !loc.startsWith('http')) ? loc : null,
+              purchase_price_net:   u.price_net ?? null,
+              purchase_price_gross: unitGross(u),
+              property_status:      u.status === 'under_construction' ? 'under_construction' : 'active',
+              owner_id:             userId,
+              created_by:           userId,
+              images:               [],
+            }).select('id').single()
+            if (newProp) {
+              const pid = (newProp as { id: string }).id
+              await adminClient.from('crm_project_units').update({ property_id: pid }).eq('id', u.id as string)
+              // deal.property_id zeigt auf die erste Wohnung des Deals (bei einem
+              // Doppelapartment also auf die untere Einheit) — nur setzen, solange leer.
+              await adminClient.from('deals').update({ property_id: pid }).eq('id', d.id).is('property_id', null)
             }
-            continue
-          }
-          const loc = u.project?.location ?? null
-          const { data: newProp } = await adminClient.from('properties').insert({
-            project_name:         u.project?.name ?? '',
-            unit_number:          (u.unit_number as string) ?? null,
-            type:                 (u.type as string) ?? 'apartment',
-            bedrooms:             (u.bedrooms as number) ?? 0,
-            size_sqm:             u.size_sqm ?? null,
-            terrace_sqm:          u.terrace_sqm ?? null,
-            floor:                u.floor ?? null,
-            block:                (u.block as string) ?? null,
-            is_furnished:         (u.is_furnished as boolean) ?? false,
-            rental_type:          u.rental_type === 'short' ? 'shortterm' : 'longterm',
-            city:                 (typeof loc === 'string' && !loc.startsWith('http')) ? loc : null,
-            purchase_price_net:   u.price_net ?? null,
-            purchase_price_gross: u.price_gross ?? null,
-            property_status:      u.status === 'under_construction' ? 'under_construction' : 'active',
-            owner_id:             userId,
-            created_by:           userId,
-            images:               [],
-          }).select('id').single()
-          if (newProp) {
-            const pid = (newProp as { id: string }).id
-            await adminClient.from('crm_project_units').update({ property_id: pid }).eq('id', u.id as string)
-            await adminClient.from('deals').update({ property_id: pid }).eq('id', d.id)
           }
         }
       }

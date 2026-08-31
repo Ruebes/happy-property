@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { unitGross } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
@@ -104,7 +105,7 @@ function UnitCard({
   onContextMenu?: (e: ReactMouseEvent) => void
 }) {
   const { t } = useTranslation()
-  const price = unit.price_gross ?? unit.price_net
+  const price = unitGross(unit)
   return (
     <div
       className="bg-white rounded-2xl border border-gray-100 shadow-sm
@@ -135,10 +136,16 @@ function UnitCard({
               </span>
             )}
             <span className="text-base font-bold text-gray-900 font-body">{unit.unit_number}</span>
-            <div className="mt-1">
+            <div className="mt-1 flex flex-wrap gap-1">
               <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${STATUS_PILL[unit.status]}`}>
                 {unit.is_completed ? t('crm.pd.handedOver') : t(`crm.pd.status.${unit.status}`)}
               </span>
+              {/* Doppelapartment: Teil-Wohnung, wird nie einzeln angeboten */}
+              {unit.parent_unit_id && (
+                <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-600">
+                  {t('crm.pd.subUnit', 'Teil-Wohnung')}
+                </span>
+              )}
             </div>
           </div>
           {unit.rental_type && (
@@ -163,7 +170,6 @@ function UnitCard({
           {price != null && (
             <p className="font-semibold text-gray-700 mt-1">
               💶 {fmtPrice(price)}
-              {unit.price_gross == null && unit.price_net != null ? t('crm.pd.netSuffix') : ''}
             </p>
           )}
           {unit.handover_date && <p>📅 {t('crm.pd.handover')} {fmtDate(unit.handover_date)}</p>}
@@ -530,7 +536,7 @@ export default function ProjectDetail() {
             block:           unit.block ?? null,
             is_furnished:    unit.is_furnished ?? false,
             purchase_price_net:   unit.price_net   ?? null,
-            purchase_price_gross: unit.price_gross ?? null,
+            purchase_price_gross: unitGross(unit),
             rental_type:     rentalType,
             city:            project?.location ?? null,
             property_status: unitBuildStatus,

@@ -176,7 +176,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       // Namens-Normalisierung: Penthouse-Suffix „(P)" und Sonderzeichen ignorieren,
       // sonst matcht „C-301 (P)" (Liste) nicht auf „C-301" (Bestand) → Duplikate.
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s*\(p\)\s*$/, '').replace(/[^a-z0-9]/g, '')
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, plot_sqm, status').eq('project_id', body.project_id)
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, plot_sqm, status, parent_unit_id').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
@@ -200,9 +200,14 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       const listByNum = new Map<string, Unit>()
       for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; plot_sqm: number | null; status: string | null }
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; plot_sqm: number | null; status: string | null; parent_unit_id: string | null }
+      // Doppelapartments: eine Einheit mit manuell gepflegten Unter-Einheiten (z.B.
+      // Mamba A2 → A2a/A2b) NIE löschen — der Fremdschlüssel würde die Unter-Einheiten
+      // mitnehmen und die Portal-Wohnungen des Eigentümers wären weg.
+      const hasChildren = new Set((existing ?? [])
+        .map(r => (r as ExRow).parent_unit_id).filter(Boolean) as string[])
       const driveAll  = (existing ?? []).filter(r => (r as ExRow).source === 'drive_import') as ExRow[]
-      const driveFree = driveAll.filter(r => !dealLinked.has(r.id))   // löschbar (Deal-Units bleiben)
+      const driveFree = driveAll.filter(r => !dealLinked.has(r.id) && !hasChildren.has(r.id))   // löschbar (Deal-/Eltern-Units bleiben)
       // Developer liefern oft BLOCK-Teillisten (Luma: „A&B" und „C&D" getrennt).
       // „Verschwunden = verkauft" darf nur für Units gelten, deren Block in DIESER
       // Liste überhaupt vorkommt — sonst löscht der A&B-Lauf alle C/D-Units und

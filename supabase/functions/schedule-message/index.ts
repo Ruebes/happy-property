@@ -9,6 +9,7 @@
 // Aufruf: supabase.functions.invoke('schedule-message', { body: { lead_id, deal_id?, event_type } })
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { unitGross } from '../_shared/price.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -105,12 +106,13 @@ Deno.serve(async (req: Request) => {
     let unitNumber = '', objektName = '', kaufpreis = '', unitDevEmail = '', unitDevPhone = ''
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
-        .select('unit_number, price_net, price_gross, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
-      const u = unit as { unit_number?: string; price_net?: number; price_gross?: number; crm_projects?: { name?: string; developer?: string } } | null
+        .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
+      const u = unit as { unit_number?: string; price_net?: number; price_gross?: number; vat_rate?: number; crm_projects?: { name?: string; developer?: string } } | null
       if (u) {
         unitNumber = u.unit_number ?? ''
         objektName = u.crm_projects?.name ?? ''
-        kaufpreis  = eur(u.price_gross ?? u.price_net)
+        // Kaufpreis IMMER brutto: Preislisten sind netto, der Kunde zahlt inkl. MwSt.
+        kaufpreis  = eur(unitGross(u))
         // Developer-Kontakt der gewählten Unit (für dynamischen Empfänger 'unit_developer')
         const devName = u.crm_projects?.developer ?? ''
         if (devName) {

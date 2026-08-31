@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
+import { unitGross } from '../../lib/price'
 import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
@@ -422,7 +423,7 @@ export default function AdminUsers() {
         rental_type:          rentalType,
         city:                 project.location ?? null,
         purchase_price_net:   unit.price_net ?? null,
-        purchase_price_gross: unit.price_gross ?? null,
+        purchase_price_gross: unitGross(unit),
         property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
         images:               [] as string[],
         created_by:           profile!.id,

@@ -1,6 +1,7 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
+import { unitGross } from '../../lib/price'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
 import { DEFAULT_PARAMS, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
@@ -14,7 +15,7 @@ import { NumberStepper } from '../NumberStepper'
 
 interface LeadLite { id: string; first_name: string; last_name: string }
 interface ProjectRow { id: string; name: string; developer: string | null; location: string | null; furniture_cost: number | null; furniture_included: boolean | null }
-interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; floor: number | null; type: string | null }
+interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; price_net: number | null; price_gross: number | null; vat_rate: number | null; floor: number | null; type: string | null }
 interface BasketItem { project: ProjectRow; unit: UnitRow }
 
 const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d : n }
@@ -92,8 +93,9 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     setSel(new Set())
     if (!projectId) { setUnits([]); return }
     const { data } = await supabase.from('crm_project_units')
-      .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, floor, type')
-      .eq('project_id', projectId).order('unit_number')
+      .select('id, unit_number, bedrooms, size_sqm, terrace_sqm, price_net, price_gross, vat_rate, floor, type')
+            // Unter-Einheiten eines Doppelapartments werden nie einzeln gerechnet.
+      .eq('project_id', projectId).is('parent_unit_id', null).order('unit_number')
     setUnits((data ?? []) as UnitRow[])
   })() }, [projectId])
 
@@ -205,7 +207,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           return {
             label: `${b.project.name} · ${u.unit_number}`, project: b.project.name, unit: u.unit_number,
             bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
-            price_net: u.price_net, price_gross: u.price_gross,
+            price_net: u.price_net, price_gross: unitGross(u),
             location: b.project.location ?? undefined, developer: b.project.developer ?? undefined,
             params: applyPerObj({ ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
               perObj[`b${u.id}`] ?? perObjFrom(p)),
@@ -280,7 +282,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           return {
             label: `${b.project.name} · ${u.unit_number}`, project: b.project.name, unit: u.unit_number,
             bedrooms: u.bedrooms, size_sqm: u.size_sqm, terrace_sqm: u.terrace_sqm, floor: u.floor,
-            price_net: u.price_net, price_gross: u.price_gross,
+            price_net: u.price_net, price_gross: unitGross(u),
             location: b.project.location ?? undefined, developer: b.project.developer ?? undefined,
             params: applyPerObj({ ...p, dealType: 'single', priceNet: u.price_net ?? p.priceNet, bedrooms: u.bedrooms ?? 2 },
               perObj[`b${u.id}`] ?? perObjFrom(p)),

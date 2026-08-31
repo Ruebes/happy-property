@@ -424,6 +424,10 @@ export interface CrmProjectUnit {
   floor:          number | null
   notes:          string | null
   property_id:    string | null
+  /** Doppelapartment: Verweis auf die Bautraeger-Einheit. Gesetzt = Unter-Einheit,
+   *  nie einzeln anbietbar (verkauft wird die Eltern-Einheit), im Eigentuemerportal
+   *  aber eine eigene Wohnung. */
+  parent_unit_id: string | null
   is_furnished:   boolean
   handover_date:  string | null
   rental_type:    UnitRentalType | null

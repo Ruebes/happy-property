@@ -2978,6 +2978,7 @@
       "rentalLongTitle": "Long-term rental",
       "terrace": "Terrace",
       "netSuffix": " net",
+      "subUnit": "Part unit",
       "handover": "Handover",
       "assignCustomer": "Assign customer",
       "notFound": "Project not found.",
