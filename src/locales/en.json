@@ -1145,7 +1145,23 @@
       "savingEllipsis": "Saving…",
       "addBtn": "Add"
     },
-    "loadPartialFailed": "Data could not be refreshed right now. Please reload."
+    "loadPartialFailed": "Data could not be refreshed right now. Please reload.",
+    "access": {
+      "title": "Access",
+      "invite": "Invite person",
+      "inviteTitle": "Invite person",
+      "name": "Name",
+      "email": "Email",
+      "remove": "Remove access",
+      "removeConfirm": "Remove this person’s access?",
+      "owner": "Owner",
+      "coOwner": "Co-owner",
+      "invited": "Person granted access. They received an email.",
+      "removed": "Access removed.",
+      "inviting": "Granting access …",
+      "hint": "Invited people see and can do exactly what you can: documents, payments, construction progress. Bank details stay excluded.",
+      "inviteHint": "The person gets portal access and sees this property just like you. If they already have access, they are only added."
+    }
   },
   "users": {
     "title": "User Management",

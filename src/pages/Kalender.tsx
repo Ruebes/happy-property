@@ -347,7 +347,8 @@ export default function Kalender() {
         .from('properties')
         .select('id, project_name, unit_number, rental_type, owner_id')
         .order('project_name')
-      if (isOwner) q = (q as typeof q).eq('owner_id', profile.id)
+      // Kein Filter auf owner_id: die Datenbank-Regel gibt dem Eigentuemer seine
+      // Wohnungen und die, in die er eingeladen wurde; Admin/Verwalter sehen alle.
       const { data } = await q
       setProperties((data ?? []) as ModalProperty[])
     })()

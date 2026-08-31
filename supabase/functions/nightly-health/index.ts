@@ -178,6 +178,11 @@ const checkEmptyPortals: Check = {
       const { count } = await sb.from('properties')
         .select('id', { count: 'exact', head: true }).eq('owner_id', o.id as string)
       if ((count ?? 0) > 0) continue
+      // Eingeladene Mit-Eigentuemer besitzen keine eigene Wohnung, sehen aber eine
+      // fremde — sie sind kein Fehlerfall.
+      const { count: mitCount } = await sb.from('property_co_owners')
+        .select('id', { count: 'exact', head: true }).eq('profile_id', o.id as string)
+      if ((mitCount ?? 0) > 0) continue
       out.push({
         check_key: 'portal_leer', severity: 'hoch',
         entity_kind: 'eigentuemer', entity_id: String(o.id), entity_label: String(o.full_name ?? o.email),

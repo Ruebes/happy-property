@@ -1145,7 +1145,23 @@
       "savingEllipsis": "Speichern…",
       "addBtn": "Hinzufügen"
     },
-    "loadPartialFailed": "Daten konnten gerade nicht aktualisiert werden. Bitte neu laden."
+    "loadPartialFailed": "Daten konnten gerade nicht aktualisiert werden. Bitte neu laden.",
+    "access": {
+      "title": "Zugriff",
+      "invite": "Person einladen",
+      "inviteTitle": "Person einladen",
+      "name": "Name",
+      "email": "E-Mail",
+      "remove": "Zugriff entfernen",
+      "removeConfirm": "Zugriff dieser Person entfernen?",
+      "owner": "Eigentümer",
+      "coOwner": "Mit-Eigentümer",
+      "invited": "Person freigeschaltet. Sie hat eine E-Mail bekommen.",
+      "removed": "Zugriff entfernt.",
+      "inviting": "Schalte frei …",
+      "hint": "Eingeladene Personen sehen und dürfen dasselbe wie du: Unterlagen, Zahlungen, Baufortschritt. Bankdaten bleiben ausgenommen.",
+      "inviteHint": "Die Person bekommt einen Portal-Zugang und sieht diese Wohnung wie du. Hat sie schon einen Zugang, wird sie nur freigeschaltet."
+    }
   },
   "users": {
     "title": "Nutzerverwaltung",

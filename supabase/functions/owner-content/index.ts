@@ -230,9 +230,16 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
       const { data: prop } = await sb.from('properties').select('owner_id, project_name, unit_number').eq('id', doc.property_id).maybeSingle()
       const p = prop as { owner_id: string | null; project_name: string | null; unit_number: string | null } | null
       unitLabel = [p?.project_name, p?.unit_number].filter(Boolean).join(' ')
-      if (p?.owner_id) {
-        const { data: pr } = await sb.from('profiles').select('id, full_name, email, phone, language').eq('id', p.owner_id).maybeSingle()
-        if (pr) owners = [pr as typeof owners[number]]
+      // Eigentuemer UND eingeladene Mit-Eigentuemer. Service-Rolle, also greifen
+      // die Datenbank-Regeln hier nicht — der Kreis muss von Hand gebildet werden.
+      const { data: co } = await sb.from('property_co_owners').select('profile_id').eq('property_id', doc.property_id)
+      const empfIds = [...new Set([
+        ...(p?.owner_id ? [p.owner_id] : []),
+        ...((co ?? []) as Array<{ profile_id: string }>).map(c => c.profile_id),
+      ])]
+      if (empfIds.length) {
+        const { data: pr } = await sb.from('profiles').select('id, full_name, email, phone, language').in('id', empfIds)
+        owners = (pr ?? []) as typeof owners
       }
     } else {
       const { data: prs } = await sb.from('profiles').select('id, full_name, email, phone, language').eq('role', 'eigentuemer')

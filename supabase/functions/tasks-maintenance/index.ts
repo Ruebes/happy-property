@@ -82,6 +82,10 @@ Deno.serve(async (req) => {
     for (const o of ((ownersRaw ?? []) as Array<{ id: string; full_name: string | null; email: string | null; language: string | null; created_at: string; portal_warned_3m_at: string | null; portal_warned_5m_at: string | null }>)) {
       const { count } = await sb.from('properties').select('id', { count: 'exact', head: true }).eq('owner_id', o.id)
       if ((count ?? 0) > 0) continue
+      // Mit-Eigentuemer haben keine eigene Wohnung, aber Zugriff auf eine fremde.
+      // Ohne diese Pruefung wuerde ihr Konto als Karteileiche verwarnt und geloescht.
+      const { count: mitCount } = await sb.from('property_co_owners').select('id', { count: 'exact', head: true }).eq('profile_id', o.id)
+      if ((mitCount ?? 0) > 0) continue
       // Kunden-Schutz: Leads über ALLE Wege matchen (profile_id, Haupt-Mail,
       // alt_emails) — nicht nur die Haupt-Mail. Hat IRGENDEIN gematchter Lead
       // einen Deal (egal welcher Phase), wird das Konto nie automatisch

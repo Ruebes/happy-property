@@ -136,7 +136,8 @@ export default function EigentuemerDashboard() {
         const { data: props, error } = await supabase
           .from('properties')
           .select('id, project_name, unit_number, type, city, images, rental_type, property_status')
-          .eq('owner_id', profile!.id)
+          // Kein Filter auf owner_id: die Datenbank-Regel liefert eigene Wohnungen
+          // UND die, in die man als Mit-Eigentuemer eingeladen wurde.
           .order('project_name')
         if (error) throw error
 

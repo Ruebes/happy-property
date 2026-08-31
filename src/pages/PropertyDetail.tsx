@@ -708,6 +708,11 @@ export default function PropertyDetail() {
   const [subUnits,          setSubUnits]          = useState<CrmProjectUnit[]>([])
   // Angeklickte Teil-Wohnung — zeigt ihre eigenen Daten im Modal.
   const [subUnitOpen,       setSubUnitOpen]       = useState<CrmProjectUnit | null>(null)
+  // Mit-Eigentuemer: eingeladene Personen mit denselben Rechten wie der Eigentuemer.
+  const [coOwners,          setCoOwners]          = useState<Array<{ id: string; profile_id: string; profile: { full_name: string | null; email: string } | null }>>([])
+  const [inviteOpen,        setInviteOpen]        = useState(false)
+  const [inviteForm,        setInviteForm]        = useState({ name: '', email: '' })
+  const [inviteBusy,        setInviteBusy]        = useState(false)
   const [linkedProjectName, setLinkedProjectName] = useState<string | null>(null)  // kanonisch aus crm_projects.name
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
@@ -897,6 +902,50 @@ export default function PropertyDetail() {
       setDocsLoading(false)
     }
   }, [id])
+
+  // ── Mit-Eigentuemer laden ────────────────────────────────
+  // Eingeladene Personen sehen und duerfen dasselbe wie der Eigentuemer.
+  const fetchCoOwners = useCallback(async () => {
+    if (!id) return
+    const { data, error } = await supabase
+      .from('property_co_owners')
+      .select('id, profile_id, profile:profile_id(full_name, email)')
+      .eq('property_id', id)
+      .order('created_at')
+    if (error) { console.error('[PropertyDetail] Mit-Eigentuemer:', error); return }
+    setCoOwners((data ?? []) as unknown as typeof coOwners)
+  }, [id])
+
+  useEffect(() => { void fetchCoOwners() }, [fetchCoOwners])
+
+  // ── Person einladen ──────────────────────────────────────
+  async function handleInvite() {
+    const email = inviteForm.email.trim().toLowerCase()
+    if (!id || !email) return
+    setInviteBusy(true)
+    try {
+      const { data, error } = await supabase.functions.invoke('invite-co-owner', {
+        body: { property_id: id, email, full_name: inviteForm.name.trim() },
+      })
+      const antwort = data as { error?: string; status?: string } | null
+      const fehler = error?.message ?? antwort?.error
+      if (fehler) { setToast({ msg: fehler, type: 'error' }); return }
+      setToast({ msg: t('propertyDetail.access.invited', 'Person freigeschaltet. Sie hat eine E-Mail bekommen.') })
+      setInviteOpen(false)
+      setInviteForm({ name: '', email: '' })
+      void fetchCoOwners()
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
+  async function handleRemoveCoOwner(rowId: string) {
+    if (!window.confirm(t('propertyDetail.access.removeConfirm', 'Zugriff dieser Person entfernen?'))) return
+    const { error } = await supabase.from('property_co_owners').delete().eq('id', rowId)
+    if (error) { setToast({ msg: error.message, type: 'error' }); return }
+    setToast({ msg: t('propertyDetail.access.removed', 'Zugriff entfernt.') })
+    void fetchCoOwners()
+  }
 
   // ── Fetch contracts ──────────────────────────────────────
   const fetchContracts = useCallback(async () => {
@@ -1963,6 +2012,114 @@ export default function PropertyDetail() {
           </div>
         )}
 
+        {/* ── Zugriff: wer sieht diese Wohnung ────────────────────────────────
+            Mit-Eigentuemer sehen und duerfen dasselbe wie der Eigentuemer.
+            Einladen und Entfernen darf nur der eingetragene Eigentuemer selbst
+            oder Sven — deckungsgleich mit den Regeln in der Datenbank. */}
+        {(canEdit || isEigentuemer) && (() => {
+          const darfVerwalten = canEdit || p.owner_id === profile?.id
+          return (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                {t('propertyDetail.access.title', 'Zugriff')}
+              </h3>
+              <div className="space-y-2">
+                {p.owner && (
+                  <div className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3.5">
+                    <span className="w-9 h-9 rounded-full bg-hp-black text-white flex items-center justify-center
+                                     text-xs font-semibold shrink-0">
+                      {(p.owner.full_name || p.owner.email || '?').slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-hp-black font-body truncate">{p.owner.full_name || p.owner.email}</p>
+                      <p className="text-xs text-gray-400 font-body truncate">{p.owner.email}</p>
+                    </div>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 shrink-0">
+                      {t('propertyDetail.access.owner', 'Eigentümer')}
+                    </span>
+                  </div>
+                )}
+
+                {coOwners.map(co => (
+                  <div key={co.id} className="flex items-center gap-3 bg-gray-50 rounded-xl px-4 py-3.5">
+                    <span className="w-9 h-9 rounded-full bg-hp-black text-white flex items-center justify-center
+                                     text-xs font-semibold shrink-0">
+                      {(co.profile?.full_name || co.profile?.email || '?').slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-hp-black font-body truncate">
+                        {co.profile?.full_name || co.profile?.email}
+                      </p>
+                      <p className="text-xs text-gray-400 font-body truncate">{co.profile?.email}</p>
+                    </div>
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600 shrink-0">
+                      {t('propertyDetail.access.coOwner', 'Mit-Eigentümer')}
+                    </span>
+                    {darfVerwalten && (
+                      <button onClick={() => void handleRemoveCoOwner(co.id)}
+                              title={t('propertyDetail.access.remove', 'Zugriff entfernen')}
+                              className="text-gray-300 hover:text-red-500 text-sm shrink-0">✕</button>
+                    )}
+                  </div>
+                ))}
+
+                {darfVerwalten && (
+                  <button onClick={() => setInviteOpen(true)}
+                          className="w-full border-2 border-dashed border-gray-200 rounded-xl px-4 py-3
+                                     text-sm font-body text-gray-500 hover:border-hp-highlight
+                                     hover:text-hp-highlight transition-colors">
+                    + {t('propertyDetail.access.invite', 'Person einladen')}
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-400 font-body mt-2">
+                {t('propertyDetail.access.hint', 'Eingeladene Personen sehen und dürfen dasselbe wie du: Unterlagen, Zahlungen, Baufortschritt. Bankdaten bleiben ausgenommen.')}
+              </p>
+            </div>
+          )
+        })()}
+
+        {/* Einladen-Fenster */}
+        {inviteOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4 py-8"
+               onClick={e => { if (e.target === e.currentTarget) setInviteOpen(false) }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
+                  {t('propertyDetail.access.inviteTitle', 'Person einladen')}
+                </h2>
+                <button onClick={() => setInviteOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-6 py-5 space-y-4">
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1">{t('propertyDetail.access.name', 'Name')}</label>
+                  <input className={inputCls} style={focusRing()} value={inviteForm.name}
+                         onChange={e => setInviteForm(f => ({ ...f, name: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 font-body mb-1">{t('propertyDetail.access.email', 'E-Mail')}</label>
+                  <input type="email" className={inputCls} style={focusRing()} value={inviteForm.email}
+                         onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))} />
+                </div>
+                <p className="text-[11px] text-gray-400 font-body">
+                  {t('propertyDetail.access.inviteHint', 'Die Person bekommt einen Portal-Zugang und sieht diese Wohnung wie du. Hat sie schon einen Zugang, wird sie nur freigeschaltet.')}
+                </p>
+              </div>
+              <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                <button onClick={() => setInviteOpen(false)}
+                        className="px-4 py-2 rounded-lg text-sm text-gray-600 border border-gray-200 hover:bg-gray-50">
+                  {t('common.cancel', 'Abbrechen')}
+                </button>
+                <button onClick={() => void handleInvite()} disabled={inviteBusy || !inviteForm.email.trim()}
+                        className="px-5 py-2 rounded-lg text-white text-sm font-semibold disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  {inviteBusy ? t('propertyDetail.access.inviting', 'Schalte frei …') : t('propertyDetail.access.invite', 'Person einladen')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Owner Edit Modal */}
         {ownerEditOpen && p.owner && ownerForm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center
@@ -2951,34 +3108,40 @@ export default function PropertyDetail() {
 
   // ── Eigentümer per E-Mail benachrichtigen ─────────────
   async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
-    // Lädt der Eigentümer SELBST hoch, bekommt er keine "es wurde für Sie
-    // hochgeladen"-Mail über die eigene Aktion.
-    if (isEigentuemer) return
+    // Empfaenger: der Eigentuemer UND alle eingeladenen Mit-Eigentuemer. Wer
+    // selbst hochgeladen hat, bekommt keine Mail ueber die eigene Aktion.
     const owner = property?.owner
-    if (!owner?.email) return
-    const firstName = owner.full_name?.split(' ')[0] || owner.full_name || 'Eigentümer'
+    const empfaenger = [
+      ...(owner?.email ? [{ id: property?.owner_id ?? null, email: owner.email, full_name: owner.full_name, language: owner.language }] : []),
+      ...coOwners
+        .filter(co => co.profile?.email)
+        .map(co => ({ id: co.profile_id, email: co.profile!.email, full_name: co.profile!.full_name, language: null as string | null })),
+    ].filter(e => e.id !== profile?.id)
     // Dateiname escapen — er landet sonst roh im HTML der Mail
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    const en = owner.language === 'en'
-    try {
-      await supabase.functions.invoke('send-email', {
-        body: {
-          to:      owner.email,
-          subject: en ? 'New file in your Happy Property portal' : 'Neue Datei in Ihrem Happy Property Portal',
-          lang:    en ? 'en' : 'de',
-          html: en
-            ? `<p>Hello ${esc(firstName)},</p>
+    for (const person of empfaenger) {
+      const firstName = person.full_name?.split(' ')[0] || person.full_name || 'Eigentümer'
+      const en = person.language === 'en'
+      try {
+        await supabase.functions.invoke('send-email', {
+          body: {
+            to:      person.email,
+            subject: en ? 'New file in your Happy Property portal' : 'Neue Datei in Ihrem Happy Property Portal',
+            lang:    en ? 'en' : 'de',
+            html: en
+              ? `<p>Hello ${esc(firstName)},</p>
 <p>a new <strong>${kind === 'Dokument' ? 'document' : kind === 'Bild' ? 'image' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
 <p>You can view it in your personal portal at any time.</p>
 <p>Best regards<br>Your Happy Property team</p>`
-            : `<p>Hallo ${esc(firstName)},</p>
+              : `<p>Hallo ${esc(firstName)},</p>
 <p>es wurde ein neues <strong>${kind}</strong> für Ihre Immobilie hochgeladen: <em>${esc(fileName)}</em></p>
 <p>Sie können es jederzeit in Ihrem persönlichen Portal einsehen.</p>
 <p>Viele Grüße<br>Ihr Happy Property Team</p>`,
-        },
-      })
-    } catch (err) {
-      console.warn('[PropertyDetail] notifyOwner failed:', err)
+          },
+        })
+      } catch (err) {
+        console.warn('[PropertyDetail] notifyOwner failed:', err)
+      }
     }
   }
 

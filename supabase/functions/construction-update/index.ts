@@ -137,7 +137,14 @@ Deno.serve(async (req) => {
     const ownerProfiles: Array<{ full_name: string | null; email: string | null; phone: string | null; language: string | null }> = []
     if (propIds.length) {
       const { data: props } = await sb.from('properties').select('owner_id').in('id', propIds).not('owner_id', 'is', null)
-      const ownerIds = [...new Set(((props ?? []) as Array<{ owner_id: string }>).map(p => p.owner_id))]
+      // Mit-Eigentuemer (eingeladene Personen) gehoeren dazu: sie sehen die Fotos
+      // im Portal und sollen auch die Nachricht darueber bekommen. Diese Function
+      // laeuft mit Service-Rolle, die Datenbank-Regeln greifen hier NICHT.
+      const { data: coOwners } = await sb.from('property_co_owners').select('profile_id').in('property_id', propIds)
+      const ownerIds = [...new Set([
+        ...((props ?? []) as Array<{ owner_id: string }>).map(p => p.owner_id),
+        ...((coOwners ?? []) as Array<{ profile_id: string }>).map(c => c.profile_id),
+      ])]
       if (ownerIds.length) {
         const { data: profs } = await sb.from('profiles').select('full_name, email, phone, language').in('id', ownerIds)
         ownerProfiles.push(...((profs ?? []) as typeof ownerProfiles))
