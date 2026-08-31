@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { CustomSelect } from '../../../components/CustomSelect'
+import { FIN_CATS, FIN_CAT_LABEL } from '../../../lib/crmTypes'
 
 // ── Buchhaltung ───────────────────────────────────────────────────────────────
 // Revolut-Kontobewegungen (täglicher Sync + Backfill), Kategorien (Regeln + KI),
@@ -24,12 +25,9 @@ interface Payable {
   due_at: string | null; doc_url: string | null; status: string; created_at: string
   beneficiary: string | null; iban: string | null; bic: string | null; revolut_payment_id: string | null
 }
-const CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero', 'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges']
-const CAT_LABEL: Record<string, string> = {
-  kundenzahlung: '💶 Kundenzahlung', developer: '🏗 Developer', werbung: '📣 Werbung', software: '💻 Software',
-  gebuehren: '🏦 Gebühren', buero: '🏢 Büro', reise: '✈️ Reise', steuern_abgaben: '🧾 Steuern & Abgaben',
-  gehalt_privat: '👤 Gehalt/Privat', sonstiges: '📦 Sonstiges',
-}
+// Kategorien zentral aus crmTypes — die Statistik nutzt dieselbe Liste.
+const CATS: readonly string[] = FIN_CATS
+const CAT_LABEL = FIN_CAT_LABEL
 const eur = (n: number) => n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
 
 export default function Finance() {

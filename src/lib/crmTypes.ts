@@ -668,3 +668,35 @@ export interface AiReplyExample {
   created_at:   string
   updated_at:   string
 }
+
+// ── Buchhaltung: Kategorien ─────────────────────────────────────────────────
+// Zentral, weil Buchhaltung (Finance) und Statistik dieselbe Liste brauchen und
+// revolut-sync sie serverseitig spiegelt (FIN_CATS).
+// einlage / entnahme / umbuchung sind KEIN Geschäftsvorfall: Privateinlagen,
+// Rückzahlungen an den Gesellschafter und Devisentausch zwischen eigenen Konten
+// zählen weder als Einnahme noch als Ausgabe (Vorgabe Sven 31.08.2026).
+export const FIN_NEUTRAL_CATS = ['einlage', 'entnahme', 'umbuchung'] as const
+
+export const FIN_CATS = [
+  'kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero',
+  'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges',
+  ...FIN_NEUTRAL_CATS,
+] as const
+
+export const FIN_CAT_LABEL: Record<string, string> = {
+  kundenzahlung: '💶 Kundenzahlung', developer: '🏗 Developer', werbung: '📣 Werbung',
+  software: '💻 Software', gebuehren: '🏦 Gebühren', buero: '🏢 Büro', reise: '✈️ Reise',
+  steuern_abgaben: '🧾 Steuern & Abgaben', gehalt_privat: '👤 Gehalt/Privat',
+  sonstiges: '📦 Sonstiges',
+  einlage: '⬇️ Einlage', entnahme: '⬆️ Entnahme', umbuchung: '🔄 Umbuchung',
+}
+
+export interface FinTransaction {
+  id:           string
+  booked_at:    string
+  amount:       number
+  currency:     string
+  counterparty: string
+  reference:    string
+  category:     string | null
+}

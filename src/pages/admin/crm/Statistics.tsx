@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useDateFormat } from '../../../lib/date'
 import { CustomSelect } from '../../../components/CustomSelect'
+import { FIN_NEUTRAL_CATS, FIN_CAT_LABEL, type FinTransaction } from '../../../lib/crmTypes'
 
 /**
  * Verkaufs-Statistik.
@@ -109,7 +110,9 @@ export default function Statistics() {
   const [orphanDeals, setOrphanDeals] = useState(0)   // Provision kassiert, aber keine Wohnung verknuepft
   const [loading,    setLoading]    = useState(true)
   const [loadError,  setLoadError]  = useState<string | null>(null)
+  const [tab,        setTab]        = useState<'sales' | 'cashflow'>('sales')
   const [devFilter,  setDevFilter]  = useState('')   // '' = alle Bauträger
+  const [fin,        setFin]        = useState<FinTransaction[]>([])
   const [expanded,   setExpanded]   = useState<string | null>(null)
 
   // ── Laden ────────────────────────────────────────────────────
@@ -200,6 +203,16 @@ export default function Statistics() {
         })
       }
       setSales(rows)
+
+      // 5. Kontobewegungen für den Reiter „Ein- und Ausgaben"
+      const { data: finData, error: finErr } = await supabase
+        .from('fin_transactions')
+        .select('id, booked_at, amount, currency, counterparty, reference, category')
+        .eq('currency', 'EUR')          // Fremdwährung läuft immer über eine Umbuchung
+        .neq('amount', 0)               // Kartenreservierungen ohne Betrag
+        .order('booked_at', { ascending: false })
+      if (finErr) throw finErr
+      setFin((finData ?? []) as FinTransaction[])
     } catch (err) {
       console.error('[Statistics] fetchSales:', err)
       setLoadError(err instanceof Error ? err.message : String(err))
@@ -267,6 +280,64 @@ export default function Statistics() {
     open:       a.open + s.open,
   }), { units: 0, volume: 0, commission: 0, paid: 0, open: 0 }), [byDeveloper])
 
+  // ── Ein- und Ausgaben ────────────────────────────────────────
+  // Gleicher Zeitraumfilter wie bei den Verkäufen, hier auf das Buchungsdatum.
+  const finInPeriod = useMemo(() => {
+    const { from, to } = getPeriodRange(period, customFrom, customTo)
+    if (!from && !to) return fin
+    return fin.filter(f => {
+      const day = f.booked_at.slice(0, 10)
+      if (from && day < from) return false
+      if (to   && day > to)   return false
+      return true
+    })
+  }, [fin, period, customFrom, customTo])
+
+  const cash = useMemo(() => {
+    const neutral = new Set<string>(FIN_NEUTRAL_CATS)
+    const income  = new Map<string, { sum: number; count: number }>()
+    const expense = new Map<string, { sum: number; count: number }>()
+    let deposits = 0, withdrawals = 0, transfers = 0
+
+    const bump = (m: Map<string, { sum: number; count: number }>, key: string, amount: number) => {
+      const cur = m.get(key) ?? { sum: 0, count: 0 }
+      cur.sum += amount
+      cur.count += 1
+      m.set(key, cur)
+    }
+
+    for (const f of finInPeriod) {
+      const cat = f.category ?? ''
+      const amount = Number(f.amount)
+      if (neutral.has(cat)) {
+        // Kein Geschäftsvorfall — nur nachrichtlich ausweisen
+        if (cat === 'einlage')  deposits    += amount
+        if (cat === 'entnahme') withdrawals += Math.abs(amount)
+        if (cat === 'umbuchung') transfers  += Math.abs(amount)
+        continue
+      }
+      const key = cat || '__none__'
+      if (amount > 0) bump(income, key, amount)
+      else            bump(expense, key, Math.abs(amount))
+    }
+
+    const toRows = (m: Map<string, { sum: number; count: number }>) =>
+      Array.from(m.entries())
+        .map(([category, v]) => ({ category, ...v }))
+        .sort((a, b) => b.sum - a.sum)
+
+    const incomeRows  = toRows(income)
+    const expenseRows = toRows(expense)
+    const incomeSum   = incomeRows.reduce((a, r) => a + r.sum, 0)
+    const expenseSum  = expenseRows.reduce((a, r) => a + r.sum, 0)
+    return {
+      incomeRows, expenseRows, incomeSum, expenseSum,
+      result: incomeSum - expenseSum,
+      deposits, withdrawals, transfers,
+      count: finInPeriod.length,
+    }
+  }, [finInPeriod])
+
   // ── Datenlücken (Zeitraum-unabhängig, sonst „verschwinden“ sie) ──
   const gaps = useMemo(() => ({
     withoutDeal:       sales.filter(s => !s.hasDeal).length,
@@ -291,14 +362,126 @@ export default function Statistics() {
 
   const maxUnits = byDeveloper[0]?.units ?? 0
 
+  // ── Ansicht: Ein- und Ausgaben ───────────────────────────────
+  function renderCashflow() {
+    if (cash.count === 0) {
+      return <p className="text-gray-400 text-center py-16 font-body">{t('stats.noData', 'Keine Daten für diesen Zeitraum.')}</p>
+    }
+    const catLabel = (c: string) =>
+      c === '__none__' ? t('stats.noCategory', 'Ohne Kategorie') : (FIN_CAT_LABEL[c] ?? c)
+
+    const Table = ({ title, rows, sum, tone }: {
+      title: string
+      rows: { category: string; sum: number; count: number }[]
+      sum: number
+      tone: 'in' | 'out'
+    }) => (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-5 py-3 border-b border-gray-100 flex items-baseline justify-between">
+          <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide font-body">{title}</h3>
+          <span className={`text-sm font-semibold font-body ${tone === 'in' ? 'text-green-700' : 'text-hp-black'}`}>
+            {tone === 'out' ? '−' : ''}{fmtEur(sum)}
+          </span>
+        </div>
+        {rows.length === 0 ? (
+          <p className="px-5 py-6 text-sm text-gray-400 font-body">{t('stats.noneInPeriod', 'Nichts in diesem Zeitraum.')}</p>
+        ) : (
+          <table className="w-full">
+            <tbody className="divide-y divide-gray-50">
+              {rows.map(r => (
+                <tr key={r.category}>
+                  <td className="px-5 py-2.5">
+                    <div className="text-sm text-hp-black font-body">{catLabel(r.category)}</div>
+                    <div className="mt-1 h-1 rounded-full bg-gray-100 overflow-hidden max-w-[200px]">
+                      <div className={`h-full rounded-full ${tone === 'in' ? 'bg-green-600/70' : 'bg-hp-highlight'}`}
+                           style={{ width: `${sum > 0 ? (r.sum / sum) * 100 : 0}%` }} />
+                    </div>
+                  </td>
+                  <td className="px-5 py-2.5 text-right text-xs text-gray-400 font-body whitespace-nowrap">
+                    {t('stats.bookings', '{{count}} Buchungen', { count: r.count })}
+                  </td>
+                  <td className="px-5 py-2.5 text-right text-sm text-gray-800 font-body whitespace-nowrap">{fmtEur(r.sum)}</td>
+                  <td className="px-5 py-2.5 text-right text-xs text-gray-400 font-body whitespace-nowrap">{fmtPct(r.sum, sum)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    )
+
+    return (
+      <>
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+          <Kpi label={t('stats.incomeLabel', 'Einnahmen')}  value={fmtEur(cash.incomeSum)} />
+          <Kpi label={t('stats.expenses', 'Ausgaben')} value={fmtEur(cash.expenseSum)} />
+          <Kpi label={t('stats.result', 'Ergebnis')}
+               value={`${cash.result < 0 ? '−' : ''}${fmtEur(Math.abs(cash.result))}`}
+               hint={cash.incomeSum > 0
+                 ? t('stats.marginHint', '{{pct}} vom Umsatz', { pct: fmtPct(cash.result, cash.incomeSum) })
+                 : undefined} />
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Table title={t('stats.incomeByCat', 'Einnahmen nach Kategorie')}
+                 rows={cash.incomeRows} sum={cash.incomeSum} tone="in" />
+          <Table title={t('stats.expensesByCat', 'Ausgaben nach Kategorie')}
+                 rows={cash.expenseRows} sum={cash.expenseSum} tone="out" />
+        </div>
+
+        {/* Nicht gewertet */}
+        {(cash.deposits > 0 || cash.withdrawals > 0 || cash.transfers > 0) && (
+          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4">
+            <p className="text-sm font-semibold text-hp-black font-body mb-1">
+              {t('stats.neutralTitle', 'Nicht als Einnahme oder Ausgabe gewertet')}
+            </p>
+            <ul className="text-sm text-gray-600 font-body space-y-0.5">
+              {cash.deposits > 0 && (
+                <li>{t('stats.neutralDeposits', 'Einlagen: {{sum}} — dein Geld ins Firmenkonto, kein Umsatz.', { sum: fmtEur(cash.deposits) })}</li>
+              )}
+              {cash.withdrawals > 0 && (
+                <li>{t('stats.neutralWithdrawals', 'Entnahmen: {{sum}} — Geld zurück an dich, keine Betriebsausgabe.', { sum: fmtEur(cash.withdrawals) })}</li>
+              )}
+              {cash.transfers > 0 && (
+                <li>{t('stats.neutralTransfers', 'Umbuchungen: {{sum}} — Devisentausch zwischen eigenen Konten.', { sum: fmtEur(cash.transfers) })}</li>
+              )}
+            </ul>
+          </div>
+        )}
+      </>
+    )
+  }
+
   return (
     <DashboardLayout basePath="/admin/crm">
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-heading font-bold text-hp-black">{t('stats.salesTitle', 'Verkäufe')}</h1>
+          <h1 className="text-2xl font-heading font-bold text-hp-black">{t('stats.title', 'Statistiken')}</h1>
           <p className="text-sm text-gray-500 font-body mt-1">
-            {t('stats.salesSubtitle', 'Verkaufte Wohnungen und Provision je Bauträger. Verkaufsdatum ist das Datum der Provisionsrechnung.')}
+            {tab === 'sales'
+              ? t('stats.salesSubtitle', 'Verkaufte Wohnungen und Provision je Bauträger. Verkaufsdatum ist das Datum der Provisionsrechnung.')
+              : t('stats.cashSubtitle', 'Alle Kontobewegungen. Einlagen und Entnahmen zählen nicht als Einnahme oder Ausgabe.')}
           </p>
+        </div>
+
+        {/* Reiter */}
+        <div className="flex gap-1 border-b border-gray-200">
+          {([
+            { id: 'sales'    as const, label: t('stats.tabSales', 'Verkäufe') },
+            { id: 'cashflow' as const, label: t('stats.tabCash',  'Ein- und Ausgaben') },
+          ]).map(x => (
+            <button
+              key={x.id}
+              onClick={() => setTab(x.id)}
+              className={`px-4 py-2 text-sm font-medium font-body border-b-2 -mb-px transition-colors ${
+                tab === x.id
+                  ? 'border-hp-highlight text-hp-black'
+                  : 'border-transparent text-gray-500 hover:text-hp-black'
+              }`}
+            >
+              {x.label}
+            </button>
+          ))}
         </div>
 
         {/* Zeitraum */}
@@ -329,7 +512,7 @@ export default function Statistics() {
         )}
 
         {/* Bauträger */}
-        {developerOptions.length > 1 && (
+        {tab === 'sales' && developerOptions.length > 1 && (
           <div className="flex items-center gap-3 flex-wrap">
             <div className="w-64">
               <CustomSelect value={devFilter} onChange={setDevFilter} options={developerOptions} />
@@ -355,6 +538,8 @@ export default function Statistics() {
               {t('stats.retry', 'Erneut versuchen')}
             </button>
           </div>
+        ) : tab === 'cashflow' ? (
+          renderCashflow()
         ) : (
           <>
             {/* Kennzahlen */}

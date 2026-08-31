@@ -211,7 +211,10 @@ async function syncTransactions(supabase: SupabaseClient, accessToken: string, d
   return { scanned: txs.length, imported, payables_matched: payablesMatched }
 }
 
-const FIN_CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero', 'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges']
+// Muss zu FIN_CATS in src/lib/crmTypes.ts passen. einlage/entnahme/umbuchung sind
+// keine Geschaeftsvorfaelle (Privateinlage, Rueckzahlung an den Gesellschafter,
+// Devisentausch zwischen eigenen Konten) und zaehlen in der Statistik nicht mit.
+const FIN_CATS = ['kundenzahlung', 'developer', 'werbung', 'software', 'gebuehren', 'buero', 'reise', 'steuern_abgaben', 'gehalt_privat', 'sonstiges', 'einlage', 'entnahme', 'umbuchung']
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
