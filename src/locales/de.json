@@ -370,7 +370,9 @@
     "gapsTitle": "Diese Zahlen sind unvollständig",
     "gapNoDeal": "{{count}} verkaufte Wohnungen haben keinen Deal — Kunde und Provision fehlen dort.",
     "gapNoCommission": "{{count}} Verkäufe haben keinen Provisionsbetrag im Deal.",
-    "gapOrphanDeal": "{{count}} Deals mit Provision haben keine Wohnung verknüpft und fehlen deshalb beim Bauträger."
+    "gapOrphanDeal": "{{count}} Deals mit Provision haben keine Wohnung verknüpft und fehlen deshalb beim Bauträger.",
+    "allDevelopers": "Alle Bauträger",
+    "resetDeveloper": "Filter zurücksetzen"
   },
   "quickActions": {
     "addProperty": "Objekt hinzufügen",

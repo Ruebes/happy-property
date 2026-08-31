@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useDateFormat } from '../../../lib/date'
+import { CustomSelect } from '../../../components/CustomSelect'
 
 /**
  * Verkaufs-Statistik.
@@ -96,6 +97,7 @@ export default function Statistics() {
   const [orphanDeals, setOrphanDeals] = useState(0)   // Provision kassiert, aber keine Wohnung verknuepft
   const [loading,    setLoading]    = useState(true)
   const [loadError,  setLoadError]  = useState<string | null>(null)
+  const [devFilter,  setDevFilter]  = useState('')   // '' = alle Bauträger
   const [expanded,   setExpanded]   = useState<string | null>(null)
 
   // ── Laden ────────────────────────────────────────────────────
@@ -173,7 +175,7 @@ export default function Statistics() {
   useEffect(() => { void fetchSales() }, [fetchSales])
 
   // ── Zeitraum-Filter ──────────────────────────────────────────
-  const filtered = useMemo(() => {
+  const inPeriod = useMemo(() => {
     const { from, to } = getPeriodRange(period, customFrom, customTo)
     if (!from && !to) return sales
     return sales.filter(s => {
@@ -184,6 +186,22 @@ export default function Statistics() {
       return true
     })
   }, [sales, period, customFrom, customTo])
+
+  // ── Bauträger-Filter ─────────────────────────────────────────
+  // Die Auswahlliste kommt aus ALLEN Verkäufen, nicht nur aus dem Zeitraum —
+  // sonst verschwindet der gerade gewählte Bauträger beim Umschalten der Periode.
+  const developerOptions = useMemo(() => {
+    const names = Array.from(new Set(sales.map(s => s.developer))).sort((a, b) => a.localeCompare(b))
+    return [{ value: '', label: t('stats.allDevelopers', 'Alle Bauträger') },
+            ...names.map(n => ({ value: n, label: n }))]
+  }, [sales, t])
+
+  const filtered = useMemo(
+    () => devFilter ? inPeriod.filter(s => s.developer === devFilter) : inPeriod,
+    [inPeriod, devFilter])
+
+  // Bei gewähltem Bauträger die Einzelwohnungen direkt aufklappen
+  useEffect(() => { setExpanded(devFilter || null) }, [devFilter])
 
   // ── Gruppierung nach Bauträger ───────────────────────────────
   const byDeveloper = useMemo(() => {
@@ -270,6 +288,21 @@ export default function Statistics() {
             <span className="text-gray-400">–</span>
             <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
               className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-body focus:outline-none focus:ring-2 focus:ring-hp-highlight/40" />
+          </div>
+        )}
+
+        {/* Bauträger */}
+        {developerOptions.length > 1 && (
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="w-64">
+              <CustomSelect value={devFilter} onChange={setDevFilter} options={developerOptions} />
+            </div>
+            {devFilter && (
+              <button onClick={() => setDevFilter('')}
+                className="text-sm font-body text-gray-500 hover:text-hp-black underline underline-offset-2">
+                {t('stats.resetDeveloper', 'Filter zurücksetzen')}
+              </button>
+            )}
           </div>
         )}
 

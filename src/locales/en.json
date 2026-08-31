@@ -370,7 +370,9 @@
     "gapsTitle": "These figures are incomplete",
     "gapNoDeal": "{{count}} sold units have no deal — customer and commission are missing there.",
     "gapNoCommission": "{{count}} sales have no commission amount in the deal.",
-    "gapOrphanDeal": "{{count}} deals with commission have no unit linked and are therefore missing from the developer totals."
+    "gapOrphanDeal": "{{count}} deals with commission have no unit linked and are therefore missing from the developer totals.",
+    "allDevelopers": "All developers",
+    "resetDeveloper": "Reset filter"
   },
   "quickActions": {
     "addProperty": "Add property",
