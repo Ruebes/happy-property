@@ -352,7 +352,7 @@
     "paidCommission": "Commission received",
     "total": "Total",
     "salesTitle": "Sales",
-    "salesSubtitle": "Units sold and commission per developer. The reference date is the commission date, otherwise the sale date.",
+    "salesSubtitle": "Units sold and commission per developer. The sale date is the date of the commission invoice.",
     "units": "Units",
     "unitsSold": "Units sold",
     "volume": "Sales volume",
@@ -369,10 +369,12 @@
     "retry": "Try again",
     "gapsTitle": "These figures are incomplete",
     "gapNoDeal": "{{count}} sold units have no deal — customer and commission are missing there.",
-    "gapNoCommission": "{{count}} sales have no commission amount in the deal.",
     "gapOrphanDeal": "{{count}} deals with commission have no unit linked and are therefore missing from the developer totals.",
     "allDevelopers": "All developers",
-    "resetDeveloper": "Reset filter"
+    "resetDeveloper": "Reset filter",
+    "dateEstimated": "no invoice",
+    "dateEstimatedHint": "No commission invoice linked — fallback date taken from the deal.",
+    "gapNoInvoice": "{{count}} sales have no commission invoice — they carry a fallback date that can distort the period filter."
   },
   "quickActions": {
     "addProperty": "Add property",

@@ -352,7 +352,7 @@
     "paidCommission": "Provision erhalten",
     "total": "Gesamt",
     "salesTitle": "Verkäufe",
-    "salesSubtitle": "Verkaufte Wohnungen und Provision je Bauträger. Stichtag ist das Provisionsdatum, sonst der Verkaufszeitpunkt.",
+    "salesSubtitle": "Verkaufte Wohnungen und Provision je Bauträger. Verkaufsdatum ist das Datum der Provisionsrechnung.",
     "units": "Einheiten",
     "unitsSold": "Wohnungen verkauft",
     "volume": "Verkaufsvolumen",
@@ -369,10 +369,12 @@
     "retry": "Erneut versuchen",
     "gapsTitle": "Diese Zahlen sind unvollständig",
     "gapNoDeal": "{{count}} verkaufte Wohnungen haben keinen Deal — Kunde und Provision fehlen dort.",
-    "gapNoCommission": "{{count}} Verkäufe haben keinen Provisionsbetrag im Deal.",
     "gapOrphanDeal": "{{count}} Deals mit Provision haben keine Wohnung verknüpft und fehlen deshalb beim Bauträger.",
     "allDevelopers": "Alle Bauträger",
-    "resetDeveloper": "Filter zurücksetzen"
+    "resetDeveloper": "Filter zurücksetzen",
+    "dateEstimated": "ohne Rechnung",
+    "dateEstimatedHint": "Keine Provisionsrechnung verknüpft — Ersatzdatum aus dem Deal.",
+    "gapNoInvoice": "{{count}} Verkäufe haben keine Provisionsrechnung — dort steht ein Ersatzdatum, das den Zeitraumfilter verfälschen kann."
   },
   "quickActions": {
     "addProperty": "Objekt hinzufügen",

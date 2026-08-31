@@ -97,7 +97,11 @@ export default function Invoices() {
                     <td className="px-4 py-3"><span className={`text-xs px-2 py-0.5 rounded-full ${STATUS_STYLE[inv.status] ?? ''}`}>{INVOICE_STATUS_LABEL[inv.status] ?? inv.status}</span></td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-2.5 text-xs">
-                        <a href={pdfUrlFor(inv.token)} target="_blank" rel="noreferrer" className="text-gray-500 hover:text-orange-600 font-medium">{t('invoices.pdfLink', 'PDF')}</a>
+                        {/* Nachgetragene Alt-Rechnungen (in Revolut erstellt) haben kein PDF im CRM —
+                            der Link liefe sonst ins Leere. */}
+                        {inv.pdf_path && (
+                          <a href={pdfUrlFor(inv.token)} target="_blank" rel="noreferrer" className="text-gray-500 hover:text-orange-600 font-medium">{t('invoices.pdfLink', 'PDF')}</a>
+                        )}
                         <button onClick={() => copyLink(inv)} className="text-gray-500 hover:text-orange-600 font-medium">{t('invoices.linkBtn', 'Link')}</button>
                         {inv.status !== 'paid' && <button onClick={() => setStatus(inv, 'paid')} className="text-green-600 hover:text-green-800 font-medium">{t('invoices.markPaidBtn', 'Bezahlt')}</button>}
                         {inv.status === 'draft' && <button onClick={() => setStatus(inv, 'sent')} className="text-blue-600 hover:text-blue-800 font-medium">{t('invoices.markSentBtn', 'Versendet')}</button>}

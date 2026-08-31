@@ -16,8 +16,10 @@ import { CustomSelect } from '../../../components/CustomSelect'
  * deals.developer wird nur auf einem einzigen Pfad (Pipeline-Wohnungswahl) gesetzt und
  * ist deshalb fuer eine Auswertung unbrauchbar.
  *
- * Die Provision kommt aus dem Deal (commission_amount / commission_paid_at). Verkaeufe
- * ohne Deal oder ohne Betrag verschwinden nicht, sondern werden unten als Luecke gemeldet.
+ * Provision und Verkaufsdatum kommen aus der Provisionsrechnung (crm_invoices, ueber
+ * deal_id verknuepft): das Rechnungsdatum IST das Verkaufsdatum (Vorgabe Sven 31.08.2026).
+ * Ohne Rechnung greift die Reihenfolge Zahldatum -> Phasenwechsel -> Portal-Anlage, und
+ * der Verkauf wird unten als Luecke gemeldet statt still zu verschwinden.
  */
 
 // ── Types ──────────────────────────────────────────────────────
@@ -28,7 +30,9 @@ interface SaleRow {
   projectName: string
   developer:   string
   customer:    string | null
-  date:        string | null   // Verkaufsdatum (Provision / Phasenwechsel / Portal-Anlage)
+  date:        string | null   // Verkaufsdatum = Rechnungsdatum, sonst Ersatzdatum
+  dateIsInvoice: boolean       // false = Ersatzdatum, weil keine Rechnung verknüpft ist
+  invoiceNo:   string | null
   volume:      number          // Kaufpreis netto
   commission:  number
   paid:        number
@@ -57,6 +61,14 @@ interface UnitRow {
   project:     { id: string; name: string | null; developer: string | null } | null
 }
 interface PropRow  { id: string; owner_id: string | null; created_at: string }
+interface InvoiceRow {
+  invoice_number: string
+  issue_date:     string
+  subtotal_net:   number | null
+  status:         string | null
+  paid_at:        string | null
+  deal_id:        string | null
+}
 interface DealRow  {
   id: string
   unit_id: string | null
@@ -142,11 +154,33 @@ export default function Statistics() {
       // Provision kassiert, aber keine Wohnung verknuepft → taucht in keiner Auswertung auf
       setOrphanDeals(deals.filter(d => !d.unit_id && (d.commission_amount ?? 0) > 0).length)
 
+      // 4. Provisionsrechnungen — Rechnungsdatum ist das Verkaufsdatum
+      const { data: invData, error: invErr } = await supabase
+        .from('crm_invoices')
+        .select('invoice_number, issue_date, subtotal_net, status, paid_at, deal_id')
+        .not('deal_id', 'is', null)
+        .neq('status', 'canceled')
+      if (invErr) throw invErr
+      // Bei mehreren Rechnungen je Deal zaehlt die aelteste (die den Verkauf ausloest);
+      // Betraege werden addiert, damit Teilrechnungen nicht verlorengehen.
+      const invByDeal = new Map<string, { first: InvoiceRow; net: number; paid: number }>()
+      for (const raw of (invData ?? []) as unknown as InvoiceRow[]) {
+        if (!raw.deal_id) continue
+        const net  = Number(raw.subtotal_net ?? 0)
+        const paid = raw.status === 'paid' || raw.paid_at ? net : 0
+        const cur  = invByDeal.get(raw.deal_id)
+        if (!cur) { invByDeal.set(raw.deal_id, { first: raw, net, paid }); continue }
+        cur.net  += net
+        cur.paid += paid
+        if (raw.issue_date < cur.first.issue_date) cur.first = raw
+      }
+
       const rows: SaleRow[] = []
       for (const u of units) {
         const prop = u.property_id ? propById.get(u.property_id) : undefined
         if (!prop?.owner_id) continue          // Portal-Objekt ohne Eigentuemer = kein Verkauf
-        const d = dealByUnit.get(u.id)
+        const d   = dealByUnit.get(u.id)
+        const inv = d ? invByDeal.get(d.id) : undefined
         rows.push({
           unitId:      u.id,
           unitNumber:  u.unit_number ?? '—',
@@ -154,10 +188,13 @@ export default function Statistics() {
           projectName: u.project?.name ?? '—',
           developer:   (u.project?.developer ?? '').trim() || t('stats.noDeveloper', 'Ohne Bauträger'),
           customer:    d?.lead ? `${d.lead.first_name ?? ''} ${d.lead.last_name ?? ''}`.trim() : null,
-          date:        d?.commission_paid_at ?? d?.phase_changed_at ?? prop.created_at ?? null,
+          date:          inv?.first.issue_date
+                      ?? d?.commission_paid_at ?? d?.phase_changed_at ?? prop.created_at ?? null,
+          dateIsInvoice: !!inv,
+          invoiceNo:     inv?.first.invoice_number ?? null,
           volume:      Number(u.price_net ?? u.price_gross ?? 0),
-          commission:  Number(d?.commission_amount ?? 0),
-          paid:        d?.commission_paid_at ? Number(d?.commission_amount ?? 0) : 0,
+          commission:  inv ? inv.net  : Number(d?.commission_amount ?? 0),
+          paid:        inv ? inv.paid : (d?.commission_paid_at ? Number(d?.commission_amount ?? 0) : 0),
           hasDeal:     !!d,
           phase:       d ? (d.archived_from_phase ?? d.phase) : null,
         })
@@ -233,7 +270,7 @@ export default function Statistics() {
   // ── Datenlücken (Zeitraum-unabhängig, sonst „verschwinden“ sie) ──
   const gaps = useMemo(() => ({
     withoutDeal:       sales.filter(s => !s.hasDeal).length,
-    withoutCommission: sales.filter(s => s.hasDeal && s.commission === 0).length,
+    withoutInvoice:    sales.filter(s => !s.dateIsInvoice).length,
     orphanDeals,
   }), [sales, orphanDeals])
 
@@ -260,7 +297,7 @@ export default function Statistics() {
         <div>
           <h1 className="text-2xl font-heading font-bold text-hp-black">{t('stats.salesTitle', 'Verkäufe')}</h1>
           <p className="text-sm text-gray-500 font-body mt-1">
-            {t('stats.salesSubtitle', 'Verkaufte Wohnungen und Provision je Bauträger. Stichtag ist das Provisionsdatum, sonst der Verkaufszeitpunkt.')}
+            {t('stats.salesSubtitle', 'Verkaufte Wohnungen und Provision je Bauträger. Verkaufsdatum ist das Datum der Provisionsrechnung.')}
           </p>
         </div>
 
@@ -386,7 +423,12 @@ export default function Statistics() {
                                         <tr key={x.unitId} className="border-b border-gray-100 last:border-0">
                                           <td className="py-2 pr-3 font-body text-gray-800">{x.projectName} · {x.unitNumber}</td>
                                           <td className="py-2 pr-3 font-body text-gray-500">{x.customer ?? t('stats.noCustomer', 'Kunde nicht verknüpft')}</td>
-                                          <td className="py-2 pr-3 font-body text-gray-500">{fmtDate(x.date)}</td>
+                                          <td className="py-2 pr-3 font-body text-gray-500">
+                                            {fmtDate(x.date)}
+                                            {x.dateIsInvoice
+                                              ? <span className="text-gray-400"> · {x.invoiceNo}</span>
+                                              : <span className="text-amber-600" title={t('stats.dateEstimatedHint', 'Keine Provisionsrechnung verknüpft — Ersatzdatum aus dem Deal.')}> · {t('stats.dateEstimated', 'ohne Rechnung')}</span>}
+                                          </td>
                                           <td className="py-2 pr-3 font-body text-gray-400">
                                             {x.phase ? t(`crm.phases.${x.phase}`, x.phase) : '—'}
                                           </td>
@@ -422,7 +464,7 @@ export default function Statistics() {
             )}
 
             {/* Datenlücken */}
-            {(gaps.withoutDeal > 0 || gaps.withoutCommission > 0 || gaps.orphanDeals > 0) && (
+            {(gaps.withoutDeal > 0 || gaps.withoutInvoice > 0 || gaps.orphanDeals > 0) && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
                 <p className="text-sm font-semibold text-amber-900 font-body mb-1">
                   {t('stats.gapsTitle', 'Diese Zahlen sind unvollständig')}
@@ -431,8 +473,8 @@ export default function Statistics() {
                   {gaps.withoutDeal > 0 && (
                     <li>{t('stats.gapNoDeal', '{{count}} verkaufte Wohnungen haben keinen Deal — Kunde und Provision fehlen dort.', { count: gaps.withoutDeal })}</li>
                   )}
-                  {gaps.withoutCommission > 0 && (
-                    <li>{t('stats.gapNoCommission', '{{count}} Verkäufe haben keinen Provisionsbetrag im Deal.', { count: gaps.withoutCommission })}</li>
+                  {gaps.withoutInvoice > 0 && (
+                    <li>{t('stats.gapNoInvoice', '{{count}} Verkäufe haben keine Provisionsrechnung — dort steht ein Ersatzdatum, das den Zeitraumfilter verfälschen kann.', { count: gaps.withoutInvoice })}</li>
                   )}
                   {gaps.orphanDeals > 0 && (
                     <li>{t('stats.gapOrphanDeal', '{{count}} Deals mit Provision haben keine Wohnung verknüpft und fehlen deshalb beim Bauträger.', { count: gaps.orphanDeals })}</li>
