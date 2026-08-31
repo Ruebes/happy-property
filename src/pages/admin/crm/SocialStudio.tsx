@@ -596,13 +596,12 @@ function UseIdeaModal({ idea, onClose, onDone }: { idea: Idea; onClose: () => vo
       const { data, error } = await supabase.functions.invoke('social-agent', {
         body: { action: 'use_idea', idea_id: idea.id, platforms: plats, newsletter: nl, format, image_count: count },
       })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; post_ids?: string[]; campaign_id?: string | null; images_pending?: number }
+      const d = (data ?? {}) as { ok?: boolean; error?: string; post_ids?: string[]; campaign_id?: string | null; images_pending?: number; newsletter_pending?: boolean }
       if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
       const parts: string[] = []
       if (d.post_ids?.length) parts.push(`${d.post_ids.length} ${t('crm.social.ideaPostsMade', 'Post-Entwurf/Entwürfe')}`)
-      if (d.campaign_id) parts.push(t('crm.social.ideaNlMade', 'Newsletter-Entwurf'))
-      const img = d.images_pending ? ` — ${d.images_pending} ${t('crm.social.ideaImgsBg', 'Bild(er) entstehen im Hintergrund')}` : ''
-      onDone(`✓ ${parts.join(' + ')}${img}`)
+      if (d.campaign_id || d.newsletter_pending) parts.push(t('crm.social.ideaNlMade', 'Newsletter-Entwurf'))
+      onDone(`✓ ${parts.join(' + ')} ${t('crm.social.ideaBgHint', '— Texte und Bilder entstehen im Hintergrund, die Liste füllt sich von selbst (~1 Min).')}`)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setBusy(false) }
   }
   const pill = (on: boolean) => `px-3 py-1.5 rounded-lg text-sm font-medium border ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200'}`
@@ -878,8 +877,8 @@ export default function SocialStudio() {
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
 
-  const fetchAll = useCallback(async () => {
-    setLoading(true)
+  const fetchAll = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true)
     try {
       const [{ data: ps }, { data: ts }, { data: prs }] = await Promise.all([
         supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(100),
@@ -1068,7 +1067,7 @@ export default function SocialStudio() {
           )}
         </div>
 
-        {!loading && ideas.length > 0 && (
+        {!loading && view === 'plan' && ideas.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
             <button onClick={() => setIdeasOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3">
               <p className="font-semibold text-gray-900">💡 {t('crm.social.ideas', 'Ideensammlung')}
@@ -1144,7 +1143,10 @@ export default function SocialStudio() {
                         <span className="text-[11px] text-gray-400">{p.platforms.join(' · ')}{p.format === 'carousel' ? ` · 🎠 ${nImgs}` : ''}</span>
                       </div>
                       <p className="text-sm font-medium text-gray-800 mt-1 truncate">{p.title ?? tp?.label}</p>
-                      <p className="text-xs text-gray-500 truncate">{(p.content ?? '').replace(/\s+/g, ' ').slice(0, 80) || t('crm.social.noText', '(noch kein Text)')}</p>
+                      <p className="text-xs text-gray-500 truncate">{(p.content ?? '').replace(/\s+/g, ' ').slice(0, 80)
+                        || (Date.now() - new Date(p.created_at).getTime() < 10 * 60 * 1000
+                          ? t('crm.social.textPending', '✍️ Text entsteht gerade …')
+                          : t('crm.social.noText', '(noch kein Text)'))}</p>
                       {p.scheduled_for && <p className="text-[11px] text-gray-400 mt-0.5">🗓 {d2(p.scheduled_for)}</p>}
                     </div>
                     {p.status !== 'gepostet' && (
@@ -1158,7 +1160,11 @@ export default function SocialStudio() {
         )}
       </div>
       {useIdea && <UseIdeaModal idea={useIdea} onClose={() => setUseIdea(null)}
-        onDone={msg => { setUseIdea(null); showToast(msg); void fetchAll() }} />}
+        onDone={msg => {
+          setUseIdea(null); showToast(msg); setView('list'); void fetchAll()
+          // Texte/Bilder laufen serverseitig weiter — still nachladen.
+          for (const ms of [15000, 40000, 80000, 140000]) setTimeout(() => void fetchAll(true), ms)
+        }} />}
       {openPost && <PostEditor post={openPost} allPosts={posts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
     </DashboardLayout>
   )

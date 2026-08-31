@@ -1237,6 +1237,31 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       if (!ideaRow) return json({ error: 'Idee nicht gefunden.' }, 404)
       const idea = ideaRow as { headline: string; core: string; source_url: string | null; angle: string }
 
+      // Entwürfe SOFORT anlegen (noch ohne Text) und antworten — Texte und
+      // Bilder entstehen danach im Hintergrund. So wartet der Browser nie
+      // 30–120 s auf die KI (das lief in einen Netzwerk-Abbruch).
+      const postIds: string[] = []
+      let metaPostId = ''
+      let liPostId = ''
+      if (wantMeta) {
+        const { data: p1, error: e1 } = await sb.from('social_posts').insert({
+          topic: 'news', title: `📰 ${idea.headline}`.slice(0, 200),
+          platforms: sel.filter(p => p !== 'linkedin'), format, status: 'entwurf', news_source: idea.source_url,
+        }).select('id').single()
+        if (e1) return json({ error: e1.message }, 500)
+        metaPostId = (p1 as { id: string }).id; postIds.push(metaPostId)
+      }
+      if (wantLi) {
+        // LinkedIn: kein Karussell — bekommt das erste Bild
+        const { data: p2, error: e2 } = await sb.from('social_posts').insert({
+          topic: 'news', title: `📰 in · ${idea.headline}`.slice(0, 200),
+          platforms: ['linkedin'], format: 'single', status: 'entwurf', news_source: idea.source_url,
+        }).select('id').single()
+        if (e2) return json({ error: e2.message }, 500)
+        liPostId = (p2 as { id: string }).id; postIds.push(liPostId)
+      }
+      await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: postIds }).eq('id', ideaId)
+
       const outTool = {
         name: 'set_outputs', description: 'Liefert die fertigen Texte für alle gewünschten Ziele.',
         input_schema: { type: 'object', properties: {
@@ -1251,52 +1276,31 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       if (wantMeta) wants.push('- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.')
       if (wantLi) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
       if (wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
-      const resp2 = await claude(anthropicKey, {
-        system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
-        messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
-        tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
-      })
-      const tu = ((resp2.content ?? []) as Array<{ type: string; name?: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use' && b.name === 'set_outputs')
-      if (!tu?.input) return json({ error: 'Texterstellung lieferte kein Ergebnis.' }, 502)
-      const out = tu.input
 
-      const postIds: string[] = []
-      let metaPostId = ''
-      if (wantMeta && out.meta_caption) {
-        const { data: p1, error: e1 } = await sb.from('social_posts').insert({
-          topic: 'news', title: `📰 ${idea.headline}`.slice(0, 200), content: out.meta_caption,
-          platforms: sel.filter(p => p !== 'linkedin'), format, status: 'entwurf', news_source: idea.source_url,
-        }).select('id').single()
-        if (e1) return json({ error: e1.message }, 500)
-        metaPostId = (p1 as { id: string }).id; postIds.push(metaPostId)
-      }
-      let liPostId = ''
-      if (wantLi && out.linkedin_caption) {
-        // LinkedIn: kein Karussell — bekommt das erste Bild
-        const { data: p2, error: e2 } = await sb.from('social_posts').insert({
-          topic: 'news', title: `📰 in · ${idea.headline}`.slice(0, 200), content: out.linkedin_caption,
-          platforms: ['linkedin'], format: 'single', status: 'entwurf', news_source: idea.source_url,
-        }).select('id').single()
-        if (e2) return json({ error: e2.message }, 500)
-        liPostId = (p2 as { id: string }).id; postIds.push(liPostId)
-      }
-      let campaignId = ''
-      if (wantNewsletter && out.newsletter_html) {
-        const { data: c, error: e3 } = await sb.from('newsletter_campaigns').insert({
-          title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
-          content_mode: 'html', html_body: out.newsletter_html, status: 'draft',
-        }).select('id').single()
-        if (e3) return json({ error: e3.message }, 500)
-        campaignId = (c as { id: string }).id
-      }
-      await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: postIds }).eq('id', ideaId)
+      const job = (async () => {
+        const stamp = () => new Date().toISOString()
+        try {
+          const resp2 = await claude(anthropicKey, {
+            system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
+            messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
+            tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
+          })
+          const tu = ((resp2.content ?? []) as Array<{ type: string; name?: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use' && b.name === 'set_outputs')
+          const out = tu?.input
+          if (!out) throw new Error('Texterstellung lieferte kein Ergebnis.')
 
-      // Bilder im Hintergrund: erst an den Meta-Post, dann dieselben an LinkedIn kopieren
-      const primary = metaPostId || liPostId
-      const imagesPending = primary ? imgCount : 0
-      if (primary) {
-        const job = (async () => {
-          try {
+          if (metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: out.meta_caption, updated_at: stamp() }).eq('id', metaPostId)
+          if (liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: out.linkedin_caption, updated_at: stamp() }).eq('id', liPostId)
+          if (wantNewsletter && out.newsletter_html) {
+            await sb.from('newsletter_campaigns').insert({
+              title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
+              content_mode: 'html', html_body: out.newsletter_html, status: 'draft',
+            })
+          }
+
+          // Bilder: erst an den Meta-Post, dann dieselben an LinkedIn kopieren
+          const primary = metaPostId || liPostId
+          if (primary && out.image_prompt) {
             for (let i = 1; i <= imgCount; i++) {
               const vary = imgCount > 1 ? ` — image ${i} of ${imgCount} of a carousel: vary subject, angle and lighting, keep one consistent photorealistic style.` : ''
               await generatePostImage(sb, primary, `${out.image_prompt}${vary}`)
@@ -1304,13 +1308,22 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
             if (liPostId && metaPostId) {
               const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', metaPostId).maybeSingle()
               const urls = ((cur as { image_urls?: string[] } | null)?.image_urls ?? [])
-              if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: new Date().toISOString() }).eq('id', liPostId)
+              if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: stamp() }).eq('id', liPostId)
             }
-          } catch (e) { console.error('[social-agent] use_idea Bilder:', e) }
-        })()
-        if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job)
-      }
-      return json({ ok: true, post_ids: postIds, campaign_id: campaignId || null, images_pending: imagesPending })
+          }
+        } catch (e) {
+          console.error('[social-agent] use_idea Hintergrund:', e)
+          // Entwürfe nicht stumm leer lassen — Hinweis in den Post schreiben.
+          const hint = `⚠️ Die Textautomatik ist ausgefallen (${e instanceof Error ? e.message : 'Fehler'}).\nSchreib den Text hier im Chat neu — die Idee steht im Titel.`
+          for (const id of [metaPostId, liPostId].filter(Boolean)) {
+            const { data: cur } = await sb.from('social_posts').select('content').eq('id', id).maybeSingle()
+            if (!((cur as { content?: string } | null)?.content ?? '').trim()) await sb.from('social_posts').update({ content: hint, updated_at: stamp() }).eq('id', id)
+          }
+        }
+      })()
+      if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job); else await job
+
+      return json({ ok: true, post_ids: postIds, campaign_id: null, images_pending: postIds.length ? imgCount : 0, texts_pending: true, newsletter_pending: wantNewsletter })
     }
 
     // ── LinkedIn-Token-Wächter (Cron täglich): Aufgabe NUR wenn ein hinterlegter
