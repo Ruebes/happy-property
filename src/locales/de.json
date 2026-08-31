@@ -959,7 +959,10 @@
       "createdAt": "Angelegt am",
       "terrace": "Terrasse",
       "floor": "Etage",
-      "bathrooms": "Badezimmer"
+      "bathrooms": "Badezimmer",
+      "subUnits": "Teil-Wohnungen",
+      "subUnitsHint": "Kauf, Zahlungsplan und Vertrag laufen über die gesamte Wohnung. Ausgaben lassen sich beim Erfassen optional einer Teil-Wohnung zuordnen.",
+      "groundFloor": "Erdgeschoss"
     },
     "contracts": {
       "activeContracts": "Aktive Verträge",
@@ -1028,7 +1031,10 @@
       "creditorPlaceholder": "Stadtwerke München",
       "pdfMaxSize": "PDF · max. 50 MB",
       "onlyPdf": "Bitte eine PDF-Datei auswählen.",
-      "tooBig": "Datei zu groß (max. 50 MB)."
+      "tooBig": "Datei zu groß (max. 50 MB).",
+      "subUnit": "Zuordnung",
+      "subUnitWhole": "Ganze Wohnung",
+      "subUnitHint": "Optional. Ohne Auswahl zählt die Ausgabe für die gesamte Wohnung."
     },
     "income": {
       "comingSoon": "Einnahmen",

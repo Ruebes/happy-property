@@ -959,7 +959,10 @@
       "createdAt": "Created on",
       "terrace": "Terrace",
       "floor": "Floor",
-      "bathrooms": "Bathrooms"
+      "bathrooms": "Bathrooms",
+      "subUnits": "Part units",
+      "subUnitsHint": "Purchase, payment plan and contract apply to the whole property. Expenses can optionally be assigned to a part unit.",
+      "groundFloor": "Ground floor"
     },
     "contracts": {
       "activeContracts": "Active contracts",
@@ -1028,7 +1031,10 @@
       "creditorPlaceholder": "Stadtwerke München",
       "pdfMaxSize": "PDF · max. 50 MB",
       "onlyPdf": "Please choose a PDF file.",
-      "tooBig": "File too large (max. 50 MB)."
+      "tooBig": "File too large (max. 50 MB).",
+      "subUnit": "Assignment",
+      "subUnitWhole": "Whole property",
+      "subUnitHint": "Optional. Without a selection the expense counts for the whole property."
     },
     "income": {
       "comingSoon": "Income",

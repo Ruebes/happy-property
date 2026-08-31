@@ -91,6 +91,8 @@ interface DocRecord {
   creditor_iban:  string | null
   notes:          string | null
   vat_rate:       number | null
+  /** Optionale Zuordnung auf eine Teil-Wohnung des Doppelapartments. Leer = ganze Wohnung. */
+  sub_unit_id:    string | null
 }
 
 interface ContractRecord {
@@ -172,13 +174,14 @@ interface InvoiceFullForm {
   description:    string
   creditor_iban:  string
   notes:          string
+  sub_unit_id:    string        // '' = ganze Wohnung
   file:           File | null
 }
 
 const EMPTY_INVOICE: InvoiceFullForm = {
   creditor: '', invoice_number: '', invoice_date: '', due_date: '', paid_at: '',
   amount_gross: '', vat_rate: '19', amount_net: '', description: '',
-  creditor_iban: '', notes: '', file: null,
+  creditor_iban: '', notes: '', sub_unit_id: '', file: null,
 }
 
 function invoiceStatus(doc: DocRecord): 'paid' | 'overdue' | 'open' {
@@ -200,6 +203,7 @@ function docToInvoiceForm(doc: DocRecord): InvoiceFullForm {
     description:    doc.description    ?? '',
     creditor_iban:  doc.creditor_iban  ?? '',
     notes:          doc.notes          ?? '',
+    sub_unit_id:    doc.sub_unit_id    ?? '',
     file:           null,
   }
 }
@@ -264,11 +268,13 @@ interface InvoiceModalProps {
   doc:        DocRecord | null   // null = new invoice
   propertyId: string
   uploadedBy: string
+  /** Teil-Wohnungen des Doppelapartments — leer bei normalen Wohnungen. */
+  subUnits:   Array<{ id: string; unit_number: string }>
   onClose:    () => void
   onSaved:    (msg: string) => void
 }
 
-function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: InvoiceModalProps) {
+function InvoiceModal({ doc, propertyId, uploadedBy, subUnits, onClose, onSaved }: InvoiceModalProps) {
   const { t }   = useTranslation()
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -382,6 +388,7 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
         description:    form.description.trim()    || null,
         creditor_iban:  form.creditor_iban.trim()  || null,
         notes:          form.notes.trim()          || null,
+        sub_unit_id:    form.sub_unit_id           || null,
         file_url:       fileUrl,
       }
 
@@ -604,6 +611,26 @@ function InvoiceModal({ doc, propertyId, uploadedBy, onClose, onSaved }: Invoice
             </div>
           </div>
 
+          {/* Doppelapartment: Ausgabe optional einer Teil-Wohnung zuordnen.
+              Leer = betrifft die ganze Wohnung (Standard). */}
+          {subUnits.length > 0 && (
+            <div>
+              <label className="block text-xs font-medium text-gray-500 font-body mb-1">
+                {t('propertyDetail.invoices.subUnit', 'Zuordnung')}
+              </label>
+              <select className={inputCls} style={focusRing()}
+                      value={form.sub_unit_id} onChange={e => setField('sub_unit_id', e.target.value)}>
+                <option value="">{t('propertyDetail.invoices.subUnitWhole', 'Ganze Wohnung')}</option>
+                {subUnits.map(su => (
+                  <option key={su.id} value={su.id}>{su.unit_number}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-gray-400 font-body mt-1">
+                {t('propertyDetail.invoices.subUnitHint', 'Optional. Ohne Auswahl zählt die Ausgabe für die gesamte Wohnung.')}
+              </p>
+            </div>
+          )}
+
           {error && (
             <p className="text-sm text-red-500 bg-red-50 px-4 py-2 rounded-lg font-body">{error}</p>
           )}
@@ -676,6 +703,9 @@ export default function PropertyDetail() {
   const [linkedUnitId,      setLinkedUnitId]      = useState<string | null>(null)
   const [linkedProjectId,   setLinkedProjectId]   = useState<string | null>(null)
   const [linkedUnit,        setLinkedUnit]        = useState<CrmProjectUnit | null>(null)
+  // Teil-Wohnungen des Doppelapartments (A2a/A2b) — Untergliederung INNERHALB
+  // dieser Wohnung, keine eigenen Objekte. Leer bei normalen Wohnungen.
+  const [subUnits,          setSubUnits]          = useState<CrmProjectUnit[]>([])
   const [linkedProjectName, setLinkedProjectName] = useState<string | null>(null)  // kanonisch aus crm_projects.name
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
@@ -855,7 +885,7 @@ export default function PropertyDetail() {
     try {
       const { data } = await supabase
         .from('documents')
-        .select('id, type, title, file_url, amount_net, amount_gross, creditor, uploaded_at, invoice_number, invoice_date, due_date, paid_at, description, creditor_iban, notes, vat_rate')
+        .select('id, type, title, file_url, amount_net, amount_gross, creditor, uploaded_at, invoice_number, invoice_date, due_date, paid_at, description, creditor_iban, notes, vat_rate, sub_unit_id')
         .eq('property_id', id)
         .order('uploaded_at', { ascending: false })
       setDocs((data as DocRecord[]) ?? [])
@@ -938,6 +968,7 @@ export default function PropertyDetail() {
         setLinkedUnitId(null)
         setLinkedProjectId(null)
         setLinkedUnit(null)
+        setSubUnits([])
         setLinkedProjectName(null)
         setUnitPayments([])
         setUnitKaufvertraege([])
@@ -950,6 +981,16 @@ export default function PropertyDetail() {
       setLinkedProjectId((unitData as { project_id: string }).project_id)
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
       setLinkedUnit(unitData as unknown as CrmProjectUnit)
+
+      // Doppelapartment: Teil-Wohnungen der Einheit (A2a/A2b). Gekauft und bezahlt
+      // wird die Einheit als Ganzes — die Teile dienen der Untergliederung von
+      // Flaechen und Ausgaben innerhalb dieser Wohnung.
+      const { data: subs } = await supabase
+        .from('crm_project_units')
+        .select('*')
+        .eq('parent_unit_id', unitData.id)
+        .order('unit_number')
+      setSubUnits((subs ?? []) as unknown as CrmProjectUnit[])
 
       const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
         supabase
@@ -1630,6 +1671,46 @@ export default function PropertyDetail() {
               <Stat label={t('properties.purchasePrice.vat')}
                     value={`${displayVatRate} %`} />
             </div>
+          </div>
+        )}
+
+        {/* Teil-Wohnungen (Doppelapartment): eine Wohnung, zwei nutzbare Einheiten.
+            Gekauft und bezahlt wird die Wohnung als Ganzes — hier steht, wie sie
+            sich aufteilt. Ausgaben lassen sich optional je Teil buchen. */}
+        {subUnits.length > 0 && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+              {t('propertyDetail.overview.subUnits', 'Teil-Wohnungen')}
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {subUnits.map(su => (
+                <div key={su.id} className="bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="font-semibold text-hp-black font-body">{su.unit_number}</span>
+                    {su.floor != null && (
+                      <span className="text-[11px] text-gray-400 font-body">
+                        {su.floor === 0
+                          ? t('propertyDetail.overview.groundFloor', 'Erdgeschoss')
+                          : `${t('propertyDetail.overview.floor', 'Etage')} ${su.floor}`}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 font-body">
+                    {su.size_sqm != null && <span>{fmtNumber(su.size_sqm, 1)} m²</span>}
+                    {su.terrace_sqm != null && (
+                      <span>{fmtNumber(su.terrace_sqm, 1)} m² {t('propertyDetail.overview.terrace', 'Terrasse')}</span>
+                    )}
+                    {su.bedrooms > 0 && <span>{su.bedrooms} {t('crm.unitSelect.bedroomsAbbr', 'SZ')}</span>}
+                    {unitGross(su) != null && (
+                      <span className="font-semibold text-gray-700">{fmtCurrency(unitGross(su)!)}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-400 font-body mt-2">
+              {t('propertyDetail.overview.subUnitsHint', 'Kauf, Zahlungsplan und Vertrag laufen über die gesamte Wohnung. Ausgaben lassen sich beim Erfassen optional einer Teil-Wohnung zuordnen.')}
+            </p>
           </div>
         )}
 
@@ -2591,6 +2672,12 @@ export default function PropertyDetail() {
                           <td className="px-4 py-3">
                             <span className="flex items-center gap-1.5 font-medium text-hp-black">
                               {doc.creditor || '—'}
+                              {/* Doppelapartment: auf welche Teil-Wohnung gebucht */}
+                              {doc.sub_unit_id && (
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                                  {subUnits.find(su => su.id === doc.sub_unit_id)?.unit_number ?? '–'}
+                                </span>
+                              )}
                               <span className="text-gray-400 text-xs">{expanded ? '▲' : '▼'}</span>
                             </span>
                           </td>
@@ -3690,6 +3777,7 @@ export default function PropertyDetail() {
           doc={invoiceModalDoc}
           propertyId={id}
           uploadedBy={profile.id}
+          subUnits={subUnits}
           onClose={() => setInvoiceModalOpen(false)}
           onSaved={msg => {
             setInvoiceModalOpen(false)
