@@ -316,7 +316,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       const availByProject: Record<string, { available: number; total: number }> = {}
       for (const pid of projIds) {
         const { count: total } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
-        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)').is('property_id', null)
+        const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)').is('property_id', null).is('parent_unit_id', null)
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
       const calcLinkByToken: Record<string, string> = {}

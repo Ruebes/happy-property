@@ -804,7 +804,9 @@ export default function Objekte() {
                     }}
                     options={[
                       { value: '', label: t('objekte.selectUnit', '— Einheit auswählen —') },
-                      ...crmUnits.filter(u => !u.property_id).map(u => ({
+                      // Teil-Wohnungen eines Doppelapartments haben kein eigenes
+                      // Portal-Objekt: verkauft und uebergeben wird die Gesamteinheit.
+                      ...crmUnits.filter(u => !u.property_id && !u.parent_unit_id).map(u => ({
                         value: u.id,
                         label: `${u.block ? `${t('objekte.blockPrefix', 'Block {{block}}', { block: u.block })} · ` : ''}${u.unit_number}${u.type === 'villa' ? ` · ${t('objekte.villaSuffix', 'Villa')}` : u.type === 'studio' ? ` · ${t('objekte.studioSuffix', 'Studio')}` : ''}${u.bedrooms ? ` · ${t('objekte.bedroomsAbbrShort', '{{count}} SZ', { count: u.bedrooms })}` : ''}${u.size_sqm ? ` · ${u.size_sqm} m²` : ''}`,
                       })),

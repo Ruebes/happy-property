@@ -283,6 +283,8 @@ export default function AdminUsers() {
         .from('crm_project_units')
         .select('*')
         .eq('project_id', projectId)
+        // Teil-Wohnungen eines Doppelapartments werden nie einzeln zugewiesen.
+        .is('parent_unit_id', null)
         .order('block', { ascending: true, nullsFirst: true })
         .order('unit_number', { ascending: true })
       setProjectUnits((data ?? []) as CrmProjectUnit[])
