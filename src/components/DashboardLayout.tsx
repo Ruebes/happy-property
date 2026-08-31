@@ -562,6 +562,13 @@ export default function DashboardLayout({ children, basePath }: Props) {
               </span>
             </Link>
 
+            {/* Bau-Kennung: laeuft im Browser noch ein alter Stand aus dem
+                Service-Worker-Cache, steht hier ein altes Datum. */}
+            <span className="hidden lg:inline text-[10px] text-gray-300 font-body tabular-nums select-all"
+                  title={t('nav.buildIdTitle', 'Stand dieser Oberflaeche. Zeigt sie ein altes Datum, Tab schliessen und neu oeffnen.')}>
+              {__BUILD_ID__}
+            </span>
+
             <button
               onClick={handleSignOut}
               disabled={loggingOut}

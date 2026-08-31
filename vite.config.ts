@@ -2,7 +2,15 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+// Bau-Kennung: steht sichtbar im Profil-Menue. Zeigt sie ein altes Datum, laeuft
+// im Browser noch ein alter Stand aus dem Service-Worker-Cache — dann hilft nur
+// Tab schliessen und neu oeffnen. Vorher war das nur zu erraten.
+const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+  },
   plugins: [
     react(),
     VitePWA({

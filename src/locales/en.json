@@ -125,7 +125,8 @@
     "settings": "Settings",
     "profile": "Profile",
     "menu": "Menu",
-    "downloads": "Downloads"
+    "downloads": "Downloads",
+    "buildIdTitle": "Build of this interface. If the date is old, close the tab and open it again."
   },
   "login": {
     "title": "Welcome back",

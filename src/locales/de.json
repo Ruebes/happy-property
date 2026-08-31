@@ -125,7 +125,8 @@
     "settings": "Einstellungen",
     "profile": "Profil",
     "menu": "Menü",
-    "downloads": "Downloads"
+    "downloads": "Downloads",
+    "buildIdTitle": "Stand dieser Oberfläche. Zeigt sie ein altes Datum, Tab schließen und neu öffnen."
   },
   "login": {
     "title": "Willkommen zurück",
