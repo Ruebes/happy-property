@@ -282,7 +282,9 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
           project_id:  body.project_id,
           unit_number: String(u.unit_number).trim(),
           block:       (u.block as string) ?? null,
-          floor:       int(u.floor),
+          // Etage nur uebernehmen, wenn sie plausibel ist: bei Mamba landeten
+          // Grundstuecksflaechen (179, 237, 324) in der Etagen-Spalte.
+          floor:       (() => { const f = int(u.floor); return f != null && f >= 0 && f <= 30 ? f : null })(),
           type:        (['apartment', 'studio', 'villa'].includes(u.type as string) ? u.type : 'apartment') as string,
           bedrooms:    int(u.bedrooms) ?? 0,
           bathrooms:   int(u.bathrooms) ?? 1,

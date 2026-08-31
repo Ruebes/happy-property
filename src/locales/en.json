@@ -963,7 +963,18 @@
       "subUnits": "Part units",
       "subUnitsHint": "Purchase, payment plan and contract apply to the whole property. Expenses can optionally be assigned to a part unit.",
       "groundFloor": "Ground floor",
-      "vatAmount": "VAT ({{rate}} %)"
+      "vatAmount": "VAT ({{rate}} %)",
+      "subUnitOpen": "View details",
+      "subUnitOf": "Part unit of {{unit}}",
+      "floorplan": "Floor plan",
+      "noFloorplan": "No floor plan available for this part unit yet.",
+      "plotShared": "Plot (shared)",
+      "handover": "Handover",
+      "subUnitPriceHint": "Calculated share. The property is bought and paid for as one purchase, with one title deed.",
+      "noSubUnitImages": "No dedicated images for this part unit yet. Images of the whole property are in the Images tab.",
+      "subUnitExpenses": "Expenses for this part unit",
+      "noSubUnitExpenses": "No expenses booked to this part unit yet.",
+      "sum": "Total"
     },
     "contracts": {
       "activeContracts": "Active contracts",

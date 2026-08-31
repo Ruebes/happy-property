@@ -706,6 +706,8 @@ export default function PropertyDetail() {
   // Teil-Wohnungen des Doppelapartments (A2a/A2b) — Untergliederung INNERHALB
   // dieser Wohnung, keine eigenen Objekte. Leer bei normalen Wohnungen.
   const [subUnits,          setSubUnits]          = useState<CrmProjectUnit[]>([])
+  // Angeklickte Teil-Wohnung — zeigt ihre eigenen Daten im Modal.
+  const [subUnitOpen,       setSubUnitOpen]       = useState<CrmProjectUnit | null>(null)
   const [linkedProjectName, setLinkedProjectName] = useState<string | null>(null)  // kanonisch aus crm_projects.name
   const [unitPayments,      setUnitPayments]      = useState<CrmUnitPayment[]>([])
   const [unitKaufvertraege, setUnitKaufvertraege] = useState<CrmUnitDocument[]>([])
@@ -951,7 +953,8 @@ export default function PropertyDetail() {
           size_sqm, terrace_sqm, floor,
           price_net, price_gross, vat_rate,
           is_furnished, rental_type, status,
-          handover_date, notes,
+          handover_date, notes, plot_sqm, parent_unit_id,
+          floorplan_url, hero_image_url,
           verwalter_id, verwalter:verwalter_id(id, full_name)
         `)
         .eq('property_id', id)
@@ -985,12 +988,20 @@ export default function PropertyDetail() {
       // Doppelapartment: Teil-Wohnungen der Einheit (A2a/A2b). Gekauft und bezahlt
       // wird die Einheit als Ganzes — die Teile dienen der Untergliederung von
       // Flaechen und Ausgaben innerhalb dieser Wohnung.
-      const { data: subs } = await supabase
+      const { data: subs, error: subErr } = await supabase
         .from('crm_project_units')
         .select('*')
         .eq('parent_unit_id', unitData.id)
         .order('unit_number')
-      setSubUnits((subs ?? []) as unknown as CrmProjectUnit[])
+      // Fehler nicht verschlucken: sonst verschwinden die Teil-Wohnungen still
+      // aus der Uebersicht und es sieht aus, als gaebe es keine.
+      if (subErr) {
+        console.error('[PropertyDetail] Teil-Wohnungen:', subErr)
+        setToast({ msg: t('propertyDetail.loadPartialFailed', 'Daten konnten gerade nicht aktualisiert werden. Bitte neu laden.'), type: 'error' })
+      } else {
+        setSubUnits((subs ?? []) as unknown as CrmProjectUnit[])
+      }
+      const subIds = ((subs ?? []) as Array<{ id: string }>).map(s => s.id)
 
       const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
         supabase
@@ -998,16 +1009,18 @@ export default function PropertyDetail() {
           .select('*')
           .eq('unit_id', unitData.id)
           .order('due_date', { ascending: true, nullsFirst: true }),
+        // Unterlagen der Wohnung UND ihrer Teil-Wohnungen (z.B. Grundriss A2a):
+        // im Client wird nach unit_id getrennt.
         supabase
           .from('crm_unit_documents')
           .select('*')
-          .eq('unit_id', unitData.id)
+          .in('unit_id', [unitData.id, ...subIds])
           .eq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
         supabase
           .from('crm_unit_documents')
           .select('*')
-          .eq('unit_id', unitData.id)
+          .in('unit_id', [unitData.id, ...subIds])
           .neq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
         supabase
@@ -1690,16 +1703,25 @@ export default function PropertyDetail() {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {subUnits.map(su => (
-                <div key={su.id} className="bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm">
+                <button
+                  key={su.id}
+                  type="button"
+                  onClick={() => setSubUnitOpen(su)}
+                  className="w-full text-left bg-white border border-gray-100 rounded-xl px-4 py-3 shadow-sm
+                             hover:border-hp-highlight hover:shadow-md transition-all
+                             focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#ff795d]">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="font-semibold text-hp-black font-body">{su.unit_number}</span>
-                    {su.floor != null && (
-                      <span className="text-[11px] text-gray-400 font-body">
-                        {su.floor === 0
-                          ? t('propertyDetail.overview.groundFloor', 'Erdgeschoss')
-                          : `${t('propertyDetail.overview.floor', 'Etage')} ${su.floor}`}
-                      </span>
-                    )}
+                    <span className="flex items-center gap-2">
+                      {su.floor != null && (
+                        <span className="text-[11px] text-gray-400 font-body">
+                          {su.floor === 0
+                            ? t('propertyDetail.overview.groundFloor', 'Erdgeschoss')
+                            : `${t('propertyDetail.overview.floor', 'Etage')} ${su.floor}`}
+                        </span>
+                      )}
+                      <span className="text-gray-300 text-xs">›</span>
+                    </span>
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-500 font-body">
                     {su.size_sqm != null && <span>{fmtNumber(su.size_sqm, 1)} m²</span>}
@@ -1713,7 +1735,10 @@ export default function PropertyDetail() {
                       </span>
                     )}
                   </div>
-                </div>
+                  <span className="mt-2 inline-block text-[11px] font-semibold text-[#ff795d] font-body">
+                    {t('propertyDetail.overview.subUnitOpen', 'Details ansehen')}
+                  </span>
+                </button>
               ))}
             </div>
             <p className="text-[11px] text-gray-400 font-body mt-2">
@@ -3783,6 +3808,212 @@ export default function PropertyDetail() {
       </div>
 
       {/* Invoice Modal */}
+      {/* ── Teil-Wohnung: Detailfenster ──────────────────────────────────────
+          Ein Doppelapartment ist EINE Wohnung mit einem Kaufvorgang. Hier stehen
+          die Daten der einzelnen Teil-Wohnung: Flaechen, Zimmer, Grundriss,
+          Bilder und die ihr zugeordneten Ausgaben. */}
+      {subUnitOpen && (() => {
+        const su = subUnitOpen
+        const plan = su.floorplan_url
+        const bilder = su.images ?? []
+        const planDocs = eigentuemerDocs.filter(d => d.unit_id === su.id && d.doc_type === 'grundriss')
+        const weitereDocs = eigentuemerDocs.filter(d => d.unit_id === su.id && d.doc_type !== 'grundriss')
+        const ausgaben = docs.filter(d => d.type === 'rechnung' && d.sub_unit_id === su.id)
+        const ausgabenSumme = ausgaben.reduce((sum, d) => sum + (d.amount_gross ?? 0), 0)
+        const etage = su.floor == null ? null
+          : su.floor === 0 ? t('propertyDetail.overview.groundFloor', 'Erdgeschoss')
+          : `${t('propertyDetail.overview.floor', 'Etage')} ${su.floor}`
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-sm px-4 py-8 overflow-y-auto"
+               onClick={e => { if (e.target === e.currentTarget) setSubUnitOpen(null) }}>
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-auto">
+
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-hp-black" style={{ fontFamily: 'var(--font-heading)' }}>
+                    {su.unit_number}
+                  </h2>
+                  <p className="text-xs text-gray-400 font-body mt-0.5">
+                    {t('propertyDetail.overview.subUnitOf', 'Teil-Wohnung von {{unit}}', { unit: linkedUnit?.unit_number ?? '' })}
+                  </p>
+                </div>
+                <button onClick={() => setSubUnitOpen(null)}
+                        className="text-gray-400 hover:text-gray-600 text-xl leading-none">✕</button>
+              </div>
+
+              <div className="px-6 py-5 space-y-6 max-h-[78vh] overflow-y-auto">
+
+                {/* Grundriss */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                    {t('propertyDetail.overview.floorplan', 'Grundriss')}
+                  </h3>
+                  {plan ? (
+                    <img src={plan} alt={su.unit_number}
+                         onClick={() => setLightbox({ images: [plan], index: 0 })}
+                         className="w-full rounded-xl border border-gray-100 cursor-zoom-in" />
+                  ) : planDocs.length > 0 ? (
+                    <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                      {planDocs.map(d => (
+                        <div key={d.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                          <p className="text-sm font-medium text-hp-black font-body truncate">{d.name}</p>
+                          <button onClick={() => openSignedInNewTab('unit-documents', d.file_path, 300)}
+                                  className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 shrink-0
+                                             text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                            {t('propertyDetail.contracts.open', 'Öffnen')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400 font-body">
+                      {t('propertyDetail.overview.noFloorplan', 'Für diese Teil-Wohnung liegt noch kein Grundriss vor.')}
+                    </p>
+                  )}
+                </div>
+
+                {/* Stammdaten */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                    {t('propertyDetail.overview.basicData')}
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <Stat label={t('properties.size')}
+                          value={su.size_sqm != null ? `${fmtNumber(su.size_sqm, 1)} m²` : null} />
+                    <Stat label={t('propertyDetail.overview.terrace', 'Terrasse')}
+                          value={su.terrace_sqm != null ? `${fmtNumber(su.terrace_sqm, 1)} m²` : null} />
+                    <Stat label={t('propertyDetail.overview.floor', 'Etage')} value={etage} />
+                    <Stat label={t('properties.bedrooms')}
+                          value={su.bedrooms > 0 ? String(su.bedrooms) : t('properties.bedroomsStudio')} />
+                    <Stat label={t('propertyDetail.overview.bathrooms', 'Badezimmer')}
+                          value={su.bathrooms > 0 ? String(su.bathrooms) : null} />
+                    <Stat label={t('properties.furnished')}
+                          value={su.is_furnished ? t('properties.furnishedYes') : t('properties.furnishedNo')} />
+                    {su.plot_sqm != null && (
+                      <Stat label={t('propertyDetail.overview.plotShared', 'Grundstück (gemeinsam)')}
+                            value={`${fmtNumber(su.plot_sqm, 0)} m²`} />
+                    )}
+                    {su.handover_date && (
+                      <Stat label={t('propertyDetail.overview.handover', 'Übergabe')} value={fmtDate(su.handover_date)} />
+                    )}
+                  </div>
+                </div>
+
+                {/* Preis: netto führend, MwSt getrennt */}
+                {unitNet(su) != null && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                      {t('propertyDetail.overview.purchaseData')}
+                    </h3>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <Stat label={t('properties.purchasePrice.net')} value={fmtCurrency(unitNet(su)!)} />
+                      <Stat label={t('propertyDetail.overview.vatAmount', 'MwSt ({{rate}} %)', { rate: su.vat_rate })}
+                            value={unitVatAmount(su) != null ? fmtCurrency(unitVatAmount(su)!) : null} />
+                      <Stat label={t('properties.purchasePrice.gross')}
+                            value={unitGross(su) != null ? fmtCurrency(unitGross(su)!) : null} />
+                    </div>
+                    <p className="text-[11px] text-gray-400 font-body mt-2">
+                      {t('propertyDetail.overview.subUnitPriceHint', 'Rechnerischer Anteil. Gekauft und bezahlt wird die gesamte Wohnung in einem Kaufvorgang, mit einem Title Deed.')}
+                    </p>
+                  </div>
+                )}
+
+                {/* Beschreibung */}
+                {su.notes && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                      {t('propertyDetail.overview.description', 'Beschreibung')}
+                    </h3>
+                    <p className="text-sm text-gray-600 font-body whitespace-pre-wrap">{su.notes}</p>
+                  </div>
+                )}
+
+                {/* Bilder */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                    {t('propertyDetail.images.title', 'Bilder')}
+                  </h3>
+                  {bilder.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {bilder.map((img, i) => (
+                        <img key={img} src={img} alt={`${su.unit_number} ${i + 1}`}
+                             onClick={() => setLightbox({ images: bilder, index: i })}
+                             className="w-full h-28 object-cover rounded-lg cursor-zoom-in" />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400 font-body">
+                      {t('propertyDetail.overview.noSubUnitImages', 'Für diese Teil-Wohnung liegen noch keine eigenen Bilder vor. Die Bilder der gesamten Wohnung stehen im Reiter Bilder.')}
+                    </p>
+                  )}
+                </div>
+
+                {/* Ausgaben dieser Teil-Wohnung */}
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                    {t('propertyDetail.overview.subUnitExpenses', 'Ausgaben dieser Teil-Wohnung')}
+                  </h3>
+                  {ausgaben.length > 0 ? (
+                    <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                      {ausgaben.map(d => (
+                        <div key={d.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-hp-black font-body truncate">{d.creditor || d.title}</p>
+                            <p className="text-xs text-gray-400 font-body">{fmtDate(d.invoice_date ?? d.uploaded_at)}</p>
+                          </div>
+                          <span className="text-sm font-semibold text-hp-black tabular-nums shrink-0">
+                            {d.amount_gross != null ? fmtCurrency(d.amount_gross) : '—'}
+                          </span>
+                        </div>
+                      ))}
+                      <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gray-50">
+                        <span className="text-xs font-semibold text-gray-500 font-body uppercase tracking-wide">
+                          {t('propertyDetail.overview.sum', 'Summe')}
+                        </span>
+                        <span className="text-sm font-bold text-hp-black tabular-nums">{fmtCurrency(ausgabenSumme)}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400 font-body">
+                      {t('propertyDetail.overview.noSubUnitExpenses', 'Noch keine Ausgaben auf diese Teil-Wohnung gebucht.')}
+                    </p>
+                  )}
+                </div>
+
+                {/* Weitere Unterlagen der Teil-Wohnung */}
+                {weitereDocs.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wide font-body mb-3">
+                      {t('propertyDetail.contracts.documents', 'Unterlagen')}
+                    </h3>
+                    <div className="border border-gray-100 rounded-xl divide-y divide-gray-50">
+                      {weitereDocs.map(d => (
+                        <div key={d.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                          <p className="text-sm font-medium text-hp-black font-body truncate">{d.name}</p>
+                          <button onClick={() => openSignedInNewTab('unit-documents', d.file_path, 300)}
+                                  className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 shrink-0
+                                             text-gray-600 hover:border-hp-highlight hover:text-hp-highlight transition-colors">
+                            {t('propertyDetail.contracts.open', 'Öffnen')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
+                <button onClick={() => setSubUnitOpen(null)}
+                        className="px-5 py-2 rounded-lg text-white text-sm font-semibold"
+                        style={{ backgroundColor: 'var(--color-highlight)' }}>
+                  {t('common.close', 'Schließen')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {invoiceModalOpen && profile && id && (
         <InvoiceModal
           doc={invoiceModalDoc}

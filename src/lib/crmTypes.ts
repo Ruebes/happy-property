@@ -434,6 +434,15 @@ export interface CrmProjectUnit {
   verwalter_id:   string | null
   is_completed:   boolean
   images:         string[]
+  /** Titelbild der Einheit (Spalte existiert, wird bisher nirgends gesetzt). */
+  hero_image_url: string | null
+  /** Grundriss als Bild-URL — aus dem Drive-Ordner oder von hp-floorplan erzeugt. */
+  floorplan_url:  string | null
+  /** Preis inklusive Moebelpaket (zweite Preisspalte der Bautraeger-Liste). */
+  price_net_furnished: number | null
+  sort_order:     number | null
+  /** Herkunft: drive_import | dropbox_allagents | manual */
+  source:         string | null
   created_at:     string
   updated_at:     string
   // joined

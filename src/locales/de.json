@@ -963,7 +963,18 @@
       "subUnits": "Teil-Wohnungen",
       "subUnitsHint": "Kauf, Zahlungsplan und Vertrag laufen über die gesamte Wohnung. Ausgaben lassen sich beim Erfassen optional einer Teil-Wohnung zuordnen.",
       "groundFloor": "Erdgeschoss",
-      "vatAmount": "MwSt ({{rate}} %)"
+      "vatAmount": "MwSt ({{rate}} %)",
+      "subUnitOpen": "Details ansehen",
+      "subUnitOf": "Teil-Wohnung von {{unit}}",
+      "floorplan": "Grundriss",
+      "noFloorplan": "Für diese Teil-Wohnung liegt noch kein Grundriss vor.",
+      "plotShared": "Grundstück (gemeinsam)",
+      "handover": "Übergabe",
+      "subUnitPriceHint": "Rechnerischer Anteil. Gekauft und bezahlt wird die gesamte Wohnung in einem Kaufvorgang, mit einem Title Deed.",
+      "noSubUnitImages": "Für diese Teil-Wohnung liegen noch keine eigenen Bilder vor. Die Bilder der gesamten Wohnung stehen im Reiter Bilder.",
+      "subUnitExpenses": "Ausgaben dieser Teil-Wohnung",
+      "noSubUnitExpenses": "Noch keine Ausgaben auf diese Teil-Wohnung gebucht.",
+      "sum": "Summe"
     },
     "contracts": {
       "activeContracts": "Aktive Verträge",

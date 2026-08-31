@@ -491,7 +491,7 @@ Deno.serve(async (req) => {
 
           const newest = files.filter(f => docType(f.name) === 'pricelist')
             .sort((a, b) => (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? ''))[0]
-          const fpFolder = kids.find(f => isFolder(f.mimeType) && /floor\s*plan|grundriss/i.test(f.name))
+          const fpFolder = kids.find(f => isFolder(f.mimeType) && /floor\s*plan|grundriss|drawings?/i.test(f.name))
           let fpNewest = ''
           let fpCount = 0
           if (fpFolder) {
@@ -855,7 +855,9 @@ Deno.serve(async (req) => {
         const cat = folderCategory(sub.name)
         if (!cat) continue
         const kids = await listChildren(token, sub.id)
-        if (cat === 'floorplan') fpFiles.push(...kids.filter(k => isImg(k.mimeType)))
+        // Grundrisse liegen bei manchen Bautraegern NUR als PDF im Ordner (Mamba:
+        // 'Drawings'). Ohne PDF kommt fuer solche Projekte nie ein Grundriss an.
+        if (cat === 'floorplan') fpFiles.push(...kids.filter(k => isImg(k.mimeType) || k.mimeType === 'application/pdf'))
         else if (cat === 'location') { if (!locFile) locFile = kids.find(k => isImg(k.mimeType)) ?? null }
         else renderFiles.push(...kids.filter(k => isImg(k.mimeType)))
       }
@@ -902,14 +904,39 @@ Deno.serve(async (req) => {
         } catch { /* Vision optional — Kandidaten bleiben */ }
       }
 
-      // Grundriss je Unit (best effort) nach Etage zuordnen
+      // Grundriss je Unit zuordnen. Reihenfolge: ZUERST die Wohnungsnummer im
+      // Label oder Dateinamen (eindeutig), erst danach die Etage (grob).
+      // Teil-Wohnungen eines Doppelapartments (parent_unit_id) bekommen NUR bei
+      // exaktem Nummern-Treffer einen Plan — ein Etagen-Treffer wuerde sonst den
+      // Plan der Nachbarwohnung an A2a haengen.
       let unitsMatched = 0
       if (floorplans.length) {
-        const { data: units } = await supabase.from('crm_project_units').select('id, unit_number, floor, floorplan_url').eq('project_id', project_id)
-        for (const u of (units ?? []) as Array<Record<string, unknown>>) {
+        const { data: units } = await supabase.from('crm_project_units')
+          .select('id, unit_number, floor, floorplan_url, parent_unit_id').eq('project_id', project_id)
+        // Nummern normalisieren und LAENGSTE zuerst pruefen, damit 'A2' nicht auf
+        // 'A2a' oder 'A20' passt. Treffer nur an Token-Grenzen.
+        const normU = (v: unknown) => String(v ?? '').toLowerCase().replace(/[\s_-]+/g, '')
+        const nummerTrifft = (text: string, nummer: string): boolean => {
+          const t = normU(text), n = normU(nummer)
+          if (!n) return false
+          let i = t.indexOf(n)
+          while (i !== -1) {
+            const davor = t[i - 1], danach = t[i + n.length]
+            const grenze = (c: string | undefined) => c === undefined || !/[a-z0-9]/.test(c)
+            if (grenze(davor) && grenze(danach)) return true
+            i = t.indexOf(n, i + 1)
+          }
+          return false
+        }
+        const sortiert = [...(units ?? []) as Array<Record<string, unknown>>]
+          .sort((a, b) => String(b.unit_number ?? '').length - String(a.unit_number ?? '').length)
+        for (const u of sortiert) {
           if (u.floorplan_url) continue
-          const floor = (u.floor as number) ?? parseInt(String(u.unit_number ?? '').charAt(0), 10)
-          const match = floorplans.find(fp => fp.floor === floor)
+          const nummer = String(u.unit_number ?? '')
+          const perNummer = floorplans.find(fp => nummerTrifft(`${fp.label ?? ''} ${fp.url ?? ''}`, nummer))
+          const match = perNummer ?? (u.parent_unit_id
+            ? undefined
+            : floorplans.find(fp => fp.floor === ((u.floor as number) ?? parseInt(nummer.charAt(0), 10))))
           if (match) { await supabase.from('crm_project_units').update({ floorplan_url: match.url }).eq('id', u.id as string); unitsMatched++ }
         }
       }
