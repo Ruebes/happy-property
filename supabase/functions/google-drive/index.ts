@@ -50,9 +50,14 @@ async function getServiceAccountToken(scope = 'https://www.googleapis.com/auth/d
   const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
   if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON nicht gesetzt')
   const sa = JSON.parse(raw) as { client_email: string; private_key: string }
+  // Domainweite Delegierung: ist GOOGLE_IMPERSONATE_SUBJECT gesetzt (z.B.
+  // sven@happy-property.de), handelt der Service-Account IM NAMEN dieses Kontos
+  // und sieht dessen kompletten Drive — ohne dass einzelne Ordner freigegeben
+  // werden müssen. Ohne die Variable bleibt alles wie bisher.
+  const sub = Deno.env.get('GOOGLE_IMPERSONATE_SUBJECT') || undefined
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
-  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600, ...(sub ? { sub } : {}) })}`
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`
@@ -274,9 +279,16 @@ Deno.serve(async (req) => {
     // müssen (kein Token nötig, nichts Sensibles).
     if (body.action === 'sa_email') {
       const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
-      const email = raw ? (JSON.parse(raw) as { client_email?: string }).client_email ?? null : null
-      return new Response(JSON.stringify({ ok: true, client_email: email }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+      const sa = raw ? JSON.parse(raw) as { client_email?: string; client_id?: string } : null
+      // client_id wird für die domainweite Delegierung in der Workspace-Verwaltung
+      // gebraucht (Sicherheit → API-Steuerung → Domainweite Delegierung).
+      // impersonate zeigt, ob die Delegierung bereits aktiv ist.
+      return new Response(JSON.stringify({
+        ok: true,
+        client_email: sa?.client_email ?? null,
+        client_id:    sa?.client_id ?? null,
+        impersonate:  Deno.env.get('GOOGLE_IMPERSONATE_SUBJECT') ?? null,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
     }
 
     // Lese-Aktionen über Service-Account (dauerhaft); Schreib-Aktionen über OAuth.

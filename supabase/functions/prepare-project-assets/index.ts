@@ -40,7 +40,10 @@ async function getReadToken(): Promise<string> {
   const sa = JSON.parse(raw) as { client_email: string; private_key: string }
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
-  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  // Domainweite Delegierung: ist GOOGLE_IMPERSONATE_SUBJECT gesetzt, sieht der
+  // Service-Account den kompletten Drive dieses Kontos, ohne Ordner-Freigaben.
+  const sub = Deno.env.get('GOOGLE_IMPERSONATE_SUBJECT') || undefined
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive.readonly', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600, ...(sub ? { sub } : {}) })}`
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`
