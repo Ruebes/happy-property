@@ -41,10 +41,12 @@ async function getWriteToken(): Promise<string> {
   const sa = JSON.parse(raw) as { client_email: string; private_key: string }
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
-  // Domainweite Delegierung: ist GOOGLE_IMPERSONATE_SUBJECT gesetzt, handelt der
-  // Service-Account im Namen dieses Kontos und arbeitet in dessen Drive.
-  const sub = Deno.env.get('GOOGLE_IMPERSONATE_SUBJECT') || undefined
-  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600, ...(sub ? { sub } : {}) })}`
+  // BEWUSST OHNE Delegierung (kein sub-Claim): der Elternordner „Happy Property
+  // Kunden" gehört dem Google-Konto happypropertycyprus@gmail.com und ist mit dem
+  // Service-Account geteilt, nicht mit sven@happy-property.de. Würde diese
+  // Function im Namen von Sven handeln, könnte sie dort keinen Kundenordner mehr
+  // anlegen. Erst wenn der Elternordner in Svens Drive liegt, kann sie mitziehen.
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: 'https://www.googleapis.com/auth/drive', aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`

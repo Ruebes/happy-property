@@ -55,9 +55,14 @@ async function getServiceAccountToken(scope = 'https://www.googleapis.com/auth/d
   // und sieht dessen kompletten Drive — ohne dass einzelne Ordner freigegeben
   // werden müssen. Ohne die Variable bleibt alles wie bisher.
   const sub = Deno.env.get('GOOGLE_IMPERSONATE_SUBJECT') || undefined
+  // Bei Delegierung MUSS der angefragte Bereich exakt einer der in der Workspace-
+  // Verwaltung freigegebenen sein, sonst lehnt Google mit "client not authorized
+  // for any of the scopes requested" ab. Freigegeben ist .../auth/drive, deshalb
+  // fragen wir bei Delegierung genau den an statt drive.readonly.
+  const effScope = sub ? 'https://www.googleapis.com/auth/drive' : scope
   const now = Math.floor(Date.now() / 1000)
   const enc = (o: unknown) => b64url(new TextEncoder().encode(JSON.stringify(o)))
-  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600, ...(sub ? { sub } : {}) })}`
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({ iss: sa.client_email, scope: effScope, aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600, ...(sub ? { sub } : {}) })}`
   const key = await importPrivateKey(sa.private_key)
   const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
   const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`
