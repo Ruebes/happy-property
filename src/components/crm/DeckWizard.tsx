@@ -9,6 +9,7 @@ import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
 import { rentFromSeason } from '../../lib/strategy'
+import { bookingUrl } from '../../lib/bookingLink'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
 // Aus dem Kunden heraus: Projekt → Vorschlags-Wohnung(en) → Freitext → ins Paket;
@@ -373,7 +374,9 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // Hochwertiger HTML-Fallback im CI (mit CTA + Buttons + Projektbild) — falls der
       // KI-Aufruf ausnahmsweise nicht durchkommt, ist die Mail trotzdem ordentlich.
       const esc = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
+      // Persönlicher Terminlink des Kunden (ohne Fragebogen, Daten schon bekannt)
+      const { data: bt } = await supabase.from('leads').select('booking_token').eq('id', lead.id).maybeSingle()
+      const TERMIN_URL = bookingUrl((bt as { booking_token?: string } | null)?.booking_token)
       const mbtn = (href: string, label: string, bg: string, color: string, border = 'none') =>
         `<a href="${esc(href)}" style="display:inline-block;background:${bg};color:${color};text-decoration:none;font-weight:600;font-size:15px;padding:11px 22px;border-radius:10px;border:${border};margin:0 8px 8px 0">${esc(label)}</a>`
       const fbCards = mailItems.map(m =>
@@ -384,7 +387,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         + (m.calc_link ? mbtn(m.calc_link, '📊 Rendite-Berechnung →', '#2f6b4f', '#ffffff') : '')
         + `</div>`).join('')
       const fbCompare = compareLink ? `<div style="margin:0 0 18px;padding:16px 18px;border-radius:12px;background:#f0f7f4;border:1px solid #d4e9df"><div style="font-weight:700;margin:0 0 10px">📊 ${esc(compareLabel)}</div>${mbtn(compareLink, 'Immobilienvergleich ansehen →', '#2f6b4f', '#ffffff')}</div>` : ''
-      const fbCta = `<div style="margin:24px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a"><div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 12px">Wie geht es weiter?</div><div style="color:#d4d4d4;line-height:1.6;margin:0 0 14px">Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.</div>${mbtn(CALENDLY, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')}${mbtn('mailto:sven@happy-property.com', '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')}</div>`
+      const fbCta = `<div style="margin:24px 0 8px;padding:22px;border-radius:14px;background:#1a1a1a"><div style="font-weight:700;font-size:17px;color:#ffffff;margin:0 0 12px">Wie geht es weiter?</div><div style="color:#d4d4d4;line-height:1.6;margin:0 0 14px">Lass uns die Optionen gemeinsam durchgehen — buch dir einfach einen neuen Termin oder gib mir kurz Feedback.</div>${mbtn(TERMIN_URL, '📅 Neuen Termin buchen', '#ff795d', '#ffffff')}${mbtn('mailto:sven@happy-property.com', '✉️ Per E-Mail', 'transparent', '#ffffff', '1px solid #555')}</div>`
       // Warmes Anschreiben (KEIN Roh-Briefing-Dump — das Briefing sind Svens interne Notizen).
       const fbIntro = ['vielen Dank für das sympathische Gespräch.',
         'Ich habe dir ein paar Objekte herausgesucht und hoffe, dass das ein oder andere deinen Vorstellungen entspricht.',
@@ -408,6 +411,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), first_name: lead.first_name,
             briefing, angle, items: mailItems,
             calc_link: compareLink, calc_label: compareLabel,   // abschließender Gesamt-Vergleich
+            booking_url: TERMIN_URL,                            // persönlicher Terminlink des Kunden
           } })
           if (mErr) throw mErr
           const mm = mail as { subject?: string; html?: string } | null

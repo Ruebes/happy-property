@@ -31,7 +31,7 @@ interface WaTpl {
 const PLACEHOLDERS = [
   '{{vorname}}', '{{nachname}}', '{{name}}', '{{email}}', '{{phone}}',
   '{{developers}}', '{{commission_amount}}',
-  '{{notiz}}', '{{zoom_link}}', '{{objekt}}', '{{unit}}', '{{kaufpreis}}', '{{drive_link}}',
+  '{{notiz}}', '{{zoom_link}}', '{{termin_buchen}}', '{{objekt}}', '{{unit}}', '{{kaufpreis}}', '{{drive_link}}',
   '{{doc_vollmacht}}', '{{doc_unterlagen}}',
 ]
 

@@ -126,6 +126,7 @@ Deno.serve(async (req) => {
       lead_id?: string
       token?: string
       deck_token?: string
+      lead_token?: string
       reason?: string
       step?: number; question_key?: string; answer?: string
       utm?: Record<string, string>; referrer?: string
@@ -169,14 +170,25 @@ Deno.serve(async (req) => {
     }
 
     // ── lead_prefill ─────────────────────────────────────────────────────────
-    // Direkteinstieg aus Newsletter/Mails: Deck-Token → Lead. Der Funnel überspringt
-    // damit Fragebogen + Kontaktformular und geht direkt zur Terminwahl. Es wird
-    // bewusst NUR der Vorname zurückgegeben (Begrüßung) — keine weiteren Daten.
+    // Direkteinstieg aus Newsletter/Mails/Automationen: Token → Lead. Der Funnel
+    // überspringt damit Fragebogen + Kontaktformular und geht direkt zur Terminwahl.
+    // Zwei Tokenarten:
+    //   lead_token (?b=) → leads.booking_token, gilt für JEDEN Lead. Steht in den
+    //     WhatsApp-/Mail-Automationen ({{termin_buchen}}) statt des alten Calendly-Links.
+    //   deck_token (?d=) → sales_decks.token, der ältere Newsletter-Weg.
+    // Es wird bewusst NUR der Vorname zurückgegeben (Begrüßung) — keine weiteren Daten.
     if (body.action === 'lead_prefill') {
-      const tok = (body.deck_token ?? '').trim()
-      if (!tok) return json({ error: 'deck_token fehlt' }, 400)
-      const { data: deck } = await admin.from('sales_decks').select('lead_id').eq('token', tok).maybeSingle()
-      const leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      const leadTok = (body.lead_token ?? '').trim()
+      const deckTok = (body.deck_token ?? '').trim()
+      if (!leadTok && !deckTok) return json({ error: 'token fehlt' }, 400)
+      let leadId: string | null = null
+      if (leadTok) {
+        const { data: l } = await admin.from('leads').select('id').eq('booking_token', leadTok).maybeSingle()
+        leadId = (l as { id?: string } | null)?.id ?? null
+      } else {
+        const { data: deck } = await admin.from('sales_decks').select('lead_id').eq('token', deckTok).maybeSingle()
+        leadId = (deck as { lead_id?: string | null } | null)?.lead_id ?? null
+      }
       if (!leadId) return json({ error: 'not_found' }, 404)
       const { data: lead } = await admin.from('leads').select('first_name').eq('id', leadId).maybeSingle()
       return json({ ok: true, lead_id: leadId, first_name: ((lead as { first_name?: string | null } | null)?.first_name ?? '').trim() })

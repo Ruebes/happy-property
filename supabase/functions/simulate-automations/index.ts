@@ -6,6 +6,7 @@
 //
 // Body: { lead_id?: string }  — optional ein echter Lead für realistische Daten.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -32,9 +33,9 @@ Deno.serve(async (req) => {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     // Lead-Daten: echter Lead falls übergeben, sonst Beispielkunde.
-    let lead = { first_name: 'Beispiel', last_name: 'Kunde', email: 'kunde@beispiel.de', phone: '+49 170 1234567', whatsapp: '' as string | null, notes: '' }
+    let lead = { first_name: 'Beispiel', last_name: 'Kunde', email: 'kunde@beispiel.de', phone: '+49 170 1234567', whatsapp: '' as string | null, notes: '', booking_token: '' as string | null }
     if (lead_id) {
-      const { data } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp, notes').eq('id', lead_id).maybeSingle()
+      const { data } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp, notes, booking_token').eq('id', lead_id).maybeSingle()
       if (data) lead = data as typeof lead
     }
     const ph: Record<string, string> = {
@@ -44,6 +45,7 @@ Deno.serve(async (req) => {
       objekt: 'Mamba · A2', projekt: 'Mamba', unit: 'A2', wohnung: 'A2', kaufpreis: '688.800 €', preis: '688.800 €',
       developer: 'Mito', developers: 'Mito', zoom_link: 'https://zoom.us/j/000', drive_link: 'https://drive.google.com/…',
       commission_amount: '15.000 €', termin: 'Mo, 24.06. 14:00',
+      termin_buchen: bookingUrl(lead.booking_token), buchungs_link: bookingUrl(lead.booking_token),
     }
 
     const [{ data: rules }, { data: emailTpls }, { data: waTpls }, { data: bcs }] = await Promise.all([

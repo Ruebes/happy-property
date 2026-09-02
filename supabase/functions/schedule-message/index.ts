@@ -10,6 +10,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { unitGross, unitNet, DEFAULT_VAT_RATE } from '../_shared/price.ts'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -94,7 +95,7 @@ Deno.serve(async (req: Request) => {
 
     // 3. Lead
     const { data: lead, error: leadErr } = await supabase
-      .from('leads').select('id, first_name, last_name, email, phone, whatsapp, language, notes, drive_folder_url').eq('id', lead_id).single()
+      .from('leads').select('id, first_name, last_name, email, phone, whatsapp, language, notes, drive_folder_url, booking_token').eq('id', lead_id).single()
     if (leadErr || !lead) throw new Error(`Lead ${lead_id} nicht gefunden: ${leadErr?.message}`)
 
     // Deal (+ verknüpfte Unit für objekt/unit/kaufpreis)
@@ -167,6 +168,9 @@ Deno.serve(async (req: Request) => {
     // Öffentlicher „Termin verwalten"-Link (verschieben/absagen ohne Login)
     const manageToken = ((nextAppt as { manage_token?: string } | null)?.manage_token) || ((lastAppt as { manage_token?: string } | null)?.manage_token) || ''
     const terminLink  = manageToken ? `https://portal.happy-property.com/termin/verwalten/${manageToken}` : ''
+    // Persönlicher Buchungslink (ersetzt die alten Calendly-Links in den Automationen):
+    // ohne Fragebogen, ohne Kontaktformular — der Lead ist über den Token schon bekannt.
+    const terminBuchen = bookingUrl(lead.booking_token)
 
     // Termin für die Anzeige in DEUTSCHER Zeit (der Kunde sitzt in DE, nicht auf Zypern).
     // Tag + volles Datum + Uhrzeit + Zeitzonen-Kürzel (MEZ/MESZ). Fällt auf den letzten
@@ -208,6 +212,8 @@ Deno.serve(async (req: Request) => {
       termin_datum: terminDatum,   // Tag + Datum + Uhrzeit in deutscher Zeit (MEZ/MESZ)
       termin:       terminDatum,   // Alias
       termin_link:  terminLink,    // öffentlicher Verwalten-Link (verschieben/absagen)
+      termin_buchen: terminBuchen, // persönlicher Buchungslink (Fragebogen + Kontaktformular übersprungen)
+      buchungs_link: terminBuchen, // Alias
       termin_ort:      terminOrt,      // Vor-Ort-Termine: Adresse/Name des Treffpunkts
       termin_ort_link: terminOrtLink,  // Google-Maps-Link zum Treffpunkt
       objekt:       objektName,

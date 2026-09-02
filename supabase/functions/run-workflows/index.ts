@@ -21,6 +21,7 @@
 // Cron:    */5 * * * *  ->  net.http_post(.../functions/v1/run-workflows)
 // Deploy:  supabase functions deploy run-workflows --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -171,23 +172,23 @@ Deno.serve(async (req) => {
 })
 
 // ── Empfänger laden (Lead ODER Newsletter-Abonnent) ─────────────────────────
-interface Person { leadId: string | null; first: string; last: string; email: string | null; phone: string | null; lang: 'de' | 'en'; optout: boolean }
+interface Person { leadId: string | null; first: string; last: string; email: string | null; phone: string | null; lang: 'de' | 'en'; optout: boolean; bookingToken: string | null }
 async function loadLead(sb: SupabaseClient, run: Run) {
   if (!run.lead_id) return null
-  const { data } = await sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language, newsletter_optout_at').eq('id', run.lead_id).maybeSingle()
-  return data as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null } | null
+  const { data } = await sb.from('leads').select('id, first_name, last_name, email, phone, whatsapp, language, newsletter_optout_at, booking_token').eq('id', run.lead_id).maybeSingle()
+  return data as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null; newsletter_optout_at: string | null; booking_token: string | null } | null
 }
 async function loadPerson(sb: SupabaseClient, run: Run): Promise<Person | null> {
   if (run.lead_id) {
     const l = await loadLead(sb, run)
     if (!l) return null
-    return { leadId: l.id, first: l.first_name ?? '', last: l.last_name ?? '', email: l.email, phone: (l.whatsapp || l.phone || '').trim() || null, lang: l.language === 'en' ? 'en' : 'de', optout: !!l.newsletter_optout_at }
+    return { leadId: l.id, first: l.first_name ?? '', last: l.last_name ?? '', email: l.email, phone: (l.whatsapp || l.phone || '').trim() || null, lang: l.language === 'en' ? 'en' : 'de', optout: !!l.newsletter_optout_at, bookingToken: l.booking_token }
   }
   if (run.subscriber_id) {
     const { data } = await sb.from('newsletter_subscribers').select('id, email, first_name, last_name, phone, optout_at, properties').eq('id', run.subscriber_id).maybeSingle()
     const s = data as { email: string; first_name: string | null; last_name: string | null; phone: string | null; optout_at: string | null; properties: { lang?: string } | null } | null
     if (!s) return null
-    return { leadId: null, first: s.first_name ?? '', last: s.last_name ?? '', email: s.email, phone: (s.phone ?? '').trim() || null, lang: s.properties?.lang === 'en' ? 'en' : 'de', optout: !!s.optout_at }
+    return { leadId: null, first: s.first_name ?? '', last: s.last_name ?? '', email: s.email, phone: (s.phone ?? '').trim() || null, lang: s.properties?.lang === 'en' ? 'en' : 'de', optout: !!s.optout_at, bookingToken: null }
   }
   return null
 }
@@ -197,7 +198,7 @@ async function sendNode(sb: SupabaseClient, run: Run, node: GNode, _ctx: Record<
   const p = await loadPerson(sb, run)
   if (!p) return false
   if (p.optout) return false   // Opt-out respektieren
-  const vars = { vorname: p.first, nachname: p.last, name: `${p.first} ${p.last}`.trim() }
+  const vars = { vorname: p.first, nachname: p.last, name: `${p.first} ${p.last}`.trim(), termin_buchen: bookingUrl(p.bookingToken), buchungs_link: bookingUrl(p.bookingToken) }
   const d = node.data ?? {}
   if (node.type === 'email') {
     if (!p.email) return false

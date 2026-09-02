@@ -299,7 +299,7 @@ export default function AiAgent() {
               {t('crm.aiAgent.dfPreview', 'Das bekommt der Kunde')}
             </div>
             <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 text-xs text-gray-600 whitespace-pre-line leading-relaxed">
-              {t('crm.aiAgent.dfMessage', 'Hey [Vorname], ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\nWenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: calendly.com/sven-happy-property/30min\n\nLiebe Grüße, Sven')}
+              {t('crm.aiAgent.dfMessage', 'Hey [Vorname], ich wollte kurz nachhören 🙂 Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\nWenn du magst, nehmen wir uns 15 Minuten und ich beantworte dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: portal.happy-property.com/termin (persönlicher Link)\n\nLiebe Grüße, Sven')}
             </div>
           </div>
 

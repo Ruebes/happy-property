@@ -48,17 +48,24 @@ function useUtm(): Record<string, string> {
 }
 
 // Einstiegs-Parameter:
-//   ?direkt=1&d=<deck-token> → bekannter Kontakt (Newsletter/Mail): Fragebogen +
-//     Kontaktformular überspringen, direkt Terminart → Kalender.
+//   ?direkt=1&b=<lead-token> → bekannter Kontakt aus den Automationen
+//     (leads.booking_token, {{termin_buchen}}): Fragebogen + Kontaktformular
+//     überspringen, direkt Terminart → Kalender. Gilt für jeden Lead.
+//   ?direkt=1&d=<deck-token> → derselbe Direkteinstieg über ein Deck (Newsletter).
 //   ?f=<slug> → Fragebogen-Variante aus dem Editor; ?f=none → GAR KEIN Fragebogen
 //     (Welcome → Kontakt → Termin). Unbekannter Slug fällt auf den Standard zurück.
-function useEntryParams(): { wanted: boolean; deckToken: string; variant: string; rebook: boolean } {
+function useEntryParams(): { wanted: boolean; deckToken: string; leadToken: string; variant: string; rebook: boolean } {
   return useMemo(() => {
     const p = new URLSearchParams(window.location.search)
     const deckToken = (p.get('d') ?? '').trim()
+    const leadToken = (p.get('b') ?? '').trim()
+    const direkt = p.get('direkt') === '1' || p.get('direct') === '1'
     return {
-      wanted: (p.get('direkt') === '1' || p.get('direct') === '1') && !!deckToken,
+      // Der Lead-Token ist für sich schon eindeutig — ein zusätzliches ?direkt=1
+      // ist erlaubt, aber nicht nötig. Der Deck-Weg bleibt wie bisher.
+      wanted: !!leadToken || (direkt && !!deckToken),
       deckToken,
+      leadToken,
       variant: (p.get('f') ?? '').trim().slice(0, 60),
       // Schnellbuchung ohne Fragebogen (z.B. aus dem „Termin verwalten"-Fallback,
       // wenn der alte Termin weg ist): direkt Terminart → Slot → Kontakt.
@@ -210,7 +217,9 @@ export default function Funnel() {
     void (async () => {
       try {
         const { data, error: e } = await supabase.functions.invoke('funnel-api', {
-          body: { action: 'lead_prefill', deck_token: directEntry.deckToken },
+          body: directEntry.leadToken
+            ? { action: 'lead_prefill', lead_token: directEntry.leadToken }
+            : { action: 'lead_prefill', deck_token: directEntry.deckToken },
         })
         const d = data as { ok?: boolean; lead_id?: string; first_name?: string } | null
         if (e || !d?.ok || !d.lead_id) throw new Error('prefill failed')

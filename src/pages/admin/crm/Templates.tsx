@@ -41,6 +41,7 @@ const buildPlaceholders = (t: (key: string, fallback: string) => string) => [
   { key: '{{projekt}}',       label: t('templates.placeholderProjectName', 'Projektname') },
   { key: '{{termin_datum}}',  label: t('templates.placeholderAppointmentDate', 'Termindatum') },
   { key: '{{termin_link}}',   label: t('templates.placeholderZoomLink', 'Zoom-Link') },
+  { key: '{{termin_buchen}}', label: t('templates.placeholderBookingLink', 'Terminlink (persönlich, ohne Fragebogen)') },
   { key: '{{berater}}',       label: t('templates.placeholderAdvisor', 'Berater') },
   { key: '{{firma}}',         label: t('templates.placeholderCompany', 'Firma (Happy Property)') },
   { key: '{{password}}',      label: t('templates.placeholderPassword', 'Temporäres Passwort') },
@@ -179,6 +180,7 @@ export default function Templates() {
     .replace(/\{\{projekt\}\}/g,      'Sunrise Residences')
     .replace(/\{\{termin_datum\}\}/g, t('templates.previewSampleDate', '15. Juni 2026, 14:00 Uhr'))
     .replace(/\{\{termin_link\}\}/g,  'https://zoom.us/j/123456')
+    .replace(/\{\{termin_buchen\}\}/g, 'https://portal.happy-property.com/termin?direkt=1&b=…')
     .replace(/\{\{berater\}\}/g,      'Sven Müller')
     .replace(/\{\{firma\}\}/g,        'Happy Property')
     .replace(/\{\{password\}\}/g,     'TempPass123!')

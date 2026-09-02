@@ -6,6 +6,7 @@
 // sales_decks / property_calculations aufgelöst. Dedupe: gleiches (lead,type,token)
 // innerhalb von 2 h wird nicht doppelt gezählt.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = {
@@ -17,7 +18,6 @@ const CORS = {
 const PIXEL = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
 const pixelResponse = () => new Response(PIXEL, { headers: { ...CORS, 'Content-Type': 'image/gif', 'Cache-Control': 'no-store, no-cache, must-revalidate, private' } })
 
-const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
 
 // Sendezeit in Bürozeiten (8–21 Uhr Asia/Nicosia) schieben — nie nachts.
 function toBusinessHours(d: Date): Date {
@@ -59,15 +59,15 @@ async function scheduleDeckFollowup(
 
     // 4) Lead + Nummer laden (WhatsApp braucht eine Nummer)
     const { data: lead } = await supabase.from('leads')
-      .select('first_name, whatsapp, phone').eq('id', leadId).maybeSingle()
-    const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null } | null
+      .select('first_name, whatsapp, phone, booking_token').eq('id', leadId).maybeSingle()
+    const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; booking_token: string | null } | null
     if (!l || !(l.whatsapp || l.phone)) return
 
     const first = (l.first_name ?? '').trim()
     const greet = first ? `Hey ${first}` : 'Hallo'
     const msg =
       `${greet}, hier ist Lotte, Svens persönliche Assistentin 🐾 Ich wollte kurz nachhören: Konntest du schon in Ruhe über die Objekte schauen? Welches spricht dich am meisten an?\n\n` +
-      `Wenn du magst, nehmt ihr euch 15 Minuten und Sven beantwortet dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${CALENDLY}\n\n` +
+      `Wenn du magst, nehmt ihr euch 15 Minuten und Sven beantwortet dir alle offenen Fragen — hier kannst du dir direkt einen Termin aussuchen: ${bookingUrl(l.booking_token)}\n\n` +
       // Lotte, nicht Sven: diese Nachricht tippt niemand, sie geht automatisch nach
       // einer Deck-Ansicht raus. Als "Sven" signiert wäre sie eine Verwechslung —
       // und ein Hundefoto unter Svens Namen erst recht.

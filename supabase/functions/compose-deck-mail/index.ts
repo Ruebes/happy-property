@@ -12,9 +12,11 @@
 // Antwort: { subject, html }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
-const CALENDLY = 'https://calendly.com/sven-happy-property/30min'
+// Terminlink kommt vom Aufrufer (persönlicher Link des Leads, ohne Fragebogen).
+// Ohne Angabe der neutrale Weg ohne Fragebogen — nie mehr Calendly.
 // Marke / Kontakt (= deckTypes DECK_LOGO/DECK_PHOTO/DECK_CONTACT)
 const LOGO  = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605725998-7ngbgv0jmyv.jpeg'
 const PHOTO = 'https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/deck-assets/brand/1781605724861-pczb70gulqa.jpg'
@@ -99,7 +101,7 @@ const SANS = `'Montserrat', Arial, Helvetica, sans-serif`
 const SERIF = `'Playfair Display', Georgia, 'Times New Roman', serif`
 
 // Branded, E-Mail-sicheres HTML im CI bauen (Tabellen-Layout, wie Svens Vorlage).
-function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare): string {
+function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare, terminUrl = bookingUrl(null)): string {
   const lines = m.deck_lines ?? []
   const props = items.map((it, i) => {
     const label = it.label || [it.project, it.unit].filter(Boolean).join(' · ') || `Objekt ${i + 1}`
@@ -205,7 +207,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
   <tr><td style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${C.ink};">${closingHtml}</td></tr>
   <tr><td style="padding:22px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${C.coral}" style="border-radius:2px;">
-      <a href="${CALENDLY}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Neuen Termin buchen</a>
+      <a href="${esc(terminUrl)}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Neuen Termin buchen</a>
     </td></tr></table>
   </td></tr>
   <tr><td style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${C.ink};">Liebe Grüße</p></td></tr>
@@ -221,7 +223,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
 }
 
 // Fallback (ohne KI): gleiche Vorlage, neutrale Positionierung aus den Eckdaten.
-function fallback(firstName: string, items: MailItem[], compare?: Compare): { subject: string; html: string } {
+function fallback(firstName: string, items: MailItem[], compare?: Compare, terminUrl = bookingUrl(null)): { subject: string; html: string } {
   const DEF = ['Das Premium-Objekt', 'Solide Kapitalanlage', 'Der Mittelweg', 'Weitere Option']
   const m: Mail = {
     subject: items.length > 1 ? `Deine ${items.length} Paphos-Optionen · Sales Decks` : `Dein Paphos-Vorschlag · ${items[0]?.label ?? ''}`.trim(),
@@ -238,7 +240,7 @@ function fallback(firstName: string, items: MailItem[], compare?: Compare): { su
     })),
     closing: 'Ich freue mich von dir zu hören.',
   }
-  return { subject: m.subject!, html: buildHtml(m, items, firstName, compare) }
+  return { subject: m.subject!, html: buildHtml(m, items, firstName, compare, terminUrl) }
 }
 
 // FAKTENCHECK: zweite KI-Stufe, die jeden Objekt-Text gegen die echten Fakten prüft und
@@ -269,12 +271,13 @@ async function verifyClaims(lines: Array<{ kicker?: string; text?: string }>, it
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { recipient_name?: string; first_name?: string; briefing?: string; angle?: string; items?: MailItem[]; calc_link?: string; calc_label?: string }
+    const body = await req.json() as { recipient_name?: string; first_name?: string; briefing?: string; angle?: string; items?: MailItem[]; calc_link?: string; calc_label?: string; booking_url?: string }
     const items = (body.items ?? []).filter(it => it && it.link)
     const compare: Compare = { link: body.calc_link, label: body.calc_label }
     if (!items.length) return json({ error: 'items fehlt' }, 400)
     const firstName = body.first_name?.trim() || (body.recipient_name?.trim().split(' ')[0] ?? '')
-    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items, compare))
+    const terminUrl = (body.booking_url ?? '').trim() || bookingUrl(null)
+    if (!ANTHROPIC_API_KEY) return json(fallback(firstName, items, compare, terminUrl))
 
     // GELERNTE VORGABEN aus Svens Mail-Korrekturen (deck_ai_rules kind='mail').
     let learnedBlock = ''
@@ -314,13 +317,13 @@ Deno.serve(async (req) => {
         messages: [{ role: 'user', content: userMsg }],
       }),
     })
-    if (!res.ok) return json(fallback(firstName, items, compare))
+    if (!res.ok) return json(fallback(firstName, items, compare, terminUrl))
     const data = await res.json() as { content?: Array<{ type?: string; input?: Mail }> }
     const m = (data.content ?? []).find(c => c.type === 'tool_use')?.input
-    if (!m || !m.subject) return json(fallback(firstName, items, compare))
+    if (!m || !m.subject) return json(fallback(firstName, items, compare, terminUrl))
     // Faktencheck: unbelegte Behauptungen (z.B. erfundene 'Mietgarantie') rausfiltern.
     if (m.deck_lines) m.deck_lines = await verifyClaims(m.deck_lines, items)
-    return json({ subject: m.subject, html: buildHtml(m, items, firstName, compare) })
+    return json({ subject: m.subject, html: buildHtml(m, items, firstName, compare, terminUrl) })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

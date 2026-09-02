@@ -10,6 +10,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
 import { translateOutbound } from '../_shared/translate.ts'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -50,10 +51,10 @@ Deno.serve(async (req: Request) => {
       if (d.last_hold_msg_at && now - Date.parse(d.last_hold_msg_at) < SIX_WEEKS) continue
       const { data: oo } = await supabase.from('communication_optouts').select('id').eq('lead_id', d.lead_id).maybeSingle()
       if (oo) continue   // Kunde will nicht mehr kontaktiert werden
-      const { data: lead } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp, language').eq('id', d.lead_id).maybeSingle()
-      const l = lead as { first_name?: string; last_name?: string; email?: string; phone?: string; whatsapp?: string; language?: string } | null
+      const { data: lead } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp, language, booking_token').eq('id', d.lead_id).maybeSingle()
+      const l = lead as { first_name?: string; last_name?: string; email?: string; phone?: string; whatsapp?: string; language?: string; booking_token?: string } | null
       if (!l) continue
-      const vars = { vorname: l.first_name ?? '', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim(), email: l.email ?? '' }
+      const vars = { vorname: l.first_name ?? '', name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim(), email: l.email ?? '', termin_buchen: bookingUrl(l.booking_token), buchungs_link: bookingUrl(l.booking_token) }
       if (dry_run) { holdSent++; continue }
       const mt = holdMail as { subject?: string; body?: string; html_body?: string | null } | null
       const wt = holdWa as { message_template?: string } | null
