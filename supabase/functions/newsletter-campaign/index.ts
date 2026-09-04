@@ -25,11 +25,19 @@ import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 // send-email via htmlToText), WhatsApp-Version via htmlToWhatsapp. Personalisierung
 // über {{vorname}}. Fehlt ein Abmelde-Link, hängen wir aus DSGVO-Gründen einen an.
 const personalize = (s: string | null | undefined, first: string) => String(s ?? '').split('{{vorname}}').join(first)
+// Tippgeber-Provision: Betrag und Textbausteine an EINER Stelle.
+const AFFILIATE_AMOUNT = '1.000 €'
+const AFFILIATE_FALLBACK = `${'https://portal.happy-property.com'}/termin?src=empfehlung`
 // unsubUrl = Ein-Klick-Abmeldelink des Empfängers (/abmelden?l=<lead> bzw. ?s=<sub>).
 // {{abmelden}} im HTML wird dadurch ersetzt; fehlt ein Abmelde-Link ganz, hängen
 // wir aus DSGVO-Gründen einen an.
-function customEmailHtml(rawHtml: string, first: string, unsubUrl: string): string {
-  let html = personalize(rawHtml, first).split('{{abmelden}}').join(unsubUrl)
+function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string): string {
+  // {{tippgeber_link}} = persoenlicher Empfehlungs-Link des Empfaengers; fehlt er
+  // (Vorschau/Test), zeigt der Platzhalter auf die allgemeine Termin-Seite.
+  let html = personalize(rawHtml, first)
+    .split('{{abmelden}}').join(unsubUrl)
+    .split('{{tippgeber_link}}').join(affiliateUrl ?? AFFILIATE_FALLBACK)
+  if (affiliateUrl && !/tippgeber|empfehlung/i.test(rawHtml)) html = injectAffiliateSection(html, first, affiliateUrl)
   if (!/abmelden|unsubscribe|abbestellen/i.test(html)) {
     const footer = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9a9aa3;text-align:center;padding:22px 20px;">Du möchtest keine E-Mails mehr von uns erhalten? <a href="${unsubUrl}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a>.</div>`
     html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${footer}</body>`) : `${html}${footer}`
@@ -100,6 +108,44 @@ function firstNameOf(l: { first_name: string | null }): string {
 
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;') }
 
+// ── Tippgeber-Sektion ────────────────────────────────────────────────────────
+// Jeder Newsletter-Empfaenger bekommt seinen EIGENEN, eindeutigen Empfehlungs-
+// Link (/termin?src=empfehlung&ref=<code>). Der Button gibt den Link per
+// WhatsApp weiter - das ist der Weg, den Empfehlungen real nehmen.
+function affiliateShareText(url: string): string {
+  return `Ich kaufe/schaue gerade bei Happy Property auf Zypern - schau dir das mal an, die machen das richtig gut: ${url}`
+}
+
+function affiliateCardHtml(url: string): string {
+  const share = `https://wa.me/?text=${encodeURIComponent(affiliateShareText(url))}`
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff;border:1px solid ${CI.line};border-radius:8px;">
+    <tr><td style="padding:26px 24px;">
+      <div style="font-family:${SANS};font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:${CI.coral};font-weight:700;">Tippgeber-Programm</div>
+      <h2 class="h2" style="margin:8px 0 0 0;font-family:${SERIF};font-size:24px;line-height:1.2;font-weight:700;color:${CI.navy};">Empfehlen und ${AFFILIATE_AMOUNT} verdienen.</h2>
+      <p style="margin:12px 0 0 0;font-family:${SANS};font-size:14px;line-height:1.65;color:${CI.ink};">Du kennst jemanden, für den eine Immobilie auf Zypern spannend wäre? Gib einfach deinen persönlichen Empfehlungs-Link weiter. Bucht jemand darüber ein Gespräch und kauft am Ende über uns, bekommst du <strong>${AFFILIATE_AMOUNT}</strong> als Dankeschön. Der Link gehört nur dir, so wissen wir immer, wer empfohlen hat.</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="btn-table" style="margin-top:18px;"><tr><td bgcolor="${CI.navy}" class="stack" style="border-radius:2px;padding:13px 26px;">
+        <a href="${esc(share)}" target="_blank" class="btn" style="display:inline-block;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">Link weitergeben →</a>
+      </td></tr></table>
+      <p style="margin:14px 0 0 0;font-family:${SANS};font-size:12px;line-height:1.6;color:${CI.mute};word-break:break-all;">Dein Link: <a href="${esc(url)}" target="_blank" style="color:${CI.navy};text-decoration:underline;">${esc(url)}</a></p>
+    </td></tr>
+  </table>`
+}
+
+// Fuer den Eigenes-HTML-Modus: die Sektion als eigenstaendiger Block, damit sie
+// auch in fremdem HTML sauber sitzt (vor </body>, sonst angehaengt).
+function injectAffiliateSection(html: string, _first: string, url: string): string {
+  const block = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:${CI.cream};"><tr><td align="center" style="padding:8px 16px 28px 16px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;">
+      <tr><td>${affiliateCardHtml(url)}</td></tr>
+    </table>
+  </td></tr></table>`
+  return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${block}</body>`) : `${html}${block}`
+}
+
+function affiliateWhatsappBlock(url: string): string {
+  return `*Tippgeber-Programm:* Empfiehl uns weiter und bekomme ${AFFILIATE_AMOUNT}, wenn dein Kontakt über deinen Link ein Gespräch bucht und kauft.\nDein persönlicher Link: ${url}`
+}
+
 // Newsletter-Mail im Happy-Property-CI (Sven 2026-07-11: "im HTML im Happy
 // Property Template"). E-Mail-sicher: Tabellen-Layout, nowrap-Buttons, Bilder
 // über Supabase-Transform verkleinert + feste width/height (Apple-Mail-Gotcha),
@@ -110,7 +156,7 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 // eine Nachricht, die man im Chat scrollen muss, liest niemand.
 function buildWhatsappText(c: {
   intro_text: string; properties: CampaignProperty[]
-}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string }): string {
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; affiliateUrl?: string }): string {
   const utmQs = `utm_source=newsletter&utm_medium=whatsapp${opts?.campaignId ? `&utm_campaign=${opts.campaignId}` : ''}`
   const firstTok = c.properties.map(p => deckTokens[p.project_id]).find(Boolean)
   const terminUrl = firstTok ? `${SITE}/termin?direkt=1&d=${firstTok}&${utmQs}` : `${SITE}/termin?${utmQs}`
@@ -131,13 +177,14 @@ function buildWhatsappText(c: {
     intro,
     links,
     `Lieber direkt sprechen? Termin buchen: ${terminUrl}`,
+    opts?.affiliateUrl ? affiliateWhatsappBlock(opts.affiliateUrl) : '',
     'Keine Nachrichten mehr? Antworte einfach mit STOPP.',
   ].filter(Boolean).join('\n\n')
 }
 
 function buildEmailHtml(c: {
   subject?: string; intro_text: string; outro_text: string; properties: CampaignProperty[]
-}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined>; bookingToken?: string }): string {
+}, firstName: string, deckTokens: Record<string, string>, opts?: { campaignId?: string; directBooking?: boolean; projectImages?: Record<string, string | undefined>; bookingToken?: string; affiliateUrl?: string }): string {
   const paras = (t: string) => t.replace(/\\n/g, '\n').split(/\n+/).map(x => x.trim()).filter(Boolean).map(esc).join('<br><br>')
   // H1 aus dem Betreff ableiten (Teil vor ":" bzw. "—"), Fallback generisch
   const rawH = (c.subject ?? '').split(/[:—]/)[0].trim()
@@ -235,6 +282,7 @@ function buildEmailHtml(c: {
       <a href="${esc(terminUrl)}" target="_blank" class="btn" style="display:inline-block;font-family:${SANS};font-size:12px;letter-spacing:0.12em;text-transform:uppercase;font-weight:700;color:#ffffff;text-decoration:none;white-space:nowrap;">📅 Termin aussuchen →</a>
     </td></tr></table>
   </td></tr>
+  ${opts?.affiliateUrl ? `<tr><td class="px" style="padding:34px 40px 0 40px;">${affiliateCardHtml(opts.affiliateUrl)}</td></tr>` : ''}
   <tr><td class="px" style="padding:24px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:14px;line-height:1.6;color:${CI.ink};">Liebe Grüße</p></td></tr>
   <tr><td class="px" style="padding:14px 40px 0 40px;">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
@@ -256,6 +304,27 @@ function buildEmailHtml(c: {
   </td></tr>
   <tr><td align="center" class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:11px;line-height:1.6;color:#9a9aa3;">Du möchtest keine Objekt-Empfehlungen mehr per E-Mail erhalten? <a href="${firstTok ? `${SITE}/abmelden?d=${firstTok}` : 'mailto:info@happy-property.com?subject=Newsletter%20abmelden'}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a> — dann nehmen wir dich aus künftigen Aussendungen heraus.</td></tr>
 </table></td></tr></table>${firstTok ? `<img src="${esc(`${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/track-engagement?type=email_open&token=${firstTok}`)}" width="1" height="1" alt="" style="display:block;width:1px;height:1px;border:0;">` : ''}</body></html>`
+}
+
+// Eindeutiger Empfehlungs-Link je Empfaenger (Lead ODER Listen-Abonnent).
+// ensure_affiliate legt bei Bedarf an und gibt sonst den vorhandenen Code
+// zurueck - derselbe Mensch behaelt seinen Link ueber alle Newsletter hinweg.
+// Schlaegt es fehl, faellt nur die Tippgeber-Sektion weg; der Versand laeuft.
+async function affiliateUrlFor(sb: SupabaseClient, r: {
+  lead_id?: string | null; subscriber_id?: string | null
+  first_name?: string | null; last_name?: string | null; email?: string | null; phone?: string | null
+}): Promise<string | undefined> {
+  if (!r.lead_id && !r.subscriber_id) return undefined
+  try {
+    const { data, error } = await sb.rpc('ensure_affiliate', {
+      p_lead_id: r.lead_id ?? null, p_subscriber_id: r.subscriber_id ?? null,
+      p_name: `${r.first_name ?? ''} ${r.last_name ?? ''}`.trim(),
+      p_email: r.email ?? null, p_whatsapp: r.phone ?? null, p_source: 'newsletter',
+    })
+    const code = (data as { code?: string } | null)?.code
+    if (error || !code) { console.warn('[newsletter] Tippgeber-Link:', error?.message ?? 'kein Code'); return undefined }
+    return `${SITE}/termin?src=empfehlung&ref=${code}`
+  } catch (e) { console.warn('[newsletter] Tippgeber-Link:', e); return undefined }
 }
 
 // Für Test-Mail/Vorschau: Deck-Token eines Leads mit dieser E-Mail (Direkteinstieg
@@ -449,14 +518,15 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'preview') {
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
-        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`), whatsapp: htmlToWhatsapp(personalize(raw, 'Vorname')) })
+        const demoUrl = `${SITE}/termin?src=empfehlung&ref=beispiel`
+        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: `${htmlToWhatsapp(personalize(raw, 'Vorname'))}\n\n${affiliateWhatsappBlock(demoUrl)}` })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
       const bookingToken = await bookingTokenFor(sb, 'sven@happy-property.com')
-      const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
+      const html = buildEmailHtml(camp, 'Vorname', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken, affiliateUrl: `${SITE}/termin?src=empfehlung&ref=beispiel` })
       return json({ ok: true, subject: String(camp.subject ?? ''), html })
     }
 
@@ -469,12 +539,14 @@ Deno.serve(async (req: Request) => {
       const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id').eq('campaign_id', camp.id).eq('status', 'pending')
       let rebuilt = 0, skipped = 0
       for (const m of (pend ?? []) as Array<{ id: string; lead_id: string }>) {
-        const { data: lead } = await sb.from('leads').select('id, first_name').eq('id', m.lead_id).maybeSingle()
+        const { data: lead } = await sb.from('leads').select('id, first_name, last_name, email').eq('id', m.lead_id).maybeSingle()
         const { data: clones } = await sb.from('sales_decks').select('token, project_id').eq('batch_id', camp.id).eq('lead_id', m.lead_id)
         const deckTokens: Record<string, string> = {}
         for (const c2 of (clones ?? []) as Array<{ token: string; project_id: string }>) deckTokens[c2.project_id] = c2.token
         if (!lead || !Object.keys(deckTokens).length) { skipped++; continue }
-        const html = buildEmailHtml(camp, firstNameOf(lead as { first_name: string | null }), deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
+        const lr = lead as { first_name: string | null; last_name: string | null; email: string | null }
+        const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, first_name: lr.first_name, last_name: lr.last_name, email: lr.email })
+        const html = buildEmailHtml(camp, firstNameOf(lead as { first_name: string | null }), deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
         const { error: ue } = await sb.from('scheduled_messages').update({ email_body: html }).eq('id', m.id).eq('status', 'pending')
         if (ue) skipped++; else rebuilt++
       }
@@ -512,12 +584,18 @@ Deno.serve(async (req: Request) => {
           token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
           status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
           content: JSON.parse(contentStr),
+          // Klon eines geprueften Master-Decks: das Quality-Gate laeuft am MASTER,
+          // nicht je Empfaenger. 'skipped' unterscheidet das sichtbar von einem
+          // ungeprueften Deck (NULL) und von einem beanstandeten (red).
+          quality_status: 'skipped',
+          quality_report: { status: 'skipped', source: 'newsletter_clone', master_token: p.master_deck_token ?? null },
         })
         if (ie) return json({ error: `Deck-Klon fehlgeschlagen: ${ie.message}` }, 500)
         deckTokens[p.project_id] = token
       }
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
-      const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
+      const affiliateUrl = await affiliateUrlFor(sb, { lead_id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email })
+      const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
       const subject = String(camp.subject).split('{{vorname}}').join(first)
       const { error: se } = await sb.from('scheduled_messages').insert({
         lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
@@ -532,7 +610,7 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'test_mail') {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       if (camp.content_mode === 'html') {
-        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven', `${SITE}/abmelden`)
+        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven', `${SITE}/abmelden`, `${SITE}/termin?src=empfehlung&ref=beispiel`)
         const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${personalize(camp.subject, 'Sven')}`, html } })
         if (se) return json({ error: `Testversand: ${se.message}` }, 502)
         return json({ ok: true })
@@ -541,7 +619,7 @@ Deno.serve(async (req: Request) => {
       for (const p of properties) if (p.master_deck_token) deckTokens[p.project_id] = p.master_deck_token
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
       const bookingToken = body.to ? await bookingTokenFor(sb, body.to) : undefined
-      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken })
+      const html = buildEmailHtml(camp, 'Sven', deckTokens, { campaignId: String(camp.id), directBooking: false, projectImages, bookingToken, affiliateUrl: `${SITE}/termin?src=empfehlung&ref=beispiel` })
       const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${camp.subject}`, html } })
       if (se) return json({ error: `Testversand: ${se.message}` }, 502)
       return json({ ok: true })
@@ -570,13 +648,16 @@ Deno.serve(async (req: Request) => {
                 const first = firstNameOf(lead)
                 const hatMail = !!lead.email, hatTel = !!lead.phone
                 const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
+                const affiliateUrl = await affiliateUrlFor(sb, lead)
                 const { error: se } = await sb.from('scheduled_messages').insert({
                   lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
                   status: 'pending', scheduled_at: slot.toISOString(),
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
-                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead)) : null,
-                  whatsapp_text: hatTel ? htmlToWhatsapp(personalize(raw, first)) : null,
+                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl) : null,
+                  whatsapp_text: hatTel
+                    ? `${htmlToWhatsapp(personalize(raw, first))}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
+                    : null,
                   recipient: 'client', appointment_condition: 'none',
                 })
                 if (se) { skipped++; console.error(`[newsletter-html] ${lead.email}:`, se.message); continue }
@@ -638,6 +719,9 @@ Deno.serve(async (req: Request) => {
                   token, lead_id: lead.lead_id, project_id: master.project_id, angle: master.angle,
                   status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
                   content: JSON.parse(contentStr),
+                  // Siehe oben: geprueft wird das Master-Deck, nicht jeder Klon.
+                  quality_status: 'skipped',
+                  quality_report: { status: 'skipped', source: 'newsletter_clone', master_token: p.master_deck_token ?? null },
                 })
                 if (ie) { console.error(`[newsletter] Deck-Klon ${lead.email}/${p.project_name}:`, ie.message); continue }
                 deckTokens[p.project_id] = token
@@ -649,14 +733,15 @@ Deno.serve(async (req: Request) => {
                 console.error(`[newsletter] ${lead.email}: unvollständige Decks — Empfänger übersprungen`)
                 continue
               }
-              const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages })
+              const affiliateUrl = await affiliateUrlFor(sb, lead)
+              const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
               const subject = String(camp.subject).split('{{vorname}}').join(first)
               // Kanal nach dem, was der Empfänger hinterlassen hat: Mail, WhatsApp
               // oder beides. Leads haben hier keine Nummer und bleiben bei E-Mail.
               const hatMail = !!lead.email
               const hatTel = !!lead.phone
               const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
-              const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id) }) : null
+              const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id), affiliateUrl }) : null
               const waBild = hatTel ? properties.map(p => projectImages[p.project_id]).find(Boolean) ?? null : null
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,

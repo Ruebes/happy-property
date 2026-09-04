@@ -1,6 +1,8 @@
 // affiliate-api — Tippgeber-Programm: Uebersicht, Provisions-Scan und Abrechnung.
 //
 //   POST { action:'list' }                    → Tippgeber + geworbene Kunden + Auszahlungen (nur eingeloggt)
+//   POST { action:'ensure', lead_id }         → eindeutigen Empfehlungs-Link fuer einen Lead anlegen/holen
+//   POST { action:'set_active', affiliate_id, active } → Link aktiv/inaktiv schalten
 //   POST { action:'commission_scan', secret } → Cron (alle 30 Min): Deals geworbener Kunden in
 //        Phase provision_erhalten → Auszahlung anlegen + Abrechnungs-PDF + Mail an den Tippgeber
 //   POST { action:'payout_link', payout_id }  → Revolut-Payout-Link erzeugen und dem
@@ -44,7 +46,7 @@ const firstOnly = (full: string) => {
   return p.length < 2 ? (p[0] ?? '') : `${p[0]} ${p[p.length - 1][0]}.`
 }
 
-interface Affiliate { id: string; lead_id: string | null; name: string; email: string | null; whatsapp: string | null; code: string; active: boolean; created_at: string }
+interface Affiliate { id: string; lead_id: string | null; subscriber_id?: string | null; name: string; email: string | null; whatsapp: string | null; code: string; active: boolean; created_at: string }
 interface Payout { id: string; affiliate_id: string; referred_lead_id: string | null; amount: number; status: string; doc_no: string | null; doc_path: string | null; payout_link: string | null; emailed_at: string | null; paid_at: string | null; created_at: string }
 
 async function callerAllowed(sb: SupabaseClient, req: Request): Promise<boolean> {
@@ -279,22 +281,69 @@ Deno.serve(async (req) => {
       const { data: affs } = await sb.from('affiliates').select('*').order('created_at', { ascending: false })
       const { data: pays } = await sb.from('affiliate_payouts').select('*').order('created_at', { ascending: false })
       const { data: referred } = await sb.from('leads')
-        .select('id, first_name, last_name, referred_by_affiliate, created_at')
+        .select('id, first_name, last_name, email, referred_by_affiliate, created_at')
         .not('referred_by_affiliate', 'is', null)
-      const referredWithPhase: Array<Record<string, unknown>> = []
-      for (const l of (referred ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; referred_by_affiliate: string; created_at: string }>) {
-        const { data: deal } = await sb.from('deals').select('phase').eq('lead_id', l.id).order('created_at', { ascending: false }).limit(1)
-        referredWithPhase.push({ ...l, phase: (deal?.[0] as { phase?: string } | undefined)?.phase ?? null })
+
+      // Phasen der geworbenen Leads in EINER Abfrage (frueher: eine je Lead).
+      const refList = (referred ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; referred_by_affiliate: string; created_at: string }>
+      const phaseOf = new Map<string, string>()
+      if (refList.length) {
+        const { data: deals } = await sb.from('deals')
+          .select('lead_id, phase, created_at').in('lead_id', refList.map(l => l.id))
+          .order('created_at', { ascending: false })
+        for (const d of (deals ?? []) as Array<{ lead_id: string; phase: string | null }>) {
+          if (d.phase && !phaseOf.has(d.lead_id)) phaseOf.set(d.lead_id, d.phase)
+        }
       }
-      const rows = ((affs ?? []) as Affiliate[]).map(a => ({
-        ...a,
-        url: `${PORTAL}/termin?src=empfehlung&ref=${a.code}`,
-        referred: referredWithPhase.filter(l => l.referred_by_affiliate === a.id),
-        payouts: ((pays ?? []) as Payout[]).filter(p => p.affiliate_id === a.id).map(p => ({
+      const referredWithPhase = refList.map(l => ({ ...l, phase: phaseOf.get(l.id) ?? null }))
+
+      const rows = ((affs ?? []) as Affiliate[]).map(a => {
+        const mine = referredWithPhase.filter(l => l.referred_by_affiliate === a.id)
+        const myPayouts = ((pays ?? []) as Payout[]).filter(p => p.affiliate_id === a.id).map(p => ({
           ...p, doc_url: p.doc_path ? `${SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${p.doc_path}` : null,
-        })),
-      }))
+        }))
+        return {
+          ...a,
+          url: `${PORTAL}/termin?src=empfehlung&ref=${a.code}`,
+          referred: mine,
+          payouts: myPayouts,
+          referred_count: mine.length,
+          payout_total: myPayouts.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
+          open_total: myPayouts.filter(p => p.status !== 'bezahlt').reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
+        }
+      })
+      // Wer wirklich empfiehlt, steht oben; danach alphabetisch.
+      rows.sort((x, y) =>
+        (y.payout_total - x.payout_total) ||
+        (y.referred_count - x.referred_count) ||
+        x.name.localeCompare(y.name, 'de'))
       return json({ ok: true, affiliates: rows })
+    }
+
+    // Eindeutigen Empfehlungs-Link fuer einen Lead anlegen (oder den
+    // vorhandenen zurueckgeben) — Sven kann jeden Kunden zum Tippgeber machen.
+    if (action === 'ensure') {
+      const leadId = String(body.lead_id ?? '')
+      if (!leadId) return json({ error: 'lead_id fehlt.' }, 400)
+      const { data: l } = await sb.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadId).maybeSingle()
+      const lead = l as { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null } | null
+      if (!lead) return json({ error: 'Lead nicht gefunden.' }, 404)
+      const { data: ensured, error: ensErr } = await sb.rpc('ensure_affiliate', {
+        p_lead_id: leadId, p_subscriber_id: null,
+        p_name: `${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim(),
+        p_email: lead.email, p_whatsapp: lead.whatsapp ?? lead.phone, p_source: 'manuell',
+      })
+      const aff = ensured as Affiliate | null
+      if (ensErr || !aff) return json({ error: ensErr?.message ?? 'Anlage fehlgeschlagen.' }, 500)
+      return json({ ok: true, affiliate: { ...aff, url: `${PORTAL}/termin?src=empfehlung&ref=${aff.code}` } })
+    }
+
+    if (action === 'set_active') {
+      const affId = String(body.affiliate_id ?? '')
+      if (!affId) return json({ error: 'affiliate_id fehlt.' }, 400)
+      const { error: ue } = await sb.from('affiliates').update({ active: body.active !== false }).eq('id', affId)
+      if (ue) return json({ error: ue.message }, 500)
+      return json({ ok: true })
     }
 
     const payoutId = String(body.payout_id ?? '')

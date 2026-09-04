@@ -62,6 +62,22 @@ export interface CalcParams {
   // MwSt-Regelung (optional, Default standard19 = heutiges Verhalten)
   vatMode?: VatMode
   livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
+  // ── Halte-Struktur (Sven 4.9.26) ──────────────────────────────────────────
+  // privat = die Wohnung gehoert der Person; firma = eine zyprische Ltd haelt
+  // sie. Die Steuer laeuft komplett anders (siehe CY_* Konstanten unten):
+  // privat hat Grundfreibetrag + 20 % Pauschalabzug, die Firma keins von beidem,
+  // dafuer 15 % Koerperschaftsteuer statt Progression bis 35 % und einen
+  // Verlustvortrag von 5 Jahren. Default 'privat' = bisheriges Verhalten.
+  holder?: 'privat' | 'firma'
+  corpTaxPct?: number       // Koerperschaftsteuer Zypern % (Default 15 seit 1.1.2026)
+  divPayoutPct?: number     // Anteil des Gewinns, der ausgeschuettet wird (%)
+  divTaxPct?: number        // Steuer beim Gesellschafter auf die Ausschuettung (%)
+  gesy?: boolean            // GESY 2,65 % auf die Bruttomiete (nur CY-Steuerresidenz)
+  // Kurzzeitvermietung als GEWERBLICHE Taetigkeit (Standard bei Kurzzeit):
+  // registriertes Self-Service-Accommodation + 9 % MwSt auf die Miete. Dann
+  // zieht auch die Privatperson die ECHTEN Kosten ab (Verwaltung!) statt der
+  // 20-%-Pauschale. Bei Langzeitvermietung gilt die Pauschale.
+  cyBusiness?: boolean
 }
 
 // ── Saisonmodell Kurzzeitvermietung (Paphos-Marktprofil) ─────────────────────
@@ -171,22 +187,62 @@ export function defaultMgmtPct(letType: 'short' | 'long', hotelConcept?: boolean
   return hotelConcept ? 40 : 25
 }
 
+// ── Zyprische Steuerfakten (Stand Steuerreform, in Kraft seit 1.1.2026) ──────
+// Quellen: Gesetzespaket im Amtsblatt 31.12.2025 (Reform 2026), PwC Worldwide
+// Tax Summaries Cyprus, Deloitte/Trident/Harneys-Zusammenfassungen zur Reform.
+//
+// PRIVAT (natuerliche Person, auch nicht in Zypern ansaessig):
+//   • Grundfreibetrag 22.000 € (vorher 19.500 €), danach 20/25/30/35 %,
+//     Spitzensatz erst ab 72.001 € (vorher ab 60.001 €).
+//   • 20 % Pauschalabzug auf die BRUTTOMIETE statt echter Instandhaltung.
+//   • Gebaeude-Abschreibung 3 % p.a. auf den Gebaeudeanteil (Grund und Boden
+//     nicht abschreibbar; hier mit 80 % Gebaeudeanteil gerechnet).
+//   • Einrichtung/Moebel 10 % p.a. (10 Jahre).
+//   • Darlehenszinsen voll abziehbar.
+//   • SDC auf Mieten ist zum 1.1.2026 ERSATZLOS ENTFALLEN.
+//   • GESY (Gesundheitsbeitrag) 2,65 % auf die Bruttomiete, Bemessung gedeckelt
+//     bei 180.000 € - nur fuer in Zypern Steueransaessige.
+// FIRMA (zyprische Ltd):
+//   • KEIN Grundfreibetrag, KEIN 20-%-Pauschalabzug - nur echte Kosten.
+//   • 15 % Koerperschaftsteuer (bis 2025: 12,5 %).
+//   • Gleiche Abschreibung (3 % Gebaeude, 10 % Einrichtung), Zinsen abziehbar.
+//   • Verlustvortrag 5 Jahre - in der Bau-/Anlaufphase mit hoher Zinslast der
+//     entscheidende Unterschied zur Privatvariante.
+//   • Kein SDC/GESY auf Ebene der Gesellschaft; Steuer faellt erst wieder bei
+//     der AUSSCHUETTUNG an den Gesellschafter an (Zypern behaelt nichts ein):
+//     DE-Gesellschafter 26,375 % Abgeltungsteuer inkl. Soli, zyprischer Non-Dom
+//     zahlt nur 2,65 % GESY auf die Dividende.
+export const CY_TAX_BANDS = [
+  { c: 22000, r: 0 }, { c: 32000, r: .2 }, { c: 42000, r: .25 }, { c: 72000, r: .3 }, { c: Infinity, r: .35 },
+] as const
+export const CY_RENT_FLAT_DEDUCTION = 0.20   // 20 % Pauschalabzug (nur privat)
+export const CY_BUILDING_SHARE = 0.80        // Gebaeudeanteil am Kaufpreis
+export const CY_BUILDING_AFA = 0.03          // 3 % p.a. Gebaeude
+export const CY_FURN_AFA = 0.10              // 10 % p.a. Einrichtung
+export const CY_CORP_TAX_PCT = 15            // Koerperschaftsteuer seit 1.1.2026
+export const CY_LOSS_CARRY_YEARS = 5         // Verlustvortrag
+export const CY_GESY_RATE = 0.0265           // Gesundheitsbeitrag auf Mieten
+export const CY_GESY_CAP = 180000            // Bemessungsdeckel p.a.
+export const DE_DIV_TAX_PCT = 26.375         // Abgeltungsteuer + Soli (DE-Gesellschafter)
+export const CY_DIV_TAX_PCT = 2.65           // Non-Dom: nur GESY auf die Dividende
+
 export const DEFAULT_PARAMS: CalcParams = {
   month: 8, year: 2025, dealType: 'single',
   priceNet: 250000, discountPct: 0, bedrooms: 2,
   sdInputMode: 'manual', sdUnits: [], sdPrice: 1000000, sdSqm: 250, sdTerr: 60, sdNum: 3,
-  sdDiscount: 0, sdVatDrawn: 0, sdVatYears: 0, sdTaxRate: 12.5,
+  sdDiscount: 0, sdVatDrawn: 0, sdVatYears: 0, sdTaxRate: CY_CORP_TAX_PCT,
   fin: 'yes', letType: 'short', mode: 'ann', res: 'de', hotelConcept: false,
   equity: 75000, cyBI: 0, yieldPct: 5.5, rentGrowth: 5, mgmtPct: 2, interestPct: 4.1,
   termYears: 20, amortPct: 2, appreciationPct: 5, deTaxPct: 42, furnCost: 0, furnFree: false,
   ppVals: Array(10).fill(0),
   season: null,
   vatMode: 'standard19', livingSqm: null,
+  holder: 'privat', corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
 }
 
-// Zypern progressive Einkommensteuer (Banden)
+// Zypern progressive Einkommensteuer (Banden ab 2026)
 export function cyTax(inc: number): number {
-  const bands = [{ c: 19500, r: 0 }, { c: 28000, r: .2 }, { c: 36300, r: .25 }, { c: 60000, r: .3 }, { c: Infinity, r: .35 }]
+  const bands = CY_TAX_BANDS
   let t2 = 0, rest = Math.max(0, inc), prev = 0
   for (const b of bands) { const w = Math.min(rest, b.c - prev); if (w > 0) t2 += w * b.r; rest -= w; prev = b.c; if (rest <= 0) break }
   return Math.round(t2)
@@ -230,6 +286,11 @@ export interface CalcResult {
   sdVatDrawn: number; sdVatYears: number; sdVatClawback: number; sdTaxRate: number
   rents: number[]; mgmt: number[]; intC: number[]; princC: number[]; rateC: number[]; restL: number[]
   prepayC: number[]; propV: number[]; vatA: number[]; taxCY: number[]; taxDE: number[]; taxU: number[]; cfA: number[]
+  // Halte-Struktur: bei 'firma' steckt in taxCY die Koerperschaftsteuer und in
+  // taxDE die Steuer auf die Ausschuettung. gesyA ist der Gesundheitsbeitrag
+  // (nur privat + Steuersitz Zypern) und steckt bereits in taxCY.
+  holder: 'privat' | 'firma'; corpTaxPct: number; divTaxPct: number; divPayoutPct: number
+  gesyA: number[]; profitCY: number[]
   sumR: number; sumC: number; sumT: number; sumVat: number; sumPP: number; sumCF: number
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
@@ -373,33 +434,84 @@ function computeCore(p: CalcParams): CalcResult {
     }
   }
 
-  const dCY = Math.round(pGross * 0.8 * 0.03)
-  const furnAfaAnn = (!furnFree && furnCost > 0) ? Math.round(furnCost / 5) : 0
-  const sdTaxRate = sdMode ? Math.max(0, Math.min(35, isNaN(p.sdTaxRate) ? 12.5 : p.sdTaxRate)) / 100 : 0
+  // ── Abschreibungen ────────────────────────────────────────────────────────
+  // Zypern: 3 % p.a. auf den Gebaeudeanteil (80 % des Kaufpreises), Einrichtung
+  // 10 % p.a. ueber 10 Jahre. Deutschland rechnet mit eigener AfA (5 % degressiv
+  // auf das Gebaeude, Einrichtung ueber 5 Jahre) - deshalb zwei Groessen.
+  const dCY = Math.round(pGross * CY_BUILDING_SHARE * CY_BUILDING_AFA)
+  const furnAfaDE = (!furnFree && furnCost > 0) ? Math.round(furnCost / 5) : 0
+  const furnAfaCY = (!furnFree && furnCost > 0) ? Math.round(furnCost * CY_FURN_AFA) : 0
+  const holder: 'privat' | 'firma' = (!sdMode && p.holder === 'firma') ? 'firma' : 'privat'
+  const corpTaxPct = Math.max(0, Math.min(35, Number.isFinite(p.corpTaxPct as number) ? (p.corpTaxPct as number) : CY_CORP_TAX_PCT))
+  const divPayoutPct = Math.max(0, Math.min(100, Number.isFinite(p.divPayoutPct as number) ? (p.divPayoutPct as number) : 100))
+  const divTaxPct = Math.max(0, Math.min(50, Number.isFinite(p.divTaxPct as number) ? (p.divTaxPct as number) : DE_DIV_TAX_PCT))
+  const sdTaxRate = sdMode ? Math.max(0, Math.min(35, isNaN(p.sdTaxRate) ? CY_CORP_TAX_PCT : p.sdTaxRate)) / 100 : 0
+  // GESY zahlt nur, wer in Zypern steueransaessig ist - und nur als Privatperson.
+  const gesyOn = holder === 'privat' && resCY && (p.gesy ?? true)
+  const gesyA = rents.map((r, i) => gesyOn ? Math.round(Math.min(r, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_RATE) : 0)
   let taxCY: number[], taxDE: number[], taxU: number[]
+  const profitCY: number[] = []
+
+  // Zyprischer Verlustvortrag (5 Jahre): Verluste der Anlaufjahre mindern die
+  // spaeteren Gewinne. Ohne das faellt in der Firma sofort Steuer an, obwohl das
+  // Objekt in Summe noch im Minus ist.
+  const applyLossCarry = (profits: number[]): number[] => {
+    const open: Array<{ y: number; amt: number }> = []
+    return profits.map((profit, i) => {
+      let rest = profit
+      if (rest <= 0) { open.push({ y: i, amt: -rest }); return 0 }
+      for (const l of open) {
+        if (i - l.y > CY_LOSS_CARRY_YEARS || l.amt <= 0) continue
+        const use = Math.min(l.amt, rest); l.amt -= use; rest -= use
+        if (rest <= 0) break
+      }
+      return rest
+    })
+  }
 
   if (sdMode) {
-    taxCY = rents.map((r, i) => {
-      const furnAfa = i < 5 ? Math.round(furnAfaAnn * fA[i]) : 0
-      const d = Math.round(dCY * fA[i])
-      const taxable = r - d - furnAfa - mgmt[i] - intC[i]
-      return Math.max(0, Math.round(taxable * sdTaxRate))
-    })
+    // Share-Deal-Holding: wie die Firma - echte Kosten, kein Pauschalabzug.
+    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - intC[i])
+    const taxable = applyLossCarry(base)
+    base.forEach(b => profitCY.push(b))
+    taxCY = taxable.map(t => Math.max(0, Math.round(t * sdTaxRate)))
     taxDE = Array(10).fill(0)
     taxU = taxCY
+  } else if (holder === 'firma') {
+    // ── Zyprische Ltd haelt die Wohnung ──────────────────────────────────────
+    // Kein Grundfreibetrag, kein 20-%-Pauschalabzug; dafuer fester Satz und
+    // Verlustvortrag. Danach die Ausschuettung an den Gesellschafter.
+    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - intC[i])
+    base.forEach(b => profitCY.push(b))
+    const taxable = applyLossCarry(base)
+    taxCY = taxable.map(t => Math.max(0, Math.round(t * corpTaxPct / 100)))
+    taxDE = base.map((b, i) => {
+      const afterTax = b - taxCY[i]
+      if (afterTax <= 0) return 0
+      return Math.round(afterTax * (divPayoutPct / 100) * (divTaxPct / 100))
+    })
+    taxU = taxCY.map((t, i) => t + taxDE[i])
   } else {
+    // Gewerbliche Kurzzeitvermietung: echte Kosten (Verwaltung) statt Pauschale.
+    // Die 20-%-Pauschale gilt fuer die passive (Langzeit-)Vermietung.
+    const cyBusiness = p.cyBusiness ?? (letT === 'short')
     taxCY = rents.map((r, i) => {
-      const furnAfa = i < 5 ? Math.round(furnAfaAnn * fA[i]) : 0
-      const d = Math.round(dCY * fA[i]), m2 = Math.round(r * 0.2), tx = r - d - furnAfa - m2 - intC[i]
-      if (resCY) { const b = cyTax(cyBI); return Math.max(0, cyTax(cyBI + Math.max(0, tx)) - b) }
-      return cyTax(Math.max(0, tx))
+      const furnAfa = Math.round(furnAfaCY * fA[i])
+      const d = Math.round(dCY * fA[i])
+      const m2 = cyBusiness ? mgmt[i] : Math.round(r * CY_RENT_FLAT_DEDUCTION)
+      const tx = r - d - furnAfa - m2 - intC[i]
+      profitCY.push(tx)
+      const inc = resCY ? Math.max(0, cyTax(cyBI + Math.max(0, tx)) - cyTax(cyBI)) : cyTax(Math.max(0, tx))
+      // GESY ist keine Einkommensteuer (in Deutschland auch nicht anrechenbar),
+      // faellt aber real an - deshalb in derselben Zeile mitgefuehrt.
+      return inc + gesyA[i]
     })
     const bDE = pGross * 0.8; let rDE = bDE
     const dDE: number[] = []
     for (let k2 = 0; k2 < 10; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
     const deR = deTx / 100
     taxDE = resCY ? Array(10).fill(0) : rents.map((r, i) => {
-      const furnAfa = i < 5 ? Math.round(furnAfaAnn * fA[i]) : 0
+      const furnAfa = i < 5 ? Math.round(furnAfaDE * fA[i]) : 0
       const g2 = Math.round((r - mgmt[i] - intC[i] - dDE[i] - furnAfa) * deR)
       return g2 <= 0 ? g2 : g2 - Math.min(taxCY[i], g2)
     })
@@ -431,6 +543,7 @@ function computeCore(p: CalcParams): CalcResult {
     discountPct, discountAmt, bedrooms,
     sdMode, sdNumUnits, sdTotalSqm, sdTotalTerr, sdVatDrawn, sdVatYears, sdVatClawback, sdTaxRate,
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
+    holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, profitCY,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
     vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,

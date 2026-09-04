@@ -92,7 +92,7 @@ const ANALYZE_TOOL = {
     properties: {
       source_index:  { type: 'integer', description: '0-basierter Index des Kandidatenbilds, das den Plan der Wohnung enthaelt. -1 wenn KEINES passt.' },
       plan_locator:  { type: 'string', description: 'Wo auf dem Blatt der richtige Plan liegt, mit Original-Beschriftung, z.B. "GROUND FLOOR PLAN, oben links". Leer wenn das Bild nur diesen einen Plan zeigt.' },
-      floors:        { type: 'array', items: { type: 'object', properties: { locator: { type: 'string', description: 'Plan-Beschriftung + Lage auf dem Blatt, z.B. "TYPE A - GROUND FLOOR PLAN, oben links".' }, label: { type: 'string', description: 'Deutsches Geschoss-Label: ERDGESCHOSS, OBERGESCHOSS, DACHGESCHOSS …' } }, required: ['locator', 'label'] }, description: 'ALLE Wohn-Geschosse dieser Einheit (Villa/Maisonette = mehrere!). Reine Dach-/Roof-Plaene ohne Wohnraeume weglassen. Bei einer eingeschossigen Wohnung genau 1 Eintrag.' },
+      floors:        { type: 'array', items: { type: 'object', properties: { locator: { type: 'string', description: 'Plan-Beschriftung + Lage auf dem Blatt, z.B. "TYPE A - GROUND FLOOR PLAN, oben links".' }, label: { type: 'string', description: 'Deutsches Geschoss-Label: ERDGESCHOSS, OBERGESCHOSS, DACHGESCHOSS …' }, source_index: { type: 'integer', description: 'PFLICHT: 0-basierter Index des Kandidatenbilds, auf dem GENAU DIESES Geschoss zu sehen ist. Gib -1 an, wenn fuer dieses Geschoss KEIN Plan unter den Kandidaten liegt — dann wird es NICHT gezeichnet.' } }, required: ['locator', 'label', 'source_index'] }, description: 'ALLE Wohn-Geschosse dieser Einheit (Villa/Maisonette/Penthouse = mehrere!). Reine Dach-/Roof-Plaene OHNE Wohn- oder Terrassenflaeche weglassen. Bei einer eingeschossigen Wohnung genau 1 Eintrag. Fuehre ein Geschoss NUR auf, wenn du seinen Plan wirklich unter den Kandidaten siehst.' },
       rooms:         { type: 'array', items: { type: 'object', properties: { original: { type: 'string' }, german: { type: 'string' } }, required: ['german'] }, description: 'Alle Raeume dieses Plans mit deutschem Label, JEDES nur EINMAL, mit ECHTEN Umlauten Ä/Ö/Ü/ß (WOHNBEREICH, KÜCHE, SCHLAFZIMMER 1, BAD, EN-SUITE, WC, HWR, ÜBERDACHTE VERANDA, DACHTERRASSE ...) — niemals AE/OE/UE schreiben.' },
       outdoor:       { type: 'array', items: { type: 'string' }, description: 'Deutsche Labels der Aussenflaechen (Veranda/Terrasse/Innenhof/Dachgarten), die koralle eingefaerbt werden sollen.' },
       dims:          { type: 'array', items: { type: 'string' }, description: 'Bis zu 8 reale Raummasse EXAKT aus dem Plan abgelesen, Format "Wohnbereich 6,70 x 3,80 m". NUR was wirklich lesbar dasteht, nichts schaetzen. Leer wenn keine Masse im Plan.' },
@@ -118,12 +118,12 @@ const VERIFY_TOOL = {
   },
 }
 
-function stylePrompt(title: string, rooms: string[], outdoor: string[], floors: Array<{ locator: string; label: string }>, planLocator: string, issues?: string[]): string {
+function stylePrompt(title: string, rooms: string[], outdoor: string[], floors: Array<{ locator: string; label: string; refNr?: number }>, planLocator: string, issues?: string[]): string {
   // Mehrgeschossige Einheiten (Villa/Maisonette): ALLE Wohn-Geschosse als Panels
   // nebeneinander in EINEM Bild — sonst wuerfelt das Modell sich ein Geschoss aus
   // (28.8.26: Lauf 1 nahm das OG, Lauf 2 das EG derselben Villa).
   const loc = floors.length > 1
-    ? `The reference sheet contains several plans and a title block. Draw ALL of these plans as separate panels side by side in ONE image, each panel with its German floor label above it: ${floors.map(f => `${f.label} (source: ${f.locator})`).join('; ')}. Ignore everything else on the sheet (roof plans, title block, notes).`
+    ? `You get ${floors.length} reference images, one per level. Draw exactly ${floors.length} panels side by side in ONE image, each panel with its German floor label above it: ${floors.map((f, i) => `panel ${i + 1} = ${f.label}, taken from reference image ${f.refNr ?? i + 1} (${f.locator})`).join('; ')}. Draw NOTHING beyond these ${floors.length} panels — never add a level, terrace or roof plan that is not among the reference images.`
     : (floors[0]?.locator || planLocator)
       ? `The reference sheet may contain several plans and a title block. Use ONLY this plan: ${floors[0]?.locator || planLocator}. Ignore everything else on the sheet.`
       : 'The reference shows one floor plan.'
@@ -234,7 +234,7 @@ Deno.serve(async (req) => {
       try {
         // ── 0) Quellen laden. PDFs (Architekten-Plaene, z.B. Kuutio) per mupdf-wasm
         // rastern — bis zu 3 Seiten je PDF werden eigene Kandidaten.
-        type Source = { png: Uint8Array; b64: string; mime: string; from: string }
+        type Source = { png: Uint8Array; b64: string; mime: string; from: string; pdfUrl?: string; page?: number }
         const sources: Source[] = []
         const toB64 = (bytes: Uint8Array) => {
           let bin = ''
@@ -244,20 +244,38 @@ Deno.serve(async (req) => {
         for (const u of cand) {
           if (sources.length >= 6) break
           try {
-            if (/\.pdf(\?|$)/i.test(u)) {
-              const pdfBytes = new Uint8Array(await (await fetch(u)).arrayBuffer())
+            // PDF am INHALT erkennen, nicht an der Endung: aus Drive importierte
+            // Plaene heissen oft ohne Endung (".blockafloorplan"), sind aber PDFs.
+            const kopf = await fetch(u)
+            const ctype = (kopf.headers.get('content-type') ?? '').toLowerCase()
+            const rohBytes = new Uint8Array(await kopf.arrayBuffer())
+            const istPdf = /\.pdf(\?|$)/i.test(u) || ctype.includes('application/pdf')
+              || (rohBytes.length > 4 && rohBytes[0] === 0x25 && rohBytes[1] === 0x50 && rohBytes[2] === 0x44 && rohBytes[3] === 0x46)
+            if (istPdf) {
+              const pdfBytes = rohBytes
               if (pdfBytes.length > 25_000_000) continue   // Edge-Speicher schuetzen
               const mupdf = await import('npm:mupdf@1.26.4')
               const doc = mupdf.Document.openDocument(pdfBytes, 'application/pdf')
-              const n = Math.min(doc.countPages(), 3)
-              for (let p = 0; p < n && sources.length < 6; p++) {
+              // ZWEISTUFIG rastern. Ein Bautraeger-PDF hat je Block eine Seite pro
+              // Etage; die gesuchte Wohnung liegt oft auf Seite 4 oder spaeter.
+              // Alle Seiten in voller Aufloesung zu halten sprengt den Worker
+              // (WORKER_RESOURCE_LIMIT), nur die ersten drei zu nehmen verfehlt die
+              // Etage ("Kein Kandidat zeigt den Plan von B-301 (P)"). Deshalb:
+              // hier ALLE Seiten klein zur Auswahl — die gewaehlte Seite wird nach
+              // der Analyse gezielt gross nachgeladen.
+              const seiten = Math.min(doc.countPages(), 10)
+              const klein = cand.length > 1 ? 620 : 780
+              for (let p = 0; p < seiten && sources.length < 12; p++) {
                 const page = doc.loadPage(p)
                 const b = page.getBounds()
-                const scale = Math.min(3, 2000 / Math.max(1, b[2] - b[0]))
+                const scale = Math.min(1.5, klein / Math.max(1, b[2] - b[0]))
                 const pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
                 const png = pix.asPNG()
-                sources.push({ png, b64: toB64(png), mime: 'image/png', from: `${u}#page=${p + 1}` })
+                sources.push({ png, b64: toB64(png), mime: 'image/png', from: `${u}#page=${p + 1}`, pdfUrl: u, page: p })
+                try { (pix as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+                try { (page as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
               }
+              try { (doc as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
             } else {
               const im = await fetchB64(shrink(u))
               const raw = new Uint8Array(await (await fetch(u)).arrayBuffer())
@@ -282,7 +300,7 @@ Deno.serve(async (req) => {
         const analysis = await claude([ANALYZE_TOOL], 'emit_analysis', [
           ...imgs.map((im, i) => [{ type: 'text', text: `Kandidat ${i}:` }, { type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } }]).flat(),
           { type: 'text', text: `Projekt „${projName}". ${unitDesc}.\nFinde das Kandidatenbild + den Plan darauf, der GENAU diese Wohnung (bzw. ihren Haustyp) zeigt. Liste in floors ALLE Wohn-Geschosse der Einheit (Villa/Maisonette hat mehrere; reine Dach-/Roof-Plaene weglassen). Lies Raumliste und — falls im Plan lesbar — reale Masse ab. Nichts schaetzen, nichts erfinden.` },
-        ]) as { source_index?: number; plan_locator?: string; floors?: Array<{ locator?: string; label?: string }>; rooms?: Array<{ german?: string }>; outdoor?: string[]; dims?: string[]; floor_label?: string; confidence?: string; note?: string }
+        ]) as { source_index?: number; plan_locator?: string; floors?: Array<{ locator?: string; label?: string; source_index?: number }>; rooms?: Array<{ german?: string }>; outdoor?: string[]; dims?: string[]; floor_label?: string; confidence?: string; note?: string }
 
         const si = Number(analysis.source_index)
         if (!(si >= 0 && si < sources.length)) throw new Error(`Kein Kandidat zeigt den Plan von ${body.unit_number}${analysis.note ? ` (${analysis.note})` : ''}`)
@@ -297,19 +315,110 @@ Deno.serve(async (req) => {
         // Labels ueber den Panels im Bild).
         const floorSuffix = floors.length === 1 && floors[0].label ? ` · ${floors[0].label}` : ''
         const title = `${projName.toUpperCase()} · ${titleUnit}${floorSuffix}`
-        const aspect = floors.length > 1 ? '16:9' : '4:3'
+        // confidence war Pflichtfeld im Tool-Schema, wurde aber nie ausgewertet:
+        // eine Analyse mit 'low' — Claude ist sich nicht sicher, ob das ueberhaupt
+        // der Plan DIESER Wohnung ist — lief ungebremst bis in die Deck-Quelle.
+        if (analysis.confidence === 'low') {
+          throw new Error(`Planerkennung unsicher (confidence low)${analysis.note ? `: ${analysis.note}` : ''} — bitte Quelle pruefen oder source_url angeben`)
+        }
+        // Ab hier wird nur noch die GEWAEHLTE Quelle gebraucht — die uebrigen
+        // base64-Kopien belegen sonst bis zum Ende des Laufs Speicher.
+        // Die Seiten der erkannten Geschosse werden gleich als Referenz gebraucht —
+        // sie duerfen NICHT geleert werden, sonst muss jede einzeln neu gerastert
+        // werden und der Worker laeuft ins Speicherlimit.
+        const gebraucht = new Set<number>([si])
+        for (const f of floors) if (typeof f.source_index === 'number' && f.source_index >= 0) gebraucht.add(f.source_index)
+        for (let i = 0; i < sources.length; i++) {
+          if (gebraucht.has(i)) continue
+          sources[i] = { ...sources[i], png: new Uint8Array(0), b64: '' }
+          imgs[i] = { b64: '', mime: 'image/png' }
+        }
+        // Zweite Stufe: die gewaehlte Seite in Arbeitsaufloesung nachladen. Erst
+        // jetzt lohnt sich der Speicher, und nur fuer genau EIN Blatt.
+        const gewaehlt = sources[si]
+        if (gewaehlt.pdfUrl && gewaehlt.page != null) {
+          try {
+            const bytes = new Uint8Array(await (await fetch(gewaehlt.pdfUrl)).arrayBuffer())
+            const mupdf = await import('npm:mupdf@1.26.4')
+            const doc = mupdf.Document.openDocument(bytes, 'application/pdf')
+            const page = doc.loadPage(gewaehlt.page)
+            const b = page.getBounds()
+            const scale = Math.min(2, 1500 / Math.max(1, b[2] - b[0]))
+            const pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
+            const png = pix.asPNG()
+            sources[si] = { ...gewaehlt, png, b64: toB64(png) }
+            imgs[si] = { b64: sources[si].b64, mime: 'image/png' }
+            try { (pix as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            try { (page as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            try { (doc as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            console.log(`[hp-floorplan] Seite ${gewaehlt.page + 1} in Arbeitsaufloesung nachgeladen`)
+          } catch (e) {
+            console.warn('[hp-floorplan] Nachladen fehlgeschlagen, nutze Vorschau:', e instanceof Error ? e.message : String(e))
+          }
+        }
 
         // ── 2) Higgsfield-Restyle (max. 2 Versuche mit Vision-Verifikation) ─────
         const store = hfStoreFrom(sb)
-        const refId = await hfUploadImage(store, sources[si].png, sources[si].mime)
+        // ── Referenzbilder je Geschoss ─────────────────────────────────────────
+        // Frueher ging NUR das gewaehlte Blatt an Higgsfield, der Prompt verlangte
+        // aber alle Geschosse als Panels. Fehlte eine Ebene im Referenzbild, hat
+        // das Modell sie ERFUNDEN — bei Emerald Park B-301 eine komplette
+        // Dachterrasse ohne Vorlage. Jetzt bekommt jedes Geschoss sein eigenes
+        // Referenzbild; Geschosse ohne Vorlage werden gar nicht erst gezeichnet.
+        const holeSeite = async (idx: number): Promise<Uint8Array | null> => {
+          const q = sources[idx]
+          if (!q) return null
+          if (q.png.length) return q.png
+          if (!q.pdfUrl || q.page == null) return null
+          try {
+            const bytes = new Uint8Array(await (await fetch(q.pdfUrl)).arrayBuffer())
+            const mupdf = await import('npm:mupdf@1.26.4')
+            const doc = mupdf.Document.openDocument(bytes, 'application/pdf')
+            const page = doc.loadPage(q.page)
+            const b = page.getBounds()
+            const scale = Math.min(1.6, 1200 / Math.max(1, b[2] - b[0]))
+            const pix = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true)
+            const png = pix.asPNG()
+            try { (pix as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            try { (page as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            try { (doc as { destroy?: () => void }).destroy?.() } catch { /* egal */ }
+            return png
+          } catch { return null }
+        }
+        const refIds: string[] = []
+        const gezeichnet: Array<{ locator: string; label: string; refNr: number }> = []
+        for (const f of floors) {
+          const idx = typeof f.source_index === 'number' && f.source_index >= 0 ? f.source_index : (floors.length === 1 ? si : -1)
+          if (idx < 0) {
+            console.warn(`[hp-floorplan] Geschoss "${f.label}" hat keinen Originalplan unter den Kandidaten — wird NICHT gezeichnet`)
+            continue
+          }
+          const png = await holeSeite(idx)
+          if (!png) continue
+          refIds.push(await hfUploadImage(store, png, sources[idx].mime))
+          gezeichnet.push({ locator: f.locator, label: f.label, refNr: refIds.length })
+        }
+        if (!refIds.length) {
+          const png = await holeSeite(si)
+          if (!png) throw new Error('Kein Referenzbild ladbar')
+          refIds.push(await hfUploadImage(store, png, sources[si].mime))
+          gezeichnet.push({ locator: floors[0]?.locator ?? analysis.plan_locator ?? '', label: floors[0]?.label ?? floorLabel, refNr: 1 })
+        }
+        if (gezeichnet.length < floors.length) {
+          console.warn(`[hp-floorplan] ${floors.length - gezeichnet.length} Geschoss(e) ohne Vorlage weggelassen`)
+        }
+        const refId = refIds[0]
+        // Seitenverhaeltnis richtet sich nach den tatsaechlich gezeichneten
+        // Panels, nicht nach den urspruenglich erkannten Geschossen.
+        const bildFormat = gezeichnet.length > 1 ? '16:9' : '4:3'
 
         let outBytes: Uint8Array | null = null
         let verified = false
         let issues: string[] = []
         for (let attempt = 0; attempt < 2; attempt++) {
           const bytes = attempt === 0 || !outBytes
-            ? await generateStyled(store, [refId], stylePrompt(title, rooms, outdoor, floors, analysis.plan_locator ?? ''), aspect)
-            : await generateStyled(store, [refId, await hfUploadImage(store, outBytes, 'image/png')], fixPrompt(title, issues), aspect)
+            ? await generateStyled(store, refIds, stylePrompt(title, rooms, outdoor, gezeichnet, analysis.plan_locator ?? ''), bildFormat)
+            : await generateStyled(store, [...refIds, await hfUploadImage(store, outBytes, 'image/png')], fixPrompt(title, issues), bildFormat)
           // Verify: Original vs. Ergebnis (beide verkleinert als base64).
           let bin = ''
           for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
@@ -319,11 +428,13 @@ Deno.serve(async (req) => {
             { type: 'image', source: { type: 'base64', media_type: orig.mime, data: orig.b64 } },
             { type: 'text', text: 'BILD 2 = neu gezeichneter Marketing-Grundriss:' },
             { type: 'image', source: { type: 'base64', media_type: 'image/png', data: btoa(bin) } },
-            { type: 'text', text: `Pruefe ${floors.length > 1 ? `JEDES Panel in Bild 2 gegen seinen Quellplan (${floors.map(f => `${f.label} = ${f.locator}`).join('; ')})` : `NUR den Plan „${floors[0]?.locator || analysis.plan_locator || 'auf dem Original'}" gegen Bild 2`}: Stimmen Waende, Tueroeffnungen samt Schwenkrichtung, Fenster, Treppe und Raumproportionen ueberein? Wurde etwas erfunden oder weggelassen? Stil/Farben/fehlende Masse sind KEINE Fehler.` },
+            { type: 'text', text: `Pruefe ${gezeichnet.length > 1 ? `JEDES Panel in Bild 2 gegen seinen Quellplan (${gezeichnet.map(f => `${f.label} = ${f.locator}`).join('; ')})` : `NUR den Plan „${floors[0]?.locator || analysis.plan_locator || 'auf dem Original'}" gegen Bild 2`}: Stimmen Waende, Tueroeffnungen samt Schwenkrichtung, Fenster, Treppe und Raumproportionen ueberein? Wurde etwas erfunden oder weggelassen? Stil/Farben/fehlende Masse sind KEINE Fehler.` },
           ]) as { geometry_ok?: boolean; issues?: string[]; severity?: string }
           outBytes = bytes
           issues = verdict.issues ?? []
-          if (verdict.geometry_ok || verdict.severity === 'none' || verdict.severity === 'minor') { verified = verdict.geometry_ok === true; break }
+          // Der Korrekturlauf lief bisher nur bei severity 'major' — ein 'minor'
+          // mit geometry_ok=false brach ohne zweiten Versuch ab.
+          if (verdict.geometry_ok === true) { verified = true; break }
         }
         if (!outBytes) throw new Error('Keine Generierung erhalten')
 
@@ -338,22 +449,49 @@ Deno.serve(async (req) => {
           'Grundriss schematisch im Happy-Property-Stil nach Originalplan des Bauträgers.',
           unit?.size_sqm ? `Wohnfläche ca. ${fmt(Number(unit.size_sqm))} m²` : '',
           unit?.terrace_sqm ? `Außenfläche ca. ${fmt(Number(unit.terrace_sqm))} m²` : '',
-          (analysis.dims?.length ? `Maße lt. Plan: ${analysis.dims.slice(0, 6).join(' · ')}` : ''),
+          // KI-abgelesene Masse gehoeren NICHT in den Kundentext: sie durchlaufen
+          // keine Pruefung (die Vision-Verifikation klammert Masse ausdruecklich
+          // aus) und widersprechen dem Zahlenverbot im Bild. Nur die gepflegten
+          // DB-Flaechen bleiben.
         ].filter(Boolean)
         // Kundentext: keine KI-Gedankenstriche (Svens Regel).
         const note = noteParts.join(' · ').replace(/\.\s·/g, ' ·').replace(/[–—]/g, '-')
 
-        // deck_assets aktualisieren: unit_floorplans (liest generate-deck) + Notes + Status.
+        // ── Freigabe-Gate: NUR ein verifizierter Plan wird zur Deck-Quelle ──────
+        // Bis hierher landete das Ergebnis IMMER in unit_floorplans — der Flag
+        // `verified` wurde nur protokolliert. Der einzige echte Lauf (BAIA 13) war
+        // verified=false mit 11 Geometriefehlern (verschobene Veranda, um 90 Grad
+        // gedrehte Treppe, falsche Tuerschwenks) und stand trotzdem als DER
+        // Grundriss der Wohnung im Deck-Pfad. Ein abgelehnter Plan bleibt jetzt im
+        // Review-Fach: sichtbar in hp_floorplans, aber nicht im Deck.
         const { data: fresh } = await sb.from('crm_projects').select('deck_assets').eq('id', body.project_id).maybeSingle()
         const daF = ((fresh as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
-        const ufp = (daF.unit_floorplans ?? {}) as Record<string, string>
-        ufp[body.unit_number!] = url
-        const ufn = (daF.unit_floorplan_notes ?? {}) as Record<string, string>
-        ufn[body.unit_number!] = note
         const hp = (daF.hp_floorplans ?? {}) as Record<string, unknown>
-        hp[unitKey] = { status: 'done', unit: body.unit_number, url, source: srcUrl, verified, issues, note, at: new Date().toISOString() }
-        await sb.from('crm_projects').update({ deck_assets: { ...daF, unit_floorplans: ufp, unit_floorplan_notes: ufn, hp_floorplans: hp } }).eq('id', body.project_id)
-        if (unit?.id) await sb.from('crm_project_units').update({ floorplan_url: url }).eq('id', unit.id)
+        hp[unitKey] = {
+          status: verified ? 'done' : 'review',
+          unit: body.unit_number, url, source: srcUrl, source_file_id: srcUrl,
+          verified, issues, note,
+          at: new Date().toISOString(),
+          verified_at: verified ? new Date().toISOString() : null,
+        }
+        const patch: Record<string, unknown> = { ...daF, hp_floorplans: hp }
+        if (verified) {
+          // Schluessel KANONISCH ablegen (unitKey), nicht roh — sonst entstehen
+          // Dubletten wie 'C-202' und 'c202', von denen die letzte gewinnt.
+          const ufp = (daF.unit_floorplans ?? {}) as Record<string, string>
+          ufp[unitKey] = url
+          const ufn = (daF.unit_floorplan_notes ?? {}) as Record<string, string>
+          ufn[unitKey] = note
+          patch.unit_floorplans = ufp
+          patch.unit_floorplan_notes = ufn
+        }
+        await sb.from('crm_projects').update({ deck_assets: patch }).eq('id', body.project_id)
+        // crm_project_units.floorplan_url bleibt dem ORIGINAL-Bautraegerplan
+        // vorbehalten (dort schreibt prepare-project-assets hinein). Wuerde das
+        // KI-Bild ihn ueberschreiben, koennte der naechtliche Drive-Abgleich der
+        // Wohnung nie wieder den echten Plan zuordnen — er ueberspringt jede
+        // Wohnung, deren floorplan_url schon gefuellt ist.
+        if (unit?.id && verified) await sb.from('crm_project_units').update({ hp_floorplan_url: url }).eq('id', unit.id)
         console.log(`[hp-floorplan] ${projName} ${body.unit_number}: ok (verified=${verified}${issues.length ? `, issues: ${issues.join('; ').slice(0, 200)}` : ''})`)
         return { url, verified, issues, note, source: srcUrl }
       } catch (e) {

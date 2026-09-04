@@ -69,20 +69,15 @@ async function ensureAffiliate(sb: SupabaseClient, row: ReviewRow): Promise<stri
       const { data } = await sb.from('leads').select('email, phone, whatsapp').eq('id', row.lead_id).maybeSingle()
       lead = data as typeof lead
     }
-    let aff: { id: string; code: string } | null = null
-    if (row.lead_id) {
-      const { data } = await sb.from('affiliates').select('id, code').eq('lead_id', row.lead_id).maybeSingle()
-      aff = data as typeof aff
-    }
-    if (!aff) {
-      const { data, error } = await sb.from('affiliates').insert({
-        lead_id: row.lead_id, name: row.recipient_name,
-        email: lead?.email ?? null, whatsapp: lead?.whatsapp ?? lead?.phone ?? null,
-        source: 'review',
-      }).select('id, code').single()
-      if (error) { console.warn('[review-api] Affiliate-Anlage fehlgeschlagen:', error.message); return null }
-      aff = data as { id: string; code: string }
-    }
+    // ensure_affiliate legt an ODER gibt den vorhandenen Tippgeber zurueck; der
+    // Code bleibt dabei immer derselbe, damit bereits verschickte Links leben.
+    const { data: ensured, error: ensErr } = await sb.rpc('ensure_affiliate', {
+      p_lead_id: row.lead_id, p_subscriber_id: null, p_name: row.recipient_name,
+      p_email: lead?.email ?? null, p_whatsapp: lead?.whatsapp ?? lead?.phone ?? null,
+      p_source: 'review',
+    })
+    const aff = ensured as { id: string; code: string } | null
+    if (ensErr || !aff) { console.warn('[review-api] Affiliate-Anlage fehlgeschlagen:', ensErr?.message); return null }
     await sb.from('review_requests').update({ affiliate_id: aff.id }).eq('id', row.id)
 
     const url = `${PORTAL}/termin?src=empfehlung&ref=${aff.code}`

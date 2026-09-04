@@ -95,8 +95,22 @@ async function driveBytes(token: string, fileId: string, mimeType = ''): Promise
   if (!res.ok) throw new Error(`Download ${res.status}`)
   return new Uint8Array(await res.arrayBuffer())
 }
+// Endung IMMER aus dem MIME-Typ ableiten, wenn der Drive-Name keine hat.
+// Drive-Dateien heissen oft "BLOCK A Floor plan" ohne Endung — daraus wurde bisher
+// ".blockafloorplan". Folge: hp-floorplan erkannte das PDF nicht (es prueft auf
+// /\.pdf$/) und der Deck-Renderer haelt es fuer ein Bild.
+const MIME_TO_EXT: Record<string, string> = {
+  'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png',
+  'image/webp': 'webp', 'image/gif': 'gif', 'image/svg+xml': 'svg', 'image/avif': 'avif',
+  'video/mp4': 'mp4', 'video/quicktime': 'mov', 'video/webm': 'webm',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+}
+const BEKANNTE_EXT = new Set(Object.values(MIME_TO_EXT).concat(['jpeg', 'tif', 'tiff', 'heic', 'doc', 'docx', 'xls', 'csv']))
+
 async function uploadBytes(supabase: ReturnType<typeof createClient>, bytes: Uint8Array, mime: string, prefix: string, name: string, bucket = 'deck-assets'): Promise<string> {
-  const ext  = (name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin'
+  const roh = (name.split('.').length > 1 ? name.split('.').pop()! : '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const ext = (roh && BEKANNTE_EXT.has(roh)) ? roh
+            : (MIME_TO_EXT[(mime || '').split(';')[0].trim().toLowerCase()] || roh || 'bin')
   const path = `${prefix}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
   const { error } = await supabase.storage.from(bucket).upload(path, bytes, { contentType: mime, upsert: false })
   if (error) throw new Error(error.message)

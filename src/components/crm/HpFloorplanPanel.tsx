@@ -63,6 +63,43 @@ export default function HpFloorplanPanel({ projectId }: { projectId: string }) {
     }
   }
 
+  // ── Freigabe ───────────────────────────────────────────────────────────────
+  // Ein Plan, den die Vision-Verifikation beanstandet hat, landet im Review-Fach
+  // und kommt NICHT automatisch ins Deck. Sven sieht ihn an und entscheidet:
+  // Freigabe hebt ihn in die Deck-Quelle, Verwerfen loescht ihn.
+  const freigeben = async (u: UnitRow, frei: boolean) => {
+    const key = normU(u.unit_number)
+    setBusy(b => ({ ...b, [u.id]: true }))
+    setMsg(null)
+    try {
+      const { data } = await supabase.from('crm_projects').select('deck_assets').eq('id', projectId).maybeSingle()
+      const cur = ((data as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+      const hp = { ...(cur.hp_floorplans ?? {}) } as Record<string, { url?: string; note?: string; status?: string }>
+      const eintrag = hp[key]
+      if (!eintrag?.url) { setMsg(t('crm.project.hpfp.noPlan', 'Kein Plan zum Freigeben vorhanden.')); return }
+      const ufp = { ...(cur.unit_floorplans ?? {}) } as Record<string, string>
+      const ufn = { ...(cur.unit_floorplan_notes ?? {}) } as Record<string, string>
+      if (frei) {
+        ufp[key] = eintrag.url
+        if (eintrag.note) ufn[key] = eintrag.note
+        hp[key] = { ...eintrag, status: 'done' }
+      } else {
+        delete ufp[key]; delete ufn[key]
+        hp[key] = { ...eintrag, status: 'verworfen' }
+      }
+      await supabase.from('crm_projects')
+        .update({ deck_assets: { ...cur, unit_floorplans: ufp, unit_floorplan_notes: ufn, hp_floorplans: hp } })
+        .eq('id', projectId)
+      await supabase.from('crm_project_units').update({ hp_floorplan_url: frei ? eintrag.url : null }).eq('id', u.id)
+      setMsg(frei
+        ? `${u.unit_number}: ${t('crm.project.hpfp.released', 'freigegeben — kommt in neue Decks.')}`
+        : `${u.unit_number}: ${t('crm.project.hpfp.discarded', 'verworfen.')}`)
+      await load()
+    } finally {
+      setBusy(b => ({ ...b, [u.id]: false }))
+    }
+  }
+
   if (!units.length) return null
   const fpMap: Record<string, string> = {}
   for (const [k, v] of Object.entries(da.unit_floorplans ?? {})) fpMap[normU(k)] = v
@@ -87,20 +124,39 @@ export default function HpFloorplanPanel({ projectId }: { projectId: string }) {
               <span className="flex-1 text-xs text-gray-500 truncate">
                 {running && <span className="text-orange-600">⏳ {t('crm.project.hpfp.running', 'wird gezeichnet…')}</span>}
                 {!running && st?.status === 'error' && <span className="text-red-600" title={st.error}>⚠ {t('crm.project.hpfp.error', 'Fehler')}: {st.error?.slice(0, 80)}</span>}
-                {!running && st?.status !== 'error' && existing && (
+                {!running && st?.status === 'review' && (
+                  <a href={st.url} target="_blank" rel="noopener noreferrer" className="text-orange-700 hover:underline"
+                    title={(st.issues ?? []).join('\n')}>
+                    ⚠ {t('crm.project.hpfp.review', 'geprüft — {{n}} Abweichung(en), bitte ansehen', { n: (st.issues ?? []).length })} ↗
+                  </a>
+                )}
+                {!running && st?.status !== 'error' && st?.status !== 'review' && existing && (
                   <a href={existing} target="_blank" rel="noopener noreferrer" className="text-green-700 hover:underline">
-                    ✓ {t('crm.project.hpfp.done', 'Grundriss vorhanden')}{st?.verified === false ? ` · ${t('crm.project.hpfp.unverified', 'nicht verifiziert - bitte ansehen')}` : ''} ↗
+                    ✓ {t('crm.project.hpfp.done', 'Grundriss vorhanden')} ↗
                   </a>
                 )}
                 {!running && !st && !existing && <span>{t('crm.project.hpfp.missing', 'kein Grundriss hinterlegt')}</span>}
               </span>
+              {st?.status === 'review' && (
+                <>
+                  <button type="button" onClick={() => void freigeben(u, true)} disabled={busy[u.id]}
+                    title={t('crm.project.hpfp.releaseTitle', 'Plan ist in Ordnung — ab in die Decks')}
+                    className="px-2.5 py-1 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-40 whitespace-nowrap">
+                    {t('crm.project.hpfp.release', 'Freigeben')}
+                  </button>
+                  <button type="button" onClick={() => void freigeben(u, false)} disabled={busy[u.id]}
+                    className="px-2 py-1 rounded-lg text-xs font-medium border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40 whitespace-nowrap">
+                    {t('crm.project.hpfp.discard', 'Verwerfen')}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => void start(u)}
                 disabled={running || busy[u.id]}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium border border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
               >
-                {existing ? t('crm.project.hpfp.redo', 'Neu zeichnen') : t('crm.project.hpfp.create', 'Erzeugen')}
+                {existing || st ? t('crm.project.hpfp.redo', 'Neu zeichnen') : t('crm.project.hpfp.create', 'Erzeugen')}
               </button>
             </div>
           )

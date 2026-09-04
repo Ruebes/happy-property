@@ -356,10 +356,23 @@ export default function Strategie() {
           <div style={{ fontSize: 12.5, color: '#666', lineHeight: 1.8 }}>
             <b style={{ color: DARK }}>{t('strategie.assumptionsTitle', 'Annahmen')}:</b>{' '}
             {t('strategie.periodNote', 'Betrachtungszeitraum: 10 Jahre ab der Übergabe der ersten Wohnung (bis {{to}}).', { to: agg.lastYear })}{' '}
-            {t('strategie.assumptions', 'Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre, Steuersitz Deutschland ({{d}} % Grenzsteuersatz). Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt.', {
+            {t('strategie.assumptions2', 'Wertsteigerung {{g}} % p.a., Mietsteigerung {{r}} % p.a., Finanzierung als Annuitätendarlehen zu {{i}} % auf {{y}} Jahre. Bei Kurzzeitvermietung ist die MwSt-Erstattung nach 24 Monaten berücksichtigt.', {
               g: String(params.growth).replace('.', ','), r: String(params.rentGrowth).replace('.', ','),
-              i: String(params.interest).replace('.', ','), y: params.termYears, d: params.deTaxPct,
-            })}
+              i: String(params.interest).replace('.', ','), y: params.termYears,
+            })}{' '}
+            {/* Steuerliche Struktur benennen - vorher stand hier fix „Steuersitz
+                Deutschland", auch wenn in Zypern versteuert wurde. */}
+            {params.holder === 'firma'
+              ? t('strategie.taxFirma', 'Gehalten über eine zyprische Gesellschaft: {{k}} % Körperschaftsteuer auf den Gewinn nach Verwaltung, Zinsen und Abschreibung (3 % Gebäude, 10 % Einrichtung), Verluste 5 Jahre vortragbar. Auf die Ausschüttung sind {{d}} % berücksichtigt.', {
+                k: String(params.corpTaxPct).replace('.', ','), d: String(params.divTaxPct).replace('.', ','),
+              })
+              : params.res === 'cy'
+                ? t('strategie.taxCyPrivat', 'Privat gehalten, Steuersitz Zypern: 22.000 € steuerfrei, danach 20 bis 35 %, nach 20 % Pauschalabzug auf die Miete, 3 % Gebäude-Abschreibung, 10 % auf die Einrichtung und die Darlehenszinsen{{gesy}}.', {
+                  gesy: params.gesy ? t('strategie.taxCyGesy', '; zusätzlich 2,65 % Gesundheitsbeitrag (GESY)') : '',
+                })
+                : t('strategie.taxDePrivat', 'Privat gehalten, Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit {{d}} % Grenzsteuersatz nach und rechnet die zyprische Steuer an.', {
+                  d: String(params.deTaxPct).replace('.', ','),
+                })}
           </div>
         </div>
         <p style={{ fontSize: 11.5, color: '#999', lineHeight: 1.7, margin: 0 }}>

@@ -34,9 +34,18 @@ Mehrsprachig (DE primär, EN) via i18next. Läuft als PWA.
 | Dev-Server starten | `npm run dev` |
 | Production-Build (inkl. TS-Check) | `npm run build` → `tsc && vite build` |
 | Build lokal ansehen | `npm run preview` |
+| Edge Functions typprüfen | `npm run check:functions` |
+| Deck-Pipeline verifizieren | `npm run verify:deck` |
 
 `npm run build` macht **zuerst** `tsc` (TypeScript-Typecheck), **dann** `vite build`.
 Wenn `npm run build` grün ist, ist TypeScript sauber UND der Build deploybar.
+
+**Achtung:** `npm run build` prüft nur `src/`. Die Edge Functions unter
+`supabase/functions/` deckt `npm run check:functions` ab
+(`supabase/functions/tsconfig.shared.json`, Remote-Imports über
+`supabase/functions/_types/remote.d.ts` gestubbt). Vor jedem Deploy einer
+Deck-Function `npm run verify:deck` laufen lassen — das prüft zusätzlich die
+MwSt-Logik bit-genau gegen den Rechner und das Block-Vokabular gegen den Renderer.
 
 ## Projektstruktur
 
@@ -138,6 +147,29 @@ in `auth.tsx`/`supabase.ts` gehärtet.)
 laden (nicht direkt `React.lazy`). Der Wrapper lädt bei Chunk-Ladefehler einmalig
 automatisch neu (sessionStorage-Guard gegen Reload-Loop) + globaler
 `vite:preloadError`-Handler. So recovert die App selbst, statt zu hängen.
+
+### #3 — Toter Block-Typ verschwindet lautlos im Renderer
+**Symptom:** `generate-deck` setzte in jedes Deck mit Koordinaten einen Block
+`{ type: 'map' }`. Der Renderer kennt den Typ nicht → `default: return null`.
+Die „Karte fehlt"-Reparatur reparierte nichts, und niemand sah es.
+**Ursache:** Vier getrennte Wahrheiten über die erlaubten Blocktypen
+(emit_deck-Enum, `DeckBlock`-Union, `switch` in `Deck.tsx`, `BLOCK_ITEM` in
+refine-deck), die auseinanderliefen.
+**Regel:** Das Block-Vokabular steht NUR in
+`supabase/functions/_shared/deckBlocks.ts`. Typdatei, Renderer und beide
+Tool-Schemata leiten sich davon ab; `npm run verify:deck` hält sie deckungsgleich.
+Kartenfelder gehören an den `facts`-Block.
+
+### #4 — Feinschliff löschte die harten Zahlen
+**Symptom:** Nach einer Chat-Bearbeitung fehlten Preiszeilen, MwSt-Box,
+Grundriss-Note oder Karte im Deck.
+**Ursache:** `refine-deck` ersetzt einen Block VOLLSTÄNDIG, sein Schema kannte
+`priceLines`/`priceSummary`/`planNote`/`mapLat` aber gar nicht — das Modell konnte
+sie nicht zurückgeben.
+**Regel:** Deterministische Felder werden nach JEDER Bearbeitung aus
+`sales_decks.deck_context` neu gesetzt (`_shared/deckNormalize.ts`), und das
+Block-Schema kommt aus `_shared/deckBlocks.ts`. Preise rechnet ausschließlich
+`_shared/deckVat.ts` — nie die KI, nie eine zweite Implementierung.
 
 <!-- Weitere gelöste Bugs hier ergänzen, sobald sie auftreten:
 ### #3 — <Titel>

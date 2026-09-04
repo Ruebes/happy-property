@@ -1,4 +1,8 @@
-import { DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, type CalcParams, type CalcResult } from './rechner'
+import {
+  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit,
+  CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT,
+  type CalcParams, type CalcResult,
+} from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
 // Wird vom CRM-Simulator UND von der öffentlichen Kundenseite /strategie/:token
@@ -32,6 +36,18 @@ export interface SimUnit {
 export interface SimParams {
   ek: number; growth: number; interest: number; termYears: number
   rentGrowth: number; deTaxPct: number; bundle: boolean
+  // ── Besteuerung (Sven 4.9.26) ─────────────────────────────────────────────
+  // Gilt fuer den GANZEN Plan, nicht je Wohnung: wo der Kunde steuerlich sitzt
+  // und ob er privat oder ueber eine zyprische Ltd haelt. Vorher rechnete der
+  // Simulator immer „privat, Steuersitz Deutschland" - Zypern war gar nicht
+  // eingebbar.
+  res: 'de' | 'cy'          // Steuersitz des Kunden
+  cyBI: number              // vorhandenes zyprisches Einkommen (Progression)
+  holder: 'privat' | 'firma'
+  corpTaxPct: number        // Koerperschaftsteuer Zypern %
+  divPayoutPct: number      // Anteil des Gewinns, der ausgeschuettet wird %
+  divTaxPct: number         // Steuer beim Gesellschafter auf die Ausschuettung %
+  gesy: boolean             // GESY 2,65 % (nur privat + Steuersitz Zypern)
 }
 
 export interface UnitOutcome {
@@ -42,6 +58,10 @@ export interface UnitOutcome {
 export interface YearRow {
   year: number; rents: number; mgmt: number; interest: number; principal: number
   taxes: number; vat: number; cashflow: number; invest: number; debt: number; value: number
+  // Aufteilung der Steuerlast: bei privat = zyprische Steuer (inkl. GESY) und
+  // deutsche Steuer nach Anrechnung; bei Firma = Koerperschaftsteuer und Steuer
+  // auf die Ausschuettung. gesy ist in taxCY bereits enthalten.
+  taxCY: number; taxDE: number; gesy: number
   // Bauphase: bereits gezahlte Kaufraten von Wohnungen, die noch nicht übergeben
   // sind. Dieses Geld ist NICHT weg, sondern in der Immobilie gebunden - ohne
   // diese Position sähe es im Vermögensverlauf aus, als würde Kapital
@@ -72,7 +92,11 @@ interface LegacyParams { ek?: number; growth?: number; ltv?: number; interest?: 
 
 export function migrateConfig(cfg: StrategyConfig | null | undefined): { units: SimUnit[]; params: SimParams } {
   if (cfg?.unitsV2?.length) {
-    return { units: cfg.unitsV2, params: { ...DEFAULT_SIM_PARAMS, ...(cfg.paramsV2 ?? {}) } }
+    const saved = cfg.paramsV2 ?? {}
+    // Alte Szenarien kannten keinen Steuersitz - dort stand er (wenn ueberhaupt)
+    // in der Einzelberechnung der Wohnung. Den uebernehmen, sonst Deutschland.
+    const resFromUnits = cfg.unitsV2.some(u => u.calc?.res === 'cy') ? 'cy' : 'de'
+    return { units: cfg.unitsV2, params: { ...DEFAULT_SIM_PARAMS, res: resFromUnits, ...saved } }
   }
   const now = new Date()
   const baseYm = now.getFullYear() * 12 + now.getMonth()   // 0-basierter Monat
@@ -110,6 +134,14 @@ export function migrateConfig(cfg: StrategyConfig | null | undefined): { units: 
 
 export const DEFAULT_SIM_PARAMS: SimParams = {
   ek: 350000, growth: 5, interest: 4.1, termYears: 20, rentGrowth: 2, deTaxPct: 42, bundle: true,
+  res: 'de', cyBI: 0, holder: 'privat',
+  corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
+}
+
+// Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
+// Gesellschafter zahlt Abgeltungsteuer + Soli, der zyprische Non-Dom nur GESY.
+export function defaultDivTaxPct(res: 'de' | 'cy'): number {
+  return res === 'cy' ? CY_DIV_TAX_PCT : DE_DIV_TAX_PCT
 }
 
 export const ymOf = (y: number, m: number) => y * 12 + (m - 1)
@@ -150,7 +182,13 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     month: u.readyM, year: u.readyY, dealType: 'single',
     priceNet: u.priceNet, discountPct: 0,
     bedrooms: fromCalc.bedrooms ?? 2,
-    fin: u.fin ? 'yes' : 'no', letType: u.letType, mode: 'ann', res: fromCalc.res ?? 'de',
+    fin: u.fin ? 'yes' : 'no', letType: u.letType, mode: 'ann',
+    // Steuersitz und Halte-Struktur setzt IMMER die Strategie: sie gelten fuer
+    // den Kunden, nicht je Wohnung (die Einzelberechnung kann hier nicht
+    // gewinnen, sonst rechnete eine Wohnung DE und die naechste CY).
+    res: p.res, cyBI: p.cyBI, holder: p.holder,
+    corpTaxPct: p.corpTaxPct, divPayoutPct: p.divPayoutPct, divTaxPct: p.divTaxPct,
+    gesy: p.res === 'cy' && p.holder === 'privat' ? p.gesy : false,
     hotelConcept: hotel, season,
     mgmtPct: fromCalc.mgmtPct ?? defaultMgmtPct(u.letType, hotel),
     equity: ekForUnit,
@@ -200,7 +238,7 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   )
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0 }
     for (const o of outcomes) {
       const i = y - o.unit.readyY
       // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
@@ -213,6 +251,7 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
         row.rents += o.res.rents[i]; row.mgmt += o.res.mgmt[i]
         row.interest += o.res.intC[i]; row.principal += o.res.princC[i]
         row.taxes += o.res.taxU[i]; row.vat += o.res.vatA[i]; row.cashflow += o.res.cfA[i]
+        row.taxCY += o.res.taxCY[i]; row.taxDE += o.res.taxDE[i]; row.gesy += o.res.gesyA[i]
         row.debt += o.res.restL[i]; row.value += o.res.propV[i]
       } else if (i >= 10) {
         row.debt += o.res.restL[9]; row.value += o.res.propV[9]
@@ -275,6 +314,7 @@ export function roeMeaningful(o: UnitOutcome): boolean {
 
 export interface StrategyTotals {
   ekTotal: number; netWorth: number; rents: number; taxes: number; vat: number
+  taxCY: number; taxDE: number; gesy: number
   interest: number; cashflow: number; totalReturn: number; roe: number
   debtEnd: number          // offener Kredit am Ende des Zeitraums
   roe5: number; roe10: number   // Eigenkapital-Rendite nach 5 bzw. 10 Jahren
@@ -309,6 +349,7 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTota
   const debtEnd = last ? last.debt : 0
   return {
     ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
+    taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy),
     roe5: roeAfterYears(rows, ekTotal, 5), roe10: roeAfterYears(rows, ekTotal, 10),
   }
 }

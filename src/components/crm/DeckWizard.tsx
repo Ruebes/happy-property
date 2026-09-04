@@ -18,9 +18,9 @@ import { bookingUrl } from '../../lib/bookingLink'
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null; language?: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; latitude: number | null; longitude: number | null; completion_date: string | null }
+interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null; latitude: number | null; longitude: number | null; completion_date: string | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; vat_rate: number | null; floor: number | null }
-interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; lat: number | null; lng: number | null }
+interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; furnitureByBedrooms: Record<string, number> | null; lat: number | null; lng: number | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -76,7 +76,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   // Projekt-Fertigstellungsdatum, Kauf = heute.
   const basketToSim = (): SimUnit[] => basket.map(b => {
     const priceNet = b.unit.price_net ?? 0
-    const furnNet = b.furnitureIncluded ? 0 : (b.furnitureCost ?? 0)
+    const furnNet = furnModeOf(b) === 'optional' ? furnNetOf(b) : 0
     const gross = Math.round((priceNet + furnNet) * 1.19)
     const proj = projects.find(p => p.id === b.projectId)
     const nowD = new Date()
@@ -114,7 +114,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   })
 
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, latitude, longitude, completion_date').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -157,15 +157,40 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const addToBasket = () => {
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id))
-      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included, lat: project.latitude, lng: project.longitude }))
+      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included, furnitureByBedrooms: project.calc_defaults?.furniture_by_bedrooms ?? null, lat: project.latitude, lng: project.longitude }))
     setBasket(b => [...b, ...adds])
     setSel(new Set())
   }
   const removeFromBasket = (unitId: string) => setBasket(b => b.filter(x => x.unit.id !== unitId))
 
+  // ── Einrichtungspaket ──────────────────────────────────────────────────────
+  // Vorbelegung aus den Stammdaten, in derselben Reihenfolge wie
+  // furnitureNetFromProject in _shared/deckContext.ts — sonst zeigt das Deck eine
+  // andere Zahl als die Berechnung. Kette: Staffel je Zimmerzahl -> projektweiter
+  // Standard -> Differenz der zweiten Preisspalte des Bautraegers -> 0.
+  const furnDefaultFor = (b: BasketItem): number => {
+    const bed = b.unit.bedrooms
+    if (b.furnitureByBedrooms && bed != null && b.furnitureByBedrooms[String(bed)] != null) {
+      return Number(b.furnitureByBedrooms[String(bed)]) || 0
+    }
+    const std = Number(b.furnitureCost) || 0
+    if (std > 0) return std
+    const n = b.unit.price_net, f = b.unit.price_net_furnished
+    if (n != null && f != null && f > n) return f - n
+    return 0
+  }
+  // Der eingestellte Moebelpreis dieser Wohnung (Svens Eingabe schlaegt die Stammdaten).
+  const furnNetOf = (b: BasketItem): number => perUnit[b.unit.id]?.furnCost ?? furnDefaultFor(b)
+  // Standardmodus: enthaelt der Preis die Moebel laut Stammdaten -> "Mit".
+  // Sonst "Optional", SOBALD ein Moebelpreis hinterlegt ist — nur ohne jeden
+  // hinterlegten Preis bleibt "Ohne". Vorher war "Ohne" der Standard, dadurch fiel
+  // das Einrichtungspaket bei Luma-Projekten still aus dem Deck (Sven 3.9.).
+  const furnModeOf = (b: BasketItem): 'none' | 'included' | 'optional' =>
+    perUnit[b.unit.id]?.furnMode ?? (b.furnitureIncluded ? 'included' : (furnDefaultFor(b) > 0 ? 'optional' : 'none'))
+
   // EIN Deck pro PROJEKT erzeugen — mit allen gewählten Wohnungen des Projekts (je
   // eigener unit-Block + Preis). Hintergrund + auf neues Token pollen (per Projekt).
-  const genProject = async (items: BasketItem[]): Promise<{ token: string; label: string; items: BasketItem[] } | null> => {
+  const genProject = async (items: BasketItem[]): Promise<{ token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null } | null> => {
     const first = items[0]
     const a = first.assets
     if (!a?.facts) throw new Error(`${first.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
@@ -179,23 +204,25 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // Moebel-Modus (Sven waehlt je Wohnung): bei "mit Moebeln" gilt die ZWEITE
     // Preisspalte des Bautraegers (price_net_furnished, z.B. ARCA 101: 400.800 ohne /
     // 417.800 mit) - nicht Grundpreis plus geschaetztes Moebelpaket.
-    const modeOf = (it: BasketItem): 'none' | 'included' | 'optional' =>
-      perUnit[it.unit.id]?.furnMode ?? (it.furnitureIncluded ? 'included' : 'none')
+    const modeOf = furnModeOf
     const priceOf = (it: BasketItem) =>
       modeOf(it) === 'included' ? (it.unit.price_net_furnished ?? it.unit.price_net) : it.unit.price_net
-    const units = items.map(it => ({ unit_number: it.unit.unit_number, price_net: priceOf(it) }))
+    // Moebelpreis je Wohnung ausdruecklich mitgeben — sonst raet der Deck-Kontext
+    // aus den Projekt-Stammdaten und Svens Eingabe im Wizard bliebe wirkungslos.
+    const units = items.map(it => ({
+      unit_number: it.unit.unit_number,
+      price_net: priceOf(it),
+      furniture_net: modeOf(it) === 'optional' ? furnNetOf(it) : 0,
+    }))
     // Ein Deck traegt EINEN Modus - der der ersten Wohnung.
     const furnitureMode = modeOf(first)
     const label = items.length > 1 ? `${first.projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})` : `${first.projectName} · ${first.unit.unit_number}`
-    // letztes Deck dieses Projekts für den Lead merken → auf NEUES Token pollen
-    const { data: prev } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
-    const prevTok = (prev as { token?: string } | null)?.token ?? null
     // Übergabe-Datum am Projekt sichern, bevor das Deck generiert wird — generate-deck
     // liest die geplante Fertigstellung aus crm_projects.completion_date.
     if (handoverDate && handoverDate !== (project?.completion_date ?? '').slice(0, 10)) {
       await supabase.from('crm_projects').update({ completion_date: handoverDate }).eq('id', first.projectId)
     }
-    const { error } = await supabase.functions.invoke('generate-deck', { body: {
+    const { data: started, error } = await supabase.functions.invoke('generate-deck', { body: {
       background: true, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(), angle, briefing,
       facts: a.facts + unitFacts, images, lead_id: lead.id, project_id: first.projectId, furniture_mode: furnitureMode,
       // Kundensprache: englischsprachige Kunden bekommen das Deck auf Englisch.
@@ -204,13 +231,24 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       month_label: new Date().toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }),
     } })
     if (error) throw new Error(error.message)
-    for (let i = 0; i < 36; i++) {   // bis ~3 Min
+    // Auf den JOB warten, nicht darauf, dass zufällig ein neuer Token auftaucht.
+    // Das alte Polling konnte Fehlschlag und Zeitüberschreitung nicht unterscheiden
+    // und griff bei zwei parallelen Läufen für denselben Lead das falsche Deck.
+    const jobId = (started as { job_id?: string } | null)?.job_id ?? null
+    if (!jobId) throw new Error(t('crm.wizard.noJob', 'Die Deck-Erstellung wurde nicht gestartet.'))
+    for (let i = 0; i < 60; i++) {   // bis ~5 Min
       await sleep(5000)
-      const { data: row } = await supabase.from('sales_decks').select('token').eq('lead_id', lead.id).eq('project_id', first.projectId).order('created_at', { ascending: false }).limit(1).maybeSingle()
-      const tok = (row as { token?: string } | null)?.token ?? null
-      if (tok && tok !== prevTok) return { token: tok, label, items }
+      const { data: job } = await supabase.from('deck_generation_jobs')
+        .select('status, quality_status, deck_token, error, progress').eq('id', jobId).maybeSingle()
+      const j = job as { status: string; quality_status: string | null; deck_token: string | null; error: string | null; progress: string | null } | null
+      if (!j) continue
+      if (j.progress) setProgress(`${first.projectName}: ${j.progress}`)
+      if (j.status === 'failed') throw new Error(`${first.projectName}: ${j.error ?? t('crm.wizard.genericFail', 'Deck-Erstellung fehlgeschlagen')}`)
+      if ((j.status === 'ready' || j.status === 'review_required') && j.deck_token) {
+        return { token: j.deck_token, label, items, quality: (j.quality_status as 'green' | 'red' | null) ?? null }
+      }
     }
-    return null
+    throw new Error(`${first.projectName}: ${t('crm.wizard.timeout', 'Zeitüberschreitung — die Erstellung läuft noch. Im Postausgang nachsehen.')}`)
   }
 
   const generateAll = async (background = false) => {
@@ -243,8 +281,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           // Einrichtung: eigener Wert der Wohnung, sonst der des PROJEKTS, sonst 0.
           // Nie der globale Wizard-Wert - der brachte Preise in Angebote, die im
           // Projekt nie hinterlegt waren (Sven 18.8.).
-          furnCost:        pu.furnCost ?? it.furnitureCost ?? 0,
-          furnFree:        pu.furnFree ?? it.furnitureIncluded ?? calcParams.furnFree,
+          furnCost:        furnNetOf(it),
+          furnFree:        pu.furnFree ?? furnModeOf(it) === 'included',
           // Hotelkonzept nur bei Kurzzeit dieser Wohnung
           hotelConcept:    (pu.letType ?? calcParams.letType) === 'short' ? (pu.hotelConcept ?? calcParams.hotelConcept) : false,
           // Verwaltung: eigener Wert der Wohnung, sonst der globale - ABER nur
@@ -302,7 +340,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         if (!background) onClose()
         return
       }
-      const links: { token: string; label: string; items: BasketItem[] }[] = []
+      const links: { token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null }[] = []
       for (let i = 0; i < groups.length; i++) {
         setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${groups.length} — ${groups[i][0].projectName}…`)
         const r = await genProject(groups[i])
@@ -421,7 +459,12 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           }
         } catch { if (attempt === 0) await sleep(2500) }
       }
-      onDone(`✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')}`)
+      // Prüfbedürftige Decks sofort benennen — der Sinn des Quality-Gates ist,
+      // dass Sven nur noch die roten anschauen muss.
+      const rot = links.filter(l => l.quality === 'red')
+      onDone(rot.length
+        ? `⚠️ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${rot.length} ${t('crm.wizard.doneRed', 'davon prüfen:')} ${rot.map(l => l.label).join(', ')}`
+        : `✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${t('crm.wizard.doneGreen', 'Alle automatisch validiert.')}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('deckWizard.genericError', 'Fehler')
       // Im Hintergrund-Modus ist das Fenster schon zu → Fehler als Popup melden statt inline.
@@ -555,17 +598,51 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             </div>
           )}
 
-          {/* Paket */}
+          {/* Paket — inkl. Einrichtungspaket je Wohnung (bestimmt den Deck-Preis) */}
           {basket.length > 0 && (
             <div className="bg-gray-50 rounded-xl p-3">
               <p className="text-xs font-semibold text-gray-500 mb-2">{t('crm.wizard.basket', 'Paket')} ({basket.length})</p>
-              <div className="space-y-1">
-                {basket.map(b => (
-                  <div key={b.unit.id} className="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-1.5">
-                    <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(unitNet(b.unit))} netto</span>
-                    <button onClick={() => removeFromBasket(b.unit.id)} className="text-gray-400 hover:text-red-500">✕</button>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                {basket.map(b => {
+                  const fm = furnModeOf(b)
+                  const fn = furnNetOf(b)
+                  const basis = fm === 'included' ? (b.unit.price_net_furnished ?? b.unit.price_net) : b.unit.price_net
+                  const gesamtNetto = (basis ?? 0) + (fm === 'optional' ? fn : 0)
+                  return (
+                    <div key={b.unit.id} className="bg-white rounded-lg px-3 py-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span>{b.projectName} · <strong>{b.unit.unit_number}</strong> · {eur(unitNet(b.unit))} netto</span>
+                        <button onClick={() => removeFromBasket(b.unit.id)} className="text-gray-400 hover:text-red-500">✕</button>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        <span className="text-xs font-medium text-gray-500">{t('crm.wizard.furnPackage', 'Einrichtungspaket')}</span>
+                        <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                          {([['none', t('crm.wizard.furnNone', 'Ohne')],
+                             ['optional', t('crm.wizard.furnOpt', 'Separat')],
+                             ['included', t('crm.wizard.furnIncl', 'Im Preis')]] as [string, string][]).map(([val, labl]) => (
+                            <button key={val} type="button" onClick={() => setPu(b.unit.id, { furnMode: val as 'none' | 'included' | 'optional' })}
+                              className={`px-2.5 py-1 text-[11px] font-medium ${fm === val ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>{labl}</button>
+                          ))}
+                        </div>
+                        {fm === 'optional' && (
+                          <div className="w-40">
+                            <NumberStepper value={fn} onChange={v => setPu(b.unit.id, { furnCost: v })} step={500} suffix="€" className="w-full" />
+                          </div>
+                        )}
+                      </div>
+                      {/* Welche Zahl im Deck landet — sichtbar, damit nie unklar ist, woher sie kommt. */}
+                      <p className="text-[11px] text-gray-500 mt-1.5">
+                        {fm === 'optional'
+                          ? t('crm.wizard.furnSumOpt', 'Deck: {{p}} netto + {{f}} Einrichtung separat ausgewiesen = {{g}} netto', { p: eur(basis), f: eur(fn), g: eur(gesamtNetto) })
+                          : fm === 'included'
+                            ? (b.unit.price_net_furnished != null
+                                ? t('crm.wizard.furnSumIncl', 'Deck: {{p}} netto (Preisspalte des Bauträgers inkl. Möbel)', { p: eur(basis) })
+                                : t('crm.wizard.furnSumMissing', '⚠ Keine Preisspalte mit Möbeln hinterlegt — es gilt {{p}} netto ohne Möbel.', { p: eur(basis) }))
+                            : t('crm.wizard.furnSumNone', 'Deck: {{p}} netto — Möbel kommen im Deck nicht vor', { p: eur(basis) })}
+                      </p>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}
@@ -676,7 +753,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                       const ff  = pu.furnFree ?? b.furnitureIncluded ?? calcParams.furnFree
                       // Standard: enthaelt der Projektpreis die Moebel laut Stammdaten,
                       // gilt "mit" - sonst "ohne". Sven kann je Wohnung umschalten.
-                      const fm: 'none' | 'included' | 'optional' = pu.furnMode ?? (b.furnitureIncluded ? 'included' : 'none')
+                      const fm: 'none' | 'included' | 'optional' = furnModeOf(b)
                       const hc  = pu.hotelConcept ?? calcParams.hotelConcept
                       const let_ = pu.letType ?? calcParams.letType
                       const fin_ = pu.fin ?? calcParams.fin
@@ -729,7 +806,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                             {miniInput(t('crm.wizard.wertsteig', 'Wertsteig.'), String(pu.appreciationPct ?? calcParams.appreciationPct ?? ''), v => setPu(b.unit.id, { appreciationPct: v }))}
                             {fin_ === 'yes' && calcParams.mode === 'tilg' && miniInput(t('crm.wizard.amort', 'Tilgung'), String(pu.amortPct ?? calcParams.amortPct ?? ''), v => setPu(b.unit.id, { amortPct: v }))}
                             {calcParams.res === 'de' && miniInput(t('crm.wizard.deTax', 'DE-Steuer'), String(pu.deTaxPct ?? calcParams.deTaxPct ?? ''), v => setPu(b.unit.id, { deTaxPct: v }), '1')}
-                            {miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(pu.furnCost ?? b.furnitureCost ?? ''), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
+                            {fm === 'optional' && miniInput(t('crm.wizard.einrichtung', 'Einrichtung'), String(furnNetOf(b)), v => setPu(b.unit.id, { furnCost: v }), '500', '€')}
                             {/* Verwaltung je Wohnung: Kurzzeit kostet ein Vielfaches von Langzeit */}
                             {miniInput(t('crm.wizard.mgmt', 'Verwaltung'),
                               String(pu.mgmtPct ?? (let_ === calcParams.letType ? calcParams.mgmtPct : defaultMgmtPct(let_, hc)) ?? ''),

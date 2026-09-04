@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import DeckChat from './DeckChat'
+import DeckQualityPanel from './DeckQualityPanel'
 
 // ── Gesendete Angebote ───────────────────────────────────────────────────────
 // Dauerhafte Historie pro Kunde: welche Decks, Berechnungen/Vergleiche und
@@ -14,7 +15,9 @@ import DeckChat from './DeckChat'
 
 interface OutboxRow { id: string; subject: string | null; status: string; created_at: string | null; deck_tokens: string[] | null; email_sent_at: string | null; whatsapp_sent_at: string | null }
 interface CalcRow { id: string; token: string; title: string | null; created_at: string | null; approved_at: string | null }
-interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null }
+const LEER = { revision: 0, refining: false, refine_error: null, approved_at: null, quality_status: null, quality_findings: 0 } as const
+
+interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
 
 // Basisfarbe (unbearbeitet) + Zyklus: nach jeder fertigen Bearbeitung die nächste
 // Farbe → Sven sieht auf einen Blick, dass eine neue Version fertig ist.
@@ -31,17 +34,23 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]     = useState<string | null>(null)
   const [chat, setChat]     = useState<{ token: string; label: string } | null>(null)
+  const [quality, setQuality] = useState<{ token: string; label: string } | null>(null)
 
   const allTokens = useMemo(() => Array.from(new Set(outbox.flatMap(o => o.deck_tokens ?? []))), [outbox])
 
   const fetchDeckMeta = useCallback(async (tokens: string[]) => {
     if (!tokens.length) return
     const { data } = await supabase.from('sales_decks')
-      .select('token, revision, refining, refine_error, approved_at').in('token', tokens)
+      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report').in('token', tokens)
     setDeckMeta(prev => {
       const next = { ...prev }
-      for (const r of (data ?? []) as Array<{ token: string } & DeckMeta>) {
-        next[r.token] = { revision: r.revision ?? 0, refining: !!r.refining, refine_error: r.refine_error ?? null, approved_at: r.approved_at ?? null }
+      for (const r of (data ?? []) as Array<{ token: string; quality_report?: { findings?: unknown[] } | null } & DeckMeta>) {
+        next[r.token] = {
+          revision: r.revision ?? 0, refining: !!r.refining, refine_error: r.refine_error ?? null,
+          approved_at: r.approved_at ?? null,
+          quality_status: r.quality_status ?? null,
+          quality_findings: Array.isArray(r.quality_report?.findings) ? r.quality_report!.findings!.length : 0,
+        }
       }
       return next
     })
@@ -77,13 +86,13 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
 
   // Vom Deck-Chat: Hintergrund-Bearbeitung gestartet → sofort als „läuft" markieren.
   const onRefineStarted = (token: string) => {
-    setDeckMeta(prev => ({ ...prev, [token]: { revision: prev[token]?.revision ?? 0, refine_error: null, approved_at: prev[token]?.approved_at ?? null, refining: true } }))
+    setDeckMeta(prev => ({ ...prev, [token]: { ...LEER, ...prev[token], refine_error: null, refining: true } }))
   }
 
   const toggleDeckApprove = async (token: string) => {
     const cur = deckMeta[token]?.approved_at
     const val = cur ? null : new Date().toISOString()
-    setDeckMeta(prev => ({ ...prev, [token]: { revision: prev[token]?.revision ?? 0, refining: prev[token]?.refining ?? false, refine_error: prev[token]?.refine_error ?? null, approved_at: val } }))
+    setDeckMeta(prev => ({ ...prev, [token]: { ...LEER, ...prev[token], approved_at: val } }))
     await supabase.from('sales_decks').update({ approved_at: val }).eq('token', token)
   }
   const toggleCalcApprove = async (c: CalcRow) => {
@@ -146,6 +155,15 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
                       <button onClick={() => setChat({ token: tok, label: `Deck ${i + 1}` })} title={t('leadAngebote.editViaChatTitle', 'Deck per Chat anpassen (läuft im Hintergrund)')}
                         className="text-[11px] px-1.5 py-0.5 bg-gray-700 text-white hover:bg-orange-500">✏️</button>
                     )}
+                    {m?.quality_status && (
+                      <button onClick={() => setQuality({ token: tok, label: `Deck ${i + 1}` })}
+                        title={m.quality_status === 'red'
+                          ? t('leadAngebote.qualityRedTitle', 'Prüfen: {{n}} Befund(e) aus der automatischen Prüfung', { n: m.quality_findings })
+                          : t('leadAngebote.qualityGreenTitle', 'Automatisch validiert — Bericht ansehen')}
+                        className={`text-[11px] px-1.5 py-0.5 ${m.quality_status === 'red' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}>
+                        {m.quality_status === 'red' ? `⚠ ${m.quality_findings}` : '✓'}
+                      </button>
+                    )}
                     {err && !refining && (
                       <span className="px-1 py-0.5 bg-red-100 text-red-600 text-[11px]" title={t('leadAngebote.refineFailedTitle', 'Bearbeitung fehlgeschlagen: {{err}}', { err })}>⚠</span>
                     )}
@@ -177,8 +195,9 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
           )
         })}
       </div>
-      <p className="text-[11px] text-gray-400 mt-2">{t('leadAngebote.footerHint', 'Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ✓ = als fertig bestätigen.')}</p>
+      <p className="text-[11px] text-gray-400 mt-2">{t('leadAngebote.footerHint', 'Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ⚠/✓ = Bericht der automatischen Prüfung. ✓ (grün) = als fertig bestätigen.')}</p>
       {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}
+      {quality && <DeckQualityPanel token={quality.token} label={quality.label} onClose={() => setQuality(null)} />}
     </div>
   )
 }

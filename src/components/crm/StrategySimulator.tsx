@@ -5,7 +5,7 @@ import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
   allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf, rentFromSeason,
-  DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
+  defaultDivTaxPct, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
 } from '../../lib/strategy'
 import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
 
@@ -244,7 +244,6 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 ['interest', t('crm.sim.interest2', 'Darlehenszins % p.a.'), 0.1],
                 ['termYears', t('crm.sim.term', 'Laufzeit Annuität (J.)'), 1],
                 ['rentGrowth', t('crm.sim.rentGrowth', 'Mietsteigerung % p.a.'), 0.5],
-                ['deTaxPct', t('crm.sim.deTax', 'DE-Steuersatz %'), 1],
               ] as Array<[keyof SimParams, string, number]>).map(([k, label, step]) => (
                 <div key={k}>
                   <label className={lbl}>{label}</label>
@@ -252,6 +251,81 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     onChange={e => setParams(p => ({ ...p, [k]: +e.target.value }))} />
                 </div>
               ))}
+            </div>
+
+            {/* ── Besteuerung: Steuersitz + privat/Firma ──────────────────────
+                Sven 4.9.26: „Versteuerung in Zypern kann ich gar nicht eingeben."
+                Steuersitz und Halte-Struktur gelten fuer den ganzen Plan; die
+                Engine rechnet damit die zyprische Steuer (Freibetrag, 20 %
+                Pauschale, 3 % AfA) bzw. die Ltd (15 %, kein Freibetrag,
+                Verlustvortrag) und die Ausschuettung an den Gesellschafter. */}
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                {t('crm.sim.taxSection', 'Besteuerung')}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className={lbl}>{t('crm.sim.taxRes', 'Steuersitz des Kunden')}</label>
+                  <CustomSelect value={params.res}
+                    onChange={v => setParams(p => ({
+                      ...p, res: v as 'de' | 'cy', divTaxPct: defaultDivTaxPct(v as 'de' | 'cy'),
+                    }))}
+                    options={[{ value: 'de', label: t('crm.sim.resDe', 'Deutschland') },
+                      { value: 'cy', label: t('crm.sim.resCy', 'Zypern') }]} />
+                </div>
+                <div>
+                  <label className={lbl}>{t('crm.sim.holder', 'Halten')}</label>
+                  <CustomSelect value={params.holder}
+                    onChange={v => setParams(p => ({ ...p, holder: v as 'privat' | 'firma' }))}
+                    options={[{ value: 'privat', label: t('crm.sim.holderPrivat', 'Privat') },
+                      { value: 'firma', label: t('crm.sim.holderFirma', 'Zyprische Ltd (Firma)') }]} />
+                </div>
+                {params.holder === 'privat' ? (<>
+                  {params.res === 'de' ? (
+                    <div>
+                      <label className={lbl}>{t('crm.sim.deTax', 'DE-Steuersatz %')}</label>
+                      <input type="number" step={1} className={inputCls} value={params.deTaxPct}
+                        onChange={e => setParams(p => ({ ...p, deTaxPct: +e.target.value }))} />
+                    </div>
+                  ) : (<>
+                    <div>
+                      <label className={lbl}>{t('crm.sim.cyBI', 'CY Bestandseinkommen (€)')}</label>
+                      <input type="number" step={500} className={inputCls} value={params.cyBI}
+                        onChange={e => setParams(p => ({ ...p, cyBI: +e.target.value }))} />
+                    </div>
+                    <div className="flex items-end pb-1.5">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
+                        <input type="checkbox" checked={params.gesy} className="w-4 h-4 accent-orange-500"
+                          onChange={e => setParams(p => ({ ...p, gesy: e.target.checked }))} />
+                        {t('crm.sim.gesy', 'GESY 2,65 % auf die Miete')}
+                      </label>
+                    </div>
+                  </>)}
+                </>) : (<>
+                  <div>
+                    <label className={lbl}>{t('crm.sim.corpTax', 'Körperschaftsteuer CY %')}</label>
+                    <input type="number" step={0.5} className={inputCls} value={params.corpTaxPct}
+                      onChange={e => setParams(p => ({ ...p, corpTaxPct: +e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={lbl}>{t('crm.sim.divPayout', 'Ausschüttung % vom Gewinn')}</label>
+                    <input type="number" step={5} className={inputCls} value={params.divPayoutPct}
+                      onChange={e => setParams(p => ({ ...p, divPayoutPct: +e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={lbl}>{t('crm.sim.divTax', 'Steuer auf Ausschüttung %')}</label>
+                    <input type="number" step={0.125} className={inputCls} value={params.divTaxPct}
+                      onChange={e => setParams(p => ({ ...p, divTaxPct: +e.target.value }))} />
+                  </div>
+                </>)}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
+                {params.holder === 'privat'
+                  ? (params.res === 'cy'
+                    ? t('crm.sim.taxHintCyPrivat', 'Zypern privat: 22.000 € steuerfrei, dann 20/25/30/35 % (35 % erst ab 72.001 €). Abziehbar: 20 % Pauschale auf die Bruttomiete, 3 % Gebäude-Abschreibung p.a. (80 % des Kaufpreises), 10 % auf die Einrichtung und die Darlehenszinsen. SDC auf Mieten ist seit 1.1.2026 gestrichen; es bleibt GESY 2,65 % (gedeckelt auf 180.000 €).')
+                    : t('crm.sim.taxHintDePrivat', 'Steuersitz Deutschland: Zypern besteuert zuerst (22.000 € frei, dann 20-35 %, nach 20 % Pauschale, 3 % Gebäude-AfA und Zinsen), Deutschland rechnet mit eigener AfA nach und rechnet die zyprische Steuer an (DBA Art. 22). GESY fällt nicht an.'))
+                  : t('crm.sim.taxHintFirma', 'Zyprische Ltd: kein Freibetrag und keine 20-%-Pauschale - nur echte Kosten (Verwaltung, Zinsen, 3 % Gebäude-AfA, 10 % Einrichtung). 15 % Körperschaftsteuer seit 1.1.2026, Verluste 5 Jahre vortragbar. Zypern behält auf die Ausschüttung nichts ein; beim deutschen Gesellschafter fallen 26,375 % (Abgeltungsteuer + Soli) an, beim zyprischen Non-Dom nur 2,65 % GESY.')}
+              </p>
             </div>
             <label className="flex items-start gap-2 cursor-pointer mt-3">
               <input type="checkbox" checked={params.bundle} onChange={e => setParams(p => ({ ...p, bundle: e.target.checked }))}
@@ -445,7 +519,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 { l: t('crm.sim.ekTotal', 'Eigenkapital gesamt'), v: eur(totals.ekTotal), d: t('crm.sim.inclCosts', 'inkl. Kaufnebenkosten') },
                 { l: t('crm.sim.netWorthEnd', 'Netto-Vermögen am Ende'), v: eur(totals.netWorth), d: t('crm.sim.valueMinusDebt', 'Wert abzgl. Restschuld'), hero: true },
                 { l: t('crm.sim.rents', 'Mieten kumuliert'), v: eur(totals.rents), d: `${t('crm.sim.interestPaid', 'Zinsen')} −${eur(totals.interest)}` },
-                { l: t('crm.sim.taxesTotal', 'Steuern gesamt'), v: `${totals.taxes >= 0 ? '−' : '+'}${eur(Math.abs(totals.taxes))}`, d: `${t('crm.sim.vatBack', 'MwSt-Erstattung')} +${eur(totals.vat)}` },
+                { l: t('crm.sim.taxesTotal', 'Steuern gesamt'),
+                  v: `${totals.taxes >= 0 ? '−' : '+'}${eur(Math.abs(totals.taxes))}`,
+                  d: params.holder === 'firma'
+                    ? t('crm.sim.taxSplitFirma', 'KSt {{k}} · Ausschüttung {{d}}', { k: eur(totals.taxCY), d: eur(totals.taxDE) })
+                    : params.res === 'cy'
+                      ? t('crm.sim.taxSplitCy', 'davon GESY {{g}} · MwSt-Erstattung +{{v}}', { g: eur(totals.gesy), v: eur(totals.vat) })
+                      : t('crm.sim.taxSplitDe', 'CY {{c}} · DE {{d}} · MwSt-Erstattung +{{v}}', { c: eur(totals.taxCY), d: eur(totals.taxDE), v: eur(totals.vat) }) },
                 { l: t('crm.sim.debtEnd', 'Kredit offen am Ende'), v: eur(totals.debtEnd), d: t('crm.sim.debtHint', 'Restschuld aller Darlehen') },
                 { l: t('crm.sim.roe5', 'EK-Rendite nach 5 J.'), v: pct(totals.roe5), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
                 { l: t('crm.sim.roe10', 'EK-Rendite nach 10 J.'), v: pct(totals.roe10), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
@@ -545,7 +625,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             </div>
 
             <p className="text-[11px] text-gray-400">
-              {t('crm.sim.engineNote', 'Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete/Steuern (Steuersitz DE) ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung nach 24 Monaten. Kaufraten laufen vor der Übergabe aus dem Eigenkapital. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken "Mit Rendite-Berechnung" - gleiche Zahlen, gleiche Engine.')}
+              {t('crm.sim.engineNote2', 'Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete und Steuern nach der oben gewählten Struktur ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung nach 24 Monaten. Kaufraten laufen vor der Übergabe aus dem Eigenkapital. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken "Mit Rendite-Berechnung" - gleiche Zahlen, gleiche Engine.')}
             </p>
           </>)}
           {units.length === 0 && (

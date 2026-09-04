@@ -7,6 +7,12 @@
 // background:true → sofortige Antwort, Claude-Arbeit läuft detached (EdgeRuntime.waitUntil);
 // Status über sales_decks.refining (true während Lauf) + revision (++ bei Fertig) + refine_error.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
+import { refineBlockSchema } from '../_shared/deckBlocks.ts'
+import { TRUTH_RULES } from '../_shared/deckRules.ts'
+import { buildDeckContext, type DeckContext, type FurnitureMode } from '../_shared/deckContext.ts'
+import { applyDeterministic } from '../_shared/deckNormalize.ts'
+import { runDeckGate } from '../_shared/deckGate.ts'
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
@@ -28,10 +34,11 @@ OBERSTES PRINZIP — NUR DAS GEÄNDERTE AUSGEBEN (wichtigste Regel):
 - \`summary\`: EIN kurzer Satz, was du geändert hast (für die Anzeige an den Nutzer).
 - Erfinde keine neuen Aussagen — keine Historie, keine Zahlen, keine Zusagen, die nicht in der Anweisung oder im bestehenden Deck stehen.
 
-WAHRHEIT & KONSISTENZ (immer beibehalten):
-- Keine garantierten Renditen/Mieten; keine erfundenen Käufer-Schutz- oder Zahlungs-Narrative.
+WAHRHEIT & KONSISTENZ (immer beibehalten) — DIESELBEN REGELN WIE BEI DER ERSTGENERIERUNG:
+${TRUTH_RULES}
 - Steuer nur sachlich: DBA-Anrechnungsmethode; 5 % degressive AfA für EU-Immobilien senkt das in Deutschland zu versteuernde Vermietungsergebnis. NIEMALS behaupten, Zyperns niedrigere Steuersätze seien der Vorteil.
 - Preis und Fließtext müssen konsistent bleiben (ist ein Möbelpaket im Preis, muss es auch im Text stehen — und umgekehrt).
+- Die Felder priceLines, priceSummary, planNote, mapLat/mapLng/mapQuery, embedUrl/videoUrl/poster und image setzt das SYSTEM deterministisch. Gibst du einen Block zurück, übernimm sie WORTGLEICH aus dem aktuellen Block. Erfinde sie nie und rechne nie selbst — das System setzt sie nach deiner Bearbeitung ohnehin neu.
 
 Technik:
 - Bilder/Videos NUR aus der Liste VERFÜGBARE BILDER oder aus den bereits im Deck vorhandenen URLs. Erfinde NIEMALS eine URL — das System bricht sonst hart ab. embedUrl/videoUrl/poster/mapUrl unverändert lassen, außer die Anweisung verlangt ausdrücklich einen Tausch (dann eine erlaubte URL).
@@ -39,23 +46,14 @@ Technik:
 - KRITISCH: in ALLEN Texten NIEMALS doppelte Anführungszeichen — nutze 'einfache' oder keine.
 - Beachte die GELERNTEN VORGABEN immer.`
 
-const BLOCK_ITEM = {
-  type: 'object',
-  properties: {
-    type: { type: 'string' }, kicker: { type: 'string' }, title: { type: 'string' }, tagline: { type: 'string' },
-    forLine: { type: 'string' }, headline: { type: 'string' }, paragraphs: { type: 'array', items: { type: 'string' } },
-    signoff: { type: 'string' }, signName: { type: 'string' }, number: { type: 'string' }, nickname: { type: 'string' },
-    specs: { type: 'array', items: { type: 'string' } }, priceMain: { type: 'string' }, priceSub: { type: 'string' },
-    note: { type: 'string' }, text: { type: 'string' }, quote: { type: 'string' }, intro: { type: 'string' },
-    image: { type: 'string' }, mapUrl: { type: 'string' }, mapLabel: { type: 'string' },
-    items: { type: 'array', items: { type: 'object' } }, cols: { type: 'array', items: { type: 'object' } },
-    cards: { type: 'array', items: { type: 'object' } }, groups: { type: 'array', items: { type: 'object' } },
-    stats: { type: 'array', items: { type: 'object' } }, bullets: { type: 'array', items: { type: 'object' } },
-    steps: { type: 'array', items: { type: 'object' } }, phase1: { type: 'object' }, phase2: { type: 'object' },
-    embedUrl: { type: 'string' }, videoUrl: { type: 'string' }, poster: { type: 'string' }, caption: { type: 'string' },
-  },
-  required: ['type'],
-}
+// Block-Schema aus dem gemeinsamen Vokabular. Die frühere lokale Fassung kannte
+// weder priceLines/priceSummary noch planNote/rooms noch die Kartenfelder — das
+// Modell konnte sie deshalb GAR NICHT zurückgeben. Da ein edit den Block
+// VOLLSTÄNDIG ersetzt, löschte jeder Feinschliff am unit-Block die verbindlichen
+// Preiszeilen, am payment-Block die MwSt-Box, am facts-Block die Karte und am
+// floorplan-Block die echte Flächen-Note. Zusätzlich läuft nach dem Merge die
+// deterministische Normalisierung, die diese Werte ohnehin neu setzt.
+const BLOCK_ITEM = refineBlockSchema()
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
@@ -64,7 +62,7 @@ Deno.serve(async (req: Request) => {
     if (!token) return json({ error: 'token fehlt' }, 400)
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-    const { data: deck } = await supabase.from('sales_decks').select('content, prev_content, project_id, revision').eq('token', token).maybeSingle()
+    const { data: deck } = await supabase.from('sales_decks').select('content, prev_content, project_id, unit_id, angle, revision, deck_context').eq('token', token).maybeSingle()
     if (!deck) return json({ error: 'Deck nicht gefunden' }, 404)
 
     // ── Undo (immer synchron — schnell, kein Claude-Call) ──
@@ -79,7 +77,7 @@ Deno.serve(async (req: Request) => {
 
     // Die eigentliche KI-Arbeit (langsam, ~16k Tokens) — als Closure, damit sie
     // wahlweise synchron oder im Hintergrund (waitUntil) laufen kann.
-    const runRefine = async (): Promise<{ blocks?: number; summary?: string; error?: string }> => {
+    const runRefine = async (): Promise<{ blocks?: number; summary?: string; error?: string; quality?: 'green' | 'red' }> => {
       try {
         const blocks = (deck.content?.blocks) ?? deck.content ?? []
         // Verfügbare Bilder aus den Projekt-Assets (für Bild-Tausch)
@@ -107,29 +105,27 @@ Deno.serve(async (req: Request) => {
           `ANWEISUNG DES NUTZERS:`, instruction!.trim(),
         ].join('\n')
 
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
-          body: JSON.stringify({
-            model: 'claude-opus-4-8', max_tokens: 16000, system: SYSTEM,
-            tools: [{ name: 'emit_edits', description: 'Gibt NUR die geänderten Blöcke (mit Index) + optionale Struktur-Operationen zurück. Unveränderte Blöcke NICHT ausgeben.', input_schema: { type: 'object', properties: {
-              edits: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
-              remove: { type: 'array', items: { type: 'integer' } },
-              insertAfter: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
-              append: { type: 'array', items: BLOCK_ITEM },
-              summary: { type: 'string' },
-            }, required: [] } }],
-            tool_choice: { type: 'tool', name: 'emit_edits' },
-            messages: [{ role: 'user', content: userMsg }],
-          }),
+        // Mit Retry und Backoff (_shared/anthropic.ts) — ein Overload darf einen
+        // Feinschliff nicht mehr ersatzlos scheitern lassen.
+        const res = await callAnthropic(ANTHROPIC_API_KEY, {
+          model: 'claude-opus-4-8', max_tokens: 16000, system: SYSTEM,
+          tools: [{ name: 'emit_edits', description: 'Gibt NUR die geänderten Blöcke (mit Index) + optionale Struktur-Operationen zurück. Unveränderte Blöcke NICHT ausgeben.', input_schema: { type: 'object', properties: {
+            edits: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
+            remove: { type: 'array', items: { type: 'integer' } },
+            insertAfter: { type: 'array', items: { type: 'object', properties: { index: { type: 'integer' }, block: BLOCK_ITEM }, required: ['index', 'block'] } },
+            append: { type: 'array', items: BLOCK_ITEM },
+            summary: { type: 'string' },
+          }, required: [] } }],
+          tool_choice: { type: 'tool', name: 'emit_edits' },
+          messages: [{ role: 'user', content: userMsg }],
+          label: 'emit_edits',
         })
         type Blk = Record<string, unknown>
-        const data = await res.json() as { content?: Array<{ type: string; input?: unknown }>; error?: { message?: string } }
-        if (data.error) throw new Error(`Claude: ${data.error.message}`)
-        const patch = (data.content ?? []).find(c => c.type === 'tool_use')?.input as {
+        if (!res.ok) throw new Error(`Claude nicht erreichbar (${res.attempts} Versuche): ${res.error}`)
+        const patch = toolInput<{
           edits?: Array<{ index: number; block: Blk }>; remove?: number[]
           insertAfter?: Array<{ index: number; block: Blk }>; append?: Blk[]; summary?: string
-        } | undefined
+        }>(res) ?? undefined
         if (!patch) throw new Error('KI lieferte keine Änderungen')
         const edits = patch.edits ?? [], insAfter = patch.insertAfter ?? [], append = patch.append ?? [], remove = patch.remove ?? []
         if (!edits.length && !insAfter.length && !append.length && !remove.length) {
@@ -141,9 +137,17 @@ Deno.serve(async (req: Request) => {
         // VERIFIKATION: keine erfundenen URLs. Jede URL in einem geänderten Block muss
         // schon im alten Deck oder in den Projekt-Assets vorkommen — sonst harter Abbruch.
         const urlRe = /https?:\/\/[^\s"'<>)\]]+/g
-        const allowed = new Set<string>([...(JSON.stringify(blocks).match(urlRe) ?? []), ...(assetsTxt.match(urlRe) ?? [])])
+        // Vergleich ohne Query/Fragment: dasselbe Bild taucht je nach Kontext mit
+        // Transform-Parametern auf (/render/image/public/...?width=512). Exakte
+        // String-Gleichheit liess den Feinschliff daran scheitern.
+        const normUrl = (u: string) => u.split('#')[0].split('?')[0]
+          .replace('/storage/v1/render/image/public/', '/storage/v1/object/public/')
+        const allowed = new Set<string>([
+          ...(JSON.stringify(blocks).match(urlRe) ?? []).map(normUrl),
+          ...(assetsTxt.match(urlRe) ?? []).map(normUrl),
+        ])
         for (const b of changed) for (const u of (JSON.stringify(b).match(urlRe) ?? [])) {
-          if (!allowed.has(u)) throw new Error(`KI hat eine unbekannte Bild-/Video-URL verwendet (abgebrochen): ${u.slice(0, 90)}`)
+          if (!allowed.has(normUrl(u))) throw new Error(`KI hat eine unbekannte Bild-/Video-URL verwendet (abgebrochen): ${u.slice(0, 90)}`)
         }
         // MERGE: unbeteiligte Blöcke bleiben BYTE-IDENTISCH (aus dem alten Content).
         const oldBlocks = blocks as Blk[]
@@ -166,12 +170,70 @@ Deno.serve(async (req: Request) => {
           if (!newBlocks.some(isMarinaFeature)) { const f = oldBlocks.find(isMarinaFeature); if (f) newBlocks.splice(anchor(), 0, f) }
           if (!newBlocks.some(b => b.type === 'marina')) { const s = oldBlocks.find(b => b.type === 'marina'); if (s) newBlocks.splice(anchor(), 0, s) }
         }
+        // ── Deterministische Normalisierung + Quality-Gate ──────────────────
+        // Der Feinschliff durfte bisher Inhalte erzeugen, die die Erstgenerierung
+        // nie durchgelassen hätte, und löschte dabei die harten Zahlen. Ab jetzt
+        // gilt derselbe Weg wie bei der Erstgenerierung:
+        //   Patch anwenden → deterministisch normalisieren → Gate → GREEN/RED.
+        let ctx = (deck.deck_context ?? null) as DeckContext | null
+        if (!ctx && deck.project_id) {
+          // Altes Deck ohne gespeicherten Kontext: aus der Datenbank rekonstruieren.
+          const units: Array<{ unit_number: string }> = []
+          if (deck.unit_id) {
+            const { data: u } = await supabase.from('crm_project_units').select('unit_number').eq('id', deck.unit_id).maybeSingle()
+            const nr = (u as { unit_number?: string } | null)?.unit_number
+            if (nr) units.push({ unit_number: nr })
+          }
+          if (!units.length) {
+            // Wohnungsnummern aus den vorhandenen unit-Blöcken ableiten.
+            for (const b of newBlocks) {
+              if (b.type === 'unit' && typeof b.number === 'string' && b.number.trim()) units.push({ unit_number: b.number.trim() })
+            }
+          }
+          try {
+            ctx = await buildDeckContext(supabase, {
+              projectId: deck.project_id as string,
+              angle: String(deck.angle ?? 'investment'),
+              lang: 'de',
+              furnitureMode: undefined as FurnitureMode | undefined,
+              units,
+            })
+          } catch (e) {
+            console.warn('[refine-deck] Kontext nicht rekonstruierbar:', e instanceof Error ? e.message : String(e))
+          }
+        }
+
+        let finalBlocks = newBlocks
+        let quality: { status: 'green' | 'red'; report: Record<string, unknown> } | null = null
+        if (ctx) {
+          const norm = applyDeterministic(finalBlocks, ctx)
+          finalBlocks = norm.blocks as Blk[]
+          const gate = runDeckGate(finalBlocks, ctx)
+          quality = {
+            status: gate.status,
+            report: {
+              status: gate.status,
+              checked_blocks: gate.checkedBlocks,
+              findings: gate.findings,
+              normalization: norm.notes,
+              scrub_events: norm.scrubEvents,
+              source: 'refine',
+              instruction: instruction!.trim().slice(0, 500),
+              generated_at: new Date().toISOString(),
+            },
+          }
+          console.log(`[refine-deck] Quality-Gate: ${gate.status.toUpperCase()} — ${gate.findings.length} Befund(e)`)
+        } else {
+          console.warn('[refine-deck] ohne Deck-Kontext — keine Re-Normalisierung, kein Gate')
+        }
+
         // Fertig: Content tauschen, revision hochzählen (Farbwechsel im CRM), refining aus.
         await supabase.from('sales_decks').update({
-          prev_content: deck.content, content: { blocks: newBlocks },
+          prev_content: deck.content, content: { blocks: finalBlocks },
           revision: ((deck.revision as number) ?? 0) + 1, refining: false, refine_error: null,
           // Natürlichsprachige Antwort für das Chat-Fenster (was wurde geändert).
           refine_summary: patch.summary ?? null,
+          ...(quality ? { quality_status: quality.status, quality_report: quality.report, quality_checked_at: new Date().toISOString() } : {}),
         }).eq('token', token)
         if (learn && instruction!.trim()) {
           // Korrektur auf das PROJEKT dieses Decks scopen — eine Deck-Chat-Korrektur betrifft
@@ -184,7 +246,7 @@ Deno.serve(async (req: Request) => {
             rule: instruction!.trim(),
           })
         }
-        return { blocks: newBlocks.length, summary: patch.summary }
+        return { blocks: finalBlocks.length, summary: patch.summary, quality: quality?.status }
       } catch (e) {
         // Fehler festhalten + refining lösen, damit das CRM den Spinner beendet + Fehler zeigt.
         await supabase.from('sales_decks').update({ refining: false, refine_error: (e as Error).message }).eq('token', token)
@@ -204,7 +266,7 @@ Deno.serve(async (req: Request) => {
     // ── Synchron (Fallback/kurze Calls) ──
     const out = await runRefine()
     if (out.error) return json({ error: out.error }, 502)
-    return json({ ok: true, blocks: out.blocks, summary: out.summary, learned: !!learn })
+    return json({ ok: true, blocks: out.blocks, summary: out.summary, quality_status: out.quality, learned: !!learn })
   } catch (err) {
     return json({ error: (err as Error).message }, 500)
   }

@@ -14,8 +14,13 @@ const document = {
 function isShareDeal(){return document.querySelector('input[name="s-dealtype"]:checked').value==='share';}
 
 // ── ORIGINAL-Helfer + compute (VERBATIM aus index.html) ──────────────────────
+// HINWEIS (4.9.26): Die zyprische Steuerreform (Amtsblatt 31.12.2025, in Kraft
+// ab 1.1.2026) hat die Banden angehoben, SDC auf Mieten gestrichen, die
+// Koerperschaftsteuer auf 15 % gesetzt und die Einrichtung wird zyprisch mit
+// 10 % p.a. abgeschrieben. Diese Referenz wurde bewusst mitgezogen - alles
+// andere bleibt VERBATIM, damit die Portierung weiter bit-genau geprueft wird.
 function cyTax(inc){
-  const bands=[{c:19500,r:0},{c:28000,r:.2},{c:36300,r:.25},{c:60000,r:.3},{c:Infinity,r:.35}];
+  const bands=[{c:22000,r:0},{c:32000,r:.2},{c:42000,r:.25},{c:72000,r:.3},{c:Infinity,r:.35}];
   let t2=0,rest=Math.max(0,inc),prev=0;
   for(const b of bands){const w=Math.min(rest,b.c-prev);if(w>0)t2+=w*b.r;rest-=w;prev=b.c;if(rest<=0)break;}
   return Math.round(t2);
@@ -109,18 +114,33 @@ function computeOrig(){
       else {intC.push(0);princC.push(0);rateC.push(0);prepayC.push(0);restL.push(rem);}}
   }
   const dCY=Math.round(pGross*0.8*0.03);
-  var furnAfaAnn=(!furnFree && furnCost>0)?Math.round(furnCost/5):0;
+  var furnAfaAnn=(!furnFree && furnCost>0)?Math.round(furnCost/5):0;      // DE-AfA
+  var furnAfaCY=(!furnFree && furnCost>0)?Math.round(furnCost*0.10):0;    // CY 10 % p.a.
+  var gesyOn=resCY;
+  var gesyA=rents.map(function(r,i){return gesyOn?Math.round(Math.min(r,Math.round(180000*fA[i]))*0.0265):0;});
   var sdTaxRateRaw=parseFloat($('sd-tax-rate').value);
-  var sdTaxRate=sdMode?Math.max(0,Math.min(35,isNaN(sdTaxRateRaw)?12.5:sdTaxRateRaw))/100:0;
+  var sdTaxRate=sdMode?Math.max(0,Math.min(35,isNaN(sdTaxRateRaw)?15:sdTaxRateRaw))/100:0;
   var taxCY,taxDE,taxU;
   if(sdMode){
-    taxCY=rents.map(function(r,i){var furnAfa=i<5?Math.round(furnAfaAnn*fA[i]):0;var d=Math.round(dCY*fA[i]);
-      var taxable=r-d-furnAfa-mgmt[i]-intC[i];return Math.max(0,Math.round(taxable*sdTaxRate));});
+    var sdBase=rents.map(function(r,i){return r-Math.round(dCY*fA[i])-Math.round(furnAfaCY*fA[i])-mgmt[i]-intC[i];});
+    var sdOpen=[];
+    var sdTaxable=sdBase.map(function(profit,i){
+      var rest=profit;
+      if(rest<=0){sdOpen.push({y:i,amt:-rest});return 0;}
+      for(var li=0;li<sdOpen.length;li++){var l=sdOpen[li];
+        if(i-l.y>5||l.amt<=0)continue;
+        var use=Math.min(l.amt,rest);l.amt-=use;rest-=use;if(rest<=0)break;}
+      return rest;});
+    taxCY=sdTaxable.map(function(t){return Math.max(0,Math.round(t*sdTaxRate));});
     taxDE=Array(10).fill(0);taxU=taxCY;
   } else {
-    taxCY=rents.map(function(r,i){var furnAfa=i<5?Math.round(furnAfaAnn*fA[i]):0;
-      var d=Math.round(dCY*fA[i]),m2=Math.round(r*0.2),tx=r-d-furnAfa-m2-intC[i];
-      if(resCY){var b=cyTax(cyBI);return Math.max(0,cyTax(cyBI+Math.max(0,tx))-b);}return cyTax(Math.max(0,tx));});
+    // Kurzzeit = registrierte gewerbliche Vermietung (9 % MwSt): echte Kosten
+    // statt der 20-%-Pauschale. Langzeit bleibt bei der Pauschale.
+    var cyBusiness=(letT==='short');
+    taxCY=rents.map(function(r,i){var furnAfa=Math.round(furnAfaCY*fA[i]);
+      var d=Math.round(dCY*fA[i]),m2=cyBusiness?mgmt[i]:Math.round(r*0.2),tx=r-d-furnAfa-m2-intC[i];
+      var inc=resCY?Math.max(0,cyTax(cyBI+Math.max(0,tx))-cyTax(cyBI)):cyTax(Math.max(0,tx));
+      return inc+gesyA[i];});
     var bDE=pGross*0.8,rDE=bDE;var dDE=[];
     for(var k2=0;k2<10;k2++){var d2=Math.round(rDE*0.05*fA[k2]);dDE.push(d2);rDE=Math.max(0,rDE-d2);}
     var deR=deTx/100;

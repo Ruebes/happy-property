@@ -1,0 +1,29 @@
+{
+  "//": "Typecheck fuer die gemeinsamen Deck-Module. npm run build (tsc) deckt nur src/ ab, die Edge Functions liefen bisher voellig ungeprueft. Erfasst nur Dateien OHNE Remote-Imports (jsr:/https:), die tsc nicht aufloesen kann.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "files": [
+    "_shared/anthropic.ts",
+    "_shared/deckVat.ts",
+    "_shared/deckBlocks.ts",
+    "_shared/deckContext.ts",
+    "_shared/deckNormalize.ts",
+    "_shared/deckGate.ts",
+    "_types/remote.d.ts",
+    "generate-deck/index.ts",
+    "refine-deck/index.ts"
+  ]
+}

@@ -1421,8 +1421,8 @@
   "crm": {
     "affiliates": {
       "title": "Referral program",
-      "subtitle": "Referral links, referred customers and €1,000 payouts at a glance.",
-      "empty": "No referrers yet. Referrers are created automatically when customers answer \"Yes\" to the recommendation question in the review questionnaire.",
+      "subtitle": "Every customer has their own referral link. All referrers, the people they referred and the €1,000 payouts at a glance.",
+      "empty": "No referrers yet. They are created automatically: through the review questionnaire and through the referral section in the newsletter (every recipient gets their own link there).",
       "code": "Code",
       "copyLink": "Copy link",
       "copied": "Copied!",
@@ -1438,7 +1438,17 @@
       "payoutLinkDone": "Link created and sent.",
       "markPaid": "Mark as paid",
       "confirmPayout": "Create a Revolut payout link for {{amount}} and send it to {{name}}?",
-      "phase": "Phase"
+      "phase": "Phase",
+      "search": "Search referrer or referred customer …",
+      "onlyReferring": "With referrals only",
+      "noMatch": "No match.",
+      "countReferred": "{{count}} referred",
+      "summary": "{{count}} referrers · {{referred}} people referred · {{open}} open",
+      "since": "since",
+      "inactive": "inactive",
+      "source_review": "from review",
+      "source_newsletter": "from newsletter",
+      "source_manuell": "added manually"
     },
     "reviews": {
       "title": "Reviews",
@@ -2363,7 +2373,14 @@
         "missing": "no floor plan stored",
         "redo": "Redraw",
         "create": "Create",
-        "startFailed": "Start failed"
+        "startFailed": "Start failed",
+        "review": "⚠ checked — {{n}} deviation(s), please review",
+        "release": "Release",
+        "releaseTitle": "Plan is fine — use it in decks",
+        "discard": "Discard",
+        "released": "released — will be used in new decks.",
+        "discarded": "discarded.",
+        "noPlan": "No plan available to release."
       }
     },
     "unit": {
@@ -3845,12 +3862,17 @@
       "seasonYieldUnit": "gross yield of this apartment",
       "furnMode": "Furniture",
       "furnNone": "Without",
-      "furnIncl": "Included",
-      "furnOpt": "Optional",
+      "furnIncl": "In the price",
+      "furnOpt": "Separate",
       "furnPriceIncl": "Deck price: {{p}} net (developer price column incl. furniture)",
       "furnPriceMissing": "⚠ No furnished price on file — {{p}} net without furniture applies. Please maintain it on the unit.",
       "furnPriceOpt": "Deck price: {{p}} net + furniture package shown separately",
-      "furnPriceNone": "Deck price: {{p}} net — furniture does not appear in the deck"
+      "furnPriceNone": "Deck price: {{p}} net — furniture does not appear in the deck",
+      "furnPackage": "Furniture package",
+      "furnSumOpt": "Deck: {{p}} net + {{f}} furnishing shown separately = {{g}} net",
+      "furnSumIncl": "Deck: {{p}} net (developer price column incl. furniture)",
+      "furnSumMissing": "⚠ No price column with furniture on file — {{p}} net without furniture applies.",
+      "furnSumNone": "Deck: {{p}} net — furniture does not appear in the deck"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -4458,7 +4480,26 @@
       "debtEnd": "Loan outstanding at the end",
       "debtHint": "Remaining debt of all loans",
       "roe5": "ROE after 5 yrs",
-      "roe10": "ROE after 10 yrs"
+      "roe10": "ROE after 10 yrs",
+      "taxSection": "Taxation",
+      "taxRes": "Client's tax residence",
+      "resDe": "Germany",
+      "resCy": "Cyprus",
+      "holder": "Ownership",
+      "holderPrivat": "Private",
+      "holderFirma": "Cyprus Ltd (company)",
+      "cyBI": "Existing Cyprus income (€)",
+      "gesy": "GHS 2.65 % on rent",
+      "corpTax": "Cyprus corporate tax %",
+      "divPayout": "Payout % of profit",
+      "divTax": "Tax on distribution %",
+      "taxHintCyPrivat": "Cyprus, held privately: first €22,000 tax free, then 20/25/30/35 % (35 % only above €72,001). Deductible: 20 % flat deduction on gross rent, 3 % building depreciation p.a. (on 80 % of the price), 10 % on furniture and the loan interest. SDC on rents was abolished on 1 Jan 2026; GHS of 2.65 % remains (capped at €180,000).",
+      "taxHintDePrivat": "Tax residence Germany: Cyprus taxes first (€22,000 free, then 20-35 %, after the 20 % flat deduction, 3 % building depreciation and interest), Germany recalculates with its own depreciation and credits the Cypriot tax (double tax treaty, Art. 22). No GHS applies.",
+      "taxHintFirma": "Cyprus Ltd: no tax-free band and no 20 % flat deduction - only actual costs (management, interest, 3 % building depreciation, 10 % furniture). 15 % corporate tax since 1 Jan 2026, losses carried forward 5 years. Cyprus withholds nothing on distributions; a German shareholder pays 26.375 % (flat tax plus solidarity surcharge), a Cypriot non-dom only 2.65 % GHS.",
+      "taxSplitFirma": "Corp. tax {{k}} · distribution {{d}}",
+      "taxSplitCy": "of which GHS {{g}} · VAT refund +{{v}}",
+      "taxSplitDe": "CY {{c}} · DE {{d}} · VAT refund +{{v}}",
+      "engineNote2": "Calculated with the same engine as the individual calculations: annuity loan from handover, rent and taxes according to the structure selected above from handover, VAT refund for short-term letting after 24 months. Purchase instalments before handover come out of equity. You create the individual calculations for the client as usual via the \"With yield calculation\" checkbox - same numbers, same engine."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5698,6 +5739,11 @@
     "legendPos": "Surplus",
     "legendNeg": "Top-up",
     "bridgeTitle": "Bridge financing during construction",
-    "bridgeText": "The instalments temporarily exceed your equity - by {{peak}} at peak. That amount is bridge-financed until handover; the interest is included in the table (interest column) and at handover the actual loan replaces the bridge."
+    "bridgeText": "The instalments temporarily exceed your equity - by {{peak}} at peak. That amount is bridge-financed until handover; the interest is included in the table (interest column) and at handover the actual loan replaces the bridge.",
+    "assumptions2": "Appreciation {{g}} % p.a., rent growth {{r}} % p.a., financing as an annuity loan at {{i}} % over {{y}} years. For short-term letting the VAT refund after 24 months is included.",
+    "taxFirma": "Held through a Cypriot company: {{k}} % corporate tax on the profit after management, interest and depreciation (3 % building, 10 % furniture), losses carried forward 5 years. {{d}} % has been applied to the distribution.",
+    "taxCyPrivat": "Held privately, tax residence Cyprus: first €22,000 tax free, then 20 to 35 %, after a 20 % flat deduction on the rent, 3 % building depreciation, 10 % on furniture and the loan interest{{gesy}}.",
+    "taxCyGesy": "; plus a 2.65 % health contribution (GHS)",
+    "taxDePrivat": "Held privately, tax residence Germany: Cyprus taxes first, Germany recalculates at a {{d}} % marginal rate and credits the Cypriot tax."
   }
 }
