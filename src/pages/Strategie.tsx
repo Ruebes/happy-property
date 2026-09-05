@@ -6,7 +6,7 @@ import { DECK_LOGO } from '../lib/deckTypes'
 import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig } from '../lib/strategy'
 import { buildCustomerAnalytics, type CustomerAnalytics, type ScenarioSummary } from '../lib/analytics'
 import {
-  ChartCard, Legend, LineChart, BarChart, StepChart, Waterfall,
+  ChartCard, Legend, LineChart, BarChart, StepChart,
   C_VALUE, C_DEBT, C_EQUITY,
 } from '../components/StrategieCharts'
 
@@ -74,6 +74,25 @@ function Section({ title, sub, children }: { title: string; sub?: string; childr
 function Term({ children, hint }: { children: React.ReactNode; hint: string }) {
   return (
     <span title={hint} style={{ borderBottom: '1px dotted #b9b2a8', cursor: 'help' }}>{children}</span>
+  )
+}
+
+// Erklaerung zum Aufklappen. Wer nur die Zahlen sehen will, wird nicht
+// zugetextet; wer wissen will, wie sie entstehen, klickt einmal.
+function Explain({ title, children }: { title?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button onClick={() => setOpen(v => !v)}
+        style={{ background: 'none', border: 0, color: CORAL, fontSize: 12.5, cursor: 'pointer', padding: 0, fontFamily: SANS }}>
+        {open ? '− ' : '+ '}{title ?? 'Wie kommt diese Zahl zustande?'}
+      </button>
+      {open && (
+        <div style={{ fontSize: 13, color: '#555', lineHeight: 1.8, marginTop: 8, paddingLeft: 2, maxWidth: 760 }}>
+          {children}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -204,6 +223,44 @@ export default function Strategie() {
           </div>
         </Section>
 
+        {/* 1b — Wie sich das Vermögen zusammensetzt */}
+        <Section title={t('strategie.sBalance', 'Woraus dein Vermögen besteht')}
+          sub={t('strategie.sBalanceSub', 'Der größte Teil liegt nicht auf dem Konto, sondern als Eigenkapital in den Wohnungen.')}>
+          <div style={{ ...card, maxWidth: 620 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <tbody>
+                {a.balance.map((b, i) => (
+                  <tr key={b.label} style={{
+                    borderTop: b.kind === 'sum' ? '1px solid #e6e3dd' : undefined,
+                    borderBottom: i < a.balance.length - 1 && b.kind !== 'sum' ? '1px solid #f5f3f0' : undefined,
+                  }}>
+                    <td style={{ padding: '9px 0', fontSize: 13.5, color: b.kind === 'sum' ? DARK : '#555', fontWeight: b.kind === 'sum' ? 700 : 400 }}>
+                      {b.hint ? <Term hint={b.hint}>{b.label}</Term> : b.label}
+                    </td>
+                    <td style={{
+                      ...td, padding: '9px 0',
+                      fontWeight: b.kind === 'sum' ? 800 : 400,
+                      fontSize: b.label === 'Netto-Vermögen' ? (isMobile ? 17 : 20) : 13.5,
+                      fontFamily: b.kind === 'sum' ? SERIF : SANS,
+                      color: b.label === 'Netto-Vermögen' ? CORAL : DARK,
+                    }}>
+                      {b.amount < 0 ? `−${eur(Math.abs(b.amount))}` : eur(b.amount)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <Explain title={t('strategie.exBalance', 'Warum das nicht dein Kontostand ist')}>
+              <p style={{ margin: '0 0 8px' }}>
+                {t('strategie.exBalance1', 'Netto-Vermögen und Liquidität sind zwei verschiedene Dinge. Der Immobilienwert abzüglich der Kredite gehört dir wirtschaftlich, ist aber im Stein gebunden. Verfügbar ist nur die Liquidität in der letzten Zeile.')}
+              </p>
+              <p style={{ margin: 0 }}>
+                {t('strategie.exBalance2', 'Um an das Eigenkapital in den Wohnungen zu kommen, müsstest du verkaufen oder refinanzieren. Beides ist im Modell abgebildet, beides kostet Steuern beziehungsweise erhöht die Schuld.')}
+              </p>
+            </Explain>
+          </div>
+        </Section>
+
         {/* 2 — Vermögen */}
         <Section title={t('strategie.s2', 'Wie sich dein Vermögen entwickelt')}
           sub={t('strategie.s2sub', 'Der Wert der Immobilien wächst, der Kredit wird getilgt. Was dazwischen liegt, gehört dir.')}>
@@ -290,10 +347,37 @@ export default function Strategie() {
                 </div>
               </div>
             )}
-            <ChartCard title={t('strategie.c3', 'Woher das Kapital kommt und wohin es geht')}
-              sub={t('strategie.c3sub', 'Grün sind Zuflüsse aus Refinanzierung und Verkauf, orange das Kapital, das in einen Kauf fließt.')}>
-              <Waterfall steps={a.capitalSteps} height={isMobile ? 220 : 260} />
-            </ChartCard>
+            {/* Der frühere Wasserfall erklärte nichts: das Startkapital war neben
+                dem Portfoliowert nur ein Strich. Die Stationen zeigen stattdessen
+                den Weg des Kapitals, jede mit ihrer echten Zahl. */}
+            <div style={{ ...card, marginBottom: 12 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 12 }}>
+                {t('strategie.journeyTitle', 'Der Weg deines Kapitals')}
+              </div>
+              <div style={{ display: 'grid', gap: 10 }}>
+                {a.journey.map((j, i) => (
+                  <div key={j.label} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{
+                      width: 26, height: 26, borderRadius: 13, flexShrink: 0,
+                      background: i === a.journey.length - 1 ? CORAL : '#eceae6',
+                      color: i === a.journey.length - 1 ? '#fff' : '#7a7a7a',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 12, fontWeight: 700, marginTop: 2,
+                    }}>{i + 1}</div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: DARK }}>{j.label}</span>
+                        <span style={{
+                          fontFamily: SERIF, fontWeight: 800, fontSize: 15,
+                          color: i === a.journey.length - 1 ? CORAL : DARK,
+                        }}>{j.value}</span>
+                      </div>
+                      <div style={{ fontSize: 12.5, color: '#777', lineHeight: 1.6 }}>{j.note}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
             {a.recyclingRows.length > 0 && (
               <ScrollBox>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
@@ -435,6 +519,14 @@ export default function Strategie() {
                   ? [{ key: 'c', color: C_EQUITY, label: t('strategie.lCap', 'Zusätzliche Beleihungskapazität'), values: a.financing.map(f => f.capacity) }]
                   : []),
               ]} />
+            <Explain title={t('strategie.exLtvTitle', 'Was der Beleihungsgrad bedeutet')}>
+              <p style={{ margin: '0 0 8px' }}>
+                {t('strategie.exLtv1', 'Der Beleihungsgrad ist das Verhältnis von Kredit zu Immobilienwert. 600.000 € Kredit bei 1.000.000 € Wert sind 60 Prozent.')}
+              </p>
+              <p style={{ margin: 0 }}>
+                {t('strategie.exLtv2', 'Im Modell wird mit einem maximalen Beleihungsauslauf von {{l}} Prozent gerechnet. Das ist eine Annahme für die Rechnung, keine Zusage einer Bank. Sinkt der Kredit und steigt der Wert, wächst der Abstand zu dieser Grenze - und genau dieser Abstand ist die zusätzliche Beleihungskapazität.', { l: String(params.refinanceLtv).replace('.', ',') })}
+              </p>
+            </Explain>
           </ChartCard>
         </Section>
 
@@ -563,6 +655,30 @@ export default function Strategie() {
           )}
         </Section>
 
+        {/* 9b — Zeitachse aus den tatsächlichen Ereignissen des Modells */}
+        <Section title={t('strategie.timelineTitle2', 'Was wann passiert')}
+          sub={t('strategie.timelineSub', 'Jeder Eintrag ist ein Ereignis aus der Berechnung, nichts davon ist ausgedacht.')}>
+          <div style={{ ...card }}>
+            {a.timeline.map((e, i) => {
+              const color = e.kind === 'sale' ? CORAL
+                : e.kind === 'refinance' ? '#1d7a4f'
+                  : e.kind === 'purchase' ? '#2563eb' : '#b9b2a8'
+              return (
+                <div key={`${e.year}-${e.label}-${i}`} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', alignSelf: 'stretch' }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 5, background: color, marginTop: 5, flexShrink: 0 }} />
+                    {i < a.timeline.length - 1 && <span style={{ width: 2, flex: 1, background: '#eceae6', marginTop: 4 }} />}
+                  </div>
+                  <div style={{ minWidth: 0, paddingBottom: i === a.timeline.length - 1 ? 0 : 14 }}>
+                    <div style={{ fontSize: 13.5, color: DARK }}><b>{e.year}</b> · {e.label}</div>
+                    <div style={{ fontSize: 12.5, color: '#777', lineHeight: 1.6 }}>{e.detail}</div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Section>
+
         {/* 10 — Verkauf */}
         {a.exits.length > 0 && (
           <Section title={t('strategie.s10', 'Was beim Verkauf übrig bleibt')}>
@@ -598,10 +714,72 @@ export default function Strategie() {
           </Section>
         )}
 
+        {/* 10b — Was die Strategie kostet und wohin das Geld geht */}
+        <Section title={t('strategie.sCost', 'Was dich die Strategie kostet')}
+          sub={t('strategie.sCostSub', 'Nicht jede Zahlung ist verloren. Tilgung zum Beispiel wandert vom Konto in dein Eigenkapital.')}>
+          <div style={kpiGrid}>
+            {[
+              { l: t('strategie.cEquity', 'Eingesetztes Eigenkapital'), v: eur(a.cost.ownEquity) },
+              ...(a.cost.additionalEquity
+                ? [{ l: t('strategie.cAdd', 'Zusätzlich nötiges Kapital'), v: eur(a.cost.additionalEquity), warn: true }]
+                : [{ l: t('strategie.cAdd0', 'Zusätzliches Kapital nötig'), v: t('strategie.no', 'nein') }]),
+              { l: t('strategie.cInterest', 'Zinsen über die Laufzeit'), v: `−${eur(a.cost.interest)}` },
+              { l: t('strategie.cGain', 'Vermögenszuwachs'), v: eur(a.cost.wealthGain), hero: true },
+            ].map(k => (
+              <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : k.warn ? '#b45309' : '#e6e3dd'}` }}>
+                <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: '#8a8a8a' }}>{k.l}</div>
+                <div style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, fontWeight: 800, color: k.hero ? CORAL : DARK, marginTop: 4 }}>{k.v}</div>
+              </div>
+            ))}
+          </div>
+
+          <ScrollBox>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+              <thead><tr style={{ borderBottom: '1px solid #eee' }}>
+                <th style={{ ...th, textAlign: 'left' }}>{t('strategie.mfFlow', 'Kapitalfluss')}</th>
+                <th style={th}>{t('strategie.mfAmount', 'Betrag')}</th>
+                <th style={{ ...th, textAlign: 'left' }}>{t('strategie.mfMeaning', 'Was das bedeutet')}</th>
+              </tr></thead>
+              <tbody>
+                {a.moneyFlow.map(m => (
+                  <tr key={m.label} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                    <td style={{ padding: '9px 10px', fontSize: 13, color: DARK, fontWeight: 600, whiteSpace: 'nowrap' }}>{m.label}</td>
+                    <td style={{ ...td, color: m.amount < 0 ? '#b45309' : '#1d7a4f' }}>
+                      {m.amount < 0 ? `−${eur(Math.abs(m.amount))}` : eur(m.amount)}
+                    </td>
+                    <td style={{ padding: '9px 10px', fontSize: 12.5, color: '#666', lineHeight: 1.6 }}>{m.meaning}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollBox>
+
+          <div style={{ ...card, marginTop: 12 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>
+              {t('strategie.threeTitle', 'Drei Sätze, die alles erklären')}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: 14 }}>
+              {[
+                [t('strategie.three1t', 'Cashflow ist nicht Vermögensaufbau'),
+                  t('strategie.three1', 'Ein Jahr kann Geld kosten und trotzdem Vermögen schaffen: Die Wohnung gewinnt an Wert und der Kredit sinkt, während auf dem Konto wenig übrig bleibt.')],
+                [t('strategie.three2t', 'Tilgung ist keine Ausgabe'),
+                  t('strategie.three2', 'Zahlst du 20.000 € Kredit zurück, sinkt deine Liquidität um 20.000 € und deine Schuld um denselben Betrag. Dein Eigenkapital steigt also um 20.000 €. Nur die Zinsen sind echte Kosten.')],
+                [t('strategie.three3t', 'Vermögen ist nicht Kontostand'),
+                  t('strategie.three3', 'Der größte Teil deines Vermögens steckt in den Wohnungen. Verfügbar ist nur die Liquidität. Wer daran will, muss verkaufen oder refinanzieren.')],
+              ].map(([title, text]) => (
+                <div key={title}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: CORAL, marginBottom: 4 }}>{title}</div>
+                  <div style={{ fontSize: 12.5, color: '#555', lineHeight: 1.75 }}>{text}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Section>
+
         {/* 11 — Erkenntnisse und Risiken */}
         <Section title={t('strategie.s11', 'Das Wichtigste in Kürze')}>
           <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3,1fr)', gap: 12, marginBottom: 12 }}>
-            {a.insights.map((ins, i) => (
+            {a.keyInsights.map((ins, i) => (
               <div key={ins.title} style={{ ...card }}>
                 <div style={{ fontFamily: SERIF, fontSize: 15, fontWeight: 800, color: CORAL, marginBottom: 6 }}>
                   {i + 1}. {ins.title}

@@ -16,8 +16,12 @@ export interface WealthPoint {
   propertyValue: number
   debt: number
   propertyEquity: number   // Immobilienwert abzueglich Schuld
-  netWorth: number         // dazu Liquiditaet und gebundenes Kapital
+  // Waehrend der Bauzeit gezahlte Kaufraten. Das Geld ist weder Liquiditaet
+  // noch schon Immobilienwert - es steckt in der Baustelle. Ohne diese eigene
+  // Groesse ginge die Vermoegensrechnung in den ersten Jahren nicht auf.
+  committed: number
   cash: number
+  netWorth: number         // Eigenkapital + gebundenes Kapital + Liquiditaet
 }
 export interface PortfolioPoint {
   year: number
@@ -83,6 +87,38 @@ export interface SensitivityRow {
 
 export interface Insight { title: string; text: string }
 
+// ── Die Vermoegensrechnung zum Nachrechnen ───────────────────────────────────
+// Der Kunde soll sehen, WIE sich das Netto-Vermoegen zusammensetzt, nicht nur
+// das Ergebnis. Die Zeilen sind so gebaut, dass die Summe der angezeigten
+// Zahlen exakt den angezeigten Endwert ergibt.
+export interface BalanceLine { label: string; amount: number; kind: 'plus' | 'minus' | 'sum'; hint?: string }
+
+// ── Was die Strategie gekostet hat ───────────────────────────────────────────
+export interface CostOverview {
+  ownEquity: number            // eingesetztes Eigenkapital
+  additionalEquity: number     // was ueber das Startkapital hinaus noetig waere
+  peakFunding: number          // hoechster Kapitalbedarf zu einem Zeitpunkt
+  interest: number
+  runningCosts: number
+  taxes: number
+  vatRefund: number
+  refinancing: number
+  saleProceeds: number
+  wealthGain: number           // Netto-Vermoegen am Ende minus Startkapital
+}
+
+// ── Wohin das Geld geht ──────────────────────────────────────────────────────
+export interface MoneyFlowRow { label: string; amount: number; meaning: string }
+
+// ── Die Stationen der Strategie ──────────────────────────────────────────────
+// Ersetzt den frueheren Wasserfall: Der erklaerte nichts, weil das Startkapital
+// neben dem Portfoliowert nur ein Strich war. Hier steht stattdessen der Weg
+// des Kapitals als Kette von Stationen, jede mit ihrer echten Zahl.
+export interface JourneyStep { label: string; value: string; note: string }
+
+// ── Was wann passiert ────────────────────────────────────────────────────────
+export interface TimelineEntry { year: number; kind: 'buy' | 'handover' | 'refinance' | 'purchase' | 'sale'; label: string; detail: string }
+
 export interface CustomerSummary {
   firstYear: number; lastYear: number
   originalEquity: number
@@ -129,6 +165,12 @@ export interface CustomerAnalytics {
   scenarios: ScenarioSummary[]
   exits: Array<{ name: string; year: number; value: number; debt: number; costs: number; tax: number; net: number }>
   risks: RiskItem[]
+  balance: BalanceLine[]
+  cost: CostOverview
+  moneyFlow: MoneyFlowRow[]
+  journey: JourneyStep[]
+  timeline: TimelineEntry[]
+  keyInsights: Insight[]
   insights: Insight[]
   drivers: string[]
   sensitivity: SensitivityRow[]
@@ -155,15 +197,18 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // ── Vermoegen ──────────────────────────────────────────────────────────────
   const cashByYear = new Map<number, number>()
   if (ri) for (const f of ri.flows) cashByYear.set(f.year, f.endingCash)
+  // Alle Groessen aus den GERUNDETEN Werten bilden, damit die Rechnung auf der
+  // Seite aufgeht: Der Kunde rechnet mit dem nach, was dort steht.
   const wealth: WealthPoint[] = agg.rows.map(row => {
-    const cash = cashByYear.get(row.year) ?? 0
+    const cash = r0(cashByYear.get(row.year) ?? 0)
+    const propertyValue = r0(row.value)
+    const debt = r0(row.debt)
+    const committed = r0(row.committed)
+    const propertyEquity = propertyValue - debt
     return {
       year: row.year,
-      propertyValue: r0(row.value),
-      debt: r0(row.debt),
-      propertyEquity: r0(row.value - row.debt),
-      netWorth: r0(row.value + row.committed - row.debt + cash),
-      cash: r0(cash),
+      propertyValue, debt, propertyEquity, committed, cash,
+      netWorth: propertyEquity + committed + cash,
     }
   })
 
@@ -422,22 +467,155 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
 
   // ── Zusammenfassung ────────────────────────────────────────────────────────
   const unitsEnd = portfolio.length ? portfolio[portfolio.length - 1].units : 0
-  const cashEnd = ri ? ri.kpis.cashEnd : 0
-  const netWorthEnd = wealth.length ? wealth[wealth.length - 1].netWorth : 0
+  const lastWealth = wealth.length ? wealth[wealth.length - 1] : null
+  const netWorthEnd = lastWealth ? lastWealth.netWorth : 0
   const summary: CustomerSummary = {
     firstYear: agg.firstYear, lastYear: agg.lastYear,
     originalEquity: params.ek,
     unitsEnd,
-    portfolioValue: r0(lastRow?.value ?? 0),
-    debt: r0(lastRow?.debt ?? 0),
+    portfolioValue: lastWealth?.propertyValue ?? 0,
+    debt: lastWealth?.debt ?? 0,
     netWorth: netWorthEnd,
-    cash: r0(cashEnd),
+    cash: lastWealth?.cash ?? 0,
     irr: totals.irr,
     recyclingMultiple: ri ? ri.kpis.capitalRecyclingMultiple : null,
     exitNet: exit ? r0(exit.net) : null,
-    additionalEquityNeeded: liquidityWarning ? r0(Math.abs(Math.min(0, liquidityWarning.lowest))) : 0,
+    additionalEquityNeeded: ri ? r0(Math.abs(Math.min(0, ...ri.flows.map(fl => fl.endingCash)))) : 0,
     text: buildSummaryText(params, agg, unitsEnd, lastRow?.value ?? 0, ri),
   }
+
+  // ── Endbilanz ─────────────────────────────────────────────────────────────
+  const balance: BalanceLine[] = lastWealth ? [
+    { label: 'Wert der Immobilien', amount: lastWealth.propertyValue, kind: 'plus' },
+    { label: 'Offene Kredite', amount: -lastWealth.debt, kind: 'minus' },
+    { label: 'Eigenkapital in den Immobilien', amount: lastWealth.propertyEquity, kind: 'sum' },
+    ...(lastWealth.committed
+      ? [{ label: 'In der Bauphase gebundenes Kapital', amount: lastWealth.committed, kind: 'plus' as const,
+        hint: 'Bereits gezahlte Kaufraten für Wohnungen, die noch nicht übergeben sind.' }]
+      : []),
+    { label: 'Liquidität', amount: lastWealth.cash, kind: 'plus' },
+    { label: 'Netto-Vermögen', amount: lastWealth.netWorth, kind: 'sum' },
+  ] : []
+
+  // ── Was die Strategie gekostet hat ────────────────────────────────────────
+  const ownEquity = outcomes.filter(o => !o.unit.model).reduce((a, o) => a + o.ekUsed, 0)
+  // Zusaetzlicher Kapitalbedarf: der tiefste Punkt, an dem die Kasse ins Minus
+  // laeuft. Genau so viel muesste der Kunde nachlegen.
+  const lowestCash = ri ? Math.min(0, ...ri.flows.map(fl => fl.endingCash)) : 0
+  const runningCosts = agg.rows.reduce((a, r) => a + r.mgmt + r.opex, 0)
+  const vatSum = agg.rows.reduce((a, r) => a + r.vat, 0)
+  const cost: CostOverview = {
+    ownEquity: r0(Math.min(ownEquity, params.ek)),
+    additionalEquity: r0(Math.abs(lowestCash)),
+    peakFunding: r0(Math.max(ownEquity, params.ek) + Math.abs(lowestCash)),
+    interest: r0(totals.interest),
+    runningCosts: r0(runningCosts),
+    taxes: r0(totals.taxes),
+    vatRefund: r0(vatSum),
+    refinancing: ri ? ri.kpis.totalRefinancingProceeds : 0,
+    saleProceeds: ri ? ri.kpis.totalSaleProceeds : (exit ? r0(exit.net) : 0),
+    wealthGain: r0(netWorthEnd - params.ek),
+  }
+
+  // ── Wohin das Geld geht ───────────────────────────────────────────────────
+  const principalSum = agg.rows.reduce((a, r) => a + r.principal, 0)
+  const moneyFlow: MoneyFlowRow[] = [
+    { label: 'Startkapital', amount: params.ek, meaning: 'Dein Ausgangspunkt.' },
+    { label: 'In Immobilien gebunden', amount: -r0(ownEquity),
+      meaning: 'Eigenkapital und Kaufnebenkosten der ersten Käufe. Das Geld ist nicht weg, es steckt in den Wohnungen.' },
+    { label: 'Mieteinnahmen', amount: r0(totals.rents), meaning: 'Alles, was die Wohnungen über den Zeitraum einbringen.' },
+    { label: 'Laufende Kosten', amount: -r0(runningCosts), meaning: 'Verwaltung, Gemeinschaftskosten und Instandhaltungsrücklage.' },
+    { label: 'Zinsen', amount: -r0(totals.interest), meaning: 'Die Kosten der Finanzierung. Dieses Geld ist tatsächlich weg.' },
+    { label: 'Tilgung', amount: -r0(principalSum),
+      meaning: 'Verlässt dein Konto, senkt aber die Schuld um denselben Betrag. Dein Eigenkapital steigt entsprechend.' },
+    { label: 'Steuern und Abgaben', amount: -r0(totals.taxes), meaning: 'Einkommensteuer, Gesundheitsbeitrag und, wo sie anfällt, Sozialversicherung.' },
+    ...(vatSum ? [{ label: 'MwSt-Erstattung', amount: r0(vatSum),
+      meaning: 'Einmaliger Zufluss: die Kaufpreis-Mehrwertsteuer kommt bei Kurzzeitvermietung zurück.' }] : []),
+    ...(cost.refinancing ? [{ label: 'Refinanzierung', amount: cost.refinancing,
+      meaning: 'Kapital, das durch Wertzuwachs und Tilgung wieder verfügbar wird. Es erhöht gleichzeitig die Schuld.' }] : []),
+    ...(cost.saleProceeds ? [{ label: 'Verkaufserlöse', amount: cost.saleProceeds,
+      meaning: 'Was nach Kredit, Kosten und Steuern aus einem Verkauf übrig bleibt.' }] : []),
+    { label: 'Liquidität am Ende', amount: lastWealth?.cash ?? 0, meaning: 'Was am Ende tatsächlich auf dem Konto liegt.' },
+  ]
+
+  // ── Stationen ─────────────────────────────────────────────────────────────
+  const firstBuyYear = Math.min(...outcomes.filter(o => !o.unit.model).map(o => o.unit.buyY))
+  const startUnits = outcomes.filter(o => !o.unit.model).length
+  const equityBuilt = lastWealth ? lastWealth.propertyEquity - r0(ownEquity) : 0
+  const journey: JourneyStep[] = [
+    { label: 'Dein Startkapital', value: eur(params.ek), note: `Ausgangspunkt im Jahr ${firstBuyYear}.` },
+    { label: startUnits === 1 ? 'Erste Wohnung' : `${startUnits} Wohnungen`, value: eur(r0(ownEquity)),
+      note: 'So viel Eigenkapital ist beim Kauf gebunden, den Rest finanziert die Bank.' },
+    { label: 'Miete, Tilgung, Wertzuwachs', value: eur(r0(totals.rents)),
+      note: 'Mieteinnahmen über den ganzen Zeitraum. Sie tragen Zinsen und Tilgung mit.' },
+    { label: 'Eigenkapital wächst', value: eur(equityBuilt),
+      note: 'So viel Eigenkapital entsteht zusätzlich durch Tilgung und Wertentwicklung.' },
+    ...(ri && ri.kpis.refinancings > 0
+      ? [{ label: 'Refinanzierung', value: eur(ri.kpis.totalRefinancingProceeds),
+        note: `${ri.kpis.refinancings === 1 ? 'Eine Refinanzierung macht' : `${ri.kpis.refinancings} Refinanzierungen machen`} gebundenes Kapital wieder verfügbar.` }]
+      : []),
+    ...(ri && ri.kpis.additionalPurchases > 0
+      ? [{ label: ri.kpis.additionalPurchases === 1 ? 'Eine weitere Wohnung' : `${ri.kpis.additionalPurchases} weitere Wohnungen`,
+        value: eur(ri.kpis.totalRecycledCapital),
+        note: 'Dieses Kapital fließt erneut als Eigenkapital in Immobilien.' }]
+      : []),
+    { label: 'Netto-Vermögen', value: eur(netWorthEnd), note: `Stand am Ende des Zeitraums, ${agg.lastYear}.` },
+  ]
+
+  // ── Zeitachse aus echten Ereignissen ──────────────────────────────────────
+  const timeline: TimelineEntry[] = []
+  for (const o of outcomes) {
+    if (o.unit.model) continue
+    timeline.push({
+      year: o.unit.buyY, kind: 'buy', label: `Kauf ${o.unit.name}`,
+      detail: `${eur(o.gross)} gesamt, davon ${eur(o.ekUsed)} Eigenkapital.`,
+    })
+    if (o.unit.readyY !== o.unit.buyY) {
+      timeline.push({
+        year: o.unit.readyY, kind: 'handover', label: `Übergabe ${o.unit.name}`,
+        detail: 'Ab hier fließt Miete, und Zins und Tilgung laufen.',
+      })
+    }
+  }
+  for (const e of events) {
+    if (e.kind === 'refinance') {
+      timeline.push({
+        year: e.year, kind: 'refinance', label: 'Refinanzierung',
+        detail: `${eur(e.newLoanAmount)} auf ${e.propertyNames.join(', ')} werden wieder verfügbar.`,
+      })
+    } else if (e.kind === 'purchase') {
+      timeline.push({
+        year: e.year, kind: 'purchase', label: `Kauf ${e.name}`,
+        detail: `${eur(e.gross)} gesamt, davon ${eur(e.equity)} Eigenkapital aus wiederverwendetem Geld.`,
+      })
+    } else {
+      timeline.push({
+        year: e.year, kind: 'sale', label: `Verkauf ${e.name}`,
+        detail: `${eur(e.netProceeds)} bleiben nach Kredit, Kosten und Steuern übrig.`,
+      })
+    }
+  }
+  timeline.sort((x, y) => x.year - y.year)
+
+  // ── Die fünf wichtigsten Punkte ───────────────────────────────────────────
+  const unitsEndForKeys = portfolio.length ? portfolio[portfolio.length - 1].units : 0
+  const keyInsights: Insight[] = [
+    { title: 'Dein Startkapital', text: `${eur(params.ek)} bilden den Ausgangspunkt der Strategie.` },
+    { title: 'Dein Portfolio',
+      text: startUnits === unitsEndForKeys
+        ? `Es bleibt bei ${unitsEndForKeys} ${unitsEndForKeys === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(lastWealth?.propertyValue ?? 0)}.`
+        : `Aus ${startUnits === 1 ? 'der ersten Wohnung' : `${startUnits} Wohnungen`} werden ${unitsEndForKeys} mit einem Wert von ${eur(lastWealth?.propertyValue ?? 0)}.` },
+    { title: 'Dein Kapital arbeitet mehrfach',
+      text: ri && ri.kpis.totalRecycledCapital > 0
+        ? `${eur(ri.kpis.totalRecycledCapital)} werden erneut in Immobilien investiert, das ${ri.kpis.capitalRecyclingMultiple.toFixed(1).replace('.', ',')}-fache deines Startkapitals.`
+        : 'Unter diesen Annahmen reicht das freiwerdende Kapital im Betrachtungszeitraum nicht für einen weiteren Kauf.' },
+    { title: 'Dein Vermögen',
+      text: `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - params.ek)} gegenüber deinem Startkapital.` },
+    { title: 'Deine Liquidität',
+      text: cost.additionalEquity > 0
+        ? `Zwischenzeitlich wären bis zu ${eur(cost.additionalEquity)} zusätzliches Kapital nötig. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.`
+        : `Die Liquiditätsreserve bleibt durchgehend erhalten. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.` },
+  ]
 
   const insights = buildInsights({ params, wealth, portfolio, cashflow, ri, sensitivity, risks, liquidityWarning })
   const drivers = buildDrivers({ params, ri, sensitivity, cashflow, financing })
@@ -447,7 +625,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     liquidity, minimumReserve: reserve, liquidityWarning,
     financing, financingKpis, capitalSteps, recyclingRows, opportunity,
     properties, tax, taxKpis, scenarios, exits, risks, insights, drivers, sensitivity,
-    events,
+    balance, cost, moneyFlow, journey, timeline, keyInsights, events,
   }
 }
 

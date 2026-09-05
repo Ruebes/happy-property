@@ -286,13 +286,59 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
 // wird zuerst bedient); ohne Bundle bekommt jede Wohnung denselben EK-Anteil.
 export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   const order = [...units].sort((a, b) => ymOf(a.readyY, a.readyM) - ymOf(b.readyY, b.readyM))
-  let pool = p.ek
   const out = new Map<string, UnitOutcome>()
+  const probes = new Map<string, UnitOutcome>()
+  for (const u of order) probes.set(u.key, runUnit(u, 0, p))
+
+  // ── Eigenkapital verteilen ────────────────────────────────────────────────
+  // Frueher bekam die zuerst uebergebene Wohnung so viel wie moeglich - und die
+  // naechsten praktisch nichts. Im Beispiel standen 353.808 EUR auf der ersten
+  // Wohnung und 3.392 EUR auf der zweiten, also 99 % Finanzierung. Das gibt es
+  // bei keiner Bank, und es fuehrte dazu, dass alle Refinanzierungen auf
+  // derselben Wohnung lagen (Befund 5.9.26).
+  //
+  // Jetzt bekommt zuerst JEDE finanzierte Wohnung ihren Mindestanteil - so viel
+  // Eigenkapital, wie die Finanzierungsannahme verlangt (100 % minus dem
+  // angenommenen Beleihungsauslauf). Reicht das Kapital dafuer nicht, wird
+  // dieser Mindestanteil bei allen gleichmaessig gekuerzt. Erst was danach uebrig
+  // bleibt, fliesst wie bisher in Uebergabe-Reihenfolge, damit die zuerst
+  // fertige Wohnung schneller entschuldet ist.
+  const equityShare = Math.max(0, Math.min(1, 1 - (p.refinanceLtv || 70) / 100))
+  const financed = order.filter(u => u.fin)
+  const cashOnly = order.filter(u => !u.fin)
+  // Wohnungen ohne Finanzierung binden immer ihren vollen Preis.
+  const cashNeed = cashOnly.reduce((a, u) => a + probes.get(u.key)!.gross, 0)
+  let pool = Math.max(0, p.ek - cashNeed)
+
+  const share = new Map<string, number>()
+  if (p.bundle) {
+    const minNeed = financed.map(u => ({ u, need: probes.get(u.key)!.gross * equityShare }))
+    const totalMin = minNeed.reduce((a, x) => a + x.need, 0)
+    const factor = totalMin > 0 ? Math.min(1, pool / totalMin) : 0
+    for (const { u, need } of minNeed) {
+      const give = need * factor
+      share.set(u.key, give)
+      pool -= give
+    }
+    // Rest in Uebergabe-Reihenfolge, aber nie mehr als der Gesamtpreis.
+    for (const u of financed) {
+      if (pool <= 0.5) break
+      const gross = probes.get(u.key)!.gross
+      const add = Math.min(pool, gross - (share.get(u.key) ?? 0))
+      if (add <= 0) continue
+      share.set(u.key, (share.get(u.key) ?? 0) + add)
+      pool -= add
+    }
+  } else {
+    const each = p.ek / Math.max(1, units.length)
+    for (const u of financed) share.set(u.key, Math.min(each, probes.get(u.key)!.gross))
+  }
+
   for (const u of order) {
-    const probe = runUnit(u, 0, p)
-    const ekForUnit = p.bundle ? Math.min(pool, probe.gross) : Math.min(p.ek / Math.max(1, units.length), probe.gross)
-    pool -= ekForUnit
-    out.set(u.key, u.fin ? runUnit(u, ekForUnit, p) : runUnit(u, probe.gross, p))
+    const probe = probes.get(u.key)!
+    out.set(u.key, u.fin
+      ? runUnit(u, Math.round(share.get(u.key) ?? 0), p)
+      : runUnit(u, probe.gross, p))
   }
   return units.map(u => out.get(u.key)!)
 }
