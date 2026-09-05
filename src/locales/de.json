@@ -4499,7 +4499,17 @@
       "taxSplitFirma": "KSt {{k}} · Ausschüttung {{d}}",
       "taxSplitCy": "davon GESY {{g}} · MwSt-Erstattung +{{v}}",
       "taxSplitDe": "CY {{c}} · DE {{d}} · MwSt-Erstattung +{{v}}",
-      "engineNote2": "Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete und Steuern nach der oben gewählten Struktur ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung nach 24 Monaten. Kaufraten laufen vor der Übergabe aus dem Eigenkapital. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken \"Mit Rendite-Berechnung\" - gleiche Zahlen, gleiche Engine."
+      "engineNote2": "Gerechnet mit der Engine der Einzelrechnungen: Annuitätendarlehen ab Übergabe, Miete und Steuern nach der oben gewählten Struktur ab Übergabe, MwSt-Erstattung bei Kurzzeitvermietung nach 24 Monaten. Kaufraten laufen vor der Übergabe aus dem Eigenkapital. Die Einzelrechnungen für den Kunden erstellst du wie gewohnt über den Haken \"Mit Rendite-Berechnung\" - gleiche Zahlen, gleiche Engine.",
+      "mgmtFix": "Verwaltung €/Monat",
+      "mgmtToPct": "→ als Prozent der Miete",
+      "mgmtToFix": "→ als fester Betrag pro Monat",
+      "opex": "Gemeinschaftskosten €/Monat",
+      "costSection": "Laufende Kosten",
+      "opexDefault": "Gemeinschaftskosten €/Monat",
+      "maint": "Instandhaltungsrücklage % p.a. vom Kaufpreis",
+      "colOpex": "Kosten",
+      "costHint": "Die Rücklage rechnet auf den ursprünglichen Kaufpreis, nicht auf den gestiegenen Marktwert. Gemeinschaftskosten gelten je Wohnung und können unten je Wohnung überschrieben werden; beide steigen mit 2 % pro Jahr.",
+      "taxJoint": "Die Steuer wird über ALLE Wohnungen zusammen gerechnet: Freibetrag, Progression, Bestandseinkommen, GESY-Deckel und der Verlustvortrag der Firma gelten pro Kunde, nicht pro Wohnung. Die Einzelberechnung einer Wohnung zeigt deshalb eine andere Steuer als dieser Plan - das ist richtig so, weil eine Wohnung allein tatsächlich anders besteuert wird als drei zusammen."
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -5744,6 +5754,7 @@
     "taxFirma": "Gehalten über eine zyprische Gesellschaft: {{k}} % Körperschaftsteuer auf den Gewinn nach Verwaltung, Zinsen und Abschreibung (3 % Gebäude, 10 % Einrichtung), Verluste 5 Jahre vortragbar. Auf die Ausschüttung sind {{d}} % berücksichtigt.",
     "taxCyPrivat": "Privat gehalten, Steuersitz Zypern: 22.000 € steuerfrei, danach 20 bis 35 %, nach 20 % Pauschalabzug auf die Miete, 3 % Gebäude-Abschreibung, 10 % auf die Einrichtung und die Darlehenszinsen{{gesy}}.",
     "taxCyGesy": "; zusätzlich 2,65 % Gesundheitsbeitrag (GESY)",
-    "taxDePrivat": "Privat gehalten, Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit {{d}} % Grenzsteuersatz nach und rechnet die zyprische Steuer an."
+    "taxDePrivat": "Privat gehalten, Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit {{d}} % Grenzsteuersatz nach und rechnet die zyprische Steuer an.",
+    "colOpex": "Kosten der Wohnung"
   }
 }

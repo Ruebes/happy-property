@@ -253,6 +253,36 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               ))}
             </div>
 
+            {/* ── Laufende Kosten der Wohnungen ───────────────────────────────
+                Verwaltung deckt die Vermietung ab. Gemeinschaftskosten (Pool,
+                Garten, Beleuchtung, Versicherung der Anlage) und die
+                Instandhaltungsruecklage kommen zusaetzlich und fehlten bisher
+                komplett. */}
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                {t('crm.sim.costSection', 'Laufende Kosten')}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className={lbl}>{t('crm.sim.opexDefault', 'Gemeinschaftskosten €/Monat')}</label>
+                  <input type="number" step={10} className={inputCls} value={params.opexMonthly}
+                    onChange={e => setParams(p => ({ ...p, opexMonthly: +e.target.value }))} />
+                </div>
+                <div className="col-span-2 sm:col-span-2">
+                  <label className={lbl}>
+                    {t('crm.sim.maint', 'Instandhaltungsrücklage % p.a. vom Kaufpreis')}
+                    <strong className="text-gray-700 ml-1">{String(params.maintPct).replace('.', ',')} %</strong>
+                  </label>
+                  <input type="range" min={0} max={2} step={0.05} className="w-full accent-orange-500"
+                    value={params.maintPct}
+                    onChange={e => setParams(p => ({ ...p, maintPct: +e.target.value }))} />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                {t('crm.sim.costHint', 'Die Rücklage rechnet auf den ursprünglichen Kaufpreis, nicht auf den gestiegenen Marktwert. Gemeinschaftskosten gelten je Wohnung und können unten je Wohnung überschrieben werden; beide steigen mit 2 % pro Jahr.')}
+              </p>
+            </div>
+
             {/* ── Besteuerung: Steuersitz + privat/Firma ──────────────────────
                 Sven 4.9.26: „Versteuerung in Zypern kann ich gar nicht eingeben."
                 Steuersitz und Halte-Struktur gelten fuer den ganzen Plan; die
@@ -319,6 +349,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   </div>
                 </>)}
               </div>
+              <p className="text-[11px] text-gray-700 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {t('crm.sim.taxJoint', 'Die Steuer wird über ALLE Wohnungen zusammen gerechnet: Freibetrag, Progression, Bestandseinkommen, GESY-Deckel und der Verlustvortrag der Firma gelten pro Kunde, nicht pro Wohnung. Die Einzelberechnung einer Wohnung zeigt deshalb eine andere Steuer als dieser Plan - das ist richtig so, weil eine Wohnung allein tatsächlich anders besteuert wird als drei zusammen.')}
+              </p>
               <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
                 {params.holder === 'privat'
                   ? (params.res === 'cy'
@@ -393,11 +426,44 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         options={[{ value: 'short', label: t('crm.sim.letShort', 'Kurzzeit (MwSt-Erstattung)') },
                           { value: 'long', label: t('crm.sim.letLong', 'Langzeit') }]} />
                     </div>
+                    {/* Verwaltung: Schieberegler statt festem Wert (Sven 5.9.26).
+                        Kurzzeit rechnet in Prozent der Miete, Langzeit wahlweise
+                        in Prozent oder als fester Monatsbetrag. */}
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className={lbl}>
+                        {u.calc?.mgmtMode === 'fix'
+                          ? t('crm.sim.mgmtFix', 'Verwaltung €/Monat')
+                          : t('crm.sim.mgmt', 'Verwaltung % der Miete')}
+                        <strong className="text-gray-700 ml-1">
+                          {u.calc?.mgmtMode === 'fix'
+                            ? `${Math.round(u.calc?.mgmtFix ?? 100)} €`
+                            : `${Math.round(u.calc?.mgmtPct ?? defaultMgmtPct(u.letType, u.calc?.hotelConcept))} %`}
+                        </strong>
+                      </label>
+                      {u.calc?.mgmtMode === 'fix' ? (
+                        <input type="range" min={0} max={500} step={10} className="w-full accent-orange-500"
+                          value={Math.round(u.calc?.mgmtFix ?? 100)}
+                          onChange={e => patchUnit(u.key, { calc: { ...(u.calc ?? {}), mgmtFix: +e.target.value } })} />
+                      ) : (
+                        <input type="range" min={0} max={50} step={1} className="w-full accent-orange-500"
+                          value={Math.round(u.calc?.mgmtPct ?? defaultMgmtPct(u.letType, u.calc?.hotelConcept))}
+                          onChange={e => patchUnit(u.key, { calc: { ...(u.calc ?? {}), mgmtPct: +e.target.value } })} />
+                      )}
+                      {u.letType === 'long' && (
+                        <button type="button"
+                          onClick={() => patchUnit(u.key, { calc: { ...(u.calc ?? {}), mgmtMode: u.calc?.mgmtMode === 'fix' ? 'pct' : 'fix', mgmtFix: u.calc?.mgmtFix ?? 100 } })}
+                          className="text-[11px] text-orange-600 hover:underline mt-0.5">
+                          {u.calc?.mgmtMode === 'fix'
+                            ? t('crm.sim.mgmtToPct', '→ als Prozent der Miete')
+                            : t('crm.sim.mgmtToFix', '→ als fester Betrag pro Monat')}
+                        </button>
+                      )}
+                    </div>
                     <div>
-                      <label className={lbl}>{t('crm.sim.mgmt', 'Verwaltung % der Miete')}</label>
-                      <input type="number" step={1} className={inputCls}
-                        value={Math.round(u.calc?.mgmtPct ?? defaultMgmtPct(u.letType, u.calc?.hotelConcept))}
-                        onChange={e => patchUnit(u.key, { calc: { ...(u.calc ?? {}), mgmtPct: +e.target.value } })} />
+                      <label className={lbl}>{t('crm.sim.opex', 'Gemeinschaftskosten €/Monat')}</label>
+                      <input type="number" step={10} className={inputCls}
+                        value={Math.round(u.opex ?? params.opexMonthly)}
+                        onChange={e => patchUnit(u.key, { opex: +e.target.value })} />
                     </div>
                     <div>
                       <label className={lbl}>{t('crm.sim.finance', 'Finanzierung')}</label>
@@ -552,6 +618,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     <th className="px-2 py-2 text-right">{t('crm.sim.colInvest', 'Kaufraten')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colRents', 'Mieten')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colMgmt', 'Verwaltung')}</th>
+                    <th className="px-2 py-2 text-right">{t('crm.sim.colOpex', 'Kosten')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colInterest', 'Zinsen')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colPrincipal', 'Tilgung')}</th>
                     <th className="px-2 py-2 text-right">{t('crm.sim.colTaxes', 'Steuern')}</th>
@@ -568,6 +635,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         <td className="px-2 py-1.5 text-right text-orange-600">{r.invest ? `−${eur(r.invest)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right text-green-700">{r.rents ? eur(r.rents) : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.mgmt ? `−${eur(r.mgmt)}` : ''}</td>
+                        <td className="px-2 py-1.5 text-right">{r.opex ? `−${eur(r.opex)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.interest ? `−${eur(r.interest)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.principal ? `−${eur(r.principal)}` : ''}</td>
                         <td className="px-2 py-1.5 text-right">{r.taxes ? `−${eur(r.taxes)}` : ''}</td>

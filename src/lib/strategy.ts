@@ -1,6 +1,6 @@
 import {
-  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit,
-  CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT,
+  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTax,
+  CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT, CY_GESY_RATE, CY_GESY_CAP, CY_LOSS_CARRY_YEARS,
   type CalcParams, type CalcResult,
 } from './rechner'
 
@@ -25,6 +25,8 @@ export interface SimUnit {
   buyM: number; buyY: number      // Kauf Monat/Jahr
   readyM: number; readyY: number  // Übergabe Monat/Jahr (= Mietstart)
   plan: 'sofort' | 'luma'
+  // Gemeinschaftskosten dieser Wohnung (EUR/Monat). Leer = globaler Vorgabewert.
+  opex?: number | null
   // Feineinstellungen aus der EINZELBERECHNUNG dieser Wohnung (Verwaltung,
   // Hotelkonzept, Saisonmodell, Rendite, Zins …). Sven 15.8.: „Der
   // Strategierechner muss auf die Daten zugreifen, die ich vorher in der
@@ -48,6 +50,9 @@ export interface SimParams {
   divPayoutPct: number      // Anteil des Gewinns, der ausgeschuettet wird %
   divTaxPct: number         // Steuer beim Gesellschafter auf die Ausschuettung %
   gesy: boolean             // GESY 2,65 % (nur privat + Steuersitz Zypern)
+  // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
+  opexMonthly: number       // Gemeinschaftskosten je Wohnung, EUR/Monat (Vorgabe)
+  maintPct: number          // Instandhaltungsruecklage % p.a. vom Kaufpreis
 }
 
 export interface UnitOutcome {
@@ -62,6 +67,14 @@ export interface YearRow {
   // deutsche Steuer nach Anrechnung; bei Firma = Koerperschaftsteuer und Steuer
   // auf die Ausschuettung. gesy ist in taxCY bereits enthalten.
   taxCY: number; taxDE: number; gesy: number
+  // Laufende Kosten der Wohnungen (Gemeinschaftskosten + Instandhaltungsruecklage)
+  opex: number
+  // Steuerliche Bemessungsgrundlagen ALLER Wohnungen dieses Jahres, aus denen
+  // die Steuer fuer die Person/Gesellschaft als Ganzes gerechnet wird.
+  baseCY: number; baseDE: number
+  // Summe der wohnungsweise gerechneten Steuer aus der Engine. Wird beim
+  // Umstieg auf die gemeinsame Steuer wieder herausgerechnet.
+  unitTax: number
   // Bauphase: bereits gezahlte Kaufraten von Wohnungen, die noch nicht übergeben
   // sind. Dieses Geld ist NICHT weg, sondern in der Immobilie gebunden - ohne
   // diese Position sähe es im Vermögensverlauf aus, als würde Kapital
@@ -136,6 +149,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   ek: 350000, growth: 5, interest: 4.1, termYears: 20, rentGrowth: 2, deTaxPct: 42, bundle: true,
   res: 'de', cyBI: 0, holder: 'privat',
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
+  opexMonthly: 100, maintPct: 0.75,
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -145,6 +159,9 @@ export function defaultDivTaxPct(res: 'de' | 'cy'): number {
 }
 
 export const ymOf = (y: number, m: number) => y * 12 + (m - 1)
+
+// Planungshorizont der Strategie in Jahren, ab dem ersten Kaufjahr.
+export const HORIZON_YEARS = 10
 
 // Monatsmiete aus dem Saisonmodell (Auslastung + Preis/Nacht je Saison).
 // WICHTIG: Ist ein Saisonmodell gesetzt, rechnet die Engine IMMER damit und
@@ -200,6 +217,10 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     rentGrowth: p.rentGrowth, interestPct: p.interest, termYears: p.termYears,
     appreciationPct: p.growth, deTaxPct: p.deTaxPct,
     furnCost: u.furnNet, furnFree: false,
+    // Laufende Kosten der Wohnung: Gemeinschaftskosten je Wohnung (sonst der
+    // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
+    opexMonthly: u.opex ?? p.opexMonthly, maintPct: p.maintPct,
+    mgmtMode: fromCalc.mgmtMode ?? 'pct', mgmtFix: fromCalc.mgmtFix ?? 0,
   }
   const res = compute(params)
   const gross = res.pGross + res.furnGross
@@ -221,24 +242,78 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   return units.map(u => out.get(u.key)!)
 }
 
+// ── Steuer ueber ALLE Wohnungen zusammen ─────────────────────────────────────
+// Der zyprische Freibetrag von 22.000 EUR und die Progression gelten pro PERSON,
+// nicht pro Wohnung. Die Engine rechnet je Wohnung - wuerde man ihre Steuer
+// einfach addieren, bekaeme jede Wohnung ihren eigenen Freibetrag (drei Wohnungen
+// mit zusammen 33.228 EUR Gewinn ergaben so 0 statt 2.307 EUR Steuer im Jahr).
+// Deshalb liefert die Engine nur noch die Bemessungsgrundlagen; die Steuer
+// entsteht hier, einmal je Kalenderjahr fuer den ganzen Kunden.
+//
+// Die Bauzeitzinsen der Zwischenfinanzierung mindern die Bemessungsgrundlage wie
+// jede andere Zinslast.
+function applyPortfolioTax(rows: YearRow[], p: SimParams): void {
+  // Verlustvortrag der Gesellschaft, 5 Jahre (Zypern), portfolioweit.
+  const open: Array<{ i: number; amt: number }> = []
+  rows.forEach((r, idx) => {
+    const baseCY = r.baseCY - r.bridgeInterest
+    const baseDE = r.baseDE - r.bridgeInterest
+    let taxCY = 0, taxDE = 0, gesy = 0
+
+    if (p.holder === 'firma') {
+      let rest = baseCY
+      if (rest <= 0) { open.push({ i: idx, amt: -rest }); rest = 0 }
+      else {
+        for (const l of open) {
+          if (idx - l.i > CY_LOSS_CARRY_YEARS || l.amt <= 0) continue
+          const use = Math.min(l.amt, rest); l.amt -= use; rest -= use
+          if (rest <= 0) break
+        }
+      }
+      taxCY = Math.max(0, Math.round(rest * p.corpTaxPct / 100))
+      const afterTax = baseCY - taxCY
+      taxDE = afterTax > 0
+        ? Math.round(afterTax * (p.divPayoutPct / 100) * (p.divTaxPct / 100))
+        : 0
+    } else if (p.res === 'cy') {
+      const inc = Math.max(0, baseCY)
+      // Bestandseinkommen hebt die Progression - einmal fuer den Kunden, nicht je Wohnung.
+      taxCY = Math.max(0, cyTax(p.cyBI + inc) - cyTax(p.cyBI))
+      gesy = p.gesy ? Math.round(Math.min(r.rents, CY_GESY_CAP) * CY_GESY_RATE) : 0
+      taxCY += gesy
+    } else {
+      // Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet die
+      // zyprische Steuer an. Die Gesamtlast ist die zyprische Steuer PLUS der
+      // nicht angerechnete deutsche Rest - nicht nur der deutsche Rest.
+      const cy = cyTax(Math.max(0, baseCY))
+      const de = Math.round(baseDE * (p.deTaxPct / 100))
+      taxCY = cy
+      taxDE = de <= 0 ? de : de - Math.min(cy, de)
+    }
+
+    const total = taxCY + taxDE
+    // Die wohnungsweise Steuer der Engine wieder herausrechnen und durch die
+    // gemeinsame ersetzen; der Cashflow zieht damit die richtige Last ab.
+    r.cashflow += r.unitTax - total
+    r.taxes = total
+    r.taxCY = taxCY
+    r.taxDE = taxDE
+    r.gesy = gesy
+  })
+}
+
 export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number } {
   if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y, bridgeNeeded: false, bridgePeak: 0 } }
   const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
-  // Die Engine rechnet je Wohnung GENAU 10 Jahre ab ihrer Übergabe. Wohnungen mit
-  // früherer Übergabe laufen also früher aus. Zeigte man darüber hinaus weiter,
-  // bräche die Summe ein (Miete fällt weg, Zins/Tilgung der späteren Wohnung
-  // laufen weiter) - genau Svens Beobachtung 15.8. für 2037. Das ist kein
-  // wirtschaftlicher Effekt, sondern das Ende des Rechenhorizonts. Deshalb endet
-  // der gemeinsame Zeitraum, wenn die ERSTE Wohnung ihre 10 Jahre voll hat; so
-  // ist jedes gezeigte Jahr vollständig. (Untergrenze: die letzte Übergabe muss
-  // enthalten sein, sonst fiele eine spät übergebene Wohnung ganz heraus.)
-  const lastYear = Math.max(
-    Math.min(...outcomes.map(o => o.unit.readyY + 9)),
-    Math.max(...outcomes.map(o => o.unit.readyY)),
-  )
+  // Zehn Jahre ab dem ERSTEN Kauf, hart (Sven 5.9.26): „Zeitraum endet nach 10
+  // Jahren, auch wenn man eine Wohnung nach 8 Jahren kauft, laenger ist voellig
+  // unrealistisch bei den vielen Variablen." Eine spaet gekaufte Wohnung wird
+  // also nur mit ihren ersten Jahren gezeigt - das ist gewollt und ehrlicher als
+  // ein Zeitraum, der sich mit jedem zusaetzlichen Kauf verschiebt.
+  const lastYear = firstYear + HORIZON_YEARS - 1
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
     for (const o of outcomes) {
       const i = y - o.unit.readyY
       // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
@@ -252,6 +327,9 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
         row.interest += o.res.intC[i]; row.principal += o.res.princC[i]
         row.taxes += o.res.taxU[i]; row.vat += o.res.vatA[i]; row.cashflow += o.res.cfA[i]
         row.taxCY += o.res.taxCY[i]; row.taxDE += o.res.taxDE[i]; row.gesy += o.res.gesyA[i]
+        row.opex += o.res.opexA[i]
+        row.baseCY += o.res.profitCY[i]; row.baseDE += o.res.profitDE[i]
+        row.unitTax += o.res.taxU[i]
         row.debt += o.res.restL[i]; row.value += o.res.propV[i]
       } else if (i >= 10) {
         row.debt += o.res.restL[9]; row.value += o.res.propV[9]
@@ -300,6 +378,9 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
       r.debt += r.bridgeDebt
     }
   }
+  // Steuer zum Schluss: sie braucht die fertigen Bemessungsgrundlagen inklusive
+  // der Bauzeitzinsen.
+  if (p) applyPortfolioTax(rows, p)
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 

@@ -817,6 +817,8 @@ async function handleStart(admin: SupabaseClient, leadId: string, dealId: string
 }
 
 // ── REPLY ─────────────────────────────────────────────────────────────────────
+type ReplyConv = { id: string; lead_id: string; deal_id: string | null; state: string; proposed_slots: Slot[] | null; chosen_slot: Slot | null; attempts: number; rounds_no_progress: number | null; last_sent_norm: string | null }
+
 async function handleReply(admin: SupabaseClient, leadId: string, text: string): Promise<Response> {
   // 'snoozed' MIT ausschliessen: ein schlafendes Gespraech darf nicht erneut durch
   // den defer-Zweig laufen. Genau daran ist Patrick Dahlmann eskaliert — er
@@ -826,7 +828,7 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   const { data: conv } = await admin.from('booking_conversations').select('*')
     .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired,snoozed)').gt('expires_at', new Date().toISOString())
     .order('created_at', { ascending: false }).limit(1).maybeSingle()
-  const c = conv as null | { id: string; lead_id: string; deal_id: string | null; state: string; proposed_slots: Slot[] | null; chosen_slot: Slot | null; attempts: number; rounds_no_progress: number | null; last_sent_norm: string | null }
+  const c = conv as ReplyConv | null
   if (!c) return json({ ok: true, skipped: 'no_active_conversation' })
 
   // ANSPRUCH: nur EIN Lauf darf dieses Gespraech gerade bearbeiten.
@@ -834,15 +836,47 @@ async function handleReply(admin: SupabaseClient, leadId: string, text: string):
   // pro Nachricht einen eigenen Lauf, alle lasen denselben Zustand und antworteten.
   // Ergebnis waren zwei einander widersprechende WhatsApps 240 ms auseinander.
   // Der bedingte UPDATE ist atomar: wer die Zeile bekommt, arbeitet; die anderen
-  // steigen aus. Ihre Nachricht geht nicht verloren — sie steht im Verlauf, den
-  // der laufende Durchgang ohnehin liest.
-  const claimBis = new Date(Date.now() + 90_000).toISOString()
-  const { data: claimed } = await admin.from('booking_conversations')
-    .update({ processing_until: claimBis }).eq('id', c.id)
-    .or(`processing_until.is.null,processing_until.lt.${new Date().toISOString()}`)
-    .select('id').maybeSingle()
-  if (!claimed) return json({ ok: true, skipped: 'wird_bereits_bearbeitet' })
+  // warten. Aussteigen darf der Wartende NICHT: der laufende Durchgang liest den
+  // Verlauf VOR der neuen Nachricht, sie ginge also verloren. Lothar Huemmer (4.9., 10:21) hat
+  // genau so seine Zusage "11 Uhr" verloren: der vorige Lauf hatte den Anspruch nicht
+  // freigegeben, 25 s spaeter stieg der neue Lauf aus, und niemand antwortete mehr.
+  // Deshalb: warten, bis der andere Lauf fertig ist, und dann mit dem NEUEN Zustand
+  // arbeiten. Erst wenn nach 30 s niemand loslaesst, wird ausgestiegen.
+  let claimed: { id: string } | null = null
+  for (let versuch = 0; versuch < 7 && !claimed; versuch++) {
+    if (versuch) await new Promise(r => setTimeout(r, 5000))
+    const { data } = await admin.from('booking_conversations')
+      .update({ processing_until: new Date(Date.now() + 90_000).toISOString() }).eq('id', c.id)
+      .or(`processing_until.is.null,processing_until.lt.${new Date().toISOString()}`)
+      .select('id').maybeSingle()
+    claimed = data as { id: string } | null
+  }
+  if (!claimed) {
+    console.warn('[booking-bot] Anspruch nicht bekommen, Nachricht unbearbeitet:', leadId, text.slice(0, 120))
+    return json({ ok: true, skipped: 'wird_bereits_bearbeitet' })
+  }
 
+  // Zustand nach dem Warten neu lesen: der andere Lauf hat ihn womoeglich veraendert.
+  const { data: frisch } = await admin.from('booking_conversations').select('*').eq('id', c.id).maybeSingle()
+  const cc = (frisch as ReplyConv | null) ?? c
+  // Waehrend des Wartens gebucht/uebergeben/eingeschlafen? Dann gehoert das Gespraech
+  // nicht mehr dem Bot — sonst schreibt er hinter einer Buchung oder Uebergabe her.
+  if (['booked', 'handoff', 'expired', 'snoozed'].includes(cc.state)) {
+    await admin.from('booking_conversations').update({ processing_until: null }).eq('id', c.id)
+    return json({ ok: true, skipped: `state_${cc.state}` })
+  }
+
+  // Der Anspruch MUSS auf jedem Rueckweg fallen — auch bei Vorschlag, Uebergabe oder
+  // Fehler. Blieb er stehen, war das Gespraech bis zu 90 s taub (Lothar Huemmer, 4.9.).
+  try {
+    return await replyRunde(admin, cc, leadId, text)
+  } finally {
+    try { await admin.from('booking_conversations').update({ processing_until: null }).eq('id', c.id) } catch (e) { console.warn('[booking-bot] Anspruch nicht geloest:', e) }
+  }
+}
+
+// Ein Gespraechszug. Laeuft immer unter dem Anspruch aus handleReply.
+async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, text: string): Promise<Response> {
   const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', leadId).maybeSingle()
   const l = lead as { first_name: string | null; whatsapp: string | null; phone: string | null; email: string | null }
   const phone = l.whatsapp || l.phone || ''

@@ -73,6 +73,16 @@ export interface CalcParams {
   divPayoutPct?: number     // Anteil des Gewinns, der ausgeschuettet wird (%)
   divTaxPct?: number        // Steuer beim Gesellschafter auf die Ausschuettung (%)
   gesy?: boolean            // GESY 2,65 % auf die Bruttomiete (nur CY-Steuerresidenz)
+  // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
+  // Verwaltung deckt die Vermietung ab, NICHT die Kosten der Wohnung selbst.
+  // Gemeinschaftskosten (common expenses, Pool/Garten/Beleuchtung/Versicherung
+  // der Anlage) und die Instandhaltungsruecklage sind eigene Positionen.
+  opexMonthly?: number      // Gemeinschaftskosten + Versicherung, EUR/Monat
+  maintPct?: number         // Instandhaltungsruecklage % p.a. vom URSPRUENGLICHEN Kaufpreis
+  // Verwaltung wahlweise als Prozentsatz der Miete oder als fester Monatsbetrag
+  // (Langzeit laeuft in der Praxis ueber eine Pauschale, nicht ueber Prozente).
+  mgmtMode?: 'pct' | 'fix'
+  mgmtFix?: number          // EUR/Monat, nur bei mgmtMode 'fix'
   // Kurzzeitvermietung als GEWERBLICHE Taetigkeit (Standard bei Kurzzeit):
   // registriertes Self-Service-Accommodation + 9 % MwSt auf die Miete. Dann
   // zieht auch die Privatperson die ECHTEN Kosten ab (Verwaltung!) statt der
@@ -238,6 +248,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   season: null,
   vatMode: 'standard19', livingSqm: null,
   holder: 'privat', corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
+  opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0,
 }
 
 // Zypern progressive Einkommensteuer (Banden ab 2026)
@@ -290,7 +301,14 @@ export interface CalcResult {
   // taxDE die Steuer auf die Ausschuettung. gesyA ist der Gesundheitsbeitrag
   // (nur privat + Steuersitz Zypern) und steckt bereits in taxCY.
   holder: 'privat' | 'firma'; corpTaxPct: number; divTaxPct: number; divPayoutPct: number
-  gesyA: number[]; profitCY: number[]
+  gesyA: number[]
+  // Steuerliche Bemessungsgrundlagen je Jahr, VOR Anwendung des Steuersatzes.
+  // Die Strategie-Schicht rechnet daraus die Steuer ueber ALLE Wohnungen eines
+  // Kunden zusammen (Freibetrag und Progression gelten pro Person, nicht pro
+  // Wohnung). Fuer die Einzelrechnung bleibt es bei den Werten aus taxCY/taxDE.
+  profitCY: number[]; profitDE: number[]
+  opexA: number[]           // Gemeinschaftskosten + Instandhaltung je Jahr
+  opexMonthly: number; maintPct: number
   sumR: number; sumC: number; sumT: number; sumVat: number; sumPP: number; sumCF: number
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
@@ -399,7 +417,19 @@ function computeCore(p: CalcParams): CalcResult {
 
   const baseR = pGrossList * (yPct / 100)
   const rents = fA.map((f, i) => Math.round(baseR * Math.pow(1 + rG / 100, i) * f))
-  const mgmt = rents.map((r, i) => Math.round(r * (mgP / 100) * Math.pow(1.02, i)))
+  // Verwaltung: Prozent der Miete (Standard) oder fester Monatsbetrag. Beide
+  // steigen mit 2 % p.a., anteilig im Rumpfjahr.
+  const mgmtFixed = Math.max(0, p.mgmtFix ?? 0)
+  const mgmt = rents.map((r, i) => p.mgmtMode === 'fix'
+    ? Math.round(mgmtFixed * 12 * Math.pow(1.02, i) * fA[i])
+    : Math.round(r * (mgP / 100) * Math.pow(1.02, i)))
+  // Gemeinschaftskosten laufen ab Uebergabe, auch bei Leerstand; die
+  // Instandhaltungsruecklage haengt am urspruenglichen Kaufpreis, nicht am
+  // jedes Jahr gestiegenen Marktwert.
+  const opexMonthly = Math.max(0, p.opexMonthly ?? 0)
+  const maintPct = Math.max(0, p.maintPct ?? 0)
+  const maintAnn = Math.round(pGross * maintPct / 100)
+  const opexA = fA.map((f, i) => Math.round((opexMonthly * 12 * Math.pow(1.02, i) + maintAnn) * f))
 
   const iR = iP / 100
   const intC: number[] = [], princC: number[] = [], rateC: number[] = [], restL: number[] = [], prepayC: number[] = []
@@ -450,7 +480,7 @@ function computeCore(p: CalcParams): CalcResult {
   const gesyOn = holder === 'privat' && resCY && (p.gesy ?? true)
   const gesyA = rents.map((r, i) => gesyOn ? Math.round(Math.min(r, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_RATE) : 0)
   let taxCY: number[], taxDE: number[], taxU: number[]
-  const profitCY: number[] = []
+  const profitCY: number[] = [], profitDE: number[] = []
 
   // Zyprischer Verlustvortrag (5 Jahre): Verluste der Anlaufjahre mindern die
   // spaeteren Gewinne. Ohne das faellt in der Firma sofort Steuer an, obwohl das
@@ -471,9 +501,10 @@ function computeCore(p: CalcParams): CalcResult {
 
   if (sdMode) {
     // Share-Deal-Holding: wie die Firma - echte Kosten, kein Pauschalabzug.
-    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - intC[i])
+    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - opexA[i] - intC[i])
     const taxable = applyLossCarry(base)
     base.forEach(b => profitCY.push(b))
+    base.forEach(() => profitDE.push(0))
     taxCY = taxable.map(t => Math.max(0, Math.round(t * sdTaxRate)))
     taxDE = Array(10).fill(0)
     taxU = taxCY
@@ -481,8 +512,9 @@ function computeCore(p: CalcParams): CalcResult {
     // ── Zyprische Ltd haelt die Wohnung ──────────────────────────────────────
     // Kein Grundfreibetrag, kein 20-%-Pauschalabzug; dafuer fester Satz und
     // Verlustvortrag. Danach die Ausschuettung an den Gesellschafter.
-    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - intC[i])
+    const base = rents.map((r, i) => r - Math.round(dCY * fA[i]) - Math.round(furnAfaCY * fA[i]) - mgmt[i] - opexA[i] - intC[i])
     base.forEach(b => profitCY.push(b))
+    base.forEach(() => profitDE.push(0))
     const taxable = applyLossCarry(base)
     taxCY = taxable.map(t => Math.max(0, Math.round(t * corpTaxPct / 100)))
     taxDE = base.map((b, i) => {
@@ -498,7 +530,11 @@ function computeCore(p: CalcParams): CalcResult {
     taxCY = rents.map((r, i) => {
       const furnAfa = Math.round(furnAfaCY * fA[i])
       const d = Math.round(dCY * fA[i])
-      const m2 = cyBusiness ? mgmt[i] : Math.round(r * CY_RENT_FLAT_DEDUCTION)
+      // Gewerblich: echte Kosten inklusive Gemeinschaftskosten und Ruecklage.
+      // Passive Vermietung: die 20-%-Pauschale ersetzt genau diese Kosten, sie
+      // duerfen dann NICHT zusaetzlich abgezogen werden (Cashflow-wirksam
+      // bleiben sie natuerlich trotzdem).
+      const m2 = cyBusiness ? mgmt[i] + opexA[i] : Math.round(r * CY_RENT_FLAT_DEDUCTION)
       const tx = r - d - furnAfa - m2 - intC[i]
       profitCY.push(tx)
       const inc = resCY ? Math.max(0, cyTax(cyBI + Math.max(0, tx)) - cyTax(cyBI)) : cyTax(Math.max(0, tx))
@@ -510,18 +546,22 @@ function computeCore(p: CalcParams): CalcResult {
     const dDE: number[] = []
     for (let k2 = 0; k2 < 10; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
     const deR = deTx / 100
-    taxDE = resCY ? Array(10).fill(0) : rents.map((r, i) => {
+    // Deutsche Bemessungsgrundlage: alle laufenden Kosten sind Werbungskosten.
+    rents.forEach((r, i) => {
       const furnAfa = i < 5 ? Math.round(furnAfaDE * fA[i]) : 0
-      const g2 = Math.round((r - mgmt[i] - intC[i] - dDE[i] - furnAfa) * deR)
+      profitDE.push(r - mgmt[i] - opexA[i] - intC[i] - dDE[i] - furnAfa)
+    })
+    taxDE = resCY ? Array(10).fill(0) : profitDE.map((g, i) => {
+      const g2 = Math.round(g * deR)
       return g2 <= 0 ? g2 : g2 - Math.min(taxCY[i], g2)
     })
     taxU = resCY ? taxCY : taxDE
   }
-  const cfA = rents.map((r, i) => r - mgmt[i] - rateC[i] + (vatA[i] || 0) - taxU[i])
+  const cfA = rents.map((r, i) => r - mgmt[i] - opexA[i] - rateC[i] + (vatA[i] || 0) - taxU[i])
   const propV = Array.from({ length: 10 }, (_, i) => Math.round(pGross * Math.pow(1 + appP / 100, (i + 1) - (1 - fA[0]))))
 
   const sum = (a: number[]) => a.reduce((x, y) => x + y, 0)
-  const sumR = sum(rents), sumC = sum(mgmt) + sum(intC), sumT = sum(taxCY) + sum(taxDE)
+  const sumR = sum(rents), sumC = sum(mgmt) + sum(opexA) + sum(intC), sumT = sum(taxCY) + sum(taxDE)
   const sumVat = sum(vatA), sumPP = sum(prepayC), sumCF = sum(cfA)
   const ek10 = propV[9] - restL[9]
   const totRet = sumCF + (ek10 - ekStart)
@@ -543,7 +583,7 @@ function computeCore(p: CalcParams): CalcResult {
     discountPct, discountAmt, bedrooms,
     sdMode, sdNumUnits, sdTotalSqm, sdTotalTerr, sdVatDrawn, sdVatYears, sdVatClawback, sdTaxRate,
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
-    holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, profitCY,
+    holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, profitCY, profitDE, opexA, opexMonthly, maintPct,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
     vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,

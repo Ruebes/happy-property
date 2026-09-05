@@ -4499,7 +4499,17 @@
       "taxSplitFirma": "Corp. tax {{k}} · distribution {{d}}",
       "taxSplitCy": "of which GHS {{g}} · VAT refund +{{v}}",
       "taxSplitDe": "CY {{c}} · DE {{d}} · VAT refund +{{v}}",
-      "engineNote2": "Calculated with the same engine as the individual calculations: annuity loan from handover, rent and taxes according to the structure selected above from handover, VAT refund for short-term letting after 24 months. Purchase instalments before handover come out of equity. You create the individual calculations for the client as usual via the \"With yield calculation\" checkbox - same numbers, same engine."
+      "engineNote2": "Calculated with the same engine as the individual calculations: annuity loan from handover, rent and taxes according to the structure selected above from handover, VAT refund for short-term letting after 24 months. Purchase instalments before handover come out of equity. You create the individual calculations for the client as usual via the \"With yield calculation\" checkbox - same numbers, same engine.",
+      "mgmtFix": "Management €/month",
+      "mgmtToPct": "→ as a percentage of rent",
+      "mgmtToFix": "→ as a fixed monthly amount",
+      "opex": "Service charge €/month",
+      "costSection": "Running costs",
+      "opexDefault": "Service charge €/month",
+      "maint": "Maintenance reserve % p.a. of the purchase price",
+      "colOpex": "Costs",
+      "costHint": "The reserve is calculated on the original purchase price, not on the increased market value. Service charges apply per apartment and can be overridden per apartment below; both rise by 2 % per year.",
+      "taxJoint": "Tax is calculated across ALL apartments together: the tax-free band, the progression, existing income, the GHS cap and the company's loss carry-forward apply per client, not per apartment. An individual calculation for a single apartment therefore shows a different tax figure than this plan - and rightly so, because one apartment alone really is taxed differently than three together."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5744,6 +5754,7 @@
     "taxFirma": "Held through a Cypriot company: {{k}} % corporate tax on the profit after management, interest and depreciation (3 % building, 10 % furniture), losses carried forward 5 years. {{d}} % has been applied to the distribution.",
     "taxCyPrivat": "Held privately, tax residence Cyprus: first €22,000 tax free, then 20 to 35 %, after a 20 % flat deduction on the rent, 3 % building depreciation, 10 % on furniture and the loan interest{{gesy}}.",
     "taxCyGesy": "; plus a 2.65 % health contribution (GHS)",
-    "taxDePrivat": "Held privately, tax residence Germany: Cyprus taxes first, Germany recalculates at a {{d}} % marginal rate and credits the Cypriot tax."
+    "taxDePrivat": "Held privately, tax residence Germany: Cyprus taxes first, Germany recalculates at a {{d}} % marginal rate and credits the Cypriot tax.",
+    "colOpex": "Property costs"
   }
 }

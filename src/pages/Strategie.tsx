@@ -315,13 +315,14 @@ export default function Strategie() {
           </span>
         </h2>
         <div style={{ ...card, padding: 0, overflowX: 'auto', marginBottom: 22 }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 860 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 940 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #eee' }}>
                 <th style={{ ...th, textAlign: 'left' }}>{t('strategie.colYear', 'Jahr')}</th>
                 <th style={th}>{t('strategie.colInvest', 'Zahlungen Kauf')}</th>
                 <th style={th}>{t('strategie.colRents', 'Mieten')}</th>
                 <th style={th}>{t('strategie.colCosts', 'Verwaltung')}</th>
+                <th style={th}>{t('strategie.colOpex', 'Kosten der Wohnung')}</th>
                 <th style={th}>{t('strategie.colInterest', 'Zinsen')}</th>
                 <th style={th}>{t('strategie.colPrincipal', 'Tilgung')}</th>
                 <th style={th}>{t('strategie.colTaxes', 'Steuern')}</th>
@@ -338,6 +339,7 @@ export default function Strategie() {
                   <td style={{ ...td, color: CORAL }}>{r.invest ? `−${eur(r.invest)}` : ''}</td>
                   <td style={{ ...td, color: GREEN }}>{r.rents ? eur(r.rents) : ''}</td>
                   <td style={td}>{r.mgmt ? `−${eur(r.mgmt)}` : ''}</td>
+                  <td style={td}>{r.opex ? `−${eur(r.opex)}` : ''}</td>
                   <td style={td}>{r.interest ? `−${eur(r.interest)}` : ''}</td>
                   <td style={td}>{r.principal ? `−${eur(r.principal)}` : ''}</td>
                   <td style={td}>{r.taxes ? `−${eur(r.taxes)}` : ''}</td>
