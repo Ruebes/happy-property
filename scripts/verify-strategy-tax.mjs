@@ -27,6 +27,7 @@ const P = {
   ...DEFAULT_SIM_PARAMS, res: 'cy', holder: 'privat', gesy: false,
   ek: 5000000, rentGrowth: 0, growth: 0, maintPct: 0, opexMonthly: 0,
   exitAfterYears: 0,   // Verkauf wird in den Steuertests separat geprueft
+  socialIns: false,    // Sozialversicherung hat einen eigenen Testblock
 }
 const run = (units, p = P) => {
   const out = allocate(units, p)
@@ -76,9 +77,22 @@ const firma = run([unit('A'), unit('B'), unit('C')], { ...P, holder: 'firma', di
 check('Koerperschaftsteuer Jahr 1', firma.rows[0].taxes, Math.round(33228 * 0.15))
 
 console.log('\n── Test 8: GESY nur einmal, gedeckelt auf 180.000 EUR Miete ──')
-const gesy = run([unit('A'), unit('B'), unit('C')], { ...P, gesy: true })
+const gesy = run([unit('A'), unit('B'), unit('C')], { ...P, gesy: true, socialIns: false })
 const rentY1 = gesy.rows[0].rents
 check('GESY Jahr 1', gesy.rows[0].gesy, Math.round(Math.min(rentY1, 180000) * 0.0265))
+
+console.log('\n── Test 8b: Sozialversicherung nur fuer Zypern-Ansaessige ──')
+const siOn = run([unit('A'), unit('B'), unit('C')], { ...P, socialIns: true })
+const siOff = run([unit('A'), unit('B'), unit('C')], { ...P, socialIns: false })
+// 33.228 EUR Gewinn liegt ueber dem fiktiven Mindesteinkommen von 20.318 EUR.
+check('Sozialversicherung Jahr 1 = 16,6 % vom Gewinn', siOn.rows[0].si, Math.round(33228 * 0.166))
+check('ohne Schalter keine Sozialversicherung', siOff.rows[0].si, 0)
+const siSmall = run([unit('A')], { ...P, socialIns: true })
+check('fiktives Mindesteinkommen greift bei kleinem Gewinn', siSmall.rows[0].si, Math.round(20318 * 0.166))
+const siDe = run([unit('A'), unit('B'), unit('C')], { ...P, res: 'de', socialIns: true })
+check('Steuersitz Deutschland: keine Sozialversicherung', siDe.rows[0].si, 0)
+const siLong = run([unit('A', { letType: 'long' })], { ...P, socialIns: true })
+check('Langzeitvermietung ist nicht gewerblich: keine Sozialversicherung', siLong.rows[0].si, 0)
 
 console.log('\n── Test 9: Verkauf, MwSt-Rueckzahlung fuer die Restjahre ──')
 // Kurzzeitvermietung, Uebergabe im Kaufjahr, Verkauf nach 5 Jahren: das

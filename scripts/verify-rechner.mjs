@@ -116,8 +116,11 @@ function computeOrig(){
   const dCY=Math.round(pGross*0.8*0.03);
   var furnAfaAnn=(!furnFree && furnCost>0)?Math.round(furnCost/5):0;      // DE-AfA
   var furnAfaCY=(!furnFree && furnCost>0)?Math.round(furnCost*0.10):0;    // CY 10 % p.a.
+  // Selbststaendige Kurzzeitvermieter in Zypern: 16,6 % Sozialversicherung auf
+  // mindestens 20.318 EUR fiktives Einkommen, GESY 4 % auf den Gewinn.
   var gesyOn=resCY;
-  var gesyA=rents.map(function(r,i){return gesyOn?Math.round(Math.min(r,Math.round(180000*fA[i]))*0.0265):0;});
+  var selfEmployed=resCY && letT==='short';
+  var gesyA=[],siA=[];
   var sdTaxRateRaw=parseFloat($('sd-tax-rate').value);
   var sdTaxRate=sdMode?Math.max(0,Math.min(35,isNaN(sdTaxRateRaw)?15:sdTaxRateRaw))/100:0;
   var taxCY,taxDE,taxU;
@@ -140,13 +143,22 @@ function computeOrig(){
     taxCY=rents.map(function(r,i){var furnAfa=Math.round(furnAfaCY*fA[i]);
       var d=Math.round(dCY*fA[i]),m2=cyBusiness?mgmt[i]:Math.round(r*0.2),tx=r-d-furnAfa-m2-intC[i];
       var inc=resCY?Math.max(0,cyTax(cyBI+Math.max(0,tx))-cyTax(cyBI)):cyTax(Math.max(0,tx));
-      return inc+gesyA[i];});
+      var gain=Math.max(0,tx),si=0,gesy=0;
+      if(selfEmployed && r>0){
+        si=Math.round(Math.min(Math.max(gain,Math.round(20318*fA[i])),Math.round(68904*fA[i]))*0.166);
+        gesy=gesyOn?Math.round(Math.min(gain,Math.round(180000*fA[i]))*0.04):0;
+      } else {
+        gesy=gesyOn?Math.round(Math.min(r,Math.round(180000*fA[i]))*0.0265):0;
+      }
+      gesyA.push(gesy);siA.push(si);
+      return inc+gesy+si;});
     var bDE=pGross*0.8,rDE=bDE;var dDE=[];
     for(var k2=0;k2<10;k2++){var d2=Math.round(rDE*0.05*fA[k2]);dDE.push(d2);rDE=Math.max(0,rDE-d2);}
     var deR=deTx/100;
     taxDE=resCY?Array(10).fill(0):rents.map(function(r,i){var furnAfa=i<5?Math.round(furnAfaAnn*fA[i]):0;
       var g2=Math.round((r-mgmt[i]-intC[i]-dDE[i]-furnAfa)*deR);return g2<=0?g2:g2-Math.min(taxCY[i],g2);});
-    taxU=resCY?taxCY:taxDE;
+    // Gesamtlast = zyprische Steuer + nicht angerechneter deutscher Rest.
+    taxU=resCY?taxCY:taxCY.map(function(cy,i){return cy+taxDE[i];});
   }
   const cfA=rents.map(function(r,i){return r-mgmt[i]-rateC[i]+(vatA[i]||0)-taxU[i];});
   const propV=Array.from({length:10},function(_,i){return Math.round(pGross*Math.pow(1+appP/100,(i+1)-(1-fA[0])));});
@@ -179,6 +191,9 @@ const cases = [
   ['Ohne Finanzierung (Cash)', {...base, fin:'no', priceNet:688800, appreciationPct:7, yieldPct:8}],
   ['Mit Einrichtung + Sondertilgung', {...base, furnCost:35000, furnFree:false, ppVals:[0,0,20000,0,0,10000,0,0,0,0]}],
   ['Discount + Hotel', {...base, discountPct:7.5, hotelConcept:true, equity:50000}],
+  // Kurzzeit + Steuersitz Zypern: hier greifen Sozialversicherung und der
+  // GESY-Satz von 4 % auf den Gewinn.
+  ['Kurzzeit + CY-Sitz (selbststaendig)', {...base, res:'cy', cyBI:0, mgmtPct:25, yieldPct:8}],
 ]
 
 const numKeys=['km','ky','pNet','pNetList','pGross','pGrossList','vatAmt','costs','loan','ekStart','ekAbs','sumR','sumC','sumT','sumVat','sumPP','sumCF','ek10','totRet','roe10','irrV','mRate','mCF','effYield']

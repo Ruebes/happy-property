@@ -73,6 +73,10 @@ export interface CalcParams {
   divPayoutPct?: number     // Anteil des Gewinns, der ausgeschuettet wird (%)
   divTaxPct?: number        // Steuer beim Gesellschafter auf die Ausschuettung (%)
   gesy?: boolean            // GESY 2,65 % auf die Bruttomiete (nur CY-Steuerresidenz)
+  // Sozialversicherung als selbststaendiger Vermieter (nur CY-Steuerresidenz und
+  // gewerbliche Kurzzeitvermietung): 16,6 % auf mindestens 20.318 EUR fiktives
+  // Einkommen, GESY dann mit 4 % auf den Gewinn statt 2,65 % auf die Miete.
+  socialIns?: boolean
   // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
   // Verwaltung deckt die Vermietung ab, NICHT die Kosten der Wohnung selbst.
   // Gemeinschaftskosten (common expenses, Pool/Garten/Beleuchtung/Versicherung
@@ -231,8 +235,17 @@ export const CY_BUILDING_AFA = 0.03          // 3 % p.a. Gebaeude
 export const CY_FURN_AFA = 0.10              // 10 % p.a. Einrichtung
 export const CY_CORP_TAX_PCT = 15            // Koerperschaftsteuer seit 1.1.2026
 export const CY_LOSS_CARRY_YEARS = 5         // Verlustvortrag
-export const CY_GESY_RATE = 0.0265           // Gesundheitsbeitrag auf Mieten
+export const CY_GESY_RATE = 0.0265           // Gesundheitsbeitrag auf Mieten (passiv)
 export const CY_GESY_CAP = 180000            // Bemessungsdeckel p.a.
+// ── Selbststaendige Vermieter (nur in Zypern Ansaessige) ─────────────────────
+// Wer die Kurzzeitvermietung als gewerbliche Taetigkeit betreibt, gilt als
+// selbststaendig: 16,6 % Sozialversicherung auf ein fiktives Mindesteinkommen
+// (2026: 20.318 EUR p.a.), gedeckelt bei 68.904 EUR versicherbarem Einkommen,
+// und GESY mit 4 % auf den Gewinn statt 2,65 % auf die Bruttomiete.
+export const CY_SI_RATE = 0.166
+export const CY_SI_MIN_INCOME = 20318
+export const CY_SI_MAX_INCOME = 68904
+export const CY_GESY_SELF_RATE = 0.04
 export const DE_DIV_TAX_PCT = 26.375         // Abgeltungsteuer + Soli (DE-Gesellschafter)
 // ── Verkauf ──────────────────────────────────────────────────────────────────
 // Zypern: 20 % Veraeusserungsgewinnsteuer auf Immobilien. Natuerliche Personen
@@ -267,7 +280,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   season: null,
   vatMode: 'standard19', livingSqm: null,
   holder: 'privat', corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
-  opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0,
+  opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0, socialIns: true,
 }
 
 // Zypern progressive Einkommensteuer (Banden ab 2026)
@@ -320,7 +333,7 @@ export interface CalcResult {
   // taxDE die Steuer auf die Ausschuettung. gesyA ist der Gesundheitsbeitrag
   // (nur privat + Steuersitz Zypern) und steckt bereits in taxCY.
   holder: 'privat' | 'firma'; corpTaxPct: number; divTaxPct: number; divPayoutPct: number
-  gesyA: number[]
+  gesyA: number[]; siA: number[]
   // Steuerliche Bemessungsgrundlagen je Jahr, VOR Anwendung des Steuersatzes.
   // Die Strategie-Schicht rechnet daraus die Steuer ueber ALLE Wohnungen eines
   // Kunden zusammen (Freibetrag und Progression gelten pro Person, nicht pro
@@ -500,7 +513,11 @@ function computeCore(p: CalcParams): CalcResult {
   const sdTaxRate = sdMode ? Math.max(0, Math.min(35, isNaN(p.sdTaxRate) ? CY_CORP_TAX_PCT : p.sdTaxRate)) / 100 : 0
   // GESY zahlt nur, wer in Zypern steueransaessig ist - und nur als Privatperson.
   const gesyOn = holder === 'privat' && resCY && (p.gesy ?? true)
-  const gesyA = rents.map((r, i) => gesyOn ? Math.round(Math.min(r, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_RATE) : 0)
+  // Selbststaendig ist, wer gewerblich kurzzeitvermietet und in Zypern ansaessig
+  // ist. Dann Sozialversicherung und der hoehere GESY-Satz auf den Gewinn.
+  const selfEmployed = holder === 'privat' && resCY && letT === 'short' && (p.socialIns ?? true)
+  const gesyA: number[] = []
+  const siA: number[] = []
   let taxCY: number[], taxDE: number[], taxU: number[]
   let dDE: number[] = Array(10).fill(0)
   const profitCY: number[] = [], profitDE: number[] = []
@@ -521,6 +538,8 @@ function computeCore(p: CalcParams): CalcResult {
       return rest
     })
   }
+
+  if (sdMode || holder === 'firma') { for (let i = 0; i < 10; i++) { gesyA.push(0); siA.push(0) } }
 
   if (sdMode) {
     // Share-Deal-Holding: wie die Firma - echte Kosten, kein Pauschalabzug.
@@ -561,9 +580,19 @@ function computeCore(p: CalcParams): CalcResult {
       const tx = r - d - furnAfa - m2 - intC[i]
       profitCY.push(tx)
       const inc = resCY ? Math.max(0, cyTax(cyBI + Math.max(0, tx)) - cyTax(cyBI)) : cyTax(Math.max(0, tx))
-      // GESY ist keine Einkommensteuer (in Deutschland auch nicht anrechenbar),
-      // faellt aber real an - deshalb in derselben Zeile mitgefuehrt.
-      return inc + gesyA[i]
+      // GESY und Sozialversicherung sind keine Einkommensteuer (in Deutschland
+      // auch nicht anrechenbar), fallen aber real an - deshalb in derselben
+      // Zeile mitgefuehrt. Die Sozialversicherung erst ab Vermietungsbeginn.
+      const gain = Math.max(0, tx)
+      let si = 0, gesy = 0
+      if (selfEmployed && r > 0) {
+        si = Math.round(Math.min(Math.max(gain, Math.round(CY_SI_MIN_INCOME * fA[i])), Math.round(CY_SI_MAX_INCOME * fA[i])) * CY_SI_RATE)
+        gesy = gesyOn ? Math.round(Math.min(gain, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_SELF_RATE) : 0
+      } else {
+        gesy = gesyOn ? Math.round(Math.min(r, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_RATE) : 0
+      }
+      gesyA.push(gesy); siA.push(si)
+      return inc + gesy + si
     })
     const bDE = pGross * 0.8; let rDE = bDE
     dDE = []
@@ -578,7 +607,11 @@ function computeCore(p: CalcParams): CalcResult {
       const g2 = Math.round(g * deR)
       return g2 <= 0 ? g2 : g2 - Math.min(taxCY[i], g2)
     })
-    taxU = resCY ? taxCY : taxDE
+    // Gesamtbelastung bei Steuersitz Deutschland: die zyprische Steuer wird
+    // gezahlt UND die deutsche Steuer, soweit sie darueber hinausgeht. Bisher
+    // stand hier nur die deutsche Steuer nach Anrechnung, die zyprische fiel
+    // ganz aus dem Cashflow (Sven 5.9.26: Einzelberechnung nachziehen).
+    taxU = resCY ? taxCY : taxCY.map((cy, i) => cy + taxDE[i])
   }
   const cfA = rents.map((r, i) => r - mgmt[i] - opexA[i] - rateC[i] + (vatA[i] || 0) - taxU[i])
   const propV = Array.from({ length: 10 }, (_, i) => Math.round(pGross * Math.pow(1 + appP / 100, (i + 1) - (1 - fA[0]))))
@@ -606,7 +639,7 @@ function computeCore(p: CalcParams): CalcResult {
     discountPct, discountAmt, bedrooms,
     sdMode, sdNumUnits, sdTotalSqm, sdTotalTerr, sdVatDrawn, sdVatYears, sdVatClawback, sdTaxRate,
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
-    holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, profitCY, profitDE, opexA, opexMonthly, maintPct,
+    holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, siA, profitCY, profitDE, opexA, opexMonthly, maintPct,
     afaDE: dDE,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,

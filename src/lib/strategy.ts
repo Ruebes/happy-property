@@ -1,6 +1,7 @@
 import {
   DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTax, irrCalc,
   CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT, CY_GESY_RATE, CY_GESY_CAP, CY_LOSS_CARRY_YEARS,
+  CY_SI_RATE, CY_SI_MIN_INCOME, CY_SI_MAX_INCOME, CY_GESY_SELF_RATE,
   CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
   VAT_ADJUST_YEARS, CY_TRANSFER_LEVY_PCT, CY_SERVICE_VAT_PCT,
   type CalcParams, type CalcResult,
@@ -52,7 +53,12 @@ export interface SimParams {
   divPayoutPct: number      // Anteil des Gewinns, der ausgeschuettet wird %
   divTaxPct: number         // Steuer beim Gesellschafter auf die Ausschuettung %
   gesy: boolean             // GESY 2,65 % (nur privat + Steuersitz Zypern)
+  // Sozialversicherung als selbststaendiger Vermieter: 16,6 % auf mindestens
+  // 20.318 EUR fiktives Einkommen, dazu GESY mit 4 % auf den Gewinn statt
+  // 2,65 % auf die Miete. Nur fuer in Zypern Ansaessige mit Kurzzeitvermietung
+  // (Sven 5.9.26: "nur fuer Resident in Zypern, wenn D dann nein").
   // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
+  socialIns: boolean
   opexMonthly: number       // Gemeinschaftskosten je Wohnung, EUR/Monat (Vorgabe)
   maintPct: number          // Instandhaltungsruecklage % p.a. vom Kaufpreis
   // ── Verkauf ───────────────────────────────────────────────────────────────
@@ -76,6 +82,7 @@ export interface YearRow {
   // deutsche Steuer nach Anrechnung; bei Firma = Koerperschaftsteuer und Steuer
   // auf die Ausschuettung. gesy ist in taxCY bereits enthalten.
   taxCY: number; taxDE: number; gesy: number
+  si: number               // Sozialversicherung des selbststaendigen Vermieters
   // Laufende Kosten der Wohnungen (Gemeinschaftskosten + Instandhaltungsruecklage)
   opex: number
   // Steuerliche Bemessungsgrundlagen ALLER Wohnungen dieses Jahres, aus denen
@@ -158,7 +165,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   ek: 350000, growth: 5, interest: 4.1, termYears: 20, rentGrowth: 2, deTaxPct: 42, bundle: true,
   res: 'de', cyBI: 0, holder: 'privat',
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
-  opexMonthly: 100, maintPct: 0.75,
+  socialIns: true, opexMonthly: 150, maintPct: 0.75,
   exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
 }
 
@@ -262,13 +269,13 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
 //
 // Die Bauzeitzinsen der Zwischenfinanzierung mindern die Bemessungsgrundlage wie
 // jede andere Zinslast.
-function applyPortfolioTax(rows: YearRow[], p: SimParams): void {
+function applyPortfolioTax(rows: YearRow[], p: SimParams, business: boolean): void {
   // Verlustvortrag der Gesellschaft, 5 Jahre (Zypern), portfolioweit.
   const open: Array<{ i: number; amt: number }> = []
   rows.forEach((r, idx) => {
     const baseCY = r.baseCY - r.bridgeInterest
     const baseDE = r.baseDE - r.bridgeInterest
-    let taxCY = 0, taxDE = 0, gesy = 0
+    let taxCY = 0, taxDE = 0, gesy = 0, si = 0
 
     if (p.holder === 'firma') {
       let rest = baseCY
@@ -289,8 +296,20 @@ function applyPortfolioTax(rows: YearRow[], p: SimParams): void {
       const inc = Math.max(0, baseCY)
       // Bestandseinkommen hebt die Progression - einmal fuer den Kunden, nicht je Wohnung.
       taxCY = Math.max(0, cyTax(p.cyBI + inc) - cyTax(p.cyBI))
-      gesy = p.gesy ? Math.round(Math.min(r.rents, CY_GESY_CAP) * CY_GESY_RATE) : 0
-      taxCY += gesy
+      // Sozialversicherung: nur wer in Zypern ansaessig ist und die Wohnungen
+      // gewerblich kurzzeitvermietet, gilt als selbststaendig. Sie faellt erst an,
+      // wenn ueberhaupt vermietet wird, nicht schon in der Bauzeit. Das fiktive
+      // Mindesteinkommen gilt auch dann, wenn der Gewinn kleiner ist.
+      if (p.socialIns && business && r.rents > 0) {
+        const siBase = Math.min(Math.max(inc, CY_SI_MIN_INCOME), CY_SI_MAX_INCOME)
+        si = Math.round(siBase * CY_SI_RATE)
+        // Als Selbststaendiger zahlt er GESY mit 4 % auf den Gewinn, nicht mit
+        // 2,65 % auf die Bruttomiete.
+        gesy = p.gesy ? Math.round(Math.min(inc, CY_GESY_CAP) * CY_GESY_SELF_RATE) : 0
+      } else {
+        gesy = p.gesy ? Math.round(Math.min(r.rents, CY_GESY_CAP) * CY_GESY_RATE) : 0
+      }
+      taxCY += gesy + si
     } else {
       // Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet die
       // zyprische Steuer an. Die Gesamtlast ist die zyprische Steuer PLUS der
@@ -309,6 +328,7 @@ function applyPortfolioTax(rows: YearRow[], p: SimParams): void {
     r.taxCY = taxCY
     r.taxDE = taxDE
     r.gesy = gesy
+    r.si = si
   })
 }
 
@@ -328,7 +348,7 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
     : horizonEnd
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, si: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
     for (const o of outcomes) {
       const i = y - o.unit.readyY
       // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
@@ -395,7 +415,7 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   }
   // Steuer zum Schluss: sie braucht die fertigen Bemessungsgrundlagen inklusive
   // der Bauzeitzinsen.
-  if (p) applyPortfolioTax(rows, p)
+  if (p) applyPortfolioTax(rows, p, outcomes.some(o => o.unit.letType === 'short'))
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 
@@ -709,7 +729,7 @@ export function roeMeaningful(o: UnitOutcome): boolean {
 
 export interface StrategyTotals {
   ekTotal: number; netWorth: number; rents: number; taxes: number; vat: number
-  taxCY: number; taxDE: number; gesy: number
+  taxCY: number; taxDE: number; gesy: number; si: number
   interest: number; cashflow: number; totalReturn: number; roe: number
   debtEnd: number          // offener Kredit am Ende des Zeitraums
   roe5: number; roe10: number   // Eigenkapital-Rendite nach 5 bzw. 10 Jahren
@@ -758,7 +778,7 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams
   const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year) : NaN
   return {
     ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
-    taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy),
+    taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy), si: sum(r => r.si),
     roe5: roeAfterYears(rows, ekTotal, 5), roe10: roeAfterYears(rows, ekTotal, 10),
     opex: sum(r => r.opex), mgmt: sum(r => r.mgmt), principal: sum(r => r.principal),
     valueEnd, equityInProperty: valueEnd - debtEnd, cashflowLastYear, irr,

@@ -4558,7 +4558,12 @@
       "risk_cashflow": "Cashflow",
       "risk_finanzierung": "Finanzierung",
       "risk_vermietung": "Vermietung",
-      "risk_exit": "Verkauf"
+      "risk_exit": "Verkauf",
+      "gesy2": "GESY (Gesundheitsbeitrag)",
+      "socialIns": "Sozialversicherung 16,6 %",
+      "taxSplitCy2": "GESY {{g}} · Sozialvers. {{s}} · MwSt +{{v}}",
+      "taxHintCyPrivat2": "Zypern privat: 22.000 € steuerfrei, dann 20/25/30/35 % (35 % erst ab 72.001 €). Abziehbar: bei Kurzzeit die echten Kosten, bei Langzeit 20 % Pauschale, dazu 3 % Gebäude-Abschreibung p.a. (80 % des Kaufpreises), 10 % auf die Einrichtung und die Darlehenszinsen. SDC auf Mieten ist seit 1.1.2026 gestrichen. Wer kurzzeitvermietet, gilt als selbstständig: 16,6 % Sozialversicherung auf mindestens 20.318 € fiktives Einkommen (Deckel 68.904 €) und GESY mit 4 % auf den Gewinn statt 2,65 % auf die Miete.",
+      "taxHintDePrivat2": "Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit eigener AfA nach und rechnet die zyprische Steuer an (DBA Art. 22, nur Anrechnung, keine Freistellung). Die Gesamtlast ist die zyprische Steuer plus der nicht angerechnete deutsche Rest. GESY und Sozialversicherung fallen nicht an."
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -5841,6 +5846,9 @@
     "risk4": "Instandhaltung und Gemeinschaftskosten",
     "risk5": "Der tatsächlich erzielte Verkaufspreis",
     "risk6": "Änderungen im Steuerrecht",
-    "riskNote": "Die Berechnung ist eine Szenariosimulation und keine Garantie für die zukünftige Entwicklung."
+    "riskNote": "Die Berechnung ist eine Szenariosimulation und keine Garantie für die zukünftige Entwicklung.",
+    "taxCyPrivat2": "Privat gehalten, Steuersitz Zypern: 22.000 € steuerfrei, danach 20 bis 35 %. Abgezogen sind die laufenden Kosten, 3 % Gebäude-Abschreibung, 10 % auf die Einrichtung und die Darlehenszinsen{{extra}}.",
+    "taxCyGesy2": ", dazu der Gesundheitsbeitrag GESY",
+    "taxCySi": " und die Sozialversicherung von 16,6 % als selbstständiger Vermieter"
   }
 }

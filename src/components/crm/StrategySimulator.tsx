@@ -380,11 +380,18 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       <input type="number" step={500} className={inputCls} value={params.cyBI}
                         onChange={e => setParams(p => ({ ...p, cyBI: +e.target.value }))} />
                     </div>
-                    <div className="flex items-end pb-1.5">
+                    <div className="flex flex-col justify-end pb-1 gap-1">
                       <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
                         <input type="checkbox" checked={params.gesy} className="w-4 h-4 accent-orange-500"
                           onChange={e => setParams(p => ({ ...p, gesy: e.target.checked }))} />
-                        {t('crm.sim.gesy', 'GESY 2,65 % auf die Miete')}
+                        {t('crm.sim.gesy2', 'GESY (Gesundheitsbeitrag)')}
+                      </label>
+                      {/* Sozialversicherung nur fuer in Zypern Ansaessige - bei
+                          Steuersitz Deutschland faellt sie nicht an. */}
+                      <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
+                        <input type="checkbox" checked={params.socialIns} className="w-4 h-4 accent-orange-500"
+                          onChange={e => setParams(p => ({ ...p, socialIns: e.target.checked }))} />
+                        {t('crm.sim.socialIns', 'Sozialversicherung 16,6 %')}
                       </label>
                     </div>
                   </>)}
@@ -412,8 +419,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               <p className="text-[11px] text-gray-500 mt-2 leading-relaxed">
                 {params.holder === 'privat'
                   ? (params.res === 'cy'
-                    ? t('crm.sim.taxHintCyPrivat', 'Zypern privat: 22.000 € steuerfrei, dann 20/25/30/35 % (35 % erst ab 72.001 €). Abziehbar: 20 % Pauschale auf die Bruttomiete, 3 % Gebäude-Abschreibung p.a. (80 % des Kaufpreises), 10 % auf die Einrichtung und die Darlehenszinsen. SDC auf Mieten ist seit 1.1.2026 gestrichen; es bleibt GESY 2,65 % (gedeckelt auf 180.000 €).')
-                    : t('crm.sim.taxHintDePrivat', 'Steuersitz Deutschland: Zypern besteuert zuerst (22.000 € frei, dann 20-35 %, nach 20 % Pauschale, 3 % Gebäude-AfA und Zinsen), Deutschland rechnet mit eigener AfA nach und rechnet die zyprische Steuer an (DBA Art. 22). GESY fällt nicht an.'))
+                    ? t('crm.sim.taxHintCyPrivat2', 'Zypern privat: 22.000 € steuerfrei, dann 20/25/30/35 % (35 % erst ab 72.001 €). Abziehbar: bei Kurzzeit die echten Kosten, bei Langzeit 20 % Pauschale, dazu 3 % Gebäude-Abschreibung p.a. (80 % des Kaufpreises), 10 % auf die Einrichtung und die Darlehenszinsen. SDC auf Mieten ist seit 1.1.2026 gestrichen. Wer kurzzeitvermietet, gilt als selbstständig: 16,6 % Sozialversicherung auf mindestens 20.318 € fiktives Einkommen (Deckel 68.904 €) und GESY mit 4 % auf den Gewinn statt 2,65 % auf die Miete.')
+                    : t('crm.sim.taxHintDePrivat2', 'Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit eigener AfA nach und rechnet die zyprische Steuer an (DBA Art. 22, nur Anrechnung, keine Freistellung). Die Gesamtlast ist die zyprische Steuer plus der nicht angerechnete deutsche Rest. GESY und Sozialversicherung fallen nicht an.'))
                   : t('crm.sim.taxHintFirma', 'Zyprische Ltd: kein Freibetrag und keine 20-%-Pauschale - nur echte Kosten (Verwaltung, Zinsen, 3 % Gebäude-AfA, 10 % Einrichtung). 15 % Körperschaftsteuer seit 1.1.2026, Verluste 5 Jahre vortragbar. Zypern behält auf die Ausschüttung nichts ein; beim deutschen Gesellschafter fallen 26,375 % (Abgeltungsteuer + Soli) an, beim zyprischen Non-Dom nur 2,65 % GESY.')}
               </p>
             </div>
@@ -734,7 +741,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   d: params.holder === 'firma'
                     ? t('crm.sim.taxSplitFirma', 'KSt {{k}} · Ausschüttung {{d}}', { k: eur(totals.taxCY), d: eur(totals.taxDE) })
                     : params.res === 'cy'
-                      ? t('crm.sim.taxSplitCy', 'davon GESY {{g}} · MwSt-Erstattung +{{v}}', { g: eur(totals.gesy), v: eur(totals.vat) })
+                      ? t('crm.sim.taxSplitCy2', 'GESY {{g}} · Sozialvers. {{s}} · MwSt +{{v}}', { g: eur(totals.gesy), s: eur(totals.si), v: eur(totals.vat) })
                       : t('crm.sim.taxSplitDe', 'CY {{c}} · DE {{d}} · MwSt-Erstattung +{{v}}', { c: eur(totals.taxCY), d: eur(totals.taxDE), v: eur(totals.vat) }) },
                 { l: t('crm.sim.debtEnd', 'Kredit offen am Ende'), v: eur(totals.debtEnd), d: t('crm.sim.debtHint', 'Restschuld aller Darlehen') },
                 { l: t('crm.sim.roe5', 'EK-Rendite nach 5 J.'), v: pct(totals.roe5), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },

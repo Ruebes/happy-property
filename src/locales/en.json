@@ -4558,7 +4558,12 @@
       "risk_cashflow": "Cash flow",
       "risk_finanzierung": "Financing",
       "risk_vermietung": "Letting",
-      "risk_exit": "Sale"
+      "risk_exit": "Sale",
+      "gesy2": "GHS (health contribution)",
+      "socialIns": "Social insurance 16.6 %",
+      "taxSplitCy2": "GHS {{g}} · social ins. {{s}} · VAT +{{v}}",
+      "taxHintCyPrivat2": "Cyprus, held privately: first €22,000 tax free, then 20/25/30/35 % (35 % only above €72,001). Deductible: actual costs for short-term letting, a 20 % flat deduction for long-term letting, plus 3 % building depreciation p.a. (on 80 % of the price), 10 % on furniture and the loan interest. SDC on rents was abolished on 1 Jan 2026. Anyone letting short-term counts as self-employed: 16.6 % social insurance on at least €20,318 of notional income (capped at €68,904) and GHS at 4 % of profit instead of 2.65 % of rent.",
+      "taxHintDePrivat2": "Tax residence Germany: Cyprus taxes first, Germany recalculates with its own depreciation and credits the Cypriot tax (double tax treaty Art. 22, credit only, no exemption). The total burden is the Cypriot tax plus the German remainder that is not credited. No GHS and no social insurance apply."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5841,6 +5846,9 @@
     "risk4": "Maintenance and service charges",
     "risk5": "The sale price actually achieved",
     "risk6": "Changes in tax law",
-    "riskNote": "The calculation is a scenario simulation and not a guarantee of future development."
+    "riskNote": "The calculation is a scenario simulation and not a guarantee of future development.",
+    "taxCyPrivat2": "Held privately, tax residence Cyprus: first €22,000 tax free, then 20 to 35 %. Running costs, 3 % building depreciation, 10 % on furniture and the loan interest are deducted{{extra}}.",
+    "taxCyGesy2": ", plus the GHS health contribution",
+    "taxCySi": " and social insurance of 16.6 % as a self-employed landlord"
   }
 }

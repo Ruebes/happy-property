@@ -507,8 +507,11 @@ export default function Strategie() {
                 k: String(params.corpTaxPct).replace('.', ','), d: String(params.divTaxPct).replace('.', ','),
               })
               : params.res === 'cy'
-                ? t('strategie.taxCyPrivat', 'Privat gehalten, Steuersitz Zypern: 22.000 € steuerfrei, danach 20 bis 35 %, nach 20 % Pauschalabzug auf die Miete, 3 % Gebäude-Abschreibung, 10 % auf die Einrichtung und die Darlehenszinsen{{gesy}}.', {
-                  gesy: params.gesy ? t('strategie.taxCyGesy', '; zusätzlich 2,65 % Gesundheitsbeitrag (GESY)') : '',
+                ? t('strategie.taxCyPrivat2', 'Privat gehalten, Steuersitz Zypern: 22.000 € steuerfrei, danach 20 bis 35 %. Abgezogen sind die laufenden Kosten, 3 % Gebäude-Abschreibung, 10 % auf die Einrichtung und die Darlehenszinsen{{extra}}.', {
+                  extra: [
+                    params.gesy ? t('strategie.taxCyGesy2', ', dazu der Gesundheitsbeitrag GESY') : '',
+                    params.socialIns ? t('strategie.taxCySi', ' und die Sozialversicherung von 16,6 % als selbstständiger Vermieter') : '',
+                  ].join(''),
                 })
                 : t('strategie.taxDePrivat', 'Privat gehalten, Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit {{d}} % Grenzsteuersatz nach und rechnet die zyprische Steuer an.', {
                   d: String(params.deTaxPct).replace('.', ','),
