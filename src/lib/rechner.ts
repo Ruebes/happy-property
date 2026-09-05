@@ -435,14 +435,21 @@ function computeCore(p: CalcParams): CalcResult {
   const ekStart = fin === 'no' ? totalGross + ekCosts : Math.round(ekAbs + ekCosts)
 
   const cyBI = resCY ? Math.max(0, p.cyBI || 0) : 0
-  const yPct = p.yieldPct || 5.5
-  const rG = p.rentGrowth || 5
-  const mgP = p.mgmtPct || 2
-  const iP = p.interestPct || 4.1
-  const termY = p.termYears || 20
-  const amP = p.amortPct || 2
-  const appP = p.appreciationPct || 5
-  const deTx = p.deTaxPct || 42
+  // WICHTIG (Audit 5.9.26): nullish-Pruefung statt `|| default`. Eine
+  // ausdrueckliche 0 ist bei all diesen Feldern ein gueltiger Wert und darf
+  // NICHT auf den Standard zurueckfallen. Vorher wurde aus 0 % Wertsteigerung
+  // still 5 %, aus 0 % Mietsteigerung 5 % und aus 0 % Verwaltung 2 % - genau
+  // die konservativen Eingaben kippten dadurch ins Gegenteil. Derselbe Fehler
+  // war beim Eigenkapital schon einmal aufgefallen und dort behoben worden.
+  const num = (v: number | undefined, d: number) => Number.isFinite(v) ? (v as number) : d
+  const yPct = num(p.yieldPct, 5.5)
+  const rG = num(p.rentGrowth, 5)
+  const mgP = num(p.mgmtPct, 2)
+  const iP = num(p.interestPct, 4.1)
+  const termY = Math.max(1, num(p.termYears, 20))
+  const amP = num(p.amortPct, 2)
+  const appP = num(p.appreciationPct, 5)
+  const deTx = num(p.deTaxPct, 42)
 
   const vatA = Array(10).fill(0)
   if (letT === 'short') {

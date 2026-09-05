@@ -80,14 +80,18 @@ function computeOrig(){
   var ekCosts=costs+sdVatClawback;
   const ekStart=fin==='no'?pGross+ekCosts:Math.round(ekAbs+ekCosts);
   const cyBI=resCY?Math.max(0,parseFloat($('s-cyi').value)||0):0;
-  const yPct=parseFloat($('s-yield').value)||5.5;
-  const rG=parseFloat($('s-rg').value)||5;
-  const mgP=parseFloat($('s-mgmt').value)||2;
-  const iP=parseFloat($('s-int').value)||4.1;
-  const termY=parseFloat($('s-term').value)||20;
-  const amP=parseFloat($('s-amort').value)||2;
-  const appP=parseFloat($('s-app').value)||5;
-  const deTx=parseFloat($('s-det').value)||42;
+  // Audit 5.9.26: nullish statt `||`, damit eine eingegebene 0 nicht still auf
+  // den Standardwert zurueckfaellt. Bewusste Abweichung vom Original, wie schon
+  // bei den Steuerbanden und der Einrichtungs-AfA.
+  const num=function(v,d){return Number.isFinite(v)?v:d;};
+  const yPct=num(parseFloat($('s-yield').value),5.5);
+  const rG=num(parseFloat($('s-rg').value),5);
+  const mgP=num(parseFloat($('s-mgmt').value),2);
+  const iP=num(parseFloat($('s-int').value),4.1);
+  const termY=Math.max(1,num(parseFloat($('s-term').value),20));
+  const amP=num(parseFloat($('s-amort').value),2);
+  const appP=num(parseFloat($('s-app').value),5);
+  const deTx=num(parseFloat($('s-det').value),42);
   const furnCost=Math.max(0,parseFloat($('s-furn').value)||0);
   const furnFree=document.querySelector('input[name="furn-free"]:checked').value==='yes';
   const vatA=Array(10).fill(0);
@@ -194,6 +198,9 @@ const cases = [
   // Kurzzeit + Steuersitz Zypern: hier greifen Sozialversicherung und der
   // GESY-Satz von 4 % auf den Gewinn.
   ['Kurzzeit + CY-Sitz (selbststaendig)', {...base, res:'cy', cyBI:0, mgmtPct:25, yieldPct:8}],
+  // Nullwerte muessen Nullwerte bleiben und duerfen nicht auf Standards kippen.
+  ['Nullwerte (0 % Wertsteigerung, 0 % Mietsteigerung, 0 % Verwaltung)',
+    {...base, appreciationPct:0, rentGrowth:0, mgmtPct:0}],
 ]
 
 const numKeys=['km','ky','pNet','pNetList','pGross','pGrossList','vatAmt','costs','loan','ekStart','ekAbs','sumR','sumC','sumT','sumVat','sumPP','sumCF','ek10','totRet','roe10','irrV','mRate','mCF','effYield']

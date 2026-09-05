@@ -57,8 +57,8 @@ export interface SimParams {
   // 20.318 EUR fiktives Einkommen, dazu GESY mit 4 % auf den Gewinn statt
   // 2,65 % auf die Miete. Nur fuer in Zypern Ansaessige mit Kurzzeitvermietung
   // (Sven 5.9.26: "nur fuer Resident in Zypern, wenn D dann nein").
-  // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
   socialIns: boolean
+  // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
   opexMonthly: number       // Gemeinschaftskosten je Wohnung, EUR/Monat (Vorgabe)
   maintPct: number          // Instandhaltungsruecklage % p.a. vom Kaufpreis
   // ── Verkauf ───────────────────────────────────────────────────────────────
@@ -223,6 +223,12 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     res: p.res, cyBI: p.cyBI, holder: p.holder,
     corpTaxPct: p.corpTaxPct, divPayoutPct: p.divPayoutPct, divTaxPct: p.divTaxPct,
     gesy: p.res === 'cy' && p.holder === 'privat' ? p.gesy : false,
+    // Audit 5.9.26: socialIns wurde nicht durchgereicht, die Engine fiel auf
+    // ihren Standard (an) zurueck. Die Portfolio-Steuer der Strategie hat das
+    // ueberschrieben, aber die Kennzahlen JE WOHNUNG (Rendite, Monatsrate) und
+    // die Einzelberechnung rechneten mit Sozialversicherung, obwohl sie
+    // abgeschaltet war.
+    socialIns: p.res === 'cy' && p.holder === 'privat' ? p.socialIns : false,
     hotelConcept: hotel, season,
     mgmtPct: fromCalc.mgmtPct ?? defaultMgmtPct(u.letType, hotel),
     equity: ekForUnit,

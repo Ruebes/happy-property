@@ -59,8 +59,11 @@ const stag = run([unit('A'), unit('B', { buyY: 2029, readyY: 2029 })])
 check('2027 nur Wohnung A', stag.rows[0].baseCY, 11076)
 check('2027 Steuer', stag.rows[0].taxes, 0)
 const r2029 = stag.rows.find(r => r.year === 2029)
-check('2029 beide Wohnungen', r2029.baseCY, 24124)
-check('2029 Steuer', r2029.taxes, cyTax(24124))
+// Wohnung A ist 2029 im dritten Jahr (hoehere Verwaltung durch die 2-%-Staffel),
+// Wohnung B im ersten. Beide Basen kommen aus dem Einzellauf.
+const erwartet2029 = a1.rows[2].baseCY + a1.rows[0].baseCY
+check('2029 beide Wohnungen zusammen', r2029.baseCY, erwartet2029)
+check('2029 Steuer = cyTax der Gesamtbasis', r2029.taxes, cyTax(r2029.baseCY))
 
 console.log('\n── Test 5: Planungshorizont endet 10 Jahre nach dem ersten Kauf ──')
 const late = run([unit('A'), unit('B', { buyY: 2035, readyY: 2035 })])
@@ -98,7 +101,7 @@ console.log('\n── Test 9: Verkauf, MwSt-Rueckzahlung fuer die Restjahre ─�
 // Kurzzeitvermietung, Uebergabe im Kaufjahr, Verkauf nach 5 Jahren: das
 // Verkaufsintervall ist das fuenfte, verbleiben fuenf volle Intervalle.
 const exUnits = [unit('A', { furnNet: 0 })]
-const exP = { ...P, exitAfterYears: 5, sellCostPct: 3, lawyerPct: 1, cpiPct: 2 }
+const exP = { ...P, exitAfterYears: 5, sellCostPct: 3, lawyerPct: 1, cpiPct: 2, growth: 5 }
 const exOut = allocate(exUnits, exP)
 const exAgg = aggregate(exOut, exP)
 const ex = computeExit(exOut, exP, exAgg.firstYear)
