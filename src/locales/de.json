@@ -3744,7 +3744,7 @@
       "noPhone": "Keine Telefonnummer am Lead.",
       "waDeckLabel": "Sales Deck",
       "waCalcLabel": "Deine Berechnung",
-      "noLinks": "Keine Deck- oder Berechnungs-Links an diesem Eintrag.",
+      "noLinks": "Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.",
       "confirmWa": "Diese WhatsApp jetzt senden?",
       "waSent": "✅ WhatsApp gesendet",
       "waFail": "WhatsApp fehlgeschlagen",
@@ -3784,7 +3784,10 @@
       "mailText": "Mailtext",
       "editHint": "Du kannst direkt im Text schreiben — die Formatierung und die Deck-Links bleiben erhalten.",
       "saving": "Speichert…",
-      "save": "Speichern"
+      "save": "Speichern",
+      "plansSection": "Investitions-Fahrplan",
+      "planHint": "Der Kunde kann den Fahrplan erst öffnen, wenn dieser Eintrag hinausgegangen ist. Die Vorschau zählt nicht als Kundenaufruf.",
+      "waPlanLabel": "Dein Investitions-Fahrplan"
     },
     "staff": {
       "errNameEmail": "Name und E-Mail nötig",
@@ -3873,7 +3876,8 @@
       "furnSumIncl": "Deck: {{p}} netto (Preisspalte des Bauträgers inkl. Möbel)",
       "furnSumMissing": "⚠ Keine Preisspalte mit Möbeln hinterlegt — es gilt {{p}} netto ohne Möbel.",
       "furnSumNone": "Deck: {{p}} netto — Möbel kommen im Deck nicht vor",
-      "strategySim2": "Investmentstrategie (Bundlekauf, EK-Verteilung, Reinvestment)"
+      "strategySim2": "Investmentstrategie (Bundlekauf, EK-Verteilung, Reinvestment)",
+      "planAdded": "Fahrplan liegt dabei."
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
@@ -4593,7 +4597,13 @@
       "tlRefi": "Refinanzierung",
       "tlSale": "Verkauf",
       "reDisclaimer": "Das ist eine Modellrechnung unter den oben gewählten Annahmen, keine Finanzierungszusage. Ob eine Bank tatsächlich finanziert, hängt von Einkommen, bestehenden Verpflichtungen, Bonität, Bewertung und den Richtlinien der Bank ab. Die weiteren Käufe rechnen mit einem Modellobjekt, das aus dem Durchschnitt der gewählten Wohnungen abgeleitet ist.",
-      "reNegative": "Die Liquidität rutscht im Jahr {{y}} auf {{v}}. So weit gerechnet müsste der Kunde zwischendurch Geld nachschießen."
+      "reNegative": "Die Liquidität rutscht im Jahr {{y}} auf {{v}}. So weit gerechnet müsste der Kunde zwischendurch Geld nachschießen.",
+      "shareBtn2": "In den Postausgang legen",
+      "shareTitle2": "Fahrplan fertigstellen",
+      "shareHint2": "Legt den fertigen Entwurf in den Postausgang und gibt die Vorschau frei. Für den Kunden sichtbar wird der Plan erst beim Versand.",
+      "sharedDraft": "Fahrplan fertig - der Entwurf liegt im Postausgang.",
+      "sharedMerged": "Fahrplan fertig - der Link liegt beim vorhandenen Entwurf im Postausgang.",
+      "sharedHint2": "Der Kunde kann den Link noch nicht öffnen. Er wird erst freigeschaltet, wenn der Eintrag im Postausgang tatsächlich hinausgeht (Mail oder WhatsApp). Änderungen hier wirken danach sofort, der Link bleibt derselbe."
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -5437,7 +5447,10 @@
     "statusMail": "✅ Mail",
     "statusWa": "✅ WA",
     "statusDraft": "⏳ Entwurf",
-    "deleteOfferTitle": "Angebot löschen"
+    "deleteOfferTitle": "Angebot löschen",
+    "planFallback": "Investitions-Fahrplan",
+    "planLive": "✓ beim Kunden",
+    "planDraft": "noch nicht sichtbar"
   },
   "unitPickerModal": {
     "statusUnderConstruction": "Im Bau",
@@ -5512,7 +5525,10 @@
     "calcFallbackTitle": "Berechnung",
     "done": "fertig",
     "updated": "aktualisiert",
-    "deckLabel": "Deck {{n}}"
+    "deckLabel": "Deck {{n}}",
+    "planFallbackTitle": "Investitions-Fahrplan",
+    "planLive": "beim Kunden",
+    "planDraft": "noch nicht sichtbar"
   },
   "deckWizard": {
     "genericError": "Fehler",

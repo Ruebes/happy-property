@@ -32,6 +32,9 @@ interface OutboxRow {
 }
 interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null }
 interface CalcRow { id: string; token: string; title: string | null; lead_id: string | null; approved_at: string | null }
+// Investitions-Fahrplan. Anders als Deck und Berechnung ist er erst fuer den
+// Kunden erreichbar, wenn shared_at gesetzt ist - das passiert beim Versand.
+interface StrategyRow { id: string; token: string; title: string | null; lead_id: string; shared_at: string | null }
 
 // Basisfarbe (unbearbeitet) + Zyklus: nach jeder fertigen Bearbeitung die nächste Farbe.
 const DECK_BASE = '#111827'
@@ -44,6 +47,7 @@ export default function Postausgang() {
   const [rows, setRows]       = useState<OutboxRow[]>([])
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
   const [calcs, setCalcs]     = useState<CalcRow[]>([])
+  const [plans, setPlans]     = useState<StrategyRow[]>([])
   const [loading, setLoading] = useState(true)
   const [openId, setOpenId]   = useState<string | null>(null)
   const [busyId, setBusyId]   = useState<string | null>(null)
@@ -72,6 +76,21 @@ export default function Postausgang() {
     })
   }, [])
 
+  // Fahrplan-Tokens, die in DIESEM Eintrag verlinkt sind.
+  const planTokensOf = (body: string | null | undefined): string[] =>
+    [...new Set([...(body ?? '').matchAll(/\/strategie\/([a-f0-9]+)/g)].map(m => m[1]))]
+
+  // Beim Versand wird der Fahrplan fuer den Kunden freigeschaltet - vorher nicht.
+  // Das ist der einzige Ort, an dem shared_at gesetzt wird (Sven 5.9.26).
+  const releasePlans = async (body: string | null | undefined): Promise<void> => {
+    const toks = planTokensOf(body)
+    if (!toks.length) return
+    const { error } = await supabase.from('crm_strategy_scenarios')
+      .update({ shared_at: new Date().toISOString() })
+      .in('token', toks).is('shared_at', null)
+    if (error) console.warn('[Postausgang] Fahrplan freischalten:', error.message)
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
     const { data } = await supabase.from('deck_outbox')
@@ -87,7 +106,10 @@ export default function Postausgang() {
       const { data: cs } = await supabase.from('property_calculations')
         .select('id, token, title, lead_id, approved_at').in('lead_id', leadIds).order('created_at', { ascending: false })
       setCalcs((cs ?? []) as CalcRow[])
-    } else setCalcs([])
+      const { data: ps } = await supabase.from('crm_strategy_scenarios')
+        .select('id, token, title, lead_id, shared_at').in('lead_id', leadIds)
+      setPlans((ps ?? []) as StrategyRow[])
+    } else { setCalcs([]); setPlans([]) }
     setLoading(false)
   }, [fetchDeckMeta])
   useEffect(() => { void load() }, [load])
@@ -191,6 +213,8 @@ export default function Postausgang() {
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
       const nowIso = new Date().toISOString()
       await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, email_sent_at: nowIso, error_message: null }).eq('id', row.id)
+      // Erst jetzt ist der Fahrplan fuer den Kunden erreichbar.
+      await releasePlans(sendBody)
       flash(resend ? t('crm.outbox.resent', '✅ Erneut gesendet') : t('crm.outbox.sent', '✅ Gesendet'))
       void load()
     } catch (e) {
@@ -216,8 +240,14 @@ export default function Postausgang() {
     const calcLines = calcs
       .filter(c => c.lead_id === row.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
       .map(c => `📊 ${c.title?.trim() || t('crm.outbox.waCalcLabel', 'Deine Berechnung')}: ${base}/rechnung/${c.token}`)
-    const links = [...deckLines, ...calcLines].join('\n')
-    if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck- oder Berechnungs-Links an diesem Eintrag.')); return }
+    // Fahrplan: nur die in DIESEM Eintrag verlinkten, kein Fallback auf alle -
+    // sonst schickt ein reiner Deck-Entwurf ungefragt den Fahrplan mit.
+    const planToks = planTokensOf(row.body)
+    const planLines = plans
+      .filter(pl => pl.lead_id === row.lead_id && planToks.includes(pl.token))
+      .map(pl => `📈 ${pl.title?.trim() || t('crm.outbox.waPlanLabel', 'Dein Investitions-Fahrplan')}: ${base}/strategie/${pl.token}`)
+    const links = [...deckLines, ...calcLines, ...planLines].join('\n')
+    if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.')); return }
     const text = t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
     const regWarnWa = await registrationWarning(row)
     if (!window.confirm(regWarnWa + t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
@@ -230,6 +260,7 @@ export default function Postausgang() {
       if ((data as { error?: string })?.error) throw new Error((data as { error: string }).error)
       const nowIso = new Date().toISOString()
       await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, whatsapp_sent_at: nowIso }).eq('id', row.id)
+      await releasePlans(row.body)
       flash(t('crm.outbox.waSent', '✅ WhatsApp gesendet'))
       void load()
     } catch (e) {
@@ -318,6 +349,9 @@ export default function Postausgang() {
             // alle des Leads zeigen.
             const calcTokensInBody = new Set([...(r.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
             const rowCalcs = calcs.filter(c => c.lead_id === r.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
+            // Fahrplan nur, wenn er in diesem Eintrag wirklich verlinkt ist.
+            const planToksInBody = planTokensOf(r.body)
+            const rowPlans = plans.filter(pl => pl.lead_id === r.lead_id && planToksInBody.includes(pl.token))
             return (
             <div key={r.id} className="border border-gray-200 rounded-xl bg-white">
               <div className="flex items-center gap-3 px-4 py-3">
@@ -444,6 +478,30 @@ export default function Postausgang() {
                         })}
                       </div>
                       <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.outbox.calcHint2', 'Eingabefehler? ✏️ öffnet die Berechnung zum Bearbeiten — gleicher Link, Werte werden aktualisiert.')}</p>
+                    </div>
+                  )}
+
+                  {rowPlans.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">{t('crm.outbox.plansSection', 'Investitions-Fahrplan')}</p>
+                      <div className="space-y-1.5">
+                        {rowPlans.map(pl => (
+                          <div key={pl.id} className="flex items-center gap-2">
+                            <span className="flex-1 truncate text-xs text-gray-700">
+                              📈 {pl.title ?? t('postausgang.planFallbackTitle', 'Investitions-Fahrplan')}
+                              {pl.shared_at
+                                ? <span className="ml-1 text-green-600 font-medium">· ✓ {t('postausgang.planLive', 'beim Kunden')}</span>
+                                : <span className="ml-1 text-gray-400">· {t('postausgang.planDraft', 'noch nicht sichtbar')}</span>}
+                            </span>
+                            <a href={`${origin}/strategie/${pl.token}?preview=1`} target="_blank" rel="noreferrer"
+                              className="text-[11px] px-2 py-0.5 rounded text-white shrink-0"
+                              style={{ backgroundColor: pl.shared_at ? '#16a34a' : '#2f6b4f' }}>
+                              {t('crm.outbox.view', 'Ansehen')}
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.outbox.planHint', 'Der Kunde kann den Fahrplan erst öffnen, wenn dieser Eintrag hinausgegangen ist. Die Vorschau zählt nicht als Kundenaufruf.')}</p>
                     </div>
                   )}
 

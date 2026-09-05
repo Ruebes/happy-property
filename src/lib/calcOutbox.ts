@@ -74,6 +74,18 @@ export async function createCalcOutboxDraft(opts: {
 // herrichten, dass sie an den Kunden verschickt werden können"). Der Body
 // enthält den /strategie/<token>-Link; Mail- und WhatsApp-Versand laufen wie
 // gewohnt über den Postausgang.
+//
+// Sven 5.9.26: der Fahrplan geht entweder als weiterer Link mit dem Deck raus
+// oder separat, auf jeden Fall über den Postausgang. Deshalb zwei Regeln:
+//   1. Liegt für denselben Kunden schon ein OFFENER Entwurf mit Deck- oder
+//      Rechnungslinks, wird der Fahrplan dort angehängt statt eine zweite Mail
+//      zu erzeugen. Zwei Mails für denselben Vorgang waren bei den Berechnungen
+//      schon einmal das Problem (siehe replacesTokens oben).
+//   2. Ein älterer OFFENER Fahrplan-Entwurf desselben Kunden wird ersetzt.
+//      Gesendete Einträge bleiben immer unangetastet.
+const strategyLinkHtml = (origin: string, token: string, title: string, esc: (s: string) => string) =>
+  `<p style="margin:0 0 10px 0"><a href="${origin}/strategie/${token}" style="color:#2f6b4f;font-weight:700;font-size:15px;text-decoration:none">📈 ${esc(title)} →</a></p>`
+
 export async function createStrategyOutboxDraft(opts: {
   leadId: string
   firstName: string
@@ -81,7 +93,40 @@ export async function createStrategyOutboxDraft(opts: {
   token: string
   title: string
   unitCount: number
-}): Promise<void> {
+  /** false hängt den Fahrplan nie an einen bestehenden Entwurf an. */
+  mergeIntoOpenDraft?: boolean
+}): Promise<{ merged: boolean }> {
+  const escFn = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const origin0 = window.location.origin
+
+  // Offene Entwürfe desselben Kunden ansehen: einen alten Fahrplan ersetzen,
+  // oder den Link an einen bestehenden Deck-Entwurf anhängen.
+  const { data: openRows } = await supabase.from('deck_outbox')
+    .select('id, body, deck_tokens').eq('lead_id', opts.leadId).eq('status', 'draft')
+    .order('created_at', { ascending: false })
+  const drafts = (openRows ?? []) as Array<{ id: string; body: string | null; deck_tokens: string[] | null }>
+
+  const stale = drafts.filter(d => /\/strategie\/[a-f0-9]+/.test(d.body ?? ''))
+  if (stale.length) {
+    const { error } = await supabase.from('deck_outbox').delete().in('id', stale.map(d => d.id))
+    if (error) console.warn('[strategyOutbox] alten Entwurf ersetzen:', error.message)
+  }
+
+  if (opts.mergeIntoOpenDraft !== false) {
+    const host = drafts.find(d =>
+      !stale.includes(d) && ((d.deck_tokens ?? []).length > 0 || (d.body ?? '').includes('/rechnung/')))
+    if (host) {
+      const block = `<div style="margin:20px 0 8px 0;padding-top:14px;border-top:1px solid #e5e5e5">`
+        + `<p style="margin:0 0 8px;font-size:14px;color:#666">Und der Fahrplan, der zeigt, wie alles zusammenspielt:</p>`
+        + strategyLinkHtml(origin0, opts.token, opts.title, escFn) + `</div>`
+      const body = host.body ?? ''
+      const merged = body.includes('</body>') ? body.replace('</body>', `${block}</body>`) : body + block
+      const { error } = await supabase.from('deck_outbox').update({ body: merged }).eq('id', host.id)
+      if (!error) return { merged: true }
+      console.warn('[strategyOutbox] Anhängen fehlgeschlagen, lege eigenen Entwurf an:', error.message)
+    }
+  }
+
   let email = opts.email ?? null
   if (!email) {
     const { data } = await supabase.from('leads').select('email').eq('id', opts.leadId).maybeSingle()
@@ -101,4 +146,5 @@ export async function createStrategyOutboxDraft(opts: {
     lead_id: opts.leadId, recipient_email: email, subject, body, deck_tokens: [], status: 'draft',
   })
   if (error) console.error('[strategyOutbox] Postausgang-Entwurf anlegen:', error.message)
+  return { merged: false }
 }

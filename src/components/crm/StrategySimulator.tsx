@@ -16,8 +16,9 @@ import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechne
 // verifizierten Rechner-Engine (lib/strategy → lib/rechner - dieselbe wie die
 // Kundenrechnungen: Annuität, Kurz-/Langzeit inkl. MwSt-Erstattung, Steuern) und
 // legt die Ergebnisse auf eine echte Zeitachse (Kauf-/Übergabe-Monat + Jahr).
-// „Für Kunden freigeben" veröffentlicht den Plan unter /strategie/<token> und
-// legt einen Begleit-Entwurf in den Postausgang (wie bei Berechnungen/Decks).
+// „Fahrplan fertigstellen" legt einen Entwurf in den Postausgang (wie bei
+// Berechnungen/Decks) und gibt eine Vorschau frei. Für den Kunden sichtbar wird
+// der Plan erst mit dem Versand aus dem Postausgang, nicht schon hier.
 
 export type { SimUnit } from '../../lib/strategy'
 
@@ -52,6 +53,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [sharing, setSharing] = useState(false)
   const [shareUrl, setShareUrl] = useState('')
   const [shareErr, setShareErr] = useState('')
+  const [merged, setMerged] = useState(false)
 
   // Gespeichertes Szenario laden, wenn der Wizard nichts mitgibt
   useEffect(() => { void (async () => {
@@ -203,10 +205,14 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     [params, units],
   )
 
-  // ── Für den Kunden freigeben ───────────────────────────────────────────────
-  // Speichert den aktuellen Stand SOFORT (nicht entprellt), schaltet den
-  // öffentlichen Link frei (/strategie/<token>) und legt einen Begleit-Entwurf
-  // in den Postausgang - genau wie bei Berechnungen und Decks.
+  // ── Fahrplan fertigstellen und in den Postausgang legen ────────────────────
+  // Speichert den aktuellen Stand SOFORT (nicht entprellt) und legt einen
+  // Entwurf in den Postausgang - genau wie bei Berechnungen und Decks.
+  //
+  // Was hier bewusst NICHT passiert: shared_at setzen. Der Fahrplan wird nicht
+  // beim Erstellen für den Kunden freigeschaltet, sondern erst beim Versand aus
+  // dem Postausgang (Sven 5.9.26). Bis dahin sieht ihn nur das Team über die
+  // Vorschau (?preview=1, get_strategy_preview).
   const share = async () => {
     if (!lead || !units.length || sharing) return
     setSharing(true); setShareErr('')
@@ -218,16 +224,16 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       const { data, error } = await supabase.from('crm_strategy_scenarios')
         .upsert({
           lead_id: lead.id, config: { unitsV2: units, paramsV2: params },
-          title, recipient_name: recipient,
-          shared_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          title, recipient_name: recipient, updated_at: new Date().toISOString(),
         }, { onConflict: 'lead_id' })
         .select('token').single()
       if (error) throw error
       const token = (data as { token: string }).token
-      await createStrategyOutboxDraft({
+      const { merged } = await createStrategyOutboxDraft({
         leadId: lead.id, firstName: lead.first_name, token, title, unitCount: units.length,
       })
-      setShareUrl(`${window.location.origin}/strategie/${token}`)
+      setMerged(merged)
+      setShareUrl(`${window.location.origin}/strategie/${token}?preview=1`)
     } catch (err) {
       console.error('[StrategySimulator] share:', err)
       setShareErr(err instanceof Error ? err.message : String(err))
@@ -976,7 +982,9 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               {shareUrl ? (
                 <div className="space-y-2">
                   <p className="text-sm font-semibold text-gray-900">
-                    ✓ {t('crm.sim.shared', 'Für den Kunden freigegeben - der Begleit-Entwurf liegt im Postausgang.')}
+                    ✓ {merged
+                      ? t('crm.sim.sharedMerged', 'Fahrplan fertig - der Link liegt beim vorhandenen Entwurf im Postausgang.')
+                      : t('crm.sim.sharedDraft', 'Fahrplan fertig - der Entwurf liegt im Postausgang.')}
                   </p>
                   <div className="flex flex-wrap items-center gap-2">
                     <input readOnly value={shareUrl} onFocus={e => e.currentTarget.select()}
@@ -987,26 +995,26 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     </button>
                     <a href={shareUrl} target="_blank" rel="noreferrer"
                       className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
-                      {t('crm.sim.openPlan', 'Ansehen')}
+                      {t('crm.sim.openPlan', 'Vorschau')}
                     </a>
                   </div>
                   <p className="text-[11px] text-gray-500">
-                    {t('crm.sim.sharedHint', 'Änderungen hier wirken sofort auf der Kundenseite - der Link bleibt derselbe. Versendet wird über den Postausgang (Mail oder WhatsApp).')}
+                    {t('crm.sim.sharedHint2', 'Der Kunde kann den Link noch nicht öffnen. Er wird erst freigeschaltet, wenn der Eintrag im Postausgang tatsächlich hinausgeht (Mail oder WhatsApp). Änderungen hier wirken danach sofort, der Link bleibt derselbe.')}
                   </p>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-gray-900">{t('crm.sim.shareTitle', 'Fahrplan an den Kunden schicken')}</p>
+                    <p className="text-sm font-semibold text-gray-900">{t('crm.sim.shareTitle2', 'Fahrplan fertigstellen')}</p>
                     <p className="text-xs text-gray-500">
-                      {t('crm.sim.shareHint', 'Legt eine Kundenseite mit eigenem Link an und einen fertigen Begleit-Entwurf in den Postausgang.')}
+                      {t('crm.sim.shareHint2', 'Legt den fertigen Entwurf in den Postausgang und gibt die Vorschau frei. Für den Kunden sichtbar wird der Plan erst beim Versand.')}
                     </p>
                     {shareErr && <p className="text-xs text-red-600 mt-1">{shareErr}</p>}
                   </div>
                   <button onClick={() => void share()} disabled={sharing || !lead}
                     className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 shrink-0"
                     style={{ backgroundColor: '#ff795d' }}>
-                    {sharing ? t('crm.sim.sharing', 'Wird vorbereitet…') : `📤 ${t('crm.sim.shareBtn', 'Für Kunden freigeben')}`}
+                    {sharing ? t('crm.sim.sharing', 'Wird vorbereitet…') : `📤 ${t('crm.sim.shareBtn2', 'In den Postausgang legen')}`}
                   </button>
                 </div>
               )}

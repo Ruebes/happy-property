@@ -3744,7 +3744,7 @@
       "noPhone": "No phone number on the lead.",
       "waDeckLabel": "Sales Deck",
       "waCalcLabel": "Your calculation",
-      "noLinks": "No deck or calculation links on this entry.",
+      "noLinks": "No deck, calculation or plan links on this entry.",
       "confirmWa": "Send this WhatsApp now?",
       "waSent": "✅ WhatsApp sent",
       "waFail": "WhatsApp failed",
@@ -3784,7 +3784,10 @@
       "mailText": "Email text",
       "editHint": "You can write directly in the text — the formatting and the deck links are preserved.",
       "saving": "Saving…",
-      "save": "Save"
+      "save": "Save",
+      "plansSection": "Investment plan",
+      "planHint": "The customer can only open the plan once this entry has been sent. The preview does not count as a customer visit.",
+      "waPlanLabel": "Your investment plan"
     },
     "staff": {
       "errNameEmail": "Name and email required",
@@ -3873,7 +3876,8 @@
       "furnSumIncl": "Deck: {{p}} net (developer price column incl. furniture)",
       "furnSumMissing": "⚠ No price column with furniture on file — {{p}} net without furniture applies.",
       "furnSumNone": "Deck: {{p}} net — furniture does not appear in the deck",
-      "strategySim2": "Investment strategy (bundle purchase, equity allocation, reinvestment)"
+      "strategySim2": "Investment strategy (bundle purchase, equity allocation, reinvestment)",
+      "planAdded": "The plan is included."
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -4593,7 +4597,13 @@
       "tlRefi": "Refinancing",
       "tlSale": "Sale",
       "reDisclaimer": "This is a model calculation under the assumptions selected above, not a financing commitment. Whether a bank actually lends depends on income, existing obligations, creditworthiness, valuation and the bank's own policies. Further purchases are calculated with a model property derived from the average of the selected apartments.",
-      "reNegative": "Liquidity drops to {{v}} in {{y}}. On this calculation the client would have to inject money in the meantime."
+      "reNegative": "Liquidity drops to {{v}} in {{y}}. On this calculation the client would have to inject money in the meantime.",
+      "shareBtn2": "Move to outbox",
+      "shareTitle2": "Finish the plan",
+      "shareHint2": "Files the finished draft in the outbox and unlocks the preview. The customer only sees the plan once it is sent.",
+      "sharedDraft": "Plan ready - the draft is in the outbox.",
+      "sharedMerged": "Plan ready - the link sits with the existing draft in the outbox.",
+      "sharedHint2": "The customer cannot open this link yet. It goes live when the outbox entry is actually sent (email or WhatsApp). Changes here take effect immediately after that, and the link stays the same."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5437,7 +5447,10 @@
     "statusMail": "✅ Mail",
     "statusWa": "✅ WA",
     "statusDraft": "⏳ Draft",
-    "deleteOfferTitle": "Delete offer"
+    "deleteOfferTitle": "Delete offer",
+    "planFallback": "Investment plan",
+    "planLive": "✓ with the customer",
+    "planDraft": "not visible yet"
   },
   "unitPickerModal": {
     "statusUnderConstruction": "Under construction",
@@ -5512,7 +5525,10 @@
     "calcFallbackTitle": "Calculation",
     "done": "done",
     "updated": "updated",
-    "deckLabel": "Deck {{n}}"
+    "deckLabel": "Deck {{n}}",
+    "planFallbackTitle": "Investment plan",
+    "planLive": "with the customer",
+    "planDraft": "not visible yet"
   },
   "deckWizard": {
     "genericError": "Error",

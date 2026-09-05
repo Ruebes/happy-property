@@ -94,9 +94,26 @@ export default function Strategie() {
 
   useEffect(() => { void (async () => {
     if (!token) return
-    const { data, error } = await supabase.rpc('get_strategy_by_token', { p_token: token })
-    const row = Array.isArray(data) ? data[0] : data
-    if (error || !row) { setErr(t('strategie.notFound', 'Dieser Fahrplan wurde nicht gefunden.')); setLoading(false); return }
+    // Zwei Wege auf dieselbe Seite:
+    //   Kunde  -> get_strategy_by_token, liefert nur freigegebene Plaene
+    //   Team   -> get_strategy_preview mit ?preview=1, liefert auch den Entwurf
+    // Der Fahrplan wird bewusst nicht beim Erstellen freigeschaltet, sondern
+    // erst beim Versand aus dem Postausgang (Sven 5.9.26). Ohne den zweiten Weg
+    // koennte niemand ansehen, was er da verschickt.
+    const preview = new URLSearchParams(window.location.search).get('preview') === '1'
+    let row: Record<string, unknown> | null = null
+    if (preview) {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        const { data } = await supabase.rpc('get_strategy_preview', { p_token: token })
+        row = (Array.isArray(data) ? data[0] : data) ?? null
+      }
+    }
+    if (!row) {
+      const { data } = await supabase.rpc('get_strategy_by_token', { p_token: token })
+      row = (Array.isArray(data) ? data[0] : data) ?? null
+    }
+    if (!row) { setErr(t('strategie.notFound', 'Dieser Fahrplan wurde nicht gefunden.')); setLoading(false); return }
     // migrateConfig liest auch Altstände (v1) - sonst sieht der Kunde eine leere Seite
     const mig = migrateConfig((row.config ?? {}) as StrategyConfig)
     setUnits(mig.units)

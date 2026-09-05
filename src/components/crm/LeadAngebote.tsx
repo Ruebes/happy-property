@@ -18,6 +18,8 @@ interface CalcRow { id: string; token: string; title: string | null; created_at:
 const LEER = { revision: 0, refining: false, refine_error: null, approved_at: null, quality_status: null, quality_findings: 0 } as const
 
 interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
+// Investitions-Fahrplan: erst nach dem Versand fuer den Kunden erreichbar.
+interface PlanRow { id: string; token: string; title: string | null; updated_at: string | null; shared_at: string | null }
 
 // Basisfarbe (unbearbeitet) + Zyklus: nach jeder fertigen Bearbeitung die nächste
 // Farbe → Sven sieht auf einen Blick, dass eine neue Version fertig ist.
@@ -30,6 +32,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const { t } = useTranslation()
   const [outbox, setOutbox] = useState<OutboxRow[]>([])
   const [calcs, setCalcs]   = useState<CalcRow[]>([])
+  const [plans, setPlans]   = useState<PlanRow[]>([])
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]     = useState<string | null>(null)
@@ -60,13 +63,15 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
     let cancelled = false
     const safety = setTimeout(() => { if (!cancelled) setLoading(false) }, 10_000)
     void (async () => {
-      const [o, k] = await Promise.all([
+      const [o, k, pl] = await Promise.all([
         supabase.from('deck_outbox').select('id, subject, status, created_at, deck_tokens, email_sent_at, whatsapp_sent_at').eq('lead_id', leadId).order('created_at', { ascending: false }),
         supabase.from('property_calculations').select('id, token, title, created_at, approved_at').eq('lead_id', leadId).order('created_at', { ascending: false }),
+        supabase.from('crm_strategy_scenarios').select('id, token, title, updated_at, shared_at').eq('lead_id', leadId),
       ])
       if (cancelled) return
       setOutbox((o.data ?? []) as OutboxRow[])
       setCalcs((k.data ?? []) as CalcRow[])
+      setPlans((pl.data ?? []) as PlanRow[])
       setLoading(false)
     })()
     return () => { cancelled = true; clearTimeout(safety) }
@@ -123,7 +128,7 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const fmt = (d: string | null) => d ? new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
 
   if (loading) return null
-  if (!outbox.length && !calcs.length) return null
+  if (!outbox.length && !calcs.length && !plans.length) return null
 
   return (
     <div className="bg-white rounded-2xl shadow p-5">
@@ -194,6 +199,20 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
             </div>
           )
         })}
+        {plans.map(pl => (
+          <div key={pl.id} className="flex items-center gap-2 text-sm border border-gray-100 rounded-lg px-3 py-2">
+            <span className="text-xs text-gray-400 w-24 shrink-0">{fmt(pl.updated_at)}</span>
+            <span className="flex-1 truncate">
+              📈 {pl.title ?? t('leadAngebote.planFallback', 'Investitions-Fahrplan')}
+              {pl.shared_at
+                ? <span className="ml-1 text-[11px] text-green-600 font-medium">· {t('leadAngebote.planLive', '✓ beim Kunden')}</span>
+                : <span className="ml-1 text-[11px] text-gray-400">· {t('leadAngebote.planDraft', 'noch nicht sichtbar')}</span>}
+            </span>
+            <a href={`${origin}/strategie/${pl.token}?preview=1`} target="_blank" rel="noreferrer"
+              className="text-[11px] px-2 py-0.5 rounded text-white shrink-0"
+              style={{ backgroundColor: pl.shared_at ? '#16a34a' : '#2f6b4f' }}>{t('leadAngebote.viewLink', 'Ansehen')}</a>
+          </div>
+        ))}
       </div>
       <p className="text-[11px] text-gray-400 mt-2">{t('leadAngebote.footerHint', 'Links bleiben dauerhaft gültig. ✏️ = Deck per Chat anpassen (läuft im Hintergrund, Farbe wechselt bei fertig). ⚠/✓ = Bericht der automatischen Prüfung. ✓ (grün) = als fertig bestätigen.')}</p>
       {chat && <DeckChat token={chat.token} label={chat.label} onClose={() => setChat(null)} onStarted={onRefineStarted} />}

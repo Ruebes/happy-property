@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
-import { createCalcOutboxDraft } from '../../lib/calcOutbox'
+import { createCalcOutboxDraft, createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { unitGross, unitNet } from '../../lib/price'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
 import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
-import { rentFromSeason } from '../../lib/strategy'
+import { rentFromSeason, DEFAULT_SIM_PARAMS } from '../../lib/strategy'
 import { bookingUrl } from '../../lib/bookingLink'
 
 // ── Deck-Wizard ──────────────────────────────────────────────────────────────
@@ -112,6 +112,50 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       },
     }
   })
+
+  // ── Investitions-Fahrplan im Hintergrund ──────────────────────────────────
+  // Ist der Haken „Investmentstrategie" gesetzt, entsteht der Fahrplan mit
+  // demselben Lauf wie Deck und Berechnung: Szenario speichern, Link an den
+  // gerade erzeugten Postausgang-Entwurf haengen. NICHT freigeben - fuer den
+  // Kunden sichtbar wird er erst beim Versand (Sven 5.9.26).
+  //
+  // Die Parameter kommen aus den Wizard-Eingaben, damit der Fahrplan mit
+  // denselben Zahlen rechnet wie die Einzelberechnung. Feinjustierung bleibt
+  // der Simulator, der dasselbe Szenario laedt.
+  const makeStrategyPlan = async (): Promise<string | null> => {
+    if (!lead) return null
+    const simUnits = basketToSim()
+    if (!simUnits.length) return null
+    const params = {
+      ...DEFAULT_SIM_PARAMS,
+      res: calcParams.res,
+      holder: calcParams.holder,
+      ek: calcParams.equity,
+      interest: calcParams.interestPct,
+      termYears: calcParams.termYears,
+      rentGrowth: calcParams.rentGrowth,
+      growth: calcParams.appreciationPct,
+      deTaxPct: calcParams.deTaxPct,
+      cyBI: calcParams.cyBI,
+    }
+    const title = simUnits.length === 1
+      ? `Investitions-Fahrplan · ${simUnits[0].name}`
+      : `Investitions-Fahrplan · ${simUnits.length} Wohnungen`
+    const { data, error } = await supabase.from('crm_strategy_scenarios')
+      .upsert({
+        lead_id: lead.id, config: { unitsV2: simUnits, paramsV2: params },
+        title, recipient_name: `${lead.first_name} ${lead.last_name}`.trim(),
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'lead_id' })
+      .select('token').single()
+    if (error) { console.error('[DeckWizard] Fahrplan anlegen:', error.message); return null }
+    const token = (data as { token: string }).token
+    await createStrategyOutboxDraft({
+      leadId: lead.id, firstName: lead.first_name, email: lead.email,
+      token, title, unitCount: simUnits.length,
+    })
+    return token
+  }
 
   useEffect(() => { void (async () => {
     const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date').order('name')
@@ -335,8 +379,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         }
         // Wie bei Decks: fertiger Mail-Entwurf mit allen Rechnungs-Links → Postausgang
         await createCalcOutboxDraft({ leadId: lead.id, firstName: lead.first_name, email: lead.email, calcs: madeCalcs })
+        const planTok = simOpen ? await makeStrategyPlan() : null
         try { await navigator.clipboard.writeText(madeLinks.join('\n')) } catch { /* Clipboard optional */ }
-        onDone(`✅ ${madeCalcs.length} ${t('crm.wizard.calcOnlyDone', 'Berechnung(en) erstellt — liegen als Mail-Entwurf im Postausgang.')}`)
+        onDone(`✅ ${madeCalcs.length} ${t('crm.wizard.calcOnlyDone', 'Berechnung(en) erstellt — liegen als Mail-Entwurf im Postausgang.')}`
+          + (planTok ? ` ${t('crm.wizard.planAdded', 'Fahrplan liegt dabei.')}` : ''))
         if (!background) onClose()
         return
       }
@@ -459,12 +505,16 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           }
         } catch { if (attempt === 0) await sleep(2500) }
       }
+      // Fahrplan zuletzt: compose-deck-mail schreibt den Body neu, der Link
+      // muss danach dazu, sonst ist er wieder weg.
+      const planTok = simOpen ? await makeStrategyPlan() : null
       // Prüfbedürftige Decks sofort benennen — der Sinn des Quality-Gates ist,
       // dass Sven nur noch die roten anschauen muss.
       const rot = links.filter(l => l.quality === 'red')
+      const planNote = planTok ? ` ${t('crm.wizard.planAdded', 'Fahrplan liegt dabei.')}` : ''
       onDone(rot.length
-        ? `⚠️ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${rot.length} ${t('crm.wizard.doneRed', 'davon prüfen:')} ${rot.map(l => l.label).join(', ')}`
-        : `✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${t('crm.wizard.doneGreen', 'Alle automatisch validiert.')}`)
+        ? `⚠️ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${rot.length} ${t('crm.wizard.doneRed', 'davon prüfen:')} ${rot.map(l => l.label).join(', ')}${planNote}`
+        : `✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${t('crm.wizard.doneGreen', 'Alle automatisch validiert.')}${planNote}`)
     } catch (e) {
       const msg = e instanceof Error ? e.message : t('deckWizard.genericError', 'Fehler')
       // Im Hintergrund-Modus ist das Fenster schon zu → Fehler als Popup melden statt inline.
