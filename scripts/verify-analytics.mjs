@@ -147,5 +147,60 @@ T('hoechstens drei Erkenntnisse', on.insights.length <= 3 && on.insights.length 
 T('Erkenntnisse sind datengetrieben, keine Textbausteine',
   on.insights.some(i => /\d/.test(i.text)))
 
+console.log('\n── Regression 3B: die korrigierten Befunde ──')
+// 1/2: Rendite mit Endwert statt negativer Scheinrendite
+T('Rendite ist positiv, wenn das Vermoegen waechst', on.summary.irr > 0,
+  `${(on.summary.irr * 100).toFixed(1)} %`)
+T('ohne Reinvestment bleibt die Rendite unveraendert berechenbar', isFinite(off.summary.irr))
+// 3: Cashflow-Tabelle geht auf
+const bad = on.cashflowRows.filter(r => {
+  const summe = r.rent - r.costs - r.interest - r.amortization - r.tax + r.vatRefund
+  return Math.abs(summe - r.net) > 3
+})
+T('jede Cashflow-Zeile rechnet sich auf den ausgewiesenen Cashflow',
+  bad.length === 0, bad.length ? `${bad.length} Zeilen weichen ab, erste ${bad[0].year}` : 'alle Zeilen stimmen')
+T('MwSt-Erstattung ist eine eigene Spalte', on.cashflowRows.some(r => r.vatRefund > 0))
+// 4: Objektrendite ehrlich benannt
+T('Objektkarten nennen den Zuwachs kumuliert, nicht als Jahresrendite',
+  on.properties.every(p => p.equityGrowthPct === null || p.equityGrowthYears > 1))
+// 5: Szenarien schluessig
+const sc3 = Object.fromEntries(on.scenarios.map(s => [s.key, s]))
+T('konservativ hat nicht mehr Wohnungen als Basis', sc3.konservativ.units <= sc3.basis.units,
+  `${sc3.konservativ.units} gegen ${sc3.basis.units}`)
+T('optimistisch hat nicht weniger Wohnungen als Basis', sc3.optimistisch.units >= sc3.basis.units,
+  `${sc3.optimistisch.units} gegen ${sc3.basis.units}`)
+T('Vermoegen steigt von konservativ ueber Basis nach optimistisch',
+  sc3.konservativ.netWorth < sc3.basis.netWorth && sc3.basis.netWorth < sc3.optimistisch.netWorth)
+T('jedes Szenario hat eine berechenbare Rendite',
+  on.scenarios.every(s => isFinite(s.irr)))
+T('Recycling ist positiv, wo zusaetzlich gekauft wurde',
+  on.scenarios.every(s => s.units <= 3 || s.recyclingMultiple > 0))
+// 6: gekauft gegen im Bestand
+T('das erste Jahr zeigt die gekauften Wohnungen', on.portfolio[0].owned > 0,
+  `${on.portfolio[0].owned} gekauft, ${on.portfolio[0].units} im Bestand`)
+T('kein Text behauptet null Wohnungen',
+  !on.insights.some(i => i.text.includes('Aus 0 ')) && !on.summary.text.includes('von 0 '))
+// 7: Risiko aus derselben Quelle
+const finRisk = on.risks.find(r => r.key === 'finanzierung')
+const ltvEnd = on.financingKpis.ltvEnd
+T('Risiko und Finanzierungskennzahl nennen denselben Beleihungsgrad',
+  Math.abs(parseFloat(finRisk.value) - ltvEnd) < 1.5,
+  `Risiko ${finRisk.value}, Kennzahl ${ltvEnd} %`)
+// 8: Steuer aufgeschluesselt
+T('Einkommensteuer wird getrennt ausgewiesen', typeof on.taxKpis.incomeTax === 'number')
+T('Gesamtabgaben sind mindestens so hoch wie die Einkommensteuer',
+  on.taxKpis.total >= on.taxKpis.incomeTax)
+// 9: Sensitivitaet trennt sich von den Szenarien
+T('Sensitivitaet variiert nur die Wertentwicklung',
+  new Set(on.sensitivity.map(s => s.appreciation)).size === on.sensitivity.length)
+T('hoehere Wertentwicklung ergibt mehr Vermoegen',
+  on.sensitivity.every((s, i) => i === 0 || s.netWorth > on.sensitivity[i - 1].netWorth))
+// 10: Mindestreserve
+const reserveKept = on.liquidity.filter(l => l.cash < on.minimumReserve).length
+T('Unterschreitungen der Reserve werden gemeldet, nicht verschwiegen',
+  reserveKept === 0 || !!on.liquidityWarning)
+// 11: 20-Jahres-Horizont
+T('zwanzig Jahre durchgaengig', on.wealth.length === 20 && on.cashflowRows.length === 20)
+
 console.log(`\n${fail === 0 ? '🎉' : '⚠️'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

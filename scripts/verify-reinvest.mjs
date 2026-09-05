@@ -14,6 +14,9 @@ function T(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 const near = (a, b, tol = 1) => Math.abs(a - b) <= tol
+function check(name, got, want, tol = 1) {
+  T(name, near(got, want, tol), `${eur(got)}${near(got, want, tol) ? '' : ` (erwartet ${eur(want)})`}`)
+}
 
 const unit = (key, o = {}) => ({
   key, name: key, priceNet: 300000, furnNet: 20000, rent: 2400, letType: 'short', fin: true,
@@ -192,8 +195,15 @@ T('Anfangsbestand jedes Jahres ist der Endbestand des Vorjahres',
 T('Recycling-Faktor ist definiert und plausibel',
   cycle.kpis.capitalRecyclingMultiple >= 0 && cycle.kpis.capitalRecyclingMultiple < 20,
   `${cycle.kpis.capitalRecyclingMultiple}x bei ${eur(cycle.kpis.originalEquity)} EUR Eigenkapital`)
-T('Recycling zaehlt nur Refinanzierung und Verkaufserlöse, nicht jeden Cashflow',
-  cycle.kpis.totalRecycledCapital <= cycle.kpis.totalRefinancingProceeds + cycle.kpis.totalSaleProceeds + 1)
+// Seit dem Befund vom 5.9.26: Wiederverwendet ist das Eigenkapital ALLER
+// zusaetzlichen Kaeufe, egal aus welcher Quelle es stammt. Die frueher engere
+// Zaehlung ergab 0, sobald ein Kauf aus der Kasse bezahlt wurde.
+const equitySum = cycle.events.filter(e => e.kind === 'purchase').reduce((a, e) => a + e.equity, 0)
+check('Recycling = Eigenkapital aller zusaetzlichen Kaeufe', cycle.kpis.totalRecycledCapital, equitySum, 2)
+T('Recycling ist positiv, sobald gekauft wurde',
+  cycle.kpis.additionalPurchases === 0 || cycle.kpis.totalRecycledCapital > 0)
+T('Recycling zaehlt nicht jeden Cashflow',
+  cycle.kpis.totalRecycledCapital < Math.abs(cycle.totals.cashflow) + cycle.kpis.totalRefinancingProceeds + cycle.kpis.totalSaleProceeds + 1)
 
 console.log(`\n${fail === 0 ? '🎉' : '⚠️'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

@@ -576,6 +576,11 @@ export function scenarioParams(p: SimParams, key: ScenarioKey): SimParams {
   return {
     ...p,
     growth: Math.max(0, Math.round((p.growth + sh.growth) * 100) / 100),
+    // Der Reinvestment-Motor rechnet mit seiner EIGENEN Wertsteigerungsannahme.
+    // Wurde sie hier nicht mitverschoben, hatten alle drei Szenarien dieselbe
+    // Wertentwicklung - das optimistische Szenario kam dadurch auf weniger
+    // Wohnungen als das Basisszenario (Befund 5.9.26).
+    reinvestAppreciationPct: Math.max(0, Math.round((p.reinvestAppreciationPct + sh.growth) * 100) / 100),
     rentGrowth: Math.max(0, Math.round((p.rentGrowth + sh.rentGrowth) * 100) / 100),
     interest: Math.max(0.1, Math.round((p.interest + sh.interest) * 100) / 100),
     maintPct: Math.max(0, Math.round((p.maintPct + sh.maint) * 100) / 100),
@@ -840,7 +845,18 @@ export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<
 
 // Interner Zinsfuss auf den TATSAECHLICHEN Zahlungsstroemen des Kunden:
 // Eigenkapital raus, laufender Cashflow rein, am Ende der Verkaufserloes.
-export function irrOfPlan(rows: YearRow[], outcomes: UnitOutcome[], p: SimParams, exitProceeds = 0, exitYear?: number): number {
+//
+// Wird NICHT verkauft, muss trotzdem ein Schlusswert in den Zahlungsstrom -
+// sonst rechnet die Formel so, als waere das Portfolio am Ende wertlos, und
+// liefert eine negative Rendite neben einem Millionenvermoegen (Befund 5.9.26).
+// Der Schlusswert ist dann das, was der Kunde am Ende in der Hand haelt:
+// Immobilienwert abzueglich Restschuld, gebundenes Kapital der noch nicht
+// uebergebenen Wohnungen und die Liquiditaet. Er wird NUR gesetzt, wenn kein
+// Verkaufserloes uebergeben wurde - doppelt gezaehlt wird nichts.
+export function irrOfPlan(
+  rows: YearRow[], outcomes: UnitOutcome[], p: SimParams,
+  exitProceeds = 0, exitYear?: number, terminalValue?: number,
+): number {
   if (!rows.length) return NaN
   const ekOut = equityOutflowByYear(outcomes, p)
   const flows: number[] = []
@@ -850,7 +866,10 @@ export function irrOfPlan(rows: YearRow[], outcomes: UnitOutcome[], p: SimParams
     if (exitYear != null && r.year === exitYear) f += exitProceeds
     flows.push(f)
   }
-  if (exitYear == null && exitProceeds) flows[flows.length - 1] += exitProceeds
+  if (exitYear == null) {
+    if (exitProceeds) flows[flows.length - 1] += exitProceeds
+    else if (terminalValue) flows[flows.length - 1] += terminalValue
+  }
   return irrCalc(flows)
 }
 
@@ -911,7 +930,9 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams
   const rented = rows.filter(r => r.rents > 0)
   const cashflowLastYear = rented.length ? rented[rented.length - 1].cashflow : 0
   const valueEnd = last ? last.value : 0
-  const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year) : NaN
+  // Ohne Verkauf zaehlt das Netto-Vermoegen am Ende als Schlusswert.
+  const terminal = last ? last.value + last.committed - last.debt : 0
+  const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year, terminal) : NaN
   return {
     ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
     taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy), si: sum(r => r.si),

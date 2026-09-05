@@ -7,6 +7,7 @@ import {
   allocate, aggregate, totalsOf, computeExit, runScenarios, roeMeaningful, assessRisk,
   breakEvenGrowth, SCENARIO_KEYS,
   type SimUnit, type SimParams, type ScenarioKey, type RiskItem, type ExitResult,
+  type ScenarioResult,
 } from './strategy'
 import { runReinvest, type ReinvestResult, type StrategyEvent } from './reinvest'
 
@@ -18,11 +19,21 @@ export interface WealthPoint {
   netWorth: number         // dazu Liquiditaet und gebundenes Kapital
   cash: number
 }
-export interface PortfolioPoint { year: number; units: number; purchases: number; sales: number }
+export interface PortfolioPoint {
+  year: number
+  units: number        // im Bestand, also uebergeben und noch nicht verkauft
+  owned: number        // bereits gekauft, auch wenn die Uebergabe noch aussteht
+  purchases: number; sales: number
+}
 export interface CashflowPoint { year: number; cashflow: number; cumulative: number }
 export interface CashflowRow {
   year: number; rent: number; costs: number; interest: number
-  amortization: number; tax: number; net: number
+  amortization: number; tax: number
+  // Die Erstattung der Kaufpreis-Mehrwertsteuer bei Kurzzeitvermietung. Ohne
+  // diese Spalte ging die Tabelle nicht auf: der Cashflow sprang um einen
+  // fuenfstelligen Betrag, den keine der gezeigten Positionen erklaerte.
+  vatRefund: number
+  net: number
 }
 export interface LiquidityPoint { year: number; cash: number }
 export interface FinancingPoint { year: number; debt: number; ltv: number; capacity: number }
@@ -44,7 +55,8 @@ export interface PropertyCard {
   price: number; gross: number; equity: number; loan: number
   valueEnd: number; debtEnd: number; equityEnd: number
   rentFirstYear: number
-  roe: number | null
+  equityGrowthPct: number | null
+  equityGrowthYears: number
   soldYear: number | null
   netSaleProceeds: number | null
   model: boolean
@@ -109,7 +121,11 @@ export interface CustomerAnalytics {
   } | null
   properties: PropertyCard[]
   tax: TaxPoint[]
-  taxKpis: { total: number; perYear: number; exit: number; gesy: number; si: number; de: number }
+  taxKpis: {
+    total: number; perYear: number; exit: number
+    incomeTax: number    // reine Einkommensteuer, ohne GESY und Sozialversicherung
+    gesy: number; si: number; de: number
+  }
   scenarios: ScenarioSummary[]
   exits: Array<{ name: string; year: number; value: number; debt: number; costs: number; tax: number; net: number }>
   risks: RiskItem[]
@@ -158,9 +174,17 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       const sold = ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? null
       return o.unit.readyY <= row.year && (sold == null || row.year < sold)
     }).length
+    // Gekauft ist eine Wohnung ab dem Kaufvertrag, im Bestand erst ab der
+    // Uebergabe. Ohne diese Trennung behauptete die Seite im ersten Jahr
+    // "0 Wohnungen", obwohl der Kunde da gerade gekauft hatte.
+    const owned = outcomes.filter(o => {
+      const sold = ri?.saleYears.get(o.unit.key) ?? o.unit.saleYear ?? null
+      return o.unit.buyY <= row.year && (sold == null || row.year < sold)
+    }).length
     return {
       year: row.year,
       units: active,
+      owned,
       purchases: events.filter(e => e.kind === 'purchase' && e.year === row.year).length,
       sales: events.filter(e => e.kind === 'sale' && e.year === row.year).length,
     }
@@ -179,6 +203,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     interest: r0(row.interest),
     amortization: r0(row.principal),
     tax: r0(row.taxes),
+    vatRefund: r0(row.vat),
     net: r0(row.cashflow),
   }))
 
@@ -276,7 +301,10 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(o.res.restL[idxEnd]),
       equityEnd: r0(o.res.propV[idxEnd] - o.res.restL[idxEnd]),
       rentFirstYear: r0(o.res.rents[0]),
-      roe: roeMeaningful(o) ? Math.round(o.res.roe10 * 10) / 10 : null,
+      // Kumulierter Zuwachs ueber die gerechneten Jahre, KEINE Jahresrendite.
+      // Die Karte beschriftet ihn entsprechend.
+      equityGrowthPct: roeMeaningful(o) ? Math.round(o.res.roe10 * 10) / 10 : null,
+      equityGrowthYears: o.res.rents.length,
       soldYear: sold,
       netSaleProceeds: sale ? r0(sale.netProceeds) : null,
       model: !!o.unit.model,
@@ -297,6 +325,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     : (exit ? exit.cgt + exit.taxDE : 0)
   const taxKpis = {
     total: r0(totals.taxes),
+    // Die Einkommensteuer allein - GESY und Sozialversicherung stecken in
+    // taxCY mit drin und wuerden die Zahl sonst verfaelschen.
+    incomeTax: r0(totals.taxCY - totals.gesy - totals.si),
     perYear: agg.rows.length ? r0(totals.taxes / agg.rows.length) : 0,
     exit: r0(exitTax),
     gesy: r0(totals.gesy),
@@ -308,9 +339,19 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   // Im Reinvestment-Modus muss jedes Szenario durch den Motor, sonst waeren
   // Portfolio-Groesse und Recycling identisch - und das waere falsch.
   const sc = runScenarios(units, params)
+  // Jedes Szenario laeuft EINMAL durch den Reinvestment-Motor; das Ergebnis
+  // wird fuer Vergleichstabelle und Risiko gemeinsam genutzt.
+  const reinvestByScenario: Partial<Record<ScenarioKey, ReinvestResult>> = {}
+  if (reinvestOn) {
+    for (const key of SCENARIO_KEYS) {
+      // Mit den Wohnungen DES SZENARIOS rechnen, nicht mit den Ausgangsdaten -
+      // sonst fehlt die geaenderte Mietannahme des Szenarios.
+      reinvestByScenario[key] = runReinvest(sc[key].units, sc[key].params)
+    }
+  }
   const scenarios: ScenarioSummary[] = SCENARIO_KEYS.map(key => {
     if (reinvestOn) {
-      const r = runReinvest(units, sc[key].params)
+      const r = reinvestByScenario[key]!
       const last = r.rows[r.rows.length - 1]
       return {
         key,
@@ -350,9 +391,18 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       costs: r0(l.sellCost + l.vatClawback), tax: 0, net: 0,
     })) : [])
 
-  // ── Risiko: bestehende Logik, keine zweite ────────────────────────────────
+  // ── Risiko: bestehende Logik, aber auf DENSELBEN Zahlen ───────────────────
+  // Im Reinvestment-Modus muss die Risikobewertung die Reinvestment-Ergebnisse
+  // lesen, sonst standen auf derselben Seite zwei verschiedene Beleihungsgrade
+  // und zwei verschiedene Szenariovergleiche (Befund 5.9.26).
   const be = breakEvenGrowth(units, params)
-  const risks = assessRisk(sc, be)
+  const riskInput = reinvestOn
+    ? Object.fromEntries(SCENARIO_KEYS.map(key => {
+      const r = reinvestByScenario[key]!
+      return [key, { ...sc[key], rows: r.rows, totals: r.totals, exit: null, outcomes: r.outcomes }]
+    })) as Record<ScenarioKey, ScenarioResult>
+    : sc
+  const risks = assessRisk(riskInput, be)
 
   // ── Sensitivitaet ──────────────────────────────────────────────────────────
   // Nur im Reinvestment-Modus interessant, weil dort die Wertentwicklung ueber
@@ -411,7 +461,7 @@ function buildSummaryText(
   value: number,
   ri: ReinvestResult | null,
 ): string {
-  const kern = `Mit einem Startkapital von ${eur(p.ek)} entsteht in dieser Modellrechnung bis ${agg.lastYear} ein Bestand von ${unitsEnd} ${unitsEnd === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(value)}.`
+  const kern = `Mit einem Startkapital von ${eur(p.ek)} entsteht in dieser Modellrechnung bis ${agg.lastYear} ein Portfolio von ${unitsEnd} ${unitsEnd === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(value)}.`
   if (!ri || ri.kpis.additionalPurchases === 0) {
     return `${kern} Ein weiterer Kauf aus Wertzuwachs und Tilgung ergibt sich unter diesen Annahmen im Betrachtungszeitraum nicht.`
   }
@@ -429,14 +479,16 @@ function buildInsights(x: {
   liquidityWarning: CustomerAnalytics['liquidityWarning']
 }): Insight[] {
   const out: Insight[] = []
-  const first = x.portfolio[0]?.units ?? 0
+  // Im ersten Jahr ist oft noch nichts uebergeben - gezaehlt wird deshalb, was
+  // der Kunde zu diesem Zeitpunkt bereits gekauft hat.
+  const first = x.portfolio[0]?.owned ?? 0
   const last = x.portfolio[x.portfolio.length - 1]?.units ?? 0
   const w0 = x.wealth[0], wN = x.wealth[x.wealth.length - 1]
 
   if (last > first) {
     out.push({
       title: 'Das Portfolio wächst',
-      text: `Aus ${first} ${first === 1 ? 'Wohnung' : 'Wohnungen'} werden ${last}. Möglich wird das, weil Wertzuwachs und Tilgung Spielraum für weitere Finanzierungen schaffen.`,
+      text: `Aus ${first === 1 ? 'deiner ersten Wohnung' : `deinen ${first} Wohnungen`} werden ${last}. Möglich wird das, weil Wertzuwachs und Tilgung Spielraum für weitere Finanzierungen schaffen.`,
     })
   } else if (wN && w0) {
     const plus = wN.propertyEquity - w0.propertyEquity
@@ -449,7 +501,7 @@ function buildInsights(x: {
   if (x.ri && x.ri.kpis.totalRefinancingProceeds > 0) {
     out.push({
       title: 'Kapital arbeitet mehrfach',
-      text: `${eur(x.ri.kpis.totalRefinancingProceeds)} aus Refinanzierungen fließen erneut in Immobilien. Bezogen auf das Startkapital entspricht das dem ${String(x.ri.kpis.capitalRecyclingMultiple).replace('.', ',')}-fachen Wiedereinsatz.`,
+      text: `${eur(x.ri.kpis.totalRecycledCapital)} fließen erneut als Eigenkapital in weitere Wohnungen, davon ${eur(x.ri.kpis.totalRefinancingProceeds)} aus Refinanzierungen. Bezogen auf dein Startkapital ist das der ${x.ri.kpis.capitalRecyclingMultiple.toFixed(1).replace('.', ',')}-fache Wiedereinsatz - kein Gewinn, sondern dasselbe Kapital, das mehrfach arbeitet.`,
     })
   } else {
     const neg = x.cashflow.filter(c => c.cashflow < 0).length

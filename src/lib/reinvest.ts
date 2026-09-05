@@ -392,7 +392,13 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       if (funded + 0.5 >= need.equity && sustainable) {
         cash -= need.equity
         purchases++
-        recycled += fromRefi + Math.min(saleIn, fromCash)
+        // Wiederverwendetes Kapital = das gesamte Eigenkapital, das nach dem
+        // Start erneut in eine Immobilie geflossen ist - egal ob es aus einer
+        // Refinanzierung, aus einem Verkauf oder aus dem laufenden Ueberschuss
+        // stammt. Die frueher engere Zaehlung (nur Refinanzierung) ergab 0,
+        // sobald ein Kauf aus der Kasse bezahlt wurde, obwohl der Kunde sichtbar
+        // weitere Wohnungen bekam (Befund 5.9.26).
+        recycled += need.equity
         allUnits = probeUnits
         outcomes = probeOutcomes
         events.push({
@@ -482,9 +488,10 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     sales: sales.length,
     totalRefinancingProceeds: round(refiProceeds),
     totalSaleProceeds: round(saleProceedsTotal),
-    // „Wiederverwendet" ist bewusst eng definiert: Kapital, das NICHT aus der
-    // urspruenglichen Einlage stammt, sondern aus Refinanzierung oder Verkauf
-    // kam und erneut in eine Immobilie geflossen ist. Nicht alle Cashflows.
+    // Wiederverwendet = Eigenkapital, das nach dem Start erneut in eine
+    // Immobilie geflossen ist. Quelle egal (Refinanzierung, Verkauf, laufender
+    // Ueberschuss), aber immer nur echtes Kapital in echten Kaeufen - keine
+    // Summe aller Cashflows. Das ist KEINE Rendite.
     totalRecycledCapital: round(recycled),
     originalEquity,
     capitalRecyclingMultiple: originalEquity > 0 ? Math.round(recycled / originalEquity * 100) / 100 : 0,

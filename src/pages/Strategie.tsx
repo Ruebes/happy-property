@@ -148,7 +148,7 @@ export default function Strategie() {
           <img src={DECK_LOGO} alt="Happy Property Cyprus" style={{ height: isMobile ? 38 : 46, width: 'auto', borderRadius: 8, flexShrink: 0 }} />
           <div>
             <div style={{ fontFamily: SERIF, fontSize: isMobile ? 20 : 26, fontWeight: 800, color: DARK, lineHeight: 1.15 }}>
-              {t('strategie.title', 'Dein Investitions-Fahrplan')}
+              {t('strategie.title2', 'Deine persönliche Investmentstrategie')}
             </div>
             <div style={{ fontSize: 12.5, color: '#666', marginTop: 2 }}>
               {meta?.recipient_name && <>{t('strategie.customer', 'Für')}: <b>{meta.recipient_name}</b> · </>}
@@ -170,7 +170,7 @@ export default function Strategie() {
               { l: t('strategie.kEquity', 'Eingesetztes Kapital'), v: eur(a.summary.originalEquity) },
               { l: t('strategie.kDebt', 'Kredit am Ende'), v: eur(a.summary.debt) },
               ...(a.summary.recyclingMultiple != null
-                ? [{ l: t('strategie.kRecycle', 'Kapital-Recycling'), v: `${String(a.summary.recyclingMultiple).replace('.', ',')}×` }]
+                ? [{ l: t('strategie.kRecycle', 'Kapital-Recycling'), v: `${a.summary.recyclingMultiple.toFixed(1).replace('.', ',')}×` }]
                 : []),
               ...(a.summary.exitNet != null
                 ? [{ l: t('strategie.kExit', 'Erlös nach Verkauf'), v: eur(a.summary.exitNet) }]
@@ -225,7 +225,8 @@ export default function Strategie() {
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
                 <thead><tr style={{ borderBottom: '1px solid #eee' }}>
                   <th style={{ ...th, textAlign: 'left' }}>{t('strategie.tYear', 'Jahr')}</th>
-                  <th style={th}>{t('strategie.tUnits', 'Wohnungen')}</th>
+                  <th style={th}>{t('strategie.tOwned', 'gekauft')}</th>
+                  <th style={th}>{t('strategie.tUnits', 'im Bestand')}</th>
                   <th style={th}>{t('strategie.tValue', 'Wert')}</th>
                   <th style={th}>{t('strategie.tDebt', 'Kredit')}</th>
                   <th style={th}>{t('strategie.tEquity', 'Eigenkapital')}</th>
@@ -236,6 +237,7 @@ export default function Strategie() {
                     return (
                       <tr key={p.year} style={{ borderBottom: '1px solid #f5f3f0' }}>
                         <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{p.year}</td>
+                        <td style={{ ...td, color: '#777' }}>{p.owned}</td>
                         <td style={td}>{p.units}</td>
                         <td style={td}>{eur(w.propertyValue)}</td>
                         <td style={td}>{eur(w.debt)}</td>
@@ -260,14 +262,14 @@ export default function Strategie() {
             {a.summary.recyclingMultiple != null && (
               <div style={{ ...card, marginBottom: 12, textAlign: 'center' }}>
                 <div style={{ fontFamily: SERIF, fontSize: isMobile ? 34 : 44, fontWeight: 800, color: CORAL, lineHeight: 1 }}>
-                  {String(a.summary.recyclingMultiple).replace('.', ',')}×
+                  {a.summary.recyclingMultiple.toFixed(1).replace('.', ',')}×
                 </div>
                 <div style={{ fontSize: 13, color: '#666', marginTop: 8, maxWidth: 560, margin: '8px auto 0', lineHeight: 1.7 }}>
                   <Term hint={t('strategie.hRecycle', 'Zeigt, wie oft Kapital aus Refinanzierungen und Verkäufen im Modell erneut für Immobilienkäufe eingesetzt wird.')}>
                     {t('strategie.recycleLabel', 'Kapital-Recycling-Faktor')}
                   </Term>
                   {': '}
-                  {t('strategie.recycleText', 'So oft wurde dein ursprünglich eingesetztes Kapital im Modell erneut für weitere Investitionen verwendet.')}
+                  {t('strategie.recycleText2', 'So oft wurde dein ursprünglich eingesetztes Kapital im Modell erneut für weitere Immobilien verwendet. Das ist keine Rendite: Der Faktor sagt nichts darüber, wie viel Gewinn entsteht, sondern nur, wie oft dasselbe Kapital erneut gearbeitet hat.')}
                 </div>
               </div>
             )}
@@ -305,9 +307,12 @@ export default function Strategie() {
                   {t('strategie.oppTitle', '{{y}}: eine weitere Investition wäre rechnerisch möglich', { y: a.opportunity.year })}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2,1fr)', gap: 6, fontSize: 13, color: '#555' }}>
-                  <div>{t('strategie.oppCap', 'Zusätzliche Beleihungskapazität')}: <b>{eur(a.opportunity.capacity)}</b></div>
-                  <div>{t('strategie.oppMax', 'Maximaler Kaufpreis')}: <b>{eur(a.opportunity.maxPrice)}</b></div>
-                  <div>{t('strategie.oppModel', 'Modellkaufpreis')}: <b>{eur(a.opportunity.modelPrice)}</b></div>
+                  <div>
+                    <Term hint={t('strategie.hCap', 'Rechnerisch mögliche zusätzliche Finanzierung auf Basis des angenommenen Beleihungswertes. Die tatsächliche Kreditentscheidung trifft die Bank.')}>
+                      {t('strategie.oppCap', 'Zusätzliche Beleihungskapazität')}
+                    </Term>: <b>{eur(a.opportunity.capacity)}</b>
+                  </div>
+                  <div>{t('strategie.oppModel', 'Kaufpreis der nächsten Wohnung im Modell')}: <b>{eur(a.opportunity.modelPrice)}</b></div>
                   <div>{t('strategie.oppEq', 'Benötigtes Eigenkapital')}: <b>{eur(a.opportunity.requiredEquity)}</b></div>
                 </div>
                 <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
@@ -331,7 +336,7 @@ export default function Strategie() {
               cumulative={a.cashflow.map(c => c.cumulative)} height={isMobile ? 190 : 220} />
           </ChartCard>
           <ScrollBox>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead><tr style={{ borderBottom: '1px solid #eee' }}>
                 <th style={{ ...th, textAlign: 'left' }}>{t('strategie.tYear', 'Jahr')}</th>
                 <th style={th}>{t('strategie.tRent', 'Mieten')}</th>
@@ -339,6 +344,7 @@ export default function Strategie() {
                 <th style={th}>{t('strategie.tInterest', 'Zinsen')}</th>
                 <th style={th}>{t('strategie.tAmort', 'Tilgung')}</th>
                 <th style={th}>{t('strategie.tTax', 'Steuern')}</th>
+                <th style={th}>{t('strategie.tVat', 'MwSt-Erstattung')}</th>
                 <th style={th}>{t('strategie.tNet', 'Cashflow')}</th>
               </tr></thead>
               <tbody>
@@ -350,6 +356,7 @@ export default function Strategie() {
                     <td style={td}>{r.interest ? `−${eur(r.interest)}` : ''}</td>
                     <td style={td}>{r.amortization ? `−${eur(r.amortization)}` : ''}</td>
                     <td style={td}>{r.tax ? `−${eur(r.tax)}` : ''}</td>
+                    <td style={{ ...td, color: '#1d7a4f' }}>{r.vatRefund ? `+${eur(r.vatRefund)}` : ''}</td>
                     <td style={{ ...td, fontWeight: 700, color: r.net >= 0 ? '#1d7a4f' : '#b45309' }}>{eur(r.net)}</td>
                   </tr>
                 ))}
@@ -440,7 +447,9 @@ export default function Strategie() {
                     [p.soldYear ? t('strategie.pValueSale', 'Wert beim Verkauf') : t('strategie.pValue', 'Wert am Ende'), eur(p.valueEnd)],
                     [t('strategie.pEquityEnd', 'davon dir gehörend'), eur(p.equityEnd)],
                     ...(p.netSaleProceeds != null ? [[t('strategie.pNet', 'Erlös nach Verkauf'), eur(p.netSaleProceeds)]] : []),
-                    ...(p.roe != null ? [[t('strategie.pRoe', 'Rendite auf Eigenkapital'), pct(p.roe)]] : []),
+                    ...(p.equityGrowthPct != null
+                      ? [[t('strategie.pGrowth', 'Eigenkapital-Zuwachs über {{n}} Jahre', { n: p.equityGrowthYears }), pct(p.equityGrowthPct)]]
+                      : []),
                   ] as Array<[string, string]>).map(([l, v]) => (
                     <div key={l} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderBottom: '1px solid #f2f0ec', paddingBottom: 5 }}>
                       <span style={{ color: '#666' }}>{l}</span>
@@ -457,7 +466,8 @@ export default function Strategie() {
         <Section title={t('strategie.s8', 'Steuern')}>
           <div style={kpiGrid}>
             {[
-              { l: t('strategie.xTotal', 'Steuern gesamt'), v: eur(a.taxKpis.total) },
+              { l: t('strategie.xIncome', 'Einkommensteuer'), v: eur(a.taxKpis.incomeTax) },
+              { l: t('strategie.xTotal', 'Steuern und Abgaben gesamt'), v: eur(a.taxKpis.total) },
               { l: t('strategie.xYear', 'Im Schnitt pro Jahr'), v: eur(a.taxKpis.perYear) },
               ...(a.taxKpis.exit ? [{ l: t('strategie.xExit', 'Steuer beim Verkauf'), v: eur(a.taxKpis.exit) }] : []),
               ...(a.taxKpis.gesy ? [{ l: t('strategie.xGesy', 'Gesundheitsbeitrag'), v: eur(a.taxKpis.gesy) }] : []),
@@ -470,6 +480,13 @@ export default function Strategie() {
               </div>
             ))}
           </div>
+          {a.taxKpis.incomeTax === 0 && (
+            <div style={{ ...card }}>
+              <p style={{ margin: 0, fontSize: 13, color: '#555', lineHeight: 1.75 }}>
+                {t('strategie.xNone', 'Im modellierten Zeitraum entsteht keine Einkommensteuer: Verwaltung, laufende Kosten, Darlehenszinsen und die Abschreibung übersteigen die Mieteinnahmen in der steuerlichen Rechnung. Was bleibt, sind der Gesundheitsbeitrag und gegebenenfalls die Steuer beim Verkauf.')}
+              </p>
+            </div>
+          )}
         </Section>
 
         {/* 9 — Szenarien */}
@@ -492,7 +509,7 @@ export default function Strategie() {
                   [t('strategie.scIrr', 'Rendite pro Jahr'), (s: ScenarioSummary) => isFinite(s.irr) ? pct(s.irr * 100) : '–'],
                   [t('strategie.scCf', 'Cashflow zusammen'), (s: ScenarioSummary) => eur(s.cumulativeCashflow)],
                   ...(a.reinvest
-                    ? [[t('strategie.scRec', 'Kapital-Recycling'), (s: ScenarioSummary) => `${String(s.recyclingMultiple).replace('.', ',')}×`]]
+                    ? [[t('strategie.scRec', 'Kapital-Recycling'), (s: ScenarioSummary) => `${s.recyclingMultiple.toFixed(1).replace('.', ',')}×`]]
                     : [[t('strategie.scExit', 'Erlös nach Verkauf'), (s: ScenarioSummary) => s.exitNet != null ? eur(s.exitNet) : '–']]),
                 ] as Array<[string, (s: ScenarioSummary) => string]>).map(([label, get]) => (
                   <tr key={label} style={{ borderBottom: '1px solid #f5f3f0' }}>

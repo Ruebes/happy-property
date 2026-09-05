@@ -3872,7 +3872,8 @@
       "furnSumOpt": "Deck: {{p}} net + {{f}} furnishing shown separately = {{g}} net",
       "furnSumIncl": "Deck: {{p}} net (developer price column incl. furniture)",
       "furnSumMissing": "⚠ No price column with furniture on file — {{p}} net without furniture applies.",
-      "furnSumNone": "Deck: {{p}} net — furniture does not appear in the deck"
+      "furnSumNone": "Deck: {{p}} net — furniture does not appear in the deck",
+      "strategySim2": "Investment strategy (bundle purchase, equity allocation, reinvestment)"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -5904,7 +5905,7 @@
     "s3sub": "Each step is a further purchase funded by appreciation and repayment.",
     "c2": "Number of apartments",
     "tYear": "Year",
-    "tUnits": "Apartments",
+    "tUnits": "in the portfolio",
     "tValue": "Value",
     "tDebt": "Loan",
     "tEquity": "Equity",
@@ -5924,7 +5925,7 @@
     "oppTitle": "{{y}}: a further investment would be possible on paper",
     "oppCap": "Additional borrowing capacity",
     "oppMax": "Maximum purchase price",
-    "oppModel": "Model purchase price",
+    "oppModel": "Purchase price of the next apartment in the model",
     "oppEq": "Equity required",
     "oppNote": "Possible on paper under the assumptions chosen. The bank decides on the actual financing.",
     "s5": "What the portfolio produces year by year",
@@ -5967,7 +5968,7 @@
     "pNet": "Proceeds after sale",
     "pRoe": "Return on equity",
     "s8": "Taxes",
-    "xTotal": "Total taxes",
+    "xTotal": "Total taxes and contributions",
     "xYear": "Average per year",
     "xExit": "Tax on the sale",
     "xGesy": "Health contribution",
@@ -6006,6 +6007,14 @@
     "taxDe3": "Held privately, tax residence Germany: Cyprus taxes first, Germany recalculates at {{d}} % and credits the Cypriot tax.",
     "disc1": "The results shown are model calculations based on the assumptions chosen. Appreciation, rental income, financing conditions, bank valuation, refinancing options and sale prices in particular may differ in reality.",
     "disc2": "A refinancing shown here is not a commitment by any bank. The actual financing depends among other things on income, existing obligations, creditworthiness, property valuation and the lender's own policies.",
-    "disc3": "Tax calculations serve the model and do not replace individual tax advice."
+    "disc3": "Tax calculations serve the model and do not replace individual tax advice.",
+    "title2": "Your personal investment strategy",
+    "tVat": "VAT refund",
+    "tOwned": "purchased",
+    "pGrowth": "Equity growth over {{n}} years",
+    "recycleText2": "That is how often your originally invested capital was used again for further properties in the model. It is not a return: the factor says nothing about the profit, only how often the same capital worked again.",
+    "hCap": "Additional financing that is possible on paper based on the assumed lending value. The bank makes the actual credit decision.",
+    "xIncome": "Income tax",
+    "xNone": "No income tax arises in the modelled period: management, running costs, loan interest and depreciation exceed the rental income in the tax calculation. What remains is the health contribution and, where applicable, the tax on the sale."
   }
 }

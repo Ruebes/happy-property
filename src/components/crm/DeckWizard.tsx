@@ -678,7 +678,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             <div className="flex items-center gap-3 mt-2">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={simOpen} onChange={e => setSimOpen(e.target.checked)} className="w-4 h-4 accent-orange-500" />
-                <span className="text-sm font-medium text-gray-700">📈 {t('crm.wizard.strategySim', 'Strategie-Simulator (Bundlekauf, EK-Verteilung, 10-Jahres-Plan)')}</span>
+                <span className="text-sm font-medium text-gray-700">📈 {t('crm.wizard.strategySim2', 'Investmentstrategie (Bundlekauf, EK-Verteilung, Reinvestment)')}</span>
               </label>
               {basket.length === 0 && (
                 <span className="text-xs text-gray-400">{t('crm.wizard.strategySimHint', 'nutzt die Wohnungen aus dem Paket')}</span>

@@ -3872,7 +3872,8 @@
       "furnSumOpt": "Deck: {{p}} netto + {{f}} Einrichtung separat ausgewiesen = {{g}} netto",
       "furnSumIncl": "Deck: {{p}} netto (Preisspalte des Bauträgers inkl. Möbel)",
       "furnSumMissing": "⚠ Keine Preisspalte mit Möbeln hinterlegt — es gilt {{p}} netto ohne Möbel.",
-      "furnSumNone": "Deck: {{p}} netto — Möbel kommen im Deck nicht vor"
+      "furnSumNone": "Deck: {{p}} netto — Möbel kommen im Deck nicht vor",
+      "strategySim2": "Investmentstrategie (Bundlekauf, EK-Verteilung, Reinvestment)"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
@@ -5904,7 +5905,7 @@
     "s3sub": "Jede Stufe ist ein weiterer Kauf, der aus Wertzuwachs und Tilgung finanziert wird.",
     "c2": "Anzahl der Wohnungen",
     "tYear": "Jahr",
-    "tUnits": "Wohnungen",
+    "tUnits": "im Bestand",
     "tValue": "Wert",
     "tDebt": "Kredit",
     "tEquity": "Eigenkapital",
@@ -5924,7 +5925,7 @@
     "oppTitle": "{{y}}: eine weitere Investition wäre rechnerisch möglich",
     "oppCap": "Zusätzliche Beleihungskapazität",
     "oppMax": "Maximaler Kaufpreis",
-    "oppModel": "Modellkaufpreis",
+    "oppModel": "Kaufpreis der nächsten Wohnung im Modell",
     "oppEq": "Benötigtes Eigenkapital",
     "oppNote": "Rechnerisch möglich unter den gewählten Annahmen. Über die tatsächliche Finanzierung entscheidet die Bank.",
     "s5": "Was das Portfolio laufend abwirft",
@@ -5967,7 +5968,7 @@
     "pNet": "Erlös nach Verkauf",
     "pRoe": "Rendite auf Eigenkapital",
     "s8": "Steuern",
-    "xTotal": "Steuern gesamt",
+    "xTotal": "Steuern und Abgaben gesamt",
     "xYear": "Im Schnitt pro Jahr",
     "xExit": "Steuer beim Verkauf",
     "xGesy": "Gesundheitsbeitrag",
@@ -6006,6 +6007,14 @@
     "taxDe3": "Privat gehalten, Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet mit {{d}} % nach und rechnet die zyprische Steuer an.",
     "disc1": "Die dargestellten Ergebnisse sind Modellrechnungen auf Basis der gewählten Annahmen. Insbesondere Wertentwicklung, Mieteinnahmen, Finanzierungskonditionen, Bankbewertung, Refinanzierungsmöglichkeiten und Verkaufspreise können in der Realität abweichen.",
     "disc2": "Eine rechnerisch dargestellte Refinanzierung ist keine Zusage einer Bank. Die tatsächliche Finanzierung hängt unter anderem von Einkommen, bestehenden Verpflichtungen, Bonität, Objektbewertung und den jeweiligen Kreditrichtlinien ab.",
-    "disc3": "Steuerliche Berechnungen dienen der Modellierung und ersetzen keine individuelle steuerliche Beratung."
+    "disc3": "Steuerliche Berechnungen dienen der Modellierung und ersetzen keine individuelle steuerliche Beratung.",
+    "title2": "Deine persönliche Investmentstrategie",
+    "tVat": "MwSt-Erstattung",
+    "tOwned": "gekauft",
+    "pGrowth": "Eigenkapital-Zuwachs über {{n}} Jahre",
+    "recycleText2": "So oft wurde dein ursprünglich eingesetztes Kapital im Modell erneut für weitere Immobilien verwendet. Das ist keine Rendite: Der Faktor sagt nichts darüber, wie viel Gewinn entsteht, sondern nur, wie oft dasselbe Kapital erneut gearbeitet hat.",
+    "hCap": "Rechnerisch mögliche zusätzliche Finanzierung auf Basis des angenommenen Beleihungswertes. Die tatsächliche Kreditentscheidung trifft die Bank.",
+    "xIncome": "Einkommensteuer",
+    "xNone": "Im modellierten Zeitraum entsteht keine Einkommensteuer: Verwaltung, laufende Kosten, Darlehenszinsen und die Abschreibung übersteigen die Mieteinnahmen in der steuerlichen Rechnung. Was bleibt, sind der Gesundheitsbeitrag und gegebenenfalls die Steuer beim Verkauf."
   }
 }
