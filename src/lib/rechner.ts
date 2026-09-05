@@ -77,6 +77,11 @@ export interface CalcParams {
   // gewerbliche Kurzzeitvermietung): 16,6 % auf mindestens 20.318 EUR fiktives
   // Einkommen, GESY dann mit 4 % auf den Gewinn statt 2,65 % auf die Miete.
   socialIns?: boolean
+  // Anzahl der zu rechnenden Jahre. Standard 10 - so bleiben alle bestehenden
+  // Rechnungen und die Referenzfaelle unveraendert. Der Reinvestment-Modus der
+  // Strategie rechnet mit laengeren Horizonten (20 Jahre und mehr), weil sich
+  // Kapital-Recycling in zehn Jahren gar nicht entfalten kann.
+  years?: number
   // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
   // Verwaltung deckt die Vermietung ab, NICHT die Kosten der Wohnung selbst.
   // Gemeinschaftskosten (common expenses, Pool/Garten/Beleuchtung/Versicherung
@@ -280,7 +285,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   season: null,
   vatMode: 'standard19', livingSqm: null,
   holder: 'privat', corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
-  opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0, socialIns: true,
+  opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0, socialIns: true, years: 10,
 }
 
 // Zypern progressive Einkommensteuer (Banden ab 2026)
@@ -353,13 +358,17 @@ export interface CalcResult {
 export function compute(p: CalcParams): CalcResult { return computeCore(applySeason(p)) }
 
 function computeCore(p: CalcParams): CalcResult {
-  const ppVals = p.ppVals && p.ppVals.length === 10 ? p.ppVals : Array(10).fill(0)
+  // Rechenhorizont. Alles unten laeuft ueber YEARS statt ueber die feste 10.
+  const YEARS = Math.max(1, Math.round(p.years ?? 10))
+  const LAST = YEARS - 1
+  const ppVals = p.ppVals && p.ppVals.length >= YEARS ? p.ppVals.slice(0, YEARS)
+    : (p.ppVals ?? []).concat(Array(YEARS).fill(0)).slice(0, YEARS)
   const km = p.month || 8
   const ky = p.year || 2025
   const mF = Math.max(1, 13 - km)
-  const mA = [mF].concat(Array(9).fill(12))
+  const mA = [mF].concat(Array(Math.max(0, YEARS - 1)).fill(12))
   const fA = mA.map(m => m / 12)
-  const yN = Array.from({ length: 10 }, (_, i) => ky + i)
+  const yN = Array.from({ length: YEARS }, (_, i) => ky + i)
 
   const sdMode = p.dealType === 'share'
   const sdInputMode = sdMode ? p.sdInputMode : ''
@@ -451,7 +460,7 @@ function computeCore(p: CalcParams): CalcResult {
   const appP = num(p.appreciationPct, 5)
   const deTx = num(p.deTaxPct, 42)
 
-  const vatA = Array(10).fill(0)
+  const vatA = Array(YEARS).fill(0)
   if (letT === 'short') {
     let acc = 0
     for (let vi = 0; vi < mA.length; vi++) { acc += mA[vi]; if (acc >= 24) { vatA[vi] = vatAmt; break } }
@@ -478,11 +487,11 @@ function computeCore(p: CalcParams): CalcResult {
   let rem = loan
 
   if (fin === 'no' || loan <= 0) {
-    for (let y2 = 0; y2 < 10; y2++) { intC.push(0); princC.push(0); rateC.push(0); restL.push(0); prepayC.push(0) }
+    for (let y2 = 0; y2 < YEARS; y2++) { intC.push(0); princC.push(0); rateC.push(0); restL.push(0); prepayC.push(0) }
   } else if (mode === 'ann') {
     const payA = iR === 0 ? Math.round(loan / Math.max(1, termY))
       : Math.round(loan * (iR * Math.pow(1 + iR, termY)) / (Math.pow(1 + iR, termY) - 1))
-    for (let y3 = 0; y3 < 10; y3++) {
+    for (let y3 = 0; y3 < YEARS; y3++) {
       const f2 = fA[y3]
       if (rem > 0 && y3 < termY) {
         const z = Math.round(rem * iR * f2)
@@ -495,7 +504,7 @@ function computeCore(p: CalcParams): CalcResult {
     }
   } else {
     const pAnn = loan * (amP / 100)
-    for (let y4 = 0; y4 < 10; y4++) {
+    for (let y4 = 0; y4 < YEARS; y4++) {
       const f3 = fA[y4]
       if (y4 < termY && rem > 0) {
         const z2 = Math.round(rem * iR * f3); const ti2 = Math.min(rem, Math.round(pAnn * f3))
@@ -526,7 +535,7 @@ function computeCore(p: CalcParams): CalcResult {
   const gesyA: number[] = []
   const siA: number[] = []
   let taxCY: number[], taxDE: number[], taxU: number[]
-  let dDE: number[] = Array(10).fill(0)
+  let dDE: number[] = Array(YEARS).fill(0)
   const profitCY: number[] = [], profitDE: number[] = []
 
   // Zyprischer Verlustvortrag (5 Jahre): Verluste der Anlaufjahre mindern die
@@ -546,7 +555,7 @@ function computeCore(p: CalcParams): CalcResult {
     })
   }
 
-  if (sdMode || holder === 'firma') { for (let i = 0; i < 10; i++) { gesyA.push(0); siA.push(0) } }
+  if (sdMode || holder === 'firma') { for (let i = 0; i < YEARS; i++) { gesyA.push(0); siA.push(0) } }
 
   if (sdMode) {
     // Share-Deal-Holding: wie die Firma - echte Kosten, kein Pauschalabzug.
@@ -555,7 +564,7 @@ function computeCore(p: CalcParams): CalcResult {
     base.forEach(b => profitCY.push(b))
     base.forEach(() => profitDE.push(0))
     taxCY = taxable.map(t => Math.max(0, Math.round(t * sdTaxRate)))
-    taxDE = Array(10).fill(0)
+    taxDE = Array(YEARS).fill(0)
     taxU = taxCY
   } else if (holder === 'firma') {
     // ── Zyprische Ltd haelt die Wohnung ──────────────────────────────────────
@@ -603,14 +612,14 @@ function computeCore(p: CalcParams): CalcResult {
     })
     const bDE = pGross * 0.8; let rDE = bDE
     dDE = []
-    for (let k2 = 0; k2 < 10; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
+    for (let k2 = 0; k2 < YEARS; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
     const deR = deTx / 100
     // Deutsche Bemessungsgrundlage: alle laufenden Kosten sind Werbungskosten.
     rents.forEach((r, i) => {
       const furnAfa = i < 5 ? Math.round(furnAfaDE * fA[i]) : 0
       profitDE.push(r - mgmt[i] - opexA[i] - intC[i] - dDE[i] - furnAfa)
     })
-    taxDE = resCY ? Array(10).fill(0) : profitDE.map((g, i) => {
+    taxDE = resCY ? Array(YEARS).fill(0) : profitDE.map((g, i) => {
       const g2 = Math.round(g * deR)
       return g2 <= 0 ? g2 : g2 - Math.min(taxCY[i], g2)
     })
@@ -621,12 +630,12 @@ function computeCore(p: CalcParams): CalcResult {
     taxU = resCY ? taxCY : taxCY.map((cy, i) => cy + taxDE[i])
   }
   const cfA = rents.map((r, i) => r - mgmt[i] - opexA[i] - rateC[i] + (vatA[i] || 0) - taxU[i])
-  const propV = Array.from({ length: 10 }, (_, i) => Math.round(pGross * Math.pow(1 + appP / 100, (i + 1) - (1 - fA[0]))))
+  const propV = Array.from({ length: YEARS }, (_, i) => Math.round(pGross * Math.pow(1 + appP / 100, (i + 1) - (1 - fA[0]))))
 
   const sum = (a: number[]) => a.reduce((x, y) => x + y, 0)
   const sumR = sum(rents), sumC = sum(mgmt) + sum(opexA) + sum(intC), sumT = sum(taxCY) + sum(taxDE)
   const sumVat = sum(vatA), sumPP = sum(prepayC), sumCF = sum(cfA)
-  const ek10 = propV[9] - restL[9]
+  const ek10 = propV[LAST] - restL[LAST]
   const totRet = sumCF + (ek10 - ekStart)
   const roe10 = ekStart > 0 ? totRet / ekStart * 100 : 0
 

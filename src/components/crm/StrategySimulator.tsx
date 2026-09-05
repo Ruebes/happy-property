@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
+import { runReinvest } from '../../lib/reinvest'
 import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
   breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
@@ -196,6 +197,11 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [beOpen, setBeOpen] = useState(false)
   const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
   const risks = useMemo(() => scenarios ? assessRisk(scenarios, breakEven) : [], [scenarios, breakEven])
+  // Kapital-Recycling laeuft ueber einen eigenen Motor auf derselben Schicht.
+  const reinvest = useMemo(
+    () => params.reinvestEnabled && units.length ? runReinvest(units, params) : null,
+    [params, units],
+  )
 
   // ── Für den Kunden freigeben ───────────────────────────────────────────────
   // Speichert den aktuellen Stand SOFORT (nicht entprellt), schaltet den
@@ -728,6 +734,119 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   )
                 })}
               </div>
+            </div>
+
+            {/* ── Reinvestment und Kapital-Recycling ────────────────────────
+                Zeigt, wie weit das vorhandene Kapital traegt, wenn Wertzuwachs
+                und Tilgung neue Beleihungsspielraeume schaffen. Bewusst als
+                Modellrechnung beschriftet, nicht als Finanzierungszusage. */}
+            <div className="border border-gray-200 rounded-xl p-4">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="checkbox" checked={params.reinvestEnabled} className="w-4 h-4 accent-orange-500 mt-0.5"
+                  onChange={e => setParams(p => ({ ...p, reinvestEnabled: e.target.checked }))} />
+                <span className="text-sm text-gray-700">
+                  <strong>{t('crm.sim.reinvest', 'Reinvestment und Kapital-Recycling')}</strong>
+                  <span className="block text-xs text-gray-400">
+                    {t('crm.sim.reinvestHint', 'Rechnet über einen längeren Zeitraum und prüft Jahr für Jahr, ob aus Wertzuwachs und Tilgung eine weitere Immobilie finanzierbar wäre.')}
+                  </span>
+                </span>
+              </label>
+
+              {params.reinvestEnabled && (<>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+                  {([
+                    ['horizonYears', t('crm.sim.horizon', 'Zeitraum (Jahre)'), 1, 10, 30],
+                    ['reinvestAppreciationPct', t('crm.sim.reAppr', 'Wertsteigerung % p.a.'), 0.5, 0, 10],
+                    ['refinanceLtv', t('crm.sim.reLtv', 'Angenommene max. Beleihung %'), 5, 30, 80],
+                    ['bankValuationFactor', t('crm.sim.reBank', 'Bankbewertung % vom Marktwert'), 5, 70, 100],
+                    ['refinanceUtilizationPct', t('crm.sim.reUse', 'Genutzte Kapazität %'), 5, 50, 100],
+                    ['minimumCashReserve', t('crm.sim.reReserve', 'Mindestliquidität (€)'), 5000, 0, 200000],
+                    ['maxAdditionalPurchases', t('crm.sim.reMax', 'Max. zusätzliche Käufe'), 1, 0, 10],
+                  ] as Array<[keyof SimParams, string, number, number, number]>).map(([k, label, step, min, max]) => (
+                    <div key={k}>
+                      <label className={lbl}>
+                        {label}
+                        <strong className="text-gray-700 ml-1">{String(params[k]).replace('.', ',')}</strong>
+                      </label>
+                      <input type="range" min={min} max={max} step={step} className="w-full accent-orange-500"
+                        value={params[k] as number}
+                        onChange={e => setParams(p => ({ ...p, [k]: +e.target.value }))} />
+                    </div>
+                  ))}
+                  <div className="flex items-end pb-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-700">
+                      <input type="checkbox" checked={params.autoReinvest} className="w-4 h-4 accent-orange-500"
+                        onChange={e => setParams(p => ({ ...p, autoReinvest: e.target.checked }))} />
+                      {t('crm.sim.reAuto', 'Modellobjekte automatisch kaufen')}
+                    </label>
+                  </div>
+                </div>
+
+                {reinvest && (<>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+                    {[
+                      { l: t('crm.sim.reCapacity', 'Beleihungskapazität heute'), v: eur(reinvest.years[0]?.refinancingCapacity ?? 0) },
+                      { l: t('crm.sim.reNext', 'Frühester weiterer Kauf'), v: reinvest.kpis.earliestNextPurchaseYear ? String(reinvest.kpis.earliestNextPurchaseYear) : '–' },
+                      { l: t('crm.sim.reModelPrice', 'Modellkaufpreis'), v: eur(reinvest.modelUnit?.priceNet ?? 0) },
+                      { l: t('crm.sim.reMaxPrice', 'Maximal finanzierbar'), v: eur(reinvest.kpis.maximumAdditionalPurchasePrice) },
+                      { l: t('crm.sim.reBuys', 'Zusätzliche Immobilien'), v: String(reinvest.kpis.additionalPurchases) },
+                      { l: t('crm.sim.reRefis', 'Refinanzierungen'), v: `${reinvest.kpis.refinancings} · ${eur(reinvest.kpis.totalRefinancingProceeds)}` },
+                      { l: t('crm.sim.rePortfolio', 'Portfolio am Ende'), v: `${reinvest.kpis.activeUnitsEnd} · ${eur(reinvest.kpis.portfolioValueEnd)}` },
+                      { l: t('crm.sim.reMultiple', 'Kapital-Recycling'), v: `${String(reinvest.kpis.capitalRecyclingMultiple).replace('.', ',')}×`, hero: true },
+                    ].map(k => (
+                      <div key={k.l} className={`rounded-xl border p-3 ${k.hero ? 'border-orange-300' : 'border-gray-200'}`}>
+                        <p className="text-[10px] uppercase tracking-wide text-gray-400">{k.l}</p>
+                        <p className={`text-base font-bold ${k.hero ? 'text-orange-600' : 'text-gray-900'}`}>{k.v}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {reinvest.events.length > 0 && (
+                    <div className="mt-4 border border-gray-200 rounded-xl overflow-x-auto">
+                      <table className="w-full text-xs tabular-nums">
+                        <thead><tr className="text-left text-[10px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                          <th className="px-2 py-2">{t('crm.sim.tlYear', 'Jahr')}</th>
+                          <th className="px-2 py-2">{t('crm.sim.tlEvent', 'Ereignis')}</th>
+                          <th className="px-2 py-2">{t('crm.sim.tlObject', 'Objekt')}</th>
+                          <th className="px-2 py-2 text-right">{t('crm.sim.tlIn', 'Kapitalzufluss')}</th>
+                          <th className="px-2 py-2 text-right">{t('crm.sim.tlOut', 'Kapitalabfluss')}</th>
+                          <th className="px-2 py-2 text-right">{t('crm.sim.tlUnits', 'Portfolio')}</th>
+                        </tr></thead>
+                        <tbody>
+                          {reinvest.events.map((e, i) => {
+                            const label = e.kind === 'purchase' ? t('crm.sim.tlBuy', 'Kauf')
+                              : e.kind === 'refinance' ? t('crm.sim.tlRefi', 'Refinanzierung')
+                                : t('crm.sim.tlSale', 'Verkauf')
+                            const name = e.kind === 'refinance' ? e.propertyNames.join(', ') : e.name
+                            const zufluss = e.kind === 'refinance' ? e.newLoanAmount : e.kind === 'sale' ? e.netProceeds : 0
+                            const abfluss = e.kind === 'purchase' ? e.equity : 0
+                            const units = reinvest.years.find(y => y.year === e.year)?.activeUnits ?? 0
+                            return (
+                              <tr key={`${e.kind}-${e.year}-${i}`} className="border-b border-gray-50 last:border-0">
+                                <td className="px-2 py-1.5 font-semibold">{e.year}</td>
+                                <td className="px-2 py-1.5">{label}</td>
+                                <td className="px-2 py-1.5 text-gray-600">{name}</td>
+                                <td className="px-2 py-1.5 text-right text-green-700">{zufluss ? eur(zufluss) : ''}</td>
+                                <td className="px-2 py-1.5 text-right text-orange-600">{abfluss ? `−${eur(abfluss)}` : ''}</td>
+                                <td className="px-2 py-1.5 text-right">{units}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {reinvest.kpis.lowestCash < 0 && (
+                    <p className="text-[11px] text-orange-900 mt-3 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                      ⚠️ {t('crm.sim.reNegative', 'Die Liquidität rutscht im Jahr {{y}} auf {{v}}. So weit gerechnet müsste der Kunde zwischendurch Geld nachschießen.', { y: reinvest.kpis.lowestCashYear, v: eur(reinvest.kpis.lowestCash) })}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-gray-700 mt-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {t('crm.sim.reDisclaimer', 'Das ist eine Modellrechnung unter den oben gewählten Annahmen, keine Finanzierungszusage. Ob eine Bank tatsächlich finanziert, hängt von Einkommen, bestehenden Verpflichtungen, Bonität, Bewertung und den Richtlinien der Bank ab. Die weiteren Käufe rechnen mit einem Modellobjekt, das aus dem Durchschnitt der gewählten Wohnungen abgeleitet ist.')}
+                  </p>
+                </>)}
+              </>)}
             </div>
 
             {/* Gesamt-KPIs */}

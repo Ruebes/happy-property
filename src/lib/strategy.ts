@@ -30,6 +30,11 @@ export interface SimUnit {
   plan: 'sofort' | 'luma'
   // Gemeinschaftskosten dieser Wohnung (EUR/Monat). Leer = globaler Vorgabewert.
   opex?: number | null
+  // Verkaufsjahr dieser Wohnung. Leer = wird im Betrachtungszeitraum nicht
+  // einzeln verkauft (dann greift der gemeinsame Verkauf der Strategie).
+  saleYear?: number | null
+  // Kennzeichnet ein vom Reinvestment-Motor erzeugtes Modellobjekt.
+  model?: boolean
   // Feineinstellungen aus der EINZELBERECHNUNG dieser Wohnung (Verwaltung,
   // Hotelkonzept, Saisonmodell, Rendite, Zins …). Sven 15.8.: „Der
   // Strategierechner muss auf die Daten zugreifen, die ich vorher in der
@@ -68,6 +73,19 @@ export interface SimParams {
   sellCostPct: number       // Maklerprovision % vom Verkaufspreis (zzgl. MwSt)
   lawyerPct: number         // Anwaltshonorar % vom Verkaufspreis (zzgl. MwSt)
   cpiPct: number            // angenommene Inflation p.a. fuer die zyprische Indexierung
+  // ── Reinvestment / Kapital-Recycling (Sven 5.9.26) ────────────────────────
+  // Aus bleibt alles exakt wie bisher: zehn Jahre, keine Tranchen, kein
+  // Modellobjekt. An laeuft die Strategie ueber einen laengeren Horizont, weil
+  // sich Kapital-Recycling in zehn Jahren nicht entfalten kann.
+  reinvestEnabled: boolean
+  horizonYears: number              // nur im Reinvestment-Modus, Standard 20
+  reinvestAppreciationPct: number   // eigene Wertsteigerungsannahme des Motors
+  refinanceLtv: number              // angenommene maximale Beleihung in %
+  bankValuationFactor: number       // Abschlag der Bankbewertung auf den Marktwert, % 
+  refinanceUtilizationPct: number   // wie viel der Kapazitaet wirklich genutzt wird, %
+  minimumCashReserve: number        // Liquiditaet, die nie angetastet wird
+  maxAdditionalPurchases: number    // Obergrenze gegen Endlosschleifen
+  autoReinvest: boolean             // Modellobjekte automatisch kaufen?
 }
 
 export interface UnitOutcome {
@@ -167,6 +185,9 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   socialIns: true, opexMonthly: 150, maintPct: 0.75,
   exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
+  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5,
+  refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
+  minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -177,8 +198,13 @@ export function defaultDivTaxPct(res: 'de' | 'cy'): number {
 
 export const ymOf = (y: number, m: number) => y * 12 + (m - 1)
 
-// Planungshorizont der Strategie in Jahren, ab dem ersten Kaufjahr.
+// Planungshorizont der Strategie in Jahren, ab dem ersten Kaufjahr. Ohne
+// Reinvestment bleibt es bei zehn; mit Reinvestment gilt p.horizonYears.
 export const HORIZON_YEARS = 10
+export function horizonOf(p?: SimParams): number {
+  if (!p?.reinvestEnabled) return HORIZON_YEARS
+  return Math.max(HORIZON_YEARS, Math.round(p.horizonYears || HORIZON_YEARS))
+}
 
 // Monatsmiete aus dem Saisonmodell (Auslastung + Preis/Nacht je Saison).
 // WICHTIG: Ist ein Saisonmodell gesetzt, rechnet die Engine IMMER damit und
@@ -238,7 +264,13 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     yieldPct: u.priceNet > 0 ? (u.rent * 12) / vatSplit(u.priceNet, fromCalc.vatMode, fromCalc.livingSqm).gross * 100 : 0,
     // Zeitachsen-Parameter setzt IMMER die Strategie (gelten über alle Wohnungen)
     rentGrowth: p.rentGrowth, interestPct: p.interest, termYears: p.termYears,
-    appreciationPct: p.growth, deTaxPct: p.deTaxPct,
+    // Im Reinvestment-Modus rechnet der Motor mit seiner eigenen
+    // Wertsteigerungsannahme; die normale Strategie bleibt bei p.growth.
+    appreciationPct: p.reinvestEnabled ? p.reinvestAppreciationPct : p.growth,
+    deTaxPct: p.deTaxPct,
+    // Jede Wohnung wird so lange gerechnet, wie der Horizont ab ihrer Uebergabe
+    // noch laeuft - hoechstens aber ueber den ganzen Horizont.
+    years: horizonOf(p),
     furnCost: u.furnNet, furnFree: false,
     // Laufende Kosten der Wohnung: Gemeinschaftskosten je Wohnung (sonst der
     // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
@@ -263,6 +295,46 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
     out.set(u.key, u.fin ? runUnit(u, ekForUnit, p) : runUnit(u, probe.gross, p))
   }
   return units.map(u => out.get(u.key)!)
+}
+
+// ── Zusaetzliche Darlehenstranchen ───────────────────────────────────────────
+// Eine Refinanzierung ist KEIN nachtraeglicher Aufschlag auf das bestehende
+// Darlehen, sondern ein eigener Kredit mit eigener Annuitaet. Die urspruengliche
+// Finanzierung bleibt dadurch nachvollziehbar, und die Tranche wirkt ab ihrem
+// Startjahr auf Zins, Tilgung, Restschuld, Cashflow und Steuerbemessung.
+export interface LoanTranche {
+  id: string
+  propertyKeys: string[]     // besichernde Wohnungen
+  startYear: number
+  amount: number
+  ratePct: number
+  termYears: number
+  // Wofuer das Geld verwendet wurde. Nur Mittel, die in eine vermietete
+  // Immobilie fliessen, tragen abzugsfaehige Zinsen; Geld, das in der Kasse
+  // liegen bleibt, nicht.
+  purpose: 'purchase' | 'liquidity'
+  deductible: boolean
+}
+
+export interface TrancheYear { year: number; interest: number; principal: number; rest: number; rate: number }
+
+// Annuitaetenplan einer Tranche, jahrweise. Gleiche Formel wie in der Engine.
+export function trancheSchedule(t: LoanTranche, untilYear: number): TrancheYear[] {
+  const out: TrancheYear[] = []
+  const ir = t.ratePct / 100
+  const n = Math.max(1, t.termYears)
+  const pay = ir === 0 ? Math.round(t.amount / n)
+    : Math.round(t.amount * (ir * Math.pow(1 + ir, n)) / (Math.pow(1 + ir, n) - 1))
+  let rest = t.amount
+  for (let y = t.startYear; y <= untilYear; y++) {
+    if (rest <= 0) { out.push({ year: y, interest: 0, principal: 0, rest: 0, rate: 0 }); continue }
+    const interest = Math.round(rest * ir)
+    let principal = Math.max(0, pay - interest)
+    if (principal > rest) principal = rest
+    rest = Math.max(0, rest - principal)
+    out.push({ year: y, interest, principal, rest, rate: interest + principal })
+  }
+  return out
 }
 
 // ── Steuer ueber ALLE Wohnungen zusammen ─────────────────────────────────────
@@ -338,7 +410,16 @@ function applyPortfolioTax(rows: YearRow[], p: SimParams, business: boolean): vo
   })
 }
 
-export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number } {
+export interface AggregateExtras {
+  tranches?: LoanTranche[]
+  // Verkaufsjahr je Wohnung: im Verkaufsjahr laeuft die Wohnung noch mit,
+  // danach faellt sie komplett heraus.
+  saleYears?: Map<string, number>
+  // Erzwungenes Endjahr (Reinvestment-Motor rechnet Jahr fuer Jahr).
+  untilYear?: number
+}
+
+export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: AggregateExtras): { rows: YearRow[]; firstYear: number; lastYear: number; bridgeNeeded: boolean; bridgePeak: number } {
   if (!outcomes.length) { const y = new Date().getFullYear(); return { rows: [], firstYear: y, lastYear: y, bridgeNeeded: false, bridgePeak: 0 } }
   const firstYear = Math.min(...outcomes.map(o => o.unit.buyY))
   // Zehn Jahre ab dem ERSTEN Kauf, hart (Sven 5.9.26): „Zeitraum endet nach 10
@@ -348,14 +429,18 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   // ein Zeitraum, der sich mit jedem zusaetzlichen Kauf verschiebt.
   // Wird verkauft, endet die Darstellung im Verkaufsjahr - danach gibt es nichts
   // mehr zu zeigen, und ein weiterlaufender Verlauf waere schlicht falsch.
-  const horizonEnd = firstYear + HORIZON_YEARS - 1
-  const lastYear = p?.exitAfterYears
+  const horizonEnd = firstYear + horizonOf(p) - 1
+  const lastYear = extras?.untilYear ?? (p?.exitAfterYears && !p.reinvestEnabled
     ? Math.min(horizonEnd, firstYear + p.exitAfterYears - 1)
-    : horizonEnd
+    : horizonEnd)
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
     const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, si: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
     for (const o of outcomes) {
+      // Nach dem Verkaufsjahr existiert die Wohnung nicht mehr: keine Miete,
+      // keine Kosten, kein Wert, keine Schuld, keine Steuer.
+      const sold = extras?.saleYears?.get(o.unit.key) ?? o.unit.saleYear ?? null
+      if (sold != null && y > sold) continue
       const i = y - o.unit.readyY
       // Noch nicht übergeben → bis hierher gezahlte Raten als gebundenes Kapital
       // führen (konservativ ohne Wertzuwachs). Ab Übergabe steht der volle
@@ -363,7 +448,8 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
       if (i < 0) {
         for (const pay of o.payments) if (Math.floor(pay.ym / 12) <= y) row.committed += pay.amount
       }
-      if (i >= 0 && i < 10) {
+      const n = o.res.rents.length
+      if (i >= 0 && i < n) {
         row.rents += o.res.rents[i]; row.mgmt += o.res.mgmt[i]
         row.interest += o.res.intC[i]; row.principal += o.res.princC[i]
         row.taxes += o.res.taxU[i]; row.vat += o.res.vatA[i]; row.cashflow += o.res.cfA[i]
@@ -371,9 +457,11 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
         row.opex += o.res.opexA[i]
         row.baseCY += o.res.profitCY[i]; row.baseDE += o.res.profitDE[i]
         row.unitTax += o.res.taxU[i]
-        row.debt += o.res.restL[i]; row.value += o.res.propV[i]
-      } else if (i >= 10) {
-        row.debt += o.res.restL[9]; row.value += o.res.propV[9]
+        // Im Verkaufsjahr steht der Wert nicht mehr im Portfolio, sondern der
+        // Erloes in der Kasse. Schuld und Wert sind hier also null.
+        if (sold == null || y < sold) { row.debt += o.res.restL[i]; row.value += o.res.propV[i] }
+      } else if (i >= n) {
+        if (sold == null || y < sold) { row.debt += o.res.restL[n - 1]; row.value += o.res.propV[n - 1] }
       }
       for (const pay of o.payments) if (Math.floor(pay.ym / 12) === y) row.invest += pay.amount
     }
@@ -388,15 +476,21 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   const ek = p?.ek ?? 0
   const iMon = (p?.interest ?? 0) / 100 / 12
   let bridgePeak = 0
-  if (iMon > 0) {
-    const pays = outcomes.flatMap(o => o.payments)
+  // Modellobjekte des Reinvestment-Motors bleiben hier aussen vor: Sie werden
+  // aus der Kasse und aus Refinanzierungstranchen bezahlt, und beides ist
+  // bereits verzinst modelliert. Wuerde die Bauzeitrechnung sie mitzaehlen,
+  // entstuende eine Phantom-Zwischenfinanzierung und die Restschuld waere
+  // doppelt so hoch wie die tatsaechlichen Darlehen.
+  const bridgeUnits = outcomes.filter(o => !o.unit.model)
+  if (iMon > 0 && bridgeUnits.length) {
+    const pays = bridgeUnits.flatMap(o => o.payments)
     const startYm = Math.min(...pays.map(x => x.ym))
     const endYm = ymOf(lastYear, 12)
     let paid = 0
     for (let ym = startYm; ym <= endYm; ym++) {
       paid += pays.filter(x => x.ym === ym).reduce((a, x) => a + x.amount, 0)
       // Enddarlehen stehen ab der Übergabe der jeweiligen Wohnung zur Verfügung
-      const loansReady = outcomes
+      const loansReady = bridgeUnits
         .filter(o => ymOf(o.unit.readyY, o.unit.readyM) <= ym)
         .reduce((a, o) => a + o.loan, 0)
       const bridge = Math.max(0, paid - ek - loansReady)
@@ -419,8 +513,25 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
       r.debt += r.bridgeDebt
     }
   }
+  // ── Refinanzierungstranchen ───────────────────────────────────────────────
+  // Wirken ab ihrem Startjahr wie jedes andere Darlehen: Zins und Tilgung
+  // belasten den Cashflow, die Restschuld erhoeht die Verschuldung, und die
+  // Zinsen mindern die Steuerbemessung - aber nur, wenn das Geld in eine
+  // vermietete Immobilie geflossen ist.
+  for (const t of extras?.tranches ?? []) {
+    for (const ty of trancheSchedule(t, lastYear)) {
+      const row = rows.find(r => r.year === ty.year)
+      if (!row) continue
+      row.interest += ty.interest
+      row.principal += ty.principal
+      row.debt += ty.rest
+      row.cashflow -= ty.rate
+      if (t.deductible) { row.baseCY -= ty.interest; row.baseDE -= ty.interest }
+    }
+  }
+
   // Steuer zum Schluss: sie braucht die fertigen Bemessungsgrundlagen inklusive
-  // der Bauzeitzinsen.
+  // der Bauzeitzinsen und der Refinanzierungstranchen.
   if (p) applyPortfolioTax(rows, p, outcomes.some(o => o.unit.letType === 'short'))
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
@@ -597,68 +708,58 @@ export interface ExitResult {
   net: number          // was beim Kunden ankommt
 }
 
-export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number): ExitResult | null {
-  if (!outcomes.length || !p.exitAfterYears) return null
-  const year = firstYear + p.exitAfterYears - 1
+// ── Bausteine des Verkaufs ───────────────────────────────────────────────────
+// Einmal geschrieben, von beiden Wegen genutzt: vom gemeinsamen Verkauf am Ende
+// der Strategie (computeExit) und vom Einzelverkauf des Reinvestment-Motors
+// (computeSale). Keine zweite Verkaufslogik.
+export function saleLineOf(o: UnitOutcome, year: number, p: SimParams, tranches: LoanTranche[] = []): ExitUnitLine {
+  const i = year - o.unit.readyY
+  const n = o.res.rents.length
+  const delivered = i >= 0
+  const paid = o.payments.filter(x => Math.floor(x.ym / 12) <= year).reduce((a, x) => a + x.amount, 0)
+  const value = delivered ? o.res.propV[Math.min(i, n - 1)] : paid
+  const cost = o.res.pGross + o.res.costs
+  const heldYears = Math.max(0, year - o.unit.buyY)
+  const costIndexed = Math.round(cost * Math.pow(1 + p.cpiPct / 100, heldYears))
   const svcVat = 1 + CY_SERVICE_VAT_PCT / 100
-  const lines: ExitUnitLine[] = []
-  for (const o of outcomes) {
-    const i = year - o.unit.readyY
-    const delivered = i >= 0
-    // Noch nicht uebergeben: der Kunde tritt den Kaufvertrag zum bereits
-    // gezahlten Betrag ab. Konservativ, aber ehrlicher als ein erfundener
-    // Zwischengewinn auf einer Baustelle.
-    const paid = o.payments.filter(x => Math.floor(x.ym / 12) <= year).reduce((a, x) => a + x.amount, 0)
-    const value = delivered ? o.res.propV[Math.min(i, 9)] : paid
-    const cost = o.res.pGross + o.res.costs
-    // Zypern rechnet die Anschaffungskosten mit dem Verbraucherpreisindex hoch,
-    // bevor der steuerpflichtige Gewinn ermittelt wird. Ohne diese Indexierung
-    // waere die Steuer zu hoch angesetzt.
-    const heldYears = Math.max(0, year - o.unit.buyY)
-    const costIndexed = Math.round(cost * Math.pow(1 + p.cpiPct / 100, heldYears))
-    // Makler und Anwalt tragen zyprische Mehrwertsteuer und sind bei der
-    // Veraeusserungsgewinnsteuer abziehbar. Darlehenszinsen dagegen NICHT: sie
-    // sind laufend schon als Werbungskosten abgezogen worden, und doppelt geht
-    // nach zyprischem Recht nicht.
-    const sellCost = Math.round(value * ((p.sellCostPct + p.lawyerPct) / 100) * svcVat)
-    const debt = delivered ? o.res.restL[Math.min(i, 9)] : 0
-    // Mehrwertsteuer-Berichtigung: Wer die Vorsteuer wegen steuerpflichtiger
-    // Kurzzeitvermietung gezogen hat, zahlt sie beim spaeteren steuerfreien
-    // Verkauf fuer die nach dem Verkaufsjahr VERBLEIBENDEN vollen Jahre zurueck
-    // (K.D.P. 314/2001 Teil IX, Berichtigungszeitraum 10 Jahre).
-    // Sonderfall, hier bewusst nicht modelliert: Wer vor 18 Monaten
-    // systematischer Nutzung verkauft, verkauft mit 19 % Mehrwertsteuer und
-    // zahlt dann nichts zurueck. Das kommt bei einem Exit ab Jahr 5 nicht vor.
-    const soldInterval = delivered ? i + 1 : 0
-    const vatClawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
-      ? Math.round(o.res.vatAmt * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
-      : 0
-    lines.push({
-      name: o.unit.name, value, cost, costIndexed, sellCost, debt, vatClawback, delivered,
-      yearsHeld: soldInterval,
-      gain: delivered ? Math.max(0, value - costIndexed - sellCost) : 0,
-    })
+  const sellCost = Math.round(value * ((p.sellCostPct + p.lawyerPct) / 100) * svcVat)
+  // Restschuld: urspruengliches Darlehen PLUS die offenen Refinanzierungs-
+  // tranchen, die auf dieser Wohnung liegen. Sonst waere der Erloes zu hoch.
+  const ownDebt = delivered ? o.res.restL[Math.min(i, n - 1)] : 0
+  const trancheDebt = tranches
+    .filter(t => t.propertyKeys.includes(o.unit.key) && t.startYear <= year)
+    .reduce((a, t) => {
+      const sched = trancheSchedule(t, year)
+      const last = sched[sched.length - 1]
+      // Bei mehreren Sicherheiten faellt auf diese Wohnung nur ihr Anteil.
+      return a + (last ? last.rest / Math.max(1, t.propertyKeys.length) : 0)
+    }, 0)
+  const debt = Math.round(ownDebt + trancheDebt)
+  const soldInterval = delivered ? i + 1 : 0
+  const vatClawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
+    ? Math.round(o.res.vatAmt * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
+    : 0
+  return {
+    name: o.unit.name, value, cost, costIndexed, sellCost, debt, vatClawback, delivered,
+    yearsHeld: soldInterval,
+    gain: delivered ? Math.max(0, value - costIndexed - sellCost) : 0,
   }
-  const sum = (f: (l: ExitUnitLine) => number) => lines.reduce((a, l) => a + f(l), 0)
-  const value = sum(l => l.value), debt = sum(l => l.debt)
-  const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
-  const gain = sum(l => l.gain)
-  // 0,4 % Abgabe auf jede Uebertragung zyprischer Immobilien, zahlt der Verkaeufer.
-  const levy = Math.round(value * CY_TRANSFER_LEVY_PCT / 100)
+}
 
-  // Zyprische Veraeusserungsgewinnsteuer: der lebenslange Freibetrag gilt je
-  // PERSON, also einmal fuer die ganze Strategie und nicht je Wohnung. Eine
-  // Gesellschaft hat keinen Freibetrag.
-  const allowance = p.holder === 'firma' ? 0 : Math.min(CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP)
+export interface SaleTax { cgt: number; taxDE: number; usedExemption: number }
+
+// Zyprische Veraeusserungsgewinnsteuer und deutsche Steuer auf einen Verkauf.
+// Der lebenslange Freibetrag wird als Topf uebergeben und verbraucht.
+export function saleTaxOf(
+  lines: ExitUnitLine[], outcomes: UnitOutcome[], year: number, p: SimParams, exemptionLeft: number,
+): SaleTax {
+  const gain = lines.reduce((a, l) => a + l.gain, 0)
+  // Der Freibetrag ist lebenslang und je Person gedeckelt - nie mehr, als noch
+  // im Topf ist, und nie mehr als der Gewinn.
+  const allowance = p.holder === 'firma'
+    ? 0
+    : Math.max(0, Math.min(exemptionLeft, CY_CGT_LIFETIME_CAP, gain))
   const cgt = Math.max(0, Math.round((gain - allowance) * CY_CGT_PCT / 100))
-
-  // Deutschland: privates Veraeusserungsgeschaeft, Frist zehn Jahre ab dem
-  // KAUFVERTRAG (nicht ab Uebergabe). Das DBA mit Zypern kennt fuer Immobilien
-  // nur die Anrechnungsmethode, nicht die Freistellung - der Gewinn ist in
-  // Deutschland also voll steuerpflichtig, und die genutzte Abschreibung erhoeht
-  // ihn. Angerechnet wird die zyprische Steuer bis zur Hoehe der deutschen.
-  // Nach einem Wegzug nach Zypern entfaellt das (Paragraf 49 EStG erfasst nur
-  // inlaendische Grundstuecke).
   let taxDE = 0
   if (p.res === 'de' && p.holder === 'privat') {
     let gainDE = 0
@@ -666,20 +767,49 @@ export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: nu
       const i = year - o.unit.readyY
       if (i < 0) continue
       if (year - o.unit.buyY >= DE_SPEC_YEARS) continue
-      const line = lines.find(l => l.name === o.unit.name)!
-      const afaUsed = o.res.afaDE.slice(0, Math.min(i + 1, 10)).reduce((a, b) => a + b, 0)
+      const line = lines.find(l => l.name === o.unit.name)
+      if (!line) continue
+      const n = o.res.afaDE.length
+      const afaUsed = o.res.afaDE.slice(0, Math.min(i + 1, n)).reduce((a, b) => a + b, 0)
       gainDE += Math.max(0, line.value - (line.cost - afaUsed) - line.sellCost)
     }
     const raw = Math.round(gainDE * (p.deTaxPct / 100))
     taxDE = raw <= 0 ? 0 : Math.max(0, raw - cgt)
   }
+  return { cgt, taxDE, usedExemption: allowance }
+}
 
-  // Firma: der Verkaufserloes muss noch beim Gesellschafter ankommen.
+// Einzelverkauf einer Wohnung im Reinvestment-Motor.
+export interface SaleResult extends SaleTax {
+  year: number; key: string; name: string
+  line: ExitUnitLine
+  levy: number
+  netProceeds: number
+}
+export function computeSale(
+  o: UnitOutcome, year: number, p: SimParams, exemptionLeft: number, tranches: LoanTranche[] = [],
+): SaleResult {
+  const line = saleLineOf(o, year, p, tranches)
+  const tax = saleTaxOf([line], [o], year, p, exemptionLeft)
+  const levy = Math.round(line.value * CY_TRANSFER_LEVY_PCT / 100)
+  const netProceeds = line.value - line.debt - line.sellCost - levy - line.vatClawback - tax.cgt - tax.taxDE
+  return { ...tax, year, key: o.unit.key, name: o.unit.name, line, levy, netProceeds }
+}
+
+export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number): ExitResult | null {
+  if (!outcomes.length || !p.exitAfterYears) return null
+  const year = firstYear + p.exitAfterYears - 1
+  const lines = outcomes.map(o => saleLineOf(o, year, p))
+  const sum = (f: (l: ExitUnitLine) => number) => lines.reduce((a, l) => a + f(l), 0)
+  const value = sum(l => l.value), debt = sum(l => l.debt)
+  const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
+  const gain = sum(l => l.gain)
+  const levy = Math.round(value * CY_TRANSFER_LEVY_PCT / 100)
+  const { cgt, taxDE } = saleTaxOf(lines, outcomes, year, p, CY_CGT_ALLOWANCE)
   const beforeDiv = value - debt - sellCost - levy - vatClawback - cgt - taxDE
   const divTax = (p.holder === 'firma' && beforeDiv > 0)
     ? Math.round(beforeDiv * (p.divPayoutPct / 100) * (p.divTaxPct / 100))
     : 0
-
   return { year, lines, value, debt, sellCost, levy, vatClawback, cgt, taxDE, divTax, gain, net: beforeDiv - divTax }
 }
 
