@@ -5,7 +5,8 @@ import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
   allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf, rentFromSeason,
-  defaultDivTaxPct, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams,
+  computeExit, breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS,
+  type SimUnit, type SimParams,
 } from '../../lib/strategy'
 import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
 
@@ -182,9 +183,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
 
   const outcomes = useMemo(() => units.length ? allocate(units, params) : [], [units, params])
   const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
+  const exit = useMemo(() => computeExit(outcomes, params, agg.firstYear), [outcomes, params, agg.firstYear])
 
   // Gesamt-Kennzahlen über den Horizont
-  const totals = useMemo(() => totalsOf(outcomes, agg.rows), [agg, outcomes])
+  const totals = useMemo(() => totalsOf(outcomes, agg.rows, params, exit), [agg, outcomes, params, exit])
+  // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
+  const [beOpen, setBeOpen] = useState(false)
+  const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
 
   // ── Für den Kunden freigeben ───────────────────────────────────────────────
   // Speichert den aktuellen Stand SOFORT (nicht entprellt), schaltet den
@@ -280,6 +285,52 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
               </div>
               <p className="text-[11px] text-gray-500 mt-1">
                 {t('crm.sim.costHint', 'Die Rücklage rechnet auf den ursprünglichen Kaufpreis, nicht auf den gestiegenen Marktwert. Gemeinschaftskosten gelten je Wohnung und können unten je Wohnung überschrieben werden; beide steigen mit 2 % pro Jahr.')}
+              </p>
+            </div>
+
+            {/* ── Verkauf ─────────────────────────────────────────────────────
+                Ohne Verkauf fehlt die halbe Entscheidung: Wertsteigerung ist bis
+                dahin nur Papier, und beim Verkauf greifen drei Steuern auf
+                einmal. Ein gemeinsames Verkaufsjahr fuer die ganze Strategie. */}
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                {t('crm.sim.exitSection', 'Verkauf')}
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                <div className="col-span-2">
+                  <label className={lbl}>
+                    {t('crm.sim.exitAfter', 'Verkauf nach')}
+                    <strong className="text-gray-700 ml-1">
+                      {params.exitAfterYears
+                        ? t('crm.sim.exitYears', '{{n}} Jahren ({{y}})', { n: params.exitAfterYears, y: agg.firstYear + params.exitAfterYears - 1 })
+                        : t('crm.sim.exitNone', 'kein Verkauf, nur Haltephase')}
+                    </strong>
+                  </label>
+                  <input type="range" min={0} max={10} step={1} className="w-full accent-orange-500"
+                    value={params.exitAfterYears}
+                    onChange={e => setParams(p => ({ ...p, exitAfterYears: +e.target.value }))} />
+                </div>
+                <div>
+                  <label className={lbl}>
+                    {t('crm.sim.sellCost', 'Maklerprovision %')}
+                    <strong className="text-gray-700 ml-1">{String(params.sellCostPct).replace('.', ',')} %</strong>
+                  </label>
+                  <input type="range" min={0} max={8} step={0.5} className="w-full accent-orange-500"
+                    value={params.sellCostPct}
+                    onChange={e => setParams(p => ({ ...p, sellCostPct: +e.target.value }))} />
+                </div>
+                <div>
+                  <label className={lbl}>
+                    {t('crm.sim.lawyer', 'Anwalt %')}
+                    <strong className="text-gray-700 ml-1">{String(params.lawyerPct).replace('.', ',')} %</strong>
+                  </label>
+                  <input type="range" min={0} max={3} step={0.25} className="w-full accent-orange-500"
+                    value={params.lawyerPct}
+                    onChange={e => setParams(p => ({ ...p, lawyerPct: +e.target.value }))} />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                {t('crm.sim.exitHint2', 'Der Zeitraum endet im Verkaufsjahr. Auf Makler und Anwalt kommen 19 % MwSt, dazu 0,4 % Übertragungsabgabe. Wohnungen, die beim Verkauf noch nicht übergeben sind, gehen zum eingezahlten Betrag ab.')}
               </p>
             </div>
 
@@ -595,6 +646,12 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 { l: t('crm.sim.debtEnd', 'Kredit offen am Ende'), v: eur(totals.debtEnd), d: t('crm.sim.debtHint', 'Restschuld aller Darlehen') },
                 { l: t('crm.sim.roe5', 'EK-Rendite nach 5 J.'), v: pct(totals.roe5), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
                 { l: t('crm.sim.roe10', 'EK-Rendite nach 10 J.'), v: pct(totals.roe10), d: t('crm.sim.roeHint2', 'gesamt über den Zeitraum, nicht p.a.') },
+                { l: t('crm.sim.irr', 'Interner Zinsfuß'), v: isFinite(totals.irr) ? pct(totals.irr * 100) : '–',
+                  d: t('crm.sim.irrHint', 'auf den echten Zahlungsströmen, p.a.'), hero: true },
+                { l: t('crm.sim.cfLast', 'Cashflow letztes Jahr'), v: eur(totals.cashflowLastYear), d: t('crm.sim.cfLastHint', 'im laufenden Betrieb') },
+                { l: t('crm.sim.valueEnd', 'Immobilienwert am Ende'), v: eur(totals.valueEnd), d: t('crm.sim.equityIn', 'davon eigen {{v}}', { v: eur(totals.equityInProperty) }) },
+                { l: t('crm.sim.interestTotal', 'Zinsen gesamt'), v: `−${eur(totals.interest)}`, d: t('crm.sim.principalTotal', 'getilgt {{v}}', { v: eur(totals.principal) }) },
+                { l: t('crm.sim.costTotal', 'Kosten gesamt'), v: `−${eur(totals.mgmt + totals.opex)}`, d: t('crm.sim.costSplit', 'Verwaltung {{m}} · Wohnung {{o}}', { m: eur(totals.mgmt), o: eur(totals.opex) }) },
               ].map(k => (
                 <div key={k.l} className={`rounded-xl border p-3 ${k.hero ? 'border-orange-300' : 'border-gray-200'}`}>
                   <p className="text-[10px] uppercase tracking-wide text-gray-400">{k.l}</p>
@@ -603,6 +660,50 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 </div>
               ))}
             </div>
+
+            {/* ── Verkaufsrechnung ─────────────────────────────────────────── */}
+            {exit && (
+              <div className="border border-gray-200 rounded-xl p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {t('crm.sim.exitTitle', 'Verkauf {{y}}', { y: exit.year })}
+                  </p>
+                  <button onClick={() => setBeOpen(true)} className="text-[11px] text-orange-600 hover:underline">
+                    {beOpen && isFinite(breakEven)
+                      ? t('crm.sim.beResult', 'Break-even bei {{v}} % Wertsteigerung p.a.', { v: String(breakEven).replace('.', ',') })
+                      : t('crm.sim.beCalc', 'Welche Wertsteigerung braucht die Strategie mindestens?')}
+                  </button>
+                </div>
+                <table className="w-full text-sm tabular-nums">
+                  <tbody>
+                    {([
+                      [t('crm.sim.exValue', 'Verkaufswert der Wohnungen'), exit.value, false],
+                      [t('crm.sim.exDebt', 'Restschuld ablösen'), -exit.debt, true],
+                      [t('crm.sim.exSell', 'Makler und Anwalt inkl. MwSt'), -exit.sellCost, true],
+                      [t('crm.sim.exLevy', 'Übertragungsabgabe 0,4 %'), -exit.levy, true],
+                      [t('crm.sim.exVat', 'MwSt-Rückzahlung (Restjahre)'), -exit.vatClawback, true],
+                      [t('crm.sim.exCgt', 'Veräußerungsgewinnsteuer Zypern'), -exit.cgt, true],
+                      ...(exit.taxDE ? [[t('crm.sim.exDe', 'Steuer Deutschland nach Anrechnung'), -exit.taxDE, true]] : []),
+                      ...(exit.divTax ? [[t('crm.sim.exDiv', 'Steuer auf die Ausschüttung'), -exit.divTax, true]] : []),
+                    ] as Array<[string, number, boolean]>).map(([label, val, minus]) => (
+                      <tr key={label} className="border-b border-gray-50">
+                        <td className="py-1.5 text-gray-600">{label}</td>
+                        <td className={`py-1.5 text-right ${minus ? 'text-gray-900' : 'font-semibold'}`}>
+                          {val === 0 ? '–' : `${val < 0 ? '−' : ''}${eur(Math.abs(val))}`}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="pt-2 font-semibold text-gray-900">{t('crm.sim.exNet', 'Nettoerlös')}</td>
+                      <td className="pt-2 text-right text-lg font-bold text-orange-600">{eur(exit.net)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <p className="text-[11px] text-gray-500 mt-2">
+                  {t('crm.sim.exHint', 'Steuerpflichtiger Gewinn nach zyprischer Indexierung: {{g}}. Der lebenslange Freibetrag von 30.000 € je Person ist einmal berücksichtigt, nicht je Wohnung.', { g: eur(exit.gain) })}
+                </p>
+              </div>
+            )}
 
             {/* Jahres-Tabelle: die komplette Rechnung auf der Zeitachse */}
             <div>

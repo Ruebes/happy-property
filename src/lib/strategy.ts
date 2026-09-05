@@ -1,6 +1,8 @@
 import {
-  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTax,
+  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTax, irrCalc,
   CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT, CY_GESY_RATE, CY_GESY_CAP, CY_LOSS_CARRY_YEARS,
+  CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
+  VAT_ADJUST_YEARS, CY_TRANSFER_LEVY_PCT, CY_SERVICE_VAT_PCT,
   type CalcParams, type CalcResult,
 } from './rechner'
 
@@ -53,6 +55,13 @@ export interface SimParams {
   // ── Laufende Kosten (Sven 5.9.26) ─────────────────────────────────────────
   opexMonthly: number       // Gemeinschaftskosten je Wohnung, EUR/Monat (Vorgabe)
   maintPct: number          // Instandhaltungsruecklage % p.a. vom Kaufpreis
+  // ── Verkauf ───────────────────────────────────────────────────────────────
+  // Ein gemeinsames Verkaufsjahr fuer die ganze Strategie: der Kunde beendet
+  // eine Strategie, nicht drei einzelne Wohnungen. 0 = kein Verkauf rechnen.
+  exitAfterYears: number    // Jahre nach dem ersten Kauf (5 bis 10)
+  sellCostPct: number       // Maklerprovision % vom Verkaufspreis (zzgl. MwSt)
+  lawyerPct: number         // Anwaltshonorar % vom Verkaufspreis (zzgl. MwSt)
+  cpiPct: number            // angenommene Inflation p.a. fuer die zyprische Indexierung
 }
 
 export interface UnitOutcome {
@@ -150,6 +159,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   res: 'de', cyBI: 0, holder: 'privat',
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   opexMonthly: 100, maintPct: 0.75,
+  exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -310,7 +320,12 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   // unrealistisch bei den vielen Variablen." Eine spaet gekaufte Wohnung wird
   // also nur mit ihren ersten Jahren gezeigt - das ist gewollt und ehrlicher als
   // ein Zeitraum, der sich mit jedem zusaetzlichen Kauf verschiebt.
-  const lastYear = firstYear + HORIZON_YEARS - 1
+  // Wird verkauft, endet die Darstellung im Verkaufsjahr - danach gibt es nichts
+  // mehr zu zeigen, und ein weiterlaufender Verlauf waere schlicht falsch.
+  const horizonEnd = firstYear + HORIZON_YEARS - 1
+  const lastYear = p?.exitAfterYears
+    ? Math.min(horizonEnd, firstYear + p.exitAfterYears - 1)
+    : horizonEnd
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
     const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
@@ -384,6 +399,164 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 
+// ── Verkauf am Ende der Strategie ────────────────────────────────────────────
+// Ohne Exit fehlt die halbe Investitionsentscheidung: Wertsteigerung ist nur auf
+// dem Papier, solange nicht verkauft wird, und beim Verkauf greifen drei Steuern
+// auf einmal (zyprische Veraeusserungsgewinnsteuer, anteilige Rueckzahlung der
+// gezogenen Mehrwertsteuer, in Deutschland das private Veraeusserungsgeschaeft).
+export interface ExitUnitLine {
+  name: string
+  value: number        // Verkaufspreis
+  cost: number         // Anschaffungskosten inkl. Nebenkosten
+  costIndexed: number  // dieselben Kosten, inflationsbereinigt (zyprische Regel)
+  sellCost: number     // Makler + Anwalt inkl. MwSt auf diese Wohnung
+  gain: number         // Gewinn fuer die zyprische Steuer
+  debt: number         // Restschuld dieser Wohnung
+  vatClawback: number  // anteilige Rueckzahlung der gezogenen MwSt
+  delivered: boolean   // zum Verkaufszeitpunkt schon uebergeben?
+  yearsHeld: number
+}
+export interface ExitResult {
+  year: number
+  lines: ExitUnitLine[]
+  value: number; debt: number
+  sellCost: number     // Makler + Anwalt inkl. MwSt
+  levy: number         // 0,4 % Uebertragungsabgabe
+  vatClawback: number
+  cgt: number          // zyprische Veraeusserungsgewinnsteuer
+  taxDE: number        // deutsche Steuer nach Anrechnung
+  divTax: number       // Ausschuettung des Verkaufserloeses aus der Firma
+  gain: number         // indexierter Gewinn ueber alle Wohnungen
+  net: number          // was beim Kunden ankommt
+}
+
+export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: number): ExitResult | null {
+  if (!outcomes.length || !p.exitAfterYears) return null
+  const year = firstYear + p.exitAfterYears - 1
+  const svcVat = 1 + CY_SERVICE_VAT_PCT / 100
+  const lines: ExitUnitLine[] = []
+  for (const o of outcomes) {
+    const i = year - o.unit.readyY
+    const delivered = i >= 0
+    // Noch nicht uebergeben: der Kunde tritt den Kaufvertrag zum bereits
+    // gezahlten Betrag ab. Konservativ, aber ehrlicher als ein erfundener
+    // Zwischengewinn auf einer Baustelle.
+    const paid = o.payments.filter(x => Math.floor(x.ym / 12) <= year).reduce((a, x) => a + x.amount, 0)
+    const value = delivered ? o.res.propV[Math.min(i, 9)] : paid
+    const cost = o.res.pGross + o.res.costs
+    // Zypern rechnet die Anschaffungskosten mit dem Verbraucherpreisindex hoch,
+    // bevor der steuerpflichtige Gewinn ermittelt wird. Ohne diese Indexierung
+    // waere die Steuer zu hoch angesetzt.
+    const heldYears = Math.max(0, year - o.unit.buyY)
+    const costIndexed = Math.round(cost * Math.pow(1 + p.cpiPct / 100, heldYears))
+    // Makler und Anwalt tragen zyprische Mehrwertsteuer und sind bei der
+    // Veraeusserungsgewinnsteuer abziehbar. Darlehenszinsen dagegen NICHT: sie
+    // sind laufend schon als Werbungskosten abgezogen worden, und doppelt geht
+    // nach zyprischem Recht nicht.
+    const sellCost = Math.round(value * ((p.sellCostPct + p.lawyerPct) / 100) * svcVat)
+    const debt = delivered ? o.res.restL[Math.min(i, 9)] : 0
+    // Mehrwertsteuer-Berichtigung: Wer die Vorsteuer wegen steuerpflichtiger
+    // Kurzzeitvermietung gezogen hat, zahlt sie beim spaeteren steuerfreien
+    // Verkauf fuer die nach dem Verkaufsjahr VERBLEIBENDEN vollen Jahre zurueck
+    // (K.D.P. 314/2001 Teil IX, Berichtigungszeitraum 10 Jahre).
+    // Sonderfall, hier bewusst nicht modelliert: Wer vor 18 Monaten
+    // systematischer Nutzung verkauft, verkauft mit 19 % Mehrwertsteuer und
+    // zahlt dann nichts zurueck. Das kommt bei einem Exit ab Jahr 5 nicht vor.
+    const soldInterval = delivered ? i + 1 : 0
+    const vatClawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
+      ? Math.round(o.res.vatAmt * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
+      : 0
+    lines.push({
+      name: o.unit.name, value, cost, costIndexed, sellCost, debt, vatClawback, delivered,
+      yearsHeld: soldInterval,
+      gain: delivered ? Math.max(0, value - costIndexed - sellCost) : 0,
+    })
+  }
+  const sum = (f: (l: ExitUnitLine) => number) => lines.reduce((a, l) => a + f(l), 0)
+  const value = sum(l => l.value), debt = sum(l => l.debt)
+  const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
+  const gain = sum(l => l.gain)
+  // 0,4 % Abgabe auf jede Uebertragung zyprischer Immobilien, zahlt der Verkaeufer.
+  const levy = Math.round(value * CY_TRANSFER_LEVY_PCT / 100)
+
+  // Zyprische Veraeusserungsgewinnsteuer: der lebenslange Freibetrag gilt je
+  // PERSON, also einmal fuer die ganze Strategie und nicht je Wohnung. Eine
+  // Gesellschaft hat keinen Freibetrag.
+  const allowance = p.holder === 'firma' ? 0 : Math.min(CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP)
+  const cgt = Math.max(0, Math.round((gain - allowance) * CY_CGT_PCT / 100))
+
+  // Deutschland: privates Veraeusserungsgeschaeft, Frist zehn Jahre ab dem
+  // KAUFVERTRAG (nicht ab Uebergabe). Das DBA mit Zypern kennt fuer Immobilien
+  // nur die Anrechnungsmethode, nicht die Freistellung - der Gewinn ist in
+  // Deutschland also voll steuerpflichtig, und die genutzte Abschreibung erhoeht
+  // ihn. Angerechnet wird die zyprische Steuer bis zur Hoehe der deutschen.
+  // Nach einem Wegzug nach Zypern entfaellt das (Paragraf 49 EStG erfasst nur
+  // inlaendische Grundstuecke).
+  let taxDE = 0
+  if (p.res === 'de' && p.holder === 'privat') {
+    let gainDE = 0
+    for (const o of outcomes) {
+      const i = year - o.unit.readyY
+      if (i < 0) continue
+      if (year - o.unit.buyY >= DE_SPEC_YEARS) continue
+      const line = lines.find(l => l.name === o.unit.name)!
+      const afaUsed = o.res.afaDE.slice(0, Math.min(i + 1, 10)).reduce((a, b) => a + b, 0)
+      gainDE += Math.max(0, line.value - (line.cost - afaUsed) - line.sellCost)
+    }
+    const raw = Math.round(gainDE * (p.deTaxPct / 100))
+    taxDE = raw <= 0 ? 0 : Math.max(0, raw - cgt)
+  }
+
+  // Firma: der Verkaufserloes muss noch beim Gesellschafter ankommen.
+  const beforeDiv = value - debt - sellCost - levy - vatClawback - cgt - taxDE
+  const divTax = (p.holder === 'firma' && beforeDiv > 0)
+    ? Math.round(beforeDiv * (p.divPayoutPct / 100) * (p.divTaxPct / 100))
+    : 0
+
+  return { year, lines, value, debt, sellCost, levy, vatClawback, cgt, taxDE, divTax, gain, net: beforeDiv - divTax }
+}
+
+// ── Eigenkapital-Abfluss auf der Zeitachse ───────────────────────────────────
+// Wann fliesst wirklich Geld des Kunden ab? Dieselbe Reihenfolge wie in der
+// Zwischenfinanzierung: erst das Eigenkapital, dann die Bank. Wird fuer die
+// Zahlungsstrom-Rendite gebraucht - die bisherige EK-Rendite war eine reine
+// Schlussbetrachtung ohne Zeitwert des Geldes.
+export function equityOutflowByYear(outcomes: UnitOutcome[], p: SimParams): Map<number, number> {
+  const out = new Map<number, number>()
+  const pays = outcomes.flatMap(o => o.payments).sort((a, b) => a.ym - b.ym)
+  let ekLeft = p.ek
+  for (const pay of pays) {
+    const use = Math.min(ekLeft, pay.amount)
+    ekLeft -= use
+    if (use > 0) {
+      const y = Math.floor(pay.ym / 12)
+      out.set(y, (out.get(y) ?? 0) + use)
+    }
+  }
+  // Kaufnebenkosten zahlt der Kunde aus eigener Tasche, faellig zur Uebergabe.
+  for (const o of outcomes) {
+    const extra = o.res.ekStart - o.res.ekAbs
+    if (extra > 0) out.set(o.unit.readyY, (out.get(o.unit.readyY) ?? 0) + extra)
+  }
+  return out
+}
+
+// Interner Zinsfuss auf den TATSAECHLICHEN Zahlungsstroemen des Kunden:
+// Eigenkapital raus, laufender Cashflow rein, am Ende der Verkaufserloes.
+export function irrOfPlan(rows: YearRow[], outcomes: UnitOutcome[], p: SimParams, exitProceeds = 0, exitYear?: number): number {
+  if (!rows.length) return NaN
+  const ekOut = equityOutflowByYear(outcomes, p)
+  const flows: number[] = []
+  for (const r of rows) {
+    if (exitYear != null && r.year > exitYear) break
+    let f = r.cashflow - (ekOut.get(r.year) ?? 0)
+    if (exitYear != null && r.year === exitYear) f += exitProceeds
+    flows.push(f)
+  }
+  if (exitYear == null && exitProceeds) flows[flows.length - 1] += exitProceeds
+  return irrCalc(flows)
+}
+
 // Eigenkapital-Rendite ist nur aussagekräftig, wenn nennenswertes EK im Spiel
 // ist: bei einer fast vollständig fremdfinanzierten Wohnung (Rest-EK nach der
 // Bundle-Verteilung) laufen die Prozente ins Absurde (mehrere tausend Prozent).
@@ -399,6 +572,14 @@ export interface StrategyTotals {
   interest: number; cashflow: number; totalReturn: number; roe: number
   debtEnd: number          // offener Kredit am Ende des Zeitraums
   roe5: number; roe10: number   // Eigenkapital-Rendite nach 5 bzw. 10 Jahren
+  // Sven 5.9.26: Kennzahlen, die fuer die Entscheidung fehlten.
+  opex: number             // laufende Kosten der Wohnungen kumuliert
+  mgmt: number             // Verwaltung kumuliert
+  principal: number        // getilgt im Zeitraum
+  valueEnd: number         // Immobilienwert am Ende, ohne Abzug der Schuld
+  equityInProperty: number // Immobilienwert abzueglich Restschuld
+  cashflowLastYear: number // was die Strategie im letzten vollen Jahr abwirft
+  irr: number              // interner Zinsfuss auf den echten Zahlungsstroemen
 }
 
 // Eigenkapital-Rendite zu einem Zeitpunkt: erwirtschaftetes Plus (Vermögen zum
@@ -418,7 +599,7 @@ export function roeAfterYears(rows: YearRow[], ekTotal: number, years: number): 
   return ((worth + cash - ekTotal) / ekTotal) * 100
 }
 
-export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTotals {
+export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[], p?: SimParams, exit?: ExitResult | null): StrategyTotals {
   const sum = (f: (r: YearRow) => number) => rows.reduce((a, r) => a + f(r), 0)
   const ekTotal = outcomes.reduce((a, o) => a + o.ekUsed, 0)
   const last = rows[rows.length - 1]
@@ -428,9 +609,43 @@ export function totalsOf(outcomes: UnitOutcome[], rows: YearRow[]): StrategyTota
   const totalReturn = netWorth - ekTotal + cashflow
   const roe = ekTotal > 0 ? (totalReturn / ekTotal) * 100 : 0
   const debtEnd = last ? last.debt : 0
+  // Cashflow des letzten Jahres, in dem ueberhaupt vermietet wurde - das zeigt,
+  // was die Strategie im eingeschwungenen Betrieb abwirft.
+  const rented = rows.filter(r => r.rents > 0)
+  const cashflowLastYear = rented.length ? rented[rented.length - 1].cashflow : 0
+  const valueEnd = last ? last.value : 0
+  const irr = p ? irrOfPlan(rows, outcomes, p, exit ? exit.net : 0, exit?.year) : NaN
   return {
     ekTotal, netWorth, rents, taxes, vat, interest, cashflow, totalReturn, roe, debtEnd,
     taxCY: sum(r => r.taxCY), taxDE: sum(r => r.taxDE), gesy: sum(r => r.gesy),
     roe5: roeAfterYears(rows, ekTotal, 5), roe10: roeAfterYears(rows, ekTotal, 10),
+    opex: sum(r => r.opex), mgmt: sum(r => r.mgmt), principal: sum(r => r.principal),
+    valueEnd, equityInProperty: valueEnd - debtEnd, cashflowLastYear, irr,
   }
+}
+
+// Welche jaehrliche Wertsteigerung braucht die Strategie, damit am Ende genau
+// das eingesetzte Eigenkapital wieder da ist? Alles darueber ist Gewinn.
+// Break-even = Nettoerloes aus dem Verkauf plus der bis dahin geflossene
+// Cashflow deckt das eingesetzte Eigenkapital.
+export function breakEvenGrowth(units: SimUnit[], p: SimParams): number {
+  if (!units.length) return NaN
+  const surplus = (growth: number): number => {
+    const pp = { ...p, growth }
+    const outs = allocate(units, pp)
+    const agg = aggregate(outs, pp)
+    const ex = computeExit(outs, pp, agg.firstYear)
+    const cash = agg.rows.filter(r => !ex || r.year <= ex.year).reduce((a, r) => a + r.cashflow, 0)
+    const ekTotal = outs.reduce((a, o) => a + o.ekUsed, 0)
+    const end = ex ? ex.net : (agg.rows.length ? agg.rows[agg.rows.length - 1].value - agg.rows[agg.rows.length - 1].debt : 0)
+    return end + cash - ekTotal
+  }
+  let lo = -10, hi = 25
+  if (surplus(lo) > 0) return lo
+  if (surplus(hi) < 0) return NaN
+  for (let k = 0; k < 40; k++) {
+    const m = (lo + hi) / 2
+    if (surplus(m) < 0) lo = m; else hi = m
+  }
+  return Math.round(((lo + hi) / 2) * 100) / 100
 }

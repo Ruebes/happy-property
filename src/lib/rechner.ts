@@ -234,6 +234,25 @@ export const CY_LOSS_CARRY_YEARS = 5         // Verlustvortrag
 export const CY_GESY_RATE = 0.0265           // Gesundheitsbeitrag auf Mieten
 export const CY_GESY_CAP = 180000            // Bemessungsdeckel p.a.
 export const DE_DIV_TAX_PCT = 26.375         // Abgeltungsteuer + Soli (DE-Gesellschafter)
+// ── Verkauf ──────────────────────────────────────────────────────────────────
+// Zypern: 20 % Veraeusserungsgewinnsteuer auf Immobilien. Natuerliche Personen
+// haben einen LEBENSLANGEN Freibetrag, mit der Reform 2026 von 17.086 auf
+// 30.000 EUR angehoben (je Person, Gesellschaften haben keinen).
+// Mehrwertsteuer: der Berichtigungszeitraum fuer Immobilien betraegt 10 Jahre.
+// Wer die Vorsteuer wegen steuerpflichtiger Kurzzeitvermietung gezogen hat und
+// vorher verkauft, zahlt sie anteilig zurueck.
+// Deutschland: privates Veraeusserungsgeschaeft, steuerpflichtig innerhalb von
+// 10 Jahren ab Anschaffung; die in Anspruch genommene AfA erhoeht den Gewinn.
+export const CY_CGT_PCT = 20
+export const CY_CGT_ALLOWANCE = 30000        // allgemeiner lebenslanger Freibetrag je Person
+export const CY_CGT_LIFETIME_CAP = 150000    // Gesamtdeckel aller Freibetraege je Person
+export const VAT_ADJUST_YEARS = 10           // Berichtigungszeitraum Capital Goods Scheme
+export const DE_SPEC_YEARS = 10              // Spekulationsfrist Paragraf 23 EStG
+// Abgabe an den Fonds fuer notleidende Kredite: 0,4 % auf jede Uebertragung
+// zyprischer Immobilien, zu tragen vom Verkaeufer.
+export const CY_TRANSFER_LEVY_PCT = 0.4
+// Maklerprovision und Anwaltshonorar tragen zyprische Mehrwertsteuer.
+export const CY_SERVICE_VAT_PCT = 19
 export const CY_DIV_TAX_PCT = 2.65           // Non-Dom: nur GESY auf die Dividende
 
 export const DEFAULT_PARAMS: CalcParams = {
@@ -309,6 +328,9 @@ export interface CalcResult {
   profitCY: number[]; profitDE: number[]
   opexA: number[]           // Gemeinschaftskosten + Instandhaltung je Jahr
   opexMonthly: number; maintPct: number
+  // Deutsche Gebaeude-AfA je Jahr. Wird beim Verkauf gebraucht: in Deutschland
+  // erhoeht die in Anspruch genommene Abschreibung den Veraeusserungsgewinn.
+  afaDE: number[]
   sumR: number; sumC: number; sumT: number; sumVat: number; sumPP: number; sumCF: number
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
@@ -480,6 +502,7 @@ function computeCore(p: CalcParams): CalcResult {
   const gesyOn = holder === 'privat' && resCY && (p.gesy ?? true)
   const gesyA = rents.map((r, i) => gesyOn ? Math.round(Math.min(r, Math.round(CY_GESY_CAP * fA[i])) * CY_GESY_RATE) : 0)
   let taxCY: number[], taxDE: number[], taxU: number[]
+  let dDE: number[] = Array(10).fill(0)
   const profitCY: number[] = [], profitDE: number[] = []
 
   // Zyprischer Verlustvortrag (5 Jahre): Verluste der Anlaufjahre mindern die
@@ -543,7 +566,7 @@ function computeCore(p: CalcParams): CalcResult {
       return inc + gesyA[i]
     })
     const bDE = pGross * 0.8; let rDE = bDE
-    const dDE: number[] = []
+    dDE = []
     for (let k2 = 0; k2 < 10; k2++) { const d2 = Math.round(rDE * 0.05 * fA[k2]); dDE.push(d2); rDE = Math.max(0, rDE - d2) }
     const deR = deTx / 100
     // Deutsche Bemessungsgrundlage: alle laufenden Kosten sind Werbungskosten.
@@ -584,6 +607,7 @@ function computeCore(p: CalcParams): CalcResult {
     sdMode, sdNumUnits, sdTotalSqm, sdTotalTerr, sdVatDrawn, sdVatYears, sdVatClawback, sdTaxRate,
     rents, mgmt, intC, princC, rateC, restL, prepayC, propV, vatA, taxCY, taxDE, taxU, cfA,
     holder, corpTaxPct, divTaxPct, divPayoutPct, gesyA, profitCY, profitDE, opexA, opexMonthly, maintPct,
+    afaDE: dDE,
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
     vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,

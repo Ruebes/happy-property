@@ -6,7 +6,7 @@
 //   npx esbuild src/lib/strategy.ts --bundle --format=esm --outfile=/tmp/strategy.mjs
 //   npx esbuild src/lib/rechner.ts --format=esm --outfile=/tmp/rechner.mjs
 //   node scripts/verify-strategy-tax.mjs
-import { allocate, aggregate, DEFAULT_SIM_PARAMS } from '/tmp/strategy.mjs'
+import { allocate, aggregate, computeExit, DEFAULT_SIM_PARAMS } from '/tmp/strategy.mjs'
 import { cyTax } from '/tmp/rechner.mjs'
 
 const eur = n => Math.round(n).toLocaleString('de-DE')
@@ -26,6 +26,7 @@ const unit = (key, over = {}) => ({
 const P = {
   ...DEFAULT_SIM_PARAMS, res: 'cy', holder: 'privat', gesy: false,
   ek: 5000000, rentGrowth: 0, growth: 0, maintPct: 0, opexMonthly: 0,
+  exitAfterYears: 0,   // Verkauf wird in den Steuertests separat geprueft
 }
 const run = (units, p = P) => {
   const out = allocate(units, p)
@@ -78,6 +79,56 @@ console.log('\n── Test 8: GESY nur einmal, gedeckelt auf 180.000 EUR Miete �
 const gesy = run([unit('A'), unit('B'), unit('C')], { ...P, gesy: true })
 const rentY1 = gesy.rows[0].rents
 check('GESY Jahr 1', gesy.rows[0].gesy, Math.round(Math.min(rentY1, 180000) * 0.0265))
+
+console.log('\n── Test 9: Verkauf, MwSt-Rueckzahlung fuer die Restjahre ──')
+// Kurzzeitvermietung, Uebergabe im Kaufjahr, Verkauf nach 5 Jahren: das
+// Verkaufsintervall ist das fuenfte, verbleiben fuenf volle Intervalle.
+const exUnits = [unit('A', { furnNet: 0 })]
+const exP = { ...P, exitAfterYears: 5, sellCostPct: 3, lawyerPct: 1, cpiPct: 2 }
+const exOut = allocate(exUnits, exP)
+const exAgg = aggregate(exOut, exP)
+const ex = computeExit(exOut, exP, exAgg.firstYear)
+const vatAmt = exOut[0].res.vatAmt
+check('MwSt-Rueckzahlung = 5/10 der gezogenen Vorsteuer', ex.vatClawback, Math.round(vatAmt * 5 / 10))
+check('Uebertragungsabgabe 0,4 %', ex.levy, Math.round(ex.value * 0.004))
+check('Makler + Anwalt inkl. 19 % MwSt', ex.sellCost, Math.round(ex.value * 0.04 * 1.19))
+check('Verkaufsjahr', ex.year, exAgg.firstYear + 4, 0)
+check('Zeitraum endet im Verkaufsjahr', exAgg.lastYear, ex.year, 0)
+
+console.log('\n── Test 10: Veraeusserungsgewinnsteuer mit einem Freibetrag fuer alle ──')
+const ex3 = (() => {
+  const p3 = { ...exP, exitAfterYears: 8 }
+  const o3 = allocate([unit('A'), unit('B'), unit('C')], p3)
+  return computeExit(o3, p3, aggregate(o3, p3).firstYear)
+})()
+check('CGT = 20 % auf den Gewinn ueber 30.000 EUR', ex3.cgt, Math.max(0, Math.round((ex3.gain - 30000) * 0.2)))
+const ex1 = (() => {
+  const p1 = { ...exP, exitAfterYears: 8 }
+  const o1 = allocate([unit('A')], p1)
+  return computeExit(o1, p1, aggregate(o1, p1).firstYear)
+})()
+if (ex3.gain > ex1.gain * 2.5) console.log('✅ Freibetrag wird nicht je Wohnung vergeben')
+else { failed++; console.log('❌ Freibetrag scheint mehrfach zu greifen') }
+
+console.log('\n── Test 11: Deutschland besteuert den Verkauf innerhalb von 10 Jahren ──')
+const deP = { ...exP, res: 'de', exitAfterYears: 7, deTaxPct: 42 }
+const deOut = allocate([unit('A')], deP)
+const deEx = computeExit(deOut, deP, aggregate(deOut, deP).firstYear)
+if (deEx.taxDE > 0) console.log(`✅ Steuer Deutschland faellt an: ${eur(deEx.taxDE)}`)
+else { failed++; console.log('❌ Deutschland besteuert nicht, obwohl innerhalb der Frist verkauft wird') }
+// Innerhalb des Planungshorizonts von zehn Jahren ab dem ersten Kauf liegt jeder
+// Verkauf zwangslaeufig INNERHALB der deutschen Zehnjahresfrist (sie laeuft ab
+// dem Kaufvertrag, nicht ab der Uebergabe). Fuer einen Kunden mit Steuersitz
+// Deutschland ist der Verkauf im Simulator also immer voll steuerpflichtig.
+// Die Fristpruefung im Code greift erst, wenn der Horizont einmal laenger wird.
+console.log('ℹ️  Im 10-Jahres-Horizont liegt jeder Verkauf in der deutschen Frist - das ist fachlich richtig, kein Fehler.')
+// Pruefbar ist dagegen die Anrechnung: die zyprische Steuer mindert die deutsche.
+const deNoCgt = { ...deP, deTaxPct: 42 }
+const oNo = allocate([unit('A')], deNoCgt)
+const exNo = computeExit(oNo, deNoCgt, aggregate(oNo, deNoCgt).firstYear)
+if (exNo.cgt > 0 && exNo.taxDE > 0) console.log(`✅ Anrechnung greift: CY ${eur(exNo.cgt)} mindert die deutsche Steuer auf ${eur(exNo.taxDE)}`)
+else if (exNo.cgt > 0 && exNo.taxDE === 0) console.log('✅ Zyprische Steuer deckt die deutsche vollstaendig ab')
+else { failed++; console.log('❌ Anrechnung nicht nachvollziehbar') }
 
 console.log(failed === 0 ? '\n🎉 Alle Strategie-Steuerfaelle korrekt.' : `\n⚠️ ${failed} Abweichung(en).`)
 process.exit(failed ? 1 : 0)

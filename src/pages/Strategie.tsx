@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, DEFAULT_SIM_PARAMS,
+  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, computeExit, DEFAULT_SIM_PARAMS,
   type SimUnit, type SimParams, type StrategyConfig, type YearRow,
 } from '../lib/strategy'
 
@@ -191,7 +191,8 @@ export default function Strategie() {
 
   const outcomes = useMemo(() => units.length ? allocate(units, params) : [], [units, params])
   const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
-  const totals = useMemo(() => totalsOf(outcomes, agg.rows), [outcomes, agg])
+  const exit = useMemo(() => computeExit(outcomes, params, agg.firstYear), [outcomes, params, agg.firstYear])
+  const totals = useMemo(() => totalsOf(outcomes, agg.rows, params, exit), [outcomes, agg, params, exit])
 
   if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
   if (err || !units.length) return <Centered>{err || t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
@@ -229,6 +230,7 @@ export default function Strategie() {
             { l: t('strategie.kpiDebt', 'Kredit noch offen'), v: eur(totals.debtEnd) },
             { l: t('strategie.kpiRoe5', 'EK-Rendite nach 5 Jahren'), v: pct(totals.roe5) },
             { l: t('strategie.kpiRoe10', 'EK-Rendite nach 10 Jahren'), v: pct(totals.roe10) },
+            ...(isFinite(totals.irr) ? [{ l: t('strategie.kpiIrr', 'Rendite pro Jahr (IRR)'), v: pct(totals.irr * 100) }] : []),
           ].map(k => (
             <div key={k.l} style={{ ...card, padding: isMobile ? 12 : 16, borderTop: `3px solid ${k.hero ? CORAL : '#e6e3dd'}` }}>
               <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: '#8a8a8a' }}>{k.l}</div>
@@ -352,6 +354,47 @@ export default function Strategie() {
             </tbody>
           </table>
         </div>
+
+        {/* Verkauf */}
+        {exit && (
+          <>
+            <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>
+              {t('strategie.exitTitle', 'Geplanter Verkauf nach {{n}} Jahren', { n: params.exitAfterYears })}
+            </h2>
+            <div style={{ ...card, marginBottom: 22 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <tbody>
+                  {([
+                    [t('strategie.exValue', 'Wert der Wohnungen im Jahr {{y}}', { y: exit.year }), exit.value],
+                    [t('strategie.exDebt', 'Kredit ablösen'), -exit.debt],
+                    [t('strategie.exSell', 'Makler und Anwalt inkl. MwSt'), -exit.sellCost],
+                    [t('strategie.exLevy', 'Übertragungsabgabe'), -exit.levy],
+                    [t('strategie.exVat', 'Rückzahlung erstatteter MwSt'), -exit.vatClawback],
+                    [t('strategie.exCgt', 'Veräußerungsgewinnsteuer Zypern'), -exit.cgt],
+                    ...(exit.taxDE ? [[t('strategie.exDe', 'Steuer in Deutschland'), -exit.taxDE]] : []),
+                    ...(exit.divTax ? [[t('strategie.exDiv', 'Steuer auf die Ausschüttung'), -exit.divTax]] : []),
+                  ] as Array<[string, number]>).filter(([, v]) => v !== 0).map(([label, val]) => (
+                    <tr key={label} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                      <td style={{ padding: '8px 0', fontSize: 13.5, color: '#555' }}>{label}</td>
+                      <td style={{ ...td, padding: '8px 0' }}>{val < 0 ? `−${eur(Math.abs(val))}` : eur(val)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td style={{ padding: '12px 0 0', fontSize: 15, fontWeight: 700, color: DARK }}>
+                      {t('strategie.exNet', 'Das bleibt nach dem Verkauf')}
+                    </td>
+                    <td style={{ ...td, padding: '12px 0 0', fontSize: isMobile ? 18 : 22, fontWeight: 800, color: CORAL, fontFamily: SERIF }}>
+                      {eur(exit.net)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p style={{ fontSize: 12, color: '#777', lineHeight: 1.6, margin: '12px 0 0' }}>
+                {t('strategie.exNote', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Die Mehrwertsteuer, die bei Kurzzeitvermietung erstattet wurde, ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen; das ist oben berücksichtigt.')}
+              </p>
+            </div>
+          </>
+        )}
 
         {/* Annahmen + Hinweis */}
         <div style={{ ...card, marginBottom: 18 }}>
