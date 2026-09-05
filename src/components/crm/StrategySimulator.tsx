@@ -4,9 +4,9 @@ import { supabase } from '../../lib/supabase'
 import { CustomSelect } from '../CustomSelect'
 import { createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, ymOf, rentFromSeason,
-  computeExit, breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS,
-  type SimUnit, type SimParams,
+  roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
+  breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
+  type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult,
 } from '../../lib/strategy'
 import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
 
@@ -181,15 +181,21 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
     setPickerOpen(false)
   }
 
-  const outcomes = useMemo(() => units.length ? allocate(units, params) : [], [units, params])
-  const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
-  const exit = useMemo(() => computeExit(outcomes, params, agg.firstYear), [outcomes, params, agg.firstYear])
-
-  // Gesamt-Kennzahlen über den Horizont
-  const totals = useMemo(() => totalsOf(outcomes, agg.rows, params, exit), [agg, outcomes, params, exit])
+  // Drei Szenarien aus EINER Berechnung: Basis sind Svens Einstellungen, die
+  // anderen beiden werden daraus abgeleitet. Angezeigt wird das gewählte.
+  const [scKey, setScKey] = useState<ScenarioKey>('basis')
+  const scenarios = useMemo(() => units.length ? runScenarios(units, params) : null, [units, params])
+  const active = scenarios?.[scKey] ?? null
+  const outcomes = active?.outcomes ?? []
+  const agg = useMemo(() => active
+    ? { rows: active.rows, firstYear: active.firstYear, lastYear: active.lastYear, bridgeNeeded: active.bridgeNeeded, bridgePeak: active.bridgePeak }
+    : { rows: [], firstYear: now.getFullYear(), lastYear: now.getFullYear(), bridgeNeeded: false, bridgePeak: 0 }, [active])
+  const exit = active?.exit ?? null
+  const totals = active?.totals ?? null
   // Break-even rechnet die ganze Strategie mehrfach durch - nur bei Bedarf.
   const [beOpen, setBeOpen] = useState(false)
   const breakEven = useMemo(() => beOpen && units.length ? breakEvenGrowth(units, params) : NaN, [beOpen, units, params])
+  const risks = useMemo(() => scenarios ? assessRisk(scenarios, breakEven) : [], [scenarios, breakEven])
 
   // ── Für den Kunden freigeben ───────────────────────────────────────────────
   // Speichert den aktuellen Stand SOFORT (nicht entprellt), schaltet den
@@ -595,7 +601,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             </button>
           )}
 
-          {outcomes.length > 0 && (<>
+          {outcomes.length > 0 && totals && scenarios && (<>
             {/* EK-Verteilung */}
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{t('crm.sim.ekTitle', 'Eigenkapital-Verteilung')}</p>
@@ -629,6 +635,93 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                 {t('crm.sim.bridgeText', 'Die Kaufraten übersteigen das Eigenkapital in der Spitze um {{peak}}. Die Bauzeitzinsen darauf sind in den Zinsen enthalten.', { peak: eur(agg.bridgePeak) })}
               </div>
             )}
+
+            {/* ── Szenarien ─────────────────────────────────────────────────
+                Drei Blickwinkel auf dieselbe Strategie. Basis sind die
+                Einstellungen oben, die anderen beiden werden daraus abgeleitet.
+                Farben bewusst zurückhaltend: die Ampel unten trägt die Aussage. */}
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mr-1">
+                  {t('crm.sim.scenarios', 'Szenarien')}
+                </p>
+                {SCENARIO_KEYS.map(k => {
+                  const on = k === scKey
+                  const label = k === 'basis' ? t('crm.sim.scBasis', 'Basis')
+                    : k === 'konservativ' ? t('crm.sim.scCons', 'Konservativ')
+                      : t('crm.sim.scOpt', 'Optimistisch')
+                  return (
+                    <button key={k} onClick={() => setScKey(k)}
+                      className={`px-3 py-1 rounded-lg text-sm border ${on ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}>
+                      {label}
+                    </button>
+                  )
+                })}
+                <span className="text-[11px] text-gray-400">
+                  {t('crm.sim.scHint', 'Wertsteigerung {{g}} % · Mietsteigerung {{r}} % · Zins {{i}} %', {
+                    g: String(active?.params.growth ?? params.growth).replace('.', ','),
+                    r: String(active?.params.rentGrowth ?? params.rentGrowth).replace('.', ','),
+                    i: String(active?.params.interest ?? params.interest).replace('.', ','),
+                  })}
+                </span>
+              </div>
+              <div className="border border-gray-200 rounded-xl overflow-x-auto">
+                <table className="w-full text-sm tabular-nums">
+                  <thead><tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 border-b border-gray-100">
+                    <th className="px-3 py-2">{t('crm.sim.scMetric', 'Kennzahl')}</th>
+                    <th className="px-3 py-2 text-right">{t('crm.sim.scBasis', 'Basis')}</th>
+                    <th className="px-3 py-2 text-right">{t('crm.sim.scCons', 'Konservativ')}</th>
+                    <th className="px-3 py-2 text-right">{t('crm.sim.scOpt', 'Optimistisch')}</th>
+                  </tr></thead>
+                  <tbody>
+                    {([
+                      [t('crm.sim.scValue', 'Immobilienwert am Ende'), (r: ScenarioResult) => eur(r.totals.valueEnd)],
+                      [t('crm.sim.scDebt', 'Restschuld'), (r: ScenarioResult) => eur(r.totals.debtEnd)],
+                      [t('crm.sim.scWorth', 'Netto-Vermögen'), (r: ScenarioResult) => eur(r.totals.netWorth)],
+                      [t('crm.sim.scCf', 'Cashflow kumuliert'), (r: ScenarioResult) => eur(r.totals.cashflow)],
+                      [t('crm.sim.scIrr', 'Interner Zinsfuß'), (r: ScenarioResult) => isFinite(r.totals.irr) ? pct(r.totals.irr * 100) : '–'],
+                      [t('crm.sim.scNet', 'Nettoerlös bei Verkauf'), (r: ScenarioResult) => r.exit ? eur(r.exit.net) : '–'],
+                    ] as Array<[string, (r: ScenarioResult) => string]>).map(([label, get]) => (
+                      <tr key={label} className="border-b border-gray-50 last:border-0">
+                        <td className="px-3 py-1.5 text-gray-600">{label}</td>
+                        <td className="px-3 py-1.5 text-right font-semibold">{get(scenarios.basis)}</td>
+                        <td className="px-3 py-1.5 text-right text-amber-800">{get(scenarios.konservativ)}</td>
+                        <td className="px-3 py-1.5 text-right text-green-800">{get(scenarios.optimistisch)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ── Risiko ────────────────────────────────────────────────────
+                Jede Ampel liest ein konkretes Ergebnis aus den Szenarien ab,
+                die Schwelle steht im Klartext daneben. Keine Fantasiewerte. */}
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                {t('crm.sim.riskTitle', 'Risiko')}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {risks.map(r => {
+                  const dot = r.level === 'gruen' ? 'bg-green-500' : r.level === 'gelb' ? 'bg-amber-400' : 'bg-red-500'
+                  const label = t(`crm.sim.risk_${r.key}`, {
+                    wert: 'Wertentwicklung', breakeven: 'Sicherheitsabstand', cashflow: 'Cashflow',
+                    finanzierung: 'Finanzierung', vermietung: 'Vermietung', exit: 'Verkauf',
+                  }[r.key] ?? r.key)
+                  return (
+                    <div key={r.key} className="flex items-start gap-2 border border-gray-200 rounded-lg px-3 py-2">
+                      <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${dot}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm text-gray-900">
+                          <strong>{label}</strong> · <span className="tabular-nums">{r.value}</span>
+                        </p>
+                        <p className="text-[11px] text-gray-500 leading-snug">{r.note}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
 
             {/* Gesamt-KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">

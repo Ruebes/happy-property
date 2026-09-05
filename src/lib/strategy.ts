@@ -399,6 +399,147 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams): { rows: YearR
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 
+// ── Drei Szenarien ───────────────────────────────────────────────────────────
+// Eine Zahl mit zwei Nachkommastellen suggeriert eine Genauigkeit, die es bei
+// zehn Jahren Immobilienmarkt nicht gibt. Deshalb rechnet der Simulator jede
+// Strategie dreimal: mit Svens eingestellten Annahmen (Basis) und mit einer
+// vorsichtigeren und einer freundlicheren Welt. Abgeleitet wird IMMER aus dem
+// Basis-Szenario, damit der Schieberegler die Grundlage bleibt.
+export type ScenarioKey = 'basis' | 'konservativ' | 'optimistisch'
+
+export interface ScenarioShift {
+  growth: number; rentGrowth: number; interest: number; maint: number; rentFactor: number
+}
+// Bewusst breit angesetzt: eine Bandbreite, die nur die Wertsteigerung um einen
+// halben Punkt verschiebt, beruhigt, statt zu informieren.
+export const SCENARIO_SHIFTS: Record<ScenarioKey, ScenarioShift> = {
+  basis:        { growth: 0,  rentGrowth: 0,  interest: 0,   maint: 0,    rentFactor: 1 },
+  // Wertsteigerung und Mieten schwaecher, Anschlussfinanzierung teurer,
+  // Instandhaltung hoeher, dazu 10 % Ausfall durch Leerstand und Preisdruck.
+  konservativ:  { growth: -2, rentGrowth: -1, interest: 1,   maint: 0.25, rentFactor: 0.9 },
+  // Freundlicher Markt: mehr Wertsteigerung, hoehere Mieten, guenstigere
+  // Finanzierung, planmaessige Instandhaltung.
+  optimistisch: { growth: 2,  rentGrowth: 1,  interest: -0.5, maint: -0.25, rentFactor: 1.05 },
+}
+
+export interface ScenarioResult {
+  key: ScenarioKey
+  params: SimParams
+  units: SimUnit[]
+  outcomes: UnitOutcome[]
+  rows: YearRow[]
+  firstYear: number; lastYear: number
+  bridgeNeeded: boolean; bridgePeak: number
+  exit: ExitResult | null
+  totals: StrategyTotals
+}
+
+export function scenarioParams(p: SimParams, key: ScenarioKey): SimParams {
+  const sh = SCENARIO_SHIFTS[key]
+  return {
+    ...p,
+    growth: Math.max(0, Math.round((p.growth + sh.growth) * 100) / 100),
+    rentGrowth: Math.max(0, Math.round((p.rentGrowth + sh.rentGrowth) * 100) / 100),
+    interest: Math.max(0.1, Math.round((p.interest + sh.interest) * 100) / 100),
+    maintPct: Math.max(0, Math.round((p.maintPct + sh.maint) * 100) / 100),
+  }
+}
+
+export function runScenario(units: SimUnit[], p: SimParams, key: ScenarioKey): ScenarioResult {
+  const sp = scenarioParams(p, key)
+  const factor = SCENARIO_SHIFTS[key].rentFactor
+  const su = factor === 1 ? units : units.map(u => ({ ...u, rent: Math.round(u.rent * factor) }))
+  const outcomes = allocate(su, sp)
+  const agg = aggregate(outcomes, sp)
+  const exit = computeExit(outcomes, sp, agg.firstYear)
+  const totals = totalsOf(outcomes, agg.rows, sp, exit)
+  return { key, params: sp, units: su, outcomes, rows: agg.rows, firstYear: agg.firstYear, lastYear: agg.lastYear, bridgeNeeded: agg.bridgeNeeded, bridgePeak: agg.bridgePeak, exit, totals }
+}
+
+export const SCENARIO_KEYS: ScenarioKey[] = ['basis', 'konservativ', 'optimistisch']
+
+export function runScenarios(units: SimUnit[], p: SimParams): Record<ScenarioKey, ScenarioResult> {
+  return {
+    basis: runScenario(units, p, 'basis'),
+    konservativ: runScenario(units, p, 'konservativ'),
+    optimistisch: runScenario(units, p, 'optimistisch'),
+  }
+}
+
+// ── Risiko ───────────────────────────────────────────────────────────────────
+// Keine erfundene Risikomathematik: Jede Ampel liest ein konkretes Ergebnis aus
+// den drei Szenarien ab und hat eine Schwelle, die im Klartext danebensteht.
+export type RiskLevel = 'gruen' | 'gelb' | 'rot'
+export interface RiskItem { key: string; level: RiskLevel; value: string; note: string }
+
+const worst = (a: number, b: number) => Math.min(a, b)
+
+export function assessRisk(sc: Record<ScenarioKey, ScenarioResult>, breakEven: number): RiskItem[] {
+  const base = sc.basis, kons = sc.konservativ
+  const items: RiskItem[] = []
+
+  // Wertentwicklung: Wie viel Vermoegen kostet die vorsichtige Welt?
+  const wBase = base.exit ? base.exit.net : base.totals.netWorth
+  const wKons = kons.exit ? kons.exit.net : kons.totals.netWorth
+  const drop = wBase > 0 ? (wBase - wKons) / wBase : 1
+  items.push({
+    key: 'wert',
+    level: drop < 0.25 ? 'gruen' : drop < 0.5 ? 'gelb' : 'rot',
+    value: `−${Math.round(drop * 100)} %`,
+    note: 'So viel weniger bleibt im vorsichtigen Szenario am Ende übrig.',
+  })
+
+  // Break-even: Wie viel Luft ist zwischen der angenommenen und der noetigen
+  // Wertsteigerung?
+  const margin = isFinite(breakEven) ? base.params.growth - breakEven : NaN
+  items.push({
+    key: 'breakeven',
+    level: !isFinite(margin) ? 'rot' : margin > 3 ? 'gruen' : margin > 1 ? 'gelb' : 'rot',
+    value: isFinite(breakEven) ? `${String(breakEven).replace('.', ',')} %` : '–',
+    note: 'Nötige Wertsteigerung, damit das Eigenkapital zurückkommt. Angenommen sind ' + String(base.params.growth).replace('.', ',') + ' %.',
+  })
+
+  // Cashflow: Muss der Kunde zuschiessen, und wie viel im schlechten Fall?
+  const cfBase = base.totals.cashflowLastYear, cfKons = kons.totals.cashflowLastYear
+  const cfMin = worst(cfBase, cfKons)
+  items.push({
+    key: 'cashflow',
+    level: cfMin >= 0 ? 'gruen' : cfMin > -12000 ? 'gelb' : 'rot',
+    value: new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(cfMin)) + ' €',
+    note: 'Schlechtester laufender Cashflow eines vollen Jahres, vorsichtiges Szenario eingerechnet.',
+  })
+
+  // Finanzierung: Wie stark haengt das Ergebnis am Zins?
+  const debtShare = base.totals.valueEnd > 0 ? base.totals.debtEnd / base.totals.valueEnd : 0
+  items.push({
+    key: 'finanzierung',
+    level: debtShare < 0.4 ? 'gruen' : debtShare < 0.65 ? 'gelb' : 'rot',
+    value: `${Math.round(debtShare * 100)} %`,
+    note: 'Anteil der Restschuld am Immobilienwert am Ende. Je höher, desto stärker wirkt ein Zinsanstieg.',
+  })
+
+  // Vermietung: Was kostet ein Ausfall von 10 % der Mieten?
+  const rentGap = base.totals.rents > 0 ? (base.totals.rents - kons.totals.rents) / base.totals.rents : 0
+  items.push({
+    key: 'vermietung',
+    level: rentGap < 0.15 ? 'gruen' : rentGap < 0.3 ? 'gelb' : 'rot',
+    value: `−${Math.round(rentGap * 100)} %`,
+    note: 'So viel Miete fehlt im vorsichtigen Szenario über den ganzen Zeitraum.',
+  })
+
+  // Exit: Bleibt nach Steuern und Kosten ueberhaupt etwas uebrig?
+  if (base.exit) {
+    const ratio = base.exit.value > 0 ? base.exit.net / base.exit.value : 0
+    items.push({
+      key: 'exit',
+      level: kons.exit && kons.exit.net > 0 ? (ratio > 0.25 ? 'gruen' : 'gelb') : 'rot',
+      value: `${Math.round(ratio * 100)} %`,
+      note: 'Anteil des Verkaufspreises, der nach Kredit, Kosten und Steuern beim Kunden ankommt.',
+    })
+  }
+  return items
+}
+
 // ── Verkauf am Ende der Strategie ────────────────────────────────────────────
 // Ohne Exit fehlt die halbe Investitionsentscheidung: Wertsteigerung ist nur auf
 // dem Papier, solange nicht verkauft wird, und beim Verkauf greifen drei Steuern

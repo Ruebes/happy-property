@@ -4,8 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 import {
-  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, computeExit, DEFAULT_SIM_PARAMS,
-  type SimUnit, type SimParams, type StrategyConfig, type YearRow,
+  allocate, aggregate, totalsOf, roeMeaningful, migrateConfig, computeExit, runScenarios,
+  SCENARIO_KEYS, DEFAULT_SIM_PARAMS,
+  type SimUnit, type SimParams, type StrategyConfig, type YearRow, type ScenarioResult,
 } from '../lib/strategy'
 
 // ── Öffentlicher Investitions-Fahrplan ───────────────────────────────────────
@@ -193,6 +194,7 @@ export default function Strategie() {
   const agg = useMemo(() => aggregate(outcomes, params), [outcomes, params])
   const exit = useMemo(() => computeExit(outcomes, params, agg.firstYear), [outcomes, params, agg.firstYear])
   const totals = useMemo(() => totalsOf(outcomes, agg.rows, params, exit), [outcomes, agg, params, exit])
+  const scenarios = useMemo(() => units.length ? runScenarios(units, params) : null, [units, params])
 
   if (loading) return <Centered>{t('strategie.loading', 'Lädt…')}</Centered>
   if (err || !units.length) return <Centered>{err || t('strategie.empty', 'Dieser Fahrplan enthält noch keine Wohnungen.')}</Centered>
@@ -355,6 +357,37 @@ export default function Strategie() {
           </table>
         </div>
 
+        {/* Zeitachse: wann tritt welche Wohnung in die Strategie ein */}
+        <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 12px' }}>
+          {t('strategie.timelineTitle', 'Der Fahrplan')}
+        </h2>
+        <div style={{ ...card, marginBottom: 22 }}>
+          {outcomes.map((o, idx) => (
+            <div key={o.unit.key} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', paddingBottom: idx === outcomes.length - 1 ? 0 : 14 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', alignSelf: 'stretch' }}>
+                <span style={{ width: 10, height: 10, borderRadius: 5, background: CORAL, marginTop: 4, flexShrink: 0 }} />
+                {idx < outcomes.length - 1 && <span style={{ width: 2, flex: 1, background: '#eceae6', marginTop: 4 }} />}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: DARK }}>{o.unit.name}</div>
+                <div style={{ fontSize: 12.5, color: '#666', lineHeight: 1.7 }}>
+                  {t('strategie.tlBuy', 'Kauf {{d}}: Eigenkapital und Kaufraten beginnen', { d: mmyyyy(o.unit.buyM, o.unit.buyY) })}<br />
+                  {t('strategie.tlReady', 'Übergabe {{d}}: ab hier Miete, Darlehen und Steuern', { d: mmyyyy(o.unit.readyM, o.unit.readyY) })}
+                </div>
+              </div>
+            </div>
+          ))}
+          {exit && (
+            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', paddingTop: 14, borderTop: '1px solid #f2f0ec', marginTop: 14 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 5, background: DARK, marginTop: 4, flexShrink: 0 }} />
+              <div style={{ fontSize: 12.5, color: '#666' }}>
+                <strong style={{ color: DARK }}>{t('strategie.tlExit', 'Verkauf {{y}}', { y: exit.year })}</strong><br />
+                {t('strategie.tlExitSub', 'Kredit wird abgelöst, der Rest fließt an dich zurück.')}
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Verkauf */}
         {exit && (
           <>
@@ -391,6 +424,68 @@ export default function Strategie() {
               </table>
               <p style={{ fontSize: 12, color: '#777', lineHeight: 1.6, margin: '12px 0 0' }}>
                 {t('strategie.exNote', 'Der Verkauf ist eine Modellannahme. Verkaufspreis, Kosten und Steuern können abweichen. Die Mehrwertsteuer, die bei Kurzzeitvermietung erstattet wurde, ist innerhalb der ersten zehn Jahre anteilig zurückzuzahlen; das ist oben berücksichtigt.')}
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* Drei mögliche Entwicklungen */}
+        {scenarios && (
+          <>
+            <h2 style={{ fontFamily: SERIF, fontSize: isMobile ? 17 : 20, color: DARK, margin: '0 0 6px' }}>
+              {t('strategie.scTitle', 'Drei mögliche Entwicklungen')}
+            </h2>
+            <p style={{ fontSize: 12.5, color: '#666', margin: '0 0 12px', lineHeight: 1.7 }}>
+              {t('strategie.scIntro', 'Niemand kennt den Markt der nächsten Jahre. Deshalb steht dieselbe Strategie hier dreimal: mit den geplanten Annahmen, mit vorsichtigeren und mit freundlicheren.')}
+            </p>
+            <div style={{ ...card, padding: 0, overflowX: 'auto', marginBottom: 22 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #eee' }}>
+                    <th style={{ ...th, textAlign: 'left' }}>{t('strategie.scMetric', 'Kennzahl')}</th>
+                    <th style={th}>{t('strategie.scBasis', 'Wie geplant')}</th>
+                    <th style={th}>{t('strategie.scCons', 'Vorsichtig')}</th>
+                    <th style={th}>{t('strategie.scOpt', 'Freundlich')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([
+                    [t('strategie.scValue', 'Immobilienwert am Ende'), (r: ScenarioResult) => eur(r.totals.valueEnd)],
+                    [t('strategie.scDebt', 'Kredit noch offen'), (r: ScenarioResult) => eur(r.totals.debtEnd)],
+                    [t('strategie.scWorth', 'Netto-Vermögen'), (r: ScenarioResult) => eur(r.totals.netWorth)],
+                    [t('strategie.scCf', 'Cashflow zusammen'), (r: ScenarioResult) => eur(r.totals.cashflow)],
+                    [t('strategie.scIrr', 'Rendite pro Jahr'), (r: ScenarioResult) => isFinite(r.totals.irr) ? pct(r.totals.irr * 100) : '–'],
+                    [t('strategie.scNet', 'Erlös nach Verkauf'), (r: ScenarioResult) => r.exit ? eur(r.exit.net) : '–'],
+                  ] as Array<[string, (r: ScenarioResult) => string]>).map(([label, get]) => (
+                    <tr key={label} style={{ borderBottom: '1px solid #f5f3f0' }}>
+                      <td style={{ padding: '8px 10px', fontSize: 13, color: '#555' }}>{label}</td>
+                      {SCENARIO_KEYS.map(k => (
+                        <td key={k} style={{ ...td, fontWeight: k === 'basis' ? 700 : 400, color: k === 'basis' ? DARK : '#666' }}>
+                          {get(scenarios[k])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ ...card, marginBottom: 22 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, color: DARK, marginBottom: 8 }}>
+                {t('strategie.riskTitle', 'Was kann das Ergebnis beeinflussen?')}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: '#555', lineHeight: 1.9 }}>
+                {[
+                  t('strategie.risk1', 'Die tatsächliche Wertentwicklung der Immobilien'),
+                  t('strategie.risk2', 'Auslastung und Höhe der Mieten'),
+                  t('strategie.risk3', 'Zinsen bei der Anschlussfinanzierung'),
+                  t('strategie.risk4', 'Instandhaltung und Gemeinschaftskosten'),
+                  t('strategie.risk5', 'Der tatsächlich erzielte Verkaufspreis'),
+                  t('strategie.risk6', 'Änderungen im Steuerrecht'),
+                ].map(x => <li key={x}>{x}</li>)}
+              </ul>
+              <p style={{ fontSize: 12, color: '#777', margin: '10px 0 0', lineHeight: 1.6 }}>
+                {t('strategie.riskNote', 'Die Berechnung ist eine Szenariosimulation und keine Garantie für die zukünftige Entwicklung.')}
               </p>
             </div>
           </>
