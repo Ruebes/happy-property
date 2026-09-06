@@ -18,7 +18,7 @@ import {
   type SimUnit, type SimParams, type UnitOutcome, type YearRow,
   type LoanTranche, type SaleResult, type StrategyTotals,
 } from './strategy'
-import { CY_CGT_ALLOWANCE } from './rechner'
+import { CY_CGT_ALLOWANCE, irrCalc } from './rechner'
 
 // ── Ereignisse ───────────────────────────────────────────────────────────────
 export interface PurchaseEvent {
@@ -46,6 +46,8 @@ export interface CapitalFlow {
   year: number
   startingCash: number
   operatingCashflow: number     // Miete abzueglich Kosten, Rate und Steuern
+  vatRefund: number             // Kapitalereignis, kein laufender Ertrag
+  investorEquity: number        // zusaetzliches Geld des Investors in diesem Jahr
   refinancingProceeds: number
   saleProceeds: number
   purchaseEquity: number        // Eigenkapital in neue Objekte
@@ -91,6 +93,16 @@ export interface ReinvestYear {
 }
 
 export interface ReinvestKpis {
+  // ── Kapitaltrennung (Sven 6.9.26) ─────────────────────────────────────────
+  // Geld des Investors und Kapital, das die Strategie selbst freisetzt, duerfen
+  // nie vermischt werden.
+  startingEquity: number          // Startkapital
+  investorContributions: number   // spaetere Einzahlungen des Investors
+  totalInvestorCapital: number    // beides zusammen
+  selfFunding: boolean            // Modus: ohne weiteres Geld des Investors
+  selfFundingBreaks: number | null // Jahr, in dem der Modus nicht mehr traegt
+  selfFundingReason: string | null
+  operatingPositiveFrom: number | null  // ab wann der operative Cashflow traegt
   additionalPurchases: number
   refinancings: number
   sales: number
@@ -223,6 +235,9 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   // Ohne diese Zeile wuerde der Motor so tun, als haette der Kunde ausser den
   // Wohnungen keinen Cent - und ein negativer Cashflow liefe sofort ins Minus.
   let cash = Math.max(0, p.ek - outcomes.reduce((a, o) => a + o.ekUsed, 0))
+  let investorTotal = 0
+  let breakYear: number | null = null
+  let breakReason: string | null = null
   let purchases = 0, refis = 0
   let recycled = 0, refiProceeds = 0, saleProceedsTotal = 0
   let maxPriceSeen = 0
@@ -239,8 +254,14 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   for (let y = firstYear; y <= lastYear; y++) {
     const row = rows.find(r => r.year === y)
     const startingCash = cash
-    const operating = row ? row.cashflow : 0
-    cash += operating
+    // Operativer Cashflow und Mehrwertsteuer-Erstattung getrennt fuehren: die
+    // Erstattung ist ein einmaliges Kapitalereignis, kein laufender Ertrag.
+    const operating = row ? row.operating : 0
+    const vatIn = row ? row.vat : 0
+    // Zusaetzliches Eigenkapital des Investors, nur im Wachstumsmodus.
+    const investorIn = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
+    investorTotal += investorIn
+    cash += operating + vatIn + investorIn
 
     // ── Verkaeufe dieses Jahres ─────────────────────────────────────────────
     let saleIn = 0
@@ -376,10 +397,13 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       const probeRows = aggregate(probeOutcomes, p, { tranches, saleYears, untilYear: lastYear }).rows
       let probeCash = cash - need.equity
       let sustainable = probeCash >= p.minimumCashReserve
+      const yearlyInvestor = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
       if (sustainable) {
         for (const pr of probeRows) {
           if (pr.year <= y) continue
-          probeCash += pr.cashflow
+          // Kuenftige Einzahlungen des Investors zaehlen mit - im
+          // selbsttragenden Modus ist dieser Betrag null.
+          probeCash += pr.cashflow + yearlyInvestor
           // Kuenftige Verkaufserloese entlasten die Kasse wieder.
           for (const o of probeOutcomes) {
             if (saleYears.get(o.unit.key) === pr.year) {
@@ -428,10 +452,19 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       }
     }
 
+    // Selbsttragend heisst: Das Portfolio kommt ohne weiteres Geld des Investors
+    // aus. Faellt die Kasse trotzdem unter null, waere ein Zuschuss noetig -
+    // das wird gemeldet, nicht stillschweigend gedeckt.
+    if (p.selfFundingOnly && breakYear == null && cash < 0) {
+      breakYear = y
+      breakReason = 'Die Liquidität reicht ohne zusätzliches Eigenkapital nicht aus.'
+    }
     flows.push({
       year: y,
       startingCash: round(startingCash),
       operatingCashflow: round(operating),
+      vatRefund: round(vatIn),
+      investorEquity: round(investorIn),
       refinancingProceeds: round(events.filter(e => e.kind === 'refinance' && e.year === y).reduce((a, e) => a + (e as RefinanceEvent).newLoanAmount, 0)),
       saleProceeds: round(saleIn),
       purchaseEquity: round(events.filter(e => e.kind === 'purchase' && e.year === y).reduce((a, e) => a + (e as PurchaseEvent).equity, 0)),
@@ -443,7 +476,28 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   // Abschliessende Rechnung mit dem fertigen Zustand.
   const agg = aggregate(outcomes, p, { tranches, saleYears, untilYear: lastYear })
   rows = agg.rows
-  const totals = totalsOf(outcomes, rows, p, null)
+  const years0 = rows
+  const totalsBase = totalsOf(outcomes, rows, p, null)
+
+  // ── Rendite aus Sicht des Investors ───────────────────────────────────────
+  // Im Reinvestment-Modus bleibt jeder Euro in der Strategie: Mieten wandern in
+  // die Kasse und von dort in die naechste Wohnung. Ausgezahlt wird nichts.
+  // Deshalb ist die ehrliche Sicht: der Investor zahlt sein Startkapital ein,
+  // legt gegebenenfalls monatlich nach, und bekommt am Ende das, was da ist -
+  // Immobilien abzueglich Schulden, gebundenes Kapital und die Kasse.
+  // Die laufenden Cashflows als Zufluss zu zaehlen UND die daraus entstandene
+  // Kasse noch einmal am Ende, waere doppelt.
+  const lastRowForIrr = rows[rows.length - 1]
+  const endWorth = lastRowForIrr
+    ? lastRowForIrr.value + lastRowForIrr.committed - lastRowForIrr.debt + cash
+    : cash
+  const investorFlows: number[] = rows.map((r, i) => {
+    const put = i === 0 ? p.ek : 0
+    const add = flows.find(fl => fl.year === r.year)?.investorEquity ?? 0
+    return -(put + add)
+  })
+  if (investorFlows.length) investorFlows[investorFlows.length - 1] += endWorth
+  const totals: StrategyTotals = { ...totalsBase, irr: irrCalc(investorFlows) }
 
   // Jahreszeilen fuer die spaetere Kundenauswertung.
   let cumCf = 0, cumTax = 0, cumPurch = 0, cumSales = 0
@@ -482,7 +536,16 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
 
   const lastRow = rows[rows.length - 1]
   const originalEquity = p.ek
+  // Ab wann traegt sich das Portfolio operativ selbst?
+  const firstPositive = years0.find(y => y.rents > 0 && y.operating > 0)
   const kpis: ReinvestKpis = {
+    startingEquity: originalEquity,
+    investorContributions: round(investorTotal),
+    totalInvestorCapital: round(originalEquity + investorTotal),
+    selfFunding: p.selfFundingOnly,
+    selfFundingBreaks: breakYear,
+    selfFundingReason: breakReason,
+    operatingPositiveFrom: firstPositive ? firstPositive.year : null,
     additionalPurchases: purchases,
     refinancings: refis,
     sales: sales.length,

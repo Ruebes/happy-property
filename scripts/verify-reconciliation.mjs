@@ -81,7 +81,8 @@ const r = runReinvest(UNITS, ON)
 let cash = Math.max(0, ON.ek - r.outcomes.filter(o => !o.unit.model).reduce((x, o) => x + o.ekUsed, 0))
 let ok = true, firstBad = null
 for (const fl of r.flows) {
-  const expected = fl.startingCash + fl.operatingCashflow + fl.refinancingProceeds + fl.saleProceeds - fl.purchaseEquity - fl.purchaseCosts
+  const expected = fl.startingCash + fl.operatingCashflow + fl.vatRefund + fl.investorEquity
+    + fl.refinancingProceeds + fl.saleProceeds - fl.purchaseEquity - fl.purchaseCosts
   if (Math.abs(expected - fl.endingCash) > 3) { ok = false; firstBad = firstBad ?? fl.year }
 }
 T('jede Jahreskasse geht auf', ok, firstBad ? `zuerst ${firstBad}` : 'alle Jahre')

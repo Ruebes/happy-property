@@ -187,7 +187,8 @@ T('ohne Kapital kein Kaufpreis', maxAffordablePrice(model, P, 0, 2030) === 0)
 console.log('\n── Kapitalfluss und Kennzahlen ──')
 T('Kassenfortschreibung ist in sich stimmig',
   cycle.flows.every((f, i) => {
-    const expected = f.startingCash + f.operatingCashflow + f.refinancingProceeds + f.saleProceeds - f.purchaseEquity
+    const expected = f.startingCash + f.operatingCashflow + f.vatRefund + f.investorEquity
+      + f.refinancingProceeds + f.saleProceeds - f.purchaseEquity - f.purchaseCosts
     return Math.abs(expected - f.endingCash) < 3
   }))
 T('Anfangsbestand jedes Jahres ist der Endbestand des Vorjahres',

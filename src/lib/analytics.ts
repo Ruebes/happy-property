@@ -192,7 +192,10 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     ? { rows: ri.rows, firstYear: ri.firstYear, lastYear: ri.lastYear }
     : (() => { const a = aggregate(outcomes, params); return { rows: a.rows, firstYear: a.firstYear, lastYear: a.lastYear } })()
   const exit: ExitResult | null = ri ? null : computeExit(outcomes, params, agg.firstYear)
-  const totals = totalsOf(outcomes, agg.rows, params, exit)
+  // Im Reinvestment-Modus rechnet der Motor die Rendite aus Sicht des Investors
+  // (Einzahlungen raus, Endwert rein). Diese Zahl gilt fuer die ganze Seite -
+  // sonst stuenden in Kennzahl und Szenariovergleich zwei verschiedene Renditen.
+  const totals = ri ? ri.totals : totalsOf(outcomes, agg.rows, params, exit)
 
   // ── Vermoegen ──────────────────────────────────────────────────────────────
   const cashByYear = new Map<number, number>()

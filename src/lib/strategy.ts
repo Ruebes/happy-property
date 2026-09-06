@@ -86,6 +86,13 @@ export interface SimParams {
   minimumCashReserve: number        // Liquiditaet, die nie angetastet wird
   maxAdditionalPurchases: number    // Obergrenze gegen Endlosschleifen
   autoReinvest: boolean             // Modellobjekte automatisch kaufen?
+  // ── Zwei Strategiemodi (Sven 6.9.26) ──────────────────────────────────────
+  // Selbsttragend: Nach dem Startkapital fliesst KEIN weiteres Geld des
+  // Investors. Weitere Kaeufe muessen aus dem bestehenden Portfolio kommen.
+  // Wachstum: Der Investor legt monatlich etwas nach; das ist zusaetzliches
+  // Eigenkapital und wird in Cashflow und Rendite voll beruecksichtigt.
+  selfFundingOnly: boolean
+  additionalEquityMonthly: number
 }
 
 export interface UnitOutcome {
@@ -103,6 +110,11 @@ export interface YearRow {
   si: number               // Sozialversicherung des selbststaendigen Vermieters
   // Laufende Kosten der Wohnungen (Gemeinschaftskosten + Instandhaltungsruecklage)
   opex: number
+  // Operativer Cashflow: Miete abzueglich laufender Kosten, Zinsen, Tilgung und
+  // Steuern. OHNE Mehrwertsteuer-Erstattung, ohne Kaeufe, ohne Refinanzierung
+  // und ohne Verkaufserloese - das sind Kapitalereignisse und duerfen ein
+  // operativ defizitaeres Portfolio nicht schoenrechnen (Sven 6.9.26).
+  operating: number
   // Steuerliche Bemessungsgrundlagen ALLER Wohnungen dieses Jahres, aus denen
   // die Steuer fuer die Person/Gesellschaft als Ganzes gerechnet wird.
   baseCY: number; baseDE: number
@@ -188,6 +200,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5,
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
+  selfFundingOnly: true, additionalEquityMonthly: 0,
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -481,7 +494,7 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
     : horizonEnd)
   const rows: YearRow[] = []
   for (let y = firstYear; y <= lastYear; y++) {
-    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, si: 0, opex: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
+    const row: YearRow = { year: y, rents: 0, mgmt: 0, interest: 0, principal: 0, taxes: 0, vat: 0, cashflow: 0, invest: 0, debt: 0, value: 0, committed: 0, bridgeInterest: 0, bridgeDebt: 0, taxCY: 0, taxDE: 0, gesy: 0, si: 0, opex: 0, operating: 0, baseCY: 0, baseDE: 0, unitTax: 0 }
     for (const o of outcomes) {
       // Nach dem Verkaufsjahr existiert die Wohnung nicht mehr: keine Miete,
       // keine Kosten, kein Wert, keine Schuld, keine Steuer.
@@ -579,6 +592,8 @@ export function aggregate(outcomes: UnitOutcome[], p?: SimParams, extras?: Aggre
   // Steuer zum Schluss: sie braucht die fertigen Bemessungsgrundlagen inklusive
   // der Bauzeitzinsen und der Refinanzierungstranchen.
   if (p) applyPortfolioTax(rows, p, outcomes.some(o => o.unit.letType === 'short'))
+  // Operativer Cashflow: derselbe Cashflow ohne die MwSt-Erstattung.
+  for (const r of rows) r.operating = r.cashflow - r.vat
   return { rows, firstYear, lastYear, bridgeNeeded: bridgePeak > 0.5, bridgePeak }
 }
 
