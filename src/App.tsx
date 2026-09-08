@@ -38,6 +38,7 @@ const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
 const Bewertung = lazy(() => import('./pages/Bewertung'))
 const Funnel   = lazy(() => import('./pages/Funnel'))
+const ZypernCheck = lazy(() => import('./pages/ZypernCheck'))
 const Anmelden = lazy(() => import('./pages/Anmelden'))
 const PartnerReview = lazy(() => import('./pages/PartnerReview'))
 const PartnerAkte = lazy(() => import('./pages/PartnerAkte'))
@@ -56,6 +57,7 @@ const VerwalterDashboard  = lazy(() => import('./pages/verwalter/Dashboard'))
 const EigentuemerDashboard   = lazy(() => import('./pages/eigentuemer/Dashboard'))
 const EigentuemerProperties  = lazy(() => import('./pages/eigentuemer/Properties'))
 const EigentuemerDownloads   = lazy(() => import('./pages/eigentuemer/Downloads'))
+const EigentuemerDrive       = lazy(() => import('./pages/eigentuemer/Drive'))
 
 // Admin-Seiten
 const AdminUsers        = lazy(() => import('./pages/admin/Users'))
@@ -148,6 +150,8 @@ export default function App() {
             <Route path="/set-password" element={<SetPassword />} />
             {/* Öffentliches Sales-Deck (per Token, kein Login) */}
             <Route path="/termin" element={<Funnel />} />
+            {/* Landeseite fuer ChatGPT-Anzeigen: Antwort + Rechner + Termin */}
+            <Route path="/zypern-check" element={<ZypernCheck />} />
             <Route path="/anmelden" element={<Anmelden />} />
             <Route path="/partner/:token" element={<PartnerReview />} />
             <Route path="/akte/:token" element={<PartnerAkte />} />
@@ -272,6 +276,7 @@ export default function App() {
               <Route path="/eigentuemer/dashboard"      element={<EigentuemerDashboard />} />
               <Route path="/eigentuemer/properties"     element={<EigentuemerProperties />} />
               <Route path="/eigentuemer/downloads"      element={<EigentuemerDownloads />} />
+              <Route path="/eigentuemer/drive"          element={<EigentuemerDrive />} />
               <Route path="/eigentuemer/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 

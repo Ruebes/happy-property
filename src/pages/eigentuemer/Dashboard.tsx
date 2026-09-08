@@ -507,6 +507,17 @@ export default function EigentuemerDashboard() {
         </div>
       )}
 
+      {/* ── Meine Dateien (Google-Drive-Kundenordner) ─────── */}
+      <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <p className="font-semibold text-hp-black font-body text-sm">📁 {t('eigentuemer.driveCard.title', 'Meine Dateien (Google Drive)')}</p>
+          <p className="text-xs text-gray-400 mt-0.5">{t('eigentuemer.driveCard.subtitle', 'Verträge und Unterlagen hochladen oder ansehen. Lotte informiert alle Beteiligten automatisch.')}</p>
+        </div>
+        <Link to="/eigentuemer/drive" className="px-5 py-2.5 rounded-xl text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
+          {t('eigentuemer.driveCard.btn', 'Dateien öffnen')}
+        </Link>
+      </div>
+
       {/* ── Problem melden ─────────────────────────────────── */}
       <div className="mt-8 bg-white rounded-2xl border border-gray-100 shadow-sm p-5 flex items-center justify-between gap-3 flex-wrap">
         <div>

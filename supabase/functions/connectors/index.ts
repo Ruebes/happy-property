@@ -90,6 +90,19 @@ const CHECKS: Check[] = [
     const tok = Deno.env.get('TIMELINES_API_KEY') ?? ''
     return tok ? { ok: true, detail: 'Schlüssel hinterlegt (Versand aktiv).' } : { ok: false, detail: 'TIMELINES_API_KEY fehlt.' }
   } },
+  { key: 'GOOGLE_DRIVE_UPLOAD', label: 'Google Drive — Upload aus dem Eigentümerportal', run: async (sb) => {
+    // Der Service-Account kann nicht hochladen (kein Speicherplatz) — das Portal
+    // lädt im Namen von Svens Google-Konto hoch (yt-oauth?target=drive).
+    const [cid, csec, rtok] = await Promise.all([secretOf(sb, 'YOUTUBE_CLIENT_ID'), secretOf(sb, 'YOUTUBE_CLIENT_SECRET'), secretOf(sb, 'GOOGLE_DRIVE_REFRESH_TOKEN')])
+    if (!rtok) return { ok: false, detail: 'Nicht verbunden — Kunden können im Portal noch nichts hochladen. „Verbinden" klicken (Google-Konto mit Zugriff auf „Happy Property Kunden").' }
+    if (!cid || !csec) return { ok: false, detail: 'YouTube-Client-ID/-Secret fehlen (gleicher OAuth-Client).' }
+    const tr = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }), ...timeout(8000) }).then(r => r.json()).catch(() => ({})) as { access_token?: string; error?: string }
+    if (!tr.access_token) return { ok: false, detail: `Token abgelehnt (${tr.error ?? 'unbekannt'}) — bitte neu verbinden.` }
+    const about = await fetch('https://www.googleapis.com/drive/v3/about?fields=user,storageQuota', { headers: { Authorization: `Bearer ${tr.access_token}` }, ...timeout(8000) }).then(r => r.json()).catch(() => ({})) as { user?: { emailAddress?: string }; storageQuota?: { limit?: string; usage?: string } }
+    const gb = (x?: string) => x ? (Number(x) / 1073741824).toFixed(1) : '?'
+    return { ok: !!about.user, detail: about.user ? `Verbunden als ${about.user.emailAddress} · ${gb(about.storageQuota?.usage)} / ${gb(about.storageQuota?.limit)} GB belegt` : 'Drive-API antwortet nicht.' }
+  } },
   { key: 'GOOGLE_SA', label: 'Google Drive & Kalender (Service-Account)', run: async () => {
     const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON') ?? ''
     try { const j = JSON.parse(raw); return { ok: true, detail: `Aktiv als ${j.client_email}` } }

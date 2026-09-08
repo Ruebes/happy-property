@@ -126,7 +126,8 @@
     "profile": "Profile",
     "menu": "Menu",
     "downloads": "Downloads",
-    "buildIdTitle": "Build of this interface. If the date is old, close the tab and open it again."
+    "buildIdTitle": "Build of this interface. If the date is old, close the tab and open it again.",
+    "drive": "My files"
   },
   "login": {
     "title": "Welcome back",
@@ -320,6 +321,33 @@
       "empty": "Nothing here yet - as soon as something new is ready for you, Lotte will let you know.",
       "mine": "For your apartments",
       "general": "For all owners"
+    },
+    "drive": {
+      "title": "My files",
+      "subtitle": "Your personal Google Drive folder at Happy Property: contracts, documents, proofs. Whatever you upload here is visible to Sven and everyone involved in your purchase.",
+      "openDrive": "Open in Google Drive",
+      "upload": "Upload file",
+      "uploading": "Uploading…",
+      "dropHint": "Drag files here or choose (max. {{mb}} MB per file)",
+      "uploaded": "{{n}} file(s) uploaded. Lotte will inform everyone involved.",
+      "uploadFailed": "{{name}}: upload failed ({{error}})",
+      "tooBig": "{{name}} is larger than {{mb}} MB.",
+      "notConnected": "Uploads are temporarily unavailable. We have been notified and will enable them shortly.",
+      "noLead": "No folder has been set up for your account yet. Drop us a line and we will create it.",
+      "empty": "No files yet. Upload your documents here, for example ID, purchase contract or proofs.",
+      "loadError": "Could not load. Please reload the page.",
+      "colName": "File",
+      "colUploader": "Uploaded by",
+      "colDate": "Date",
+      "open": "Open",
+      "folder": "Folder",
+      "reload": "Reload",
+      "notify": "New files are announced automatically via WhatsApp to everyone with access to your folder."
+    },
+    "driveCard": {
+      "title": "My files (Google Drive)",
+      "subtitle": "Upload or view contracts and documents. Lotte informs everyone involved automatically.",
+      "btn": "Open files"
     }
   },
   "stats": {
@@ -2184,7 +2212,10 @@
       "noneToRate": "Nothing to rate right now. 🎉",
       "viewList": "List",
       "viewTiles": "Tiles",
-      "rightClickHint": "↳ Right-click to send"
+      "rightClickHint": "↳ Right-click to send",
+      "reasonAppt": "Meeting held",
+      "reasonDeal": "In pipeline",
+      "reasonReply": "Replied"
     },
     "modal": {
       "newLead": "Create New Lead",
@@ -4242,7 +4273,8 @@
       "change": "Change",
       "tokenPh": "Paste new token …",
       "saved": "✓ Saved — testing connection…",
-      "hint": "Keys are only checked on the server and never shown in the browser. Integrations without a “Change” button are maintained via Claude or the Supabase secrets."
+      "hint": "Keys are only checked on the server and never shown in the browser. Integrations without a “Change” button are maintained via Claude or the Supabase secrets.",
+      "driveConnect": "Connect"
     },
     "ownerContent": {
       "title": "Owner content",

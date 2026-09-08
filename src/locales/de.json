@@ -126,7 +126,8 @@
     "profile": "Profil",
     "menu": "Menü",
     "downloads": "Downloads",
-    "buildIdTitle": "Stand dieser Oberfläche. Zeigt sie ein altes Datum, Tab schließen und neu öffnen."
+    "buildIdTitle": "Stand dieser Oberfläche. Zeigt sie ein altes Datum, Tab schließen und neu öffnen.",
+    "drive": "Meine Dateien"
   },
   "login": {
     "title": "Willkommen zurück",
@@ -320,6 +321,33 @@
       "empty": "Noch keine Inhalte - sobald etwas Neues für dich bereitliegt, sagt Lotte dir Bescheid.",
       "mine": "Zu deinen Wohnungen",
       "general": "Für alle Eigentümer"
+    },
+    "drive": {
+      "title": "Meine Dateien",
+      "subtitle": "Dein persönlicher Google-Drive-Ordner bei Happy Property: Verträge, Unterlagen, Nachweise. Was du hier hochlädst, sehen Sven und alle, die an deinem Kauf beteiligt sind.",
+      "openDrive": "In Google Drive öffnen",
+      "upload": "Datei hochladen",
+      "uploading": "Lädt hoch…",
+      "dropHint": "Dateien hierher ziehen oder auswählen (max. {{mb}} MB je Datei)",
+      "uploaded": "{{n}} Datei(en) hochgeladen. Lotte informiert alle Beteiligten.",
+      "uploadFailed": "{{name}}: Upload fehlgeschlagen ({{error}})",
+      "tooBig": "{{name}} ist größer als {{mb}} MB.",
+      "notConnected": "Der Upload ist gerade nicht möglich. Wir sind informiert und schalten ihn frei.",
+      "noLead": "Für dein Konto ist noch kein Ordner eingerichtet. Melde dich kurz bei uns, dann legen wir ihn an.",
+      "empty": "Noch keine Dateien. Lade hier deine Unterlagen hoch, zum Beispiel Ausweis, Kaufvertrag oder Nachweise.",
+      "loadError": "Konnte nicht geladen werden. Bitte Seite neu laden.",
+      "colName": "Datei",
+      "colUploader": "Hochgeladen von",
+      "colDate": "Datum",
+      "open": "Öffnen",
+      "folder": "Ordner",
+      "reload": "Neu laden",
+      "notify": "Neue Dateien melden wir automatisch per WhatsApp an alle, die Zugriff auf deinen Ordner haben."
+    },
+    "driveCard": {
+      "title": "Meine Dateien (Google Drive)",
+      "subtitle": "Verträge und Unterlagen hochladen oder ansehen. Lotte informiert alle Beteiligten automatisch.",
+      "btn": "Dateien öffnen"
     }
   },
   "stats": {
@@ -2184,7 +2212,10 @@
       "noneToRate": "Gerade nichts zu bewerten. 🎉",
       "viewList": "Liste",
       "viewTiles": "Kacheln",
-      "rightClickHint": "↳ Rechtsklick zum Senden"
+      "rightClickHint": "↳ Rechtsklick zum Senden",
+      "reasonAppt": "Termin gehalten",
+      "reasonDeal": "In der Pipeline",
+      "reasonReply": "Hat geantwortet"
     },
     "modal": {
       "newLead": "Neuen Lead anlegen",
@@ -4242,7 +4273,8 @@
       "change": "Ändern",
       "tokenPh": "Neuen Token einfügen …",
       "saved": "✓ Gespeichert — Verbindung wird getestet…",
-      "hint": "Schlüssel werden nur auf dem Server geprüft und nie im Browser angezeigt. Anbindungen ohne „Ändern\"-Knopf pflegst du über mich (Claude) oder die Supabase-Secrets."
+      "hint": "Schlüssel werden nur auf dem Server geprüft und nie im Browser angezeigt. Anbindungen ohne „Ändern\"-Knopf pflegst du über mich (Claude) oder die Supabase-Secrets.",
+      "driveConnect": "Verbinden"
     },
     "ownerContent": {
       "title": "Eigentümer-Inhalte",

@@ -468,6 +468,14 @@ export default function DashboardLayout({ children, basePath }: Props) {
                       {t('nav.downloads', 'Downloads')}
                     </Link>
                   )}
+                  {/* Google-Drive-Kundenordner — Dateien ansehen und hochladen */}
+                  {effectiveRole === 'eigentuemer' && (
+                    <Link to="/eigentuemer/drive"
+                      className="px-3 py-1.5 rounded-lg text-sm font-medium font-body text-gray-600
+                                 hover:bg-gray-100 hover:text-hp-black transition-colors">
+                      {t('nav.drive', 'Meine Dateien')}
+                    </Link>
+                  )}
 
                   {/* CRM-Dropdown für Verwalter */}
                   {profile?.role === 'verwalter' && (

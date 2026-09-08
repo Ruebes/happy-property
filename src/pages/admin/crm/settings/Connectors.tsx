@@ -63,6 +63,12 @@ export default function Connectors() {
                     <p className="font-medium text-gray-900 text-sm">{c.label}</p>
                     <p className={`text-xs mt-0.5 ${c.ok ? 'text-gray-500' : 'text-red-600'}`}>{c.detail}</p>
                   </div>
+                  {c.key === 'GOOGLE_DRIVE_UPLOAD' && (
+                    <a href="https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/yt-oauth?target=drive" target="_blank" rel="noreferrer"
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
+                      🔗 {t('crm.conn.driveConnect', 'Verbinden')}
+                    </a>
+                  )}
                   {c.editable && (
                     <button onClick={() => { setEditKey(editKey === c.key ? null : c.key); setEditVal('') }}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">

@@ -49,3 +49,11 @@ verify_jwt = false
 
 [functions.process-scheduled-messages]
 verify_jwt = false
+
+# Drive im Eigentümerportal: Cron-Sweep (Service-Role) + Portal-Aufrufe mit
+# User-JWT, den die Function selbst prüft. yt-oauth ist Googles Rücksprung-URL.
+[functions.owner-drive]
+verify_jwt = false
+
+[functions.yt-oauth]
+verify_jwt = false
