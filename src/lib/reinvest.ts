@@ -150,8 +150,11 @@ const round = (n: number) => Math.round(n)
 // Preis, Moebelanteil, Mietrendite, Vermietungsart, Verwaltung und laufende
 // Kosten. Es ist ausdruecklich eine Modellannahme, kein reales Objekt.
 export function buildModelUnit(units: SimUnit[], p: SimParams): SimUnit | null {
-  const base = units.filter(u => !u.model)
-  if (!base.length) return null
+  const real = units.filter(u => !u.model)
+  if (!real.length) return null
+  // Explizit gewaehltes Referenzobjekt hat Vorrang vor dem Durchschnitt.
+  const target = p.reinvestTargetKey ? real.find(u => u.key === p.reinvestTargetKey) : undefined
+  const base = target ? [target] : real
   const avg = (f: (u: SimUnit) => number) => base.reduce((a, u) => a + f(u), 0) / base.length
   const priceNet = round(avg(u => u.priceNet) / 1000) * 1000
   const furnNet = round(avg(u => u.furnNet) / 500) * 500
@@ -179,15 +182,16 @@ export function buildModelUnit(units: SimUnit[], p: SimParams): SimUnit | null {
 // schneller als Mieten, deshalb faellt die Anfangsrendite spaeterer Kaeufe. Die
 // Rendite mitzuziehen wuerde jedem Folgekauf die Mietsteigerung des Kaufpreises
 // unterschieben und die Strategie zu gut aussehen lassen.
+// Moebel bleiben auf dem heutigen Betrag (STEP 3G, Punkt 12): eine eigene
+// Moebelpreissteigerung kommt spaeter als separater Parameter, nicht implizit.
 function modelAt(model: SimUnit, price: number, year: number, index: number, rentFactor = 1): SimUnit {
-  const furnShare = model.priceNet > 0 ? model.furnNet / model.priceNet : 0
   const priceNet = Math.max(50000, round(price / 1000) * 1000)
   return {
     ...model,
     key: `model-${index}`,
     name: `Modellwohnung ${index}`,
     priceNet,
-    furnNet: round(priceNet * furnShare / 500) * 500,
+    furnNet: model.furnNet,
     rent: round(model.rent * rentFactor),
     buyM: 1, buyY: year, readyM: 1, readyY: year,
   }
@@ -215,6 +219,19 @@ export function modelPriceAt(model: SimUnit, p: SimParams, year: number, baseYea
   const g = purchaseGrowthOf(p) / 100
   const n = Math.max(0, year - baseYear)
   return round(model.priceNet * Math.pow(1 + g, n) / 1000) * 1000
+}
+
+// Kapitalbedarf eines Kaufs im Jahr `year`: Preis hochgerechnet, Miete mit der
+// Mietsteigerung fortgeschrieben, alles Weitere (Nebenkosten, MwSt, Moebel,
+// Darlehen, Eigenkapital) aus der Engine. Fuer Anzeige und Tests - der Motor
+// selbst rechnet ueber dieselben Bausteine.
+export interface PurchaseQuote { year: number; price: number; gross: number; loan: number; equity: number; costs: number; rent: number }
+export function futurePurchaseQuote(model: SimUnit, p: SimParams, year: number, baseYear: number): PurchaseQuote {
+  const price = modelPriceAt(model, p, year, baseYear)
+  const rentFactor = Math.pow(1 + p.rentGrowth / 100, Math.max(0, year - baseYear))
+  const unit = modelAt(model, price, year, 0, rentFactor)
+  const need = equityNeeded(unit, p, p.refinanceLtv)
+  return { year, price: unit.priceNet, gross: need.gross, loan: need.loan, equity: need.equity, costs: need.costs, rent: unit.rent }
 }
 
 export function maxAffordablePrice(model: SimUnit, p: SimParams, capital: number, year: number, rentFactor = 1): number {

@@ -44,8 +44,10 @@ T('Verkaufsrechnung unveraendert', exOff && exOff.net > 0, `${eur(exOff.net)} EU
 
 console.log('\n── Case B/C/D: Wertsteigerung 0, 5 und 9 Prozent ──')
 const byApp = {}
+// Seit STEP 3G folgt der Kaufpreis spaeterer Kaeufe der Wertsteigerung. Um den
+// reinen Effekt der Bestandswertsteigerung zu sehen, hier Kaufpreis konstant.
 for (const app of [0, 5, 9]) {
-  const r = runReinvest([unit('A')], { ...P, reinvestAppreciationPct: app })
+  const r = runReinvest([unit('A')], { ...P, reinvestAppreciationPct: app, purchasePriceGrowth: 0 })
   byApp[app] = r
   console.log(`   ${app} %: ${r.kpis.additionalPurchases} Kaeufe, ${r.kpis.refinancings} Refinanzierungen, Kapazitaet Jahr 10 ${eur(r.years[9].refinancingCapacity)} EUR`)
 }
@@ -203,8 +205,15 @@ const equitySum = cycle.events.filter(e => e.kind === 'purchase').reduce((a, e) 
 check('Recycling = Eigenkapital aller zusaetzlichen Kaeufe', cycle.kpis.totalRecycledCapital, equitySum, 2)
 T('Recycling ist positiv, sobald gekauft wurde',
   cycle.kpis.additionalPurchases === 0 || cycle.kpis.totalRecycledCapital > 0)
+// Obergrenze = alle Kapitalquellen der Strategie: operativer Cashflow,
+// Refinanzierungen, Verkaeufe UND Mehrwertsteuer-Erstattungen (die laufen
+// getrennt vom operativen Cashflow, Befund 5.9.26). Seit STEP 3G kosten
+// spaetere Kaeufe mehr Eigenkapital; ohne die Erstattungen war die Schranke
+// zu eng.
+const vatRefunds = cycle.flows.reduce((a, f) => a + (f.vatRefund || 0), 0)
 T('Recycling zaehlt nicht jeden Cashflow',
-  cycle.kpis.totalRecycledCapital < Math.abs(cycle.totals.cashflow) + cycle.kpis.totalRefinancingProceeds + cycle.kpis.totalSaleProceeds + 1)
+  cycle.kpis.totalRecycledCapital < Math.abs(cycle.totals.cashflow) + cycle.kpis.totalRefinancingProceeds + cycle.kpis.totalSaleProceeds + vatRefunds + 1,
+  `${eur(cycle.kpis.totalRecycledCapital)} < ${eur(Math.abs(cycle.totals.cashflow) + cycle.kpis.totalRefinancingProceeds + cycle.kpis.totalSaleProceeds + vatRefunds)}`)
 
 console.log(`\n${fail === 0 ? '🎉' : '⚠️'}  ${pass} PASS, ${fail} FAIL`)
 process.exit(fail ? 1 : 0)

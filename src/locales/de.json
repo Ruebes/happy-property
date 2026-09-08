@@ -4612,7 +4612,9 @@
       "rePriceGrowth": "Kaufpreissteigerung % p.a.",
       "rePriceGrowthLinked": "wie Wertsteigerung",
       "rePriceGrowthReset": "an Wertsteigerung koppeln",
-      "rePriceGrowthHint": "Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe."
+      "rePriceGrowthHint": "Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe.",
+      "reTarget": "Referenzobjekt für spätere Käufe",
+      "reTargetAvg": "Durchschnitt der gewählten Wohnungen"
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",

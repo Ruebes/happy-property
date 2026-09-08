@@ -85,6 +85,9 @@ export interface SimParams {
   // Wertsteigerung, weil Bestandswert und Marktpreis dieselbe Groesse sind.
   // Ein eigener Wert ist nur fuer bewusst abweichende Annahmen da.
   purchasePriceGrowth: number | null
+  // Referenzobjekt fuer spaetere Kaeufe: key einer Wohnung aus dem Szenario,
+  // null = Durchschnitt der gewaehlten Wohnungen (Svens Freigabe STEP 1).
+  reinvestTargetKey: string | null
   refinanceLtv: number              // angenommene maximale Beleihung in %
   bankValuationFactor: number       // Abschlag der Bankbewertung auf den Marktwert, % 
   refinanceUtilizationPct: number   // wie viel der Kapazitaet wirklich genutzt wird, %
@@ -208,7 +211,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   socialIns: true, opexMonthly: 150, maintPct: 0.75,
   exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
-  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5, purchasePriceGrowth: null,
+  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5, purchasePriceGrowth: null, reinvestTargetKey: null,
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
   selfFundingOnly: true, additionalEquityMonthly: 0, buyerStructure: 'single',

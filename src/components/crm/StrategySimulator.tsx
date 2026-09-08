@@ -818,6 +818,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                         </button>
                       )}
                     </div>
+                    <div className="mt-2">
+                      <label className={lbl}>{t('crm.sim.reTarget', 'Referenzobjekt für spätere Käufe')}</label>
+                      <CustomSelect value={params.reinvestTargetKey ?? ''}
+                        onChange={v => setParams(p => ({ ...p, reinvestTargetKey: v || null }))}
+                        options={[{ value: '', label: t('crm.sim.reTargetAvg', 'Durchschnitt der gewählten Wohnungen') },
+                          ...units.filter(u => !u.model).map(u => ({ value: u.key, label: `${u.name} · ${eur(u.priceNet)}` }))]} />
+                    </div>
                     <p className="text-[11px] text-gray-500 mt-1">
                       {t('crm.sim.rePriceGrowthHint', 'Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe.')}
                     </p>

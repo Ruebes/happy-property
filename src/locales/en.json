@@ -4612,7 +4612,9 @@
       "rePriceGrowth": "Purchase price growth % p.a.",
       "rePriceGrowthLinked": "same as appreciation",
       "rePriceGrowthReset": "link to appreciation",
-      "rePriceGrowthHint": "Later purchases cost today's model price carried forward at this rate. The model property's rent grows only with rent growth, so the initial yield of later purchases declines."
+      "rePriceGrowthHint": "Later purchases cost today's model price carried forward at this rate. The model property's rent grows only with rent growth, so the initial yield of later purchases declines.",
+      "reTarget": "Reference property for later purchases",
+      "reTargetAvg": "Average of the selected apartments"
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
