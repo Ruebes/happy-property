@@ -1,10 +1,10 @@
 import {
-  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTax, irrCalc,
+  DEFAULT_PARAMS, compute, defaultMgmtPct, seasonBreakdown, vatSplit, cyTaxFor, personsOf, irrCalc,
   CY_CORP_TAX_PCT, DE_DIV_TAX_PCT, CY_DIV_TAX_PCT, CY_GESY_RATE, CY_GESY_CAP, CY_LOSS_CARRY_YEARS,
   CY_SI_RATE, CY_SI_MIN_INCOME, CY_SI_MAX_INCOME, CY_GESY_SELF_RATE,
   CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
   VAT_ADJUST_YEARS, CY_TRANSFER_LEVY_PCT, CY_SERVICE_VAT_PCT,
-  type CalcParams, type CalcResult,
+  type CalcParams, type CalcResult, type BuyerStructure,
 } from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
@@ -80,6 +80,11 @@ export interface SimParams {
   reinvestEnabled: boolean
   horizonYears: number              // nur im Reinvestment-Modus, Standard 20
   reinvestAppreciationPct: number   // eigene Wertsteigerungsannahme des Motors
+  // Kaufpreissteigerung am Markt: Eine Wohnung, die in fuenf Jahren gekauft
+  // wird, kostet dann nicht mehr den heutigen Preis. null = folgt der
+  // Wertsteigerung, weil Bestandswert und Marktpreis dieselbe Groesse sind.
+  // Ein eigener Wert ist nur fuer bewusst abweichende Annahmen da.
+  purchasePriceGrowth: number | null
   refinanceLtv: number              // angenommene maximale Beleihung in %
   bankValuationFactor: number       // Abschlag der Bankbewertung auf den Marktwert, % 
   refinanceUtilizationPct: number   // wie viel der Kapazitaet wirklich genutzt wird, %
@@ -93,6 +98,12 @@ export interface SimParams {
   // Eigenkapital und wird in Cashflow und Rendite voll beruecksichtigt.
   selfFundingOnly: boolean
   additionalEquityMonthly: number
+  // ── Kaeuferstruktur (Sven 8.9.26) ─────────────────────────────────────────
+  // Kaufen zwei Personen gemeinsam, stehen steuerlich zwei Freibetraege und
+  // zwei Progressionsverlaeufe zur Verfuegung. Das sagt NICHTS ueber die
+  // Eigentumsverteilung, die Finanzierung oder zwei Darlehensnehmer aus - die
+  // Finanzierungslogik bleibt unveraendert.
+  buyerStructure: BuyerStructure
 }
 
 export interface UnitOutcome {
@@ -197,10 +208,10 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   socialIns: true, opexMonthly: 150, maintPct: 0.75,
   exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
-  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5,
+  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5, purchasePriceGrowth: null,
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
-  selfFundingOnly: true, additionalEquityMonthly: 0,
+  selfFundingOnly: true, additionalEquityMonthly: 0, buyerStructure: 'single',
 }
 
 // Sinnvoller Vorschlag fuer die Steuer auf die Ausschuettung: der deutsche
@@ -217,6 +228,14 @@ export const HORIZON_YEARS = 10
 export function horizonOf(p?: SimParams): number {
   if (!p?.reinvestEnabled) return HORIZON_YEARS
   return Math.max(HORIZON_YEARS, Math.round(p.horizonYears || HORIZON_YEARS))
+}
+
+// Effektive Kaufpreissteigerung: ohne eigenen Wert dieselbe Rate wie die
+// Wertsteigerung des Bestands. Alles andere waere in sich widerspruechlich -
+// der Bestand waere mehr wert, aber am Markt kostete nichts mehr.
+export function purchaseGrowthOf(p: SimParams): number {
+  if (p.purchasePriceGrowth != null) return p.purchasePriceGrowth
+  return p.reinvestEnabled ? p.reinvestAppreciationPct : p.growth
 }
 
 // Monatsmiete aus dem Saisonmodell (Auslastung + Preis/Nacht je Saison).
@@ -407,6 +426,10 @@ export function trancheSchedule(t: LoanTranche, untilYear: number): TrancheYear[
 // Die Bauzeitzinsen der Zwischenfinanzierung mindern die Bemessungsgrundlage wie
 // jede andere Zinslast.
 function applyPortfolioTax(rows: YearRow[], p: SimParams, business: boolean): void {
+  // Einzelperson oder Paar: bei zwei Personen greift die Progression zweimal.
+  // Der Freibetrag haengt an der PERSON, nicht an der Wohnung - drei Wohnungen
+  // bringen keine drei Freibetraege.
+  const persons = personsOf(p.buyerStructure)
   // Verlustvortrag der Gesellschaft, 5 Jahre (Zypern), portfolioweit.
   const open: Array<{ i: number; amt: number }> = []
   rows.forEach((r, idx) => {
@@ -432,11 +455,15 @@ function applyPortfolioTax(rows: YearRow[], p: SimParams, business: boolean): vo
     } else if (p.res === 'cy') {
       const inc = Math.max(0, baseCY)
       // Bestandseinkommen hebt die Progression - einmal fuer den Kunden, nicht je Wohnung.
-      taxCY = Math.max(0, cyTax(p.cyBI + inc) - cyTax(p.cyBI))
+      taxCY = Math.max(0, cyTaxFor(persons, p.cyBI + inc) - cyTaxFor(persons, p.cyBI))
       // Sozialversicherung: nur wer in Zypern ansaessig ist und die Wohnungen
       // gewerblich kurzzeitvermietet, gilt als selbststaendig. Sie faellt erst an,
       // wenn ueberhaupt vermietet wird, nicht schon in der Bauzeit. Das fiktive
       // Mindesteinkommen gilt auch dann, wenn der Gewinn kleiner ist.
+      // Sozialversicherung und GESY bleiben bewusst unveraendert: sie haengen an
+      // der Erwerbstaetigkeit der Person, und dazu liegt keine belastbare Regel
+      // fuer die gemeinsame Vermietung vor (Sven 8.9.26: keine eigenen Regeln
+      // ergaenzen).
       if (p.socialIns && business && r.rents > 0) {
         const siBase = Math.min(Math.max(inc, CY_SI_MIN_INCOME), CY_SI_MAX_INCOME)
         si = Math.round(siBase * CY_SI_RATE)
@@ -451,7 +478,7 @@ function applyPortfolioTax(rows: YearRow[], p: SimParams, business: boolean): vo
       // Steuersitz Deutschland: Zypern besteuert zuerst, Deutschland rechnet die
       // zyprische Steuer an. Die Gesamtlast ist die zyprische Steuer PLUS der
       // nicht angerechnete deutsche Rest - nicht nur der deutsche Rest.
-      const cy = cyTax(Math.max(0, baseCY))
+      const cy = cyTaxFor(persons, Math.max(0, baseCY))
       const de = Math.round(baseDE * (p.deTaxPct / 100))
       taxCY = cy
       taxDE = de <= 0 ? de : de - Math.min(cy, de)
@@ -642,6 +669,8 @@ export function scenarioParams(p: SimParams, key: ScenarioKey): SimParams {
     // Wertentwicklung - das optimistische Szenario kam dadurch auf weniger
     // Wohnungen als das Basisszenario (Befund 5.9.26).
     reinvestAppreciationPct: Math.max(0, Math.round((p.reinvestAppreciationPct + sh.growth) * 100) / 100),
+    purchasePriceGrowth: p.purchasePriceGrowth == null ? null
+      : Math.max(0, Math.round((p.purchasePriceGrowth + sh.growth) * 100) / 100),
     rentGrowth: Math.max(0, Math.round((p.rentGrowth + sh.rentGrowth) * 100) / 100),
     interest: Math.max(0.1, Math.round((p.interest + sh.interest) * 100) / 100),
     maintPct: Math.max(0, Math.round((p.maintPct + sh.maint) * 100) / 100),
@@ -820,11 +849,13 @@ export function saleTaxOf(
   lines: ExitUnitLine[], outcomes: UnitOutcome[], year: number, p: SimParams, exemptionLeft: number,
 ): SaleTax {
   const gain = lines.reduce((a, l) => a + l.gain, 0)
-  // Der Freibetrag ist lebenslang und je Person gedeckelt - nie mehr, als noch
-  // im Topf ist, und nie mehr als der Gewinn.
+  // Der Freibetrag ist lebenslang und gilt JE PERSON - bei einem Paar also
+  // zweimal, aber niemals je Wohnung. Nie mehr, als noch im Topf ist, und nie
+  // mehr als der Gewinn.
+  const persons = personsOf(p.buyerStructure)
   const allowance = p.holder === 'firma'
     ? 0
-    : Math.max(0, Math.min(exemptionLeft, CY_CGT_LIFETIME_CAP, gain))
+    : Math.max(0, Math.min(exemptionLeft, CY_CGT_LIFETIME_CAP * persons, gain))
   const cgt = Math.max(0, Math.round((gain - allowance) * CY_CGT_PCT / 100))
   let taxDE = 0
   if (p.res === 'de' && p.holder === 'privat') {
@@ -871,7 +902,7 @@ export function computeExit(outcomes: UnitOutcome[], p: SimParams, firstYear: nu
   const sellCost = sum(l => l.sellCost), vatClawback = sum(l => l.vatClawback)
   const gain = sum(l => l.gain)
   const levy = Math.round(value * CY_TRANSFER_LEVY_PCT / 100)
-  const { cgt, taxDE } = saleTaxOf(lines, outcomes, year, p, CY_CGT_ALLOWANCE)
+  const { cgt, taxDE } = saleTaxOf(lines, outcomes, year, p, CY_CGT_ALLOWANCE * personsOf(p.buyerStructure))
   const beforeDiv = value - debt - sellCost - levy - vatClawback - cgt - taxDE
   const divTax = (p.holder === 'firma' && beforeDiv > 0)
     ? Math.round(beforeDiv * (p.divPayoutPct / 100) * (p.divTaxPct / 100))

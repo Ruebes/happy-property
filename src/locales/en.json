@@ -4603,7 +4603,16 @@
       "shareHint2": "Files the finished draft in the outbox and unlocks the preview. The customer only sees the plan once it is sent.",
       "sharedDraft": "Plan ready - the draft is in the outbox.",
       "sharedMerged": "Plan ready - the link sits with the existing draft in the outbox.",
-      "sharedHint2": "The customer cannot open this link yet. It goes live when the outbox entry is actually sent (email or WhatsApp). Changes here take effect immediately after that, and the link stays the same."
+      "sharedHint2": "The customer cannot open this link yet. It goes live when the outbox entry is actually sent (email or WhatsApp). Changes here take effect immediately after that, and the link stays the same.",
+      "buyer": "Buyer structure",
+      "buyerSingle": "Individual",
+      "buyerCouple": "Couple",
+      "buyerHintSingle": "Individual: €22,000 per year tax-free, €30,000 lifetime allowance on sale. Both apply per person, not per apartment.",
+      "buyerHintCouple": "Couple: Cyprus assesses each person separately, so the allowance and the progression apply twice. That makes €44,000 per year tax-free and €60,000 lifetime on sale. This says nothing about ownership split or financing - those stay unchanged.",
+      "rePriceGrowth": "Purchase price growth % p.a.",
+      "rePriceGrowthLinked": "same as appreciation",
+      "rePriceGrowthReset": "link to appreciation",
+      "rePriceGrowthHint": "Later purchases cost today's model price carried forward at this rate. The model property's rent grows only with rent growth, so the initial yield of later purchases declines."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -6060,6 +6069,9 @@
     "three3": "Most of your wealth sits in the apartments. Only the liquidity is available. Anyone who wants at it has to sell or refinance.",
     "journeyTitle": "The path of your capital",
     "timelineTitle2": "What happens when",
-    "timelineSub": "Every entry is an event from the calculation, none of it is invented."
+    "timelineSub": "Every entry is an event from the calculation, none of it is invented.",
+    "buyerSingle": "The model calculation takes into account the personal tax-free basic amount of €22,000 per year and a lifetime allowance of €30,000 on sale. Both apply per person and are not multiplied per apartment.",
+    "buyerCouple": "The strategy is implemented jointly by two people. Cyprus assesses each person separately, so the model calculation takes into account the personal tax-free basic amounts of both people, together €44,000 per year and €60,000 lifetime on sale. These amounts apply per person and are not multiplied per apartment.",
+    "assumptionsPrice": "Later purchases are not calculated at today's price: the model property's purchase price rises by {{g}} % per year, the rent only with rent growth. The initial yield of later purchases is therefore lower than today."
   }
 }

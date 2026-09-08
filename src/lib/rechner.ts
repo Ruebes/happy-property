@@ -296,6 +296,25 @@ export function cyTax(inc: number): number {
   return Math.round(t2)
 }
 
+// ── Einzelperson oder Paar ───────────────────────────────────────────────────
+// Zypern kennt keine Zusammenveranlagung: Jede Person wird einzeln besteuert.
+// Kaufen zwei Personen gemeinsam, versteuert also jede ihren Anteil - damit
+// greift nicht nur der Freibetrag zweimal, sondern die ganze Progression.
+//
+// Deshalb wird das Einkommen auf die Personen aufgeteilt, einzeln besteuert und
+// wieder zusammengezaehlt. Nur den Freibetrag zu verdoppeln und den Rest mit den
+// Baendern einer Person zu besteuern waere zu guenstig gerechnet: Bei 100.000
+// EUR Gesamteinkommen ergaebe das 13.800 EUR statt der richtigen 13.800 EUR bei
+// gleichmaessiger Aufteilung, aber bei ungleicher Verteilung liefe es
+// auseinander. Die Aufteilung bildet ab, was tatsaechlich passiert.
+export type BuyerStructure = 'single' | 'couple'
+export const personsOf = (b: BuyerStructure | undefined): number => b === 'couple' ? 2 : 1
+export function cyTaxFor(persons: number, inc: number): number {
+  const n = Math.max(1, Math.round(persons))
+  if (n === 1) return cyTax(inc)
+  return cyTax(Math.max(0, inc) / n) * n
+}
+
 // Tilgungslaufzeit aus Annuität (Bisektion) — für „Rate optimieren" (1:1 aus Original)
 export function solveTerm(loan: number, ir: number, annPay: number, max = 35): number {
   if (loan <= 0 || annPay <= 0) return 20

@@ -14,11 +14,11 @@
 // gewaehlten Annahmen, keine Finanzierungszusage. Ob eine Bank tatsaechlich
 // finanziert, haengt an Einkommen, Bonitaet, Bewertung und Bankrichtlinien.
 import {
-  allocate, aggregate, runUnit, computeSale, totalsOf, horizonOf, trancheSchedule,
+  allocate, aggregate, runUnit, computeSale, totalsOf, horizonOf, purchaseGrowthOf, trancheSchedule,
   type SimUnit, type SimParams, type UnitOutcome, type YearRow,
   type LoanTranche, type SaleResult, type StrategyTotals,
 } from './strategy'
-import { CY_CGT_ALLOWANCE, irrCalc } from './rechner'
+import { CY_CGT_ALLOWANCE, irrCalc, personsOf } from './rechner'
 
 // ── Ereignisse ───────────────────────────────────────────────────────────────
 export interface PurchaseEvent {
@@ -174,8 +174,12 @@ export function buildModelUnit(units: SimUnit[], p: SimParams): SimUnit | null {
 }
 
 // Ein Modellobjekt auf einen bestimmten Preis und ein bestimmtes Jahr setzen.
-function modelAt(model: SimUnit, price: number, year: number, index: number): SimUnit {
-  const yieldPct = model.priceNet > 0 ? (model.rent * 12) / model.priceNet : 0
+// rentFactor schreibt die Marktmiete bis zum Kaufjahr fort. Bewusst NICHT ueber
+// die Rendite an den Kaufpreis gekoppelt: Kaufpreise steigen in der Regel
+// schneller als Mieten, deshalb faellt die Anfangsrendite spaeterer Kaeufe. Die
+// Rendite mitzuziehen wuerde jedem Folgekauf die Mietsteigerung des Kaufpreises
+// unterschieben und die Strategie zu gut aussehen lassen.
+function modelAt(model: SimUnit, price: number, year: number, index: number, rentFactor = 1): SimUnit {
   const furnShare = model.priceNet > 0 ? model.furnNet / model.priceNet : 0
   const priceNet = Math.max(50000, round(price / 1000) * 1000)
   return {
@@ -184,7 +188,7 @@ function modelAt(model: SimUnit, price: number, year: number, index: number): Si
     name: `Modellwohnung ${index}`,
     priceNet,
     furnNet: round(priceNet * furnShare / 500) * 500,
-    rent: round(priceNet * yieldPct / 12),
+    rent: round(model.rent * rentFactor),
     buyM: 1, buyY: year, readyM: 1, readyY: year,
   }
 }
@@ -204,13 +208,22 @@ function equityNeeded(unit: SimUnit, p: SimParams, ltv: number): { equity: numbe
 // Groesstes Objekt, das mit dem verfuegbaren Kapital finanzierbar ist. Die
 // einfache Formel Kapital/Eigenkapitalquote dient nur als Startwert; geprueft
 // wird gegen die echte Engine, weil Nebenkosten, Moebel und MwSt mit haengen.
-export function maxAffordablePrice(model: SimUnit, p: SimParams, capital: number, year: number): number {
+// Marktpreis des Modellobjekts im Kaufjahr. Wohnungen werden nicht billiger,
+// waehrend der Bestand im Wert steigt - ein Kauf in fuenf Jahren kostet den
+// heutigen Preis fortgeschrieben mit der Kaufpreissteigerung.
+export function modelPriceAt(model: SimUnit, p: SimParams, year: number, baseYear: number): number {
+  const g = purchaseGrowthOf(p) / 100
+  const n = Math.max(0, year - baseYear)
+  return round(model.priceNet * Math.pow(1 + g, n) / 1000) * 1000
+}
+
+export function maxAffordablePrice(model: SimUnit, p: SimParams, capital: number, year: number, rentFactor = 1): number {
   const ltv = p.refinanceLtv
   if (capital <= 0) return 0
   let lo = 0, hi = Math.max(100000, capital / Math.max(0.05, (100 - ltv) / 100) * 2)
   for (let k = 0; k < 24; k++) {
     const mid = (lo + hi) / 2
-    const need = equityNeeded(modelAt(model, mid, year, 0), p, ltv).equity
+    const need = equityNeeded(modelAt(model, mid, year, 0, rentFactor), p, ltv).equity
     if (need > capital) hi = mid; else lo = mid
   }
   return round(lo / 1000) * 1000
@@ -230,7 +243,10 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   let outcomes = allocate(units, p)
   let allUnits = [...units]
   const model = buildModelUnit(units, p)
-  let exemptionLeft = CY_CGT_ALLOWANCE
+  // Lebenslanger Freibetrag der Veraeusserungsgewinnsteuer: je Person einmal,
+  // ueber ALLE Verkaufsjahre hinweg verbraucht - nicht je Wohnung und nicht
+  // jedes Jahr neu.
+  let exemptionLeft = CY_CGT_ALLOWANCE * personsOf(p.buyerStructure)
   // Startkasse: Was vom Eigenkapital nach den ersten Kaeufen uebrig bleibt.
   // Ohne diese Zeile wuerde der Motor so tun, als haette der Kunde ausser den
   // Wohnungen keinen Cent - und ein negativer Cashflow liefe sofort ins Minus.
@@ -313,11 +329,12 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     capacityByYear.set(y, capacity)
 
     // ── Gelegenheit pruefen ─────────────────────────────────────────────────
-    const modelPrice = model ? model.priceNet : 0
+    const rentFactor = Math.pow(1 + p.rentGrowth / 100, Math.max(0, y - firstYear))
+    const modelPrice = model ? modelPriceAt(model, p, y, firstYear) : 0
     const capitalWithoutRefi = Math.max(0, cash - p.minimumCashReserve)
     const capitalWithRefi = Math.max(0, cash + capacity - p.minimumCashReserve)
-    const maxPrice = model ? maxAffordablePrice(model, p, capitalWithRefi, y) : 0
-    const needForModel = model ? equityNeeded(modelAt(model, modelPrice, y, purchases + 1), p, p.refinanceLtv).equity : 0
+    const maxPrice = model ? maxAffordablePrice(model, p, capitalWithRefi, y, rentFactor) : 0
+    const needForModel = model ? equityNeeded(modelAt(model, modelPrice, y, purchases + 1, rentFactor), p, p.refinanceLtv).equity : 0
     const affordable = !!model && y < lastYear && purchases < p.maxAdditionalPurchases
       && needForModel > 0 && capitalWithRefi >= needForModel
     if (maxPrice > maxPriceSeen) maxPriceSeen = maxPrice
@@ -342,7 +359,7 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     // ── Kauf durchfuehren ───────────────────────────────────────────────────
     if (affordable && p.autoReinvest && model) {
       const idx = purchases + 1
-      const unit = modelAt(model, modelPrice, y, idx)
+      const unit = modelAt(model, modelPrice, y, idx, rentFactor)
       const need = equityNeeded(unit, p, p.refinanceLtv)
       // Zuerst vorhandenes Geld, dann refinanzieren - nur so viel wie noetig.
       const fromCash = Math.min(capitalWithoutRefi, need.equity)

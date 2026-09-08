@@ -7,8 +7,7 @@ import { runReinvest } from '../../lib/reinvest'
 import {
   roeMeaningful, migrateConfig, ymOf, rentFromSeason, runScenarios, assessRisk,
   breakEvenGrowth, defaultDivTaxPct, DEFAULT_SIM_PARAMS, SCENARIO_KEYS,
-  type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult,
-} from '../../lib/strategy'
+  type SimUnit, type SimParams, type ScenarioKey, type ScenarioResult, purchaseGrowthOf } from '../../lib/strategy'
 import { defaultMgmtPct, type CalcParams, type CalcItem } from '../../lib/rechner'
 
 // ── Strategie-Simulator ──────────────────────────────────────────────────────
@@ -373,6 +372,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       { value: 'cy', label: t('crm.sim.resCy', 'Zypern') }]} />
                 </div>
                 <div>
+                  <label className={lbl}>{t('crm.sim.buyer', 'Käuferstruktur')}</label>
+                  <CustomSelect value={params.buyerStructure}
+                    onChange={v => setParams(p => ({ ...p, buyerStructure: v as 'single' | 'couple' }))}
+                    options={[{ value: 'single', label: t('crm.sim.buyerSingle', 'Einzelperson') },
+                      { value: 'couple', label: t('crm.sim.buyerCouple', 'Paar') }]} />
+                </div>
+                <div>
                   <label className={lbl}>{t('crm.sim.holder', 'Halten')}</label>
                   <CustomSelect value={params.holder}
                     onChange={v => setParams(p => ({ ...p, holder: v as 'privat' | 'firma' }))}
@@ -425,6 +431,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                   </div>
                 </>)}
               </div>
+              {params.holder === 'privat' && (
+                <p className="text-[11px] text-gray-500 mt-2">
+                  {params.buyerStructure === 'couple'
+                    ? t('crm.sim.buyerHintCouple', 'Paar: Zypern veranlagt jede Person einzeln, deshalb greifen Freibetrag und Progression zweimal. Steuerfrei sind damit 44.000 € im Jahr, beim Verkauf 60.000 € lebenslang. Das sagt nichts über Eigentumsverteilung oder Finanzierung - die bleibt unverändert.')
+                    : t('crm.sim.buyerHintSingle', 'Einzelperson: 22.000 € im Jahr steuerfrei, beim Verkauf 30.000 € lebenslang. Beides gilt je Person, nicht je Wohnung.')}
+                </p>
+              )}
               <p className="text-[11px] text-gray-700 mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
                 {t('crm.sim.taxJoint', 'Die Steuer wird über ALLE Wohnungen zusammen gerechnet: Freibetrag, Progression, Bestandseinkommen, GESY-Deckel und der Verlustvortrag der Firma gelten pro Kunde, nicht pro Wohnung. Die Einzelberechnung einer Wohnung zeigt deshalb eine andere Steuer als dieser Plan - das ist richtig so, weil eine Wohnung allein tatsächlich anders besteuert wird als drei zusammen.')}
               </p>
@@ -786,6 +799,29 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       {t('crm.sim.reAuto', 'Modellobjekte automatisch kaufen')}
                     </label>
                   </div>
+                  <div className="col-span-2">
+                    <label className={lbl}>
+                      {t('crm.sim.rePriceGrowth', 'Kaufpreissteigerung % p.a.')}
+                      <strong className="text-gray-700 ml-1">{String(purchaseGrowthOf(params)).replace('.', ',')}</strong>
+                      {params.purchasePriceGrowth == null && (
+                        <span className="text-gray-400 ml-1">({t('crm.sim.rePriceGrowthLinked', 'wie Wertsteigerung')})</span>
+                      )}
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input type="range" min={0} max={10} step={0.5} className="flex-1 accent-orange-500"
+                        value={purchaseGrowthOf(params)}
+                        onChange={e => setParams(p => ({ ...p, purchasePriceGrowth: +e.target.value }))} />
+                      {params.purchasePriceGrowth != null && (
+                        <button type="button" className="text-[11px] text-orange-600 hover:underline whitespace-nowrap"
+                          onClick={() => setParams(p => ({ ...p, purchasePriceGrowth: null }))}>
+                          {t('crm.sim.rePriceGrowthReset', 'an Wertsteigerung koppeln')}
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      {t('crm.sim.rePriceGrowthHint', 'Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe.')}
+                    </p>
+                  </div>
                 </div>
 
                 {reinvest && (<>
@@ -793,7 +829,12 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                     {[
                       { l: t('crm.sim.reCapacity', 'Beleihungskapazität heute'), v: eur(reinvest.years[0]?.refinancingCapacity ?? 0) },
                       { l: t('crm.sim.reNext', 'Frühester weiterer Kauf'), v: reinvest.kpis.earliestNextPurchaseYear ? String(reinvest.kpis.earliestNextPurchaseYear) : '–' },
-                      { l: t('crm.sim.reModelPrice', 'Modellkaufpreis'), v: eur(reinvest.modelUnit?.priceNet ?? 0) },
+                      { l: t('crm.sim.reModelPrice', 'Modellkaufpreis'), v: (() => {
+                        const today = reinvest.modelUnit?.priceNet ?? 0
+                        const ny = reinvest.kpis.earliestNextPurchaseYear
+                        const then = ny ? reinvest.opportunities.find(o => o.year === ny)?.modelPurchasePrice : null
+                        return then && then !== today ? `${eur(today)} → ${eur(then)} (${ny})` : eur(today)
+                      })() },
                       { l: t('crm.sim.reMaxPrice', 'Maximal finanzierbar'), v: eur(reinvest.kpis.maximumAdditionalPurchasePrice) },
                       { l: t('crm.sim.reBuys', 'Zusätzliche Immobilien'), v: String(reinvest.kpis.additionalPurchases) },
                       { l: t('crm.sim.reRefis', 'Refinanzierungen'), v: `${reinvest.kpis.refinancings} · ${eur(reinvest.kpis.totalRefinancingProceeds)}` },

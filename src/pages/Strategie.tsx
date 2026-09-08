@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
-import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig } from '../lib/strategy'
+import { migrateConfig, DEFAULT_SIM_PARAMS, type SimUnit, type SimParams, type StrategyConfig, purchaseGrowthOf } from '../lib/strategy'
 import { buildCustomerAnalytics, type CustomerAnalytics, type ScenarioSummary } from '../lib/analytics'
 import {
   ChartCard, Legend, LineChart, BarChart, StepChart,
@@ -839,6 +839,14 @@ export default function Strategie() {
               {a.reinvest && t('strategie.assumptionsRe', 'Für Refinanzierungen ist eine maximale Beleihung von {{l}} % des Immobilienwertes angenommen, mit einer Mindestliquidität von {{c}}.', {
                 l: String(params.refinanceLtv).replace('.', ','), c: eur(params.minimumCashReserve),
               })}{' '}
+              {a.reinvest && t('strategie.assumptionsPrice', 'Spätere Käufe werden nicht zum heutigen Preis gerechnet: Der Kaufpreis des Modellobjekts steigt mit {{g}} % pro Jahr, die Miete nur mit der Mietsteigerung. Die Anfangsrendite späterer Käufe fällt dadurch niedriger aus als heute.', {
+                g: String(purchaseGrowthOf(params)).replace('.', ','),
+              })}{' '}
+              {params.holder === 'privat' && (
+                params.buyerStructure === 'couple'
+                  ? t('strategie.buyerCouple', 'Die Strategie wird von zwei Personen gemeinsam umgesetzt. Zypern veranlagt jede Person einzeln, deshalb berücksichtigt die Modellrechnung die persönlichen steuerfreien Grundbeträge beider Personen in Höhe von zusammen 44.000 € pro Jahr und beim Verkauf 60.000 € lebenslang. Diese Beträge gelten je Person und werden nicht je Wohnung vervielfacht.')
+                  : t('strategie.buyerSingle', 'Die Modellrechnung berücksichtigt den persönlichen steuerfreien Grundbetrag von 22.000 € pro Jahr und beim Verkauf einen lebenslangen Freibetrag von 30.000 €. Beides gilt je Person und wird nicht je Wohnung vervielfacht.')
+              )}{' '}
               {params.holder === 'firma'
                 ? t('strategie.taxFirma2', 'Gehalten über eine zyprische Gesellschaft: {{k}} % Körperschaftsteuer, auf die Ausschüttung sind {{d}} % berücksichtigt.', {
                   k: String(params.corpTaxPct).replace('.', ','), d: String(params.divTaxPct).replace('.', ','),

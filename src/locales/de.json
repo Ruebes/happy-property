@@ -4603,7 +4603,16 @@
       "shareHint2": "Legt den fertigen Entwurf in den Postausgang und gibt die Vorschau frei. Für den Kunden sichtbar wird der Plan erst beim Versand.",
       "sharedDraft": "Fahrplan fertig - der Entwurf liegt im Postausgang.",
       "sharedMerged": "Fahrplan fertig - der Link liegt beim vorhandenen Entwurf im Postausgang.",
-      "sharedHint2": "Der Kunde kann den Link noch nicht öffnen. Er wird erst freigeschaltet, wenn der Eintrag im Postausgang tatsächlich hinausgeht (Mail oder WhatsApp). Änderungen hier wirken danach sofort, der Link bleibt derselbe."
+      "sharedHint2": "Der Kunde kann den Link noch nicht öffnen. Er wird erst freigeschaltet, wenn der Eintrag im Postausgang tatsächlich hinausgeht (Mail oder WhatsApp). Änderungen hier wirken danach sofort, der Link bleibt derselbe.",
+      "buyer": "Käuferstruktur",
+      "buyerSingle": "Einzelperson",
+      "buyerCouple": "Paar",
+      "buyerHintSingle": "Einzelperson: 22.000 € im Jahr steuerfrei, beim Verkauf 30.000 € lebenslang. Beides gilt je Person, nicht je Wohnung.",
+      "buyerHintCouple": "Paar: Zypern veranlagt jede Person einzeln, deshalb greifen Freibetrag und Progression zweimal. Steuerfrei sind damit 44.000 € im Jahr, beim Verkauf 60.000 € lebenslang. Das sagt nichts über Eigentumsverteilung oder Finanzierung - die bleibt unverändert.",
+      "rePriceGrowth": "Kaufpreissteigerung % p.a.",
+      "rePriceGrowthLinked": "wie Wertsteigerung",
+      "rePriceGrowthReset": "an Wertsteigerung koppeln",
+      "rePriceGrowthHint": "Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe."
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -6060,6 +6069,9 @@
     "three3": "Der größte Teil deines Vermögens steckt in den Wohnungen. Verfügbar ist nur die Liquidität. Wer daran will, muss verkaufen oder refinanzieren.",
     "journeyTitle": "Der Weg deines Kapitals",
     "timelineTitle2": "Was wann passiert",
-    "timelineSub": "Jeder Eintrag ist ein Ereignis aus der Berechnung, nichts davon ist ausgedacht."
+    "timelineSub": "Jeder Eintrag ist ein Ereignis aus der Berechnung, nichts davon ist ausgedacht.",
+    "buyerSingle": "Die Modellrechnung berücksichtigt den persönlichen steuerfreien Grundbetrag von 22.000 € pro Jahr und beim Verkauf einen lebenslangen Freibetrag von 30.000 €. Beides gilt je Person und wird nicht je Wohnung vervielfacht.",
+    "buyerCouple": "Die Strategie wird von zwei Personen gemeinsam umgesetzt. Zypern veranlagt jede Person einzeln, deshalb berücksichtigt die Modellrechnung die persönlichen steuerfreien Grundbeträge beider Personen in Höhe von zusammen 44.000 € pro Jahr und beim Verkauf 60.000 € lebenslang. Diese Beträge gelten je Person und werden nicht je Wohnung vervielfacht.",
+    "assumptionsPrice": "Spätere Käufe werden nicht zum heutigen Preis gerechnet: Der Kaufpreis des Modellobjekts steigt mit {{g}} % pro Jahr, die Miete nur mit der Mietsteigerung. Die Anfangsrendite späterer Käufe fällt dadurch niedriger aus als heute."
   }
 }
