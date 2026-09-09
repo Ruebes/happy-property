@@ -343,7 +343,25 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
   const cashOnly = order.filter(u => !u.fin)
   // Wohnungen ohne Finanzierung binden immer ihren vollen Preis.
   const cashNeed = cashOnly.reduce((a, u) => a + probes.get(u.key)!.gross, 0)
-  let pool = Math.max(0, p.ek - cashNeed)
+  // ── Geschuetzte Liquiditaetsreserve (Sven 9.9.26) ─────────────────────────
+  // Frueher floss das gesamte Startkapital in die ersten Wohnungen, die Kasse
+  // stand im Startjahr auf null und jede Strategie galt damit als nicht
+  // selbsttragend. Die vereinbarte Mindestreserve ist aber genau dafuer da:
+  // Sie bleibt liegen und wird nicht investiert.
+  // Die Kaufnebenkosten kommen ebenfalls aus dem investierbaren Teil, sonst
+  // fraesse sich die Reserve genau um diesen Betrag wieder auf.
+  // Das ist KEIN Cash-Floor: Faellt die Kasse spaeter unter die Reserve, wird
+  // das gemeldet und nicht kaschiert.
+  // Nur im Reinvestment-Modus - die klassische Strategie kennt keine Reserve.
+  // Nur im Reinvestment-Modus: Die klassische Strategie kennt keine Reserve und
+  // bleibt unveraendert, dort zahlt der Kunde die Nebenkosten wie bisher aus
+  // eigener Tasche zusaetzlich zum Startkapital.
+  const reserve = p.reinvestEnabled ? Math.max(0, p.minimumCashReserve || 0) : 0
+  const costsTotal = p.reinvestEnabled
+    ? order.reduce((a, u) => a + probes.get(u.key)!.res.costs, 0)
+    : 0
+  const investable = Math.max(0, p.ek - reserve - costsTotal)
+  let pool = Math.max(0, investable - cashNeed)
 
   const share = new Map<string, number>()
   if (p.bundle) {
@@ -365,7 +383,7 @@ export function allocate(units: SimUnit[], p: SimParams): UnitOutcome[] {
       pool -= add
     }
   } else {
-    const each = p.ek / Math.max(1, units.length)
+    const each = investable / Math.max(1, units.length)
     for (const u of financed) share.set(u.key, Math.min(each, probes.get(u.key)!.gross))
   }
 

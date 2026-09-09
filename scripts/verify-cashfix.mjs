@@ -68,13 +68,14 @@ T('auch in den Kaufjahren', [...buyYears].every(y => {
   const f = base.flows.find(x => x.year === y), row = base.rows.find(x => x.year === y)
   return Math.abs(f.operatingCashflow - Math.round(row.operating)) <= 1
 }), [...buyYears].join(', '))
-// Kassenbruecke
-let cash = 0, chainOk = true
+// Kassenbruecke - startet bei der geschuetzten Reserve, die allocate
+// zurueckbehaelt, nicht bei null.
+let cash = base.flows[0].startingCash, chainOk = true
 for (const f of base.flows) {
   cash = cash + f.operatingCashflow + f.vatRefund + f.investorEquity + f.refinancingProceeds + f.saleProceeds - f.purchaseEquity - f.purchaseCosts
   if (Math.abs(cash - f.endingCash) > 2) chainOk = false
 }
-T('Kassenbruecke schliesst ueber alle Jahre', chainOk, `Ende ${eur(cash)} vs ${eur(base.kpis.cashEnd)}`)
+T('Kassenbruecke schliesst ueber alle Jahre', chainOk, `Start ${eur(base.flows[0].startingCash)}, Ende ${eur(cash)} vs ${eur(base.kpis.cashEnd)}`)
 T('keine kuenstliche Auffuellung auf die Mindestreserve', base.flows.some(f => f.endingCash !== P.minimumCashReserve),
   'mindestens ein Jahr weicht von 25.000 ab')
 

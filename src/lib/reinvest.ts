@@ -92,6 +92,26 @@ export interface ReinvestYear {
   endingCash: number
 }
 
+// Lebenslauf einer Wohnung: Kauf, Bauzeit, Uebergabe, Beleihbarkeit.
+// Kaufvertrag und Uebergabe sind zwei verschiedene Zeitpunkte. Eine Wohnung im
+// Bau ist bezahlt (oder in Raten), aber sie taugt nicht als Sicherheit - die
+// Bank beleiht erst das fertige Objekt. Deshalb kann eine 2027 gekaufte
+// Wohnung erst 2029 zum Kapital-Recycling beitragen (Sven 9.9.26).
+export interface UnitTimeline {
+  key: string
+  name: string
+  model: boolean
+  purchaseYear: number
+  purchaseMonth: number
+  handoverYear: number
+  handoverMonth: number
+  constructionMonths: number      // 0 = sofort verfuegbar, kein Bau
+  pledgeableFrom: number          // Jahr, ab dem die Wohnung Sicherheit sein kann
+  firstRefinanceYear: number | null
+  refinancings: number
+  totalRefinanced: number
+}
+
 export interface ReinvestKpis {
   // ── Kapitaltrennung (Sven 6.9.26) ─────────────────────────────────────────
   // Geld des Investors und Kapital, das die Strategie selbst freisetzt, duerfen
@@ -141,6 +161,7 @@ export interface ReinvestResult {
   firstYear: number
   lastYear: number
   modelUnit: SimUnit | null
+  unitTimeline: UnitTimeline[]
 }
 
 const round = (n: number) => Math.round(n)
@@ -351,6 +372,8 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     for (const o of outcomes) {
       const sold = saleYears.get(o.unit.key)
       if (sold != null && y >= sold) continue
+      // Nur uebergebene Wohnungen sind beleihbar. Eine Wohnung im Bau taugt
+      // nicht als Sicherheit, egal wie viele Raten schon bezahlt sind.
       const i = y - o.unit.readyY
       if (i < 0) continue
       const n = o.res.rents.length
@@ -676,9 +699,32 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       : null,
   }
 
+  // ── Lebenslauf je Wohnung ─────────────────────────────────────────────────
+  const refiEvents = events.filter((e): e is RefinanceEvent => e.kind === 'refinance')
+  const unitTimeline: UnitTimeline[] = outcomes.map(o => {
+    const u = o.unit
+    const mine = refiEvents.filter(e => e.propertyKeys.includes(u.key))
+    return {
+      key: u.key,
+      name: u.name,
+      model: !!u.model,
+      purchaseYear: u.buyY,
+      purchaseMonth: u.buyM,
+      handoverYear: u.readyY,
+      handoverMonth: u.readyM,
+      constructionMonths: Math.max(0, (u.readyY * 12 + u.readyM) - (u.buyY * 12 + u.buyM)),
+      // Beleihbar ab dem Uebergabejahr - identisch mit der Bedingung, nach der
+      // die Kapazitaetsrechnung oben eine Wohnung beruecksichtigt.
+      pledgeableFrom: u.readyY,
+      firstRefinanceYear: mine.length ? Math.min(...mine.map(e => e.year)) : null,
+      refinancings: mine.length,
+      totalRefinanced: round(mine.reduce((a, e) => a + e.newLoanAmount, 0)),
+    }
+  })
+
   return {
     units: allUnits, outcomes, rows, years, events, tranches, flows, opportunities,
-    sales, saleYears, totals, kpis, firstYear, lastYear, modelUnit: model,
+    sales, saleYears, totals, kpis, firstYear, lastYear, modelUnit: model, unitTimeline,
   }
 }
 
