@@ -53,6 +53,10 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
   const [shareUrl, setShareUrl] = useState('')
   const [shareErr, setShareErr] = useState('')
   const [merged, setMerged] = useState(false)
+  // Token und Freigabestand des zuletzt erstellten Fahrplans
+  const [shareToken, setShareToken] = useState('')
+  const [sharedAt, setSharedAt] = useState<string | null>(null)
+  const [releasing, setReleasing] = useState(false)
 
   // Gespeichertes Szenario laden, wenn der Wizard nichts mitgibt
   useEffect(() => { void (async () => {
@@ -237,10 +241,38 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
       // Kunden nie funktioniert: ?preview=1 braucht eine Anmeldung, und ohne
       // Freigabe liefert get_strategy_by_token nichts (Sven 9.9.26).
       setShareUrl(`${window.location.origin}/strategie/${token}`)
+      setShareToken(token)
+      const { data: cur } = await supabase.from('crm_strategy_scenarios')
+        .select('shared_at').eq('token', token).maybeSingle()
+      setSharedAt((cur as { shared_at: string | null } | null)?.shared_at ?? null)
     } catch (err) {
       console.error('[StrategySimulator] share:', err)
       setShareErr(err instanceof Error ? err.message : String(err))
     } finally { setSharing(false) }
+  }
+
+  // Fahrplan von Hand freischalten. Bisher ging das nur ueber den Versand aus
+  // dem Postausgang - wer den Link selbst verschickt (WhatsApp vom Handy, im
+  // Termin gezeigt, in eine eigene Mail kopiert), hatte keinen Weg, ihn gueltig
+  // zu machen, und der Kunde landete auf einer Fehlermeldung (Sven 9.9.26).
+  // Der Versand aus dem Postausgang setzt shared_at weiterhin automatisch;
+  // dieser Knopf ist der zweite Weg, kein Ersatz.
+  const release = async () => {
+    if (!shareToken || releasing) return
+    setReleasing(true); setShareErr('')
+    try {
+      const { error } = await supabase.from('crm_strategy_scenarios')
+        .update({ shared_at: new Date().toISOString() })
+        .eq('token', shareToken).is('shared_at', null)
+      if (error) throw error
+      const { data: cur } = await supabase.from('crm_strategy_scenarios')
+        .select('shared_at').eq('token', shareToken).maybeSingle()
+      const val = (cur as { shared_at: string | null } | null)?.shared_at ?? null
+      if (!val) throw new Error(t('crm.sim.releaseFail', 'Freigabe wurde nicht gespeichert - fehlen die Rechte?'))
+      setSharedAt(val)
+    } catch (err) {
+      setShareErr(err instanceof Error ? err.message : String(err))
+    } finally { setReleasing(false) }
   }
 
   const inputCls = 'w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300'
@@ -1050,9 +1082,25 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       {t('crm.sim.openPlan', 'Vorschau')}
                     </a>
                   </div>
-                  <p className="text-[11px] text-gray-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    {t('crm.sim.sharedHint3', 'Diesen Link jetzt noch nicht selbst verschicken. Er öffnet sich beim Kunden erst, wenn der Eintrag im Postausgang tatsächlich hinausgegangen ist (Mail oder WhatsApp) - dabei wird der Fahrplan freigeschaltet. Vorher sieht der Kunde nur eine Fehlermeldung. Die Vorschau daneben funktioniert nur für angemeldete Mitarbeiter.')}
-                  </p>
+                  {sharedAt ? (
+                    <p className="text-[11px] text-green-800 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      ✓ {t('crm.sim.releasedHint', 'Der Link ist für den Kunden freigeschaltet. Du kannst ihn jetzt verschicken, egal auf welchem Weg. Änderungen hier wirken sofort, der Link bleibt derselbe.')}
+                    </p>
+                  ) : (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                      <p className="text-[11px] text-gray-700">
+                        {t('crm.sim.sharedHint4', 'Der Kunde kann diesen Link noch nicht öffnen. Er wird automatisch freigeschaltet, sobald der Eintrag im Postausgang hinausgeht. Wenn du den Link selbst verschickst, schalte ihn hier frei.')}
+                      </p>
+                      <button onClick={() => void release()} disabled={releasing}
+                        className="mt-2 px-3 py-1.5 rounded-lg text-sm font-semibold text-white disabled:opacity-50"
+                        style={{ backgroundColor: '#2f6b4f' }}>
+                        {releasing
+                          ? t('crm.sim.releasing', 'Wird freigeschaltet…')
+                          : t('crm.sim.release', 'Für den Kunden freischalten')}
+                      </button>
+                    </div>
+                  )}
+                  {shareErr && <p className="text-[11px] text-red-600">{shareErr}</p>}
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3">

@@ -4660,7 +4660,12 @@
       "rePriceGrowthHint": "Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe.",
       "reTarget": "Referenzobjekt für spätere Käufe",
       "reTargetAvg": "Durchschnitt der gewählten Wohnungen",
-      "sharedHint3": "Diesen Link jetzt noch nicht selbst verschicken. Er öffnet sich beim Kunden erst, wenn der Eintrag im Postausgang tatsächlich hinausgegangen ist (Mail oder WhatsApp) - dabei wird der Fahrplan freigeschaltet. Vorher sieht der Kunde nur eine Fehlermeldung. Die Vorschau daneben funktioniert nur für angemeldete Mitarbeiter."
+      "sharedHint3": "Diesen Link jetzt noch nicht selbst verschicken. Er öffnet sich beim Kunden erst, wenn der Eintrag im Postausgang tatsächlich hinausgegangen ist (Mail oder WhatsApp) - dabei wird der Fahrplan freigeschaltet. Vorher sieht der Kunde nur eine Fehlermeldung. Die Vorschau daneben funktioniert nur für angemeldete Mitarbeiter.",
+      "sharedHint4": "Der Kunde kann diesen Link noch nicht öffnen. Er wird automatisch freigeschaltet, sobald der Eintrag im Postausgang hinausgeht. Wenn du den Link selbst verschickst, schalte ihn hier frei.",
+      "releasedHint": "Der Link ist für den Kunden freigeschaltet. Du kannst ihn jetzt verschicken, egal auf welchem Weg. Änderungen hier wirken sofort, der Link bleibt derselbe.",
+      "release": "Für den Kunden freischalten",
+      "releasing": "Wird freigeschaltet…",
+      "releaseFail": "Freigabe wurde nicht gespeichert - fehlen die Rechte?"
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -5507,7 +5512,10 @@
     "deleteOfferTitle": "Angebot löschen",
     "planFallback": "Investitions-Fahrplan",
     "planLive": "✓ beim Kunden",
-    "planDraft": "noch nicht sichtbar"
+    "planDraft": "noch nicht sichtbar",
+    "release": "Freischalten",
+    "releaseTitle": "Den Link jetzt für den Kunden gültig machen, ohne über den Postausgang zu senden",
+    "releaseFail": "Freischalten fehlgeschlagen. Bitte Rechte prüfen."
   },
   "unitPickerModal": {
     "statusUnderConstruction": "Im Bau",

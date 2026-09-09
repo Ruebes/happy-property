@@ -33,6 +33,26 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   const [outbox, setOutbox] = useState<OutboxRow[]>([])
   const [calcs, setCalcs]   = useState<CalcRow[]>([])
   const [plans, setPlans]   = useState<PlanRow[]>([])
+  const [releasing, setReleasing] = useState('')
+
+  // Fahrplan von Hand fuer den Kunden freischalten. Zweiter Weg neben dem
+  // Versand aus dem Postausgang - wer den Link selbst verschickt, brauchte
+  // bisher trotzdem einen Postausgang-Versand, sonst lief der Kunde in eine
+  // Fehlermeldung (Sven 9.9.26).
+  const releasePlan = async (token: string) => {
+    if (releasing) return
+    setReleasing(token)
+    try {
+      const now = new Date().toISOString()
+      const { error } = await supabase.from('crm_strategy_scenarios')
+        .update({ shared_at: now }).eq('token', token).is('shared_at', null)
+      if (error) throw error
+      setPlans(ps => ps.map(p => p.token === token ? { ...p, shared_at: now } : p))
+    } catch (err) {
+      console.error('[LeadAngebote] Fahrplan freischalten:', err)
+      window.alert(t('leadAngebote.releaseFail', 'Freischalten fehlgeschlagen. Bitte Rechte prüfen.'))
+    } finally { setReleasing('') }
+  }
   const [deckMeta, setDeckMeta] = useState<Record<string, DeckMeta>>({})
   const [loading, setLoading] = useState(true)
   const [busy, setBusy]     = useState<string | null>(null)
@@ -208,9 +228,16 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
                 ? <span className="ml-1 text-[11px] text-green-600 font-medium">· {t('leadAngebote.planLive', '✓ beim Kunden')}</span>
                 : <span className="ml-1 text-[11px] text-gray-400">· {t('leadAngebote.planDraft', 'noch nicht sichtbar')}</span>}
             </span>
-            <a href={`${origin}/strategie/${pl.token}?preview=1`} target="_blank" rel="noreferrer"
+            <a href={`${origin}/strategie/${pl.token}${pl.shared_at ? '' : '?preview=1'}`} target="_blank" rel="noreferrer"
               className="text-[11px] px-2 py-0.5 rounded text-white shrink-0"
               style={{ backgroundColor: pl.shared_at ? '#16a34a' : '#2f6b4f' }}>{t('leadAngebote.viewLink', 'Ansehen')}</a>
+            {!pl.shared_at && (
+              <button onClick={() => void releasePlan(pl.token)} disabled={!!releasing}
+                title={t('leadAngebote.releaseTitle', 'Den Link jetzt für den Kunden gültig machen, ohne über den Postausgang zu senden')}
+                className="text-[11px] px-2 py-0.5 rounded border border-green-600 text-green-700 shrink-0 disabled:opacity-50 hover:bg-green-50">
+                {releasing === pl.token ? '…' : t('leadAngebote.release', 'Freischalten')}
+              </button>
+            )}
           </div>
         ))}
       </div>

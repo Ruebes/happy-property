@@ -4660,7 +4660,12 @@
       "rePriceGrowthHint": "Later purchases cost today's model price carried forward at this rate. The model property's rent grows only with rent growth, so the initial yield of later purchases declines.",
       "reTarget": "Reference property for later purchases",
       "reTargetAvg": "Average of the selected apartments",
-      "sharedHint3": "Do not send this link yourself yet. It only opens for the client once the outbox entry has actually gone out (email or WhatsApp), which is when the plan is released. Before that the client only sees an error. The preview next to it works for signed-in staff only."
+      "sharedHint3": "Do not send this link yourself yet. It only opens for the client once the outbox entry has actually gone out (email or WhatsApp), which is when the plan is released. Before that the client only sees an error. The preview next to it works for signed-in staff only.",
+      "sharedHint4": "The client cannot open this link yet. It is released automatically as soon as the outbox entry goes out. If you send the link yourself, release it here.",
+      "releasedHint": "The link is live for the client. You can send it now, by any route. Changes here take effect immediately and the link stays the same.",
+      "release": "Release to client",
+      "releasing": "Releasing…",
+      "releaseFail": "The release was not saved - are permissions missing?"
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5507,7 +5512,10 @@
     "deleteOfferTitle": "Delete offer",
     "planFallback": "Investment plan",
     "planLive": "✓ with the customer",
-    "planDraft": "not visible yet"
+    "planDraft": "not visible yet",
+    "release": "Release",
+    "releaseTitle": "Make the link valid for the client now, without sending from the outbox",
+    "releaseFail": "Release failed. Please check permissions."
   },
   "unitPickerModal": {
     "statusUnderConstruction": "Under construction",
