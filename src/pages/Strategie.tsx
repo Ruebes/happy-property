@@ -481,7 +481,11 @@ export default function Strategie() {
                     <td style={td}>{r.costs ? `−${eur(r.costs)}` : ''}</td>
                     <td style={td}>{r.interest ? `−${eur(r.interest)}` : ''}</td>
                     <td style={td}>{r.amortization ? `−${eur(r.amortization)}` : ''}</td>
-                    <td style={td}>{r.tax ? `−${eur(r.tax)}` : ''}</td>
+                    {/* Negative Steuer ist eine Erstattung, also ein Zufluss.
+                        Ohne die Fallunterscheidung stand dort "−-5.901 €". */}
+                    <td style={{ ...td, color: r.tax < 0 ? '#1d7a4f' : undefined }}>
+                      {r.tax ? (r.tax < 0 ? `+${eur(-r.tax)}` : `−${eur(r.tax)}`) : ''}
+                    </td>
                     <td style={{ ...td, color: '#1d7a4f' }}>{r.vatRefund ? `+${eur(r.vatRefund)}` : ''}</td>
                     <td style={{ ...td, fontWeight: 700, color: r.net >= 0 ? '#1d7a4f' : '#b45309' }}>{eur(r.net)}</td>
                   </tr>
@@ -569,7 +573,7 @@ export default function Strategie() {
                   )}
                 </div>
                 <div style={{ fontSize: 12, color: '#777', marginTop: 2 }}>
-                  {t('strategie.purchase', 'Kauf')} {mmyyyy(1, p.buyYear)} · {t('strategie.handover', 'Übergabe')} {mmyyyy(1, p.readyYear)}
+                  {t('strategie.purchase', 'Kauf')} {mmyyyy(p.buyMonth, p.buyYear)} · {t('strategie.handover', 'Übergabe')} {mmyyyy(p.readyMonth, p.readyYear)}
                   {p.model && ` · ${t('strategie.modelUnit', 'Modellobjekt')}`}
                 </div>
                 <div style={{ marginTop: 10, display: 'grid', gap: 6, fontSize: 13 }}>
@@ -726,7 +730,9 @@ export default function Strategie() {
                       <td style={td}>{eur(e.value)}</td>
                       <td style={td}>−{eur(e.debt)}</td>
                       <td style={td}>−{eur(e.costs)}</td>
-                      <td style={td}>−{eur(e.tax)}</td>
+                      <td style={{ ...td, color: e.tax < 0 ? '#1d7a4f' : undefined }}>
+                        {e.tax < 0 ? `+${eur(-e.tax)}` : `−${eur(e.tax)}`}
+                      </td>
                       <td style={{ ...td, fontWeight: 700, color: CORAL }}>{eur(e.net)}</td>
                     </tr>
                   ))}

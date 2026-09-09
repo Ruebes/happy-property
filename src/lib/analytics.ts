@@ -56,6 +56,7 @@ export interface RecyclingRow {
 export interface PropertyCard {
   key: string; name: string
   buyYear: number; readyYear: number
+  buyMonth: number; readyMonth: number
   price: number; gross: number; equity: number; loan: number
   valueEnd: number; debtEnd: number; equityEnd: number
   rentFirstYear: number
@@ -346,6 +347,7 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
     return {
       key: o.unit.key, name: o.unit.name,
       buyYear: o.unit.buyY, readyYear: o.unit.readyY,
+      buyMonth: o.unit.buyM, readyMonth: o.unit.readyM,
       price: o.unit.priceNet, gross: r0(o.gross), equity: r0(o.ekUsed), loan: r0(o.loan),
       valueEnd: r0(o.res.propV[idxEnd]), debtEnd: r0(o.res.restL[idxEnd]),
       equityEnd: r0(o.res.propV[idxEnd] - o.res.restL[idxEnd]),
