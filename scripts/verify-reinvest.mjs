@@ -24,7 +24,11 @@ const unit = (key, o = {}) => ({
 })
 const P = {
   ...DEFAULT_SIM_PARAMS, res: 'cy', holder: 'privat', socialIns: false, gesy: true,
-  ek: 150000, interest: 4.1, termYears: 20, exitAfterYears: 0,
+  // 9.9.26: von 150.000 auf 420.000 angehoben. Seit Zukaeufe Off-Plan sind
+  // (18 Monate Bauzeit, Zahlungsplan, Miete erst ab Uebergabe), traegt ein
+  // Startkapital von 150.000 keinen einzigen weiteren Kauf mehr - der Fall
+  // pruefte dann nichts mehr.
+  ek: 420000, interest: 4.1, termYears: 20, exitAfterYears: 0,
   reinvestEnabled: true, horizonYears: 20, reinvestAppreciationPct: 5,
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
@@ -67,11 +71,23 @@ T('Case E/F: 70 % ergibt mehr Kapazitaet als 60 %',
   ltv70.years[9].refinancingCapacity > ltv60.years[9].refinancingCapacity,
   `${eur(ltv60.years[9].refinancingCapacity)} gegen ${eur(ltv70.years[9].refinancingCapacity)}`)
 const y10 = ltv70.years[9]
-const o10 = ltv70.outcomes[0]
-const wert = o10.res.propV[9], schuld = o10.res.restL[9]
-T('Kapazitaet = Marktwert mal Beleihung minus Restschuld',
-  near(y10.refinancingCapacity, Math.max(0, Math.round(wert * 0.7 - schuld)), 3),
-  `Wert ${eur(wert)}, Schuld ${eur(schuld)}, Kapazitaet ${eur(y10.refinancingCapacity)}`)
+// Die Kapazitaet zaehlt ALLE uebergebenen Wohnungen zusammen, nicht nur die
+// erste: Seit dem hoeheren Startkapital kauft der Motor hier auch Zukaeufe,
+// und deren Tranchen mindern die freie Kapazitaet ihrer Sicherheit.
+const jahr10 = ltv70.firstYear + 9
+let erwartet = 0
+for (const o of ltv70.outcomes) {
+  const i = jahr10 - o.unit.readyY
+  if (i < 0) continue                       // noch im Bau, nicht beleihbar
+  const n = o.res.propV.length
+  const wert = o.res.propV[Math.min(i, n - 1)], schuld = o.res.restL[Math.min(i, n - 1)]
+  const tr = ltv70.tranches.filter(t => t.propertyKeys.includes(o.unit.key) && t.startYear <= jahr10)
+    .reduce((a, t) => { const sch = trancheSchedule(t, jahr10); return a + (sch.length ? sch[sch.length - 1].rest : t.amount) }, 0)
+  erwartet += Math.max(0, wert * 0.7 - schuld - tr)
+}
+T('Kapazitaet = Summe aus Marktwert mal Beleihung minus Schulden',
+  Math.abs(y10.refinancingCapacity - Math.round(erwartet)) <= ltv70.outcomes.length + 3,
+  `erwartet ${eur(erwartet)}, gemeldet ${eur(y10.refinancingCapacity)} ueber ${ltv70.outcomes.length} Wohnungen`)
 T('Kapazitaet wird nie negativ', ltv60.years.every(y => y.refinancingCapacity >= 0))
 
 console.log('\n── Case G: Verkauf nach 5 Jahren ──')
@@ -198,13 +214,21 @@ T('Anfangsbestand jedes Jahres ist der Endbestand des Vorjahres',
 T('Recycling-Faktor ist definiert und plausibel',
   cycle.kpis.capitalRecyclingMultiple >= 0 && cycle.kpis.capitalRecyclingMultiple < 20,
   `${cycle.kpis.capitalRecyclingMultiple}x bei ${eur(cycle.kpis.originalEquity)} EUR Eigenkapital`)
-// Seit dem Befund vom 5.9.26: Wiederverwendet ist das Eigenkapital ALLER
-// zusaetzlichen Kaeufe, egal aus welcher Quelle es stammt. Die frueher engere
-// Zaehlung ergab 0, sobald ein Kauf aus der Kasse bezahlt wurde.
+// Seit 9.9.26: Wiederverwendet ist NUR Geld, das dem Investor schon gehoerte -
+// Mietueberschuesse, Mehrwertsteuer-Erstattungen, Verkaufserloese. Der Teil,
+// der aus einer Refinanzierung stammt, ist neue Schuld und wird getrennt
+// gezaehlt (Sven: "Beleihungskapazitaet ist kein Eigenkapital").
 const equitySum = cycle.events.filter(e => e.kind === 'purchase').reduce((a, e) => a + e.equity, 0)
-check('Recycling = Eigenkapital aller zusaetzlichen Kaeufe', cycle.kpis.totalRecycledCapital, equitySum, 2)
-T('Recycling ist positiv, sobald gekauft wurde',
-  cycle.kpis.additionalPurchases === 0 || cycle.kpis.totalRecycledCapital > 0)
+const borrowed = cycle.kpis.totalBorrowedForPurchases
+T('Recycling zaehlt keine Kreditbetraege mit',
+  cycle.kpis.totalRecycledCapital + borrowed <= equitySum + 3,
+  `${eur(cycle.kpis.totalRecycledCapital)} eigenes + ${eur(borrowed)} geliehen, Kaufeigenkapital ${eur(equitySum)}`)
+T('geliehener Anteil ist ausgewiesen und nie negativ', borrowed >= 0)
+T('geliehener Anteil hoechstens so gross wie die Refinanzierungen',
+  borrowed <= cycle.kpis.totalRefinancingProceeds + 3,
+  `${eur(borrowed)} von ${eur(cycle.kpis.totalRefinancingProceeds)}`)
+T('Recycling nie groesser als das Kaufeigenkapital',
+  cycle.kpis.totalRecycledCapital <= equitySum + 3)
 // Obergrenze = alle Kapitalquellen der Strategie: operativer Cashflow,
 // Refinanzierungen, Verkaeufe UND Mehrwertsteuer-Erstattungen (die laufen
 // getrennt vom operativen Cashflow, Befund 5.9.26). Seit STEP 3G kosten

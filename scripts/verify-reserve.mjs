@@ -100,7 +100,12 @@ T('beleihbar ab dem Uebergabejahr, nie ab dem Kaufjahr',
 T('Bauzeit = Monate zwischen Kauf und Uebergabe', base.unitTimeline.every(tl =>
   tl.constructionMonths === Math.max(0, (tl.handoverYear * 12 + tl.handoverMonth) - (tl.purchaseYear * 12 + tl.purchaseMonth))))
 T('Startwohnung im Bau: 6 und 24 Monate', base.unitTimeline.filter(tl => !tl.model).map(tl => tl.constructionMonths).join(',') === '6,24')
-T('Modellwohnungen ohne Bauzeit', base.unitTimeline.filter(tl => tl.model).every(tl => tl.constructionMonths === 0))
+// Seit 9.9.26 sind auch Zukaeufe Off-Plan: Vertrag heute, Uebergabe nach der
+// eingestellten Bauzeit. Vorher standen Kauf und Uebergabe auf demselben Monat.
+T('Modellwohnungen mit der eingestellten Bauzeit', base.unitTimeline.filter(tl => tl.model).every(tl => tl.constructionMonths === P.reinvestConstructionMonths),
+  `${P.reinvestConstructionMonths} Monate erwartet, gefunden ${[...new Set(base.unitTimeline.filter(tl => tl.model).map(tl => tl.constructionMonths))].join(',') || 'keine Modellwohnung'}`)
+T('Modellwohnung: Uebergabe = Kauf + Bauzeit', base.unitTimeline.filter(tl => tl.model).every(tl =>
+  (tl.handoverYear * 12 + tl.handoverMonth) - (tl.purchaseYear * 12 + tl.purchaseMonth) === P.reinvestConstructionMonths))
 T('keine Refinanzierung vor der Uebergabe', base.unitTimeline.every(tl =>
   tl.firstRefinanceYear == null || tl.firstRefinanceYear >= tl.handoverYear))
 // Direkt gegen die Ereignisse gegengeprueft

@@ -5,6 +5,7 @@ import {
   CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
   VAT_ADJUST_YEARS, CY_TRANSFER_LEVY_PCT, CY_SERVICE_VAT_PCT,
   type CalcParams, type CalcResult, type BuyerStructure,
+  VAT_REFUND_MONTHS_STRATEGY,
 } from './rechner'
 
 // ── Strategie-Rechnung (gemeinsame Logik) ────────────────────────────────────
@@ -88,6 +89,11 @@ export interface SimParams {
   // Referenzobjekt fuer spaetere Kaeufe: key einer Wohnung aus dem Szenario,
   // null = Durchschnitt der gewaehlten Wohnungen (Svens Freigabe STEP 1).
   reinvestTargetKey: string | null
+  // Bauzeit kuenftiger Kaeufe in Monaten. Off-Plan ist der Regelfall: Der
+  // Vertrag wird heute unterschrieben, gezahlt wird nach Baufortschritt, und
+  // erst nach der Uebergabe fliesst Miete und die Wohnung wird beleihbar
+  // (Sven 9.9.26). 0 bedeutet Bestandskauf ohne Bauzeit.
+  reinvestConstructionMonths: number
   refinanceLtv: number              // angenommene maximale Beleihung in %
   bankValuationFactor: number       // Abschlag der Bankbewertung auf den Marktwert, % 
   refinanceUtilizationPct: number   // wie viel der Kapazitaet wirklich genutzt wird, %
@@ -211,7 +217,7 @@ export const DEFAULT_SIM_PARAMS: SimParams = {
   corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   socialIns: true, opexMonthly: 150, maintPct: 0.75,
   exitAfterYears: 7, sellCostPct: 3, lawyerPct: 1, cpiPct: 2,
-  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5, purchasePriceGrowth: null, reinvestTargetKey: null,
+  reinvestEnabled: false, horizonYears: 20, reinvestAppreciationPct: 5, purchasePriceGrowth: null, reinvestTargetKey: null, reinvestConstructionMonths: 18,
   refinanceLtv: 70, bankValuationFactor: 100, refinanceUtilizationPct: 100,
   minimumCashReserve: 25000, maxAdditionalPurchases: 5, autoReinvest: true,
   selfFundingOnly: true, additionalEquityMonthly: 0, buyerStructure: 'single',
@@ -311,6 +317,10 @@ export function runUnit(u: SimUnit, ekForUnit: number, p: SimParams): UnitOutcom
     // globale Vorgabewert), Ruecklage einheitlich als Prozentsatz.
     opexMonthly: u.opex ?? p.opexMonthly, maintPct: p.maintPct,
     mgmtMode: fromCalc.mgmtMode ?? 'pct', mgmtFix: fromCalc.mgmtFix ?? 0,
+    // In der Strategie gilt die reale Frist von 18 Monaten ab Uebergabe
+    // (Sven 9.9.26). Der Einzelrechner bleibt bei seinen 24, damit er
+    // bit-genau zum Original passt.
+    vatRefundMonths: VAT_REFUND_MONTHS_STRATEGY,
   }
   const res = compute(params)
   const gross = res.pGross + res.furnGross

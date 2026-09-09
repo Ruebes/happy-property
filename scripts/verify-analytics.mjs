@@ -21,7 +21,9 @@ const unit = (key, o = {}) => ({
 })
 const base = {
   ...DEFAULT_SIM_PARAMS, res: 'cy', holder: 'privat', socialIns: false, gesy: true,
-  ek: 150000, interest: 4.1, termYears: 20,
+  // 9.9.26 von 150.000 angehoben, siehe verify-reinvest: Off-Plan-Zukaeufe
+  // brauchen mehr Startkapital, sonst kauft der Motor gar nicht mehr.
+  ek: 420000, interest: 4.1, termYears: 20,
 }
 const OFF = { ...base, reinvestEnabled: false, exitAfterYears: 7 }
 const ON = { ...base, reinvestEnabled: true, horizonYears: 20, reinvestAppreciationPct: 5, exitAfterYears: 0 }

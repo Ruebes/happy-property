@@ -130,6 +130,7 @@ export interface ReinvestKpis {
   totalRefinancingProceeds: number
   totalSaleProceeds: number
   totalRecycledCapital: number
+  totalBorrowedForPurchases: number   // Anteil der Zukaeufe, der aus Krediten stammt
   originalEquity: number
   capitalRecyclingMultiple: number
   maximumAdditionalPurchasePrice: number
@@ -192,15 +193,20 @@ export function buildModelUnit(units: SimUnit[], p: SimParams): SimUnit | null {
   // Miete ueber die durchschnittliche Rendite, damit ein groesseres oder
   // kleineres Objekt konsistent bleibt.
   const yieldPct = avg(u => u.priceNet > 0 ? (u.rent * 12) / u.priceNet : 0)
-  const short = base.filter(u => u.letType === 'short').length >= base.length / 2
   const mgmt = base.map(u => u.calc?.mgmtPct).filter((x): x is number => typeof x === 'number')
   return {
     key: 'model', name: 'Modellwohnung', priceNet, furnNet,
     rent: round(priceNet * yieldPct / 12),
-    letType: short ? 'short' : 'long',
+    // Kurzzeitvermietung ist der Standard fuer neue Wohnungen (Sven 9.9.26).
+    // Frueher wurde die Vermietungsart von den Startwohnungen geerbt: Waren
+    // die mehrheitlich Langzeit, fiel bei jedem Zukauf die
+    // Mehrwertsteuer-Erstattung ersatzlos weg, ohne dass es jemand sah.
+    letType: 'short',
     fin: true,
     buyM: 1, buyY: 0, readyM: 1, readyY: 0,   // Zeitpunkte setzt der Motor
-    plan: 'sofort',
+    // Zahlungsplan des Bautraegers statt Sofortkauf: Reservierung, 35 % bei
+    // Vertrag, drei Bauraten, 10 % bei Uebergabe.
+    plan: 'luma',
     opex: round(avg(u => u.opex ?? p.opexMonthly)),
     model: true,
     calc: mgmt.length ? { mgmtPct: round(mgmt.reduce((a, b) => a + b, 0) / mgmt.length) } : undefined,
@@ -215,8 +221,13 @@ export function buildModelUnit(units: SimUnit[], p: SimParams): SimUnit | null {
 // unterschieben und die Strategie zu gut aussehen lassen.
 // Moebel bleiben auf dem heutigen Betrag (STEP 3G, Punkt 12): eine eigene
 // Moebelpreissteigerung kommt spaeter als separater Parameter, nicht implizit.
-function modelAt(model: SimUnit, price: number, year: number, index: number, rentFactor = 1): SimUnit {
+function modelAt(model: SimUnit, price: number, year: number, index: number, rentFactor = 1, constructionMonths = 18): SimUnit {
   const priceNet = Math.max(50000, round(price / 1000) * 1000)
+  // Vertrag im Januar des Kaufjahres, Uebergabe nach der Bauzeit. Vorher wurde
+  // beides auf denselben Januar gesetzt: Die Wohnung war im Kaufmonat bezahlt,
+  // vermietet und beliehen - ein Off-Plan-Kauf sieht anders aus.
+  const cm = Math.max(0, Math.round(constructionMonths))
+  const readyAbs = year * 12 + cm
   return {
     ...model,
     key: `model-${index}`,
@@ -224,7 +235,10 @@ function modelAt(model: SimUnit, price: number, year: number, index: number, ren
     priceNet,
     furnNet: model.furnNet,
     rent: round(model.rent * rentFactor),
-    buyM: 1, buyY: year, readyM: 1, readyY: year,
+    buyM: 1, buyY: year,
+    readyY: Math.floor(readyAbs / 12),
+    readyM: (readyAbs % 12) + 1,
+    plan: cm > 0 ? 'luma' : 'sofort',
   }
 }
 
@@ -271,7 +285,7 @@ export interface PurchaseQuote { year: number; price: number; gross: number; loa
 export function futurePurchaseQuote(model: SimUnit, p: SimParams, year: number, baseYear: number): PurchaseQuote {
   const price = modelPriceAt(model, p, year, baseYear)
   const rentFactor = Math.pow(1 + p.rentGrowth / 100, Math.max(0, year - baseYear))
-  const unit = modelAt(model, price, year, 0, rentFactor)
+  const unit = modelAt(model, price, year, 0, rentFactor, p.reinvestConstructionMonths)
   const need = equityNeeded(unit, p, p.refinanceLtv)
   return { year, price: unit.priceNet, gross: need.gross, loan: need.loan, equity: need.equity, costs: need.costs, rent: unit.rent }
 }
@@ -282,7 +296,7 @@ export function maxAffordablePrice(model: SimUnit, p: SimParams, capital: number
   let lo = 0, hi = Math.max(100000, capital / Math.max(0.05, (100 - ltv) / 100) * 2)
   for (let k = 0; k < 24; k++) {
     const mid = (lo + hi) / 2
-    const need = equityNeeded(modelAt(model, mid, year, 0, rentFactor), p, ltv).equity
+    const need = equityNeeded(modelAt(model, mid, year, 0, rentFactor, p.reinvestConstructionMonths), p, ltv).equity
     if (need > capital) hi = mid; else lo = mid
   }
   return round(lo / 1000) * 1000
@@ -310,11 +324,19 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
   // Ohne diese Zeile wuerde der Motor so tun, als haette der Kunde ausser den
   // Wohnungen keinen Cent - und ein negativer Cashflow liefe sofort ins Minus.
   let cash = Math.max(0, p.ek - outcomes.reduce((a, o) => a + o.ekUsed, 0))
+  // Eigenkapitalanteil der noch offenen Bautraegerraten, je Jahr. Ein Kauf ist
+  // eine Verpflichtung ueber die ganze Bauzeit, keine einmalige Zahlung: Wer im
+  // Januar 2027 unterschreibt, zahlt bis zur Uebergabe Mitte 2028 in Raten.
+  // Frueher zog der Motor das gesamte Eigenkapital im Kaufjahr ab.
+  const pendingEquity = new Map<number, number>()
   let investorTotal = 0
   let breakYear: number | null = null
   let breakReason: string | null = null
   let purchases = 0, refis = 0
   let recycled = 0, refiProceeds = 0, saleProceedsTotal = 0
+  // Wie viel von den Zukaeufen aus neuen Krediten stammt - die Gegenzahl zum
+  // wiederverwendeten Eigenkapital.
+  let borrowedForPurchase = 0
   let maxPriceSeen = 0
   let earliestNext: number | null = null
 
@@ -339,7 +361,12 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     // Zusaetzliches Eigenkapital des Investors, nur im Wachstumsmodus.
     const investorIn = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
     investorTotal += investorIn
-    cash += operating + vatIn + investorIn
+    // Faellige Raten frueherer Kaeufe: Sie belasten die Kasse in dem Jahr, in
+    // dem sie wirklich anfallen, nicht im Jahr der Unterschrift.
+    const dueThisYear = pendingEquity.get(y) ?? 0
+    pendingEquity.delete(y)
+    let equityOutThisYear = dueThisYear
+    cash += operating + vatIn + investorIn - dueThisYear
 
     // ── Verkaeufe dieses Jahres ─────────────────────────────────────────────
     let saleIn = 0
@@ -398,7 +425,7 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     const capitalWithoutRefi = Math.max(0, cash - p.minimumCashReserve)
     const capitalWithRefi = Math.max(0, cash + capacity - p.minimumCashReserve)
     const maxPrice = model ? maxAffordablePrice(model, p, capitalWithRefi, y, rentFactor) : 0
-    const needForModel = model ? equityNeeded(modelAt(model, modelPrice, y, purchases + 1, rentFactor), p, p.refinanceLtv).equity : 0
+    const needForModel = model ? equityNeeded(modelAt(model, modelPrice, y, purchases + 1, rentFactor, p.reinvestConstructionMonths), p, p.refinanceLtv).equity : 0
     const affordable = !!model && y < lastYear && purchases < p.maxAdditionalPurchases
       && needForModel > 0 && capitalWithRefi + MONEY_TOLERANCE >= needForModel
     if (maxPrice > maxPriceSeen) maxPriceSeen = maxPrice
@@ -423,7 +450,7 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     // ── Kauf durchfuehren ───────────────────────────────────────────────────
     if (affordable && p.autoReinvest && model) {
       const idx = purchases + 1
-      const unit = modelAt(model, modelPrice, y, idx, rentFactor)
+      const unit = modelAt(model, modelPrice, y, idx, rentFactor, p.reinvestConstructionMonths)
       const need = equityNeeded(unit, p, p.refinanceLtv)
       // Die neue Wohnung kostet im Kaufjahr nicht nur das Eigenkapital, sondern
       // traegt ab Januar auch Annuitaet und laufende Kosten. Wie gross dieser
@@ -444,7 +471,12 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       let fromRefi = 0
       if (missing > 0 && capacity > 0) {
         let rest = Math.min(missing, capacity)
-        for (const pu of perUnit) {
+        // Die Wohnung mit dem groessten freien Spielraum zuerst. Frueher lief
+        // die Liste in Portfolio-Reihenfolge durch und nahm die erste, die
+        // genug hergab - dadurch lagen alle Refinanzierungen auf derselben
+        // Wohnung, auch wenn andere laengst mehr Luft hatten (Sven 9.9.26).
+        const byRoom = [...perUnit].sort((a, b) => b.usable - a.usable)
+        for (const pu of byRoom) {
           if (rest <= 0.5) break
           const take = Math.min(pu.usable, rest)
           if (take < 1000) continue
@@ -519,7 +551,25 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       }
       if (funded + MONEY_TOLERANCE >= need.equity && sustainable) {
         bought = true
-        cash -= need.equity
+        // Eigenkapital nach Faelligkeit verteilen. Der Anteil des Investors an
+        // jeder Rate ist gleich, die Bank traegt den Rest; die Nebenkosten
+        // werden bei Uebergabe faellig.
+        const probe = probeOutcomes.find(o => o.unit.key === unit.key)
+        const share = need.gross > 0 ? (need.gross - need.loan) / need.gross : 1
+        let thisYear = 0
+        if (probe) {
+          for (const pay of probe.payments) {
+            const py = Math.floor(pay.ym / 12)
+            const part = pay.amount * share
+            if (py <= y) thisYear += part
+            else pendingEquity.set(py, (pendingEquity.get(py) ?? 0) + part)
+          }
+          const cy = probe.unit.readyY
+          if (cy <= y) thisYear += need.costs
+          else pendingEquity.set(cy, (pendingEquity.get(cy) ?? 0) + need.costs)
+        } else thisYear = need.equity
+        cash -= thisYear
+        equityOutThisYear += thisYear
         // Erstjahresbeitrag der neuen Wohnung und der neuen Tranche nachbuchen.
         cash += deltaOperating + deltaVat
         operating += deltaOperating
@@ -531,7 +581,13 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
         // stammt. Die frueher engere Zaehlung (nur Refinanzierung) ergab 0,
         // sobald ein Kauf aus der Kasse bezahlt wurde, obwohl der Kunde sichtbar
         // weitere Wohnungen bekam (Befund 5.9.26).
-        recycled += need.equity
+        // Wiederverwendetes Eigenkapital ist NUR Geld, das dem Investor schon
+        // gehoerte: Ueberschuesse, Mehrwertsteuer-Erstattungen, Verkaufserloese.
+        // Der Teil, der aus einer Refinanzierung stammt, ist neue Schuld und
+        // zaehlt hier nicht mit (Sven 9.9.26). Frueher stand hier das gesamte
+        // Eigenkapital jedes Zukaufs, also auch die Kreditbetraege.
+        recycled += Math.max(0, thisYear - fromRefi)
+        borrowedForPurchase += fromRefi
         allUnits = probeUnits
         outcomes = probeOutcomes
         events.push({
@@ -591,7 +647,9 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       investorEquity: round(investorIn),
       refinancingProceeds: round(events.filter(e => e.kind === 'refinance' && e.year === y).reduce((a, e) => a + (e as RefinanceEvent).newLoanAmount, 0)),
       saleProceeds: round(saleIn),
-      purchaseEquity: round(events.filter(e => e.kind === 'purchase' && e.year === y).reduce((a, e) => a + (e as PurchaseEvent).equity, 0)),
+      // Was in DIESEM Jahr wirklich an Eigenkapital abgeflossen ist: die
+      // faelligen Raten frueherer Kaeufe plus der Anteil eines neuen Kaufs.
+      purchaseEquity: round(equityOutThisYear),
       purchaseCosts: 0,
       endingCash: round(cash),
     })
@@ -679,11 +737,13 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     sales: sales.length,
     totalRefinancingProceeds: round(refiProceeds),
     totalSaleProceeds: round(saleProceedsTotal),
-    // Wiederverwendet = Eigenkapital, das nach dem Start erneut in eine
-    // Immobilie geflossen ist. Quelle egal (Refinanzierung, Verkauf, laufender
-    // Ueberschuss), aber immer nur echtes Kapital in echten Kaeufen - keine
-    // Summe aller Cashflows. Das ist KEINE Rendite.
+    // Wiederverwendet = Eigenkapital des Investors, das nach dem Start erneut
+    // in eine Immobilie geflossen ist: Mietueberschuesse,
+    // Mehrwertsteuer-Erstattungen, Verkaufserloese. NICHT dabei ist Geld aus
+    // Refinanzierungen - das ist neue Schuld und steht in
+    // totalBorrowedForPurchases. Das ist KEINE Rendite.
     totalRecycledCapital: round(recycled),
+    totalBorrowedForPurchases: round(borrowedForPurchase),
     originalEquity,
     capitalRecyclingMultiple: originalEquity > 0 ? Math.round(recycled / originalEquity * 100) / 100 : 0,
     maximumAdditionalPurchasePrice: maxPriceSeen,

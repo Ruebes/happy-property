@@ -611,9 +611,9 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
       text: startUnits === unitsEndForKeys
         ? `Es bleibt bei ${unitsEndForKeys} ${unitsEndForKeys === 1 ? 'Wohnung' : 'Wohnungen'} mit einem Wert von ${eur(lastWealth?.propertyValue ?? 0)}.`
         : `Aus ${startUnits === 1 ? 'der ersten Wohnung' : `${startUnits} Wohnungen`} werden ${unitsEndForKeys} mit einem Wert von ${eur(lastWealth?.propertyValue ?? 0)}.` },
-    { title: 'Dein Kapital arbeitet mehrfach',
-      text: ri && ri.kpis.totalRecycledCapital > 0
-        ? `${eur(ri.kpis.totalRecycledCapital)} werden erneut in Immobilien investiert, das ${ri.kpis.capitalRecyclingMultiple.toFixed(1).replace('.', ',')}-fache deines Startkapitals.`
+    { title: 'Woher das Geld für weitere Käufe kommt',
+      text: ri && (ri.kpis.totalRecycledCapital > 0 || ri.kpis.totalBorrowedForPurchases > 0)
+        ? `${eur(ri.kpis.totalRecycledCapital)} stammen aus eigenen Mitteln, also aus Mietüberschüssen und der Mehrwertsteuer-Erstattung. ${eur(ri.kpis.totalBorrowedForPurchases)} kommen aus zusätzlichen Darlehen auf bereits übergebene Wohnungen und erhöhen die Schuld.`
         : 'Unter diesen Annahmen reicht das freiwerdende Kapital im Betrachtungszeitraum nicht für einen weiteren Kauf.' },
     { title: 'Dein Vermögen',
       text: `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - params.ek)} gegenüber deinem Startkapital.` },
@@ -654,7 +654,10 @@ function buildSummaryText(
   if (!ri || ri.kpis.additionalPurchases === 0) {
     return `${kern} Ein weiterer Kauf aus Wertzuwachs und Tilgung ergibt sich unter diesen Annahmen im Betrachtungszeitraum nicht.`
   }
-  return `${kern} ${ri.kpis.additionalPurchases === 1 ? 'Eine weitere Wohnung wird' : `${ri.kpis.additionalPurchases} weitere Wohnungen werden`} aus Wertzuwachs und Tilgung finanziert: Über ${ri.kpis.refinancings} ${ri.kpis.refinancings === 1 ? 'Refinanzierung' : 'Refinanzierungen'} werden ${eur(ri.kpis.totalRefinancingProceeds)} des gebundenen Kapitals wieder verfügbar und erneut investiert.`
+  // Eine Refinanzierung ist ein NEUER KREDIT, kein freigewordenes Eigenkapital
+  // (Sven 9.9.26). Der alte Satz sprach von "gebundenem Kapital, das wieder
+  // verfuegbar wird" - das klang nach Gewinn und war die Haelfte der Wahrheit.
+  return `${kern} ${ri.kpis.additionalPurchases === 1 ? 'Eine weitere Wohnung wird' : `${ri.kpis.additionalPurchases} weitere Wohnungen werden`} über ${ri.kpis.refinancings} ${ri.kpis.refinancings === 1 ? 'Refinanzierung' : 'Refinanzierungen'} finanziert: Dabei werden ${eur(ri.kpis.totalRefinancingProceeds)} als zusätzliches Darlehen auf bereits übergebene Wohnungen aufgenommen. Das ist neues Fremdkapital, kein Gewinn - es erhöht die Schuld und wird aus den Mieten bedient.`
 }
 
 function buildInsights(x: {

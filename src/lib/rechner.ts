@@ -61,6 +61,7 @@ export interface CalcParams {
   season?: { totalOcc: number; adrHigh: number } | null
   // MwSt-Regelung (optional, Default standard19 = heutiges Verhalten)
   vatMode?: VatMode
+  vatRefundMonths?: number   // Wartezeit ab Uebergabe, Standard 24
   livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
   // ── Halte-Struktur (Sven 4.9.26) ──────────────────────────────────────────
   // privat = die Wohnung gehoert der Person; firma = eine zyprische Ltd haelt
@@ -265,6 +266,11 @@ export const CY_CGT_PCT = 20
 export const CY_CGT_ALLOWANCE = 30000        // allgemeiner lebenslanger Freibetrag je Person
 export const CY_CGT_LIFETIME_CAP = 150000    // Gesamtdeckel aller Freibetraege je Person
 export const VAT_ADJUST_YEARS = 10           // Berichtigungszeitraum Capital Goods Scheme
+// Wartezeit bis zur Mehrwertsteuer-Erstattung, gerechnet AB UEBERGABE.
+// Der Einzelrechner bleibt bei 24 Monaten, damit er bit-genau zum Original
+// passt. Die Strategie setzt 18 (Sven 9.9.26) - dort zaehlt der reale Ablauf.
+export const VAT_REFUND_MONTHS_DEFAULT = 24
+export const VAT_REFUND_MONTHS_STRATEGY = 18
 export const DE_SPEC_YEARS = 10              // Spekulationsfrist Paragraf 23 EStG
 // Abgabe an den Fonds fuer notleidende Kredite: 0,4 % auf jede Uebertragung
 // zyprischer Immobilien, zu tragen vom Verkaeufer.
@@ -479,10 +485,14 @@ function computeCore(p: CalcParams): CalcResult {
   const appP = num(p.appreciationPct, 5)
   const deTx = num(p.deTaxPct, 42)
 
+  // Mehrwertsteuer-Erstattung: nur bei Kurzzeitvermietung, und erst nachdem ab
+  // der Uebergabe genug Monate vergangen sind. Die Frist ist ein Parameter,
+  // weil Einzelrechner (24) und Strategie (18) sich hier unterscheiden.
+  const vatWait = Math.max(0, Math.round(p.vatRefundMonths ?? VAT_REFUND_MONTHS_DEFAULT))
   const vatA = Array(YEARS).fill(0)
   if (letT === 'short') {
     let acc = 0
-    for (let vi = 0; vi < mA.length; vi++) { acc += mA[vi]; if (acc >= 24) { vatA[vi] = vatAmt; break } }
+    for (let vi = 0; vi < mA.length; vi++) { acc += mA[vi]; if (acc >= vatWait) { vatA[vi] = vatAmt; break } }
   }
 
   const baseR = pGrossList * (yPct / 100)

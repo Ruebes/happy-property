@@ -89,7 +89,12 @@ T('Kaeufe vorhanden', buys5.length > 0, String(buys5.length))
 T('jeder Kauf: Preis = Basis × 1,05^(Jahr − 2027)', buys5.every(e => e.price === grow(model.priceNet, 5, e.year - BASE_YEAR)))
 T('jeder Kauf: Kredit = 70 % Gesamtpreis, EK = Rest + Nebenkosten (< 3 %)', buys5.every(e => near(e.loan, e.gross * 0.7, 2) && e.equity >= e.gross - e.loan - 1 && e.equity - (e.gross - e.loan) < e.gross * 0.03))
 T('jeder Kauf: Moebel bleiben 20.000 (Durchschnitt), nicht hochgerechnet', buys5.every(e => run5.units.find(x => x.key === e.key)?.furnNet === model.furnNet))
-T('jeder Kauf: Wohnung startet im Kaufjahr (buyY = readyY = Kaufjahr)', buys5.every(e => { const x = run5.units.find(x => x.key === e.key); return x.buyY === e.year && x.readyY === e.year }))
+// Kaufvertrag und Uebergabe sind zwei Zeitpunkte (Sven 9.9.26): Der Vertrag
+// faellt ins Kaufjahr, die Uebergabe liegt um die Bauzeit spaeter.
+T('jeder Kauf: Vertrag im Kaufjahr, Uebergabe nach der Bauzeit', buys5.every(e => {
+  const x = run5.units.find(x => x.key === e.key)
+  return x.buyY === e.year && (x.readyY * 12 + x.readyM) - (x.buyY * 12 + x.buyM) === P.reinvestConstructionMonths
+}), `Bauzeit ${P.reinvestConstructionMonths} Monate`)
 T('Kaufpreise steigen monoton mit dem Jahr', buys5.every((e, i) => i === 0 || e.price >= buys5[i - 1].price))
 T('spaetester Kauf teurer als erster', buys5.length > 1 && buys5[buys5.length - 1].price > buys5[0].price, `${eur(buys5[0].price)} (${buys5[0].year}) → ${eur(buys5[buys5.length - 1].price)} (${buys5[buys5.length - 1].year})`)
 
@@ -107,8 +112,14 @@ if (firstLate) {
   // einem Kauf weniger vergleichen.
   const fewer = runReinvest(U, { ...P, maxAdditionalPurchases: buysOf(run5).filter(e => e.year <= y).length - sameYear.length })
   const delta = run5.years.find(r => r.year === y).propertyValue - fewer.years.find(r => r.year === y).propertyValue
-  T(`Kauf ${y}: Wertbeitrag im Kaufjahr ≈ Gesamtpreis (≤ +5 %)`, delta <= grossSum * 1.05 + 2 && delta >= grossSum * 0.97, `${eur(delta)} vs ${eur(grossSum)}`)
-  T(`Kauf ${y}: NICHT Gesamtpreis × 1,05^${y - BASE_YEAR} (haette seit 2027 mitgewachsen)`, delta < grossSum * Math.pow(1.05, y - BASE_YEAR) * 0.98)
+  // Im Kaufjahr steht die Wohnung noch im Bau: Sie taucht erst mit der
+  // Uebergabe im Portfoliowert auf, vorher zaehlt sie als gebundenes Kapital.
+  T(`Kauf ${y}: im Kaufjahr noch kein Wertbeitrag (Bauphase)`, delta <= 2, `${eur(delta)}`)
+  const hy = run5.units.find(x => x.key === firstLate.key).readyY
+  const fewer2 = runReinvest(U, { ...P, maxAdditionalPurchases: buysOf(run5).filter(e => e.year <= y).length - sameYear.length })
+  const deltaH = run5.years.find(r => r.year === hy).propertyValue - fewer2.years.find(r => r.year === hy).propertyValue
+  T(`Kauf ${y}: Wertbeitrag ab Uebergabe ${hy} vorhanden`, deltaH > grossSum * 0.9, `${eur(deltaH)} vs Kaufpreis ${eur(grossSum)}`)
+  T(`Kauf ${y}: NICHT seit ${BASE_YEAR} mitgewachsen`, deltaH < grossSum * Math.pow(1.05, hy - BASE_YEAR) * 0.98)
   void contrib
 } else T('Test D: spaeter Kauf vorhanden', false)
 
