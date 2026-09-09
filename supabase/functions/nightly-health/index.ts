@@ -237,6 +237,59 @@ const checkStuckMessages: Check = {
   },
 }
 
+// ── Prüfung 6b: Nachricht ist endgültig fehlgeschlagen ──────────────────────
+// Ein Fehlschlag stoppt weder die anderen Kanäle noch die anderen Nachrichten —
+// deshalb sieht ihn hinterher niemand mehr, sobald die Live-Meldung im Pipeline-
+// Fenster weg ist. Diese Prüfung holt ihn in den Morgenbericht.
+const checkFailedMessages: Check = {
+  key: 'nachricht_fehlgeschlagen',
+  title: 'Nachricht konnte nicht zugestellt werden',
+  run: async (sb) => {
+    const grenze = new Date(Date.now() - 24 * 3600e3).toISOString()
+    const { data: msgs } = await sb.from('scheduled_messages')
+      .select('id, type, event_type, recipient, error_message, sent_at, lead:leads(first_name, last_name)')
+      .eq('status', 'failed').gte('sent_at', grenze).limit(50)
+    return ((msgs ?? []) as Array<Record<string, unknown>>).map(m => {
+      const err   = String(m.error_message ?? '')
+      const l     = m.lead as { first_name?: string; last_name?: string } | null
+      const name  = `${l?.first_name ?? ''} ${l?.last_name ?? ''}`.trim()
+      const rec   = String(m.recipient ?? 'client')
+      const anWen = rec === 'client' ? (name || 'den Kunden')
+        : rec === 'unit_developer' ? 'den Bauträger'
+        : rec.startsWith('vw:') ? 'die Verwaltung' : 'einen Partner'
+      // Welche Kanäle sind wirklich gescheitert? Der Fehlertext trägt das Präfix
+      // 'email:' bzw. 'whatsapp:' je Kanal — bei type='both' ging der andere raus.
+      const mailWeg = err.includes('email:')
+      const waWeg   = err.includes('whatsapp:')
+      const kanal   = mailWeg && waWeg ? 'E-Mail und WhatsApp'
+        : mailWeg ? 'Die E-Mail' : waWeg ? 'Die WhatsApp' : 'Die Nachricht'
+      const rest    = m.type === 'both' && (mailWeg !== waWeg)
+        ? ` ${mailWeg ? 'Die WhatsApp' : 'Die E-Mail'} ist raus.` : ''
+      return {
+        check_key: 'nachricht_fehlgeschlagen', severity: 'hoch' as const,
+        entity_kind: 'nachricht', entity_id: String(m.id), entity_label: name || String(m.event_type ?? ''),
+        what_plain: `${kanal} an ${anWen} („${m.event_type}") kam nicht an: ${plainSendError(err)}.${rest}`,
+        action: 'proposed' as const,
+        fix_plain: mailWeg && /556|550|does not accept mail|no such user|unknown|invalid/i.test(err)
+          ? 'Sieht nach einer falschen E-Mail-Adresse aus — Adresse im Lead prüfen und korrigieren, dann die Nachricht neu auslösen.'
+          : 'Sag Bescheid, dann schicke ich sie erneut raus.',
+      }
+    })
+  },
+}
+
+// SMTP-/API-Fehlertexte in einen Satz übersetzen, den man ohne Technikwissen versteht.
+function plainSendError(err: string): string {
+  if (/does not accept mail|invalid DNS|MX/i.test(err))       return 'die E-Mail-Adresse gibt es so nicht (die Domain nimmt gar keine Mails an)'
+  if (/no such user|550|recipient (address )?rejected/i.test(err)) return 'das Postfach existiert nicht'
+  if (/mailbox full|quota/i.test(err))                        return 'das Postfach des Empfängers ist voll'
+  if (/spam|blocked|blacklist/i.test(err))                    return 'der Empfänger-Server hat die Mail als Werbung abgewiesen'
+  if (/kein Empfänger/i.test(err))                            return 'es ist gar keine Adresse hinterlegt'
+  if (/kein Telefon/i.test(err))                              return 'es ist keine Telefonnummer hinterlegt'
+  if (/timeout|ETIMEDOUT|network|fetch failed/i.test(err))    return 'die Verbindung zum Versand-Dienst hat nicht geklappt'
+  return err.slice(0, 160)
+}
+
 // ── Prüfung 7: Automatik verweist auf eine gelöschte/inaktive Vorlage ───────
 // Verlinkungs-Check: eine aktive Regel ohne existierende Vorlage sendet still nichts.
 const checkBrokenAutomationLinks: Check = {
@@ -632,7 +685,7 @@ const checkWaQuota: Check = {
 
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
-  checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages,
+  checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages, checkFailedMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
   checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
   checkDirtyPhones, checkFurnitureData, checkProjectBasics, checkCalcItemBasics,

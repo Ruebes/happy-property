@@ -3945,7 +3945,17 @@
       "drive": "Google-Drive-Ordner",
       "created": "erstellt",
       "noSteps": "Phase gespeichert — keine automatischen Schritte hinterlegt.",
-      "noneTriggered": "Keine Nachricht ausgelöst (Opt-Out oder fehlende Vorlage?)."
+      "noneTriggered": "Keine Nachricht ausgelöst (Opt-Out oder fehlende Vorlage?).",
+      "mailFailedWaSent": "✉️ ✗ / 💬 ✓",
+      "waFailedMailSent": "✉️ ✓ / 💬 ✗",
+      "partly": "Teilweise raus — bitte prüfen",
+      "errNoDomain": "E-Mail-Adresse gibt es so nicht — Domain nimmt keine Mails an",
+      "errNoMailbox": "Postfach existiert nicht",
+      "errFull": "Postfach des Empfängers ist voll",
+      "errSpam": "Empfänger-Server hat die Mail abgewiesen",
+      "errNoAddress": "Keine E-Mail-Adresse hinterlegt",
+      "errNoPhone": "Keine Telefonnummer hinterlegt",
+      "errNetwork": "Verbindung zum Versand-Dienst hat nicht geklappt"
     },
     "handoverSent": "Kontakt übergeben",
     "financing": {

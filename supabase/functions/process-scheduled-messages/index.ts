@@ -425,326 +425,340 @@ Deno.serve(async (req: Request) => {
       // Gesetzt bei Newsletter-Empfaengern aus einer Liste (kein CRM-Lead).
       subscriber_id: string | null
     }[]) {
-      let success = true
-      const errors: string[] = []
+      // Jede Nachricht in ihrem eigenen Fehler-Netz: ein unerwarteter Fehler
+      // (Netzwerk, Übersetzung, DB) darf NUR diese eine Nachricht kippen. Vorher riss
+      // er den ganzen Lauf mit — alle übrigen geclaimten Nachrichten fielen auf
+      // 'pending' zurück und dieselbe kaputte Nachricht blockierte sie im nächsten
+      // Lauf erneut.
+      try {
+        let success = true
+        const errors: string[] = []
 
-      // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
-      // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
-      // No-Show-Nudge. Der Bot prüft selbst Opt-Out/Termin/Engagement + sendet.
-      if (msg.bot_nudge_stage != null) {
-        // Stage 0 ERÖFFNET ein Gespräch (No-Show/Erstkontakt/Deck-Ansicht); bei
-        // Immobilienauswahl ist auch Stage 0 ein Nudge (kein separater Start).
-        const isStart = msg.bot_nudge_stage === 0 && ['no_show', 'erstkontakt', 'deck_viewed'].includes(msg.bot_nudge_source ?? '')
-        const botBody = isStart
-          ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source }
-          : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage, source: msg.bot_nudge_source ?? 'no_show' }
-        // booking-bot meldet per `skipped`, WARUM nichts rausging (no_phone, no_slots,
-        // optout, has_appointment, engaged …). Diese Antwort NICHT ignorieren, sonst
-        // wird ein nie gesendeter Nudge still als „sent" markiert (z.B. Lead ohne
-        // Telefonnummer → Kunde bekommt nie eine WhatsApp, und niemand sieht es).
-        let botSkip: string | null = null
-        try {
-          const br = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify(botBody),
-          })
-          const bj = await br.json().catch(() => ({})) as { skipped?: string }
-          botSkip = br.ok ? (bj.skipped ?? null) : 'error'
-        } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e); botSkip = 'error' }
-
-        // no_phone/no_slots/error = echtes Problem → failed + Grund (sichtbar im Postausgang).
-        // disabled/optout/has_appointment/engaged/engaged_or_closed = gewollt kein Versand → skipped.
-        if (botSkip === 'no_phone' || botSkip === 'no_slots' || botSkip === 'error') {
-          const reason = botSkip === 'no_phone' ? 'Keine Telefonnummer am Lead — WhatsApp konnte nicht gesendet werden'
-            : botSkip === 'no_slots' ? 'Keine freien Termine für den Vorschlag verfügbar'
-            : 'Termin-Bot-Aufruf fehlgeschlagen'
-          await supabase.from('scheduled_messages').update({ status: 'failed', error_message: reason, sent_at: new Date().toISOString() }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: `bot_failed:${botSkip}` })
-        } else if (botSkip) {
-          await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString() }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: `bot_skipped:${botSkip}` })
-        } else {
-          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
-        }
-        continue
-      }
-
-      // Lead-E-Mail + Telefon für Versand laden. Newsletter-Abonnenten haben
-      // KEINEN Lead — dort wird der Empfaenger unten aus newsletter_subscribers
-      // aufgeloest, der Lead-Schritt wird uebersprungen.
-      const { data: lead } = msg.subscriber_id
-        ? { data: { email: null, phone: null, whatsapp: null, language: 'de' } }
-        : await supabase
-          .from('leads')
-          .select('email, phone, whatsapp, language')
-          .eq('id', msg.lead_id)
-          .single()
-
-      if (!lead) {
-        await supabase
-          .from('scheduled_messages')
-          .update({ status: 'failed', error_message: 'Lead nicht gefunden', sent_at: new Date().toISOString() })
-          .eq('id', msg.id)
-        processed.push({ id: msg.id, result: 'failed:no_lead' })
-        continue
-      }
-
-      // ── Terminerinnerung: Verschiebe-Guard ────────────────────────────────
-      // Weicht die Soll-Sendezeit (aktuelle Terminzeit − delay) von der geplanten
-      // Sendezeit ab, wurde der Termin verschoben → alte Erinnerungen (falscher Text!)
-      // verwerfen und aus der neuen Terminzeit frisch planen. Ein Re-Fire pro Lead.
-      const beforeRule = msg.rule_id ? beforeRules.get(msg.rule_id) : undefined
-      if (beforeRule) {
-        const { data: nx } = await supabase.from('crm_appointments')
-          .select('start_time').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
-          .order('start_time', { ascending: true }).limit(1).maybeSingle()
-        const nxStart = (nx as { start_time?: string } | null)?.start_time
-        const expected = nxStart ? new Date(nxStart).getTime() - beforeRule.delay_minutes * 60000 : null
-        if (expected !== null && Math.abs(expected - new Date(msg.scheduled_at).getTime()) > 15 * 60000) {
-          await supabase.from('scheduled_messages')
-            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Termin verschoben – Erinnerung neu geplant' })
-            .eq('id', msg.id)
-          if (!refiredLeads.has(msg.lead_id)) {
-            refiredLeads.add(msg.lead_id)
-            // übrige veraltete Erinnerungen des Leads mit verwerfen, dann frisch planen
-            await supabase.from('scheduled_messages')
-              .update({ status: 'skipped', error_message: 'Termin verschoben – Erinnerung neu geplant' })
-              .eq('lead_id', msg.lead_id).eq('status', 'pending').in('rule_id', [...beforeRules.keys()])
-            try {
-              await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/schedule-message`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ lead_id: msg.lead_id, deal_id: msg.deal_id, event_type: beforeRule.event_type, only_timing: 'before_appointment' }),
-              })
-            } catch (e) { console.warn('[process-scheduled] Erinnerungs-Neuplanung fehlgeschlagen:', e) }
-          }
-          processed.push({ id: msg.id, result: 'skipped:rescheduled' })
-          continue
-        }
-      }
-
-      // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
-      // Newsletter-Abmeldung zwischen Planung und Versand: Mail überspringen.
-      if (msg.event_type === 'newsletter' && msg.lead_id) {
-        const { data: ol } = await supabase.from('leads').select('newsletter_optout_at').eq('id', msg.lead_id).maybeSingle()
-        if ((ol as { newsletter_optout_at?: string | null } | null)?.newsletter_optout_at) {
-          await supabase.from('scheduled_messages')
-            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Newsletter abbestellt' })
-            .eq('id', msg.id)
-          processed.push({ id: msg.id, result: 'skipped_newsletter_optout' })
-          continue
-        }
-      }
-
-      const cond = msg.appointment_condition
-      if (cond && cond !== 'none') {
-        const { data: appt } = await supabase.from('crm_appointments')
-          .select('zoom_link, type').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
-          .order('start_time', { ascending: true }).limit(1).maybeSingle()
-        const hasAppt = !!appt
-        const hasZoom = !!(appt as { zoom_link?: string } | null)?.zoom_link
-        // Vor-Ort-Termine dürfen NIE in die Telefon-Erinnerung („ich rufe dich an")
-        // laufen — dafür gibt es eigene is_inperson-Regeln.
-        const isInperson = (appt as { type?: string } | null)?.type === 'inperson'
-        const shouldSend =
-          cond === 'has_appointment' ? hasAppt :
-          cond === 'no_appointment'  ? !hasAppt :
-          cond === 'has_zoom'        ? (hasAppt && hasZoom) :
-          cond === 'is_inperson'     ? (hasAppt && isInperson) :
-          cond === 'no_zoom'         ? (hasAppt && !hasZoom && !isInperson) : true
-        if (!shouldSend) {
-          await supabase.from('scheduled_messages')
-            .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Bedingung ${msg.appointment_condition} nicht erfüllt` })
-            .eq('id', msg.id)
-          processed.push({ id: msg.id, result: 'skipped:condition' })
-          continue
-        }
-      }
-
-      // ── Flow-Builder: Wenn/Dann-Bedingung (E-Mail geöffnet?) zur SENDEZEIT ──
-      const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean } | null }).seq_condition
-      if (seqCond?.kind === 'email_opened') {
-        let opened = false
-        if (msg.subscriber_id) {
-          const { data: ev } = await supabase.from('engagement_events').select('id').eq('subscriber_id', msg.subscriber_id).eq('type', 'email_open').limit(1)
-          opened = !!(ev && ev.length)
-        } else if (msg.lead_id) {
-          const { data: ev } = await supabase.from('engagement_events').select('id').eq('lead_id', msg.lead_id).eq('type', 'email_open').limit(1)
-          opened = !!(ev && ev.length)
-        }
-        const ok = seqCond.negate ? !opened : opened
-        if (!ok) {
-          await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Flow-Bedingung nicht erfüllt (email_opened${seqCond.negate ? '=nein' : '=ja'})` }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: 'skipped:flow_condition' })
-          continue
-        }
-      }
-
-      // ── Flow-Builder: Empfängerlisten-Update (kein Versand) ─────────────────
-      if (msg.type === 'list_update') {
-        const mu = msg as { seq_list_op?: string | null; seq_list_target?: string | null }
-        try {
-          if (mu.seq_list_target && msg.subscriber_id) {
-            if (mu.seq_list_op === 'remove') {
-              await supabase.from('newsletter_list_members').delete().eq('list_id', mu.seq_list_target).eq('subscriber_id', msg.subscriber_id)
-            } else {
-              await supabase.from('newsletter_list_members').upsert({ list_id: mu.seq_list_target, subscriber_id: msg.subscriber_id }, { onConflict: 'list_id,subscriber_id' })
-            }
-          }
-          await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: 'list_update' })
-        } catch (e) {
-          await supabase.from('scheduled_messages').update({ status: 'failed', error_message: String(e).slice(0, 300) }).eq('id', msg.id)
-          processed.push({ id: msg.id, result: 'list_update:failed' })
-        }
-        continue
-      }
-
-      // Empfänger auflösen: Abonnent (Newsletter-Liste) hat Vorrang, sonst
-      // 'client' = Lead bzw. fixer Kontakt (bc:/dc:).
-      const rcpt = msg.subscriber_id
-        ? await resolveSubscriber(supabase, msg.subscriber_id)
-        : await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
-
-      // In Empfängersprache übersetzen (nur wenn ≠ de → sonst 1:1 Original).
-      const loc = await translateOutbound(
-        { subject: msg.email_subject, body: msg.email_body, whatsapp: msg.whatsapp_text },
-        rcpt.language,
-      )
-      const emailSubject = loc.subject
-      const emailBody    = loc.body
-      const whatsappText = loc.whatsapp
-
-      // ── E-Mail senden ─────────────────────────────────────────────────────
-      if ((msg.type === 'email' || msg.type === 'both') && msg.email_subject && msg.email_body) {
-        if (!rcpt.email) {
-          console.warn(`[process-scheduled] Kein Empfänger-E-Mail für ${msg.id} (recipient=${msg.recipient})`)
-          errors.push('email: kein Empfänger')
-          success = false
-        } else if (smtpUser && smtpPass) {
+        // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
+        // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
+        // No-Show-Nudge. Der Bot prüft selbst Opt-Out/Termin/Engagement + sendet.
+        if (msg.bot_nudge_stage != null) {
+          // Stage 0 ERÖFFNET ein Gespräch (No-Show/Erstkontakt/Deck-Ansicht); bei
+          // Immobilienauswahl ist auch Stage 0 ein Nudge (kein separater Start).
+          const isStart = msg.bot_nudge_stage === 0 && ['no_show', 'erstkontakt', 'deck_viewed'].includes(msg.bot_nudge_source ?? '')
+          const botBody = isStart
+            ? { action: 'start', lead_id: msg.lead_id, deal_id: msg.deal_id, source: msg.bot_nudge_source }
+            : { action: 'nudge', lead_id: msg.lead_id, stage: msg.bot_nudge_stage, source: msg.bot_nudge_source ?? 'no_show' }
+          // booking-bot meldet per `skipped`, WARUM nichts rausging (no_phone, no_slots,
+          // optout, has_appointment, engaged …). Diese Antwort NICHT ignorieren, sonst
+          // wird ein nie gesendeter Nudge still als „sent" markiert (z.B. Lead ohne
+          // Telefonnummer → Kunde bekommt nie eine WhatsApp, und niemand sieht es).
+          let botSkip: string | null = null
           try {
-            // Terminbestätigung (termin_gebucht): .ics-Kalenderdatei anhängen, damit
-            // der Kunde den Termin 1-Klick in seinen Kalender übernimmt — inkl. Zoom-Link.
-            let attachments: { filename: string; content: string; contentType: string }[] | undefined
-            if (msg.event_type === 'termin_gebucht') {
-              try {
-                const { data: ap } = await supabase.from('crm_appointments')
-                  .select('id, title, start_time, end_time, zoom_link, type, location, location_url')
-                  .eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
-                  .order('start_time', { ascending: true }).limit(1).maybeSingle()
-                const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null; type: string | null; location: string | null; location_url: string | null } | null
-                if (a) {
-                  const isZoom = !!a.zoom_link
-                  const isVorOrt = a.type === 'inperson'
-                  const ics = buildIcs({
-                    uid:         a.id,
-                    title:       a.title || 'Beratungsgespräch mit Sven – Happy Property',
-                    startIso:    new Date(a.start_time).toISOString(),
-                    endIso:      new Date(a.end_time).toISOString(),
-                    description: `Beratungsgespräch mit Sven · Happy Property${isVorOrt ? `\nWir treffen uns vor Ort${a.location ? `: ${a.location}` : ''}${a.location_url ? `\n${a.location_url}` : ''}` : isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,
-                    location:    isVorOrt ? (a.location || 'Vor Ort') : isZoom ? (a.zoom_link as string) : 'WhatsApp / Telefon',
-                    url:         isVorOrt ? (a.location_url ?? undefined) : isZoom ? (a.zoom_link as string) : undefined,
-                  })
-                  attachments = [{ filename: 'termin.ics', content: toB64(ics), contentType: 'text/calendar; method=PUBLISH; charset=UTF-8' }]
-                }
-              } catch (icsErr) { console.warn('[process-scheduled] ICS-Anhang fehlgeschlagen:', icsErr) }
-            }
-            // Abonnenten-Mails: Öffnungs-Pixel für den Flow-Split „E-Mail geöffnet?"
-            const htmlOut = (emailBody ?? msg.email_body) + (msg.subscriber_id
-              ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/subscriber-optin?open=${msg.subscriber_id}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
-              : '')
-            await sendEmail({
-              to:       rcpt.email,
-              subject:  emailSubject ?? msg.email_subject,
-              html:     htmlOut,
-              smtpUser, smtpPass,
-              attachments,
+            const br = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/booking-bot`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify(botBody),
             })
+            const bj = await br.json().catch(() => ({})) as { skipped?: string }
+            botSkip = br.ok ? (bj.skipped ?? null) : 'error'
+          } catch (e) { console.warn('[process-scheduled] bot_nudge Fehler:', e); botSkip = 'error' }
+
+          // no_phone/no_slots/error = echtes Problem → failed + Grund (sichtbar im Postausgang).
+          // disabled/optout/has_appointment/engaged/engaged_or_closed = gewollt kein Versand → skipped.
+          if (botSkip === 'no_phone' || botSkip === 'no_slots' || botSkip === 'error') {
+            const reason = botSkip === 'no_phone' ? 'Keine Telefonnummer am Lead — WhatsApp konnte nicht gesendet werden'
+              : botSkip === 'no_slots' ? 'Keine freien Termine für den Vorschlag verfügbar'
+              : 'Termin-Bot-Aufruf fehlgeschlagen'
+            await supabase.from('scheduled_messages').update({ status: 'failed', error_message: reason, sent_at: new Date().toISOString() }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: `bot_failed:${botSkip}` })
+          } else if (botSkip) {
+            await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString() }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: `bot_skipped:${botSkip}` })
+          } else {
+            await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: `bot_${isStart ? 'start' : 'nudge'}:${msg.bot_nudge_stage}` })
+          }
+          continue
+        }
+
+        // Lead-E-Mail + Telefon für Versand laden. Newsletter-Abonnenten haben
+        // KEINEN Lead — dort wird der Empfaenger unten aus newsletter_subscribers
+        // aufgeloest, der Lead-Schritt wird uebersprungen.
+        const { data: lead } = msg.subscriber_id
+          ? { data: { email: null, phone: null, whatsapp: null, language: 'de' } }
+          : await supabase
+            .from('leads')
+            .select('email, phone, whatsapp, language')
+            .eq('id', msg.lead_id)
+            .single()
+
+        if (!lead) {
+          await supabase
+            .from('scheduled_messages')
+            .update({ status: 'failed', error_message: 'Lead nicht gefunden', sent_at: new Date().toISOString() })
+            .eq('id', msg.id)
+          processed.push({ id: msg.id, result: 'failed:no_lead' })
+          continue
+        }
+
+        // ── Terminerinnerung: Verschiebe-Guard ────────────────────────────────
+        // Weicht die Soll-Sendezeit (aktuelle Terminzeit − delay) von der geplanten
+        // Sendezeit ab, wurde der Termin verschoben → alte Erinnerungen (falscher Text!)
+        // verwerfen und aus der neuen Terminzeit frisch planen. Ein Re-Fire pro Lead.
+        const beforeRule = msg.rule_id ? beforeRules.get(msg.rule_id) : undefined
+        if (beforeRule) {
+          const { data: nx } = await supabase.from('crm_appointments')
+            .select('start_time').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+            .order('start_time', { ascending: true }).limit(1).maybeSingle()
+          const nxStart = (nx as { start_time?: string } | null)?.start_time
+          const expected = nxStart ? new Date(nxStart).getTime() - beforeRule.delay_minutes * 60000 : null
+          if (expected !== null && Math.abs(expected - new Date(msg.scheduled_at).getTime()) > 15 * 60000) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Termin verschoben – Erinnerung neu geplant' })
+              .eq('id', msg.id)
+            if (!refiredLeads.has(msg.lead_id)) {
+              refiredLeads.add(msg.lead_id)
+              // übrige veraltete Erinnerungen des Leads mit verwerfen, dann frisch planen
+              await supabase.from('scheduled_messages')
+                .update({ status: 'skipped', error_message: 'Termin verschoben – Erinnerung neu geplant' })
+                .eq('lead_id', msg.lead_id).eq('status', 'pending').in('rule_id', [...beforeRules.keys()])
+              try {
+                await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/schedule-message`, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ lead_id: msg.lead_id, deal_id: msg.deal_id, event_type: beforeRule.event_type, only_timing: 'before_appointment' }),
+                })
+              } catch (e) { console.warn('[process-scheduled] Erinnerungs-Neuplanung fehlgeschlagen:', e) }
+            }
+            processed.push({ id: msg.id, result: 'skipped:rescheduled' })
+            continue
+          }
+        }
+
+        // ── B/D) Termin-Bedingung erneut prüfen (Zustand kann sich seit Planung geändert haben) ──
+        // Newsletter-Abmeldung zwischen Planung und Versand: Mail überspringen.
+        if (msg.event_type === 'newsletter' && msg.lead_id) {
+          const { data: ol } = await supabase.from('leads').select('newsletter_optout_at').eq('id', msg.lead_id).maybeSingle()
+          if ((ol as { newsletter_optout_at?: string | null } | null)?.newsletter_optout_at) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: 'Newsletter abbestellt' })
+              .eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'skipped_newsletter_optout' })
+            continue
+          }
+        }
+
+        const cond = msg.appointment_condition
+        if (cond && cond !== 'none') {
+          const { data: appt } = await supabase.from('crm_appointments')
+            .select('zoom_link, type').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+            .order('start_time', { ascending: true }).limit(1).maybeSingle()
+          const hasAppt = !!appt
+          const hasZoom = !!(appt as { zoom_link?: string } | null)?.zoom_link
+          // Vor-Ort-Termine dürfen NIE in die Telefon-Erinnerung („ich rufe dich an")
+          // laufen — dafür gibt es eigene is_inperson-Regeln.
+          const isInperson = (appt as { type?: string } | null)?.type === 'inperson'
+          const shouldSend =
+            cond === 'has_appointment' ? hasAppt :
+            cond === 'no_appointment'  ? !hasAppt :
+            cond === 'has_zoom'        ? (hasAppt && hasZoom) :
+            cond === 'is_inperson'     ? (hasAppt && isInperson) :
+            cond === 'no_zoom'         ? (hasAppt && !hasZoom && !isInperson) : true
+          if (!shouldSend) {
+            await supabase.from('scheduled_messages')
+              .update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Bedingung ${msg.appointment_condition} nicht erfüllt` })
+              .eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'skipped:condition' })
+            continue
+          }
+        }
+
+        // ── Flow-Builder: Wenn/Dann-Bedingung (E-Mail geöffnet?) zur SENDEZEIT ──
+        const seqCond = (msg as { seq_condition?: { kind?: string; negate?: boolean } | null }).seq_condition
+        if (seqCond?.kind === 'email_opened') {
+          let opened = false
+          if (msg.subscriber_id) {
+            const { data: ev } = await supabase.from('engagement_events').select('id').eq('subscriber_id', msg.subscriber_id).eq('type', 'email_open').limit(1)
+            opened = !!(ev && ev.length)
+          } else if (msg.lead_id) {
+            const { data: ev } = await supabase.from('engagement_events').select('id').eq('lead_id', msg.lead_id).eq('type', 'email_open').limit(1)
+            opened = !!(ev && ev.length)
+          }
+          const ok = seqCond.negate ? !opened : opened
+          if (!ok) {
+            await supabase.from('scheduled_messages').update({ status: 'skipped', sent_at: new Date().toISOString(), error_message: `Flow-Bedingung nicht erfüllt (email_opened${seqCond.negate ? '=nein' : '=ja'})` }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'skipped:flow_condition' })
+            continue
+          }
+        }
+
+        // ── Flow-Builder: Empfängerlisten-Update (kein Versand) ─────────────────
+        if (msg.type === 'list_update') {
+          const mu = msg as { seq_list_op?: string | null; seq_list_target?: string | null }
+          try {
+            if (mu.seq_list_target && msg.subscriber_id) {
+              if (mu.seq_list_op === 'remove') {
+                await supabase.from('newsletter_list_members').delete().eq('list_id', mu.seq_list_target).eq('subscriber_id', msg.subscriber_id)
+              } else {
+                await supabase.from('newsletter_list_members').upsert({ list_id: mu.seq_list_target, subscriber_id: msg.subscriber_id }, { onConflict: 'list_id,subscriber_id' })
+              }
+            }
+            await supabase.from('scheduled_messages').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'list_update' })
+          } catch (e) {
+            await supabase.from('scheduled_messages').update({ status: 'failed', error_message: String(e).slice(0, 300) }).eq('id', msg.id)
+            processed.push({ id: msg.id, result: 'list_update:failed' })
+          }
+          continue
+        }
+
+        // Empfänger auflösen: Abonnent (Newsletter-Liste) hat Vorrang, sonst
+        // 'client' = Lead bzw. fixer Kontakt (bc:/dc:).
+        const rcpt = msg.subscriber_id
+          ? await resolveSubscriber(supabase, msg.subscriber_id)
+          : await resolveRecipient(supabase, msg.recipient, lead, msg.deal_id)
+
+        // In Empfängersprache übersetzen (nur wenn ≠ de → sonst 1:1 Original).
+        const loc = await translateOutbound(
+          { subject: msg.email_subject, body: msg.email_body, whatsapp: msg.whatsapp_text },
+          rcpt.language,
+        )
+        const emailSubject = loc.subject
+        const emailBody    = loc.body
+        const whatsappText = loc.whatsapp
+
+        // ── E-Mail senden ─────────────────────────────────────────────────────
+        if ((msg.type === 'email' || msg.type === 'both') && msg.email_subject && msg.email_body) {
+          if (!rcpt.email) {
+            console.warn(`[process-scheduled] Kein Empfänger-E-Mail für ${msg.id} (recipient=${msg.recipient})`)
+            errors.push('email: kein Empfänger')
+            success = false
+          } else if (smtpUser && smtpPass) {
+            try {
+              // Terminbestätigung (termin_gebucht): .ics-Kalenderdatei anhängen, damit
+              // der Kunde den Termin 1-Klick in seinen Kalender übernimmt — inkl. Zoom-Link.
+              let attachments: { filename: string; content: string; contentType: string }[] | undefined
+              if (msg.event_type === 'termin_gebucht') {
+                try {
+                  const { data: ap } = await supabase.from('crm_appointments')
+                    .select('id, title, start_time, end_time, zoom_link, type, location, location_url')
+                    .eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
+                    .order('start_time', { ascending: true }).limit(1).maybeSingle()
+                  const a = ap as { id: string; title: string | null; start_time: string; end_time: string; zoom_link: string | null; type: string | null; location: string | null; location_url: string | null } | null
+                  if (a) {
+                    const isZoom = !!a.zoom_link
+                    const isVorOrt = a.type === 'inperson'
+                    const ics = buildIcs({
+                      uid:         a.id,
+                      title:       a.title || 'Beratungsgespräch mit Sven – Happy Property',
+                      startIso:    new Date(a.start_time).toISOString(),
+                      endIso:      new Date(a.end_time).toISOString(),
+                      description: `Beratungsgespräch mit Sven · Happy Property${isVorOrt ? `\nWir treffen uns vor Ort${a.location ? `: ${a.location}` : ''}${a.location_url ? `\n${a.location_url}` : ''}` : isZoom ? `\nZoom: ${a.zoom_link}` : '\nWir sprechen per WhatsApp / Telefon.'}`,
+                      location:    isVorOrt ? (a.location || 'Vor Ort') : isZoom ? (a.zoom_link as string) : 'WhatsApp / Telefon',
+                      url:         isVorOrt ? (a.location_url ?? undefined) : isZoom ? (a.zoom_link as string) : undefined,
+                    })
+                    attachments = [{ filename: 'termin.ics', content: toB64(ics), contentType: 'text/calendar; method=PUBLISH; charset=UTF-8' }]
+                  }
+                } catch (icsErr) { console.warn('[process-scheduled] ICS-Anhang fehlgeschlagen:', icsErr) }
+              }
+              // Abonnenten-Mails: Öffnungs-Pixel für den Flow-Split „E-Mail geöffnet?"
+              const htmlOut = (emailBody ?? msg.email_body) + (msg.subscriber_id
+                ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/subscriber-optin?open=${msg.subscriber_id}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
+                : '')
+              await sendEmail({
+                to:       rcpt.email,
+                subject:  emailSubject ?? msg.email_subject,
+                html:     htmlOut,
+                smtpUser, smtpPass,
+                attachments,
+              })
+              await logActivity(supabase, {
+                lead_id: msg.lead_id,
+                deal_id: msg.deal_id,
+                type:    'email',
+                subject: emailSubject ?? msg.email_subject,
+                content: stripHtml(emailBody ?? msg.email_body),
+              })
+            } catch (emailErr) {
+              const errMsg = emailErr instanceof Error ? emailErr.message : String(emailErr)
+              console.error(`[process-scheduled] E-Mail Fehler (${msg.id}):`, errMsg)
+              errors.push(`email: ${errMsg}`)
+              success = false
+            }
+          } else {
+            // SMTP nicht konfiguriert → simulieren + loggen
+            console.warn(`[process-scheduled] SMTP nicht konfiguriert – simulierter Versand an ${rcpt.email}`)
             await logActivity(supabase, {
               lead_id: msg.lead_id,
               deal_id: msg.deal_id,
               type:    'email',
               subject: emailSubject ?? msg.email_subject,
-              content: stripHtml(emailBody ?? msg.email_body),
+              content: `[Simulation] ${stripHtml(emailBody ?? msg.email_body)}`,
             })
-          } catch (emailErr) {
-            const errMsg = emailErr instanceof Error ? emailErr.message : String(emailErr)
-            console.error(`[process-scheduled] E-Mail Fehler (${msg.id}):`, errMsg)
-            errors.push(`email: ${errMsg}`)
-            success = false
           }
-        } else {
-          // SMTP nicht konfiguriert → simulieren + loggen
-          console.warn(`[process-scheduled] SMTP nicht konfiguriert – simulierter Versand an ${rcpt.email}`)
-          await logActivity(supabase, {
-            lead_id: msg.lead_id,
-            deal_id: msg.deal_id,
-            type:    'email',
-            subject: emailSubject ?? msg.email_subject,
-            content: `[Simulation] ${stripHtml(emailBody ?? msg.email_body)}`,
-          })
         }
-      }
 
-      // ── WhatsApp senden ───────────────────────────────────────────────────
-      if ((msg.type === 'whatsapp' || msg.type === 'both') && msg.whatsapp_text) {
-        const phone = rcpt.phone
-        if (phone) {
-          if (waApiKey && waSender) {
-            try {
-              await sendWhatsApp({
-                supabase,
-                phone,
-                message:  whatsappText ?? msg.whatsapp_text,
-                name:     rcpt.name,
-                imageUrl: msg.whatsapp_image_url ?? null,
-                // Kunden-WhatsApps tragen ein Lotte-Bild (wie die Bot-Nachrichten),
-                // damit ALLE automatischen Kunden-WhatsApps eine Bildkarte haben.
-                // Partner/Developer (bc:/dc:/unit_developer) bekommen keins.
-                alsLotte: !msg.recipient || msg.recipient === 'client',
-              })
+        // ── WhatsApp senden ───────────────────────────────────────────────────
+        if ((msg.type === 'whatsapp' || msg.type === 'both') && msg.whatsapp_text) {
+          const phone = rcpt.phone
+          if (phone) {
+            if (waApiKey && waSender) {
+              try {
+                await sendWhatsApp({
+                  supabase,
+                  phone,
+                  message:  whatsappText ?? msg.whatsapp_text,
+                  name:     rcpt.name,
+                  imageUrl: msg.whatsapp_image_url ?? null,
+                  // Kunden-WhatsApps tragen ein Lotte-Bild (wie die Bot-Nachrichten),
+                  // damit ALLE automatischen Kunden-WhatsApps eine Bildkarte haben.
+                  // Partner/Developer (bc:/dc:/unit_developer) bekommen keins.
+                  alsLotte: !msg.recipient || msg.recipient === 'client',
+                })
+                await logActivity(supabase, {
+                  lead_id: msg.lead_id,
+                  deal_id: msg.deal_id,
+                  type:    'whatsapp',
+                  subject: `WhatsApp: ${msg.event_type}`,
+                  content: whatsappText ?? msg.whatsapp_text,
+                })
+              } catch (waErr) {
+                const errMsg = waErr instanceof Error ? waErr.message : String(waErr)
+                console.error(`[process-scheduled] WhatsApp Fehler (${msg.id}):`, errMsg)
+                errors.push(`whatsapp: ${errMsg}`)
+                success = false
+              }
+            } else {
+              console.warn(`[process-scheduled] Timelines nicht konfiguriert – simulierter WA an ${phone}`)
               await logActivity(supabase, {
                 lead_id: msg.lead_id,
                 deal_id: msg.deal_id,
                 type:    'whatsapp',
-                subject: `WhatsApp: ${msg.event_type}`,
+                subject: `[Simulation] WhatsApp: ${msg.event_type}`,
                 content: whatsappText ?? msg.whatsapp_text,
               })
-            } catch (waErr) {
-              const errMsg = waErr instanceof Error ? waErr.message : String(waErr)
-              console.error(`[process-scheduled] WhatsApp Fehler (${msg.id}):`, errMsg)
-              errors.push(`whatsapp: ${errMsg}`)
-              success = false
             }
           } else {
-            console.warn(`[process-scheduled] Timelines nicht konfiguriert – simulierter WA an ${phone}`)
-            await logActivity(supabase, {
-              lead_id: msg.lead_id,
-              deal_id: msg.deal_id,
-              type:    'whatsapp',
-              subject: `[Simulation] WhatsApp: ${msg.event_type}`,
-              content: whatsappText ?? msg.whatsapp_text,
-            })
+            console.warn(`[process-scheduled] Kein Telefon für Lead ${msg.lead_id}`)
+            errors.push('whatsapp: kein Telefon')
           }
-        } else {
-          console.warn(`[process-scheduled] Kein Telefon für Lead ${msg.lead_id}`)
-          errors.push('whatsapp: kein Telefon')
         }
+
+        // ── Status zurückschreiben ────────────────────────────────────────────
+        await supabase
+          .from('scheduled_messages')
+          .update({
+            status:        success ? 'sent' : 'failed',
+            sent_at:       new Date().toISOString(),
+            error_message: errors.length > 0 ? errors.join(' | ') : null,
+          })
+          .eq('id', msg.id)
+
+        processed.push({ id: msg.id, result: success ? 'sent' : 'failed' })
+      } catch (loopErr) {
+        const errMsg = loopErr instanceof Error ? loopErr.message : String(loopErr)
+        console.error(`[process-scheduled] Unerwarteter Fehler (${msg.id}):`, errMsg)
+        await supabase.from('scheduled_messages')
+          .update({ status: 'failed', error_message: errMsg.slice(0, 300), sent_at: new Date().toISOString() })
+          .eq('id', msg.id)
+        processed.push({ id: msg.id, result: 'failed' })
       }
-
-      // ── Status zurückschreiben ────────────────────────────────────────────
-      await supabase
-        .from('scheduled_messages')
-        .update({
-          status:        success ? 'sent' : 'failed',
-          sent_at:       new Date().toISOString(),
-          error_message: errors.length > 0 ? errors.join(' | ') : null,
-        })
-        .eq('id', msg.id)
-
-      processed.push({ id: msg.id, result: success ? 'sent' : 'failed' })
     }
 
     console.log(`[process-scheduled] Fertig: ${processed.filter(p => p.result === 'sent').length} gesendet, ${processed.filter(p => p.result.startsWith('failed')).length} fehlgeschlagen`)

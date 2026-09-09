@@ -83,6 +83,11 @@ export default function PhaseRunToast({ deal, phase, since, onClose }: Props) {
     return () => { cancelled = true; clearInterval(iv) }
   }, [deal.id, deal.lead_id, phase, since, expectedMsgs, driveExpected])
 
+  const partial = (r: ScheduledRow): boolean => {
+    if (r.status !== 'failed' || r.type !== 'both') return false
+    const err = r.error_message ?? ''
+    return err.includes('email:') !== err.includes('whatsapp:')
+  }
   const anyFailed = rows.some(r => r.status === 'failed')
   const allSent   = rows.length > 0 && rows.every(r => r.status === 'sent')
   const driveOk   = !driveExpected || !!driveUrl
@@ -110,13 +115,40 @@ export default function PhaseRunToast({ deal, phase, since, onClose }: Props) {
   const header = !done
     ? { bg: 'bg-amber-50 border-amber-200', dot: 'bg-amber-400 animate-pulse', text: 'text-amber-800', label: t('crm.run.running', 'läuft …') }
     : anyFailed
-      ? { bg: 'bg-red-50 border-red-200', dot: 'bg-red-500', text: 'text-red-800', label: t('crm.run.failed', 'Bitte prüfen') }
+      ? rows.filter(r => r.status === 'failed').every(partial)
+        ? { bg: 'bg-amber-50 border-amber-200', dot: 'bg-amber-500', text: 'text-amber-900', label: t('crm.run.partly', 'Teilweise raus — bitte prüfen') }
+        : { bg: 'bg-red-50 border-red-200', dot: 'bg-red-500', text: 'text-red-800', label: t('crm.run.failed', 'Bitte prüfen') }
       : { bg: 'bg-green-50 border-green-300', dot: 'bg-green-500', text: 'text-green-800', label: t('crm.run.allDone', 'Alles erledigt') }
 
-  const statusBadge = (s: string) => {
-    if (s === 'sent') return <span className="text-green-600 font-semibold">✓ {t('crm.run.sent', 'gesendet')}</span>
-    if (s === 'failed') return <span className="text-red-600 font-semibold">✗ {t('crm.run.fail', 'fehlgeschlagen')}</span>
+  const statusBadge = (r: ScheduledRow) => {
+    if (r.status === 'sent') return <span className="text-green-600 font-semibold">✓ {t('crm.run.sent', 'gesendet')}</span>
+    if (r.status === 'failed') {
+      // Bei 'both' scheitert oft nur EIN Kanal — der andere ist trotzdem raus.
+      // Das muss dranstehen, sonst liest sich ein halber Fehlschlag wie ein ganzer.
+      const err = r.error_message ?? ''
+      const mailWeg = err.includes('email:'), waWeg = err.includes('whatsapp:')
+      if (r.type === 'both' && mailWeg !== waWeg) return (
+        <span className="text-amber-600 font-semibold">
+          {mailWeg
+            ? t('crm.run.mailFailedWaSent', '✉️ ✗ / 💬 ✓')
+            : t('crm.run.waFailedMailSent', '✉️ ✓ / 💬 ✗')}
+        </span>
+      )
+      return <span className="text-red-600 font-semibold">✗ {t('crm.run.fail', 'fehlgeschlagen')}</span>
+    }
     return <span className="text-amber-600">⏳ {t('crm.run.pending', 'läuft …')}</span>
+  }
+
+  // Technische SMTP-/API-Meldungen in einen verständlichen Satz übersetzen.
+  const plainError = (err: string): string => {
+    if (/does not accept mail|invalid DNS|MX/i.test(err))            return t('crm.run.errNoDomain', 'E-Mail-Adresse gibt es so nicht — Domain nimmt keine Mails an')
+    if (/no such user|550|recipient (address )?rejected/i.test(err)) return t('crm.run.errNoMailbox', 'Postfach existiert nicht')
+    if (/mailbox full|quota/i.test(err))                             return t('crm.run.errFull', 'Postfach des Empfängers ist voll')
+    if (/spam|blocked|blacklist/i.test(err))                         return t('crm.run.errSpam', 'Empfänger-Server hat die Mail abgewiesen')
+    if (/kein Empfänger/i.test(err))                                 return t('crm.run.errNoAddress', 'Keine E-Mail-Adresse hinterlegt')
+    if (/kein Telefon/i.test(err))                                   return t('crm.run.errNoPhone', 'Keine Telefonnummer hinterlegt')
+    if (/timeout|ETIMEDOUT|network|fetch failed/i.test(err))         return t('crm.run.errNetwork', 'Verbindung zum Versand-Dienst hat nicht geklappt')
+    return err
   }
 
   return (
@@ -137,9 +169,9 @@ export default function PhaseRunToast({ deal, phase, since, onClose }: Props) {
             <div className="flex-1 min-w-0">
               <div className="text-gray-800 truncate">{recLabel(r)}</div>
               {r.status === 'failed' && r.error_message &&
-                <div className="text-[11px] text-red-500 truncate">{r.error_message}</div>}
+                <div className="text-[11px] text-red-500">{plainError(r.error_message)}</div>}
             </div>
-            <div className="text-[12px] whitespace-nowrap">{statusBadge(r.status)}</div>
+            <div className="text-[12px] whitespace-nowrap">{statusBadge(r)}</div>
           </div>
         ))}
 

@@ -3945,7 +3945,17 @@
       "drive": "Google Drive folder",
       "created": "created",
       "noSteps": "Phase saved — no automatic steps configured.",
-      "noneTriggered": "No message triggered (opt-out or missing template?)."
+      "noneTriggered": "No message triggered (opt-out or missing template?).",
+      "mailFailedWaSent": "✉️ ✗ / 💬 ✓",
+      "waFailedMailSent": "✉️ ✓ / 💬 ✗",
+      "partly": "Partly sent — please check",
+      "errNoDomain": "This email address does not exist — the domain accepts no mail",
+      "errNoMailbox": "Mailbox does not exist",
+      "errFull": "The recipient's mailbox is full",
+      "errSpam": "The recipient's server rejected the mail",
+      "errNoAddress": "No email address on file",
+      "errNoPhone": "No phone number on file",
+      "errNetwork": "Could not reach the sending service"
     },
     "handoverSent": "Contact handed over",
     "financing": {
