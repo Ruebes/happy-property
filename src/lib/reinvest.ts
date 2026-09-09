@@ -100,6 +100,7 @@ export interface ReinvestKpis {
   investorContributions: number   // spaetere Einzahlungen des Investors
   totalInvestorCapital: number    // beides zusammen
   selfFunding: boolean            // Modus: ohne weiteres Geld des Investors
+  selfSupporting: boolean         // Ergebnis: Reserve zu jedem Zeitpunkt gehalten
   selfFundingBreaks: number | null // Jahr, in dem der Modus nicht mehr traegt
   selfFundingReason: string | null
   operatingPositiveFrom: number | null  // ab wann der operative Cashflow traegt
@@ -143,6 +144,15 @@ export interface ReinvestResult {
 }
 
 const round = (n: number) => Math.round(n)
+
+// Zentrale Toleranz fuer Ja-Nein-Entscheidungen ueber Geld (Audit 9.9.26).
+// Die Kasse traegt Nachkommastellen aus den Bauzeitzinsen, die Tranchen werden
+// auf ganze Euro gerundet. Ohne Toleranz entschieden dadurch 24 Cent ueber die
+// gesamte Kaufkaskade: 399.000 Euro Startkapital ergaben 2,41 Millionen,
+// 400.000 Euro dagegen 3,73 Millionen.
+// Die Toleranz gilt AUSSCHLIESSLICH fuer die Entscheidungslogik. Jede
+// ausgewiesene Zahl - Kasse, Schuld, Vermoegen - bleibt exakt gerechnet.
+export const MONEY_TOLERANCE = 1
 
 // ── Modellobjekt ─────────────────────────────────────────────────────────────
 // Fuer ein Jahr in der Zukunft gibt es kein konkretes Angebot. Der Motor leitet
@@ -207,6 +217,17 @@ function equityNeeded(unit: SimUnit, p: SimParams, ltv: number): { equity: numbe
   const eq = Math.max(0, gross - loan)
   const withEq = runUnit({ ...unit }, eq, p)
   return { equity: withEq.res.ekStart, gross, loan: withEq.loan, costs: withEq.res.costs }
+}
+
+// Eigenkapital OHNE Nebenkosten - genau das, was runUnit als Eigenkapitalanteil
+// am Kaufpreis erwartet. equityNeeded liefert dagegen ekStart, also den Betrag
+// INKLUSIVE der Nebenkosten, den der Investor aus der Kasse zahlt.
+// Beide Zahlen zu verwechseln hiess: Nebenkosten ein zweites Mal aufschlagen
+// und dafuer das Darlehen kuerzen (Audit 9.9.26). Der Beleihungsauslauf lag
+// dadurch bei 69,0 statt der eingestellten 70 Prozent.
+function modelEquityBase(unit: SimUnit, p: SimParams): number {
+  const n = equityNeeded(unit, p, p.refinanceLtv)
+  return Math.max(0, n.gross - n.loan)
 }
 
 // Groesstes Objekt, das mit dem verfuegbaren Kapital finanzierbar ist. Die
@@ -289,8 +310,11 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     const startingCash = cash
     // Operativer Cashflow und Mehrwertsteuer-Erstattung getrennt fuehren: die
     // Erstattung ist ein einmaliges Kapitalereignis, kein laufender Ertrag.
-    const operating = row ? row.operating : 0
-    const vatIn = row ? row.vat : 0
+    // Stand VOR einem Kauf dieses Jahres. Kommt es zu einem Kauf, wird die
+    // Differenz weiter unten nachgebucht - die neue Wohnung wird im Januar
+    // gekauft und traegt damit ein volles Jahr Miete, Kosten und Annuitaet.
+    let operating = row ? row.operating : 0
+    let vatIn = row ? row.vat : 0
     // Zusaetzliches Eigenkapital des Investors, nur im Wachstumsmodus.
     const investorIn = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
     investorTotal += investorIn
@@ -353,7 +377,7 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     const maxPrice = model ? maxAffordablePrice(model, p, capitalWithRefi, y, rentFactor) : 0
     const needForModel = model ? equityNeeded(modelAt(model, modelPrice, y, purchases + 1, rentFactor), p, p.refinanceLtv).equity : 0
     const affordable = !!model && y < lastYear && purchases < p.maxAdditionalPurchases
-      && needForModel > 0 && capitalWithRefi >= needForModel
+      && needForModel > 0 && capitalWithRefi + MONEY_TOLERANCE >= needForModel
     if (maxPrice > maxPriceSeen) maxPriceSeen = maxPrice
     opportunities.push({
       year: y,
@@ -378,9 +402,22 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       const idx = purchases + 1
       const unit = modelAt(model, modelPrice, y, idx, rentFactor)
       const need = equityNeeded(unit, p, p.refinanceLtv)
+      // Die neue Wohnung kostet im Kaufjahr nicht nur das Eigenkapital, sondern
+      // traegt ab Januar auch Annuitaet und laufende Kosten. Wie gross dieser
+      // Erstjahresbedarf ist, weiss man erst, wenn die neue Tranche steht - und
+      // jeder zusaetzlich gezogene Euro erhoeht ihn wieder ein wenig. Deshalb
+      // wird der Fehlbetrag gemessen und die Beschaffung wiederholt; die Reihe
+      // konvergiert schnell (typisch 2.400 auf 140 auf 8 Euro). Die
+      // Beleihungsgrenze bleibt unangetastet: Reicht die Kapazitaet nicht oder
+      // konvergiert es nicht, faellt der Kauf aus.
+      const MAX_FUNDING_ROUNDS = 6
+      let extraNeed = 0
+      let bought = false
+      for (let attempt = 0; attempt < MAX_FUNDING_ROUNDS && !bought; attempt++) {
+      const target = need.equity + extraNeed
       // Zuerst vorhandenes Geld, dann refinanzieren - nur so viel wie noetig.
-      const fromCash = Math.min(capitalWithoutRefi, need.equity)
-      const missing = Math.max(0, need.equity - fromCash)
+      const fromCash = Math.min(capitalWithoutRefi, target)
+      const missing = Math.max(0, target - fromCash)
       let fromRefi = 0
       if (missing > 0 && capacity > 0) {
         let rest = Math.min(missing, capacity)
@@ -427,10 +464,20 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
       // ist der Kauf unter diesen Annahmen nicht tragbar.
       const probeUnits = [...allUnits, unit]
       const probeOutcomes = allocate(probeUnits.filter(u => !u.model), p)
-        .concat(probeUnits.filter(u => u.model).map(u => runUnit(u, equityNeeded(u, p, p.refinanceLtv).equity, p)))
+        .concat(probeUnits.filter(u => u.model).map(u => runUnit(u, modelEquityBase(u, p), p)))
       const probeRows = aggregate(probeOutcomes, p, { tranches, saleYears, untilYear: lastYear }).rows
-      let probeCash = cash - need.equity
-      let sustainable = probeCash >= p.minimumCashReserve
+      // Das Kaufjahr selbst gehoert in die Pruefung: Die neue Wohnung und die
+      // neue Tranche kosten ab Januar Geld. Frueher startete die Probe erst im
+      // Folgejahr, dadurch fehlte der Erstjahresbeitrag in der Kasse und die
+      // Kasse landete in jedem Kaufjahr punktgenau auf der Mindestreserve.
+      const probeRowY = probeRows.find(pr => pr.year === y)
+      const deltaOperating = (probeRowY ? probeRowY.operating : operating) - operating
+      const deltaVat = (probeRowY ? probeRowY.vat : vatIn) - vatIn
+      let probeCash = cash - need.equity + deltaOperating + deltaVat
+      // Festhalten: probeCash laeuft in der Folgejahrschleife weiter, fuer die
+      // Begruendung und den zweiten Anlauf braucht es den Stand im Kaufjahr.
+      const probeCashAtBuy = probeCash
+      let sustainable = probeCash >= p.minimumCashReserve - MONEY_TOLERANCE
       const yearlyInvestor = p.selfFundingOnly ? 0 : Math.max(0, p.additionalEquityMonthly) * 12
       if (sustainable) {
         for (const pr of probeRows) {
@@ -444,11 +491,16 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
               probeCash += computeSale(o, pr.year, p, exemptionLeft, tranches).netProceeds
             }
           }
-          if (probeCash < p.minimumCashReserve) { sustainable = false; break }
+          if (probeCash < p.minimumCashReserve - MONEY_TOLERANCE) { sustainable = false; break }
         }
       }
-      if (funded + 0.5 >= need.equity && sustainable) {
+      if (funded + MONEY_TOLERANCE >= need.equity && sustainable) {
+        bought = true
         cash -= need.equity
+        // Erstjahresbeitrag der neuen Wohnung und der neuen Tranche nachbuchen.
+        cash += deltaOperating + deltaVat
+        operating += deltaOperating
+        vatIn += deltaVat
         purchases++
         // Wiederverwendetes Kapital = das gesamte Eigenkapital, das nach dem
         // Start erneut in eine Immobilie geflossen ist - egal ob es aus einer
@@ -478,20 +530,35 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
           if (events[i].kind === 'refinance' && events[i].year === y) events.splice(i, 1)
         }
         cash -= fromRefi
+        // Erster Anlauf gescheitert, weil im Kaufjahr Geld fehlt? Dann den
+        // Fehlbetrag messen und mit hoeherem Ziel noch einmal beschaffen.
+        const gapY = p.minimumCashReserve - probeCashAtBuy
+        if (attempt < MAX_FUNDING_ROUNDS - 1 && funded + MONEY_TOLERANCE >= need.equity
+          && gapY > MONEY_TOLERANCE && extraNeed + gapY < capacity) {
+          extraNeed = Math.ceil(extraNeed + gapY)
+          continue
+        }
         const opp = opportunities[opportunities.length - 1]
         opp.affordable = false
-        opp.reason = funded + 0.5 < need.equity
+        opp.reason = funded + MONEY_TOLERANCE < need.equity
           ? 'verfügbares Kapital reicht nicht für das Modellobjekt'
-          : 'Mindestliquidität würde in einem der Folgejahre unterschritten'
+          : probeCashAtBuy < p.minimumCashReserve - MONEY_TOLERANCE
+            ? 'Mindestliquidität wäre schon im Kaufjahr unterschritten'
+            : 'Mindestliquidität würde in einem der Folgejahre unterschritten'
+      }
       }
     }
 
-    // Selbsttragend heisst: Das Portfolio kommt ohne weiteres Geld des Investors
-    // aus. Faellt die Kasse trotzdem unter null, waere ein Zuschuss noetig -
-    // das wird gemeldet, nicht stillschweigend gedeckt.
-    if (p.selfFundingOnly && breakYear == null && cash < 0) {
+    // Selbsttragend heisst: nach dem Startkapital kein weiteres Geld des
+    // Investors UND die Mindestreserve zu JEDEM Zeitpunkt gehalten. Eine
+    // spaetere Mehrwertsteuer-Erstattung repariert eine Luecke nicht
+    // rueckwirkend - wer 2041 nicht zahlen kann, ist 2041 zahlungsunfaehig
+    // (Sven 9.9.26). Frueher schlug das erst bei einer negativen Kasse an.
+    if (breakYear == null && cash < p.minimumCashReserve - MONEY_TOLERANCE) {
       breakYear = y
-      breakReason = 'Die Liquidität reicht ohne zusätzliches Eigenkapital nicht aus.'
+      breakReason = cash < 0
+        ? 'Die Liquidität reicht ohne zusätzliches Eigenkapital nicht aus.'
+        : 'Die Liquidität fällt unter die vereinbarte Mindestreserve.'
     }
     flows.push({
       year: y,
@@ -577,6 +644,10 @@ export function runReinvest(units: SimUnit[], p: SimParams): ReinvestResult {
     investorContributions: round(investorTotal),
     totalInvestorCapital: round(originalEquity + investorTotal),
     selfFunding: p.selfFundingOnly,
+    // Der Modus sagt, was gewollt ist. selfSupporting sagt, ob es aufgeht.
+    // Beides zu verwechseln war der Grund, warum die Kundenseite
+    // "selbsttragend" meldete, obwohl die Reserve dreimal unterschritten war.
+    selfSupporting: breakYear == null,
     selfFundingBreaks: breakYear,
     selfFundingReason: breakReason,
     operatingPositiveFrom: firstPositive ? firstPositive.year : null,

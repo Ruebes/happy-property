@@ -9,7 +9,7 @@ import {
   type SimUnit, type SimParams, type ScenarioKey, type RiskItem, type ExitResult,
   type ScenarioResult,
 } from './strategy'
-import { runReinvest, type ReinvestResult, type StrategyEvent } from './reinvest'
+import { runReinvest, type ReinvestResult, type StrategyEvent, MONEY_TOLERANCE } from './reinvest'
 
 export interface WealthPoint {
   year: number
@@ -260,7 +260,8 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
   const reserve = params.minimumCashReserve
   let liquidityWarning: CustomerAnalytics['liquidityWarning'] = null
   if (ri) {
-    const below = liquidity.filter(l => l.cash < reserve)
+    // Dieselbe Schwelle wie die Engine: die vereinbarte Reserve, nicht die Null.
+    const below = liquidity.filter(l => l.cash < reserve - MONEY_TOLERANCE)
     if (below.length) {
       liquidityWarning = {
         from: below[0].year,
@@ -614,9 +615,14 @@ export function buildCustomerAnalytics(units: SimUnit[], params: SimParams): Cus
         : 'Unter diesen Annahmen reicht das freiwerdende Kapital im Betrachtungszeitraum nicht für einen weiteren Kauf.' },
     { title: 'Dein Vermögen',
       text: `Das Netto-Vermögen erreicht ${eur(netWorthEnd)}, ein Zuwachs von ${eur(netWorthEnd - params.ek)} gegenüber deinem Startkapital.` },
+    // Die Aussage zur Liquiditaet kommt AUSSCHLIESSLICH aus der Engine
+    // (kpis.selfSupporting). Frueher prueste dieser Text nur, ob die Kasse
+    // negativ wird, und meldete "Reserve bleibt durchgehend erhalten", waehrend
+    // ein paar Bloecke weiter die Warnung stand, die Reserve sei unterschritten
+    // (Audit 9.9.26). Zwei Rechnungen, zwei Antworten - das darf es nicht geben.
     { title: 'Deine Liquidität',
-      text: cost.additionalEquity > 0
-        ? `Zwischenzeitlich wären bis zu ${eur(cost.additionalEquity)} zusätzliches Kapital nötig. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.`
+      text: ri && !ri.kpis.selfSupporting
+        ? `Mit dem aktuell eingeplanten Kapital entsteht im Modell ${ri.kpis.selfFundingBreaks ? `ab ${ri.kpis.selfFundingBreaks} ` : ''}zwischenzeitlich eine Liquiditätslücke. Die Strategie benötigt an diesem Punkt zusätzliches Kapital oder eine Anpassung der Finanzierung beziehungsweise des Kaufzeitpunkts. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.`
         : `Die Liquiditätsreserve bleibt durchgehend erhalten. Am Ende verbleiben ${eur(lastWealth?.cash ?? 0)}.` },
   ]
 
