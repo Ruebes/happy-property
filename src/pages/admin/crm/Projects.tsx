@@ -134,9 +134,10 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
     if (!project?.id) return
     setIngesting(true)
     setIngestMsg(null)
-    const steps: { action: 'images' | 'categorize' | 'docs' | 'brochure' | 'facts'; label: string }[] = [
+    const steps: { action: 'images' | 'categorize' | 'videos' | 'docs' | 'brochure' | 'facts'; label: string }[] = [
       { action: 'images',     label: t('crm.project.deck.stepImages',     'Bilder & Grundrisse') },
       { action: 'categorize', label: t('crm.project.deck.stepCategorize', 'Bilder einsortieren (Räume)') },
+      { action: 'videos',     label: t('crm.project.deck.stepVideos',     'Videos prüfen und laden') },
       { action: 'docs',       label: t('crm.project.deck.stepDocs',       'Dokumente') },
       { action: 'brochure',   label: t('crm.project.deck.stepBrochure',   'Broschüre auswerten (Innenbilder)') },
       { action: 'facts',      label: t('crm.project.deck.stepFacts',      'Fakten (KI liest Broschüre)') },
@@ -164,10 +165,11 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
           body: { project_id: project.id, action, folder_id: folderId || undefined },
         })
         if (error) throw new Error(error.message)
-        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean; extracted?: number; uploaded?: number }
+        const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean; extracted?: number; uploaded?: number; im_deck?: number; zu_gross?: number; codec?: number }
         if (d?.error) throw new Error(d.error)
         if (action === 'images')     summary.push(t('crm.project.deck.summaryImages', '{{renders}} Bilder, {{floorplans}} Grundrisse ({{unitsMatched}} Units zugeordnet)', { renders: d.renders ?? 0, floorplans: d.floorplans ?? 0, unitsMatched: d.unitsMatched ?? 0 }))
         if (action === 'categorize') summary.push(t('crm.project.deck.summaryCategorized', '{{gallery}} Bilder einsortiert', { gallery: d.gallery ?? 0 }))
+        if (action === 'videos')     summary.push(t('crm.project.deck.summaryVideos', '{{n}} Videos im Deck', { n: d.im_deck ?? 0 }) + ((d.zu_gross ?? 0) + (d.codec ?? 0) ? ` (${(d.zu_gross ?? 0) + (d.codec ?? 0)} ${t('crm.project.deck.videosBlocked', 'nicht nutzbar')})` : ''))
         if (action === 'docs')       summary.push(t('crm.project.deck.summaryDocs', 'Dokumente: {{docs}}', { docs: Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || t('crm.project.deck.none', 'keine') }))
         if (action === 'brochure')   summary.push(t('crm.project.deck.summaryBrochure', '{{extracted}} Broschüren-Bilder ({{gallery}} in Gallery)', { extracted: d.extracted ?? 0, gallery: d.gallery ?? 0 }))
         if (action === 'facts')      summary.push(d.background ? t('crm.project.deck.factsBackground', 'Fakten laufen im Hintergrund (~1 Min)') : t('crm.project.deck.summaryFacts', 'Fakten {{chars}} Zeichen', { chars: d.facts_chars ?? 0 }))
@@ -187,6 +189,32 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       setIngestMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.importError', 'Fehler beim Import') })
     } finally {
       setIngesting(false)
+    }
+  }
+
+  // ── Video nicht gelistet zu YouTube laden ─────────────────────────────────────
+  // Der einzige verlaessliche Weg fuer H.265-Rohmaterial (kein Browser dekodiert das)
+  // und fuer Master-Filme jenseits des Storage-Limits. Bewusst ein Knopf und kein
+  // Automatismus: das Video landet auf dem eigenen YouTube-Kanal.
+  const [ytBusy, setYtBusy] = useState<string | null>(null)
+  const [ytMsg, setYtMsg]   = useState<{ ok: boolean; text: string } | null>(null)
+  const runYoutubeUpload = async (driveId: string, name: string) => {
+    if (!project?.id) return
+    if (!window.confirm(t('crm.project.deck.videoUploadConfirm', 'Video „{{name}}" nicht gelistet auf den YouTube-Kanal laden? Es ist danach nur über den Link im Deck erreichbar.', { name }))) return
+    setYtBusy(driveId)
+    setYtMsg(null)
+    try {
+      const { data, error } = await supabase.functions.invoke('prepare-project-assets', {
+        body: { project_id: project.id, action: 'videoupload', file_id: driveId },
+      })
+      if (error) throw new Error(error.message)
+      const d = data as { url?: string; error?: string }
+      if (d?.error) throw new Error(d.error)
+      setYtMsg({ ok: true, text: `✓ ${d.url ?? ''}` })
+    } catch (e) {
+      setYtMsg({ ok: false, text: e instanceof Error ? e.message : t('crm.project.deck.videoUploadError', 'Upload fehlgeschlagen') })
+    } finally {
+      setYtBusy(null)
     }
   }
 
@@ -738,6 +766,61 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <p className="text-xs text-gray-400 mt-2">
                     {t('crm.project.deck.cached', 'Im Cache')}: {project.deck_assets.renders?.length ?? 0} Bilder · {project.deck_assets.floorplans?.length ?? 0} Grundrisse · {project.deck_assets.facts ? t('crm.project.deck.factsReady', 'Fakten ✓') : t('crm.project.deck.factsMissing', 'Fakten fehlen')}
                   </p>
+                )}
+
+                {/* Videos aus dem Drive: was im Deck landet und was nicht — mit Grund.
+                    Ohne diese Liste bliebe unsichtbar, dass der beste Film des
+                    Bauträgers in H.265 vorliegt oder zu groß fürs Selbsthosting ist. */}
+                {!!project?.deck_assets?.videos?.length && (
+                  <div className="mt-3 rounded-lg border border-gray-200 p-3">
+                    <p className="text-xs font-semibold text-gray-700">
+                      {t('crm.project.deck.videosTitle', 'Videos aus dem Drive')}
+                    </p>
+                    <ul className="mt-2 space-y-1">
+                      {project.deck_assets.videos
+                        .filter(v => v.status !== 'kandidat' && v.status !== 'ignoriert')
+                        .map(v => (
+                        <li key={v.drive_id} className="text-[11px] leading-snug flex gap-2">
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 font-medium ${
+                            v.status === 'ok' ? 'bg-green-50 text-green-700'
+                            : v.status === 'fehler' ? 'bg-red-50 text-red-600'
+                            : 'bg-amber-50 text-amber-700'}`}>
+                            {v.status === 'ok'
+                              ? t('crm.project.deck.videoInDeck', 'im Deck')
+                              : v.status === 'zu_gross' ? t('crm.project.deck.videoTooBig', 'zu groß')
+                              : v.status === 'codec' ? t('crm.project.deck.videoCodec', 'Codec')
+                              : t('crm.project.deck.videoError', 'Fehler')}
+                          </span>
+                          <span className="text-gray-600">
+                            <span className="text-gray-800">{v.name}</span>
+                            {' · '}{v.slot}{' · '}{Math.round(v.size / 1024 / 1024)} MB
+                            {v.duration_s ? ` · ${v.duration_s}s` : ''}
+                            {v.reason ? <span className="block text-gray-500">{v.reason}</span> : null}
+                          </span>
+                          {(v.status === 'zu_gross' || v.status === 'codec') && !v.youtube_url && (
+                            <button
+                              type="button"
+                              onClick={() => runYoutubeUpload(v.drive_id, v.name)}
+                              disabled={ytBusy !== null}
+                              className="shrink-0 ml-auto px-2 py-0.5 rounded border border-orange-300 text-orange-700 hover:bg-orange-50 disabled:opacity-40"
+                            >
+                              {ytBusy === v.drive_id
+                                ? t('crm.project.deck.videoUploading', 'lädt…')
+                                : t('crm.project.deck.videoToYoutube', 'zu YouTube')}
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    {ytMsg && (
+                      <p className={`text-[11px] mt-2 rounded px-2 py-1 ${ytMsg.ok ? 'text-green-700 bg-green-50' : 'text-red-600 bg-red-50'}`}>{ytMsg.text}</p>
+                    )}
+                    {project.deck_assets.videos.some(v => v.status === 'zu_gross' || v.status === 'codec') && (
+                      <p className="text-[11px] text-amber-700 mt-2">
+                        {t('crm.project.deck.videosHint', 'Diese Dateien laufen nur über YouTube: „zu YouTube" lädt sie nicht gelistet hoch und hängt sie ans Deck. Alternativ selbst hochladen und den Link oben bei „Video-URL" eintragen.')}
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {/* HP-Grundrisse je Wohnung (hp-floorplan: Bauträger-Plan → HP-Stil) */}

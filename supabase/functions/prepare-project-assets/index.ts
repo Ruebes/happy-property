@@ -60,13 +60,15 @@ async function getReadToken(): Promise<string> {
 }
 
 // ── Drive-Helfer ─────────────────────────────────────────────────────────────────
-type DriveFile = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }
+type DriveVideoMeta = { width?: number; height?: number; durationMillis?: string }
+type DriveFile = { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string; videoMediaMetadata?: DriveVideoMeta }
 const isFolder = (m: string) => m === 'application/vnd.google-apps.folder'
 const isImg    = (m: string) => m.startsWith('image/')
+const isVid    = (m: string) => m.startsWith('video/')
 
 async function listChildren(token: string, parentId: string): Promise<DriveFile[]> {
   const q = encodeURIComponent(`'${parentId}' in parents and trashed=false`)
-  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,modifiedTime)&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
+  const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,modifiedTime,videoMediaMetadata(width,height,durationMillis))&pageSize=300&orderBy=folder,name&supportsAllDrives=true&includeItemsFromAllDrives=true`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
   const data = await res.json() as { files?: DriveFile[] }
   return data.files ?? []
@@ -214,6 +216,148 @@ async function ingestLocation(
   return { found: false, tried }
 }
 
+// Drive-Body direkt nach Storage pipen, ohne die Datei im Worker zu puffern.
+// Genau dieser Weg ueberlebt auch 100-MB-Dateien; ein Buffer-Import killt den Worker.
+async function streamDriveToStorage(token: string, fileId: string, mime: string, name: string, projectId: string): Promise<string> {
+  const SUPABASE_URL_L = Deno.env.get('SUPABASE_URL')!
+  const SERVICE_L = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const nameExt = (name || '').toLowerCase().match(/\.([a-z0-9]{2,4})$/)?.[1]
+  // Endung MUSS stimmen: der Deck-Renderer erkennt ein direktes Video an der Endung.
+  const ext = (nameExt && BEKANNTE_EXT.has(nameExt)) ? nameExt : (MIME_TO_EXT[mime] || 'mp4')
+  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${token}` } })
+  if (!dl.ok || !dl.body) throw new Error(`Drive-Download ${dl.status}`)
+  const path = `projects/${projectId}/videos/${fileId}.${ext}`
+  const init: RequestInit & { duplex?: string } = {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${SERVICE_L}`, apikey: SERVICE_L, 'Content-Type': mime, 'x-upsert': 'true', 'cache-control': '31536000' },
+    body: dl.body,
+    duplex: 'half',
+  }
+  const up = await fetch(`${SUPABASE_URL_L}/storage/v1/object/deck-assets/${path}`, init)
+  if (!up.ok) throw new Error(`Storage-Upload ${up.status}: ${(await up.text()).slice(0, 200)}`)
+  return `${SUPABASE_URL_L}/storage/v1/object/public/deck-assets/${path}`
+}
+
+// YouTube-Upload (nicht gelistet) fuer Bautraeger-Filme, die sich nicht selbst
+// hosten lassen: H.265-Rohmaterial (kein Browser dekodiert das) und Master ueber
+// dem Storage-Limit. YouTube transkodiert beides und liefert es ausgeliefert an
+// jedes Endgeraet. Der Drive-Body wird direkt in den Resumable-Upload gepipet,
+// damit auch grosse Dateien den Worker nicht sprengen.
+async function youtubeAccessToken(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const get = async (k: string) => (((await supabase.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? '').trim()
+  const [cid, csec, rtok] = await Promise.all([get('YOUTUBE_CLIENT_ID'), get('YOUTUBE_CLIENT_SECRET'), get('YOUTUBE_REFRESH_TOKEN')])
+  if (!cid || !csec || !rtok) throw new Error('YouTube ist nicht verbunden (YOUTUBE_CLIENT_ID/SECRET/REFRESH_TOKEN in Einstellungen -> Connectoren).')
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: cid, client_secret: csec, refresh_token: rtok, grant_type: 'refresh_token' }),
+  })
+  const d = await r.json() as { access_token?: string; error_description?: string }
+  if (!d.access_token) throw new Error(`YouTube-OAuth: ${d.error_description ?? r.status}`)
+  return d.access_token
+}
+
+async function driveToYoutube(
+  driveToken: string, ytToken: string, fileId: string, size: number, mime: string,
+  titel: string, beschreibung: string, dryRun = false,
+): Promise<string> {
+  const init = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ytToken}`, 'Content-Type': 'application/json',
+      'X-Upload-Content-Length': String(size), 'X-Upload-Content-Type': mime || 'video/mp4',
+    },
+    body: JSON.stringify({
+      snippet: { title: titel.slice(0, 95), description: beschreibung.slice(0, 4800), categoryId: '26' },
+      // NICHT GELISTET: das Video ist nur ueber den Link im Deck erreichbar und
+      // taucht weder im Kanal noch in der YouTube-Suche auf.
+      status: { privacyStatus: 'unlisted', selfDeclaredMadeForKids: false },
+    }),
+  })
+  const loc = init.headers.get('location')
+  if (!init.ok || !loc) throw new Error(`YouTube-Upload-Init ${init.status}: ${(await init.text()).slice(0, 200)}`)
+  // Probelauf: Anmeldung, Kontingent und Metadaten sind geprueft, es werden aber
+  // KEINE Bytes uebertragen - ohne PUT entsteht auf dem Kanal kein Video.
+  if (dryRun) return ''
+  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${driveToken}` } })
+  if (!dl.ok || !dl.body) throw new Error(`Drive-Download ${dl.status}`)
+  const put: RequestInit & { duplex?: string } = {
+    method: 'PUT',
+    headers: { 'Content-Length': String(size), 'Content-Type': mime || 'video/mp4' },
+    body: dl.body,
+    duplex: 'half',
+  }
+  const up = await fetch(loc, put)
+  const ud = await up.json().catch(() => ({})) as { id?: string; error?: { message?: string } }
+  if (!up.ok || !ud.id) throw new Error(ud.error?.message ?? `YouTube-Upload ${up.status}`)
+  return `https://youtu.be/${ud.id}`
+}
+
+// ── Video-Erkennung ──────────────────────────────────────────────────────────────
+// Bautraeger liefern drei Sorten Bewegtbild, und nur eine davon laeuft im Browser:
+//  1. fertige Filme in H.264 (avc1)  -> nutzbar, wenn sie klein genug sind
+//  2. dieselben Filme als Master     -> H.264, aber hunderte MB bis GB
+//  3. Drohnen-Rohclips aus der DJI   -> H.265 (hvc1), Chrome kann das NICHT dekodieren
+// Deshalb wird JEDE Datei geprueft, bevor irgendetwas importiert wird, und jede
+// Entscheidung landet nachlesbar in deck_assets.videos.
+const VIDEO_MAX_BYTES = 60 * 1024 * 1024        // was groesser ist, gehoert auf YouTube
+type VideoCodecProbe = { codecs: string[]; playable: boolean }
+
+async function probeVideoCodec(token: string, fileId: string, size: number): Promise<VideoCodecProbe> {
+  const range = async (a: number, b: number) => {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${token}`, Range: `bytes=${a}-${b}` } })
+    return r.ok ? new Uint8Array(await r.arrayBuffer()) : new Uint8Array()
+  }
+  // Der moov-Atom mit der Codec-Kennung liegt je nach Encoder vorn ODER hinten.
+  const head = await range(0, 4_000_000)
+  const tail = size > 8_000_000 ? await range(size - 3_000_000, size - 1) : new Uint8Array()
+  const hay = new TextDecoder('latin1').decode(head) + new TextDecoder('latin1').decode(tail)
+  const codecs = ['avc1', 'hvc1', 'hev1', 'mp4v', 'av01', 'vp09'].filter(c => hay.includes(c))
+  return { codecs, playable: codecs.some(c => c === 'avc1' || c === 'mp4v') }
+}
+
+// In welchen Deck-Abschnitt gehoert der Clip? Ordner- UND Dateiname entscheiden,
+// weil Bautraeger mal das eine, mal das andere sprechend benennen.
+function videoSlot(name: string, folder = ''): 'projekt' | 'anlage' | 'innen' {
+  const n = `${folder} ${name}`.toLowerCase()
+  if (/sauna|\bspa\b|\bgym\b|fitness|pool|club|yoga|studio|amenit|lobby|cafe|café/.test(n)) return 'anlage'
+  if (/interior|innen|apartment|wohnung|room|zimmer|kitchen|kueche|küche|tour|rundgang|show\s*house|show\s*flat|musterwohnung/.test(n)) return 'innen'
+  return 'projekt'
+}
+
+// Bewertung eines Clips fuer den Deck-Einsatz. Bautraeger-Ordner sind voll mit
+// Export-Dubletten ("temp_video_for_share.mp4" viermal), WhatsApp-Mitschnitten und
+// kurzen Schnipseln — ohne Bewertung gewinnt der Zufall.
+function videoScore(v: { name: string; duration_s?: number; width?: number; height?: number; slot: string; orientation: string; status: string }): number {
+  const n = v.name.toLowerCase()
+  const w = v.width ?? 0, h = v.height ?? 0
+  let p = 0
+  p += Math.min(v.duration_s ?? 0, 90)                                  // Laenge zaehlt, aber gedeckelt
+  p += Math.min(w / 100, 40)                                            // Aufloesung
+  // Seitenverhaeltnis: das Deck zeigt 16:9. Quadrat und Hochformat laufen im
+  // Hauptfilm-Slot mit Balken und sehen billig aus.
+  const ar = h > 0 ? w / h : 0
+  if (Math.abs(ar - 16 / 9) < 0.2) p += 30
+  else if (v.slot === 'projekt' && Math.abs(ar - 1) < 0.1) p -= 20
+  if (/final|fertig|film|promo|tour|showreel|show\s*house|master|no\s*logo/.test(n)) p += 40
+  if (/whatsapp|screen|^img[_-]|^video[_-]?\d|^\d{8}/.test(n)) p -= 40
+  // Drive-Exportnamen ("temp_video_for_share.mp4") sagen nichts ueber die Qualitaet
+  // aus - bei Luma steckt genau dort der beste Drohnenflug. Nur leicht abwerten.
+  if (/temp|share|kopie|copy/.test(n)) p -= 12
+  if (/^[0-9a-f-]{20,}\./.test(n)) p -= 15                              // reine UUID-Namen
+  if (/\.mov$/.test(n)) p -= 20                                        // .mov spielt nicht ueberall
+  if (v.slot === 'projekt' && v.orientation === 'hoch') p -= 25         // Hochformat als Hauptfilm passt nicht
+  if ((v.duration_s ?? 0) < 5) p -= 30                                  // Schnipsel
+  return Math.round(p)
+}
+
+// Dateien, die zwar Video sind, aber nie ins Deck gehoeren.
+// "logo" steht hier bewusst NICHT: Bautraeger nennen die Fassung ohne Wasserzeichen
+// "no logo …" — die ist die beste, nicht die schlechteste.
+const VIDEO_JUNK_RE = /\b(preisliste|pricelist|entwurf|draft)\b/i
+
 // ── Klassifizierung ──────────────────────────────────────────────────────────────
 function folderCategory(name: string): 'floorplan' | 'location' | 'render' | null {
   const n = name.toLowerCase()
@@ -229,8 +373,15 @@ function floorFromName(name: string): number | null {
   const d = name.match(/\b(\d+)\s*\.?\s*(og|floor|etage|stock)\b/i); if (d) return parseInt(d[1], 10)
   return null
 }
+// Renditeprognosen des Bautraegers kommen NIE ins Sales Deck (Sven 9.9.2026):
+// gerechnet wird ausschliesslich mit unserem eigenen Rechner. Deshalb werden solche
+// Dateien schon beim Einlesen aussortiert - nicht erst im Deck-Text. Gilt fuer
+// Bilder, Dokumente, Fakten und Videos gleichermassen.
+export const RENDITE_RE = /\b(roi|rendite|renditen|yield|rental.?income|mietrendite|prognose|forecast|prediction|projection)\b/i
+
 function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 'linen' | 'payment' | null {
   const n = name.toLowerCase()
+  if (RENDITE_RE.test(n)) return null
   if (/zahlungsplan|payment.?plan|payment.?schedule|ratenplan|payment.?terms/.test(n)) return 'payment'
   if (/cutlery|cutler|cultery|besteck|geschirr|crockery/.test(n)) return 'cutlery'
   if (/linen|w[äa]sche|bett|towel/.test(n))                       return 'linen'
@@ -250,11 +401,20 @@ type DeckAssets = {
   doc_urls?: Record<string, string>
   spec_text?: string
   facts?: string
+  // Bewegtbild aus dem Drive-Ordner, inklusive der Dateien, die NICHT ins Deck
+  // koennen (Codec/Groesse). Der Grund steht dabei, damit nichts still scheitert.
+  videos?: Array<{
+    drive_id: string; name: string; folder: string; modified?: string; size: number
+    width?: number; height?: number; duration_s?: number
+    slot: 'projekt' | 'anlage' | 'innen'; orientation: 'quer' | 'hoch'
+    status: 'ok' | 'kandidat' | 'codec' | 'zu_gross' | 'ignoriert' | 'fehler'
+    codecs?: string[]; url?: string; youtube_url?: string; reason?: string; score?: number
+  }>
   updated_at?: string
 }
 async function loadAssets(supabase: ReturnType<typeof createClient>, projectId: string): Promise<{ folderId: string | null; assets: DeckAssets; project: Record<string, unknown> }> {
   const { data } = await supabase.from('crm_projects')
-    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url, images, latitude, longitude').eq('id', projectId).maybeSingle()
+    .select('drive_folder_id, deck_assets, name, developer, location, google_maps_url, maps_url, images, latitude, longitude, video_url').eq('id', projectId).maybeSingle()
   const p = (data ?? {}) as Record<string, unknown>
   return { folderId: (p.drive_folder_id as string) ?? null, assets: (p.deck_assets as DeckAssets) ?? {}, project: p }
 }
@@ -448,7 +608,7 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number }
+    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number; max_bytes?: number; set_hero?: boolean; dry_run?: boolean }
     const { project_id, action, folder_id, sync } = body
 
     // ── nightly: alle angebundenen Drive-Ordner durchsuchen (Cron ~04:00 CY) ─────
@@ -488,7 +648,13 @@ Deno.serve(async (req) => {
       const MAX_SYNCS = 6
       const pass = Math.max(1, Number(body.pass) || 1)
       const MAX_PASSES = 6
-      type NightlyState = { pricelist_id?: string; pricelist_mtime?: string; floorplans_newest?: string; last_run?: string; dbx_pricelist_path?: string; dbx_pricelist_mtime?: string; dbx_floorplans_newest?: string }
+      type NightlyState = { pricelist_id?: string; pricelist_mtime?: string; floorplans_newest?: string; last_run?: string; videos_last?: string; dbx_pricelist_path?: string; dbx_pricelist_mtime?: string; dbx_floorplans_newest?: string }
+      // Video-Suche laeuft je Projekt hoechstens woechentlich und hoechstens
+      // VID_PRO_LAUF mal pro Nacht: sie durchsucht zwei Ordnerebenen und laedt beim
+      // Codec-Test Megabytes. Ueber eine Woche ist trotzdem jedes Projekt dran.
+      const VID_INTERVALL_MS = 7 * 24 * 60 * 60 * 1000
+      const VID_PRO_LAUF = 3
+      let vidLaeufe = 0
       for (const pr of (projs ?? []) as Array<{ id: string; name: string; developer?: string | null; drive_folder_id: string; deck_assets?: { drive_sync?: NightlyState } | null }>) {
         try {
           const kids = await listChildren(token, pr.drive_folder_id)
@@ -544,8 +710,28 @@ Deno.serve(async (req) => {
             // Projekt im selben Lauf ohnehin noch die „synchronisiert"-Zeile.
             if (pass >= MAX_PASSES) syncNote = 'Preisliste geaendert · Sync folgt naechste Nacht'
           }
-          if (syncNote || fpChanged) {
-            report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Dateien im Grundriss-Ordner (${fpCount} Dateien)` : null].filter(Boolean).join(' · ')}`)
+          // Bewegtbild einsammeln (Projektfilm, Anlage- und Innen-Clip). Das Ergebnis
+          // steht in deck_assets.videos, inklusive der Dateien, die aus Codec- oder
+          // Groessengruenden NICHT ins Deck koennen.
+          let vidNote = ''
+          let vidGelaufen = false
+          const vidFaellig = !state.videos_last || (Date.now() - Date.parse(state.videos_last)) > VID_INTERVALL_MS
+          if (vidFaellig && vidLaeufe < VID_PRO_LAUF) {
+            vidLaeufe++
+            vidGelaufen = true
+            const vs = await callFn('prepare-project-assets', { project_id: pr.id, action: 'videos' })
+            if (vs.ok === true) {
+              const imDeck = Number(vs.im_deck ?? 0), zuGross = Number(vs.zu_gross ?? 0), codec = Number(vs.codec ?? 0)
+              if (imDeck || zuGross || codec) {
+                vidNote = `Videos: ${imDeck} im Deck` + (zuGross ? `, ${zuGross} zu gross fuer Selbsthosting (YouTube noetig)` : '') + (codec ? `, ${codec} in H.265 (nicht abspielbar)` : '')
+              }
+            } else {
+              vidNote = `Video-Suche FEHLER: ${JSON.stringify(vs).slice(0, 160)}`
+            }
+          }
+
+          if (syncNote || fpChanged || vidNote) {
+            report.push(`${pr.name}: ${[syncNote || null, fpChanged ? `neue/geaenderte Dateien im Grundriss-Ordner (${fpCount} Dateien)` : null, vidNote || null].filter(Boolean).join(' · ')}`)
           }
 
           // Zustand fortschreiben. Preislisten-Stand NUR nach erfolgreichem Sync (bzw.
@@ -556,6 +742,7 @@ Deno.serve(async (req) => {
             pricelist_id:      advancePl ? (newest?.id ?? state.pricelist_id) : state.pricelist_id,
             pricelist_mtime:   advancePl ? (newest?.modifiedTime ?? state.pricelist_mtime) : state.pricelist_mtime,
             floorplans_newest: fpNewest || state.floorplans_newest,
+            videos_last:       vidGelaufen ? new Date().toISOString() : state.videos_last,
             last_run:          new Date().toISOString(),
           }
           const { data: fresh } = await supabase.from('crm_projects').select('deck_assets').eq('id', pr.id).maybeSingle()
@@ -865,6 +1052,190 @@ Deno.serve(async (req) => {
     }
 
     // ── images ────────────────────────────────────────────────────────────────
+    // ── videoupload ────────────────────────────────────────────────────────────
+    // Laedt EINE Drive-Datei nicht gelistet zu YouTube und haengt den Link an den
+    // Eintrag in deck_assets.videos. Nur so kommen H.265-Drohnenflüge und die
+    // grossen Master-Filme ins Deck. Bewusst kein Automatismus: das Video landet
+    // auf Svens Kanal, das loest er selbst aus.
+    if (action === 'videoupload') {
+      const fid = String(body.file_id ?? '').trim()
+      if (!fid) return json({ error: 'file_id fehlt' }, 400)
+      const liste = ((assets.videos ?? []) as Array<Record<string, unknown>>)
+      const eintrag = liste.find(v => String(v.drive_id) === fid)
+      if (!eintrag) return json({ error: 'Video steht nicht in deck_assets.videos - erst die Video-Suche laufen lassen.' }, 400)
+      if (eintrag.youtube_url) return json({ ok: true, action, url: eintrag.youtube_url, schon_da: true })
+      try {
+        const ytToken = await youtubeAccessToken(supabase)
+        const meta = await fetch(`https://www.googleapis.com/drive/v3/files/${fid}?fields=name,mimeType,size&supportsAllDrives=true`,
+          { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()) as { name?: string; mimeType?: string; size?: string }
+        const size = Number(meta.size ?? eintrag.size ?? 0)
+        if (!size) return json({ error: 'Dateigroesse unbekannt - YouTube braucht sie fuer den Upload.' }, 400)
+        const projName = String(project.name ?? '').trim() || 'Projekt'
+        const sauber = String(meta.name ?? '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/[_-]+/g, ' ').trim()
+        // Heisst die Datei wie das Projekt ("Mamba .mov"), waere der Titel doppelt.
+        const gleich = sauber.toLowerCase().replace(/\s+/g, '') === projName.toLowerCase().replace(/\s+/g, '')
+        const titel = (gleich || !sauber ? projName : `${projName} - ${sauber}`).slice(0, 95)
+        const url = await driveToYoutube(
+          token, ytToken, fid, size, String(meta.mimeType ?? 'video/mp4'), titel,
+          `${projName}. Aufnahme des Bautraegers, nicht gelistet - nur ueber den Link in den Unterlagen von Happy Property erreichbar.`,
+          body.dry_run === true,
+        )
+        if (body.dry_run === true) return json({ ok: true, action, dry_run: true, titel, size, mime: meta.mimeType })
+        eintrag.youtube_url = url
+        eintrag.status = 'ok'
+        eintrag.reason = 'nicht gelistet auf YouTube geladen'
+        await saveAssets(supabase, project_id, { videos: liste as DeckAssets['videos'] })
+        // Fehlt am Projekt noch ein Hauptfilm, uebernimmt ihn der Projekt-Clip.
+        if (eintrag.slot === 'projekt' && !String(project.video_url ?? '').trim()) {
+          await supabase.from('crm_projects').update({ video_url: url }).eq('id', project_id)
+        }
+        return json({ ok: true, action, url, titel })
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : String(e) }, 502)
+      }
+    }
+
+    // ── videos ──────────────────────────────────────────────────────────────────
+    // Holt Bewegtbild aus dem Drive-Ordner des Projekts in die Decks. Standardisiert:
+    // jede gefundene Datei wird geprueft, klassifiziert und mit Begruendung in
+    // deck_assets.videos protokolliert — auch die, die NICHT ins Deck kommen. So
+    // scheitert nichts still, und Sven sieht, welche Datei auf YouTube gehoert.
+    if (action === 'videos') {
+      const MAX = Number(body.max_bytes) || VIDEO_MAX_BYTES
+      const force = body.force === true
+
+      // 1) Kandidaten einsammeln (Wurzel + zwei Ordnerebenen; Luma legt die
+      //    Drohnenclips unter "Drone shots / Roof gardens" ab).
+      const found: Array<{ f: DriveFile; folder: string }> = []
+      const root = await listChildren(token, folderId)
+      for (const f of root.filter(x => isVid(x.mimeType))) found.push({ f, folder: '' })
+      for (const sub of root.filter(x => isFolder(x.mimeType)).slice(0, 14)) {
+        let kids: DriveFile[] = []
+        try { kids = await listChildren(token, sub.id) } catch { continue }
+        for (const f of kids.filter(x => isVid(x.mimeType))) found.push({ f, folder: sub.name })
+        for (const sub2 of kids.filter(x => isFolder(x.mimeType)).slice(0, 8)) {
+          try {
+            const kids2 = await listChildren(token, sub2.id)
+            for (const f of kids2.filter(x => isVid(x.mimeType))) found.push({ f, folder: `${sub.name} / ${sub2.name}` })
+          } catch { /* Unterordner optional */ }
+        }
+      }
+
+      // 2) Bekannter Stand: unveraenderte Dateien nicht erneut pruefen. Das Proben
+      //    laedt je Datei bis zu 7 MB per Range — ohne diesen Cache waere der
+      //    naechtliche Lauf teuer und langsam.
+      type VideoEntry = {
+        drive_id: string; name: string; folder: string; modified?: string; size: number
+        width?: number; height?: number; duration_s?: number
+        slot: 'projekt' | 'anlage' | 'innen'; orientation: 'quer' | 'hoch'
+        // ok        = im Storage, wird im Deck gezeigt
+        // kandidat  = spielbar und klein genug, aber nicht ausgewaehlt
+        // codec     = H.265 o.ae., kein Browser spielt das
+        // zu_gross  = spielbar, aber zu gross fuer Selbsthosting -> YouTube
+        // ignoriert = Dateiname sagt: gehoert nicht ins Deck
+        status: 'ok' | 'kandidat' | 'codec' | 'zu_gross' | 'ignoriert' | 'fehler'
+        codecs?: string[]; url?: string; youtube_url?: string; reason?: string; score?: number
+      }
+      const prev = new Map<string, VideoEntry>(((assets.videos ?? []) as VideoEntry[]).map(v => [v.drive_id, v]))
+      const geprueft: VideoEntry[] = []
+
+      for (const { f, folder } of found.slice(0, 30)) {
+        const size = Number(f.size ?? 0)
+        const vm = f.videoMediaMetadata ?? {}
+        const w = Number(vm.width ?? 0), h = Number(vm.height ?? 0)
+        const e: VideoEntry = {
+          drive_id: f.id, name: f.name, folder, modified: f.modifiedTime, size,
+          width: w || undefined, height: h || undefined,
+          duration_s: vm.durationMillis ? Math.round(Number(vm.durationMillis) / 1000) : undefined,
+          slot: videoSlot(f.name, folder),
+          orientation: h > w && h > 0 ? 'hoch' : 'quer',
+          status: 'kandidat',
+        }
+        const alt = prev.get(f.id)
+        // Unveraendert und schon einmal geprueft -> Codec-Ergebnis uebernehmen,
+        // statt erneut Megabytes zu laden.
+        if (alt && alt.modified === f.modifiedTime && !force && alt.codecs) {
+          e.codecs = alt.codecs
+          if (alt.status === 'ok' && alt.url) { e.status = 'ok'; e.url = alt.url }
+        }
+        // Ein einmal zu YouTube geladenes Video bleibt nutzbar - auch wenn es in
+        // H.265 vorliegt oder zu gross fuer den Storage ist. Sonst faende der
+        // naechste Lauf es wieder als 'codec' vor und das Deck verloere den Film.
+        if (alt?.youtube_url) e.youtube_url = alt.youtube_url
+        try {
+          if (VIDEO_JUNK_RE.test(f.name) || VIDEO_JUNK_RE.test(folder) || RENDITE_RE.test(f.name) || RENDITE_RE.test(folder)) {
+            e.status = 'ignoriert'; e.reason = 'Dateiname deutet auf Rohmaterial oder Unterlagen hin, die nicht ins Deck gehoeren'
+          } else {
+            if (!e.codecs) e.codecs = (await probeVideoCodec(token, f.id, size)).codecs
+            const spielbar = e.codecs.some(c => c === 'avc1' || c === 'mp4v')
+            if (!spielbar) {
+              e.status = 'codec'
+              e.reason = `${e.codecs.join(', ') || 'unbekannter Codec'} - Browser koennen das nicht abspielen (H.264/avc1 noetig)`
+            } else if (size > MAX) {
+              e.status = 'zu_gross'
+              e.reason = `${Math.round(size / 1024 / 1024)} MB - zu gross fuer Selbsthosting, gehoert als nicht gelistetes YouTube-Video verlinkt`
+            }
+          }
+        } catch (err) {
+          e.status = 'fehler'
+          e.reason = err instanceof Error ? err.message : String(err)
+        }
+        if (e.youtube_url) { e.status = 'kandidat'; e.reason = 'nicht gelistet auf YouTube geladen' }
+        e.score = videoScore(e) + (e.youtube_url ? 60 : 0)   // YouTube laeuft ueberall
+        geprueft.push(e)
+      }
+
+      // 3) Auswahl: je Abschnitt der beste Clip, hoechstens einer. Bautraeger laden
+      //    dieselbe Datei mehrfach hoch (Emerald: vier "temp_video_for_share.mp4");
+      //    ohne Auswahl landet alles im Storage und das Deck zeigt Dubletten.
+      const SLOTS: Array<'projekt' | 'anlage' | 'innen'> = ['projekt', 'anlage', 'innen']
+      const gewaehlt = new Set<string>()
+      for (const slot of SLOTS) {
+        const best = geprueft
+          .filter(v => v.slot === slot && (v.status === 'kandidat' || v.status === 'ok'))
+          .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))[0]
+        if (best) gewaehlt.add(best.drive_id)
+      }
+      for (const e of geprueft) {
+        if (e.status !== 'kandidat' && e.status !== 'ok') continue
+        if (!gewaehlt.has(e.drive_id)) {
+          // Bereits importierte, aber nicht mehr gewaehlte Clips behalten ihre URL
+          // (Storage wird nie geleert), verschwinden aber aus dem Deck.
+          e.status = 'kandidat'
+          e.reason = 'spielbar, aber ein anderer Clip passt besser in diesen Abschnitt'
+          continue
+        }
+        if (e.youtube_url) { e.status = 'ok'; e.reason = 'nicht gelistet auf YouTube'; continue }
+        if (e.status === 'ok' && e.url) continue          // schon im Storage
+        try {
+          const f = found.find(x => x.f.id === e.drive_id)!.f
+          e.url = await streamDriveToStorage(token, f.id, f.mimeType, f.name, project_id)
+          e.status = 'ok'
+          e.reason = undefined
+        } catch (err) {
+          e.status = 'fehler'
+          e.reason = err instanceof Error ? err.message : String(err)
+        }
+      }
+
+      // 4) Hauptfilm: der gewaehlte Projekt-Clip. Ein von Hand gesetztes video_url
+      //    (z.B. ein nicht gelistetes YouTube-Video) wird NIE ueberschrieben.
+      const hero = geprueft.find(v => v.status === 'ok' && v.slot === 'projekt')
+      const hatHero = !!String(project.video_url ?? '').trim()
+      const heroSetzen = !!((hero?.youtube_url || hero?.url) && (!hatHero || body.set_hero === true))
+      if (heroSetzen) await supabase.from('crm_projects').update({ video_url: hero!.youtube_url || hero!.url }).eq('id', project_id)
+
+      await saveAssets(supabase, project_id, { videos: geprueft })
+      const zaehl = (st: string) => geprueft.filter(v => v.status === st).length
+      return json({
+        ok: true, action, gefunden: found.length, geprueft: geprueft.length,
+        im_deck: zaehl('ok'), kandidaten: zaehl('kandidat'), codec: zaehl('codec'),
+        zu_gross: zaehl('zu_gross'), ignoriert: zaehl('ignoriert'), fehler: zaehl('fehler'),
+        hero: hero?.url ?? null, hero_gesetzt: heroSetzen,
+        videos: geprueft.map(v => ({ name: v.name, folder: v.folder, slot: v.slot, orientation: v.orientation, status: v.status, mb: Math.round(v.size / 1024 / 1024), s: v.duration_s, reason: v.reason })),
+      })
+    }
+
     if (action === 'images') {
       const MAX = 12_000_000, RENDER_CAP = 18, FP_CAP = 5
       const children = await listChildren(token, folderId)
@@ -888,12 +1259,13 @@ Deno.serve(async (req) => {
       // Offensichtlicher Nicht-Render-Müll schon am Dateinamen aussieben (spart Vision +
       // schützt das 18er-Limit für echte Bilder). Das Vision-Gate fängt den Rest ab.
       const JUNK_RE = /(preisliste|pricelist|price.?list|\bprice\b|zahlungsplan|payment|\blogo\b|datasheet|fact.?sheet|spec(ification)?s?|brosch|brochure)/i
+      // Renditeprognosen des Bautraegers gehoeren nie ins Deck.
       if (!locFile) {
         const cands = renderFiles.filter(f => MAP_RE.test(f.name))
         locFile = cands.find(small) ?? cands[0] ?? null
       }
       const renders: string[] = []
-      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name) && !JUNK_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
+      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name) && !JUNK_RE.test(f.name) && !RENDITE_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
         try { renders.push(await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)) } catch { /* skip */ }
       }
       // Fallback: keine Bilder im Drive-Ordner → bereits im CRM hinterlegte Projektbilder nutzen.
@@ -1033,7 +1405,7 @@ Deno.serve(async (req) => {
         .sort((a, b) => (b.modifiedTime ?? '').localeCompare(a.modifiedTime ?? ''))[0]
       // Broschüre: Namens-Treffer (auch Unterordner), sonst größtes PDF im Projektordner
       let brochure = all.find(f => docType(f.name) === 'brochure')
-      if (!brochure) brochure = projectFiles.filter(f => f.mimeType === 'application/pdf').sort((a, b) => (parseInt(b.size ?? '0', 10)) - (parseInt(a.size ?? '0', 10)))[0]
+      if (!brochure) brochure = projectFiles.filter(f => f.mimeType === 'application/pdf' && !RENDITE_RE.test(f.name)).sort((a, b) => (parseInt(b.size ?? '0', 10)) - (parseInt(a.size ?? '0', 10)))[0]
       const cutlery = pick('cutlery'), linen = pick('linen'), pricelist = newestPricelist, spec = pick('spec'), payment = pick('payment')
 
       const doc_urls: Record<string, string> = { ...(assets.doc_urls ?? {}) }

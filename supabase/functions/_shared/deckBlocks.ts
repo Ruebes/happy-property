@@ -41,7 +41,7 @@ export const DETERMINISTIC_FIELDS = [
   'priceLines', 'priceSummary', 'priceMain', 'priceSub',
   'mapLat', 'mapLng', 'mapQuery', 'mapEmbed', 'mapMarker', 'mapUrl', 'mapLabel',
   'planNote', 'rooms', 'plan',
-  'embedUrl', 'videoUrl', 'poster',
+  'embedUrl', 'videoUrl', 'poster', 'aspect',
   'image',
 ] as const
 
@@ -76,7 +76,7 @@ const DETERMINISTIC_SCHEMA: Record<string, unknown> = {
   priceLines: { type: 'array', items: { type: 'object', properties: { label: str, value: str, strong: bool }, required: ['label', 'value'] } },
   priceSummary: { type: 'object' },
   planNote: str, rooms: objArr, plan: str, planLabel: str,
-  embedUrl: str, videoUrl: str, poster: str,
+  embedUrl: str, videoUrl: str, poster: str, aspect: str,
   /** Stabile Bild-Identität aus deck_assets_catalog. */
   assetId: str,
 }

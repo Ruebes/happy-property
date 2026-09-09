@@ -717,12 +717,26 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
   const embedSrc = b.embedUrl ? (toEmbedSrc(b.embedUrl) ?? (isDirectVideo(b.embedUrl) ? null : b.embedUrl)) : toEmbedSrc(raw)
   const nativeSrc = embedSrc ? null : (b.videoUrl && isDirectVideo(b.videoUrl) ? b.videoUrl : (isDirectVideo(raw) ? raw : null))
   if (!embedSrc && !nativeSrc) return null
+  // Das Seitenverhaeltnis aus den Projektdaten ist nur die erste Schaetzung: Google
+  // Drive meldet fuer manche Dateien falsche Masse (Show-House-Clip: 816x960 laut
+  // Drive, tatsaechlich 1280x720). Sobald der Player die echten Masse kennt, gilt
+  // er — sonst laeuft ein Querformat-Video in einem Hochformat-Rahmen.
+  const [echtAspekt, setEchtAspekt] = useState<number | null>(null)
+  const geschaetzt = (b.aspect ?? '16/9')
+  const [gw, gh] = geschaetzt.split('/').map(Number)
+  const verhaeltnis = echtAspekt ?? (gh ? gw / gh : 16 / 9)
+  const hoch = verhaeltnis < 0.95
+  const seiten = `${verhaeltnis}`
   return (
     <section className="px-5 md:px-20 py-16" style={{ background: DARK }}>
       <Accent /><Kicker light>{b.kicker}</Kicker>
       {b.headline && <h2 className="font-heading font-bold text-white text-4xl md:text-6xl mt-2 leading-tight">{b.headline}</h2>}
       {b.text && <p className="text-[15px] leading-relaxed text-gray-300 mt-4 max-w-2xl">{b.text}</p>}
-      <div className="mt-8 relative w-full overflow-hidden rounded-xl border" style={{ aspectRatio: '16 / 9', borderColor: 'rgba(194,161,94,0.3)' }}>
+      {/* Bautraeger liefern auch Hochformat (Reels vom Musterhaus, Sauna-Clip). In
+          einem 16:9-Rahmen liefe das mit schwarzen Balken links und rechts, deshalb
+          bekommt jedes Format seinen eigenen Rahmen: hoch = schmal und zentriert. */}
+      <div className={`mt-8 relative overflow-hidden rounded-xl border ${hoch ? 'w-full max-w-sm mx-auto' : 'w-full'}`}
+           style={{ aspectRatio: seiten, borderColor: 'rgba(194,161,94,0.3)' }}>
         {embedSrc ? (
           <iframe
             title={b.headline || t('deck.videoIframeTitle', 'Video')}
@@ -736,8 +750,13 @@ function VideoBlock(b: Extract<DeckBlock, { type: 'video' }>) {
           />
         ) : (
           <video
-            className="absolute inset-0 h-full w-full object-cover"
+            className={`absolute inset-0 h-full w-full ${hoch ? 'object-contain' : 'object-cover'}`}
             src={nativeSrc ?? undefined}
+            aria-label={b.headline || undefined}
+            onLoadedMetadata={e => {
+              const v = e.currentTarget
+              if (v.videoWidth && v.videoHeight) setEchtAspekt(v.videoWidth / v.videoHeight)
+            }}
             poster={b.poster}
             controls
             playsInline

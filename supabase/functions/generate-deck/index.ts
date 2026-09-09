@@ -58,11 +58,12 @@ REGELN:
 4g. KEY FACTS (benefits-Block, PFLICHT direkt nach den unit-Blöcken): 6–8 Karten mit den stärksten KAUF-Argumenten des Objekts aus den Fakten — z.B. Fußbodenheizung, VRV-/Zentralklima, Doppel-/Dreifachverglasung, Photovoltaik/Solar, Gym, Pool, Sauna, Bauqualität/Materialien, Garantie, Smart Home, Aufzug, Tiefgarage/Stellplatz, Meerblick, Rooftop. NUR Fakten, die wirklich im Input stehen. Jede Karte: icon (Emoji), title (2–4 Worte), text (1–2 konkrete Sätze mit dem Nutzen für den Käufer). headline z.B. 'Die Key Facts — was dieses Objekt mitbringt'.
 4h. WARUM DIESE LAGE (columns-Block, PFLICHT direkt nach dem facts-Block): 3 Spalten, die aus den Fakten begründen, warum GENAU diese Lage jetzt kaufenswert ist (z.B. Nachbarschaft/Charakter, Infrastruktur/Erreichbarkeit, Entwicklung der Gegend). Nutze NUR belegte Fakten aus dem Input (Regel 5e gilt: keine erfundenen Markt-Aussagen). headline z.B. 'Warum genau hier'.
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
-3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Vermietung/ROI/Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
-4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = ROI/Vermietung/Zahlungsplan/Wertsteigerung. Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
+3. Webe das Briefing auch in andere Blöcke ein, WO es inhaltlich passt (z.B. Investor → betone Lage, Vermietbarkeit, Ausstattung und Zahlungsplan; will selbst herziehen → Lifestyle/„ein Tag"/Terrassen; Sonnenuntergang → West-Terrasse/Feature). Nicht erzwingen.
+4. Wähle 10–14 Blöcke passend zum Winkel (angle): "lifestyle" = Erlebnis/Terrassen/„ein Tag"/Pool; "investment" = Lage, Vermietbarkeit, Zahlungsplan, Wertentwicklung des Standorts (KEINE Renditezahlen, siehe Regel 8). Mische sinnvoll. PFLICHT: Ein "payment"-Block (Zahlungsplan) MUSS dabei sein, sobald im Input Zahlungsplan-Daten stehen — bei JEDEM Deck. Ein "facts"-Block für die Lage gehört ebenfalls immer dazu. Ein "floorplan"-Block, wenn Grundriss-/Flächendaten vorliegen.
 ${TRUTH_RULES}
 6. Preise/Beträge exakt aus den Fakten übernehmen (Format wie gegeben).
-7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.`
+7. KRITISCH für gültiges JSON: Verwende in ALLEN Texten (Titel, Taglines, Absätze, überall) NIEMALS doppelte Anführungszeichen — weder gerade noch typografische deutsche. Für Spitznamen/Hervorhebungen nutze EINFACHE Anführungszeichen 'so' oder gar keine. Beispiel: Apartment 303 'Dior' (nicht mit doppelten Zeichen). Übergib blocks als echtes JSON-Array.
+8. RENDITE — HART, KEINE AUSNAHME: Das Deck enthält KEINE Rendite-, Mietertrags- oder Amortisationszahlen. Keine Prozentsätze p.a., keine erwartete Miete pro Monat oder Jahr, keine Auslastungsquoten, keine Kaufpreisfaktoren, keine Wertsteigerungsprognosen in Zahlen — auch dann nicht, wenn die Fakten oder Bauträger-Unterlagen solche Zahlen enthalten. Diese Zahlen rechnet Happy Property in einer eigenen, persönlichen Kalkulation; im Deck haben sie nichts verloren. Was du stattdessen sagen darfst: was die Wohnung und die Anlage für Mieter attraktiv macht (Lage, Ausstattung, Ganzjahresnutzung, Gemeinschaftsflächen) und dass Sven die Zahlen persönlich durchrechnet.`
 
 /** Ergebnis eines Generierungslaufs — inklusive Gate-Urteil. */
 interface GenResult { token: string; blocks: number; deckId: string | null; quality: 'green' | 'red'; findings: number }
@@ -236,26 +237,123 @@ function injectLocationAndMarina(
 // einsetzen — dort, wo der Kunde ohnehin über Standort & Blick liest. Idempotent.
 // Entscheidet nur das Feld (embedUrl vs. videoUrl); die Embed-Normalisierung macht
 // der Renderer (eine Quelle der Wahrheit). Direkte MP4 → nativer Player, sonst iframe.
-function injectVideo(blocks: Array<Record<string, unknown>>, videoUrl?: string | null): void {
-  const url = (videoUrl ?? '').trim()
-  if (!url) return
-  if (blocks.some(b => b.type === 'video')) return
-  const isDirect = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
-  const cover = blocks.find(b => b.type === 'cover') as { image?: string } | undefined
-  const vb: Record<string, unknown> = {
-    type: 'video',
-    kicker: 'Rundgang',
-    headline: 'Sehen statt vorstellen',
-    text: 'Ein Eindruck, den kein Foto ersetzt — das Projekt in Bewegung.',
-    ...(isDirect ? { videoUrl: url } : { embedUrl: url }),
-    ...(cover?.image ? { poster: cover.image } : {}),
-  }
-  let at = blocks.findIndex(b => b.type === 'marina')
-  if (at < 0) at = blocks.findIndex(b => b.type === 'facts')
-  if (at < 0) at = blocks.findIndex(b => b.type === 'cover')
-  at = at < 0 ? Math.min(1, blocks.length) : at + 1
-  blocks.splice(at, 0, vb)
+type VideoAsset = {
+  slot?: 'projekt' | 'anlage' | 'innen'
+  status?: string
+  url?: string
+  // Nicht gelistet auf YouTube geladen: der Weg fuer H.265-Rohmaterial und grosse
+  // Master-Filme. Hat Vorrang vor der Storage-Kopie, weil YouTube ueberall laeuft.
+  youtube_url?: string
+  name?: string
+  width?: number
+  height?: number
+  duration_s?: number
 }
+
+// Seitenverhaeltnis fuer den Renderer: Bautraeger liefern auch Hochformat
+// (Musterhaus-Reel, Sauna-Clip). Ohne diese Angabe liefe alles im 16:9-Rahmen.
+function videoAspect(v: VideoAsset): string | undefined {
+  const w = v.width ?? 0, h = v.height ?? 0
+  if (!w || !h) return undefined
+  const ar = w / h
+  if (ar >= 1.5) return '16/9'
+  if (ar >= 1.15) return '4/3'
+  if (ar >= 0.9) return '1/1'
+  // Hochformat: 4/5 (816x960, Instagram-Zuschnitt) vom echten 9/16 unterscheiden,
+  // sonst bekommt ein 4:5-Clip einen viel zu schmalen Rahmen.
+  if (ar >= 0.72) return '4/5'
+  return '9/16'
+}
+
+// Texte je Abschnitt. Sie stehen hier und nicht im KI-Prompt, weil die KI nicht
+// weiss, WELCHER Clip vorliegt - sie wuerde einen Rundgang beschreiben, der im
+// Video gar nicht vorkommt.
+const VIDEO_TEXTE = {
+  de: {
+    projekt: { kicker: 'Rundgang',  headline: 'Sehen statt vorstellen',      text: 'Ein Eindruck, den kein Foto ersetzt: das Projekt in Bewegung.' },
+    anlage:  { kicker: 'Anlage',    headline: 'Die Gemeinschaftsflächen in Bewegung', text: 'Aufnahme des Bauträgers aus der fertigen Anlage.' },
+    innen:   { kicker: 'Innen',     headline: 'Durch die Wohnung',           text: 'Rundgang durch die Musterwohnung, Aufnahme des Bauträgers.' },
+  },
+  en: {
+    projekt: { kicker: 'Walkthrough', headline: 'See it, do not imagine it', text: 'What no photo can show: the project in motion.' },
+    anlage:  { kicker: 'Amenities',   headline: 'The communal areas in motion', text: 'Footage from the developer.' },
+    innen:   { kicker: 'Interiors',   headline: 'Through the apartment',     text: 'Walkthrough of the show apartment, footage from the developer.' },
+  },
+} as const
+
+function buildVideoBlock(v: VideoAsset, slot: 'projekt' | 'anlage' | 'innen', poster: string | undefined, en: boolean): Record<string, unknown> {
+  const url = (v.youtube_url ?? v.url ?? '').trim()
+  const isDirect = /\.(mp4|webm|ogg|mov|m4v)(\?|#|$)/i.test(url)
+  const T = (en ? VIDEO_TEXTE.en : VIDEO_TEXTE.de)[slot]
+  const aspect = videoAspect(v)
+  return {
+    type: 'video',
+    kicker: T.kicker,
+    headline: T.headline,
+    text: T.text,
+    ...(isDirect ? { videoUrl: url } : { embedUrl: url }),
+    ...(poster ? { poster } : {}),
+    ...(aspect ? { aspect } : {}),
+  }
+}
+
+// Bewegtbild aus dem Drive-Sync (deck_assets.videos, Status ok) plus das am Projekt
+// hinterlegte video_url. Frueher kam genau EIN Video ins Deck; hat der Bautraeger
+// mehr Material, darf das Deck laenger werden.
+//   phase 'hero' -> der Projektfilm, direkt hinter die Standort-Strecke
+//   phase 'rest' -> Anlage- und Innen-Clips, nach dem Galerie-Aufbau
+function injectVideos(
+  blocks: Array<Record<string, unknown>>,
+  videos: VideoAsset[] | undefined,
+  heroUrl: string | null | undefined,
+  phase: 'hero' | 'rest',
+  en?: boolean,
+): void {
+  const cover = blocks.find(b => b.type === 'cover') as { image?: string } | undefined
+  const poster = cover?.image
+  const ok = (videos ?? []).filter(v => v.status === 'ok' && ((v.youtube_url ?? v.url) ?? '').trim())
+  const schonDrin = new Set(blocks.filter(b => b.type === 'video').map(b => String(b.videoUrl ?? b.embedUrl ?? '')))
+
+  if (phase === 'hero') {
+    // Vorrang hat das am Projekt hinterlegte video_url: das ist der Platz, an dem
+    // ein nicht gelistetes YouTube-Video von Hand eingetragen wird.
+    const manuell = (heroUrl ?? '').trim()
+    const auto = ok.find(v => v.slot === 'projekt')
+    const v: VideoAsset | null = manuell
+      ? { url: manuell, ...(auto && (auto.youtube_url === manuell || auto.url === manuell) ? auto : {}), youtube_url: undefined }
+      : (auto ?? null)
+    const vUrl = (v?.youtube_url ?? v?.url ?? '').trim()
+    if (!v || !vUrl || schonDrin.has(vUrl)) return
+    let at = blocks.findIndex(b => b.type === 'marina')
+    if (at < 0) at = blocks.findIndex(b => b.type === 'facts')
+    if (at < 0) at = blocks.findIndex(b => b.type === 'cover')
+    at = at < 0 ? Math.min(1, blocks.length) : at + 1
+    blocks.splice(at, 0, buildVideoBlock(v, 'projekt', poster, !!en))
+    return
+  }
+
+  // Anlage-Clip an die Gemeinschaftsanlagen, Innen-Clip an die Raumstrecken.
+  for (const slot of ['anlage', 'innen'] as const) {
+    const v = ok.find(x => x.slot === slot)
+    const vUrl = (v?.youtube_url ?? v?.url ?? '').trim()
+    if (!v || !vUrl || schonDrin.has(vUrl)) continue
+    let at = -1
+    if (slot === 'anlage') {
+      const i = blocks.findIndex(b => b.type === 'amenity')
+      if (i >= 0) at = i + 1
+    } else {
+      // hinter die letzte Innenraum-Galerie
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'gallery' && /innenr|interior/i.test(String(blocks[i].kicker ?? ''))) { at = i + 1; break }
+      }
+    }
+    if (at < 0) at = blocks.findIndex(b => b.type === 'payment')
+    if (at < 0) at = blocks.findIndex(b => b.type === 'cta')
+    if (at < 0) at = blocks.length
+    blocks.splice(at, 0, buildVideoBlock(v, slot, poster, !!en))
+  }
+}
+
 
 // ── Lageplan + Gemeinschaftsanlagen ─────────────────────────────────────────────
 // Beide kommen kuratiert aus crm_projects.deck_assets (masterplan / amenities,
@@ -918,13 +1016,13 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
-    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset } | null = null
+    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[] } | null = null
     let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
           .select('name, location, latitude, longitude, video_url, developer, payment_schedule, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string }; masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset } | null } | null
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string }; masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset; videos?: VideoAsset[] } | null } | null
         projRow = pr
         projAssets = pr?.deck_assets ?? null
         if (pr) {
@@ -1019,12 +1117,13 @@ Deno.serve(async (req) => {
 
     // Deck-Standard: Entfernungs-Chips (facts) + Marina-Sektion — deterministisch,
     // damit JEDES Deck sie hat, unabhängig davon was die KI liefert.
-    injectLocationAndMarina(blocks, projRow?.name || projName, projRow, deckLang)
-    // Projekt-Video (falls hinterlegt) nach der Lage-Sektion einsetzen.
-    injectVideo(blocks, projRow?.video_url)
-    // Lageplan der Anlage + Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit
-    // Render UND Grundriss — kuratiert in deck_assets, deshalb deterministisch.
     const enDeck = deckLang === 'en'
+    injectLocationAndMarina(blocks, projRow?.name || projName, projRow, deckLang)
+    // Projektfilm nach der Lage-Sektion einsetzen. Anlage- und Innen-Clips folgen
+    // weiter unten, nachdem die Bildstrecken stehen.
+    injectVideos(blocks, projAssets?.videos, projRow?.video_url, 'hero', enDeck)
+    // Lageplan der Anlage + Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit
+    // Render UND Grundriss - kuratiert in deck_assets, deshalb deterministisch.
     injectMasterplan(blocks, (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan, enDeck)
     injectAmenities(blocks, (enDeck && projAssets?.amenities_en) || projAssets?.amenities, enDeck)
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
@@ -1080,6 +1179,9 @@ Deno.serve(async (req) => {
     // Echte Aufnahmen der Aussicht - NACH dem Galerie-Aufbau, weil der jeden
     // gallery-Block ersetzt.
     injectViews(blocks, (enDeck && projAssets?.views_en) || projAssets?.views, enDeck)
+    // Anlage- und Innen-Clips: erst jetzt, weil sie sich an die Gemeinschaftsanlagen
+    // und die Raumstrecken haengen — die gibt es vorher noch nicht.
+    injectVideos(blocks, projAssets?.videos, null, 'rest', enDeck)
 
     // Marina-, Video- und Zahlungsplan-Bloecke werden NACH der Normalisierung
     // eingesetzt und bringen ihre eigenen Gedankenstriche mit. Deshalb hier noch

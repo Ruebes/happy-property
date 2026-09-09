@@ -291,6 +291,25 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
     }
   }
 
+  // ── Renditeaussagen ────────────────────────────────────────────────────────
+  // Sven 9.9.2026: Renditeprognosen kommen NIE ins Sales Deck. Gerechnet wird
+  // ausschliesslich mit unserem eigenen Rechner (/rechnung/:token), der die Zahlen
+  // nachvollziehbar herleitet. Ein Prozentwert im Deck ist deshalb immer ein Fund,
+  // egal ob ihn die KI erfunden oder aus Bautraeger-Unterlagen uebernommen hat.
+  const RENDITE_RE = /(\b(rendite|mietrendite|renditeerwartung|yield|roi|rental\s+income|mieteinnahmen|mietertrag|kapitalverzinsung)\b[^.;!?]{0,60}?\d)|(\d[\d.,]*\s*%\s*(p\.?\s?a\.?|rendite|yield|roi|netto|brutto)\b)/i
+  blocks.forEach((b, i) => {
+    for (const [k, v] of Object.entries(b)) {
+      if (k === 'type' || typeof v !== 'string') continue
+      const m = v.match(RENDITE_RE)
+      if (!m) continue
+      add({ key: 'renditeaussage', severity: 'hoch', block: i,
+        what: 'Im Deck steht eine Rendite- oder Mietertragsangabe. Solche Zahlen gehoeren in den Rendite-Rechner, nicht ins Deck.',
+        evidence: `${k}: ${v.slice(Math.max(0, (m.index ?? 0) - 40), (m.index ?? 0) + 120)}`,
+        fix: 'Aussage aus dem Deck entfernen und stattdessen auf die persoenliche Berechnung verweisen.' })
+      return
+    }
+  })
+
   // ── Sprache ────────────────────────────────────────────────────────────────
   if (ctx.lang === 'en') {
     const DEUTSCH = /[äöüßÄÖÜ]|\b(und|der|die|das|mit|Wohnzimmer|Schlafzimmer|Terrasse|Zahlungsplan|Bruttopreis|Nettopreis)\b/

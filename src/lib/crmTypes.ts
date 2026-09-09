@@ -284,7 +284,30 @@ export interface DeckAssetsCache {
   doc_urls?:   Record<string, string>
   spec_text?:  string
   facts?:      string
+  // Bewegtbild aus dem Drive-Ordner. Enthaelt bewusst AUCH die Dateien, die nicht ins
+  // Deck koennen (H.265, zu gross) — samt Begruendung, damit im Projektformular
+  // sichtbar ist, was noch als YouTube-Video nachgereicht werden muss.
+  videos?: DeckVideoAsset[]
   updated_at?: string
+}
+
+export interface DeckVideoAsset {
+  drive_id:    string
+  name:        string
+  folder:      string
+  modified?:   string
+  size:        number
+  width?:      number
+  height?:     number
+  duration_s?: number
+  slot:        'projekt' | 'anlage' | 'innen'
+  orientation: 'quer' | 'hoch'
+  status:      'ok' | 'kandidat' | 'codec' | 'zu_gross' | 'ignoriert' | 'fehler'
+  codecs?:     string[]
+  url?:        string
+  youtube_url?: string   // nicht gelistet auf YouTube geladen (H.265 / zu große Master)
+  reason?:     string
+  score?:      number
 }
 
 // ── Rechnungstool ─────────────────────────────────────────────────────────────
