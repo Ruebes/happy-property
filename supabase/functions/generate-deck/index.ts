@@ -15,7 +15,7 @@ import { emitDeckSchema } from '../_shared/deckBlocks.ts'
 import { TRUTH_RULES } from '../_shared/deckRules.ts'
 import { eur, VAT_CAP_SQM } from '../_shared/deckVat.ts'
 import { buildDeckContext, MARINA_MODEL, type DeckContext, type FurnitureMode, type PaySchedule } from '../_shared/deckContext.ts'
-import { applyDeterministic, type ScrubEvent } from '../_shared/deckNormalize.ts'
+import { applyDeterministic, normalizeDashes, type ScrubEvent } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
@@ -54,7 +54,7 @@ Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder 
 - cta:      { type, kicker, headline, text, steps:[{n,title,text}] }  // n = "01"/"02"/"03"
 
 REGELN:
-1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block — bei MEHREREN Wohnungen JE Wohnung ein eigener unit-Block mit number=Wohnungsnummer, direkt hintereinander, danach optional je ein floorplan) → (c2) benefits 'Key Facts' (PFLICHT, siehe Regel 4g) → (d) facts (STANDORT/Lage mit Karte) → (d2) columns 'Warum diese Lage' (PFLICHT, siehe Regel 4h) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt. HINWEIS: Eine Marina-Sektion und die Entfernungs-Chips im facts-Block werden automatisch vom System ergänzt — baue selbst KEINEN Paphos-Marina-Block, außer eine GELERNTE VORGABE verlangt es ausdrücklich.
+1. STANDARD-REIHENFOLGE der Blöcke (HALTE DIESE EIN): (a) cover → (b) letter (Einleitung) → (c) unit (Preis-Block — bei MEHREREN Wohnungen JE Wohnung ein eigener unit-Block mit number=Wohnungsnummer, direkt hintereinander, danach optional je ein floorplan) → (c2) benefits 'Key Facts' (PFLICHT, siehe Regel 4g) → (d) facts (STANDORT/Lage mit Karte) → (d2) columns 'Warum diese Lage' (PFLICHT, siehe Regel 4h) → (e) gallery + feature: Innen- und Außenansichten, jeden Raum benennen (Wohnzimmer, Schlafzimmer, Küche, Bad …); für Amenities wie Pool, Gym, Sauna, Yoga je ein "feature" mit kurzer Story → (f) floorplan (Grundriss, wenn Flächen/Plan vorliegen) → (g) inventory (wenn Ausstattung/Möbel in den Fakten) → (h) payment (Zahlungsplan) inkl. Fertigstellung → (i) cta. cover IMMER zuerst, cta IMMER zuletzt. HINWEIS: Eine Marina-Sektion und die Entfernungs-Chips im facts-Block werden automatisch vom System ergänzt — baue selbst KEINEN Paphos-Marina-Block, außer eine GELERNTE VORGABE verlangt es ausdrücklich. HINWEIS 2: Lageplan der Anlage und Gemeinschaftsanlagen (Gym, Sauna, Studio/Yoga, Café, Pool, Dachgarten) setzt das System als eigene Sektionen mit Bildern UND den Grundrissen des Bauträgers ein. Schreibe dazu HÖCHSTENS EINEN feature-Block mit einer Verkaufsgeschichte (z. B. Ganzjahres-Vermietung) und wiederhole dort KEINE Flächenangaben - sonst steht dasselbe zweimal im Deck.
 4g. KEY FACTS (benefits-Block, PFLICHT direkt nach den unit-Blöcken): 6–8 Karten mit den stärksten KAUF-Argumenten des Objekts aus den Fakten — z.B. Fußbodenheizung, VRV-/Zentralklima, Doppel-/Dreifachverglasung, Photovoltaik/Solar, Gym, Pool, Sauna, Bauqualität/Materialien, Garantie, Smart Home, Aufzug, Tiefgarage/Stellplatz, Meerblick, Rooftop. NUR Fakten, die wirklich im Input stehen. Jede Karte: icon (Emoji), title (2–4 Worte), text (1–2 konkrete Sätze mit dem Nutzen für den Käufer). headline z.B. 'Die Key Facts — was dieses Objekt mitbringt'.
 4h. WARUM DIESE LAGE (columns-Block, PFLICHT direkt nach dem facts-Block): 3 Spalten, die aus den Fakten begründen, warum GENAU diese Lage jetzt kaufenswert ist (z.B. Nachbarschaft/Charakter, Infrastruktur/Erreichbarkeit, Entwicklung der Gegend). Nutze NUR belegte Fakten aus dem Input (Regel 5e gilt: keine erfundenen Markt-Aussagen). headline z.B. 'Warum genau hier'.
 2. Das "letter"-Anschreiben nimmt das Kunden-Briefing direkt auf (Situation, Motiv, Wünsche) — persönlich, als käme es von Sven. signoff "Bis bald, Sven", signName "Sven · Happy Property Cyprus".
@@ -255,6 +255,91 @@ function injectVideo(blocks: Array<Record<string, unknown>>, videoUrl?: string |
   if (at < 0) at = blocks.findIndex(b => b.type === 'cover')
   at = at < 0 ? Math.min(1, blocks.length) : at + 1
   blocks.splice(at, 0, vb)
+}
+
+// ── Lageplan + Gemeinschaftsanlagen ─────────────────────────────────────────────
+// Beide kommen kuratiert aus crm_projects.deck_assets (masterplan / amenities,
+// optional *_en) und werden deterministisch eingesetzt — genau wie Marina und
+// Video. Die KI schreibt sie nicht: sie haette weder den Bautraeger-Lageplan noch
+// die Flaechen der Gemeinschaftsraeume und wuerde beides erfinden.
+type MasterplanAsset = {
+  image?: string; caption?: string; kicker?: string; headline?: string; intro?: string; note?: string
+  legend?: Array<{ n?: string; title?: string; items?: string[] }>
+  features?: string[]
+}
+type AmenityAsset = {
+  kicker?: string; headline?: string; intro?: string; note?: string
+  items?: Array<{ title?: string; text?: string; image?: string; plan?: string; planLabel?: string; stats?: Array<{ value?: string; unit?: string; label?: string }> }>
+}
+
+function injectMasterplan(blocks: Array<Record<string, unknown>>, mp?: MasterplanAsset | null, en?: boolean): void {
+  if (!mp?.image) return
+  if (blocks.some(b => b.type === 'masterplan')) return
+  const mb: Record<string, unknown> = {
+    type: 'masterplan',
+    kicker:   mp.kicker   || (en ? 'The complex' : 'Die Anlage'),
+    headline: mp.headline || (en ? 'Where exactly you land' : 'Wo genau du landest'),
+    ...(mp.intro ? { intro: mp.intro } : {}),
+    image: mp.image,
+    ...(mp.caption ? { caption: mp.caption } : {}),
+    ...(mp.legend?.length ? { legend: mp.legend } : {}),
+    ...(mp.features?.length ? { features: mp.features } : {}),
+    ...(mp.note ? { note: mp.note } : {}),
+  }
+  // Direkt hinter die Standort-Strecke (facts → marina → video), damit die
+  // Reihenfolge lautet: wo liegt es → wie ist die Anlage aufgebaut → die Wohnung.
+  let at = -1
+  for (const t of ['video', 'marina', 'facts']) {
+    const i = blocks.map(b => b.type).lastIndexOf(t)
+    if (i > at) at = i
+  }
+  at = at < 0 ? Math.min(2, blocks.length) : at + 1
+  blocks.splice(at, 0, mb)
+}
+
+type ViewsAsset = {
+  kicker?: string; headline?: string; note?: string
+  items?: Array<{ image?: string; title?: string; caption?: string }>
+}
+
+// Echte Drohnenaufnahmen auf Wohnungshoehe (nicht gerendert). Bewusst NICHT in
+// deck_assets.gallery: der Drive-Sync baut die Galerie neu auf und wuerde sie
+// verlieren. Wird nach dem Galerie-Aufbau eingesetzt, weil der alle gallery-Bloecke
+// der KI ersetzt.
+function injectViews(blocks: Array<Record<string, unknown>>, vw?: ViewsAsset | null, en?: boolean): void {
+  const items = (vw?.items ?? []).filter(i => i?.image)
+  if (!items.length) return
+  const vb: Record<string, unknown> = {
+    type: 'gallery',
+    kicker:   vw?.kicker   || (en ? 'The view' : 'Aussicht'),
+    headline: vw?.headline || (en ? 'The actual view: drone shots at floor level' : 'Der echte Blick: Drohnenaufnahmen auf Wohnungshöhe'),
+    items,
+    ...(vw?.note ? { note: vw.note } : {}),
+  }
+  const amIdx = blocks.findIndex(b => b.type === 'amenity')
+  let at = amIdx >= 0 ? amIdx + 1 : blocks.findIndex(b => b.type === 'payment')
+  if (at < 0) at = blocks.findIndex(b => b.type === 'cta')
+  if (at < 0) at = blocks.length
+  blocks.splice(at, 0, vb)
+}
+
+function injectAmenities(blocks: Array<Record<string, unknown>>, am?: AmenityAsset | null, en?: boolean): void {
+  const items = (am?.items ?? []).filter(i => i?.title && i?.image)
+  if (!items.length) return
+  if (blocks.some(b => b.type === 'amenity')) return
+  const ab: Record<string, unknown> = {
+    type: 'amenity',
+    kicker:   am?.kicker   || (en ? 'Amenities' : 'Gemeinschaftsanlagen'),
+    headline: am?.headline || (en ? 'Resort living, every day' : 'Resort-Alltag, jeden Tag'),
+    ...(am?.intro ? { intro: am.intro } : {}),
+    items,
+    ...(am?.note ? { note: am.note } : {}),
+  }
+  // Vor den Zahlungsplan: erst zeigen, was man bekommt, dann was es kostet.
+  let at = blocks.findIndex(b => b.type === 'payment')
+  if (at < 0) at = blocks.findIndex(b => b.type === 'cta')
+  if (at < 0) at = blocks.length
+  blocks.splice(at, 0, ab)
 }
 
 // Welche Bildkategorie passt zu welchen Woertern im Blocktext? Reihenfolge zaehlt:
@@ -833,13 +918,15 @@ Deno.serve(async (req) => {
     // Standort-Karte IMMER interaktiv (Deck-Standard): exakte Koordinaten bevorzugt,
     // sonst Such-Query aus Projektname + Ort → Deck.tsx baut ein scroll-/zoombares
     // Google-Embed statt eines statischen Bildes.
+    let projAssets: { masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset } | null = null
     let projRow: { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null } | null = null
     if (body.project_id) {   // gilt für generische UND personalisierte Decks
       try {
         const { data: proj } = await sbRules.from('crm_projects')
           .select('name, location, latitude, longitude, video_url, developer, payment_schedule, deck_assets').eq('id', body.project_id).maybeSingle()
-        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string } } | null } | null
+        const pr = proj as { name?: string; location?: string | null; latitude?: number | null; longitude?: number | null; video_url?: string | null; developer?: string | null; payment_schedule?: PaySchedule | null; deck_assets?: { mapUrl?: string; hero_video?: { url?: string }; masterplan?: MasterplanAsset; masterplan_en?: MasterplanAsset; amenities?: AmenityAsset; amenities_en?: AmenityAsset; views?: ViewsAsset; views_en?: ViewsAsset } | null } | null
         projRow = pr
+        projAssets = pr?.deck_assets ?? null
         if (pr) {
           body.images = body.images ?? {}
           // Projekt-Hero-Video (EINE Kamerafahrt je Projekt, von allen Decks geteilt)
@@ -935,6 +1022,11 @@ Deno.serve(async (req) => {
     injectLocationAndMarina(blocks, projRow?.name || projName, projRow, deckLang)
     // Projekt-Video (falls hinterlegt) nach der Lage-Sektion einsetzen.
     injectVideo(blocks, projRow?.video_url)
+    // Lageplan der Anlage + Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit
+    // Render UND Grundriss — kuratiert in deck_assets, deshalb deterministisch.
+    const enDeck = deckLang === 'en'
+    injectMasterplan(blocks, (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan, enDeck)
+    injectAmenities(blocks, (enDeck && projAssets?.amenities_en) || projAssets?.amenities, enDeck)
     // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
     // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,
     // damit der Kunde im Zoom sieht, wie alles aussieht.
@@ -976,11 +1068,24 @@ Deno.serve(async (req) => {
       }
       if (galleryBlocks.length) {
         const filtered = blocks.filter(b => b.type !== 'gallery')   // Modell-Galerien ersetzen
-        const ctaIdx = filtered.findIndex(b => b.type === 'cta')
-        const at = ctaIdx >= 0 ? ctaIdx : filtered.length
+        // Erst zeigen, dann den Preis: die Bildstrecken landen VOR dem Zahlungsplan.
+        // Vorher hingen sie hinter ihm, der Zahlungsplan stand mitten im Deck.
+        let at = filtered.findIndex(b => b.type === 'amenity')
+        if (at < 0) at = filtered.findIndex(b => b.type === 'payment')
+        if (at < 0) at = filtered.findIndex(b => b.type === 'cta')
+        if (at < 0) at = filtered.length
         blocks = [...filtered.slice(0, at), ...galleryBlocks, ...filtered.slice(at)]
       }
     }
+    // Echte Aufnahmen der Aussicht - NACH dem Galerie-Aufbau, weil der jeden
+    // gallery-Block ersetzt.
+    injectViews(blocks, (enDeck && projAssets?.views_en) || projAssets?.views, enDeck)
+
+    // Marina-, Video- und Zahlungsplan-Bloecke werden NACH der Normalisierung
+    // eingesetzt und bringen ihre eigenen Gedankenstriche mit. Deshalb hier noch
+    // einmal ueber das fertige Deck (Regel: nie —, immer normaler Bindestrich).
+    const nachHits = normalizeDashes(blocks)
+    if (nachHits) console.log(`[generate-deck] Gedankenstriche nach Injektion ersetzt: ${nachHits}`)
 
     // Marina-Abschnitte tragen IMMER das Marina-Modell. Die KI baut wegen der
     // gelernten Mamba-Vorgabe einen eigenen feature-Block dazu; ohne diese Regel

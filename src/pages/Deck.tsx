@@ -304,6 +304,96 @@ function GalleryBlock(b: Extract<DeckBlock, { type: 'gallery' }>) {
   )
 }
 
+// Lageplan der Gesamtanlage: Bauträgerplan gross, darunter die Legende (Club House,
+// Park, Gebäude) und die Merkmale der Anlage. Ersetzt das bisherige Loch zwischen
+// „Standort" und „Wohnung" — der Kunde sieht, wo im Areal er landet.
+function MasterplanBlock(b: Extract<DeckBlock, { type: 'masterplan' }>) {
+  const legend = b.legend ?? []
+  const features = b.features ?? []
+  return (
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
+      <Accent /><Kicker>{b.kicker}</Kicker>
+      {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
+      {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
+      <Img src={b.image} className="w-full h-auto max-h-[720px] object-contain bg-white rounded-xl border border-gray-200 p-2 md:p-4 mt-8" />
+      {b.caption && <p className="text-[12px] text-gray-500 mt-3 max-w-3xl">{b.caption}</p>}
+      {legend.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mt-8">
+          {legend.map((l, i) => (
+            <div key={i} className="bg-white rounded-xl p-5 border-t-2" style={{ borderColor: GOLD }}>
+              <div className="flex items-center gap-3">
+                {l.n && <span className="w-8 h-8 rounded-md flex items-center justify-center text-[13px] font-bold shrink-0" style={{ background: '#f3ead7', color: GOLD }}>{l.n}</span>}
+                <h3 className="font-heading font-bold text-lg" style={{ color: INK }}>{l.title}</h3>
+              </div>
+              {(l.items ?? []).length > 0 && (
+                <ul className="mt-3 space-y-1.5">
+                  {(l.items ?? []).map((it, j) => (
+                    <li key={j} className="flex gap-2.5 text-[13.5px] leading-snug text-gray-700">
+                      <span className="shrink-0" style={{ color: GOLD }}>·</span><span>{it}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {features.length > 0 && (
+        <div className="flex flex-wrap gap-2.5 mt-8">
+          {features.map((f, i) => (
+            <span key={i} className="rounded-full bg-white px-4 py-2 text-[13px] text-gray-700 border" style={{ borderColor: '#e6ddc9' }}>{f}</span>
+          ))}
+        </div>
+      )}
+      {b.note && <div className="mt-6 rounded-xl px-5 py-3 text-[13px] text-gray-700 border-l-2 bg-white" style={{ borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
+    </section>
+  )
+}
+
+// Gemeinschaftsanlagen: je Anlage ein Render UND — wo vorhanden — der echte
+// Grundriss des Bauträgers mit Flächen. Genau das, was die Bauträger-Broschüre
+// zeigt und was im Deck bisher fehlte.
+function AmenityBlock(b: Extract<DeckBlock, { type: 'amenity' }>) {
+  const items = b.items ?? []
+  return (
+    <section className="px-5 md:px-20 py-16" style={{ background: CREAM }}>
+      <Accent /><Kicker>{b.kicker}</Kicker>
+      {b.headline && <h2 className="font-heading font-bold text-4xl md:text-5xl mt-3 leading-tight" style={{ color: INK }}>{b.headline}</h2>}
+      {b.intro && <p className="text-[15px] leading-relaxed text-gray-700 mt-4 max-w-3xl">{b.intro}</p>}
+      <div className="space-y-12 mt-10">
+        {items.map((it, i) => (
+          <div key={i}>
+            <Img src={it.image} className="w-full h-[38vh] md:h-[52vh] object-cover rounded-xl" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-6">
+              <div>
+                <h3 className="font-heading font-bold text-2xl md:text-3xl" style={{ color: INK }}>{it.title}</h3>
+                {it.text && <p className="text-[15px] leading-relaxed text-gray-700 mt-3">{it.text}</p>}
+                {(it.stats ?? []).length > 0 && (
+                  <div className="grid grid-cols-2 gap-3 mt-5">
+                    {(it.stats ?? []).map((s, j) => (
+                      <div key={j} className="rounded-xl p-4 border-t-2 bg-white" style={{ borderColor: GOLD }}>
+                        <p className="font-heading font-bold text-2xl break-words" style={{ color: INK }}>{s.value}<span className="text-sm text-gray-400 ml-1">{s.unit}</span></p>
+                        <p className="text-[11px] uppercase tracking-wide text-gray-500 mt-1">{s.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {it.plan && (
+                <div>
+                  <Img src={it.plan} className="w-full h-auto max-h-[420px] object-contain bg-white rounded-xl border border-gray-200 p-3" />
+                  {it.planLabel && <p className="text-[12px] text-gray-500 mt-2">{it.planLabel}</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      {b.note && <div className="mt-8 rounded-xl px-5 py-3 text-[13px] text-gray-700 border-l-2 bg-white" style={{ borderColor: GOLD }} dangerouslySetInnerHTML={{ __html: b.note }} />}
+    </section>
+  )
+}
+
 function BenefitsBlock(b: Extract<DeckBlock, { type: 'benefits' }>) {
   const cards = b.cards ?? []
   return (
@@ -671,6 +761,8 @@ function Block({ block }: { block: DeckBlock }) {
     case 'columns':   return <ColumnsBlock {...block} />
     case 'feature':   return <FeatureBlock {...block} />
     case 'gallery':   return <GalleryBlock {...block} />
+    case 'masterplan':return <MasterplanBlock {...block} />
+    case 'amenity':   return <AmenityBlock {...block} />
     case 'benefits':  return <BenefitsBlock {...block} />
     case 'inventory': return <InventoryBlock {...block} />
     case 'floorplan': return <FloorplanBlock {...block} />

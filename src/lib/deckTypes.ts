@@ -27,6 +27,12 @@ export type DeckBlock =
   // Bewegtbild-Sektion (z.B. Drohnen-/Meerblick-Video). embedUrl = YouTube/Vimeo/Drive
   // (iframe), videoUrl = direktes MP4 (nativer Player). poster = Standbild fürs MP4.
   | { type: 'video';   kicker?: string; headline?: string; text?: string; embedUrl?: string; videoUrl?: string; poster?: string; caption?: string }
+  // Lageplan der Gesamtanlage (Bautraeger-Masterplan) mit Legende und Ausstattungs-
+  // merkmalen. Deterministisch aus deck_assets.masterplan.
+  | { type: 'masterplan'; kicker?: string; headline?: string; intro?: string; image?: string; caption?: string; legend?: { n?: string; title: string; items?: string[] }[]; features?: string[]; note?: string }
+  // Gemeinschaftsanlagen (Gym, Studio, Cafe, Pool ...) je mit Render UND Grundriss —
+  // deterministisch aus deck_assets.amenities.
+  | { type: 'amenity'; kicker?: string; headline?: string; intro?: string; items?: { title: string; text?: string; image?: string; plan?: string; planLabel?: string; stats?: { value: string; unit?: string; label: string }[] }[]; note?: string }
   | { type: 'benefits';kicker?: string; headline?: string; cards?: { icon?: string; title: string; text: string }[] }
   | { type: 'inventory';kicker?: string; headline?: string; intro?: string; image?: string; groups?: { title: string; icon?: string; items: string[] }[]; note?: string }
   | { type: 'floorplan';kicker?: string; headline?: string; image?: string; stats?: { value: string; unit?: string; label: string }[]; bullets?: { strong?: string; text: string }[]; rooms?: FloorplanRoom[]; planNote?: string }

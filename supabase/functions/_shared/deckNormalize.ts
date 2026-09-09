@@ -262,6 +262,37 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
   }
 }
 
+// ── Gedankenstriche ──────────────────────────────────────────────────────────
+// Ersetzt Geviert-/Halbgeviertstriche durch den normalen Bindestrich. Laeuft
+// rekursiv durch die Bloecke (auch phase1.rows[].label, items[].caption ...),
+// laesst URLs unangetastet und gibt die Anzahl der Treffer zurueck. Wird zweimal
+// gebraucht: in der Normalisierung und noch einmal am Ende von generate-deck, weil
+// Marina-, Video- und Zahlungsplan-Bloecke DANACH eingesetzt werden.
+export function normalizeDashes(value: unknown): number {
+  let hits = 0
+  const fix = (v: string) => v.replace(/\s*[\u2014\u2013]\s*/g, m => (/^\s|\s$/.test(m) ? ' - ' : '-'))
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach((el, i) => {
+        if (typeof el === 'string') {
+          if (/^https?:\/\//i.test(el)) return
+          const f = fix(el); if (f !== el) { node[i] = f; hits++ }
+        } else walk(el)
+      })
+    } else if (node && typeof node === 'object') {
+      const obj = node as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string') {
+          if (/^https?:\/\//i.test(v)) continue
+          const f = fix(v); if (f !== v) { obj[k] = f; hits++ }
+        } else walk(v)
+      }
+    }
+  }
+  walk(value)
+  return hits
+}
+
 // ── Die eigentliche Normalisierung ───────────────────────────────────────────
 export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): NormalizeResult {
   const notes: string[] = []
@@ -272,6 +303,12 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
   const { kept, dropped } = dropUnknownBlocks(inputBlocks)
   let blocks = kept
   if (dropped.length) notes.push(`Unbekannte Blocktypen entfernt: ${dropped.join(', ')}`)
+
+  // 0b) Gedankenstriche: Sven will in Kundentexten NIE einen Geviert- oder
+  //     Halbgeviertstrich, immer den normalen Bindestrich. Das Modell setzt sie trotz
+  //     Prompt in fast jede Ueberschrift.
+  const dashHits = normalizeDashes(blocks)
+  if (dashHits) notes.push(`Gedankenstriche ersetzt: ${dashHits}`)
 
   // 1) Wahrheits-Backstop
   scrubEvents.push(...scrubNarrative(blocks, ctx.furnitureIncluded))
@@ -445,6 +482,10 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
       notes.push('Marina-Abschnitt: Modellbild gesetzt')
     }
   }
+
+  // Letzter Durchgang: Zahlungsplan und andere Bloecke werden weiter oben ERST
+  // eingesetzt und bringen eigene Gedankenstriche mit.
+  normalizeDashes(blocks)
 
   return { blocks, scrubEvents, notes }
 }

@@ -22,7 +22,7 @@ export const AI_BLOCK_TYPES = [
 ] as const
 
 /** Typen, die AUSSCHLIESSLICH das System deterministisch einsetzt. */
-export const SYSTEM_BLOCK_TYPES = ['marina', 'video'] as const
+export const SYSTEM_BLOCK_TYPES = ['marina', 'video', 'masterplan', 'amenity'] as const
 
 /** Alles, was im Deck vorkommen darf. Muss deckungsgleich sein mit der
  *  DeckBlock-Union (src/lib/deckTypes.ts) und dem switch in Deck.tsx. */
@@ -40,7 +40,7 @@ export const isKnownBlockType = (t: unknown): t is BlockType =>
 export const DETERMINISTIC_FIELDS = [
   'priceLines', 'priceSummary', 'priceMain', 'priceSub',
   'mapLat', 'mapLng', 'mapQuery', 'mapEmbed', 'mapMarker', 'mapUrl', 'mapLabel',
-  'planNote', 'rooms',
+  'planNote', 'rooms', 'plan',
   'embedUrl', 'videoUrl', 'poster',
   'image',
 ] as const
@@ -59,7 +59,7 @@ const TEXT_FIELDS: Record<string, unknown> = {
   number: str, nickname: str, specs: strArr,
   note: str, text: str, quote: str, intro: str, caption: str,
   link: str, linkLabel: str,
-  items: objArr, cols: objArr, cards: objArr, groups: objArr,
+  items: objArr, cols: objArr, cards: objArr, groups: objArr, legend: objArr, features: strArr,
   stats: objArr, bullets: objArr, steps: objArr,
   phase1: { type: 'object' }, phase2: { type: 'object' },
 }
@@ -75,7 +75,7 @@ const DETERMINISTIC_SCHEMA: Record<string, unknown> = {
   priceMain: str, priceSub: str,
   priceLines: { type: 'array', items: { type: 'object', properties: { label: str, value: str, strong: bool }, required: ['label', 'value'] } },
   priceSummary: { type: 'object' },
-  planNote: str, rooms: objArr,
+  planNote: str, rooms: objArr, plan: str, planLabel: str,
   embedUrl: str, videoUrl: str, poster: str,
   /** Stabile Bild-Identität aus deck_assets_catalog. */
   assetId: str,
