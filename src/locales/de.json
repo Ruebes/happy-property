@@ -4659,7 +4659,8 @@
       "rePriceGrowthReset": "an Wertsteigerung koppeln",
       "rePriceGrowthHint": "Spätere Käufe kosten den heutigen Modellpreis, fortgeschrieben mit dieser Rate. Die Miete des Modellobjekts wächst nur mit der Mietsteigerung, deshalb sinkt die Anfangsrendite späterer Käufe.",
       "reTarget": "Referenzobjekt für spätere Käufe",
-      "reTargetAvg": "Durchschnitt der gewählten Wohnungen"
+      "reTargetAvg": "Durchschnitt der gewählten Wohnungen",
+      "sharedHint3": "Diesen Link jetzt noch nicht selbst verschicken. Er öffnet sich beim Kunden erst, wenn der Eintrag im Postausgang tatsächlich hinausgegangen ist (Mail oder WhatsApp) - dabei wird der Fahrplan freigeschaltet. Vorher sieht der Kunde nur eine Fehlermeldung. Die Vorschau daneben funktioniert nur für angemeldete Mitarbeiter."
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -6119,6 +6120,9 @@
     "timelineSub": "Jeder Eintrag ist ein Ereignis aus der Berechnung, nichts davon ist ausgedacht.",
     "buyerSingle": "Die Modellrechnung berücksichtigt den persönlichen steuerfreien Grundbetrag von 22.000 € pro Jahr und beim Verkauf einen lebenslangen Freibetrag von 30.000 €. Beides gilt je Person und wird nicht je Wohnung vervielfacht.",
     "buyerCouple": "Die Strategie wird von zwei Personen gemeinsam umgesetzt. Zypern veranlagt jede Person einzeln, deshalb berücksichtigt die Modellrechnung die persönlichen steuerfreien Grundbeträge beider Personen in Höhe von zusammen 44.000 € pro Jahr und beim Verkauf 60.000 € lebenslang. Diese Beträge gelten je Person und werden nicht je Wohnung vervielfacht.",
-    "assumptionsPrice": "Spätere Käufe werden nicht zum heutigen Preis gerechnet: Der Kaufpreis des Modellobjekts steigt mit {{g}} % pro Jahr, die Miete nur mit der Mietsteigerung. Die Anfangsrendite späterer Käufe fällt dadurch niedriger aus als heute."
+    "assumptionsPrice": "Spätere Käufe werden nicht zum heutigen Preis gerechnet: Der Kaufpreis des Modellobjekts steigt mit {{g}} % pro Jahr, die Miete nur mit der Mietsteigerung. Die Anfangsrendite späterer Käufe fällt dadurch niedriger aus als heute.",
+    "notShared": "Dieser Fahrplan ist noch nicht für den Kunden freigegeben. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Zum Ansehen hänge ?preview=1 an die Adresse.",
+    "previewTag": "Interne Vorschau.",
+    "previewNote": "Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken."
   }
 }

@@ -232,7 +232,11 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         leadId: lead.id, firstName: lead.first_name, token, title, unitCount: units.length,
       })
       setMerged(merged)
-      setShareUrl(`${window.location.origin}/strategie/${token}?preview=1`)
+      // Im Feld steht der KUNDENLINK, nicht die interne Vorschau. Wer den
+      // Vorschaulink kopiert und verschickt, schickt einen Link, der beim
+      // Kunden nie funktioniert: ?preview=1 braucht eine Anmeldung, und ohne
+      // Freigabe liefert get_strategy_by_token nichts (Sven 9.9.26).
+      setShareUrl(`${window.location.origin}/strategie/${token}`)
     } catch (err) {
       console.error('[StrategySimulator] share:', err)
       setShareErr(err instanceof Error ? err.message : String(err))
@@ -1041,13 +1045,13 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 text-gray-600 hover:bg-white">
                       {t('crm.sim.copy', 'Link kopieren')}
                     </button>
-                    <a href={shareUrl} target="_blank" rel="noreferrer"
+                    <a href={`${shareUrl}?preview=1`} target="_blank" rel="noreferrer"
                       className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white" style={{ backgroundColor: '#ff795d' }}>
                       {t('crm.sim.openPlan', 'Vorschau')}
                     </a>
                   </div>
-                  <p className="text-[11px] text-gray-500">
-                    {t('crm.sim.sharedHint2', 'Der Kunde kann den Link noch nicht öffnen. Er wird erst freigeschaltet, wenn der Eintrag im Postausgang tatsächlich hinausgeht (Mail oder WhatsApp). Änderungen hier wirken danach sofort, der Link bleibt derselbe.')}
+                  <p className="text-[11px] text-gray-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    {t('crm.sim.sharedHint3', 'Diesen Link jetzt noch nicht selbst verschicken. Er öffnet sich beim Kunden erst, wenn der Eintrag im Postausgang tatsächlich hinausgegangen ist (Mail oder WhatsApp) - dabei wird der Fahrplan freigeschaltet. Vorher sieht der Kunde nur eine Fehlermeldung. Die Vorschau daneben funktioniert nur für angemeldete Mitarbeiter.')}
                   </p>
                 </div>
               ) : (

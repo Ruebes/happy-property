@@ -4659,7 +4659,8 @@
       "rePriceGrowthReset": "link to appreciation",
       "rePriceGrowthHint": "Later purchases cost today's model price carried forward at this rate. The model property's rent grows only with rent growth, so the initial yield of later purchases declines.",
       "reTarget": "Reference property for later purchases",
-      "reTargetAvg": "Average of the selected apartments"
+      "reTargetAvg": "Average of the selected apartments",
+      "sharedHint3": "Do not send this link yourself yet. It only opens for the client once the outbox entry has actually gone out (email or WhatsApp), which is when the plan is released. Before that the client only sees an error. The preview next to it works for signed-in staff only."
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -6119,6 +6120,9 @@
     "timelineSub": "Every entry is an event from the calculation, none of it is invented.",
     "buyerSingle": "The model calculation takes into account the personal tax-free basic amount of €22,000 per year and a lifetime allowance of €30,000 on sale. Both apply per person and are not multiplied per apartment.",
     "buyerCouple": "The strategy is implemented jointly by two people. Cyprus assesses each person separately, so the model calculation takes into account the personal tax-free basic amounts of both people, together €44,000 per year and €60,000 lifetime on sale. These amounts apply per person and are not multiplied per apartment.",
-    "assumptionsPrice": "Later purchases are not calculated at today's price: the model property's purchase price rises by {{g}} % per year, the rent only with rent growth. The initial yield of later purchases is therefore lower than today."
+    "assumptionsPrice": "Later purchases are not calculated at today's price: the model property's purchase price rises by {{g}} % per year, the rent only with rent growth. The initial yield of later purchases is therefore lower than today.",
+    "notShared": "This plan has not been released to the client yet. It is released as soon as the outbox entry actually goes out. To view it, append ?preview=1 to the address.",
+    "previewTag": "Internal preview.",
+    "previewNote": "The client cannot open this link yet. It is released as soon as the outbox entry actually goes out. Please do not forward the link yourself."
   }
 }

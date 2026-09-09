@@ -108,6 +108,7 @@ export default function Strategie() {
   const [meta, setMeta] = useState<{ title?: string; recipient_name?: string } | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const [draft, setDraft] = useState(false)
   const [showYears, setShowYears] = useState(false)
   const isMobile = useIsMobile()
 
@@ -132,7 +133,25 @@ export default function Strategie() {
       const { data } = await supabase.rpc('get_strategy_by_token', { p_token: token })
       row = (Array.isArray(data) ? data[0] : data) ?? null
     }
-    if (!row) { setErr(t('strategie.notFound', 'Dieser Fahrplan wurde nicht gefunden.')); setLoading(false); return }
+    if (!row) {
+      // Der Kunde bekommt nur "nicht gefunden" - dass es den Plan gibt, geht
+      // ihn nichts an. Ein angemeldeter Mitarbeiter bekommt dagegen den echten
+      // Grund, sonst sucht er den Fehler an der falschen Stelle (Sven 9.9.26).
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        const { data: prev } = await supabase.rpc('get_strategy_preview', { p_token: token })
+        const draft = (Array.isArray(prev) ? prev[0] : prev) ?? null
+        if (draft) {
+          setErr(t('strategie.notShared', 'Dieser Fahrplan ist noch nicht für den Kunden freigegeben. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Zum Ansehen hänge ?preview=1 an die Adresse.'))
+          setLoading(false); return
+        }
+      }
+      setErr(t('strategie.notFound', 'Dieser Fahrplan wurde nicht gefunden.')); setLoading(false); return
+    }
+    // In der Vorschau sichtbar machen, ob der Kunde diese Seite ueberhaupt
+    // schon oeffnen kann. Ohne das haelt man die Vorschau leicht fuer den
+    // Kundenstand und verschickt einen Link, der drueben nicht aufgeht.
+    setDraft(preview && !row.shared_at)
     // migrateConfig liest auch Altstände (v1) - sonst sieht der Kunde eine leere Seite
     const mig = migrateConfig((row.config ?? {}) as StrategyConfig)
     setUnits(mig.units)
@@ -177,6 +196,12 @@ export default function Strategie() {
 
   return (
     <div style={{ background: '#f4f3f1', minHeight: '100vh', fontFamily: SANS, color: '#1a1a1a' }}>
+      {draft && (
+        <div style={{ background: '#7c2d12', color: '#fff', padding: isMobile ? '10px 14px' : '11px 22px', fontSize: 13, lineHeight: 1.5 }}>
+          <strong>{t('strategie.previewTag', 'Interne Vorschau.')}</strong>{' '}
+          {t('strategie.previewNote', 'Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken.')}
+        </div>
+      )}
       <div style={{ maxWidth: 1080, margin: '0 auto', padding: isMobile ? '18px 14px 48px' : '28px 22px 64px' }}>
 
         {/* Kopf */}
