@@ -172,6 +172,25 @@
   .cta .alt { font-size: 0.9rem; color: var(--muted); }
   .cta .alt a { color: var(--navy); font-weight: 600; }
 
+  /* ── Videos ───────────────────────────────────────────── */
+  .videos { padding: 0 0 96px; }
+  .video-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 36px; }
+  .video { text-decoration: none; display: flex; flex-direction: column; gap: 10px; }
+  .video .thumb { position: relative; border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; background: var(--navy); }
+  .video .thumb img { width: 100%; height: 100%; object-fit: cover; transition: transform .3s; }
+  .video:hover .thumb img, .video:focus-visible .thumb img { transform: scale(1.03); }
+  .video .play {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 52px; height: 52px; border-radius: 50%; background: var(--korall); display: grid; place-items: center;
+    box-shadow: 0 8px 20px rgba(0,0,0,.3);
+  }
+  .video .play::after { content: ""; border-style: solid; border-width: 9px 0 9px 15px; border-color: transparent transparent transparent #fff; margin-left: 4px; }
+  .video .dur { position: absolute; right: 10px; bottom: 10px; background: rgba(26,35,50,.85); color: #fff; font-size: 0.72rem; font-weight: 600; padding: 3px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+  .video .tag { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--korall); }
+  .video h3 { font-size: 1.08rem; line-height: 1.3; }
+  .video p { font-size: 0.9rem; color: var(--muted); margin: 0; }
+  .video:focus-visible { outline: 2px solid var(--korall); outline-offset: 6px; border-radius: 12px; }
+
   /* ── Fuß ───────────────────────────────────────────────── */
   footer { border-top: 1px solid var(--line); padding: 32px 0 44px; font-size: 0.82rem; color: var(--muted); }
   footer .row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -186,6 +205,7 @@
     .phase-grid.flip .media { order: 0; }
     .wish-grid, .people-grid { grid-template-columns: 1fr; }
     .next-box { grid-template-columns: 1fr; padding: 28px; gap: 28px; }
+    .video-grid { grid-template-columns: 1fr; }
     .phase, .wish, .people { padding: 60px 0; }
   }
   @media (max-width: 520px) {
@@ -396,6 +416,50 @@
         <span class="alt">oder per WhatsApp, wie gehabt</span>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="wrap videos" id="videos">
+  <div class="eyebrow">Zum Weiterschauen</div>
+  <h2>Videos aus unserem Kanal, die zu deinem Weg passen</h2>
+  <p>Sechs Folgen, die die Punkte aus diesem Fahrplan vertiefen. Alle vom Happy-Property-Kanal auf YouTube, jeweils unter 20 Minuten.</p>
+  <div class="video-grid">
+    <a class="video" href="https://www.youtube.com/watch?v=Q-Jx8Gowsn8" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/Q-Jx8Gowsn8/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">10 Min</span></div>
+      <span class="tag">Auswandern</span>
+      <h3>Nach Zypern auswandern? Darauf würde ich vorher achten</h3>
+      <p>Die Punkte, die vor dem Umzug geklärt sein sollten. Passt genau zu Phase 1 und 3.</p>
+    </a>
+    <a class="video" href="https://www.youtube.com/watch?v=Sbn3qDxV800" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/Sbn3qDxV800/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">15 Min</span></div>
+      <span class="tag">Auswandern</span>
+      <h3>10 Jahre Zypern: Würde ich Deutschland wieder verlassen?</h3>
+      <p>Ehrliche Bilanz nach zehn Jahren auf der Insel, Alltag inklusive.</p>
+    </a>
+    <a class="video" href="https://www.youtube.com/watch?v=EZnKB_IFkQs" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/EZnKB_IFkQs/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">16 Min</span></div>
+      <span class="tag">Auswandern</span>
+      <h3>Warum immer mehr Menschen Zypern zum Lebensmittelpunkt machen</h3>
+      <p>Was die Insel für Menschen attraktiv macht, die dauerhaft bleiben wollen.</p>
+    </a>
+    <a class="video" href="https://www.youtube.com/watch?v=FGhMM_YrUzs" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/FGhMM_YrUzs/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">10 Min</span></div>
+      <span class="tag">Steuern &amp; Firma</span>
+      <h3>Zypern-Immobilie privat oder mit Firma kaufen?</h3>
+      <p>Grundlage für das Thema Firmengründung, bevor du mit Henning sprichst.</p>
+    </a>
+    <a class="video" href="https://www.youtube.com/watch?v=tNSq0p347OM" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/tNSq0p347OM/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">8 Min</span></div>
+      <span class="tag">Einstieg</span>
+      <h3>Was bekommst du mit 70.000 € Eigenkapital auf Zypern?</h3>
+      <p>Zeigt, was ein One-Bedroom-Apartment als Einstieg konkret bedeutet.</p>
+    </a>
+    <a class="video" href="https://www.youtube.com/watch?v=hx5J6guWvjg" target="_blank" rel="noopener">
+      <div class="thumb"><img src="https://i.ytimg.com/vi/hx5J6guWvjg/hqdefault.jpg" alt="" loading="lazy"><span class="play"></span><span class="dur">12 Min</span></div>
+      <span class="tag">Markt</span>
+      <h3>10,8 % Wertsteigerung: Warum Immobilien in Zypern so stark steigen</h3>
+      <p>Der Hintergrund zu den steigenden Preisen aus Phase 4.</p>
+    </a>
   </div>
 </section>
 
