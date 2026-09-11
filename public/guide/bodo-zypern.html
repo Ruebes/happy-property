@@ -131,7 +131,7 @@
   .wish h2, .wish h3 { color: #fff; }
   .wish .eyebrow { color: var(--korall); }
   .wish p { color: #cfd4dc; }
-  .wish-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 40px; }
+  .wish-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-top: 40px; }
   .wish-card {
     border: 1px solid rgba(255,255,255,.14); border-radius: 14px; padding: 22px 22px 18px;
     display: flex; flex-direction: column; gap: 6px; background: rgba(255,255,255,.03);
@@ -203,12 +203,14 @@
     .plan-grid a:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
     .phase-grid { grid-template-columns: 1fr; gap: 28px; }
     .phase-grid.flip .media { order: 0; }
-    .wish-grid, .people-grid { grid-template-columns: 1fr; }
+    .wish-grid { grid-template-columns: 1fr 1fr; }
+    .people-grid { grid-template-columns: 1fr; }
     .next-box { grid-template-columns: 1fr; padding: 28px; gap: 28px; }
     .video-grid { grid-template-columns: 1fr; }
     .phase, .wish, .people { padding: 60px 0; }
   }
   @media (max-width: 520px) {
+    .wish-grid { grid-template-columns: 1fr; }
     .plan-grid { grid-template-columns: 1fr; }
     .plan-grid a { border-right: 0; border-bottom: 1px solid var(--line); }
     .plan-grid a:last-child { border-bottom: 0; }
@@ -268,8 +270,8 @@
       <p>Der beste Start ist kein Vertrag, sondern ein Koffer. Komm für 4 bis 8 Wochen nach Zypern und miete dir ein Airbnb. In dieser Zeit lernst du die Gegenden kennen, fährst die Strecken zum Flughafen und ans Meer selbst ab und merkst schnell, wo du dich wirklich wohlfühlst.</p>
       <p>Parallel suchen wir gemeinsam dein Mietobjekt. So triffst du die Entscheidung vor Ort und mit Gefühl für die Lage, nicht vom Schreibtisch in Deutschland aus.</p>
       <div class="tip">
-        <div class="l">Mein Tipp</div>
-        <p>Buche das Airbnb mit etwas Puffer. Wer nach 4 Wochen sein Mietobjekt hat, verlängert nicht; wer noch sucht, hat keinen Zeitdruck.</p>
+        <div class="l">Mein Tipp zum Timing</div>
+        <p>Am besten kommst du im Oktober und mietest im November. Dann ist die Saison vorbei, das Angebot am größten und die Mieten am günstigsten. Buche das Airbnb mit etwas Puffer: Wer nach 4 Wochen sein Mietobjekt hat, verlängert nicht; wer noch sucht, hat keinen Zeitdruck.</p>
       </div>
     </div>
   </div>
@@ -284,7 +286,8 @@
     <div>
       <div class="num-big">Phase 2</div>
       <h2>Das passende Haus oder die passende Wohnung mieten</h2>
-      <p>Wir hatten gestern schon über eine ruhige Berglage gesprochen. Damit ich gezielt suchen kann, brauche ich von dir ein paar Eckdaten. Die Wunschliste weiter unten kannst du einfach ausfüllen und mir zurückschicken, gern auch per WhatsApp als Sprachnachricht.</p>
+      <p>Der Mietmarkt auf Zypern funktioniert anders als in Deutschland: Vermietet wird, was gerade frei ist, und zwar zeitnah. Ein Haus Monate im Voraus zu reservieren ist unüblich, kaum ein Vermieter lässt ein Objekt so lange leer stehen. Deshalb bringt es wenig, jetzt schon von Deutschland aus zu suchen.</p>
+      <p>Der Weg, der funktioniert: Du kommst her, wohnst im Airbnb, und wir schauen uns gemeinsam an, was in diesem Moment auf dem Markt ist. Besichtigung, Entscheidung und Einzug liegen dann oft nur wenige Tage auseinander. Wir hatten gestern schon über eine ruhige Berglage gesprochen. Damit ich vor Ort gezielt vorsortieren kann, brauche ich vorab deine Eckdaten. Die Wunschliste weiter unten kannst du einfach ausfüllen und mir zurückschicken, gern auch per WhatsApp als Sprachnachricht.</p>
       <ul class="clean">
         <li><strong>Budget</strong> pro Monat, kalt oder inklusive Nebenkosten</li>
         <li><strong>Größe</strong>: Anzahl der Schlafzimmer, Bedarf an Büro oder Gästezimmer</li>
@@ -321,10 +324,16 @@
         <div class="field"><span>Umfeld</span><span>ruhige Berglage</span></div>
         <div class="field open"><span>Fahrzeit Flughafen max.</span><span>offen</span></div>
         <div class="field open"><span>Fahrzeit Meer max.</span><span>offen</span></div>
-        <div class="field open"><span>Einzugstermin</span><span>offen</span></div>
+      </div>
+      <div class="wish-card">
+        <h3>Deine Timeline</h3>
+        <div class="field open"><span>Ankunft auf Zypern</span><span>offen</span></div>
+        <div class="field open"><span>Wunsch-Einzug Mietobjekt</span><span>offen</span></div>
+        <div class="field open"><span>Dauer erste Airbnb-Phase</span><span>offen</span></div>
+        <div class="field"><span>Mein Vorschlag</span><span>Okt. kommen, Nov. mieten</span></div>
       </div>
     </div>
-    <p class="wish-note">Zur Orientierung: Vom Flughafen Paphos in die Hügel oberhalb der Stadt sind es je nach Dorf 20 bis 35 Minuten, ans Meer meist 10 bis 20 Minuten.</p>
+    <p class="wish-note">Die Timeline ist der wichtigste Punkt: Sobald ich weiß, wann du kommst, kann ich Airbnb-Phase, Besichtigungen und die Termine für Yellow Slip und Firma darauf abstimmen. Zur Orientierung: Vom Flughafen Paphos in die Hügel oberhalb der Stadt sind es je nach Dorf 20 bis 35 Minuten, ans Meer meist 10 bis 20 Minuten.</p>
   </div>
 </section>
 
@@ -397,8 +406,9 @@
     <div>
       <h3>Deine nächsten Schritte</h3>
       <ol class="steps">
+        <li>Mir deine Timeline schicken: Wann kommst du, wann willst du einziehen?</li>
         <li>Wunschliste für das Mietobjekt ausfüllen und mir schicken</li>
-        <li>Zeitraum für die ersten 4 bis 8 Wochen festlegen und Airbnb buchen</li>
+        <li>Airbnb für die ersten 4 bis 8 Wochen buchen, idealerweise ab Oktober</li>
         <li>Gespräch mit Henning führen</li>
         <li>Mit mir besprechen, ob ein oder zwei Apartments zum Einstieg passen</li>
       </ol>
