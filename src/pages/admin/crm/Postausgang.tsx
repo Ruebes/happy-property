@@ -5,6 +5,7 @@ import { supabase } from '../../../lib/supabase'
 import DeckChat from '../../../components/crm/DeckChat'
 import RechnerWizard from '../../../components/crm/RechnerWizard'
 import type { CalcItem } from '../../../lib/rechner'
+import { htmlToWhatsapp } from '../../../lib/htmlDerive'
 
 // ── Postausgang ──────────────────────────────────────────────────────────────
 // Erzeugte Begleit-Mails (mit Deck-Links) aus dem Deck-Wizard. Sven prüft und
@@ -247,8 +248,15 @@ export default function Postausgang() {
       .filter(pl => pl.lead_id === row.lead_id && planToks.includes(pl.token))
       .map(pl => `📈 ${pl.title?.trim() || t('crm.outbox.waPlanLabel', 'Dein Investitions-Fahrplan')}: ${base}/strategie/${pl.token}`)
     const links = [...deckLines, ...calcLines, ...planLines].join('\n')
-    if (!links) { flash(t('crm.outbox.noLinks', 'Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.')); return }
-    const text = t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
+    // Einträge ohne Deck/Berechnung/Fahrplan (z. B. ein Guide oder eine frei
+    // geschriebene Mail) gingen bisher gar nicht raus („Keine Links"). Jetzt wird
+    // der Mailtext selbst zur WhatsApp: Absätze, Listen und Links bleiben erhalten
+    // (Sven 11.9.26, Bodo-Fahrplan). send-whatsapp teilt lange Texte selbst auf.
+    const fallback = links ? '' : htmlToWhatsapp(row.body ?? '')
+    if (!links && !fallback) { flash(t('crm.outbox.noLinks', 'Keine Deck-, Berechnungs- oder Fahrplan-Links an diesem Eintrag.')); return }
+    const text = links
+      ? t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
+      : fallback
     const regWarnWa = await registrationWarning(row)
     if (!window.confirm(regWarnWa + t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
     setBusyId(row.id)

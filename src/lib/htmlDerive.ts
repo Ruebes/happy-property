@@ -61,15 +61,18 @@ export function htmlToWhatsapp(html: string): string {
     .replace(/<(b|strong)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, inner) => `*${String(inner).replace(/<[^>]+>/g, '').trim()}*`)
     .replace(/<(i|em)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, inner) => `_${String(inner).replace(/<[^>]+>/g, '').trim()}_`)
     .replace(/<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, url, label) => {
-      const text = String(label).replace(/<[^>]+>/g, '').trim()
+      const text = String(label).replace(/<[^>]+>/g, '').replace(/\s*(→|&rarr;)\s*$/, '').trim()
       if (/^(mailto:|tel:)/i.test(url)) return text || url.replace(/^(mailto:|tel:)/i, '')
       if (!text || text === url) return url
       return `${text}: ${url}`
     })
     .replace(/<img\b[^>]*>/gi, '')
-    .replace(/<li\b[^>]*>/gi, '\n• ')
+    .replace(/<li\b[^>]*>/gi, '• ')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|h[1-6]|li|ul|ol|table|blockquote)>/gi, '\n')
+    // Absätze mit Leerzeile trennen, Listenpunkte nur mit Zeilenumbruch - sonst
+    // klebt in WhatsApp alles aneinander bzw. jede Aufzählung hat Luft dazwischen.
+    .replace(/<\/(li|tr)>/gi, '\n')
+    .replace(/<\/(p|div|h[1-6]|ul|ol|table|blockquote)>/gi, '\n\n')
     .replace(/<[^>]+>/g, '')
   s = decodeEntities(s)
     .replace(/[ \t]{2,}/g, ' ')
