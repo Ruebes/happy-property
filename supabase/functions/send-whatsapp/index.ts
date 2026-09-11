@@ -152,10 +152,18 @@ Deno.serve(async (req) => {
     // Bidi-Zeichen (U+202A/U+202C) und geschützten Leerzeichen an - TimelinesAI
     // erkennt das nicht als Telefonnummer und antwortet mit "Cannot message this
     // group" (Michael Decker, 14.8.). Erlaubt bleiben nur führendes + und Ziffern.
+    // Ohne Landesvorwahl weist TimelinesAI die Nummer ab (400 "Wrong phone
+    // number", Thorsten Brendel 11.9.: Profil-Nummer "01755815816"). Deshalb:
+    // "00…" wird zu "+…", eine einzelne führende 0 gilt als deutsche Inlands-
+    // nummer (+49), alles andere bleibt unverändert.
     const normPhone = (raw: unknown): string => {
       const s = String(raw ?? '')
       const digits = s.replace(/[^0-9]/g, '')
-      return digits ? (s.includes('+') ? '+' : '') + digits : ''
+      if (!digits) return ''
+      if (s.includes('+')) return '+' + digits
+      if (digits.startsWith('00')) return '+' + digits.slice(2)
+      if (digits.startsWith('0')) return '+49' + digits.slice(1)
+      return digits
     }
     let recipients: Recipient[] = ((template?.recipients as Recipient[]) ?? [])
       .map(r => ({ ...r, phone: normPhone(r.phone) })).filter(r => r.phone)

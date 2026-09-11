@@ -8,6 +8,10 @@
 //        (notified_at IS NULL), sendet einmal je Kunde, stempelt sie als gemeldet.
 //   POST { project_id, test: true }  → NUR an Sven (sven@… / +35795096409), nimmt
 //        die neuesten Fotos als Muster, claimt NICHT, ignoriert das Flag.
+//   Reparatur (gezielter Nachversand, alle optional, nur mit force sinnvoll):
+//        photo_ids: [..]        → genau diese Fotos (ohne Claim, egal ob gemeldet)
+//        only_contacts: [..]    → nur Empfänger mit dieser E-Mail/Nummer
+//        channels: ['whatsapp'] → nur WhatsApp bzw. ['email'] nur Mail
 //
 // Schutz: sendet nur bei eingeschaltetem Flag; nur NEUE Fotos (atomar geclaimt,
 // keine Doppelsendung); Opt-out (leads.newsletter_optout_at) respektiert; Dedup
@@ -83,12 +87,16 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(SUPA, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
-    const body = await req.json().catch(() => ({})) as { project_id?: string; test?: boolean; force?: boolean; buyers_only?: boolean; all_photos?: boolean }
+    const body = await req.json().catch(() => ({})) as { project_id?: string; test?: boolean; force?: boolean; buyers_only?: boolean; all_photos?: boolean; photo_ids?: string[]; only_contacts?: string[]; channels?: string[] }
     const projectId = String(body.project_id ?? '').trim()
     const test = body.test === true
     const force = body.force === true        // Schalter überspringen (gezielter Einmal-Versand)
     const buyersOnly = body.buyers_only === true  // nur Käufer (Eigentümer + Deals), keine Interessenten
     const allPhotos = body.all_photos === true    // ALLE Projektfotos senden (nicht nur die neuen)
+    const photoIds = Array.isArray(body.photo_ids) ? body.photo_ids.filter(x => typeof x === 'string' && x) : []
+    const onlyContacts = Array.isArray(body.only_contacts) ? body.only_contacts.map(x => String(x).trim().toLowerCase()).filter(Boolean) : []
+    const channels = Array.isArray(body.channels) && body.channels.length ? body.channels.map(x => String(x).toLowerCase()) : ['email', 'whatsapp']
+    const wantMail = channels.includes('email'), wantWa = channels.includes('whatsapp')
     if (!projectId) return json({ error: 'project_id fehlt' }, 400)
 
     // Ein/Aus-Schalter (Standard AUS) — scharf nur wenn aktiviert ODER force.
@@ -109,7 +117,12 @@ Deno.serve(async (req) => {
     // Fotos bestimmen: test/all_photos → alle (bis Deckel); scharf-normal → NUR
     // NEUE atomar claimen. Bei all_photos-Scharfversand alle als gemeldet stempeln.
     let photos: ConPhoto[] = []
-    if (test || allPhotos) {
+    if (photoIds.length) {
+      // Reparatur: genau diese Fotos, kein Claim (sie sind i.d.R. schon gemeldet).
+      const { data } = await sb.from('construction_photos').select('id, file_path, file_name')
+        .eq('project_id', projectId).in('id', photoIds).order('created_at', { ascending: false }).limit(MAX_MAIL_PHOTOS)
+      photos = (data ?? []) as ConPhoto[]
+    } else if (test || allPhotos) {
       const { data } = await sb.from('construction_photos').select('id, file_path, file_name')
         .eq('project_id', projectId).order('created_at', { ascending: false }).limit(MAX_MAIL_PHOTOS)
       photos = (data ?? []) as ConPhoto[]
@@ -185,12 +198,17 @@ Deno.serve(async (req) => {
     const recips = new Map<string, Recipient>()
     const keyOf = (email?: string | null, phone?: string | null) => (email?.trim().toLowerCase() || (phone ?? '').replace(/\D/g, '') || '')
     for (const o of ownerProfiles) {
-      let phone = (o.phone ?? '').trim()
-      if (!phone && o.email) {
+      // Nummer mit Landesvorwahl bevorzugen: Profil-Nummern kommen aus dem
+      // Portal oft ohne "+" ("01755815816", Thorsten Brendel 11.9.) und
+      // werden von TimelinesAI abgewiesen. Der Lead-Datensatz zur selben
+      // E-Mail hat meist die saubere Nummer.
+      const candidates = [(o.phone ?? '').trim()]
+      if (o.email) {
         const { data: ld } = await sb.from('leads').select('phone, whatsapp').ilike('email', o.email).order('created_at', { ascending: true }).limit(1)
         const l0 = ld?.[0] as { phone?: string | null; whatsapp?: string | null } | undefined
-        phone = ((l0?.whatsapp ?? '').trim() || (l0?.phone ?? '').trim())
+        candidates.push((l0?.whatsapp ?? '').trim(), (l0?.phone ?? '').trim())
       }
+      const phone = candidates.find(c => c.startsWith('+')) || candidates.find(Boolean) || ''
       const email = (o.email ?? '').trim() || null
       const k = keyOf(email, phone); if (!k || recips.has(k)) continue
       recips.set(k, { name: firstOf(o.full_name) || 'Investor', email, phone: phone || null, lang: o.language === 'en' ? 'en' : 'de' })
@@ -203,9 +221,11 @@ Deno.serve(async (req) => {
       recips.set(k, { name: firstOf(l.first_name) || firstOf(`${l.first_name ?? ''} ${l.last_name ?? ''}`) || 'Investor', email, phone, lang: l.language === 'en' ? 'en' : 'de' })
     }
 
+    const matchesOnly = (r: Recipient) => !onlyContacts.length || onlyContacts.some(c =>
+      (r.email && r.email.toLowerCase() === c) || (r.phone && r.phone.replace(/\D/g, '').endsWith(c.replace(/\D/g, '') || '§')))
     const recipients = test
       ? [{ name: 'Sven', email: TEST_MAIL, phone: TEST_PHONE, lang: 'de' as const }]
-      : [...recips.values()]
+      : [...recips.values()].filter(matchesOnly)
     if (!recipients.length) return json({ success: true, recipients: 0, note: 'Keine Kunden für dieses Projekt' })
 
     // ── Senden ────────────────────────────────────────────────────────────────
@@ -234,14 +254,14 @@ Deno.serve(async (req) => {
 
       const res = { name: r.name, mail: false, whatsapp: false } as typeof results[number]
       try {
-        if (r.email) {
+        if (r.email && wantMail) {
           const { error } = await sb.functions.invoke('send-email', { body: {
             to: r.email, subject, html, from_name: 'Lotte · Happy Property', auto: true, lang: r.lang,
           } })
           if (error) throw new Error(error.message)
           res.mail = true
         }
-        if (r.phone) {
+        if (r.phone && wantWa) {
           // WhatsApp hat nur EINEN Bild-Slot je Nachricht → mehrere Nachrichten:
           // (1) Lotte meldet sich mit IHREM Bild, dann (2..N) je ein frisches Foto.
           // allow_duplicate ÜBERALL: sonst greift der 6h-Text-Doppelschutz bei
@@ -252,16 +272,24 @@ Deno.serve(async (req) => {
             lead_data: { lead_name: r.name, lead_phone: r.phone },
             persona_image: lottePhoto, allow_duplicate: true,
           } })
+          // send-whatsapp antwortet bei TimelinesAI-Fehlern mit HTTP 200 und
+          // success:false (z. B. "Wrong phone number", Kontingent) → prüfen,
+          // sonst steht im Ergebnis whatsapp:true, obwohl nichts ankam.
+          const d1 = r1.data as { success?: boolean; error?: string } | null
           if (r1.error) throw new Error(r1.error.message)
+          if (d1 && d1.success === false) throw new Error(d1.error || 'WhatsApp nicht gesendet')
           for (let i = 0; i < photoUrls.length; i++) {
             const cap = i === 0
               ? (de ? `📸 Frisch von der Baustelle: ${projName}` : `📸 Fresh from the site: ${projName}`)
               : `📸 ${projName} (${i + 1}/${photoUrls.length})`
-            await sb.functions.invoke('send-whatsapp', { body: {
+            const rp = await sb.functions.invoke('send-whatsapp', { body: {
               event_type: 'construction_update', override_text: cap,
               lead_data: { lead_name: r.name, lead_phone: r.phone },
               file_url: photoUrls[i], file_name: `${projName}-${i + 1}.jpg`, allow_duplicate: true,
-            } }).catch((e2: unknown) => console.warn('[construction-update] WA-Foto:', e2))
+            } }).catch((e2: unknown) => ({ error: e2 instanceof Error ? e2 : new Error(String(e2)), data: null }))
+            const dp2 = rp.data as { success?: boolean; error?: string } | null
+            const perr = rp.error?.message || (dp2 && dp2.success === false ? (dp2.error || 'nicht gesendet') : null)
+            if (perr) { console.warn('[construction-update] WA-Foto:', perr); res.error = `WA-Foto ${i + 1}: ${perr}`; if (/Kontingent|quota/i.test(perr)) break }
           }
           res.whatsapp = true
         }

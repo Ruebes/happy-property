@@ -3203,6 +3203,8 @@
       "toastProjectImagesUploaded_other": "✅ {{count}} Projektbilder hochgeladen",
       "toastConstructionUploaded_one": "✅ {{count}} Baustellenfoto hochgeladen",
       "toastConstructionUploaded_other": "✅ {{count}} Baustellenfotos hochgeladen",
+      "toastConstructionNotified_one": "🐾 Lotte hat {{count}} Kunden über die neuen Fotos informiert",
+      "toastConstructionNotified_other": "🐾 Lotte hat {{count}} Kunden über die neuen Fotos informiert",
       "toastUnitCreated": "✅ Einheit angelegt",
       "toastUnitUpdated": "✅ Einheit aktualisiert",
       "toastDeleteError": "Fehler beim Löschen",

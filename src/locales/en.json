@@ -3203,6 +3203,8 @@
       "toastProjectImagesUploaded_other": "✅ {{count}} project images uploaded",
       "toastConstructionUploaded_one": "✅ {{count}} construction photo uploaded",
       "toastConstructionUploaded_other": "✅ {{count}} construction photos uploaded",
+      "toastConstructionNotified_one": "🐾 Lotte informed {{count}} customer about the new photos",
+      "toastConstructionNotified_other": "🐾 Lotte informed {{count}} customers about the new photos",
       "toastUnitCreated": "✅ Unit created",
       "toastUnitUpdated": "✅ Unit updated",
       "toastDeleteError": "Error while deleting",

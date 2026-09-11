@@ -22,7 +22,7 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
   const [broken,    setBroken]    = useState<Set<string>>(new Set())        // Foto-IDs, deren Vorschau nicht lud
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(''), 3500) }
+  const showMsg = (m: string, ms = 3500) => { setMsg(m); setTimeout(() => setMsg(''), ms) }
 
   const fetchPhotos = useCallback(async () => {
     if (!projectId) return
@@ -96,8 +96,18 @@ export default function ConstructionPhotos({ projectId }: { projectId: string })
       // Lotte informiert die Kunden des Projekts über die neuen Fotos (Mail + WhatsApp).
       // Feuert EINMAL nach dem Upload; die Function selbst greift nur bei
       // eingeschaltetem Schalter und nur auf die NEUEN Fotos (atomar geclaimt).
+      // Ergebnis sichtbar machen: Thorsten Brendel (11.9.) bekam keine WhatsApp
+      // (falsche Nummer), und niemand hat es gemerkt - der Aufruf war fire-and-forget.
       if (anyUploaded) {
         void supabase.functions.invoke('construction-update', { body: { project_id: projectId } })
+          .then(({ data, error }) => {
+            if (error) { showMsg(`⚠️ Lotte-Info fehlgeschlagen: ${error.message}`, 8000); return }
+            const d = (data ?? {}) as { skipped?: string; recipients?: number; results?: Array<{ name: string; mail: boolean; whatsapp: boolean; error?: string }> }
+            if (d.skipped) return
+            const failed = (d.results ?? []).filter(r => r.error)
+            if (failed.length) showMsg(`⚠️ Lotte: ${failed.map(r => `${r.name}: ${r.error}`).join(' · ')}`, 12000)
+            else if (d.recipients) showMsg(t('crm.pd.toastConstructionNotified', { count: d.recipients }), 6000)
+          })
           .catch(err => console.warn('[ConstructionPhotos] construction-update failed:', err))
       }
     } catch (err) {
