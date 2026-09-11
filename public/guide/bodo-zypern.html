@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Dein Weg nach Zypern</title>
+<meta name="description" content="Persönlicher Fahrplan für Bodo: Ankommen, Mieten, Formalitäten und der erste Schritt in den Immobilienmarkt in Paphos.">
+<link rel="icon" href="/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Montserrat:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --creme: #fffcf6;
+    --creme-2: #f7f1e6;
+    --korall: #ff795d;
+    --navy: #1a2332;
+    --ink: #2a2a2a;
+    --line: #e6dfd0;
+    --gold: #C2A15E;
+    --muted: #7d7d86;
+    --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    --font-body: 'Montserrat', 'Helvetica Neue', Arial, sans-serif;
+    --wrap: 1120px;
+    --text: 640px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--creme);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  img, video { max-width: 100%; display: block; }
+  a { color: inherit; }
+  h1, h2, h3 { font-family: var(--font-display); color: var(--navy); font-weight: 500; line-height: 1.12; margin: 0; text-wrap: balance; }
+  h1 { font-size: clamp(2.4rem, 5.5vw, 4.4rem); }
+  h2 { font-size: clamp(1.8rem, 3.4vw, 2.6rem); }
+  h3 { font-size: 1.3rem; }
+  p { margin: 0 0 1.1em; max-width: var(--text); }
+  p:last-child { margin-bottom: 0; }
+  .eyebrow {
+    font-family: var(--font-body);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--korall);
+    margin: 0 0 14px;
+  }
+  .wrap { width: min(var(--wrap), calc(100% - 48px)); margin: 0 auto; }
+
+  /* ── Kopf ─────────────────────────────────────────────── */
+  .top {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 22px 0;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+  .brand img { width: 40px; height: 40px; border-radius: 8px; }
+  .brand span { font-family: var(--font-display); font-size: 1.05rem; color: var(--navy); letter-spacing: 0.01em; }
+  .top .for { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+
+  /* ── Hero ─────────────────────────────────────────────── */
+  .hero { padding: 24px 0 0; }
+  .hero-text { max-width: 760px; margin-bottom: 36px; }
+  .hero-text p.lead { font-size: 1.15rem; color: var(--ink); max-width: 620px; margin-top: 22px; }
+  .hero-media {
+    position: relative; border-radius: 18px; overflow: hidden; background: var(--navy);
+    aspect-ratio: 16 / 9; box-shadow: 0 30px 60px -30px rgba(26,35,50,.45);
+  }
+  .hero-media video { width: 100%; height: 100%; object-fit: cover; }
+  .hero-media .cap {
+    position: absolute; left: 22px; bottom: 18px; color: #fff;
+    font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600;
+    text-shadow: 0 1px 10px rgba(0,0,0,.5);
+  }
+
+  /* ── Fahrplan-Übersicht ────────────────────────────────── */
+  .plan { padding: 72px 0 24px; }
+  .plan-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  }
+  .plan-grid a {
+    text-decoration: none; padding: 26px 22px 28px; border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px; transition: background .2s;
+  }
+  .plan-grid a:last-child { border-right: 0; }
+  .plan-grid a:hover, .plan-grid a:focus-visible { background: var(--creme-2); outline: none; }
+  .plan-grid .num { font-family: var(--font-display); font-size: 2rem; color: var(--gold); line-height: 1; }
+  .plan-grid .t { font-weight: 700; color: var(--navy); font-size: 0.98rem; }
+  .plan-grid .w { font-size: 0.82rem; color: var(--muted); }
+
+  /* ── Phasen ───────────────────────────────────────────── */
+  .phase { padding: 84px 0; }
+  .phase + .phase { border-top: 1px solid var(--line); }
+  .phase-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: 56px; align-items: center; }
+  .phase-grid.flip .media { order: 2; }
+  .media img { border-radius: 14px; aspect-ratio: 4 / 3; object-fit: cover; width: 100%; }
+  .media figcaption { font-size: 0.78rem; color: var(--muted); margin-top: 10px; }
+  .phase h2 { margin-bottom: 18px; }
+  .phase .num-big {
+    font-family: var(--font-display); color: var(--gold); font-size: 1rem; letter-spacing: 0.04em;
+    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  }
+  .num-big::after { content: ""; width: 34px; height: 1px; background: var(--gold); }
+
+  ul.clean { list-style: none; padding: 0; margin: 18px 0 0; max-width: var(--text); }
+  ul.clean li { padding: 10px 0 10px 26px; position: relative; border-top: 1px solid var(--line); }
+  ul.clean li:last-child { border-bottom: 1px solid var(--line); }
+  ul.clean li::before {
+    content: ""; position: absolute; left: 4px; top: 19px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--korall);
+  }
+  ul.clean li strong { color: var(--navy); }
+
+  .tip {
+    margin-top: 26px; padding: 18px 22px; border-left: 3px solid var(--korall);
+    background: var(--creme-2); border-radius: 0 12px 12px 0; max-width: var(--text);
+  }
+  .tip .l { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--korall); margin-bottom: 6px; }
+  .tip p { margin: 0; }
+
+  /* ── Wunschliste (Checkliste) ─────────────────────────── */
+  .wish { background: var(--navy); color: #eef0f3; padding: 84px 0; }
+  .wish h2, .wish h3 { color: #fff; }
+  .wish .eyebrow { color: var(--korall); }
+  .wish p { color: #cfd4dc; }
+  .wish-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 40px; }
+  .wish-card {
+    border: 1px solid rgba(255,255,255,.14); border-radius: 14px; padding: 22px 22px 18px;
+    display: flex; flex-direction: column; gap: 6px; background: rgba(255,255,255,.03);
+  }
+  .wish-card h3 { font-size: 1.15rem; margin-bottom: 6px; }
+  .wish-card .field { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,.1); font-size: 0.92rem; }
+  .wish-card .field span:last-child { color: var(--gold); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .wish-card .field.open span:last-child { color: rgba(255,255,255,.35); }
+  .wish-note { margin-top: 28px; font-size: 0.92rem; color: #aeb5c0; max-width: 720px; }
+
+  /* ── Menschen ─────────────────────────────────────────── */
+  .people { padding: 84px 0; }
+  .people-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 36px; }
+  .person { border: 1px solid var(--line); border-radius: 14px; padding: 24px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
+  .person .role { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--korall); }
+  .person h3 { font-size: 1.2rem; }
+  .person p { font-size: 0.95rem; margin: 0; }
+  .person .state { margin-top: auto; padding-top: 12px; font-size: 0.82rem; font-weight: 600; color: var(--navy); }
+  .person .state::before { content: "✓ "; color: var(--gold); }
+
+  /* ── Nächste Schritte ─────────────────────────────────── */
+  .next { padding: 0 0 96px; }
+  .next-box { border: 1px solid var(--line); border-radius: 18px; background: #fff; padding: 44px; display: grid; grid-template-columns: 1fr 1fr; gap: 44px; }
+  .next-box h3 { margin-bottom: 14px; }
+  ol.steps { margin: 0; padding-left: 0; list-style: none; counter-reset: s; }
+  ol.steps li { counter-increment: s; padding: 10px 0 10px 40px; position: relative; border-top: 1px solid var(--line); }
+  ol.steps li:last-child { border-bottom: 1px solid var(--line); }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 11px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--navy); color: #fff; font-size: 0.78rem; font-weight: 700; display: grid; place-items: center;
+  }
+  .cta { margin-top: 30px; display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; background: var(--korall); color: #fff; text-decoration: none; font-weight: 700;
+    padding: 14px 24px; border-radius: 999px; font-size: 0.95rem; letter-spacing: 0.01em;
+  }
+  .btn:hover, .btn:focus-visible { filter: brightness(.95); outline: none; }
+  .cta .alt { font-size: 0.9rem; color: var(--muted); }
+  .cta .alt a { color: var(--navy); font-weight: 600; }
+
+  /* ── Fuß ───────────────────────────────────────────────── */
+  footer { border-top: 1px solid var(--line); padding: 32px 0 44px; font-size: 0.82rem; color: var(--muted); }
+  footer .row { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer .soc a { margin-left: 14px; color: var(--navy); font-weight: 600; }
+
+  @media (max-width: 880px) {
+    .plan-grid { grid-template-columns: 1fr 1fr; }
+    .plan-grid a:nth-child(2) { border-right: 0; }
+    .plan-grid a:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    .phase-grid { grid-template-columns: 1fr; gap: 28px; }
+    .phase-grid.flip .media { order: 0; }
+    .wish-grid, .people-grid { grid-template-columns: 1fr; }
+    .next-box { grid-template-columns: 1fr; padding: 28px; gap: 28px; }
+    .phase, .wish, .people { padding: 60px 0; }
+  }
+  @media (max-width: 520px) {
+    .plan-grid { grid-template-columns: 1fr; }
+    .plan-grid a { border-right: 0; border-bottom: 1px solid var(--line); }
+    .plan-grid a:last-child { border-bottom: 0; }
+    .top .for { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  @media print {
+    .hero-media, .btn { display: none; }
+    body { font-size: 12pt; }
+    .wish { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+    .wish h2, .wish h3, .wish p { color: var(--navy); }
+  }
+</style>
+</head>
+<body>
+
+<header class="wrap top">
+  <a class="brand" href="https://happy-property.com">
+    <img src="/logo.jpg" alt="Happy Property Cyprus">
+    <span>Happy Property Cyprus</span>
+  </a>
+  <div class="for">Persönlicher Fahrplan für Bodo · September 2026</div>
+</header>
+
+<section class="wrap hero">
+  <div class="hero-text">
+    <div class="eyebrow">Umzug nach Paphos</div>
+    <h1>Dein Weg nach Zypern</h1>
+    <p class="lead">Bodo, hier ist alles aus unserem Gespräch in einer Reihenfolge, die sich bewährt hat: erst ankommen, dann in Ruhe mieten, die Formalitäten erledigen und parallel den ersten Fuß in den Markt setzen. Jeder Schritt hat einen Ansprechpartner, den ich dir vermittle.</p>
+  </div>
+  <div class="hero-media">
+    <video autoplay muted loop playsinline poster="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/hero.jpg">
+      <source src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/hero.mp4" type="video/mp4">
+    </video>
+    <div class="cap">Ruhige Berglage über Paphos, Blick aufs Meer</div>
+  </div>
+</section>
+
+<section class="wrap plan" aria-label="Fahrplan">
+  <div class="plan-grid">
+    <a href="#ankommen"><span class="num">1</span><span class="t">Ankommen</span><span class="w">4 bis 8 Wochen Airbnb</span></a>
+    <a href="#mieten"><span class="num">2</span><span class="t">Mietobjekt finden</span><span class="w">Berglage, Pool, Ruhe</span></a>
+    <a href="#formalitaeten"><span class="num">3</span><span class="t">Formalitäten</span><span class="w">Yellow Slip, Auto, Firma</span></a>
+    <a href="#einstieg"><span class="num">4</span><span class="t">Fuß im Markt</span><span class="w">1 bis 2 One-Bedroom-Apartments</span></a>
+  </div>
+</section>
+
+<section class="wrap phase" id="ankommen">
+  <div class="phase-grid">
+    <figure class="media">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/hafen.jpg" alt="Der alte Hafen von Paphos am Abend">
+      <figcaption>Der alte Hafen von Paphos, zehn Minuten von den meisten Vierteln entfernt</figcaption>
+    </figure>
+    <div>
+      <div class="num-big">Phase 1</div>
+      <h2>Erst ankommen, dann entscheiden</h2>
+      <p>Der beste Start ist kein Vertrag, sondern ein Koffer. Komm für 4 bis 8 Wochen nach Zypern und miete dir ein Airbnb. In dieser Zeit lernst du die Gegenden kennen, fährst die Strecken zum Flughafen und ans Meer selbst ab und merkst schnell, wo du dich wirklich wohlfühlst.</p>
+      <p>Parallel suchen wir gemeinsam dein Mietobjekt. So triffst du die Entscheidung vor Ort und mit Gefühl für die Lage, nicht vom Schreibtisch in Deutschland aus.</p>
+      <div class="tip">
+        <div class="l">Mein Tipp</div>
+        <p>Buche das Airbnb mit etwas Puffer. Wer nach 4 Wochen sein Mietobjekt hat, verlängert nicht; wer noch sucht, hat keinen Zeitdruck.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap phase" id="mieten">
+  <div class="phase-grid flip">
+    <figure class="media">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/miete.jpg" alt="Helles Wohnzimmer mit Terrasse und Pool in den Hügeln bei Paphos">
+      <figcaption>So sieht ein typisches Mietobjekt in den Hügeln aus: Terrasse, Pool, Blick</figcaption>
+    </figure>
+    <div>
+      <div class="num-big">Phase 2</div>
+      <h2>Das passende Haus oder die passende Wohnung mieten</h2>
+      <p>Wir hatten gestern schon über eine ruhige Berglage gesprochen. Damit ich gezielt suchen kann, brauche ich von dir ein paar Eckdaten. Die Wunschliste weiter unten kannst du einfach ausfüllen und mir zurückschicken, gern auch per WhatsApp als Sprachnachricht.</p>
+      <ul class="clean">
+        <li><strong>Budget</strong> pro Monat, kalt oder inklusive Nebenkosten</li>
+        <li><strong>Größe</strong>: Anzahl der Schlafzimmer, Bedarf an Büro oder Gästezimmer</li>
+        <li><strong>Ausstattung</strong>: Pool, Fußbodenheizung, Klimaanlage, Garten</li>
+        <li><strong>Lage</strong>: maximale Fahrzeit zum Flughafen und ans Meer</li>
+        <li><strong>Umfeld</strong>: ruhige Berglage, Nachbarn, Einkaufsmöglichkeiten</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="wish" id="wunschliste">
+  <div class="wrap">
+    <div class="eyebrow">Deine Wunschliste</div>
+    <h2>Das brauche ich von dir für die Suche</h2>
+    <p>Was wir schon besprochen haben, steht drin. Der Rest ist offen, fülle ihn einfach in deiner Antwort aus.</p>
+    <div class="wish-grid">
+      <div class="wish-card">
+        <h3>Budget &amp; Größe</h3>
+        <div class="field open"><span>Miete pro Monat</span><span>offen</span></div>
+        <div class="field open"><span>Schlafzimmer</span><span>offen</span></div>
+        <div class="field open"><span>Wohnfläche ca.</span><span>offen</span></div>
+        <div class="field open"><span>Haus oder Wohnung</span><span>offen</span></div>
+      </div>
+      <div class="wish-card">
+        <h3>Ausstattung</h3>
+        <div class="field open"><span>Pool</span><span>offen</span></div>
+        <div class="field open"><span>Fußbodenheizung</span><span>offen</span></div>
+        <div class="field open"><span>Klimaanlage</span><span>offen</span></div>
+        <div class="field open"><span>Garten / Terrasse</span><span>offen</span></div>
+      </div>
+      <div class="wish-card">
+        <h3>Lage</h3>
+        <div class="field"><span>Umfeld</span><span>ruhige Berglage</span></div>
+        <div class="field open"><span>Fahrzeit Flughafen max.</span><span>offen</span></div>
+        <div class="field open"><span>Fahrzeit Meer max.</span><span>offen</span></div>
+        <div class="field open"><span>Einzugstermin</span><span>offen</span></div>
+      </div>
+    </div>
+    <p class="wish-note">Zur Orientierung: Vom Flughafen Paphos in die Hügel oberhalb der Stadt sind es je nach Dorf 20 bis 35 Minuten, ans Meer meist 10 bis 20 Minuten.</p>
+  </div>
+</section>
+
+<section class="wrap phase" id="formalitaeten">
+  <div class="phase-grid">
+    <figure class="media">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/papiere.jpg" alt="Reisepass und Unterlagen auf einem Schreibtisch mit Meerblick">
+      <figcaption>Yellow Slip, Firma, Verwaltung: für jeden Punkt gibt es einen Ansprechpartner</figcaption>
+    </figure>
+    <div>
+      <div class="num-big">Phase 3</div>
+      <h2>Was vor Ort geklärt wird</h2>
+      <p>Sobald du auf Zypern bist, gehen wir die Formalitäten in dieser Reihenfolge an. Du musst dich um nichts allein kümmern, ich stelle jeweils den Kontakt her.</p>
+      <ul class="clean">
+        <li><strong>Yellow Slip</strong> beantragen, die Daueraufenthaltsgenehmigung für EU-Bürger. Ich vermittle dir einen Dienstleister, der den Antrag komplett begleitet.</li>
+        <li><strong>Verwaltung deiner Mietimmobilie in Deutschland.</strong> Auch hier stelle ich den Kontakt her, damit das aus der Ferne sauber läuft.</li>
+        <li><strong>Mietwagen</strong> für die ersten Wochen. Wenn klar ist, dass du bleibst, schauen wir direkt nach einem eigenen Auto.</li>
+        <li><strong>Firmengründung</strong>, um Kosten sauber abzurechnen. Henning hat das gleiche Modell und kann dir aus erster Hand sagen, wie es sich im Alltag anfühlt.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="wrap phase" id="einstieg">
+  <div class="phase-grid flip">
+    <figure class="media">
+      <img src="https://vjlwgajmtqlwjjreowbu.supabase.co/storage/v1/object/public/landing-assets/guide-bodo/apartment.jpg" alt="Neubau-Apartmentanlage mit Pool in Paphos">
+      <figcaption>One-Bedroom-Apartments in Neubauprojekten sind der übliche Einstieg</figcaption>
+    </figure>
+    <div>
+      <div class="num-big">Phase 4</div>
+      <h2>Einen Fuß in den Markt setzen</h2>
+      <p>Mein Vorschlag für den Einstieg: der Kauf von einem oder zwei One-Bedroom-Apartments. Die Preise in Paphos steigen Jahr für Jahr, aktuell um rund 9 % pro Jahr. Wer wartet, bis das eigene Traumhaus gefunden ist, zahlt für dieselben Objekte später mehr.</p>
+      <p>Die Apartments arbeiten für dich, während du in Ruhe wohnst und suchst. Wenn du dir später eine eigene Immobilie kaufen möchtest, hast du zwei Wege: die Apartments beleihen oder verkaufen. Beides finanziert den nächsten Schritt.</p>
+      <div class="tip">
+        <div class="l">Warum jetzt</div>
+        <p>Der Einstieg ist unabhängig vom Umzug. Die Apartments kannst du bereits sichern, bevor dein Mietobjekt steht.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap people">
+  <div class="eyebrow">Dein Netzwerk vor Ort</div>
+  <h2>Wer dir auf dem Weg hilft</h2>
+  <div class="people-grid">
+    <div class="person">
+      <div class="role">Erfahrungsaustausch</div>
+      <h3>Henning</h3>
+      <p>Steuerberater aus Hamburg, lebt bereits in Paphos und hat den Umzug und die Firmengründung selbst durch. Unverbindliches Gespräch, von Deutschem zu Deutschem.</p>
+      <div class="state">Kontakt hergestellt</div>
+    </div>
+    <div class="person">
+      <div class="role">Yellow Slip</div>
+      <h3>Dienstleister für den Antrag</h3>
+      <p>Begleitet die Daueraufenthaltsgenehmigung von den Unterlagen bis zum Termin bei der Behörde.</p>
+      <div class="state">Kontakt kommt von mir, sobald du vor Ort bist</div>
+    </div>
+    <div class="person">
+      <div class="role">Immobilie in Deutschland</div>
+      <h3>Verwaltung deiner Mietimmobilie</h3>
+      <p>Damit Mieter, Abrechnung und Instandhaltung auch aus Zypern zuverlässig laufen.</p>
+      <div class="state">Kontakt kommt von mir</div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap next">
+  <div class="next-box">
+    <div>
+      <h3>Deine nächsten Schritte</h3>
+      <ol class="steps">
+        <li>Wunschliste für das Mietobjekt ausfüllen und mir schicken</li>
+        <li>Zeitraum für die ersten 4 bis 8 Wochen festlegen und Airbnb buchen</li>
+        <li>Gespräch mit Henning führen</li>
+        <li>Mit mir besprechen, ob ein oder zwei Apartments zum Einstieg passen</li>
+      </ol>
+    </div>
+    <div>
+      <h3>Was ich parallel mache</h3>
+      <ol class="steps">
+        <li>Mietobjekte in ruhiger Berglage nach deinen Eckdaten vorsortieren</li>
+        <li>Passende One-Bedroom-Apartments in aktuellen Projekten zusammenstellen</li>
+        <li>Dienstleister für Yellow Slip und Verwaltung vorbereiten</li>
+        <li>Vor Ort: Besichtigungen, Auto, Firmengründung gemeinsam angehen</li>
+      </ol>
+      <div class="cta">
+        <a class="btn" href="mailto:info@happy-property.com?subject=Wunschliste%20Mietobjekt%20Zypern">Wunschliste an Sven schicken</a>
+        <span class="alt">oder per WhatsApp, wie gehabt</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap row">
+    <div>Sven Rüprich · Happy Property Cyprus · Pallados 1, 8046 Paphos · <a href="https://happy-property.com">happy-property.com</a></div>
+    <div class="soc">
+      <a href="https://www.youtube.com/@HappyPropertyCyprus">YouTube</a>
+      <a href="https://www.instagram.com/happy_property_cyprus">Instagram</a>
+      <a href="https://www.linkedin.com/in/sven-r%C3%BCprich/">LinkedIn</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
