@@ -60,3 +60,7 @@ verify_jwt = false
 
 [functions.masterclass-register]
 verify_jwt = false
+
+# YouTube-Center: In-Code-Guard (User-JWT gegen profiles/permissions, Service-Role erlaubt)
+[functions.yt-center]
+verify_jwt = false

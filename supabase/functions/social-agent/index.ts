@@ -891,11 +891,17 @@ Regeln:
     // 08:30 CY). Idempotent über news_source = Video-URL.
     if (body.action === 'youtube_post') {
       const CHANNEL = 'UC7SGGkCGeiY8XQZGvdyNr9A'
-      const feed = await (await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL}`)).text()
+      const feed = typeof body.video_id === 'string' && body.video_id ? '' : await (await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL}`)).text()
       // Neuestes ECHTES Video suchen — Shorts aussortieren (Svens Vorgabe):
       // /shorts/<id> antwortet für Shorts mit 200, echte Videos leiten auf /watch um.
       let vid = '', title = '', desc = ''
-      for (const entry of feed.split('<entry>').slice(1, 9)) {
+      // Aus dem YouTube-Center: konkretes Video statt „neuestes im Feed".
+      if (typeof body.video_id === 'string' && body.video_id) {
+        vid = body.video_id
+        title = String(body.title ?? '').trim()
+        desc = String(body.description ?? '').trim().slice(0, 1500)
+      }
+      for (const entry of vid ? [] : feed.split('<entry>').slice(1, 9)) {
         const v = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]
         if (!v) continue
         // GOTCHA: ohne Consent-Cookie leitet YouTube aus Rechenzentren ALLES auf die
@@ -920,8 +926,12 @@ Regeln:
       // Thumbnail sichern (maxres, sonst hq)
       let thumbUrl: string | null = null
       let igUrl: string | null = null
-      for (const q of ['maxresdefault', 'hqdefault']) {
-        const r = await fetch(`https://i.ytimg.com/vi/${vid}/${q}.jpg`)
+      // thumb_url (YouTube-Center): eigenes/signiertes Bild zuerst - private Videos
+      // liefern unter i.ytimg.com oft nur den grauen 404-Platzhalter.
+      const thumbSrcs = [...(typeof body.thumb_url === 'string' && body.thumb_url ? [body.thumb_url] : []), `https://i.ytimg.com/vi/${vid}/maxresdefault.jpg`, `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`]
+      for (const src of thumbSrcs) {
+        const r = await fetch(src)
+        if (r.ok && Number(r.headers.get('content-length') ?? 0) > 0 && Number(r.headers.get('content-length') ?? 0) < 1500) continue   // grauer Platzhalter (1097 Bytes)
         if (r.ok) {
           const bytes = new Uint8Array(await r.arrayBuffer())
           const path = `social/yt-${vid}.jpg`
@@ -953,7 +963,9 @@ Regeln:
         for (const pt of new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Nicosia', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(d)) m[pt.type] = pt.value
         return (Date.UTC(+m.year, +m.month - 1, +m.day, +m.hour === 24 ? 0 : +m.hour, +m.minute, +m.second) - d.getTime()) / 60000
       }
-      const now = new Date()
+      // not_before (YouTube-Center): Posts erst NACH der geplanten Veröffentlichung
+      const nb = typeof body.not_before === 'string' && body.not_before ? new Date(body.not_before) : null
+      const now = nb && !isNaN(nb.getTime()) && nb.getTime() > Date.now() ? nb : new Date()
       const cyNow = new Date(now.getTime() + cyOffsetMin(now) * 60000)
       const daysToMon = ((8 - cyNow.getUTCDay()) % 7) || 7
       const monday = new Date(Date.UTC(cyNow.getUTCFullYear(), cyNow.getUTCMonth(), cyNow.getUTCDate() + daysToMon))
@@ -963,7 +975,8 @@ Regeln:
       }
       await sb.from('social_topics').upsert({ key: 'youtube', label: 'YouTube-Video', icon: '🎬', sort: 90 }, { onConflict: 'key', ignoreDuplicates: true })
       const metaImg = igUrl ?? thumbUrl
-      const base = { topic: 'youtube', news_source: videoUrl, format: 'single', status: 'geplant', image_url: thumbUrl, image_urls: thumbUrl ? [thumbUrl] : [] }
+      // as_draft (YouTube-Center): als Entwurf anlegen, Freigabe im Social Studio.
+      const base = { topic: 'youtube', news_source: videoUrl, format: 'single', status: body.as_draft ? 'entwurf' : 'geplant', image_url: thumbUrl, image_urls: thumbUrl ? [thumbUrl] : [] }
       const { data: p1, error: e1 } = await sb.from('social_posts').insert({ ...base, image_url: metaImg, image_urls: metaImg ? [metaImg] : [], title: `🎬 ${title}`.slice(0, 200), content: out.meta_caption, platforms: ['facebook', 'instagram'], scheduled_for: atCy(18, 30) }).select('id').single()
       if (e1) return json({ error: e1.message }, 500)
       const { data: p2, error: e2 } = await sb.from('social_posts').insert({ ...base, title: `🎬 in · ${title}`.slice(0, 200), content: out.linkedin_caption, platforms: ['linkedin'], scheduled_for: atCy(8, 30) }).select('id').single()

@@ -38,7 +38,7 @@ function setCachedProfile(profile: Profile | null) {
 export type UserRole = 'admin' | 'verwalter' | 'eigentuemer' | 'feriengast' | 'funnel' | 'mitarbeiter'
 
 // Einzeln zuschaltbare Mitarbeiter-Rechte (Bereiche). Admin/Verwalter haben immer alles.
-export type PermissionArea = 'pipeline' | 'funnel' | 'decks' | 'invoices' | 'contacts' | 'thumbnails'
+export type PermissionArea = 'pipeline' | 'funnel' | 'decks' | 'invoices' | 'contacts' | 'thumbnails' | 'youtube'
   | 'werbung' | 'werbung_meta' | 'werbung_youtube' | 'werbung_google'
 export const PERMISSION_AREAS: { key: PermissionArea; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline & Leads' },
@@ -47,6 +47,7 @@ export const PERMISSION_AREAS: { key: PermissionArea; label: string }[] = [
   { key: 'invoices', label: 'Rechnungen' },
   { key: 'contacts', label: 'Kontakte' },
   { key: 'thumbnails', label: 'Thumbnail-Studio (YouTube & Social)' },
+  { key: 'youtube',    label: 'YouTube-Center (Videos hochladen & vorbereiten)' },
   { key: 'werbung',         label: 'Werbemanager (alle Kanäle)' },
   { key: 'werbung_meta',    label: 'Werbemanager: nur Meta' },
   { key: 'werbung_youtube', label: 'Werbemanager: nur YouTube' },

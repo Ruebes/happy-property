@@ -44,6 +44,7 @@ const PartnerReview = lazy(() => import('./pages/PartnerReview'))
 const PartnerAkte = lazy(() => import('./pages/PartnerAkte'))
 const SocialStudio = lazy(() => import('./pages/admin/crm/SocialStudio'))
 const ThumbnailStudio = lazy(() => import('./pages/admin/crm/ThumbnailStudio'))
+const YouTubeCenter = lazy(() => import('./pages/admin/crm/YouTubeCenter'))
 const TerminVerwalten = lazy(() => import('./pages/TerminVerwalten'))
 const Abmelden = lazy(() => import('./pages/Abmelden'))
 const Zusage = lazy(() => import('./pages/Zusage'))
@@ -206,6 +207,11 @@ export default function App() {
             {/* ── Thumbnail-Studio (Recht 'thumbnails' — z.B. Leonard) ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="thumbnails" />}>
               <Route path="/admin/crm/thumbnails"        element={<ThumbnailStudio />} />
+            </Route>
+
+            {/* ── YouTube-Center (Recht 'youtube' — z.B. Leonard) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter']} permission="youtube" />}>
+              <Route path="/admin/crm/youtube"           element={<YouTubeCenter />} />
             </Route>
 
             {/* ── CRM-Einstellungen (nur Admin/Verwalter) ── */}
