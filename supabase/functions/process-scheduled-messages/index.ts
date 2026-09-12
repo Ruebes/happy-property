@@ -26,6 +26,12 @@ import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 
+// Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
+// länger als das beobachtete Sperrfenster (~50 Min am 11.9.2026). 10 Min bleibt
+// unter der 15-Min-Toleranz des Verschiebe-Guards für Terminerinnerungen.
+const QUOTA_MAX_RETRIES = 8
+const QUOTA_RETRY_MIN   = 10
+
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -424,6 +430,8 @@ Deno.serve(async (req: Request) => {
       scheduled_at:  string
       // Gesetzt bei Newsletter-Empfaengern aus einer Liste (kein CRM-Lead).
       subscriber_id: string | null
+      // Bisherige Wiederholungen (TimelinesAI-Kontingent, siehe unten).
+      retry_count:   number | null
     }[]) {
       // Jede Nachricht in ihrem eigenen Fehler-Netz: ein unerwarteter Fehler
       // (Netzwerk, Übersetzung, DB) darf NUR diese eine Nachricht kippen. Vorher riss
@@ -433,6 +441,11 @@ Deno.serve(async (req: Request) => {
       try {
         let success = true
         const errors: string[] = []
+        // Merkt sich, ob die E-Mail in DIESEM Lauf rausging: bei einer
+        // Wiederholung wegen WhatsApp-Kontingent darf sie nicht nochmal kommen.
+        let emailSent = false
+        let waQuotaHit = false
+        const retryCount = msg.retry_count ?? 0
 
         // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
         // Text). Stage 0 = Gespräch ERÖFFNEN (+20 Min nach No-Show/Erstkontakt), Stage ≥1 =
@@ -501,8 +514,10 @@ Deno.serve(async (req: Request) => {
         // Weicht die Soll-Sendezeit (aktuelle Terminzeit − delay) von der geplanten
         // Sendezeit ab, wurde der Termin verschoben → alte Erinnerungen (falscher Text!)
         // verwerfen und aus der neuen Terminzeit frisch planen. Ein Re-Fire pro Lead.
+        // Bei einer Kontingent-Wiederholung ist scheduled_at absichtlich nach hinten
+        // gerückt - das ist KEINE Terminverschiebung, Guard hier aussetzen.
         const beforeRule = msg.rule_id ? beforeRules.get(msg.rule_id) : undefined
-        if (beforeRule) {
+        if (beforeRule && retryCount === 0) {
           const { data: nx } = await supabase.from('crm_appointments')
             .select('start_time').eq('lead_id', msg.lead_id).gte('start_time', new Date().toISOString())
             .order('start_time', { ascending: true }).limit(1).maybeSingle()
@@ -668,6 +683,7 @@ Deno.serve(async (req: Request) => {
                 smtpUser, smtpPass,
                 attachments,
               })
+              emailSent = true
               await logActivity(supabase, {
                 lead_id: msg.lead_id,
                 deal_id: msg.deal_id,
@@ -723,6 +739,7 @@ Deno.serve(async (req: Request) => {
                 console.error(`[process-scheduled] WhatsApp Fehler (${msg.id}):`, errMsg)
                 errors.push(`whatsapp: ${errMsg}`)
                 success = false
+                waQuotaHit = /quota_exceeded|mass sending quota/i.test(errMsg)
               }
             } else {
               console.warn(`[process-scheduled] Timelines nicht konfiguriert – simulierter WA an ${phone}`)
@@ -738,6 +755,34 @@ Deno.serve(async (req: Request) => {
             console.warn(`[process-scheduled] Kein Telefon für Lead ${msg.lead_id}`)
             errors.push('whatsapp: kein Telefon')
           }
+        }
+
+        // ── TimelinesAI-Kontingent: später nochmal, nicht endgültig 'failed' ──
+        // Nach einem Sende-Burst (z.B. Baustellen-Update) lehnt TimelinesAI für
+        // rund eine Stunde ALLES mit 403 quota_exceeded ab. Vorher war eine
+        // Nachricht in diesem Fenster verloren (Heike Stachowiak, 11.9.2026: Mail
+        // raus, Terminbestätigung per WhatsApp nie). Jetzt: bis zu
+        // QUOTA_MAX_RETRIES Wiederholungen im Abstand von QUOTA_RETRY_MIN Minuten.
+        // Ist die Mail in diesem Lauf schon raus, wird die Nachricht auf reines
+        // WhatsApp umgestellt, damit der Kunde die Mail nicht doppelt bekommt.
+        if (waQuotaHit && retryCount < QUOTA_MAX_RETRIES) {
+          const next = new Date(Date.now() + QUOTA_RETRY_MIN * 60000).toISOString()
+          const { error: rqErr } = await supabase
+            .from('scheduled_messages')
+            .update({
+              status:        'pending',
+              scheduled_at:  next,
+              retry_count:   retryCount + 1,
+              ...(emailSent && msg.type === 'both' ? { type: 'whatsapp' } : {}),
+              error_message: `TimelinesAI-Kontingent erschöpft - Wiederholung ${retryCount + 1}/${QUOTA_MAX_RETRIES} um ${next.slice(11, 16)} UTC`,
+            })
+            .eq('id', msg.id)
+          if (!rqErr) {
+            console.warn(`[process-scheduled] Kontingent: ${msg.id} neu geplant (${retryCount + 1}/${QUOTA_MAX_RETRIES}) auf ${next}`)
+            processed.push({ id: msg.id, result: 'retry:quota' })
+            continue
+          }
+          console.error(`[process-scheduled] Retry-Update fehlgeschlagen (${msg.id}):`, rqErr.message)
         }
 
         // ── Status zurückschreiben ────────────────────────────────────────────
