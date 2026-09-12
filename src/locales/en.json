@@ -1080,7 +1080,28 @@
     },
     "income": {
       "comingSoon": "Income",
-      "comingSoonHint": "This feature will be available soon."
+      "comingSoonHint": "This feature will be available soon.",
+      "subtitle": "Rental income and expenses from your invoices. Net amounts.",
+      "kpiIncome": "Income {{year}}",
+      "kpiExpenses": "Expenses {{year}}",
+      "kpiResult": "Result",
+      "kpiOccupancy": "Occupancy",
+      "nights": "{{n}} nights · {{b}} bookings",
+      "emptyTitle": "No income yet for {{year}}",
+      "emptyHint": "Bookings and rental contracts will appear here automatically.",
+      "chartTitle": "Monthly overview",
+      "legendIncome": "Income",
+      "legendExpenses": "Expenses",
+      "colMonth": "Month",
+      "colShort": "Short-term",
+      "colRent": "Rent",
+      "colExpenses": "Expenses",
+      "colResult": "Result",
+      "bookingsAbbr": "bkg.",
+      "total": "Total",
+      "bookingsTitle": "Bookings {{year}}",
+      "nightsShort": "nights",
+      "note": "Short-term rental net by arrival month, long-term rent per contract, expenses by invoice date. Not tax advice."
     },
     "images": {
       "dropHint": "Drag images here or click to select",
@@ -6145,5 +6166,19 @@
     "notShared": "This plan has not been released to the client yet. It is released as soon as the outbox entry actually goes out. To view it, append ?preview=1 to the address.",
     "previewTag": "Internal preview.",
     "previewNote": "The client cannot open this link yet. It is released as soon as the outbox entry actually goes out. Please do not forward the link yourself."
+  },
+  "months": {
+    "jan": "Jan",
+    "feb": "Feb",
+    "mar": "Mar",
+    "apr": "Apr",
+    "may": "May",
+    "jun": "Jun",
+    "jul": "Jul",
+    "aug": "Aug",
+    "sep": "Sep",
+    "oct": "Oct",
+    "nov": "Nov",
+    "dec": "Dec"
   }
 }

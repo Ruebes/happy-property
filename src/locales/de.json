@@ -1080,7 +1080,28 @@
     },
     "income": {
       "comingSoon": "Einnahmen",
-      "comingSoonHint": "Diese Funktion wird in Kürze verfügbar sein."
+      "comingSoonHint": "Diese Funktion wird in Kürze verfügbar sein.",
+      "subtitle": "Einnahmen aus Vermietung, Ausgaben aus deinen Rechnungen. Beträge netto.",
+      "kpiIncome": "Einnahmen {{year}}",
+      "kpiExpenses": "Ausgaben {{year}}",
+      "kpiResult": "Ergebnis",
+      "kpiOccupancy": "Auslastung",
+      "nights": "{{n}} Nächte · {{b}} Buchungen",
+      "emptyTitle": "Noch keine Einnahmen für {{year}}",
+      "emptyHint": "Buchungen und Mietverträge erscheinen hier automatisch.",
+      "chartTitle": "Monatsübersicht",
+      "legendIncome": "Einnahmen",
+      "legendExpenses": "Ausgaben",
+      "colMonth": "Monat",
+      "colShort": "Kurzzeit",
+      "colRent": "Miete",
+      "colExpenses": "Ausgaben",
+      "colResult": "Ergebnis",
+      "bookingsAbbr": "Buch.",
+      "total": "Gesamt",
+      "bookingsTitle": "Buchungen {{year}}",
+      "nightsShort": "Nächte",
+      "note": "Kurzzeitvermietung netto nach Anreisemonat, Langzeitmiete laut Vertrag, Ausgaben laut Rechnungsdatum. Keine Steuerberatung."
     },
     "images": {
       "dropHint": "Bilder hierher ziehen oder klicken zum Auswählen",
@@ -6145,5 +6166,19 @@
     "notShared": "Dieser Fahrplan ist noch nicht für den Kunden freigegeben. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Zum Ansehen hänge ?preview=1 an die Adresse.",
     "previewTag": "Interne Vorschau.",
     "previewNote": "Der Kunde kann diesen Link noch nicht öffnen. Er wird freigeschaltet, sobald der Eintrag im Postausgang tatsächlich hinausgeht. Bitte den Link nicht selbst weiterschicken."
+  },
+  "months": {
+    "jan": "Jan",
+    "feb": "Feb",
+    "mar": "Mär",
+    "apr": "Apr",
+    "may": "Mai",
+    "jun": "Jun",
+    "jul": "Jul",
+    "aug": "Aug",
+    "sep": "Sep",
+    "oct": "Okt",
+    "nov": "Nov",
+    "dec": "Dez"
   }
 }

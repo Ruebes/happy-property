@@ -988,6 +988,41 @@ export default function PropertyDetail() {
     if (canEdit) fetchContracts()
   }, [fetchContracts, canEdit])
 
+  // ── Einnahmen-Tab: Buchungen (Kurzzeit) + Mietverträge (Langzeit) je Monat,
+  //    Ausgaben aus den Rechnungen (documents.type='rechnung'). Nur lesend.
+  interface IncomeBooking {
+    id: string; source: string | null; check_in: string; check_out: string
+    total_price_net: number | null; total_price_gross: number | null; total_price: number | null
+    is_owner_stay: boolean | null; status: string | null; booking_number: string | null
+  }
+  const [incomeBookings,  setIncomeBookings]  = useState<IncomeBooking[]>([])
+  const [incomeContracts, setIncomeContracts] = useState<ContractRecord[]>([])
+  const [incomeYear,      setIncomeYear]      = useState<number>(new Date().getFullYear())
+  const [incomeLoading,   setIncomeLoading]   = useState(false)
+  const fetchIncome = useCallback(async () => {
+    if (!id) return
+    setIncomeLoading(true)
+    try {
+      const [bk, ct] = await Promise.all([
+        supabase.from('bookings')
+          .select('id, source, check_in, check_out, total_price_net, total_price_gross, total_price, is_owner_stay, status, booking_number')
+          .eq('property_id', id).order('check_in', { ascending: false }),
+        supabase.from('contracts')
+          .select('id, tenant_name, tenant_email, start_date, end_date, monthly_rent, status, signature_token, signed_at')
+          .eq('property_id', id),
+      ])
+      if (bk.error) console.error('[PropertyDetail] income bookings:', bk.error)
+      if (ct.error) console.error('[PropertyDetail] income contracts:', ct.error)
+      setIncomeBookings((bk.data as IncomeBooking[]) ?? [])
+      setIncomeContracts((ct.data as ContractRecord[]) ?? [])
+    } catch (err) {
+      console.error('[PropertyDetail] fetchIncome:', err)
+    } finally {
+      setIncomeLoading(false)
+    }
+  }, [id])
+  useEffect(() => { if (activeTab === 'income') fetchIncome() }, [activeTab, fetchIncome])
+
   // ── Fetch unit payments + Kaufvertrag-Dokumente ──────────
   const fetchUnitPayments = useCallback(async () => {
     if (!id) return
@@ -3095,13 +3130,177 @@ export default function PropertyDetail() {
     )
   }
 
-  // ── Tab 4: Einnahmen (Platzhalter) ────────────────────
+  // ── Tab 4: Einnahmen ──────────────────────────────────
   function renderIncome() {
+    const year = incomeYear
+    const monthsShort = [t('months.jan', 'Jan'), t('months.feb', 'Feb'), t('months.mar', 'Mär'), t('months.apr', 'Apr'), t('months.may', 'Mai'), t('months.jun', 'Jun'), t('months.jul', 'Jul'), t('months.aug', 'Aug'), t('months.sep', 'Sep'), t('months.oct', 'Okt'), t('months.nov', 'Nov'), t('months.dec', 'Dez')]
+    const monthOf = (iso: string | null | undefined) => {
+      if (!iso) return null
+      const d = new Date(iso)
+      return d.getFullYear() === year ? d.getMonth() : null
+    }
+    // Buchungseinnahmen (netto, ohne Eigennutzung/Storno) nach Anreisemonat
+    const validBookings = incomeBookings.filter(b => !b.is_owner_stay && b.status !== 'cancelled')
+    const bookingIncome = Array(12).fill(0) as number[]
+    const bookingCount  = Array(12).fill(0) as number[]
+    const nights = (b: IncomeBooking) => Math.max(0, Math.round((new Date(b.check_out).getTime() - new Date(b.check_in).getTime()) / 86_400_000))
+    let nightsYear = 0
+    for (const b of validBookings) {
+      const m = monthOf(b.check_in)
+      if (m == null) continue
+      bookingIncome[m] += Number(b.total_price_net ?? b.total_price ?? 0)
+      bookingCount[m]  += 1
+      nightsYear       += nights(b)
+    }
+    // Langzeitmiete: Monatsmiete für jeden Monat, in dem der Vertrag läuft
+    const rentIncome = Array(12).fill(0) as number[]
+    for (const c of incomeContracts) {
+      if (c.status === 'draft') continue
+      const start = new Date(c.start_date)
+      const end   = c.end_date ? new Date(c.end_date) : null
+      for (let m = 0; m < 12; m++) {
+        const first = new Date(year, m, 1), last = new Date(year, m + 1, 0)
+        if (start <= last && (!end || end >= first)) rentIncome[m] += Number(c.monthly_rent ?? 0)
+      }
+    }
+    // Ausgaben: Rechnungen nach Rechnungsdatum (sonst Upload-Datum)
+    const expenses = Array(12).fill(0) as number[]
+    for (const d of docs) {
+      if (d.type !== 'rechnung') continue
+      const m = monthOf(d.invoice_date ?? d.uploaded_at)
+      if (m == null) continue
+      expenses[m] += Number(d.amount_gross ?? d.amount_net ?? 0)
+    }
+    const income = bookingIncome.map((v, i) => v + rentIncome[i])
+    const sum = (a: number[]) => a.reduce((x, y) => x + y, 0)
+    const totalIncome = sum(income), totalExp = sum(expenses), result = totalIncome - totalExp
+    const maxBar = Math.max(1, ...income, ...expenses)
+    const occupancy = Math.round((nightsYear / (year === new Date().getFullYear() ? Math.max(1, (Date.now() - new Date(year, 0, 1).getTime()) / 86_400_000) : 365)) * 100)
+    const hasData = totalIncome > 0 || totalExp > 0
+    const yearsAvailable = Array.from(new Set([
+      new Date().getFullYear(),
+      ...incomeBookings.map(b => new Date(b.check_in).getFullYear()),
+      ...docs.filter(d => d.type === 'rechnung').map(d => new Date(d.invoice_date ?? d.uploaded_at).getFullYear()),
+    ])).sort((a, b) => b - a)
+    const srcLabel = (b: IncomeBooking) => b.source === 'airbnb' ? 'Airbnb'
+      : (b.source === 'booking' || b.source === 'booking_com') ? 'Booking.com'
+      : b.source === 'vrbo' ? 'Vrbo' : 'Happy Property'
+
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-gray-400 font-body">
-        <div className="text-5xl mb-4">💰</div>
-        <p className="text-base font-semibold text-gray-500 mb-1">{t('propertyDetail.income.comingSoon')}</p>
-        <p className="text-sm">{t('propertyDetail.income.comingSoonHint')}</p>
+      <div className="space-y-6">
+        {/* Kopf: Jahr wählen */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm text-gray-500 font-body">{t('propertyDetail.income.subtitle', 'Einnahmen aus Vermietung, Ausgaben aus deinen Rechnungen. Beträge netto.')}</p>
+          <div className="flex items-center gap-1">
+            {yearsAvailable.map(y => (
+              <button key={y} onClick={() => setIncomeYear(y)}
+                      className={`px-3 py-1.5 rounded-full text-sm font-semibold font-body transition-colors
+                        ${y === year ? 'bg-hp-black text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-gray-400'}`}>
+                {y}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* KPI-Kacheln */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-green-200 bg-green-50 px-5 py-4">
+            <p className="text-xs uppercase tracking-wide text-green-700 font-body">{t('propertyDetail.income.kpiIncome', 'Einnahmen {{year}}', { year })}</p>
+            <p className="text-2xl font-bold text-green-700 font-body mt-1">{fmtCurrency(totalIncome)}</p>
+          </div>
+          <div className="rounded-2xl border border-red-100 bg-red-50 px-5 py-4">
+            <p className="text-xs uppercase tracking-wide text-red-600 font-body">{t('propertyDetail.income.kpiExpenses', 'Ausgaben {{year}}', { year })}</p>
+            <p className="text-2xl font-bold text-red-600 font-body mt-1">{fmtCurrency(totalExp)}</p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4">
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-body">{t('propertyDetail.income.kpiResult', 'Ergebnis')}</p>
+            <p className={`text-2xl font-bold font-body mt-1 ${result >= 0 ? 'text-hp-black' : 'text-red-600'}`}>{fmtCurrency(result)}</p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white px-5 py-4">
+            <p className="text-xs uppercase tracking-wide text-gray-500 font-body">{t('propertyDetail.income.kpiOccupancy', 'Auslastung')}</p>
+            <p className="text-2xl font-bold text-hp-black font-body mt-1">{validBookings.length ? `${Math.min(100, occupancy)} %` : '–'}</p>
+            <p className="text-xs text-gray-400 font-body">{t('propertyDetail.income.nights', '{{n}} Nächte · {{b}} Buchungen', { n: nightsYear, b: validBookings.filter(b => monthOf(b.check_in) != null).length })}</p>
+          </div>
+        </div>
+
+        {incomeLoading ? (
+          <div className="py-16 text-center text-sm text-gray-400 font-body">{t('common.loading', 'Lädt …')}</div>
+        ) : !hasData ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400 font-body">
+            <div className="text-5xl mb-4">💰</div>
+            <p className="text-base font-semibold text-gray-500 mb-1">{t('propertyDetail.income.emptyTitle', 'Noch keine Einnahmen für {{year}}', { year })}</p>
+            <p className="text-sm">{t('propertyDetail.income.emptyHint', 'Buchungen und Mietverträge erscheinen hier automatisch.')}</p>
+          </div>
+        ) : (
+          <>
+            {/* Monatsbalken */}
+            <div className="rounded-2xl border border-gray-100 bg-white p-5">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm font-semibold text-hp-black font-body">{t('propertyDetail.income.chartTitle', 'Monatsübersicht')}</p>
+                <div className="flex items-center gap-4 text-xs text-gray-500 font-body">
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" />{t('propertyDetail.income.legendIncome', 'Einnahmen')}</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400 inline-block" />{t('propertyDetail.income.legendExpenses', 'Ausgaben')}</span>
+                </div>
+              </div>
+              <div className="grid grid-cols-12 gap-2 items-end h-44">
+                {monthsShort.map((label, m) => (
+                  <div key={m} className="flex flex-col items-center justify-end h-full gap-1">
+                    <div className="flex items-end gap-0.5 h-36 w-full justify-center">
+                      <div className="w-2/5 rounded-t bg-green-500 transition-all" style={{ height: `${(income[m] / maxBar) * 100}%` }} title={fmtCurrency(income[m])} />
+                      <div className="w-2/5 rounded-t bg-red-400 transition-all" style={{ height: `${(expenses[m] / maxBar) * 100}%` }} title={fmtCurrency(expenses[m])} />
+                    </div>
+                    <span className="text-[11px] text-gray-500 font-body">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Monatstabelle */}
+            <div className="rounded-2xl border border-gray-100 bg-white overflow-hidden">
+              <div className="grid grid-cols-5 gap-2 px-5 py-2.5 bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 font-body">
+                <span>{t('propertyDetail.income.colMonth', 'Monat')}</span>
+                <span className="text-right">{t('propertyDetail.income.colShort', 'Kurzzeit')}</span>
+                <span className="text-right">{t('propertyDetail.income.colRent', 'Miete')}</span>
+                <span className="text-right">{t('propertyDetail.income.colExpenses', 'Ausgaben')}</span>
+                <span className="text-right">{t('propertyDetail.income.colResult', 'Ergebnis')}</span>
+              </div>
+              {monthsShort.map((label, m) => (income[m] || expenses[m]) ? (
+                <div key={m} className="grid grid-cols-5 gap-2 px-5 py-2.5 border-t border-gray-50 text-sm font-body">
+                  <span className="text-hp-black font-semibold">{label} {year}<span className="text-gray-400 font-normal text-xs ml-1">{bookingCount[m] ? `· ${bookingCount[m]} ${t('propertyDetail.income.bookingsAbbr', 'Buch.')}` : ''}</span></span>
+                  <span className="text-right text-gray-700">{bookingIncome[m] ? fmtCurrency(bookingIncome[m]) : '–'}</span>
+                  <span className="text-right text-gray-700">{rentIncome[m] ? fmtCurrency(rentIncome[m]) : '–'}</span>
+                  <span className="text-right text-red-500">{expenses[m] ? `−${fmtCurrency(expenses[m])}` : '–'}</span>
+                  <span className={`text-right font-semibold ${income[m] - expenses[m] >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtCurrency(income[m] - expenses[m])}</span>
+                </div>
+              ) : null)}
+              <div className="grid grid-cols-5 gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 text-sm font-bold font-body">
+                <span>{t('propertyDetail.income.total', 'Gesamt')}</span>
+                <span className="text-right">{fmtCurrency(sum(bookingIncome))}</span>
+                <span className="text-right">{fmtCurrency(sum(rentIncome))}</span>
+                <span className="text-right text-red-500">{totalExp ? `−${fmtCurrency(totalExp)}` : '–'}</span>
+                <span className={`text-right ${result >= 0 ? 'text-green-700' : 'text-red-600'}`}>{fmtCurrency(result)}</span>
+              </div>
+            </div>
+
+            {/* Letzte Buchungen */}
+            {validBookings.some(b => monthOf(b.check_in) != null) && (
+              <div className="rounded-2xl border border-gray-100 bg-white overflow-hidden">
+                <p className="px-5 py-3 text-sm font-semibold text-hp-black font-body border-b border-gray-100">{t('propertyDetail.income.bookingsTitle', 'Buchungen {{year}}', { year })}</p>
+                {validBookings.filter(b => monthOf(b.check_in) != null).map(b => (
+                  <div key={b.id} className="flex items-center justify-between gap-3 px-5 py-2.5 border-t border-gray-50 text-sm font-body">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${b.source === 'airbnb' ? 'bg-[#ff385c]' : (b.source === 'booking' || b.source === 'booking_com') ? 'bg-[#003580]' : 'bg-hp-highlight'}`} />
+                      <span className="text-hp-black font-semibold">{srcLabel(b)}</span>
+                      <span className="text-gray-500 truncate">{fmtDate(b.check_in)} – {fmtDate(b.check_out)} · {nights(b)} {t('propertyDetail.income.nightsShort', 'Nächte')}</span>
+                    </div>
+                    <span className="font-semibold text-green-700 shrink-0">{fmtCurrency(Number(b.total_price_net ?? b.total_price ?? 0))}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-gray-400 font-body">{t('propertyDetail.income.note', 'Kurzzeitvermietung netto nach Anreisemonat, Langzeitmiete laut Vertrag, Ausgaben laut Rechnungsdatum. Keine Steuerberatung.')}</p>
+          </>
+        )}
       </div>
     )
   }
