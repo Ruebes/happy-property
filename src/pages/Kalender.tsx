@@ -13,7 +13,9 @@ interface CalBook {
   check_in:        string
   check_out:       string
   status:          'confirmed' | 'cancelled' | 'pending'
-  source:          'manual' | 'airbnb' | 'booking_com' | null
+  // DB-Constraint (bookings_source_check) speichert Booking.com als 'booking';
+  // 'booking_com' bleibt für Altbestand/Import tolerant.
+  source:          'manual' | 'airbnb' | 'booking' | 'booking_com' | 'vrbo' | null
   is_owner_stay:   boolean
   total_price:     number | null
   price_per_night: number | null
@@ -78,6 +80,7 @@ function bookingStyle(b: CalBook): React.CSSProperties {
   if (b.property?.rental_type === 'longterm') return { backgroundColor: '#16a34a' }
   switch (b.source) {
     case 'airbnb':      return { backgroundColor: '#ff385c' }
+    case 'booking':
     case 'booking_com': return { backgroundColor: '#003580' }
     default:            return { backgroundColor: '#ff795d' }
   }
@@ -137,7 +140,7 @@ function BookingDetail({
           <div>
             <p className="text-xs font-body opacity-80">
               {booking.source === 'airbnb'      ? 'Airbnb'
-                : booking.source === 'booking_com' ? 'Booking.com'
+                : (booking.source === 'booking' || booking.source === 'booking_com') ? 'Booking.com'
                 : booking.property?.rental_type === 'longterm'
                   ? t('calendar.source.longterm')
                   : t('calendar.source.manual')}
