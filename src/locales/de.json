@@ -361,6 +361,7 @@
     "occupied": "Aktuell belegt",
     "future": "Zukünftig",
     "bookings": "{{count}} Buchungen",
+    "bookingsLabel": "Buchungen",
     "activeContracts": "Aktive Verträge",
     "pending": "Ausstehend",
     "myProperties": "Meine Objekte",

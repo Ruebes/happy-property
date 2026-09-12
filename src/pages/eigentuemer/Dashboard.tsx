@@ -323,7 +323,7 @@ export default function EigentuemerDashboard() {
                     {t('dashboard.eigentuemer.returnComingSoon')}
                   </div>
                   <div className="text-xs text-gray-400 font-body mt-0.5">
-                    {t('stats.' + key)}
+                    {t(key === 'bookings' ? 'stats.bookingsLabel' : 'stats.' + key)}
                   </div>
                 </>
               ) : (
@@ -334,7 +334,7 @@ export default function EigentuemerDashboard() {
                     ) : (value ?? 0)}
                   </div>
                   <div className="text-xs text-gray-500 font-body mt-0.5">
-                    {t('stats.' + key)}
+                    {t(key === 'bookings' ? 'stats.bookingsLabel' : 'stats.' + key)}
                   </div>
                 </>
               )}

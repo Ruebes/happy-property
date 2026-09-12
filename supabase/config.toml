@@ -57,3 +57,6 @@ verify_jwt = false
 
 [functions.yt-oauth]
 verify_jwt = false
+
+[functions.masterclass-register]
+verify_jwt = false
