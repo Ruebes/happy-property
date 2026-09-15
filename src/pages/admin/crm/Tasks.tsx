@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -28,6 +29,7 @@ interface Contact { key: string; id: string; kind: 'lead' | 'biz'; name: string;
 interface ExtAssignee { name: string; email: string; phone: string; channel: Channel; lang: 'de' | 'en' }
 interface Assignee { id: string; profile_id: string | null; ext_name: string | null; ext_email: string | null; ext_phone: string | null; channel: string; accepted_at: string | null }
 interface LinkedLead { lead_id: string; name: string; email: string | null; phone: string | null }
+interface ParentCtx { parent_id: string; title: string; description: string | null; status: string; created_by: string; creator: string; messages: { who: string; body: string; created_at: string }[] }
 
 const COLUMNS: { status: TaskStatus; label: string; accent: string }[] = [
   { status: 'offen',     label: 'Gestellt',  accent: '#94a3b8' },
@@ -374,7 +376,7 @@ function CreateModal({ staff, myId, onClose, onCreated }: { staff: Staff[]; myId
 }
 
 // ── Aufgabe-Detail + Chat ────────────────────────────────────────────────────
-function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; staff: Staff[]; myId: string; onClose: () => void; onChanged: () => void }) {
+function DetailModal({ task, staff, myId, onClose, onChanged, onOpenTask }: { task: Task; staff: Staff[]; myId: string; onClose: () => void; onChanged: () => void; onOpenTask?: (id: string) => void }) {
   const { t } = useTranslation()
   const [messages, setMessages] = useState<TaskMessage[]>([])
   const [subtasks, setSubtasks] = useState<Task[]>([])
@@ -383,6 +385,10 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
   const [subDue, setSubDue] = useState(''); const [subBusy, setSubBusy] = useState(false)
   const [assignees, setAssignees] = useState<Assignee[]>([])
   const [customers, setCustomers] = useState<LinkedLead[]>([])
+  // Teilaufgabe: Hauptaufgabe + Verlauf (per RPC, weil der Zuarbeitende die
+  // Hauptaufgabe per RLS sonst nicht sehen darf). Vorfall 15.9.: Leonards Rückfrage
+  // kam als Teilaufgabe bei Sven an, ohne dass der Bezug erkennbar war.
+  const [parentCtx, setParentCtx] = useState<ParentCtx | null>(null)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const nameOf = (id: string | null) => (id && (staff.find(s => s.id === id)?.full_name || staff.find(s => s.id === id)?.email)) || '—'
@@ -409,6 +415,10 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     ])
     setSubtasks((subRes.data ?? []) as Task[])
     setMessages((msgRes.data ?? []) as TaskMessage[])
+    if (task.parent_task_id) {
+      const { data: pc } = await supabase.rpc('task_parent_context', { t: task.id })
+      setParentCtx((pc as ParentCtx | null) ?? null)
+    }
     setAssignees((asgRes.data ?? []) as Assignee[])
     // deno-lint-ignore no-explicit-any
     setCustomers(((leadRes.data ?? []) as any[]).map(r => ({
@@ -437,18 +447,16 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
     setSending(true)
     const body = text.trim()
     try {
-      const { error } = await supabase.from('crm_task_messages').insert({
+      const { data: ins, error } = await supabase.from('crm_task_messages').insert({
         task_id: task.id, sender_id: myId, sender_label: nameOf(myId), recipient_id: recipient ?? myId, body,
-      })
+      }).select('id').single()
       if (error) throw error
       setText(''); await loadAll()
-      const rec = recipient ? staff.find(s => s.id === recipient) : null
-      if (rec?.email) {
-        supabase.functions.invoke('send-email', { body: {
-          to: rec.email, subject: `Aufgabe: ${task.title}`,
-          html: `<p>Hallo ${(rec.full_name || '').split(' ')[0]},</p><p>${nameOf(myId)} hat dir zu der Aufgabe <strong>${task.title}</strong> geschrieben:</p><blockquote style="border-left:3px solid #ff795d;padding-left:12px;color:#374151;">${body.replace(/</g, '&lt;')}</blockquote><p style="font-size:13px;color:#6b7280;">Antworte direkt in der App unter Aufgaben.</p>`,
-        } }).catch(e => console.warn('[Tasks] Mail-Benachrichtigung:', e))
-      }
+      // Externe Meldung zentral in task-notify: WhatsApp (sonst Mail) an den Empfänger
+      // und alle @Erwähnten - immer mit Aufgabentitel und Direktlink. Vorher ging hier
+      // nur eine Mail raus, und "@Sven" in einer Nachricht an Leonard erreichte niemanden.
+      supabase.functions.invoke('task-notify', { body: { mode: 'message', message_id: (ins as { id: string }).id } })
+        .catch(e => console.warn('[Tasks] message notify:', e))
     } catch (e) { console.error('[Tasks] send:', e) } finally { setSending(false) }
   }
 
@@ -584,7 +592,10 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
             {editing
               ? <input value={eTitle} onChange={e => setETitle(e.target.value)} className={inputCls + ' font-semibold'} />
               : <h2 className="text-lg font-semibold text-gray-900 truncate">{task.title}</h2>}
-            <p className="text-xs text-gray-400 mt-0.5">{t('crm.tasks.from', 'von')} {nameOf(task.created_by)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {t('crm.tasks.from', 'von')} {nameOf(task.created_by)}
+              {parentCtx && <> · ↳ {t('crm.tasks.parentCtx', 'Zuarbeit zu')}: <span className="text-gray-600 font-medium">{parentCtx.title}</span></>}
+            </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-2">
             {iAmCreator && !editing && (
@@ -595,6 +606,27 @@ function DetailModal({ task, staff, myId, onClose, onChanged }: { task: Task; st
         </div>
 
         <div className="p-6 space-y-4 overflow-y-auto">
+          {parentCtx && !editing && (
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3 text-sm">
+              <p className="text-[11px] font-semibold text-indigo-500 uppercase tracking-wide">🔗 {t('crm.tasks.parentCtx', 'Zuarbeit zu')}</p>
+              <p className="font-semibold text-gray-900 mt-0.5">{parentCtx.title}</p>
+              {parentCtx.creator && <p className="text-xs text-gray-400">{t('crm.tasks.from', 'von')} {parentCtx.creator}</p>}
+              {parentCtx.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap line-clamp-4">{parentCtx.description}</p>}
+              {parentCtx.messages.filter(m => !/^[✅▶🏁✋]/u.test(m.body.trim())).length > 0 && (
+                <div className="mt-2 space-y-1">
+                  <p className="text-[11px] font-semibold text-gray-500">{t('crm.tasks.parentHistory', 'Bisheriger Verlauf')}</p>
+                  {parentCtx.messages.filter(m => !/^[✅▶🏁✋]/u.test(m.body.trim())).slice(-4).map((m, i) => (
+                    <p key={i} className="text-xs text-gray-700"><span className="font-semibold">{m.who}</span> <span className="text-gray-400">{new Date(m.created_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>: {m.body}</p>
+                  ))}
+                </div>
+              )}
+              {onOpenTask && (
+                <button onClick={() => onOpenTask(parentCtx.parent_id)} className="mt-2 text-xs font-semibold text-indigo-600 hover:underline">
+                  {t('crm.tasks.openParent', 'Hauptaufgabe öffnen')} →
+                </button>
+              )}
+            </div>
+          )}
           {editing ? (
             <div className="space-y-2">
               <textarea value={eDesc} onChange={e => setEDesc(e.target.value)} rows={3} className={inputCls} placeholder={t('crm.tasks.descPh', 'Details zur Aufgabe …')} />
@@ -915,6 +947,9 @@ export default function Tasks() {
   const { t } = useTranslation()
   const { profile } = useAuth()
   const myId = profile?.id ?? ''
+  // ?task=<id> aus WhatsApp/Mail/Popup: Aufgabe direkt öffnen, statt nur die Liste.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const wantedTask = searchParams.get('task')
 
   const [tasks, setTasks]   = useState<Task[]>([])
   const [staff, setStaff]   = useState<Staff[]>([])
@@ -970,6 +1005,18 @@ export default function Tasks() {
     } finally { setLoading(false) }
   }, [myId])
   useEffect(() => { fetchAll() }, [fetchAll])
+  useEffect(() => {
+    if (loading || !wantedTask) return
+    const tk = tasks.find(x => x.id === wantedTask)
+    if (tk) setDetail(tk)
+    else showToast(t('crm.tasks.notFound', 'Aufgabe nicht gefunden oder bereits archiviert.'))
+    setSearchParams({}, { replace: true })
+  }, [loading, wantedTask, tasks, setSearchParams, t])
+  // Aus dem Modal heraus eine andere Aufgabe öffnen (Teilaufgabe → Hauptaufgabe).
+  const openTaskById = (id: string) => {
+    const tk = tasks.find(x => x.id === id)
+    if (tk) setDetail(tk); else showToast(t('crm.tasks.notFound', 'Aufgabe nicht gefunden oder bereits archiviert.'))
+  }
 
   const nameOf = (id: string | null) => (id && staff.find(s => s.id === id)?.full_name) || t('crm.tasks.external', 'extern')
 
@@ -1062,7 +1109,7 @@ export default function Tasks() {
       </div>
 
       {creating && <CreateModal staff={staff} myId={myId} onClose={() => setCreating(false)} onCreated={(m) => { setCreating(false); showToast(m); fetchAll() }} />}
-      {detail && <DetailModal task={detail} staff={staff} myId={myId} onClose={() => { setDetail(null); fetchAll() }} onChanged={fetchAll} />}
+      {detail && <DetailModal key={detail.id} task={detail} staff={staff} myId={myId} onClose={() => { setDetail(null); fetchAll() }} onChanged={fetchAll} onOpenTask={openTaskById} />}
     </DashboardLayout>
   )
 }

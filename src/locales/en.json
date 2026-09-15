@@ -1668,7 +1668,11 @@
       "rememberPerson": "Remember person - available in the list next time",
       "roleZuarbeit": "Support",
       "externalAssignees2": "Another person - no CRM account needed",
-      "externalHint2": "Someone missing above? Name + WhatsApp number (or email) is enough - the task arrives as a message from Lotte."
+      "externalHint2": "Someone missing above? Name + WhatsApp number (or email) is enough - the task arrives as a message from Lotte.",
+      "parentCtx": "Sub-task of",
+      "parentHistory": "History so far",
+      "openParent": "Open main task",
+      "notFound": "Task not found or already archived."
     },
     "home": {
       "hello": "Hello",
@@ -5973,7 +5977,10 @@
       "offen": "Open",
       "in_arbeit": "In progress",
       "erledigt": "Done"
-    }
+    },
+    "parentCtx": "Sub-task of",
+    "parentBy": "created by {{name}}",
+    "parentHistory": "History so far"
   },
   "numberStepper": {
     "decrease": "decrease",

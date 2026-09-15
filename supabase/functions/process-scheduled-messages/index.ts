@@ -245,6 +245,12 @@ Deno.serve(async (req: Request) => {
   try {
     await supabase.functions.invoke('task-notify', { body: { mode: 'subtask_sweep' } })
   } catch (e) { console.warn('[process-scheduled] Teilaufgaben-Fertigmeldung:', e) }
+  // Aufgaben-Nachrichten (Rückfragen), die noch niemand extern gemeldet hat - fängt
+  // Mail-Antworten (imap-poll) und WhatsApp-Antworten (timelines-webhook) ab.
+  // task-notify riegelt per ext_notified_at ab.
+  try {
+    await supabase.functions.invoke('task-notify', { body: { mode: 'message_sweep' } })
+  } catch (e) { console.warn('[process-scheduled] Aufgaben-Nachrichten:', e) }
 
   // ── Bug-Meldungen aus dem Eigentümerportal: erledigt → Melder informieren ──
   // owner-content riegelt selbst per bug_done_notified_at (CAS) ab.

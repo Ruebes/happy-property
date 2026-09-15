@@ -17,7 +17,7 @@ import { acceptTask } from '../../lib/crmTasks'
 //  • NACHRICHTEN-Popups: neue Aufgaben-Chat-Nachrichten. Poppen genau einmal
 //    (notified_at), reine Info.
 interface AcceptPopup { id: string; task_id: string; title: string; from: string; creator: string }
-interface MsgPopup { id: string; task_id: string; body: string; from: string }
+interface MsgPopup { id: string; task_id: string; body: string; from: string; title: string }
 
 const POLL_MS = 30_000
 
@@ -43,13 +43,14 @@ export default function TaskNotifications() {
         supabase.from('crm_task_assignees').select('id, task:crm_tasks!inner(id, title, created_by, archived, status)')
           .eq('profile_id', myId).is('accepted_at', null).limit(20),
         // Neue Chat-Nachrichten an mich (einmalig).
-        supabase.from('crm_task_messages').select('id, task_id, body, sender_id')
+        // Mit Aufgabentitel: ein Popup "Rückfrage ..." ohne Bezug ist wertlos (15.9.).
+        supabase.from('crm_task_messages').select('id, task_id, body, sender_id, task:crm_tasks(title)')
           .eq('recipient_id', myId).is('read_at', null).is('notified_at', null)
           .order('created_at', { ascending: true }).limit(5),
       ])
       // deno-lint-ignore no-explicit-any
       const asgs = ((asgRes.data ?? []) as any[]).filter(a => a.task && !a.task.archived && a.task.status !== 'erledigt' && a.task.created_by !== myId)
-      const newMsgs = (msgRes.data ?? []) as { id: string; task_id: string; body: string; sender_id: string }[]
+      const newMsgs = (msgRes.data ?? []) as unknown as { id: string; task_id: string; body: string; sender_id: string; task: { title: string } | null }[]
 
       const { data: staff } = await supabase.rpc('list_staff')
       const nameById = new Map(((staff ?? []) as { id: string; full_name: string }[]).map(s => [s.id, s.full_name]))
@@ -62,7 +63,7 @@ export default function TaskNotifications() {
 
       // Nachrichten-Popups: anhängen, einmalig.
       if (newMsgs.length) {
-        setMsgs(prev => [...prev, ...newMsgs.map(r => ({ id: `msg-${r.id}`, task_id: r.task_id, body: r.body, from: nameById.get(r.sender_id) || '' }))])
+        setMsgs(prev => [...prev, ...newMsgs.map(r => ({ id: `msg-${r.id}`, task_id: r.task_id, body: r.body, from: nameById.get(r.sender_id) || '', title: r.task?.title ?? '' }))])
         await supabase.from('crm_task_messages').update({ notified_at: now }).in('id', newMsgs.map(r => r.id))
       }
     } catch (e) { console.warn('[TaskNotifications] poll:', e) } finally { busy.current = false }
@@ -84,7 +85,8 @@ export default function TaskNotifications() {
       setAccepts(prev => prev.filter(x => x.id !== p.id))   // Popup schließt sich
     } catch (e) { console.error('[TaskNotifications] accept:', e) } finally { setAccepting(null) }
   }
-  const openTask = () => { setMsgs([]); navigate('/admin/crm/tasks') }
+  // Direkt in die Aufgabe springen (Tasks.tsx liest ?task=), nicht nur zur Liste.
+  const openTask = (taskId?: string) => { setMsgs([]); navigate(taskId ? `/admin/crm/tasks?task=${taskId}` : '/admin/crm/tasks') }
   const dismissMsg = (id: string) => setMsgs(p => p.filter(x => x.id !== id))
 
   return (
@@ -103,7 +105,7 @@ export default function TaskNotifications() {
               className="flex-1 text-xs font-semibold text-white px-3 py-2 rounded-lg disabled:opacity-60" style={{ backgroundColor: '#10b981' }}>
               {accepting === p.id ? t('common.saving', '…') : `✋ ${t('crm.tasks.accept', 'Aufgabe annehmen')}`}
             </button>
-            <button onClick={openTask} className="text-xs font-medium text-gray-500 px-2 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
+            <button onClick={() => openTask(p.task_id)} className="text-xs font-medium text-gray-500 px-2 py-2 rounded-lg border border-gray-200 hover:bg-gray-50">
               {t('crm.tasks.openTask', 'Öffnen')}
             </button>
           </div>
@@ -119,9 +121,10 @@ export default function TaskNotifications() {
             </div>
             <button onClick={() => dismissMsg(p.id)} className="text-gray-400 hover:text-gray-600 text-sm leading-none">✕</button>
           </div>
-          {p.from && <p className="text-xs text-gray-400 mt-1">{t('crm.tasks.from', 'von')} {p.from}</p>}
+          {p.title && <p className="text-xs font-semibold text-gray-700 mt-1 line-clamp-2">📋 {p.title}</p>}
+          {p.from && <p className="text-xs text-gray-400 mt-0.5">{t('crm.tasks.from', 'von')} {p.from}</p>}
           <p className="text-sm text-gray-700 mt-1 line-clamp-3">{p.body}</p>
-          <button onClick={openTask} className="mt-2 text-xs font-semibold text-white px-3 py-1.5 rounded-lg" style={{ backgroundColor: '#ff795d' }}>
+          <button onClick={() => openTask(p.task_id)} className="mt-2 text-xs font-semibold text-white px-3 py-1.5 rounded-lg" style={{ backgroundColor: '#ff795d' }}>
             {t('crm.tasks.openTask', 'Zur Aufgabe')} →
           </button>
         </div>

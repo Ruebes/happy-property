@@ -1668,7 +1668,11 @@
       "rememberPerson": "Person merken - steht beim nächsten Mal in der Auswahl",
       "roleZuarbeit": "Zuarbeit",
       "externalAssignees2": "Weitere Person - auch ohne CRM-Zugang",
-      "externalHint2": "Steht jemand nicht oben? Name + WhatsApp-Nummer (oder Mail) genügt - die Aufgabe kommt per Nachricht von Lotte."
+      "externalHint2": "Steht jemand nicht oben? Name + WhatsApp-Nummer (oder Mail) genügt - die Aufgabe kommt per Nachricht von Lotte.",
+      "parentCtx": "Zuarbeit zu",
+      "parentHistory": "Bisheriger Verlauf",
+      "openParent": "Hauptaufgabe öffnen",
+      "notFound": "Aufgabe nicht gefunden oder bereits archiviert."
     },
     "home": {
       "hello": "Hallo",
@@ -5855,7 +5859,10 @@
       "offen": "Offen",
       "in_arbeit": "In Arbeit",
       "erledigt": "Erledigt"
-    }
+    },
+    "parentCtx": "Zuarbeit zur Aufgabe",
+    "parentBy": "gestellt von {{name}}",
+    "parentHistory": "Bisheriger Verlauf"
   },
   "numberStepper": {
     "decrease": "weniger",

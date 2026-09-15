@@ -55,20 +55,35 @@ Deno.serve(async (req) => {
 
     // ── info: Zustand für die Link-Seite ────────────────────────────────────
     if (!action || action === 'info') {
+      // Teilaufgabe: Hauptaufgabe + letzte Nachrichten mitgeben, damit der
+      // Zuarbeitende den Bezug sieht (RPC läuft als SECURITY DEFINER).
+      let parent: unknown = null
+      if (task.parent_task_id) {
+        const { data: pc } = await supabase.rpc('task_parent_context', { t: task.id })
+        parent = pc ?? null
+      }
       return json({
         ok: true, title: task.title, description: task.description,
         status: task.status, statusLabel: statusLabel(task.status), lang,
         assignee: label, accepted: !!asg.accepted_at, done: task.status === 'erledigt',
+        parent,
       })
     }
 
     // ── note: Bemerkung schreiben (an den Ersteller, sichtbar für alle) ──────
+    // Freitext (keine Status-Notiz) wird sofort extern gemeldet - WhatsApp/Mail an
+    // den Ersteller, mit Aufgabentitel und Direktlink. Vorher kam so eine Rückfrage
+    // nur als In-App-Popup ohne Aufgabenbezug an.
     const addNote = async (body: string, prefix = '') => {
       const text = (prefix + body).slice(0, 4000)
-      await supabase.from('crm_task_messages').insert({
+      const { data: ins } = await supabase.from('crm_task_messages').insert({
         task_id: task.id, sender_id: asg.profile_id ?? null, sender_label: label,
         recipient_id: task.created_by, body: text,
-      })
+      }).select('id').maybeSingle()
+      if (!prefix && ins?.id) {
+        await supabase.functions.invoke('task-notify', { body: { mode: 'message', message_id: ins.id } })
+          .catch((e: unknown) => console.warn('[task-action] message notify:', e))
+      }
     }
 
     if (action === 'note') {

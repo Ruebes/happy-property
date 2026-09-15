@@ -6,7 +6,8 @@ import { supabase } from '../lib/supabase'
 // ── Öffentliche Aufgaben-Seite (per Token, kein Login) ───────────────────────
 // Aufgerufen über den Link aus Erinnerungs-Mail/WhatsApp. Der/die Zuständige kann
 // die Aufgabe annehmen, als erledigt markieren und eine Bemerkung hinterlassen.
-interface Info { title: string; description: string | null; statusLabel: string; assignee: string; accepted: boolean; done: boolean; status: string; lang?: string }
+interface ParentCtx { title: string; description: string | null; creator: string; messages: { who: string; body: string; created_at: string }[] }
+interface Info { title: string; description: string | null; statusLabel: string; assignee: string; accepted: boolean; done: boolean; status: string; lang?: string; parent?: ParentCtx | null }
 
 const CORAL = '#ff795d'
 
@@ -73,6 +74,25 @@ export default function TaskAction() {
               {info.description && <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{info.description}</p>}
               <p className="text-xs text-gray-400 mt-3">{t('taskAction.assignedTo', 'Hallo {{name}}, diese Aufgabe ist dir zugeordnet.', { name: info.assignee.split(' ')[0] })}</p>
             </div>
+
+            {/* Teilaufgabe: Bezug zur Hauptaufgabe + bisheriger Verlauf, sonst weiß
+                der Zuarbeitende nicht, worauf sich z.B. eine Rückfrage bezieht. */}
+            {info.parent && (
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/60 p-4 text-sm">
+                <p className="text-[11px] font-semibold text-indigo-500 uppercase tracking-wide">🔗 {t('taskAction.parentCtx', 'Zuarbeit zur Aufgabe')}</p>
+                <p className="font-semibold text-gray-900 mt-0.5">{info.parent.title}</p>
+                {info.parent.creator && <p className="text-xs text-gray-400">{t('taskAction.parentBy', 'gestellt von {{name}}', { name: info.parent.creator })}</p>}
+                {info.parent.description && <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">{info.parent.description}</p>}
+                {info.parent.messages.filter(m => !/^[✅▶🏁✋]/u.test(m.body.trim())).length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    <p className="text-[11px] font-semibold text-gray-500">{t('taskAction.parentHistory', 'Bisheriger Verlauf')}</p>
+                    {info.parent.messages.filter(m => !/^[✅▶🏁✋]/u.test(m.body.trim())).slice(-4).map((m, i) => (
+                      <p key={i} className="text-xs text-gray-700"><span className="font-semibold">{m.who}</span>: {m.body}</p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {info.done ? (
               <div className="rounded-2xl bg-green-50 border border-green-100 p-4 text-center">
