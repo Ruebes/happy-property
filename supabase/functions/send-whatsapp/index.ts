@@ -1,4 +1,5 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { waAccountGone, waAccountRecovered } from '../_shared/waAccountAlert.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
@@ -457,6 +458,23 @@ Deno.serve(async (req) => {
     }
 
     const okResults = results.filter(r => (r as { ok?: boolean }).ok)
+
+    // ── Alarm an Sven, wenn das Absender-Handy in TimelinesAI abgemeldet ist ──
+    // Sonst merkt es niemand (14.9.2026: anderthalb Tage tot). Entwarnung beim
+    // ersten erfolgreichen Versand danach. Fehler hier dürfen den Versand nie kippen.
+    try {
+      const accountGone = results.some(r => !(r as { ok?: boolean }).ok
+        && /whatsapp account not found/i.test(JSON.stringify((r as { data?: unknown }).data ?? '')))
+      if (accountGone) {
+        const r = await waAccountGone(supabase, senderPhone, 'Whatsapp account not found')
+        console.warn(`[send-whatsapp] Konto ${senderPhone} nicht verbunden - Alarm: ${r}`)
+      } else if (okResults.length > 0) {
+        const r = await waAccountRecovered(supabase, senderPhone)
+        if (r === 'mailed') console.warn(`[send-whatsapp] Konto ${senderPhone} wieder verbunden - Entwarnung verschickt`)
+      }
+    } catch (alertErr) {
+      console.error('[send-whatsapp] Alarm-Mail fehlgeschlagen:', alertErr)
+    }
 
     // ── Aktivität in CRM loggen ───────────────────────────────────
     // Der Betreff MUSS erkennbar machen, WER die Nachricht bekommen hat. Ging sie
