@@ -31,6 +31,14 @@ import { buildIcs, toB64 } from '../_shared/ics.ts'
 // unter der 15-Min-Toleranz des Verschiebe-Guards für Terminerinnerungen.
 const QUOTA_MAX_RETRIES = 8
 const QUOTA_RETRY_MIN   = 10
+// Wiederholung, wenn TimelinesAI das Absender-Konto nicht kennt (404 "Whatsapp
+// account not found"): das Handy ist in TimelinesAI abgemeldet, bis Sven es per
+// QR-Code neu verbindet geht nichts raus. Vorher war jede Nachricht in diesem
+// Zustand sofort endgültig 'failed' (14./15.9.2026: 9 Nachrichten, u.a. die
+// Registrierungs-Aufgaben nach einer Reservierung). Jetzt: bis zu 24 Stunden
+// alle 30 Minuten neu versuchen, danach endgültig 'failed'.
+const ACCOUNT_MAX_RETRIES = 48
+const ACCOUNT_RETRY_MIN   = 30
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -445,6 +453,7 @@ Deno.serve(async (req: Request) => {
         // Wiederholung wegen WhatsApp-Kontingent darf sie nicht nochmal kommen.
         let emailSent = false
         let waQuotaHit = false
+        let waAccountGone = false
         const retryCount = msg.retry_count ?? 0
 
         // ── Termin-Bot: an booking-bot delegieren (dynamische AM/PM-Slots statt statischem
@@ -740,6 +749,7 @@ Deno.serve(async (req: Request) => {
                 errors.push(`whatsapp: ${errMsg}`)
                 success = false
                 waQuotaHit = /quota_exceeded|mass sending quota/i.test(errMsg)
+                waAccountGone = /whatsapp account not found/i.test(errMsg)
               }
             } else {
               console.warn(`[process-scheduled] Timelines nicht konfiguriert – simulierter WA an ${phone}`)
@@ -765,8 +775,12 @@ Deno.serve(async (req: Request) => {
         // QUOTA_MAX_RETRIES Wiederholungen im Abstand von QUOTA_RETRY_MIN Minuten.
         // Ist die Mail in diesem Lauf schon raus, wird die Nachricht auf reines
         // WhatsApp umgestellt, damit der Kunde die Mail nicht doppelt bekommt.
-        if (waQuotaHit && retryCount < QUOTA_MAX_RETRIES) {
-          const next = new Date(Date.now() + QUOTA_RETRY_MIN * 60000).toISOString()
+        const retryPlan =
+          waQuotaHit    && retryCount < QUOTA_MAX_RETRIES   ? { min: QUOTA_RETRY_MIN,   max: QUOTA_MAX_RETRIES,   tag: 'quota',   grund: 'TimelinesAI-Kontingent erschöpft' } :
+          waAccountGone && retryCount < ACCOUNT_MAX_RETRIES ? { min: ACCOUNT_RETRY_MIN, max: ACCOUNT_MAX_RETRIES, tag: 'account', grund: 'WhatsApp-Konto in TimelinesAI nicht verbunden (Handy per QR-Code neu verbinden)' } :
+          null
+        if (retryPlan) {
+          const next = new Date(Date.now() + retryPlan.min * 60000).toISOString()
           const { error: rqErr } = await supabase
             .from('scheduled_messages')
             .update({
@@ -774,12 +788,12 @@ Deno.serve(async (req: Request) => {
               scheduled_at:  next,
               retry_count:   retryCount + 1,
               ...(emailSent && msg.type === 'both' ? { type: 'whatsapp' } : {}),
-              error_message: `TimelinesAI-Kontingent erschöpft - Wiederholung ${retryCount + 1}/${QUOTA_MAX_RETRIES} um ${next.slice(11, 16)} UTC`,
+              error_message: `${retryPlan.grund} - Wiederholung ${retryCount + 1}/${retryPlan.max} um ${next.slice(11, 16)} UTC`,
             })
             .eq('id', msg.id)
           if (!rqErr) {
-            console.warn(`[process-scheduled] Kontingent: ${msg.id} neu geplant (${retryCount + 1}/${QUOTA_MAX_RETRIES}) auf ${next}`)
-            processed.push({ id: msg.id, result: 'retry:quota' })
+            console.warn(`[process-scheduled] ${retryPlan.tag}: ${msg.id} neu geplant (${retryCount + 1}/${retryPlan.max}) auf ${next}`)
+            processed.push({ id: msg.id, result: `retry:${retryPlan.tag}` })
             continue
           }
           console.error(`[process-scheduled] Retry-Update fehlgeschlagen (${msg.id}):`, rqErr.message)

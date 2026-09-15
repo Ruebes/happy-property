@@ -508,6 +508,11 @@ Deno.serve(async (req) => {
         ...(okResults.length === 0 && firstErr ? { error:
           /quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? ''))
             ? 'WhatsApp-Monatskontingent bei TimelinesAI ist aufgebraucht (50 Nachrichten im aktuellen Tarif). Bis zum Monatswechsel geht kein automatischer Versand mehr - Tarif unter app.timelines.ai/account/subscription hochstufen.'
+            // 404 "Whatsapp account not found" = das Absender-Handy ist in TimelinesAI
+            // abgemeldet (14.9.2026: alles tot, obwohl Kontingent voll). Klartext statt
+            // Roh-JSON, damit sofort klar ist, dass QR-Code-Neuverbindung noetig ist.
+            : /whatsapp account not found/i.test(JSON.stringify(firstErr.data ?? ''))
+            ? `WhatsApp-Konto ${senderPhone} ist in TimelinesAI nicht verbunden (Whatsapp account not found). Handy unter app.timelines.ai per QR-Code neu verbinden - bis dahin geht keine WhatsApp raus.`
             : `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'}): ${JSON.stringify(firstErr.data ?? '').slice(0, 180)}`,
           ...(/quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? '')) ? { quota_exceeded: true } : {}) } : {}),
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
