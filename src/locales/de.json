@@ -6251,6 +6251,7 @@
     "colNight": "Nacht",
     "colRevenue": "Einnahmen",
     "total": "Gesamt (Jahr 1)",
-    "vsFull": "Ohne Selbstnutzung bei gleicher Auslastung: {{rent}} €"
+    "vsFull": "Ohne Selbstnutzung bei gleicher Auslastung: {{rent}} €",
+    "clickHint2": "Klick wechselt: vermietet / Selbstnutzung"
   }
 }

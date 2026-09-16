@@ -3,14 +3,15 @@ import { MONTH_PLAN_ALL_LET, monthBreakdown, monthPlanCounts, type MonthPlan, ty
 import { formatMonthRanges, monthName, monthsWithUse } from '../../lib/monthPlan'
 
 // ── Monatskalender Mischnutzung ──────────────────────────────────────────────
-// Zwoelf Chips, Klick wechselt: vermietet → Selbstnutzung → nicht vermietet.
-// Dazu Kurzfassung (welche Monate, MwSt-Anteil) und - wenn ein Saisonmodell
-// gesetzt ist - die Monatstabelle, damit Sven sieht, welche Auslastung die
-// Engine je Monat wirklich rechnet. Eigenstaendige Komponente auf Modulebene
-// (keine Inline-Komponente im Wizard, sonst Remount pro Render).
+// Zwoelf Chips, Klick wechselt: vermietet ↔ Selbstnutzung. Nur die Monate, in
+// denen der Eigentuemer selbst dort wohnt, fallen raus - welche auch immer es
+// sind (Sven 16.9.); alle anderen bleiben vermietet. Dazu Kurzfassung (welche
+// Monate, MwSt-Anteil) und - wenn ein Saisonmodell gesetzt ist - die
+// Monatstabelle. Eigenstaendige Komponente auf Modulebene (keine
+// Inline-Komponente im Wizard, sonst Remount pro Render). Der Zustand 'empty'
+// bleibt in der Engine erhalten, wird aber nicht mehr angeboten.
 
-const NEXT: Record<MonthUse, MonthUse> = { let: 'self', self: 'empty', empty: 'let' }
-const WINTER = [12, 1, 2]
+const NEXT: Record<MonthUse, MonthUse> = { let: 'self', self: 'let', empty: 'let' }
 
 type Props = {
   value: MonthPlan | null
@@ -28,7 +29,6 @@ export function MonthPlanPicker({ value, onChange, season, compact }: Props) {
   const emptyMonths = monthsWithUse(plan, 'empty')
   const joiner = t('monthPlan.rangeJoiner', 'bis')
   const vatShare = Math.round((12 - counts.self) / 12 * 1000) / 10
-  const winterEmpty = WINTER.every(m => plan[m - 1] === 'empty')
   const setMonth = (m: number, use: MonthUse) => { const n = [...plan] as MonthPlan; n[m - 1] = use; onChange(n) }
   const chip = (use: MonthUse) => use === 'self'
     ? 'bg-orange-500 border-orange-500 text-white'
@@ -42,7 +42,7 @@ export function MonthPlanPicker({ value, onChange, season, compact }: Props) {
     <div className="space-y-2">
       <div className="flex flex-wrap gap-1">
         {plan.map((use, i) => (
-          <button key={i} type="button" title={t('monthPlan.clickHint', 'Klick wechselt: vermietet → Selbstnutzung → nicht vermietet')}
+          <button key={i} type="button" title={t('monthPlan.clickHint2', 'Klick wechselt: vermietet / Selbstnutzung')}
             onClick={() => setMonth(i + 1, NEXT[use])}
             className={`${sz} rounded-lg border font-medium transition-colors ${chip(use)}`}>
             {monthName(i + 1, lang, 'short')}
@@ -52,11 +52,7 @@ export function MonthPlanPicker({ value, onChange, season, compact }: Props) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-white border border-gray-300" /> {t('monthPlan.legendLet', 'vermietet')}</span>
         <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500" /> {t('monthPlan.legendSelf', 'Selbstnutzung')}</span>
-        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-200" /> {t('monthPlan.legendEmpty', 'nicht vermietet')}</span>
-        <button type="button" onClick={() => { const n = [...plan] as MonthPlan; for (const m of WINTER) n[m - 1] = winterEmpty ? 'let' : 'empty'; onChange(n) }}
-          className={`px-2 py-0.5 rounded border ${winterEmpty ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600 hover:border-orange-300'}`}>
-          {winterEmpty ? t('monthPlan.winterLetAgain', 'Winter wieder vermieten') : t('monthPlan.winterEmpty', 'Winter (Dez, Jan, Feb) nicht vermieten')}
-        </button>
+        {counts.empty > 0 && <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-200" /> {t('monthPlan.legendEmpty', 'nicht vermietet')}</span>}
         {(counts.self > 0 || counts.empty > 0) && (
           <button type="button" onClick={() => onChange([...MONTH_PLAN_ALL_LET] as MonthPlan)} className="px-2 py-0.5 rounded border border-gray-200 text-gray-600 hover:border-orange-300">
             {t('monthPlan.reset', 'Alle vermieten')}
