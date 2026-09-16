@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { unitGross } from '../../lib/price'
 import { createCalcOutboxDraft } from '../../lib/calcOutbox'
-import { DEFAULT_PARAMS, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, seasonBreakdown, applySeason } from '../../lib/rechner'
+import { DEFAULT_PARAMS, compute, vatSplit, type CalcParams, type CalcItem, type VatMode, type MonthPlan, seasonBreakdown, applySeason, effectiveMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET } from '../../lib/rechner'
+import { MonthPlanPicker, MonthPlanTable } from './MonthPlanPicker'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 
@@ -22,7 +23,7 @@ const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
 // Objektwerte: Vermietungsart, Saisonmodell, Verwaltung, Einrichtung.
-interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean; vatMode: VatMode; livingSqm: number; selfUse: number }
+interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean; vatMode: VatMode; livingSqm: number }
 // fallbackSqm: Wohnflaeche aus dem CRM-Objekt, wenn die (aeltere) Berechnung noch
 // kein eigenes livingSqm gespeichert hat.
 const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null): PerObj => ({
@@ -34,8 +35,6 @@ const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null
   furnCost: pr?.furnCost ?? 0,
   furnFree: !!pr?.furnFree,
   vatMode: pr?.vatMode ?? 'standard19',
-  // Mischnutzung: Monate Selbstnutzung je Jahr (0 = reine Vermietung)
-  selfUse: pr?.selfUseMonths ?? 0,
   // 'livingSqm: null' ist eine GESPEICHERTE Entscheidung (keine Flaeche = alles
   // beguenstigt) - nur wenn das Feld ganz fehlt (Alt-Berechnung), aus dem
   // CRM-Objekt vorbelegen.
@@ -51,8 +50,18 @@ const applyPerObj = (base: CalcParams, o: PerObj): CalcParams => ({
   furnFree: o.furnFree,
   vatMode: o.vatMode,
   livingSqm: o.livingSqm > 0 ? o.livingSqm : null,
-  selfUseMonths: o.letType === 'short' ? Math.max(0, Math.min(11, o.selfUse || 0)) : 0,
+  // Mischnutzung ist GETEILT (Sven 16.9.): der Eigentuemer wohnt in denselben
+  // Monaten dort, egal welche Wohnung. Kalender aus den geteilten Werten, nur
+  // bei Kurzzeit wirksam; die Monatszahl folgt dem Kalender (Alt-Berechnungen
+  // ohne Kalender behalten ihre pauschale Zahl).
+  ...sharedPlanFields(base, o.letType),
 })
+const sharedPlanFields = (base: CalcParams, letType: 'short' | 'long'): { monthPlan: MonthPlan | null; selfUseMonths: number } => {
+  if (letType !== 'short') return { monthPlan: null, selfUseMonths: 0 }
+  const plan = effectiveMonthPlan(base.monthPlan)
+  if (plan) return { monthPlan: plan, selfUseMonths: monthPlanCounts(plan).self }
+  return { monthPlan: null, selfUseMonths: base.monthPlan ? 0 : Math.max(0, Math.min(11, base.selfUseMonths ?? 0)) }
+}
 
 export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
   const { t } = useTranslation()
@@ -86,8 +95,12 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
   // aus dem ersten Objekt vorbefüllen. Die Objekte selbst bleiben unverändert.
   useEffect(() => {
     const it0 = editCalc?.content?.items?.[0]
-    if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params })
     const its = editCalc?.content?.items ?? []
+    // Kalender/Selbstnutzung sind geteilt: aus dem ersten Objekt nehmen, das
+    // einen traegt (das erste Objekt koennte Langzeit sein und keinen haben).
+    const withPlan = its.find(i => effectiveMonthPlan(i.params?.monthPlan))?.params
+    const withCount = its.find(i => (i.params?.selfUseMonths ?? 0) > 0)?.params
+    if (it0?.params) setP({ ...DEFAULT_PARAMS, ...it0.params, monthPlan: withPlan?.monthPlan ?? null, selfUseMonths: withPlan ? monthPlanCounts(withPlan.monthPlan).self : (withCount?.selfUseMonths ?? 0) })
     setKeptItems(its)
     setPerObj(Object.fromEntries(its.map((it, i) => [`k${i}`, perObjFrom(it.params, it.size_sqm)])))
   }, [editCalc])
@@ -129,7 +142,6 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           // (im Bearbeiten-Modus aus dem ersten Objekt geseedeten) p erben.
           vatMode: 'standard19',
           livingSqm: a.unit.size_sqm ?? 0,
-          selfUse: 0,
         }
       }
       return n
@@ -178,7 +190,8 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
     const preview = compute(refObj ? applyPerObj(base, refObj) : base)
     const vatIdx = preview.vatA.findIndex(v => v > 0)
     if (vatIdx < 0) { setErr(t('rechnerWizard.noVatRefundCalculated', 'Keine USt.-Erstattung berechnet — dafür Kurzzeit-Vermietung wählen.')); return }
-    const pp = [...p.ppVals]; pp[vatIdx] = Math.round(preview.vatAmt)
+    // Sondertilgung = die tatsaechlich erstattete USt. (bei Selbstnutzung anteilig), nicht die volle.
+    const pp = [...p.ppVals]; pp[vatIdx] = Math.round(preview.vatA[vatIdx])
     setP(prev => ({ ...prev, ppVals: pp })); setShowAdvanced(true); setErr('')
   }
 
@@ -414,31 +427,30 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             <input type="checkbox" checked={o.furnFree} onChange={e => upd({ furnFree: e.target.checked })} className="accent-orange-500" />
             {t('rechnerWizard.furnFree', 'Einrichtung kostenfrei')}
           </label>
-          {/* Mischnutzung (Sven 16.9.): Haken + Monate. Die Engine erstattet die
-              MwSt nur anteilig ((12 - Monate)/12) und rechnet in diesen Monaten
-              keine Miete. Nur bei Kurzzeit - Langzeit kennt keine Erstattung. */}
-          {o.letType === 'short' && (
-            <label className="flex items-center gap-1.5 text-xs text-gray-600">
-              <input type="checkbox" checked={o.selfUse > 0} onChange={e => upd({ selfUse: e.target.checked ? 2 : 0 })} className="accent-orange-500" />
-              🏠 {t('rechnerWizard.selfUse', 'Selbstnutzung')}
-            </label>
-          )}
         </div>
-        {o.letType === 'short' && o.selfUse > 0 && (() => {
-          const share = Math.round((12 - o.selfUse) / 12 * 1000) / 10
+        {/* Mischnutzung wirkt je Objekt, wird aber GETEILT eingestellt (Abschnitt
+            Vermietung & Steuer). Hier nur, was der Kalender fuer DIESES Objekt
+            bedeutet - mit eigener Auslastung und eigenem Preis/Nacht. */}
+        {o.letType === 'short' && (() => {
+          const plan = effectiveMonthPlan(p.monthPlan)
+          if (!plan) return null
+          const c = monthPlanCounts(plan)
+          const season = o.occ > 0 && o.adr > 0 ? { totalOcc: o.occ, adrHigh: o.adr } : null
+          const share = Math.round((12 - c.self) / 12 * 1000) / 10
           return (
-            <div className="mt-2 rounded-lg border border-orange-100 bg-orange-50/60 p-2.5 flex flex-wrap items-center gap-3">
-              <label className="flex items-center gap-2 text-xs text-gray-600">
-                <span>{t('rechnerWizard.selfUseMonths', 'Monate im Jahr')}</span>
-                <select value={o.selfUse} onChange={e => upd({ selfUse: Number(e.target.value) })} className="border border-orange-200 bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400">
-                  {Array.from({ length: 11 }, (_, i) => i + 1).map(m => (
-                    <option key={m} value={m}>{m} {m === 1 ? t('rechnerWizard.month1', 'Monat') : t('rechnerWizard.monthN', 'Monate')}</option>
-                  ))}
-                </select>
-              </label>
-              <span className="text-[11px] text-gray-500">
-                {t('rechnerWizard.selfUseHint', 'Vermietung {{share}} % des Jahres → MwSt-Erstattung und Miete anteilig', { share: share.toLocaleString('de-DE') })}
-              </span>
+            <div className="mt-2 rounded-lg border border-orange-100 bg-orange-50/60 p-2.5 text-[11px] text-gray-600 space-y-1.5">
+              <p>
+                🏠 {season
+                  ? t('rechnerWizard.objPlanSeason', 'Kalender: Jahresmiete {{rent}} € statt {{full}} € ({{occ}} % Auslastung auf die vermieteten Monate)', { rent: eur0(seasonBreakdown(season, plan).rent), full: eur0(seasonBreakdown(season, null).rent), occ: o.occ.toLocaleString('de-DE') })
+                  : t('rechnerWizard.objPlanFlat', 'Kalender: Miete für {{n}} von 12 Monaten', { n: c.let })}
+                {' · ' + t('monthPlan.summaryVat', 'MwSt-Erstattung {{share}} %', { share: share.toLocaleString('de-DE') })}
+              </p>
+              {season && (
+                <details>
+                  <summary className="cursor-pointer text-orange-700">{t('rechnerWizard.showMonths', 'Monate anzeigen')}</summary>
+                  <div className="mt-1.5"><MonthPlanTable plan={plan} season={season} /></div>
+                </details>
+              )}
             </div>
           )
         })()}
@@ -621,6 +633,35 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
               {numF(t('rechnerWizard.appreciationLabel', 'Wertsteigerung'), 'appreciationPct', '%', '0.1')}
             </div>
             {p.letType === 'short' && <div className="mt-3">{toggle(`🏨 ${t('rechnerWizard.hotelConceptLabel', 'Hotelkonzept')}`, 'hotelConcept', t('rechnerWizard.hotelConceptHint', 'Verwaltung übernimmt kompletten Hotelservice'))}</div>}
+            {/* Mischnutzung (Sven 16.9.): GETEILT fuer alle Objekte - der Eigentuemer
+                wohnt in denselben Monaten dort, egal welche Wohnung. Die Engine
+                erstattet die MwSt nur fuer den vermieteten Anteil und rechnet die
+                markierten Monate ohne Miete; beim Saisonmodell gilt die Auslastung
+                nur fuer die vermieteten Monate. */}
+            {p.letType === 'short' && p.dealType === 'single' && (() => {
+              const on = !!p.monthPlan || (p.selfUseMonths ?? 0) > 0
+              return (
+                <div className="mt-3 space-y-3">
+                  <button type="button" onClick={() => setP(prev => ({ ...prev, monthPlan: on ? null : [...MONTH_PLAN_ALL_LET] as MonthPlan, selfUseMonths: 0 }))}
+                    className={`flex items-center justify-between w-full px-3.5 py-2.5 rounded-xl border text-sm transition-all ${on ? 'border-orange-300 bg-orange-50' : 'border-gray-200 bg-white'}`}>
+                    <span className="text-left"><span className="font-medium text-gray-700">🏠 {t('rechnerWizard.selfUseGlobal', 'Selbstnutzung (gilt für alle Objekte)')}</span>
+                      <span className="block text-[11px] text-gray-400">{t('rechnerWizard.selfUseGlobalHint', 'Monate, in denen der Käufer selbst dort wohnt: MwSt-Erstattung und Miete anteilig')}</span></span>
+                    <span className={`w-9 h-5 rounded-full relative transition-colors shrink-0 ${on ? 'bg-orange-500' : 'bg-gray-300'}`}>
+                      <span className="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" style={{ left: on ? 18 : 2 }} />
+                    </span>
+                  </button>
+                  {on && (
+                    <div className="rounded-xl border border-orange-100 bg-orange-50/60 p-3 space-y-2">
+                      <p className="text-[11px] text-gray-500">{t('rechnerWizard.selfUseCalHint', 'Monate anklicken, in denen der Käufer selbst dort wohnt. Die Auslastung gilt dann nur für die vermieteten Monate, die MwSt-Erstattung anteilig.')}</p>
+                      {!p.monthPlan && (p.selfUseMonths ?? 0) > 0 && (
+                        <p className="text-[11px] text-orange-700">{t('rechnerWizard.selfUseLegacy', 'Bisher pauschal {{n}} Monate ohne Kalender - bitte die Monate unten markieren.', { n: p.selfUseMonths })}</p>
+                      )}
+                      <MonthPlanPicker value={p.monthPlan ?? null} onChange={plan => setP(prev => ({ ...prev, monthPlan: plan, selfUseMonths: 0 }))} />
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
             {p.letType === 'short' && p.dealType === 'single' && (
               <div className="mt-3 space-y-3">
                 <button type="button" onClick={() => setP(prev => ({ ...prev, season: prev.season ? null : { totalOcc: 56, adrHigh: 120 } }))}
@@ -632,7 +673,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
                   </span>
                 </button>
                 {p.season && (() => {
-                  const sb = seasonBreakdown(p.season)
+                  const sb = seasonBreakdown(p.season, effectiveMonthPlan(p.monthPlan))
                   const effY = applySeason(p).yieldPct
                   return (
                     <div className="rounded-xl border border-orange-100 bg-orange-50/40 p-3 space-y-3">
@@ -671,7 +712,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
                               <td className="py-1 pr-2">{t('rechnerWizard.seasonTotal', 'Gesamt')}</td>
                               <td className="py-1 pr-2" />
                               <td className="py-1 pr-2 text-right">{sb.occPct.toLocaleString('de-DE')} %</td>
-                              <td className="py-1 pr-2 text-right">{sb.occDays} / {sb.totalDays}</td>
+                              <td className="py-1 pr-2 text-right">{sb.occDays} / {sb.letDays}</td>
                               <td className="py-1 pr-2" />
                               <td className="py-1 text-right">{sb.rent.toLocaleString('de-DE')} €</td>
                             </tr>

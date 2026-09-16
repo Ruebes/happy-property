@@ -132,7 +132,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
         const season = letType === 'short' ? (p.season ?? null) : null
         // Bei Saisonmodell rechnet die Engine daraus - Miete entsprechend angleichen,
         // sonst zeigt der Simulator eine andere Miete als er rechnet.
-        const seasonRent = rentFromSeason(season)
+        const monthPlan = letType === 'short' ? (p.monthPlan ?? null) : null
+        const seasonRent = rentFromSeason(season, monthPlan)
         return {
           ...u,
           letType,
@@ -144,7 +145,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             // Strategie 19 %, waehrend die Einzelrechnung 5/19 gemischt zeigt.
             vatMode: p.vatMode, livingSqm: p.livingSqm,
             // Mischnutzung (Selbstnutzung) nur bei Kurzzeit
-            selfUseMonths: letType === 'short' ? (p.selfUseMonths ?? 0) : 0,
+            selfUseMonths: letType === 'short' ? (p.selfUseMonths ?? 0) : 0, monthPlan,
           },
         }
       }))

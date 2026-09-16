@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { compute, seasonBreakdown, type CalcContent, type CalcItem, type CalcResult } from '../lib/rechner'
+import { formatMonthRanges, monthName, monthsWithUse } from '../lib/monthPlan'
 import { DECK_LOGO } from '../lib/deckTypes'
 
 // ── Öffentliche Rendite-Rechnung / Immobilienvergleich (HTML-Microsite) ───────
@@ -179,9 +180,11 @@ function KV({ k, v, color, strong }: { k: ReactNode; v: ReactNode; color?: strin
 
 // ── Detaillierte Einzel-Auswertung (8 Abschnitte, exakt nach Original) ────────
 function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const r = row.res!
   const p = row.item.params!
+  // Vermietungsanteil in der Sprache des Lesers (Komma statt Punkt auf der deutschen Seite).
+  const shareTxt = (Math.round(r.letShare * 1000) / 10).toLocaleString(i18n.language)
   const yl = (i: number) => i === 0 ? `${r.yN[0]} (${r.mF} Mon.)` : String(r.yN[i])
   // abgeleitete Reihen (Formeln 1:1 aus dem Original-Export)
   const cumRent: number[] = []; { let a = 0; r.rents.forEach(x => { a += x; cumRent.push(a) }) }
@@ -268,9 +271,12 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
               : t('rechnung.vatMode200', 'Reduziert – 5% bis 200 m²')) + (r.livingSqm > 0 ? ` (${r.livingSqm} m²)` : '')} />}
             <KV k={r.vatMode !== 'standard19' ? t('rechnung.vatMixed', 'Umsatzsteuer (5%/19%)') : t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
             {r.selfUseMonths > 0 && (<>
-              <KV k={t('rechnung.selfUse', 'Selbstnutzung')} v={t('rechnung.selfUseValue', '{{m}} Monate/Jahr · Vermietung {{share}} %', { m: r.selfUseMonths, share: Math.round(r.letShare * 1000) / 10 })} />
-              <KV k={t('rechnung.vatRefundPartial', 'USt.-Erstattung anteilig')} v={eur(r.vatRefund)} />
+              <KV k={t('rechnung.selfUse', 'Selbstnutzung')} v={r.monthPlan
+                ? t('rechnung.selfUseMonthsValue', '{{months}} ({{count}} Monate)', { months: formatMonthRanges(monthsWithUse(r.monthPlan, 'self'), i18n.language, t('monthPlan.rangeJoiner', 'bis')), count: r.selfUseMonths })
+                : t('rechnung.selfUseValue', '{{m}} Monate/Jahr · Vermietung {{share}} %', { m: r.selfUseMonths, share: shareTxt })} />
+              <KV k={t('rechnung.vatRefundPartial', 'USt.-Erstattung anteilig')} v={`${eur(r.vatRefund)} (${shareTxt} %)`} />
             </>)}
+            {r.emptyMonths > 0 && r.monthPlan && <KV k={t('rechnung.notLet', 'Nicht vermietet')} v={formatMonthRanges(monthsWithUse(r.monthPlan, 'empty'), i18n.language, t('monthPlan.rangeJoiner', 'bis'))} />}
             <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
             <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
             <KV k={t('rechnung.rentGrowthAnnual', 'Mietsteigerung p.a.')} v={pct(r.rG)} />
@@ -283,10 +289,27 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
 
       {/* 2b. Saisonkalkulation Kurzzeitvermietung (nur wenn Saisonmodell aktiv) */}
       {p.season && p.letType === 'short' && (() => {
-        const sb = seasonBreakdown(p.season)
+        const plan = r.monthPlan   // Engine-Ergebnis ist die einzige Wahrheit (null = kein wirksamer Kalender)
+        const sb = seasonBreakdown(p.season, plan)
+        const useColor = (u: string) => u === 'self' ? { background: CORAL, color: '#fff' } : u === 'empty' ? { background: '#eeeeee', color: '#999', textDecoration: 'line-through' as const } : { background: '#fff', color: '#333', border: '1px solid #e5e5e5' }
         return (
           <>
             <H2Section>{t('rechnung.seasonTitle', 'Kurzzeitvermietung – Saisonkalkulation (Jahr 1)')}</H2Section>
+            {plan && (
+              <Card style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 12, color: '#777', marginBottom: 8 }}>{t('rechnung.monthPlanTitle', 'Nutzung im Jahr')}</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {plan.map((u, i) => (
+                    <span key={i} style={{ ...useColor(u), borderRadius: 8, padding: '5px 9px', fontSize: 12, fontWeight: 600 }}>{monthName(i + 1, i18n.language, 'short')}</span>
+                  ))}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 8, fontSize: 11.5, color: '#777' }}>
+                  <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#fff', border: '1px solid #ccc', verticalAlign: 'middle', marginRight: 4 }} />{t('monthPlan.legendLet', 'vermietet')}</span>
+                  <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: CORAL, verticalAlign: 'middle', marginRight: 4 }} />{t('monthPlan.legendSelf', 'Selbstnutzung')}</span>
+                  {r.emptyMonths > 0 && <span><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: '#ddd', verticalAlign: 'middle', marginRight: 4 }} />{t('monthPlan.legendEmpty', 'nicht vermietet')}</span>}
+                </div>
+              </Card>
+            )}
             <Card style={{ padding: 0, overflow: 'hidden' }}>
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
@@ -313,7 +336,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
                       <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{t('rechnung.seasonTotal', 'Gesamt')}</td>
                       <td style={td} />
                       <td style={{ ...td, fontWeight: 700 }}>{sb.occPct.toLocaleString('de-DE')} %</td>
-                      <td style={{ ...td, fontWeight: 700 }}>{sb.occDays} {t('rechnung.seasonOf', 'von')} {sb.totalDays}</td>
+                      <td style={{ ...td, fontWeight: 700 }}>{sb.occDays} {t('rechnung.seasonOf', 'von')} {sb.letDays}</td>
                       <td style={td} />
                       <td style={{ ...td, fontWeight: 700 }}>{sb.rent.toLocaleString('de-DE')} €</td>
                     </tr>
@@ -321,7 +344,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
                 </table>
               </div>
             </Card>
-            <Note>{t('rechnung.seasonNote', 'Saisonprofil auf Basis lokaler Markterfahrung (Paphos): Hochsaison Juni–August, Nachsaison September–Oktober, Vorsaison April–Mai, Nebensaison Mitte November–März (Weihnachten als kurzer Ausreißer eingerechnet). Preise der übrigen Saisons werden vom Hochsaisonpreis abgeleitet.')}</Note>
+            <Note>{t('rechnung.seasonNote', 'Saisonprofil auf Basis lokaler Markterfahrung (Paphos): Hochsaison Juni–August, Nachsaison September–Oktober, Vorsaison April–Mai, Nebensaison Mitte November–März (Weihnachten als kurzer Ausreißer eingerechnet). Preise der übrigen Saisons werden vom Hochsaisonpreis abgeleitet.')}{plan ? ' ' + t('rechnung.seasonPlanNote', 'Die Auslastung von {{occ}} % gilt für die vermieteten Monate; selbst genutzte und nicht vermietete Monate bringen keine Übernachtungen.', { occ: p.season.totalOcc.toLocaleString(i18n.language) }) : ''}</Note>
           </>
         )
       })()}
@@ -356,7 +379,9 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
         </div>
       </Card>
       {r.letT === 'short' && r.hotelConcept && <Note>🏨 <b>{t('rechnung.hotelConceptLabel', 'Hotelkonzept')}:</b> {t('rechnung.hotelConceptNote', 'Verwaltung übernimmt komplettes Hotelservice inkl. Reinigung, Check-in, Marketing & 24/7 Gästebetreuung.')}</Note>}
-      {r.selfUseMonths > 0 && <Note>🏠 <b>{t('rechnung.selfUse', 'Selbstnutzung')}:</b> {t('rechnung.selfUseNote', '{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { m: r.selfUseMonths, share: Math.round(r.letShare * 1000) / 10 })}</Note>}
+      {r.selfUseMonths > 0 && <Note>🏠 <b>{t('rechnung.selfUse', 'Selbstnutzung')}:</b> {r.monthPlan
+        ? t('rechnung.selfUseNoteMonths', 'Eigene Nutzung {{months}} ({{count}} Monate). Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { months: formatMonthRanges(monthsWithUse(r.monthPlan, 'self'), i18n.language, t('monthPlan.rangeJoiner', 'bis')), count: r.selfUseMonths, share: shareTxt })
+        : t('rechnung.selfUseNote', '{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { m: r.selfUseMonths, share: shareTxt })}</Note>}
       <Note>{t('rechnung.cashflowNote', 'Der Cashflow zeigt die tatsächlichen Einnahmen nach allen Kosten, Kreditraten und Steuern. Positive Werte bedeuten Überschuss aus der Immobilie. Die einmalige USt.-Erstattung ist separat ausgewiesen.')}</Note>
 
       {/* 4. Tabelle B – Darlehen / EK / Werte */}
@@ -511,7 +536,7 @@ function StrategyCards({ rows, isMobile }: { rows: Row[]; isMobile: boolean }) {
 }
 
 function CompareTable({ rows }: { rows: Row[] }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const td: CSSProperties = { padding: '11px 14px', fontSize: 13.5, borderBottom: '1px solid #f0f0f0', textAlign: 'right' }
   const lbl: CSSProperties = { ...td, textAlign: 'left', color: '#777' }
   const best = (vals: number[]) => { const v = Math.max(...vals); return vals.map(x => x === v) }
@@ -549,7 +574,8 @@ function CompareTable({ rows }: { rows: Row[] }) {
                 {row(t('rechnung.vatTotal', 'Umsatzsteuer gesamt'), r => r.res ? `+ ${eur(r.res.vatAmt)}` : '–')}
               </>)}
               {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
-              {rows.some(x => x.res && x.res.selfUseMonths > 0) && row(t('rechnung.selfUse', 'Selbstnutzung'), r => r.res && r.res.selfUseMonths > 0 ? t('rechnung.selfUseShort', '{{m}} Mon./Jahr', { m: r.res.selfUseMonths }) : '–')}
+              {rows.some(x => x.res && x.res.selfUseMonths > 0) && row(t('rechnung.selfUse', 'Selbstnutzung'), r => r.res && r.res.selfUseMonths > 0 ? (r.res.monthPlan ? formatMonthRanges(monthsWithUse(r.res.monthPlan, 'self'), i18n.language, t('monthPlan.rangeJoiner', 'bis'), 'short') : t('rechnung.selfUseShort', '{{m}} Mon./Jahr', { m: r.res.selfUseMonths })) : '–')}
+              {rows.some(x => x.res && x.res.emptyMonths > 0) && row(t('rechnung.notLet', 'Nicht vermietet'), r => r.res && r.res.emptyMonths > 0 ? formatMonthRanges(monthsWithUse(r.res.monthPlan, 'empty'), i18n.language, t('monthPlan.rangeJoiner', 'bis'), 'short') : '–')}
               {rows.some(x => x.res && x.res.selfUseMonths > 0) && row(t('rechnung.vatRefundPartial', 'USt.-Erstattung anteilig'), r => r.res ? (r.res.letT === 'short' ? eur(r.res.vatRefund) : '–') : '–')}
               {/* Einrichtung NETTO ausweisen und die MwSt darunter - im Vergleich stand
                   vorher der Bruttowert (25.000 → 29.750) und wirkte wie ein anderer

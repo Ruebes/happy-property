@@ -4,7 +4,7 @@ import {
   CY_SI_RATE, CY_SI_MIN_INCOME, CY_SI_MAX_INCOME, CY_GESY_SELF_RATE,
   CY_CGT_PCT, CY_CGT_ALLOWANCE, CY_CGT_LIFETIME_CAP, DE_SPEC_YEARS,
   VAT_ADJUST_YEARS, CY_TRANSFER_LEVY_PCT, CY_SERVICE_VAT_PCT,
-  type CalcParams, type CalcResult, type BuyerStructure,
+  type CalcParams, type CalcResult, type BuyerStructure, type MonthPlan, normalizeMonthPlan,
   VAT_REFUND_MONTHS_STRATEGY,
 } from './rechner'
 
@@ -252,9 +252,9 @@ export function purchaseGrowthOf(p: SimParams): number {
 // ignoriert eine abweichend eingetippte Miete. Damit Anzeige und Rechnung nicht
 // auseinanderlaufen, wird die Miete daraus abgeleitet, sobald ein Modell
 // übernommen wird.
-export function rentFromSeason(season: { totalOcc: number; adrHigh: number } | null | undefined): number | null {
+export function rentFromSeason(season: { totalOcc: number; adrHigh: number } | null | undefined, plan?: MonthPlan | null): number | null {
   if (!season || !(season.totalOcc > 0) || !(season.adrHigh > 0)) return null
-  return Math.round(seasonBreakdown(season).rent / 12)
+  return Math.round(seasonBreakdown(season, normalizeMonthPlan(plan)).rent / 12)
 }
 
 export function paymentPlan(u: SimUnit, gross: number): Array<{ ym: number; amount: number; label: string }> {

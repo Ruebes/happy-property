@@ -70,6 +70,15 @@ export interface CalcParams {
   // ((12 - Monate) / 12), und in diesen Monaten gibt es keine Miete. Gilt nur
   // bei Kurzzeit + Einzelkauf; bei Langzeit und Share-Deal ohne Wirkung.
   selfUseMonths?: number
+  // Monatskalender (Sven 16.9.26, zweite Stufe): WELCHE Monate. Index 0 =
+  // Januar. 'let' = vermietet, 'self' = Selbstnutzung, 'empty' = nicht
+  // vermietet (leer, z. B. Winter). Ist der Kalender gesetzt, ersetzt er die
+  // Monatszahl: Selbstnutzung = Anzahl 'self'. Beim Saisonmodell gilt die
+  // eingegebene Auslastung nur fuer die vermieteten Monate (Saisonprofil auf
+  // den vermietbaren Tagen), ohne Saisonmodell faellt die Miete anteilig aus.
+  // Leere Monate mindern die Miete, NICHT die MwSt-Erstattung (die Wohnung
+  // steht der Vermietung zur Verfuegung, nur Selbstnutzung ist privat).
+  monthPlan?: MonthPlan | null
   // ── Halte-Struktur (Sven 4.9.26) ──────────────────────────────────────────
   // privat = die Wohnung gehoert der Person; firma = eine zyprische Ltd haelt
   // sie. Die Steuer laeuft komplett anders (siehe CY_* Konstanten unten):
@@ -112,35 +121,118 @@ export interface CalcParams {
 // auf 4 Saisons (Basisprofil aus Hotelier-Erfahrung) und leiten die Preise der
 // übrigen Saisons über Marktfaktoren ab. Weihnachten (kurzer Ausreißer in der
 // Nebensaison) ist im Basiswert der Nebensaison bereits eingepreist.
-export interface SeasonRow { key: string; label: string; period: string; days: number; occPct: number; occDays: number; adr: number; revenue: number }
+export type MonthUse = 'let' | 'self' | 'empty'
+export type MonthPlan = MonthUse[]          // 12 Eintraege, Index 0 = Januar
+export type SeasonKey = 'neben' | 'vor' | 'hoch' | 'nach'
+// Kalendertage je Monat, aufgeteilt auf die Saisons (November liegt mit 14 Tagen
+// in der Nach- und mit 16 Tagen in der Nebensaison). Summen: neben 137, vor 61,
+// hoch 92, nach 75 = 365, deckungsgleich mit SEASON_DEF.
+export const MONTH_SEASON_DAYS: ReadonlyArray<ReadonlyArray<{ key: SeasonKey; days: number }>> = [
+  [{ key: 'neben', days: 31 }], [{ key: 'neben', days: 28 }], [{ key: 'neben', days: 31 }],
+  [{ key: 'vor', days: 30 }], [{ key: 'vor', days: 31 }],
+  [{ key: 'hoch', days: 30 }], [{ key: 'hoch', days: 31 }], [{ key: 'hoch', days: 31 }],
+  [{ key: 'nach', days: 30 }], [{ key: 'nach', days: 31 }], [{ key: 'nach', days: 14 }, { key: 'neben', days: 16 }],
+  [{ key: 'neben', days: 31 }],
+]
+export const MONTH_PLAN_ALL_LET: MonthPlan = Array(12).fill('let')
+// Kalender absichern: nur 12 gueltige Eintraege zaehlen, alles Unbekannte = 'let'.
+export function normalizeMonthPlan(plan?: ReadonlyArray<string> | null): MonthPlan | null {
+  if (!plan || plan.length !== 12) return null
+  return plan.map(x => x === 'self' ? 'self' : x === 'empty' ? 'empty' : 'let') as MonthPlan
+}
+export function monthPlanCounts(plan: MonthPlan | null | undefined): { self: number; empty: number; let: number } {
+  const c = { self: 0, empty: 0, let: 0 }
+  for (const x of plan ?? MONTH_PLAN_ALL_LET) c[x]++
+  return c
+}
+// Kalender nur dann wirksam, wenn er etwas aussagt (Selbstnutzung oder leere
+// Monate) - sonst null = reine Vermietung. Beide Wizards speichern damit.
+export function effectiveMonthPlan(plan?: ReadonlyArray<string> | null): MonthPlan | null {
+  const n = normalizeMonthPlan(plan)
+  if (!n) return null
+  const c = monthPlanCounts(n)
+  return (c.self > 0 || c.empty > 0) ? n : null
+}
+// Vermietbare Tage einer Saison nach Kalender (ohne Kalender = alle Tage).
+export function seasonLetDays(key: SeasonKey, plan?: MonthPlan | null): number {
+  if (!plan) return SEASON_DEF.find(x => x.key === key)?.days ?? 0
+  let d = 0
+  plan.forEach((use, m) => { if (use === 'let') for (const part of MONTH_SEASON_DAYS[m]) if (part.key === key) d += part.days })
+  return d
+}
+
+export interface SeasonRow { key: string; label: string; period: string; days: number; calDays: number; occPct: number; occDays: number; adr: number; revenue: number }
 export const SEASON_DEF = [
   { key: 'neben', label: 'Nebensaison', period: '15.11. – 31.03.', days: 137, baseOcc: 27.5, adrFactor: 0.45 },
   { key: 'vor',   label: 'Vorsaison',   period: '01.04. – 31.05.', days: 61,  baseOcc: 55,   adrFactor: 0.65 },
   { key: 'hoch',  label: 'Hochsaison',  period: '01.06. – 31.08.', days: 92,  baseOcc: 87.5, adrFactor: 1 },
   { key: 'nach',  label: 'Nachsaison',  period: '01.09. – 14.11.', days: 75,  baseOcc: 70,   adrFactor: 0.75 },
 ] as const
-export function seasonBreakdown(cfg: { totalOcc: number; adrHigh: number }): { rows: SeasonRow[]; totalDays: number; occDays: number; occPct: number; rent: number } {
+// Mit Kalender (Mischnutzung): die eingegebene Auslastung ist der Durchschnitt
+// ueber die VERMIETBAREN Tage, verteilt nach dem Saisonprofil (Sommer hoch,
+// Winter niedrig, Kappung 98 %). Selbst genutzte und leere Monate bringen
+// keine Naechte. Ohne Kalender bleibt die Rechnung bit-genau wie bisher
+// (alle 365 Tage vermietbar).
+export function seasonBreakdown(cfg: { totalOcc: number; adrHigh: number }, plan?: MonthPlan | null): { rows: SeasonRow[]; totalDays: number; letDays: number; occDays: number; occPct: number; rent: number } {
   const totalDays = SEASON_DEF.reduce((a, x) => a + x.days, 0)                     // 365
-  const baseAvg = SEASON_DEF.reduce((a, x) => a + x.baseOcc * x.days, 0) / totalDays
-  const f = Math.max(0, cfg.totalOcc || 0) / baseAvg
+  const letDays = SEASON_DEF.reduce((a, x) => a + seasonLetDays(x.key, plan), 0)   // = 365 ohne Kalender
+  const baseAvg = letDays > 0 ? SEASON_DEF.reduce((a, x) => a + x.baseOcc * seasonLetDays(x.key, plan), 0) / letDays : 0
+  const f = baseAvg > 0 ? Math.max(0, cfg.totalOcc || 0) / baseAvg : 0
   const rows: SeasonRow[] = SEASON_DEF.map(x => {
-    const occPct = Math.min(98, Math.round(x.baseOcc * f * 10) / 10)
-    const occDays = Math.round(x.days * occPct / 100)
+    const days = seasonLetDays(x.key, plan)
+    const occPct = days > 0 ? Math.min(98, Math.round(x.baseOcc * f * 10) / 10) : 0
+    const occDays = Math.round(days * occPct / 100)
     const adr = Math.round((cfg.adrHigh || 0) * x.adrFactor)
-    return { key: x.key, label: x.label, period: x.period, days: x.days, occPct, occDays, adr, revenue: occDays * adr }
+    return { key: x.key, label: x.label, period: x.period, days, calDays: x.days, occPct, occDays, adr, revenue: occDays * adr }
   })
   const occDays = rows.reduce((a, x) => a + x.occDays, 0)
   const rent = rows.reduce((a, x) => a + x.revenue, 0)
-  return { rows, totalDays, occDays, occPct: Math.round(occDays / totalDays * 1000) / 10, rent }
+  return { rows, totalDays, letDays, occDays, occPct: letDays > 0 ? Math.round(occDays / letDays * 1000) / 10 : 0, rent }
+}
+// Monatsansicht des Saisonmodells (fuer Wizard und Kundenseite): jeder Monat mit
+// Nutzung, Auslastung, Naechten und Einnahmen. Anzeige-Aufteilung der
+// Saisonwerte; die Saisonzeilen bleiben die Rechengrundlage.
+export interface MonthRow { month: number; use: MonthUse; days: number; occPct: number; nights: number; adr: number; revenue: number }
+export function monthBreakdown(cfg: { totalOcc: number; adrHigh: number }, plan?: MonthPlan | null): MonthRow[] {
+  const sb = seasonBreakdown(cfg, plan)
+  const byKey = new Map(sb.rows.map(r => [r.key, r]))
+  // Die belegten Naechte jeder Saison werden nach Tagen auf ihre Monate verteilt,
+  // kumulativ gerundet - so stimmen Monatssumme und Saisonsumme auf die Nacht
+  // und den Euro ueberein (Wizard-Tabelle = Kundenseite).
+  const cum: Record<string, { days: number; nights: number }> = {}
+  return MONTH_SEASON_DAYS.map((parts, m) => {
+    const use: MonthUse = plan?.[m] ?? 'let'
+    const days = parts.reduce((a, x) => a + x.days, 0)
+    if (use !== 'let') return { month: m + 1, use, days, occPct: 0, nights: 0, adr: 0, revenue: 0 }
+    let nights = 0, revenue = 0, adrW = 0, occW = 0
+    for (const part of parts) {
+      const r = byKey.get(part.key)!
+      const c = cum[part.key] ?? (cum[part.key] = { days: 0, nights: 0 })
+      c.days += part.days
+      const target = r.days > 0 ? Math.round(r.occDays * c.days / r.days) : 0
+      const n = target - c.nights
+      c.nights = target
+      nights += n; revenue += n * r.adr; adrW += part.days * r.adr; occW += part.days * r.occPct
+    }
+    // Auslastung = Saisonwert (tagesgewichtet), nicht Naechte/Tage - sonst
+    // zeigt die Rundung im Juli 100 %, obwohl die Saison bei 98 % gedeckelt ist.
+    return { month: m + 1, use, days, occPct: Math.round(occW / days * 10) / 10, nights, adr: Math.round(adrW / days), revenue }
+  })
+}
+// Ein Saisonmodell rechnet nur bei Kurzzeit + Einzelkauf mit gueltigen Werten.
+// applySeason() und computeCore() muessen dieselbe Frage gleich beantworten,
+// sonst wuerde die Selbstnutzung doppelt (Saison UND Zwoelftel) abgezogen.
+export function seasonActive(p: CalcParams): boolean {
+  const sn = p.season
+  if (!sn || p.letType !== 'short' || p.dealType !== 'single' || !(sn.totalOcc > 0) || !(sn.adrHigh > 0)) return false
+  return vatSplit(p.priceNet || 0, p.vatMode, p.livingSqm).gross > 0
 }
 // Saison aktiv → effektive Bruttorendite aus der Saison-Jahresmiete ableiten;
 // die verifizierte Engine bleibt formelgleich (Miete = pGrossList × yield%).
 export function applySeason(p: CalcParams): CalcParams {
-  const sn = p.season
-  if (!sn || p.letType !== 'short' || p.dealType !== 'single' || !(sn.totalOcc > 0) || !(sn.adrHigh > 0)) return p
+  if (!seasonActive(p)) return p
   const basis = vatSplit(p.priceNet || 0, p.vatMode, p.livingSqm).gross
-  if (basis <= 0) return p
-  const { rent } = seasonBreakdown(sn)
+  const { rent } = seasonBreakdown(p.season!, normalizeMonthPlan(p.monthPlan))
   return { ...p, yieldPct: Math.round(rent / basis * 10000) / 100 }
 }
 
@@ -388,6 +480,9 @@ export interface CalcResult {
   // Mischnutzung: Monate Selbstnutzung je Jahr, unternehmerischer Anteil und die
   // daraus tatsaechlich erstattbare MwSt (0 bei Langzeit/Share-Deal).
   selfUseMonths: number; letShare: number; vatRefund: number
+  // Kalender (null = keiner), vermietete/leere Monate und der Mietanteil, der
+  // in computeCore auf die Jahresmiete angewendet wurde (1 = schon im Saisonmodell).
+  monthPlan: MonthPlan | null; letMonths: number; emptyMonths: number; rentShare: number
 }
 
 export function compute(p: CalcParams): CalcResult { return computeCore(applySeason(p)) }
@@ -501,10 +596,22 @@ function computeCore(p: CalcParams): CalcResult {
   const vatWait = Math.max(0, Math.round(p.vatRefundMonths ?? VAT_REFUND_MONTHS_DEFAULT))
   // Mischnutzung: Monate Selbstnutzung mindern den unternehmerischen Anteil.
   // Nur Kurzzeit + Einzelkauf; 0 Monate = bisheriges Verhalten (bit-genau).
-  const selfUseMonths = (letT === 'short' && !sdMode)
-    ? Math.max(0, Math.min(11, Math.round(p.selfUseMonths ?? 0))) : 0
+  // Kalender hat Vorrang vor der reinen Monatszahl. Ein Kalender ohne
+  // Selbstnutzung und ohne leere Monate ist wie kein Kalender.
+  const planRaw = (letT === 'short' && !sdMode) ? normalizeMonthPlan(p.monthPlan) : null
+  const planCounts = monthPlanCounts(planRaw)
+  const monthPlan = planRaw && (planCounts.self > 0 || planCounts.empty > 0) ? planRaw : null
+  // Kalender: 0-12 Monate (12 = gar keine Vermietung, dann auch keine
+  // Erstattung); reine Monatszahl wie bisher 0-11.
+  const selfUseMonths = monthPlan ? planCounts.self
+    : (letT === 'short' && !sdMode) ? Math.max(0, Math.min(11, Math.round(p.selfUseMonths ?? 0))) : 0
+  const letMonths = monthPlan ? planCounts.let : 12 - selfUseMonths
+  const emptyMonths = monthPlan ? planCounts.empty : 0
   const letShare = (12 - selfUseMonths) / 12
   const vatRefund = letT === 'short' ? Math.round(vatAmt * letShare) : 0
+  // Mietanteil: Saisonmodell mit Kalender hat die Monate schon herausgerechnet
+  // (applySeason), sonst Zwoelftel der vermieteten Monate.
+  const rentShare = monthPlan ? (seasonActive(p) ? 1 : letMonths / 12) : letShare
   const vatA = Array(YEARS).fill(0)
   if (letT === 'short') {
     let acc = 0
@@ -512,7 +619,7 @@ function computeCore(p: CalcParams): CalcResult {
   }
 
   // Miete nur fuer die vermieteten Monate (Selbstnutzung bringt keine Miete).
-  const baseR = pGrossList * (yPct / 100) * letShare
+  const baseR = pGrossList * (yPct / 100) * rentShare
   const rents = fA.map((f, i) => Math.round(baseR * Math.pow(1 + rG / 100, i) * f))
   // Verwaltung: Prozent der Miete (Standard) oder fester Monatsbetrag. Beide
   // steigen mit 2 % p.a., anteilig im Rumpfjahr.
@@ -707,5 +814,6 @@ function computeCore(p: CalcParams): CalcResult {
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
     vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,
     selfUseMonths, letShare, vatRefund,
+    monthPlan, letMonths, emptyMonths, rentShare,
   }
 }

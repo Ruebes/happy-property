@@ -3955,7 +3955,9 @@
       "selfUse": "Own use",
       "month1": "month",
       "monthN": "months",
-      "selfUsePerYear": "per year"
+      "selfUsePerYear": "per year",
+      "planSeason": "Own use: annual rent {{rent}} € instead of {{full}} €",
+      "planFlat": "Own use: rent for {{n}} of 12 months"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -5166,7 +5168,14 @@
     "selfUseValue": "{{m}} months/year · rented {{share}} %",
     "selfUseShort": "{{m}} mo./year",
     "vatRefundPartial": "VAT refund (pro rata)",
-    "selfUseNote": "{{m}} months of own use per year. VAT is refunded only for the rented share ({{share}} %), and no rental income arises in the months of own use."
+    "selfUseNote": "{{m}} months of own use per year. VAT is refunded only for the rented share ({{share}} %), and no rental income arises in the months of own use.",
+    "notLet": "Not rented",
+    "monthPlanTitle": "Use over the year",
+    "seasonPlanNote": "The occupancy of {{occ}} % applies to the rented months; months of own use and months not rented bring no overnight stays.",
+    "selfUseMonthsValue_one": "{{months}} (1 month)",
+    "selfUseMonthsValue_other": "{{months}} ({{count}} months)",
+    "selfUseNoteMonths_one": "Own use {{months}} (1 month). VAT is refunded only for the rented share ({{share}} %), and no rental income arises in the months of own use.",
+    "selfUseNoteMonths_other": "Own use {{months}} ({{count}} months). VAT is refunded only for the rented share ({{share}} %), and no rental income arises in the months of own use."
   },
   "automationRules": {
     "eventLeadCreated": "New lead",
@@ -5433,7 +5442,14 @@
     "selfUseMonths": "Months per year",
     "month1": "month",
     "monthN": "months",
-    "selfUseHint": "Rented {{share}} % of the year → VAT refund and rent pro rata"
+    "selfUseHint": "Rented {{share}} % of the year → VAT refund and rent pro rata",
+    "selfUseCalHint": "Click the months in which the buyer lives there. Occupancy then applies only to the rented months, the VAT refund pro rata.",
+    "selfUseLegacy": "So far a flat {{n}} months without a calendar - please mark the months below.",
+    "selfUseGlobal": "Own use (applies to all properties)",
+    "selfUseGlobalHint": "Months in which the buyer lives there: VAT refund and rent pro rata",
+    "objPlanSeason": "Calendar: annual rent {{rent}} € instead of {{full}} € ({{occ}} % occupancy on the rented months)",
+    "objPlanFlat": "Calendar: rent for {{n}} of 12 months",
+    "showMonths": "Show months"
   },
   "appointmentModal": {
     "stepBasis": "Basics",
@@ -5798,7 +5814,9 @@
     "discount": "Discount",
     "furnishing": "Furnishing",
     "furnishingFree": "Furnishing free of charge",
-    "hotelConceptToggle": "Hotel concept"
+    "hotelConceptToggle": "Hotel concept",
+    "selfUseToggle": "Own use (all units)",
+    "selfUseHint": "Click the months in which the buyer lives there - applies to every unit in the basket. VAT refund and rent pro rata, occupancy only on the rented months."
   },
   "depositInvoiceModal": {
     "leadGenDescription": "Lead generation {{details}}",
@@ -6328,5 +6346,29 @@
     "oct": "Oct",
     "nov": "Nov",
     "dec": "Dec"
+  },
+  "monthPlan": {
+    "rangeJoiner": "to",
+    "clickHint": "Click cycles: rented → own use → not rented",
+    "legendLet": "rented",
+    "legendSelf": "own use",
+    "legendEmpty": "not rented",
+    "winterEmpty": "Do not rent in winter (Dec, Jan, Feb)",
+    "winterLetAgain": "Rent in winter again",
+    "reset": "Rent all months",
+    "summarySelf": "Own use {{n}} mo. ({{months}})",
+    "summaryNoSelf": "No own use marked yet - click the months in which the buyer lives there.",
+    "summaryEmpty": "not rented {{n}} mo. ({{months}})",
+    "summaryLet": "rented {{n}} mo.",
+    "summaryVat": "VAT refund {{share}} %",
+    "emptyHint": "Months not rented bring no rent but do not reduce the VAT refund (the property stays dedicated to letting).",
+    "colMonth": "Month",
+    "colUse": "Use",
+    "colOcc": "Occupancy",
+    "colNights": "Nights",
+    "colNight": "night",
+    "colRevenue": "Revenue",
+    "total": "Total (year 1)",
+    "vsFull": "Without own use at the same occupancy: {{rent}} €"
   }
 }

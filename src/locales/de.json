@@ -3955,7 +3955,9 @@
       "selfUse": "Selbstnutzung",
       "month1": "Monat",
       "monthN": "Monate",
-      "selfUsePerYear": "im Jahr"
+      "selfUsePerYear": "im Jahr",
+      "planSeason": "Selbstnutzung: Jahresmiete {{rent}} € statt {{full}} €",
+      "planFlat": "Selbstnutzung: Miete für {{n}} von 12 Monaten"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
@@ -5048,7 +5050,14 @@
     "selfUseValue": "{{m}} Monate/Jahr · Vermietung {{share}} %",
     "selfUseShort": "{{m}} Mon./Jahr",
     "vatRefundPartial": "USt.-Erstattung anteilig",
-    "selfUseNote": "{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an."
+    "selfUseNote": "{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.",
+    "notLet": "Nicht vermietet",
+    "monthPlanTitle": "Nutzung im Jahr",
+    "seasonPlanNote": "Die Auslastung von {{occ}} % gilt für die vermieteten Monate; selbst genutzte und nicht vermietete Monate bringen keine Übernachtungen.",
+    "selfUseMonthsValue_one": "{{months}} (1 Monat)",
+    "selfUseMonthsValue_other": "{{months}} ({{count}} Monate)",
+    "selfUseNoteMonths_one": "Eigene Nutzung {{months}} (1 Monat). Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.",
+    "selfUseNoteMonths_other": "Eigene Nutzung {{months}} ({{count}} Monate). Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an."
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",
@@ -5315,7 +5324,14 @@
     "selfUseMonths": "Monate im Jahr",
     "month1": "Monat",
     "monthN": "Monate",
-    "selfUseHint": "Vermietung {{share}} % des Jahres → MwSt-Erstattung und Miete anteilig"
+    "selfUseHint": "Vermietung {{share}} % des Jahres → MwSt-Erstattung und Miete anteilig",
+    "selfUseCalHint": "Monate anklicken, in denen der Käufer selbst dort wohnt. Die Auslastung gilt dann nur für die vermieteten Monate, die MwSt-Erstattung anteilig.",
+    "selfUseLegacy": "Bisher pauschal {{n}} Monate ohne Kalender - bitte die Monate unten markieren.",
+    "selfUseGlobal": "Selbstnutzung (gilt für alle Objekte)",
+    "selfUseGlobalHint": "Monate, in denen der Käufer selbst dort wohnt: MwSt-Erstattung und Miete anteilig",
+    "objPlanSeason": "Kalender: Jahresmiete {{rent}} € statt {{full}} € ({{occ}} % Auslastung auf die vermieteten Monate)",
+    "objPlanFlat": "Kalender: Miete für {{n}} von 12 Monaten",
+    "showMonths": "Monate anzeigen"
   },
   "appointmentModal": {
     "stepBasis": "Basis",
@@ -5680,7 +5696,9 @@
     "discount": "Rabatt",
     "furnishing": "Einrichtung",
     "furnishingFree": "Einrichtung kostenfrei",
-    "hotelConceptToggle": "Hotelkonzept"
+    "hotelConceptToggle": "Hotelkonzept",
+    "selfUseToggle": "Selbstnutzung (alle Wohnungen)",
+    "selfUseHint": "Monate anklicken, in denen der Käufer selbst dort wohnt - gilt für jede Wohnung im Korb. MwSt-Erstattung und Miete anteilig, Auslastung nur auf die vermieteten Monate."
   },
   "depositInvoiceModal": {
     "leadGenDescription": "Leadgenerierung {{details}}",
@@ -6210,5 +6228,29 @@
     "oct": "Okt",
     "nov": "Nov",
     "dec": "Dez"
+  },
+  "monthPlan": {
+    "rangeJoiner": "bis",
+    "clickHint": "Klick wechselt: vermietet → Selbstnutzung → nicht vermietet",
+    "legendLet": "vermietet",
+    "legendSelf": "Selbstnutzung",
+    "legendEmpty": "nicht vermietet",
+    "winterEmpty": "Winter (Dez, Jan, Feb) nicht vermieten",
+    "winterLetAgain": "Winter wieder vermieten",
+    "reset": "Alle vermieten",
+    "summarySelf": "Selbstnutzung {{n}} Mon. ({{months}})",
+    "summaryNoSelf": "Keine Selbstnutzung markiert - bitte die Monate anklicken, in denen der Käufer selbst dort wohnt.",
+    "summaryEmpty": "nicht vermietet {{n}} Mon. ({{months}})",
+    "summaryLet": "vermietet {{n}} Mon.",
+    "summaryVat": "MwSt-Erstattung {{share}} %",
+    "emptyHint": "Nicht vermietete Monate bringen keine Miete, mindern die MwSt-Erstattung aber nicht (die Wohnung bleibt der Vermietung gewidmet).",
+    "colMonth": "Monat",
+    "colUse": "Nutzung",
+    "colOcc": "Auslastung",
+    "colNights": "Nächte",
+    "colNight": "Nacht",
+    "colRevenue": "Einnahmen",
+    "total": "Gesamt (Jahr 1)",
+    "vsFull": "Ohne Selbstnutzung bei gleicher Auslastung: {{rent}} €"
   }
 }

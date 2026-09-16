@@ -4,7 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { createCalcOutboxDraft, createStrategyOutboxDraft } from '../../lib/calcOutbox'
 import { unitGross, unitNet } from '../../lib/price'
 import type { DeckAssetsCache } from '../../lib/crmTypes'
-import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, seasonBreakdown, applySeason } from '../../lib/rechner'
+import { DEFAULT_PARAMS, defaultMgmtPct, type CalcParams, type CalcItem, type MonthPlan, seasonBreakdown, applySeason, effectiveMonthPlan, monthPlanCounts, MONTH_PLAN_ALL_LET } from '../../lib/rechner'
+import { MonthPlanPicker } from './MonthPlanPicker'
 import { CustomSelect } from '../CustomSelect'
 import { NumberStepper } from '../NumberStepper'
 import StrategySimulator, { type SimUnit } from './StrategySimulator'
@@ -46,8 +47,6 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     mgmtPct?: number; season?: { totalOcc: number; adrHigh: number } | null
     // MwSt-Regelung je Wohnung (Sven waehlt manuell; Default Standard 19 %)
     vatMode?: import('../../lib/rechner').VatMode; livingSqm?: number | null
-    // Mischnutzung: Monate Selbstnutzung je Jahr (nur Kurzzeit; MwSt + Miete anteilig)
-    selfUseMonths?: number
     // Moebel je Wohnung: 'none' = ohne Moebel verkauft (kommen im Deck nicht vor),
     // 'included' = zweite Preisspalte des Bautraegers (price_net_furnished),
     // 'optional' = Grundpreis + separat ausgewiesenes Moebelpaket.
@@ -71,6 +70,14 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const [progress, setProgress] = useState('')
   const [err, setErr]           = useState('')
   const [simOpen, setSimOpen]   = useState(false)
+
+  // Mischnutzung ist GETEILT (Sven 16.9.): der Eigentuemer wohnt in denselben
+  // Monaten dort, egal welche Wohnung - Kalender aus calcParams, nur bei
+  // Kurzzeit wirksam; die Monatszahl folgt dem Kalender.
+  const planFields = (letType: 'short' | 'long'): { monthPlan: MonthPlan | null; selfUseMonths: number } => {
+    const plan = letType === 'short' ? effectiveMonthPlan(calcParams.monthPlan) : null
+    return plan ? { monthPlan: plan, selfUseMonths: monthPlanCounts(plan).self } : { monthPlan: null, selfUseMonths: 0 }
+  }
 
   // Paket → Simulator-Wohnungen: Netto-Basis (Engine rechnet MwSt/brutto selbst),
   // Miete aus der Wizard-Rendite (falls je Wohnung gesetzt, sonst 5,5 %),
@@ -96,7 +103,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       priceNet, furnNet,
       // Saisonmodell schlägt die pauschale Rendite - sonst zeigt der Simulator
       // eine andere Miete als er rechnet.
-      rent: rentFromSeason(puSeason) ?? Math.round(gross * yieldPct / 100 / 12),
+      rent: rentFromSeason(puSeason, planFields(letType).monthPlan) ?? Math.round(gross * yieldPct / 100 / 12),
       letType,
       fin: (pu.fin ?? calcParams.fin) === 'yes',
       buyM: nowD.getMonth() + 1, buyY: nowD.getFullYear(), readyM, readyY,
@@ -111,7 +118,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
         res: calcParams.res,
         vatMode: pu.vatMode, livingSqm: pu.livingSqm ?? b.unit.size_sqm ?? null,
-        selfUseMonths: letType === 'short' ? (pu.selfUseMonths ?? 0) : 0,
+        ...planFields(letType),
       },
     }
   })
@@ -343,7 +350,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
             ? (pu.season !== undefined ? pu.season : calcParams.season)
             : null,
           // Mischnutzung je Wohnung, nur bei Kurzzeit
-          selfUseMonths:   (pu.letType ?? calcParams.letType) === 'short' ? (pu.selfUseMonths ?? 0) : 0,
+          ...planFields(pu.letType ?? calcParams.letType),
         }
         return {
           label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
@@ -764,7 +771,20 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                 <div className="flex flex-wrap gap-2">
                   {cpToggle(t('deckWizard.furnishingFree', 'Einrichtung kostenfrei'), 'furnFree')}
                   {calcParams.letType === 'short' && cpToggle('🏨 ' + t('deckWizard.hotelConceptToggle', 'Hotelkonzept'), 'hotelConcept')}
+                  {/* Mischnutzung GETEILT fuer alle Wohnungen im Korb (Sven 16.9.) */}
+                  {calcParams.letType === 'short' && (
+                    <button type="button" onClick={() => setCalcParams(prev => ({ ...prev, monthPlan: prev.monthPlan ? null : [...MONTH_PLAN_ALL_LET] as MonthPlan, selfUseMonths: 0 }))}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${calcParams.monthPlan ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 bg-white text-gray-600'}`}>
+                      🏠 {t('deckWizard.selfUseToggle', 'Selbstnutzung (alle Wohnungen)')}
+                    </button>
+                  )}
                 </div>
+                {calcParams.letType === 'short' && calcParams.monthPlan && (
+                  <div className="rounded-lg border border-orange-100 bg-orange-50/60 p-2.5 space-y-2">
+                    <p className="text-[11px] text-gray-500">{t('deckWizard.selfUseHint', 'Monate anklicken, in denen der Käufer selbst dort wohnt - gilt für jede Wohnung im Korb. MwSt-Erstattung und Miete anteilig, Auslastung nur auf die vermieteten Monate.')}</p>
+                    <MonthPlanPicker compact value={calcParams.monthPlan} onChange={plan => setCalcParams(prev => ({ ...prev, monthPlan: plan, selfUseMonths: 0 }))} />
+                  </div>
+                )}
                 {calcParams.letType === 'short' && (
                   <div className="space-y-2">
                     <button type="button" onClick={() => setCalcParams(prev => ({ ...prev, season: prev.season ? null : { totalOcc: 56, adrHigh: 120 } }))}
@@ -772,7 +792,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                       🏖 {t('deckWizard.seasonToggle', 'Saisonmodell (4 Saisons) statt pauschaler Rendite')}
                     </button>
                     {calcParams.season && (() => {
-                      const sb = seasonBreakdown(calcParams.season)
+                      const sb = seasonBreakdown(calcParams.season, effectiveMonthPlan(calcParams.monthPlan))
                       const effY = applySeason({ ...calcParams, dealType: 'single', priceNet: basket[0]?.unit.price_net ?? calcParams.priceNet }).yieldPct
                       return (
                         <div className="rounded-lg border border-orange-100 bg-white p-2.5 space-y-2">
@@ -896,31 +916,28 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                             })()}
                             {/* Mischnutzung (Sven 16.9.): Haken + Monate-Dropdown. Engine
                                 erstattet die MwSt anteilig und rechnet die Monate ohne Miete. */}
-                            {let_ === 'short' && (() => {
-                              const su = pu.selfUseMonths ?? 0
-                              return (
-                                <>
-                                  <button type="button" onClick={() => setPu(b.unit.id, { selfUseMonths: su > 0 ? 0 : 2 })}
-                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${su > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
-                                    <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${su > 0 ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{su > 0 ? '✓' : ''}</span>
-                                    🏠 {t('crm.wizard.selfUse', 'Selbstnutzung')}
-                                  </button>
-                                  {su > 0 && (
-                                    <select value={su} onChange={e => setPu(b.unit.id, { selfUseMonths: Number(e.target.value) })}
-                                      className="border border-orange-200 bg-white rounded px-2 py-1 text-[11px] focus:outline-none focus:border-orange-400">
-                                      {Array.from({ length: 11 }, (_, i) => i + 1).map(m => (
-                                        <option key={m} value={m}>{m} {m === 1 ? t('crm.wizard.month1', 'Monat') : t('crm.wizard.monthN', 'Monate')} {t('crm.wizard.selfUsePerYear', 'im Jahr')}</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </>
-                              )
-                            })()}
                           </div>
+                          {/* Geteilter Selbstnutzungs-Kalender (oben in den Rechenparametern):
+                              hier nur, was er fuer diese Wohnung bedeutet. */}
+                          {let_ === 'short' && planFields(let_).monthPlan && (() => {
+                            const plan = planFields(let_).monthPlan!
+                            const c = monthPlanCounts(plan)
+                            const sn = pu.season !== undefined ? pu.season : calcParams.season
+                            const seasonOn = !!sn && sn.totalOcc > 0 && sn.adrHigh > 0
+                            return (
+                              <p className="text-[11px] text-gray-500">
+                                🏠 {seasonOn
+                                  ? t('crm.wizard.planSeason', 'Selbstnutzung: Jahresmiete {{rent}} € statt {{full}} €', { rent: seasonBreakdown(sn!, plan).rent.toLocaleString('de-DE'), full: seasonBreakdown(sn!, null).rent.toLocaleString('de-DE') })
+                                  : t('crm.wizard.planFlat', 'Selbstnutzung: Miete für {{n}} von 12 Monaten', { n: c.let })}
+                                {' · ' + t('monthPlan.summaryVat', 'MwSt-Erstattung {{share}} %', { share: (Math.round((12 - c.self) / 12 * 1000) / 10).toLocaleString('de-DE') })}
+                              </p>
+                            )
+                          })()}
                           {/* Saison-Feineinstellung dieser Wohnung */}
                           {let_ === 'short' && (pu.season !== undefined ? pu.season : calcParams.season) && (() => {
                             const sn = (pu.season !== undefined ? pu.season : calcParams.season)!
-                            const sb = seasonBreakdown(sn)
+                            // Mit dem Kalender dieser Wohnung - so wie buildCalcItem ihn speichert.
+                            const sb = seasonBreakdown(sn, planFields(let_).monthPlan)
                             const basis = Math.round((b.unit.price_net ?? 0) * 1.19)   // wie applySeason()
                             const effY = basis > 0 ? Math.round(sb.rent / basis * 1000) / 10 : 0
                             return (
