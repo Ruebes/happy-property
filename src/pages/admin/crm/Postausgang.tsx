@@ -216,6 +216,7 @@ export default function Postausgang() {
       await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, email_sent_at: nowIso, error_message: null }).eq('id', row.id)
       // Erst jetzt ist der Fahrplan fuer den Kunden erreichbar.
       await releasePlans(sendBody)
+      await startFollowupChain(row)
       flash(resend ? t('crm.outbox.resent', '✅ Erneut gesendet') : t('crm.outbox.sent', '✅ Gesendet'))
       void load()
     } catch (e) {
@@ -223,6 +224,16 @@ export default function Postausgang() {
       flash(`${t('crm.outbox.sendFail', 'Senden fehlgeschlagen')}: ${e instanceof Error ? e.message : ''}`)
       void load()
     } finally { setBusyId(null) }
+  }
+
+  // Nachfass-Kette (Immobilienauswahl: Mails + Termin-Bot) startet erst mit dem ERSTEN
+  // Versand eines Eintrags, nicht beim Phasenwechsel (Sven 16.9.). schedule-message
+  // prüft selbst, ob der Deal in Immobilienauswahl steht, und verwirft eine alte Kette.
+  const startFollowupChain = async (row: OutboxRow) => {
+    if (row.sent_at || !row.lead_id) return   // erneuter Versand desselben Eintrags → Kette läuft weiter
+    try {
+      await supabase.functions.invoke('schedule-message', { body: { lead_id: row.lead_id, event_type: 'immobilienauswahl', trigger: 'deck_sent' } })
+    } catch (e) { console.warn('[postausgang] Nachfass-Kette nicht gestartet:', e) }
   }
 
   const sendWhatsApp = async (row: OutboxRow) => {
@@ -269,6 +280,7 @@ export default function Postausgang() {
       const nowIso = new Date().toISOString()
       await supabase.from('deck_outbox').update({ status: 'sent', sent_at: row.sent_at ?? nowIso, whatsapp_sent_at: nowIso }).eq('id', row.id)
       await releasePlans(row.body)
+      await startFollowupChain(row)
       flash(t('crm.outbox.waSent', '✅ WhatsApp gesendet'))
       void load()
     } catch (e) {

@@ -53,7 +53,10 @@ Deno.serve(async (req: Request) => {
   try {
     // only_timing='before_appointment': nur Vor-Termin-Regeln (neu) planen — für die
     // Erinnerungs-Neuplanung nach Terminverschiebung, OHNE die Bestätigung erneut zu senden.
-    const { lead_id, deal_id, event_type, probe_docs, only_timing } = await req.json() as { lead_id?: string; deal_id?: string | null; event_type?: string; probe_docs?: boolean; only_timing?: string }
+    // trigger='deck_sent': Aufruf aus dem Postausgang, wenn das Deck tatsächlich raus ist —
+    // startet die Immobilienauswahl-Nachfass-Kette (siehe unten).
+    const { lead_id, deal_id: dealIdIn, event_type, probe_docs, only_timing, trigger } = await req.json() as { lead_id?: string; deal_id?: string | null; event_type?: string; probe_docs?: boolean; only_timing?: string; trigger?: string }
+    let deal_id = dealIdIn
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
     if (probe_docs) return new Response(JSON.stringify(await finDocs(supabase)), { headers: { ...CORS, 'Content-Type': 'application/json' } })
     if (!lead_id || !event_type) {
@@ -64,6 +67,36 @@ Deno.serve(async (req: Request) => {
     const { data: optOut } = await supabase.from('communication_optouts').select('id').eq('lead_id', lead_id).maybeSingle()
     if (optOut) {
       return new Response(JSON.stringify({ ok: true, skipped: 'opted_out', scheduled: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
+
+    // ── Immobilienauswahl: Nachfass-Kette hängt am DECK-VERSAND, nicht am Phasenwechsel ──
+    // Sven 16.9.: Der Kunde bekam „Schon einen Favoriten gefunden?" wenige Stunden nach dem
+    // Deck, weil die Kette (Mails 1/3/5/10/14/30 Tage + Bot-Nudges) schon beim Ziehen in die
+    // Phase geplant wurde — das Deck ging aber erst einen Tag später raus. Deshalb:
+    //  - Phasenwechsel: Kette nur, wenn ein Deck in den letzten 3 Tagen schon raus ist
+    //    (Deck vor dem Ziehen gesendet → wie bisher). Sonst wartet sie auf den Versand.
+    //  - trigger='deck_sent' (Postausgang, erster Versand eines Eintrags): laufende Kette
+    //    verwerfen und ab jetzt neu planen — nur wenn der Deal in Immobilienauswahl steht.
+    // Der Portal-Zugang hängt nicht hier dran (process-scheduled-messages, phasenbasiert).
+    if (event_type === 'immobilienauswahl') {
+      if (trigger === 'deck_sent') {
+        const { data: d } = await supabase.from('deals').select('id').eq('lead_id', lead_id).eq('phase', 'immobilienauswahl').limit(1).maybeSingle()
+        const dealRow = d as { id: string } | null
+        if (!dealRow) {
+          return new Response(JSON.stringify({ ok: true, skipped: 'not_in_immobilienauswahl', scheduled: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+        }
+        deal_id = deal_id ?? dealRow.id
+        const { error: cancelErr } = await supabase.from('scheduled_messages').update({ status: 'cancelled' })
+          .eq('lead_id', lead_id).eq('status', 'pending')
+          .or('event_type.eq.immobilienauswahl,and(event_type.eq.bot_nudge,bot_nudge_source.eq.immobilienauswahl)')
+        if (cancelErr) console.warn('[schedule-message] alte Immobilienauswahl-Kette nicht storniert:', cancelErr.message)
+      } else {
+        const since = new Date(Date.now() - 3 * 24 * 60 * 60000).toISOString()
+        const { data: ob } = await supabase.from('deck_outbox').select('id').eq('lead_id', lead_id).not('sent_at', 'is', null).gte('sent_at', since).limit(1)
+        if (!ob || ob.length === 0) {
+          return new Response(JSON.stringify({ ok: true, skipped: 'awaiting_deck', scheduled: 0 }), { headers: { ...CORS, 'Content-Type': 'application/json' } })
+        }
+      }
     }
 
     // Termin gebucht → offene Termin-Bot-Gespräche schließen (egal über welchen Weg
