@@ -178,11 +178,20 @@ async function logEvent(type: string, token: string | null) {
       // sonst plant ein Deck-View einen deck_viewed-Start, obwohl schon ein
       // immobilienauswahl/no_show-Nudge pending ist (Andreas-Fall: zwei fast identische
       // Lotte-Vorstellungen 5 Min auseinander).
-      const { data: pend } = await supabase.from('scheduled_messages').select('id')
-        .eq('lead_id', leadId).eq('event_type', 'bot_nudge').in('status', ['pending', 'processing']).limit(1)
+      const { data: pend } = await supabase.from('scheduled_messages').select('id, bot_nudge_source, bot_nudge_stage, scheduled_at')
+        .eq('lead_id', leadId).eq('event_type', 'bot_nudge').in('status', ['pending', 'processing']).limit(10)
       const { data: activeConv } = await supabase.from('booking_conversations').select('id')
         .eq('lead_id', leadId).not('state', 'in', '(booked,handoff,expired)').gt('expires_at', new Date().toISOString()).limit(1)
-      if (!(pend && pend.length) && !(activeConv && activeConv.length)) {
+      // Läuft schon die Immobilienauswahl-Kette (Stufe 0 = „Hattest du schon Zeit …?"
+      // in 24 h), wird diese Stufe auf +40 Min VORGEZOGEN statt den Deck-View-Start zu
+      // verschlucken: Der Kunde hat gerade geschaut, jetzt ist der Moment (Nazih 16.9.:
+      // Deck um 12:08 angesehen, keine WhatsApp, weil die Kette „schon pending" war).
+      // Kein Doppel, weil dieselbe Zeile nur früher dran ist.
+      const kette0 = (pend ?? []).find((p) => (p as { bot_nudge_source?: string; bot_nudge_stage?: number }).bot_nudge_source === 'immobilienauswahl' && (p as { bot_nudge_stage?: number }).bot_nudge_stage === 0) as { id: string; scheduled_at: string } | undefined
+      const in40 = new Date(Date.now() + 40 * 60000).toISOString()
+      if (kette0 && kette0.scheduled_at > in40) {
+        await supabase.from('scheduled_messages').update({ scheduled_at: in40 }).eq('id', kette0.id)
+      } else if (!(pend && pend.length) && !(activeConv && activeConv.length)) {
         await supabase.from('scheduled_messages').insert({
           lead_id: leadId, type: 'whatsapp', event_type: 'bot_nudge',
           bot_nudge_stage: 0, bot_nudge_source: 'deck_viewed', status: 'pending',
