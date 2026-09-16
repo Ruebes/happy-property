@@ -152,7 +152,6 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/social',         key: 'crm.nav.social'      },
     { to: '/admin/crm/thumbnails',     key: 'crm.nav.thumbnails'  },
     { to: '/admin/crm/youtube',        key: 'crm.nav.youtube'     },
-    { to: '/admin/crm/settings/booking-links', key: 'crm.nav.bookingLinks' },
   ]
 
   // Rolle 'funnel' (Legacy-Mitarbeiter): sieht NUR den Termin-Funnel.
@@ -205,6 +204,9 @@ export default function DashboardLayout({ children, basePath }: Props) {
     { to: '/admin/crm/settings/ai',          key: 'crm.nav.ai'          },
     { to: '/admin/crm/settings/documents',   key: 'crm.nav.documents'   },
     { to: '/admin/crm/settings/contacts',    key: 'crm.nav.contacts'    },
+    // Persönliche Buchungslinks (Termin und/oder Aufgabe je Person) — Sven suchte
+    // sie unter Einstellungen, dort gehören sie hin (vorher im langen Hauptmenü).
+    { to: '/admin/crm/settings/booking-links', key: 'crm.nav.bookingLinks' },
     { to: '/admin/crm/settings/invoices',    key: 'crm.nav.invoiceSettings' },
     { to: '/admin/crm/settings/connectors',  key: 'crm.nav.connectors'  },
     { to: '/admin/crm/settings',             key: 'crm.nav.developers'  },
