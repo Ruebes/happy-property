@@ -3951,7 +3951,11 @@
       "furnSumMissing": "⚠ Keine Preisspalte mit Möbeln hinterlegt — es gilt {{p}} netto ohne Möbel.",
       "furnSumNone": "Deck: {{p}} netto — Möbel kommen im Deck nicht vor",
       "strategySim2": "Investmentstrategie (Bundlekauf, EK-Verteilung, Reinvestment)",
-      "planAdded": "Fahrplan liegt dabei."
+      "planAdded": "Fahrplan liegt dabei.",
+      "selfUse": "Selbstnutzung",
+      "month1": "Monat",
+      "monthN": "Monate",
+      "selfUsePerYear": "im Jahr"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
@@ -4711,7 +4715,8 @@
       "releasedHint": "Der Link ist für den Kunden freigeschaltet. Du kannst ihn jetzt verschicken, egal auf welchem Weg. Änderungen hier wirken sofort, der Link bleibt derselbe.",
       "release": "Für den Kunden freischalten",
       "releasing": "Wird freigeschaltet…",
-      "releaseFail": "Freigabe wurde nicht gespeichert - fehlen die Rechte?"
+      "releaseFail": "Freigabe wurde nicht gespeichert - fehlen die Rechte?",
+      "selfUse": "🏠 {{m}} Mon. Selbstnutzung"
     },
     "taskNewPerson": "Neue Person (kein CRM-Zugang nötig)",
     "taskNewName": "Name",
@@ -5038,7 +5043,12 @@
     "vatShare5": "davon MwSt 5%-Anteil",
     "vatShare19": "davon MwSt 19%-Anteil",
     "netSuffix": "netto",
-    "purchasePriceVat": "MwSt auf Kaufpreis"
+    "purchasePriceVat": "MwSt auf Kaufpreis",
+    "selfUse": "Selbstnutzung",
+    "selfUseValue": "{{m}} Monate/Jahr · Vermietung {{share}} %",
+    "selfUseShort": "{{m}} Mon./Jahr",
+    "vatRefundPartial": "USt.-Erstattung anteilig",
+    "selfUseNote": "{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an."
   },
   "automationRules": {
     "eventLeadCreated": "Neuer Lead",
@@ -5300,7 +5310,12 @@
     "vatReduced200": "Reduziert – 5 % bis 200 m² (Übergangsregelung)",
     "livingSqmLabel": "Wohnfläche m²",
     "vatPreview": "{{red}} € netto zu 5 % + {{std}} € netto zu 19 % → {{vat}} € MwSt, brutto {{gross}} €",
-    "vatNoSqm": "⚠ Ohne Wohnfläche gilt der gesamte Preis als begünstigt (5 %). Bitte Wohnfläche eintragen."
+    "vatNoSqm": "⚠ Ohne Wohnfläche gilt der gesamte Preis als begünstigt (5 %). Bitte Wohnfläche eintragen.",
+    "selfUse": "Selbstnutzung",
+    "selfUseMonths": "Monate im Jahr",
+    "month1": "Monat",
+    "monthN": "Monate",
+    "selfUseHint": "Vermietung {{share}} % des Jahres → MwSt-Erstattung und Miete anteilig"
   },
   "appointmentModal": {
     "stepBasis": "Basis",

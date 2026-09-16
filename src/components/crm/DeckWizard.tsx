@@ -46,6 +46,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     mgmtPct?: number; season?: { totalOcc: number; adrHigh: number } | null
     // MwSt-Regelung je Wohnung (Sven waehlt manuell; Default Standard 19 %)
     vatMode?: import('../../lib/rechner').VatMode; livingSqm?: number | null
+    // Mischnutzung: Monate Selbstnutzung je Jahr (nur Kurzzeit; MwSt + Miete anteilig)
+    selfUseMonths?: number
     // Moebel je Wohnung: 'none' = ohne Moebel verkauft (kommen im Deck nicht vor),
     // 'included' = zweite Preisspalte des Bautraegers (price_net_furnished),
     // 'optional' = Grundpreis + separat ausgewiesenes Moebelpaket.
@@ -109,6 +111,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         deTaxPct: pu.deTaxPct ?? calcParams.deTaxPct,
         res: calcParams.res,
         vatMode: pu.vatMode, livingSqm: pu.livingSqm ?? b.unit.size_sqm ?? null,
+        selfUseMonths: letType === 'short' ? (pu.selfUseMonths ?? 0) : 0,
       },
     }
   })
@@ -339,6 +342,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           season:          (pu.letType ?? calcParams.letType) === 'short'
             ? (pu.season !== undefined ? pu.season : calcParams.season)
             : null,
+          // Mischnutzung je Wohnung, nur bei Kurzzeit
+          selfUseMonths:   (pu.letType ?? calcParams.letType) === 'short' ? (pu.selfUseMonths ?? 0) : 0,
         }
         return {
           label: `${it.projectName} · ${it.unit.unit_number}`, project: it.projectName, unit: it.unit.unit_number,
@@ -887,6 +892,28 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
                                   <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${puSeason ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{puSeason ? '✓' : ''}</span>
                                   🏖 {t('crm.wizard.season', 'Saisonmodell')}
                                 </button>
+                              )
+                            })()}
+                            {/* Mischnutzung (Sven 16.9.): Haken + Monate-Dropdown. Engine
+                                erstattet die MwSt anteilig und rechnet die Monate ohne Miete. */}
+                            {let_ === 'short' && (() => {
+                              const su = pu.selfUseMonths ?? 0
+                              return (
+                                <>
+                                  <button type="button" onClick={() => setPu(b.unit.id, { selfUseMonths: su > 0 ? 0 : 2 })}
+                                    className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium ${su > 0 ? 'border-orange-300 bg-orange-50 text-orange-700' : 'border-gray-200 text-gray-600'}`}>
+                                    <span className={`w-3 h-3 rounded border flex items-center justify-center text-[8px] ${su > 0 ? 'bg-orange-500 border-orange-500 text-white' : 'border-gray-300'}`}>{su > 0 ? '✓' : ''}</span>
+                                    🏠 {t('crm.wizard.selfUse', 'Selbstnutzung')}
+                                  </button>
+                                  {su > 0 && (
+                                    <select value={su} onChange={e => setPu(b.unit.id, { selfUseMonths: Number(e.target.value) })}
+                                      className="border border-orange-200 bg-white rounded px-2 py-1 text-[11px] focus:outline-none focus:border-orange-400">
+                                      {Array.from({ length: 11 }, (_, i) => i + 1).map(m => (
+                                        <option key={m} value={m}>{m} {m === 1 ? t('crm.wizard.month1', 'Monat') : t('crm.wizard.monthN', 'Monate')} {t('crm.wizard.selfUsePerYear', 'im Jahr')}</option>
+                                      ))}
+                                    </select>
+                                  )}
+                                </>
                               )
                             })()}
                           </div>

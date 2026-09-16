@@ -63,6 +63,13 @@ export interface CalcParams {
   vatMode?: VatMode
   vatRefundMonths?: number   // Wartezeit ab Uebergabe, Standard 24
   livingSqm?: number | null   // Wohnflaeche m² fuer die anteilige 5/19-Aufteilung
+  // ── Mischnutzung (Sven 16.9.26) ───────────────────────────────────────────
+  // Kurzzeitvermietung mit eigener Nutzung: so viele Monate im Jahr wohnt der
+  // Kaeufer selbst darin (0-11, 0/undefined = reine Vermietung). Die MwSt auf
+  // den Kaufpreis wird nur fuer den unternehmerischen Anteil erstattet
+  // ((12 - Monate) / 12), und in diesen Monaten gibt es keine Miete. Gilt nur
+  // bei Kurzzeit + Einzelkauf; bei Langzeit und Share-Deal ohne Wirkung.
+  selfUseMonths?: number
   // ── Halte-Struktur (Sven 4.9.26) ──────────────────────────────────────────
   // privat = die Wohnung gehoert der Person; firma = eine zyprische Ltd haelt
   // sie. Die Steuer laeuft komplett anders (siehe CY_* Konstanten unten):
@@ -289,7 +296,7 @@ export const DEFAULT_PARAMS: CalcParams = {
   termYears: 20, amortPct: 2, appreciationPct: 5, deTaxPct: 42, furnCost: 0, furnFree: false,
   ppVals: Array(10).fill(0),
   season: null,
-  vatMode: 'standard19', livingSqm: null,
+  vatMode: 'standard19', livingSqm: null, selfUseMonths: 0,
   holder: 'privat', corpTaxPct: CY_CORP_TAX_PCT, divPayoutPct: 100, divTaxPct: DE_DIV_TAX_PCT, gesy: true,
   opexMonthly: 0, maintPct: 0, mgmtMode: 'pct', mgmtFix: 0, socialIns: true, years: 10,
 }
@@ -378,6 +385,9 @@ export interface CalcResult {
   ek10: number; totRet: number; roe10: number; irrV: number; mRate: number; mCF: number; mF: number
   furnCost: number; furnFree: boolean; furnForIRR: number; furnVat: number; furnGross: number
   vatMode: VatMode; livingSqm: number; vatDetail: VatSplit
+  // Mischnutzung: Monate Selbstnutzung je Jahr, unternehmerischer Anteil und die
+  // daraus tatsaechlich erstattbare MwSt (0 bei Langzeit/Share-Deal).
+  selfUseMonths: number; letShare: number; vatRefund: number
 }
 
 export function compute(p: CalcParams): CalcResult { return computeCore(applySeason(p)) }
@@ -489,13 +499,20 @@ function computeCore(p: CalcParams): CalcResult {
   // der Uebergabe genug Monate vergangen sind. Die Frist ist ein Parameter,
   // weil Einzelrechner (24) und Strategie (18) sich hier unterscheiden.
   const vatWait = Math.max(0, Math.round(p.vatRefundMonths ?? VAT_REFUND_MONTHS_DEFAULT))
+  // Mischnutzung: Monate Selbstnutzung mindern den unternehmerischen Anteil.
+  // Nur Kurzzeit + Einzelkauf; 0 Monate = bisheriges Verhalten (bit-genau).
+  const selfUseMonths = (letT === 'short' && !sdMode)
+    ? Math.max(0, Math.min(11, Math.round(p.selfUseMonths ?? 0))) : 0
+  const letShare = (12 - selfUseMonths) / 12
+  const vatRefund = letT === 'short' ? Math.round(vatAmt * letShare) : 0
   const vatA = Array(YEARS).fill(0)
   if (letT === 'short') {
     let acc = 0
-    for (let vi = 0; vi < mA.length; vi++) { acc += mA[vi]; if (acc >= vatWait) { vatA[vi] = vatAmt; break } }
+    for (let vi = 0; vi < mA.length; vi++) { acc += mA[vi]; if (acc >= vatWait) { vatA[vi] = vatRefund; break } }
   }
 
-  const baseR = pGrossList * (yPct / 100)
+  // Miete nur fuer die vermieteten Monate (Selbstnutzung bringt keine Miete).
+  const baseR = pGrossList * (yPct / 100) * letShare
   const rents = fA.map((f, i) => Math.round(baseR * Math.pow(1 + rG / 100, i) * f))
   // Verwaltung: Prozent der Miete (Standard) oder fester Monatsbetrag. Beide
   // steigen mit 2 % p.a., anteilig im Rumpfjahr.
@@ -689,5 +706,6 @@ function computeCore(p: CalcParams): CalcResult {
     sumR, sumC, sumT, sumVat, sumPP, sumCF, ek10, totRet, roe10, irrV, mRate, mCF, mF,
     furnCost, furnFree, furnForIRR, furnVat, furnGross,
     vatMode: sdMode ? 'standard19' : (p.vatMode ?? 'standard19'), livingSqm: Math.max(0, p.livingSqm ?? 0), vatDetail,
+    selfUseMonths, letShare, vatRefund,
   }
 }

@@ -22,7 +22,7 @@ const num = (v: string, d = 0) => { const n = parseFloat(v); return isNaN(n) ? d
 const eur0 = (n: number) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(Math.round(n))
 
 // Objektwerte: Vermietungsart, Saisonmodell, Verwaltung, Einrichtung.
-interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean; vatMode: VatMode; livingSqm: number }
+interface PerObj { letType: 'short' | 'long'; occ: number; adr: number; mgmtPct: number; hotel: boolean; furnCost: number; furnFree: boolean; vatMode: VatMode; livingSqm: number; selfUse: number }
 // fallbackSqm: Wohnflaeche aus dem CRM-Objekt, wenn die (aeltere) Berechnung noch
 // kein eigenes livingSqm gespeichert hat.
 const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null): PerObj => ({
@@ -34,6 +34,8 @@ const perObjFrom = (pr?: Partial<CalcParams> | null, fallbackSqm?: number | null
   furnCost: pr?.furnCost ?? 0,
   furnFree: !!pr?.furnFree,
   vatMode: pr?.vatMode ?? 'standard19',
+  // Mischnutzung: Monate Selbstnutzung je Jahr (0 = reine Vermietung)
+  selfUse: pr?.selfUseMonths ?? 0,
   // 'livingSqm: null' ist eine GESPEICHERTE Entscheidung (keine Flaeche = alles
   // beguenstigt) - nur wenn das Feld ganz fehlt (Alt-Berechnung), aus dem
   // CRM-Objekt vorbelegen.
@@ -49,6 +51,7 @@ const applyPerObj = (base: CalcParams, o: PerObj): CalcParams => ({
   furnFree: o.furnFree,
   vatMode: o.vatMode,
   livingSqm: o.livingSqm > 0 ? o.livingSqm : null,
+  selfUseMonths: o.letType === 'short' ? Math.max(0, Math.min(11, o.selfUse || 0)) : 0,
 })
 
 export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lead: LeadLite; onClose: () => void; onDone: (msg: string) => void; editCalc?: { token: string; content: { items: CalcItem[]; recipient_name?: string } } }) {
@@ -126,6 +129,7 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
           // (im Bearbeiten-Modus aus dem ersten Objekt geseedeten) p erben.
           vatMode: 'standard19',
           livingSqm: a.unit.size_sqm ?? 0,
+          selfUse: 0,
         }
       }
       return n
@@ -410,7 +414,34 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
             <input type="checkbox" checked={o.furnFree} onChange={e => upd({ furnFree: e.target.checked })} className="accent-orange-500" />
             {t('rechnerWizard.furnFree', 'Einrichtung kostenfrei')}
           </label>
+          {/* Mischnutzung (Sven 16.9.): Haken + Monate. Die Engine erstattet die
+              MwSt nur anteilig ((12 - Monate)/12) und rechnet in diesen Monaten
+              keine Miete. Nur bei Kurzzeit - Langzeit kennt keine Erstattung. */}
+          {o.letType === 'short' && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-600">
+              <input type="checkbox" checked={o.selfUse > 0} onChange={e => upd({ selfUse: e.target.checked ? 2 : 0 })} className="accent-orange-500" />
+              🏠 {t('rechnerWizard.selfUse', 'Selbstnutzung')}
+            </label>
+          )}
         </div>
+        {o.letType === 'short' && o.selfUse > 0 && (() => {
+          const share = Math.round((12 - o.selfUse) / 12 * 1000) / 10
+          return (
+            <div className="mt-2 rounded-lg border border-orange-100 bg-orange-50/60 p-2.5 flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-xs text-gray-600">
+                <span>{t('rechnerWizard.selfUseMonths', 'Monate im Jahr')}</span>
+                <select value={o.selfUse} onChange={e => upd({ selfUse: Number(e.target.value) })} className="border border-orange-200 bg-white rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-orange-400">
+                  {Array.from({ length: 11 }, (_, i) => i + 1).map(m => (
+                    <option key={m} value={m}>{m} {m === 1 ? t('rechnerWizard.month1', 'Monat') : t('rechnerWizard.monthN', 'Monate')}</option>
+                  ))}
+                </select>
+              </label>
+              <span className="text-[11px] text-gray-500">
+                {t('rechnerWizard.selfUseHint', 'Vermietung {{share}} % des Jahres → MwSt-Erstattung und Miete anteilig', { share: share.toLocaleString('de-DE') })}
+              </span>
+            </div>
+          )
+        })()}
       </div>
     )
   }

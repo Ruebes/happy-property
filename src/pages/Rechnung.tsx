@@ -267,6 +267,10 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
               ? t('rechnung.vatMode130', 'Reduziert – 5% bis 130 m²')
               : t('rechnung.vatMode200', 'Reduziert – 5% bis 200 m²')) + (r.livingSqm > 0 ? ` (${r.livingSqm} m²)` : '')} />}
             <KV k={r.vatMode !== 'standard19' ? t('rechnung.vatMixed', 'Umsatzsteuer (5%/19%)') : t('rechnung.vat19', 'Umsatzsteuer (19%)')} v={eur(r.vatAmt)} />
+            {r.selfUseMonths > 0 && (<>
+              <KV k={t('rechnung.selfUse', 'Selbstnutzung')} v={t('rechnung.selfUseValue', '{{m}} Monate/Jahr · Vermietung {{share}} %', { m: r.selfUseMonths, share: Math.round(r.letShare * 1000) / 10 })} />
+              <KV k={t('rechnung.vatRefundPartial', 'USt.-Erstattung anteilig')} v={eur(r.vatRefund)} />
+            </>)}
             <KV k={t('rechnung.legalFees1pct', 'Anwaltskosten (1%)')} v={eur(r.costs)} />
             <KV k={t('rechnung.financing', 'Fremdfinanzierung')} v={eur(r.loan)} />
             <KV k={t('rechnung.rentGrowthAnnual', 'Mietsteigerung p.a.')} v={pct(r.rG)} />
@@ -352,6 +356,7 @@ function Single({ row, isMobile }: { row: Row; today: string; isMobile: boolean 
         </div>
       </Card>
       {r.letT === 'short' && r.hotelConcept && <Note>🏨 <b>{t('rechnung.hotelConceptLabel', 'Hotelkonzept')}:</b> {t('rechnung.hotelConceptNote', 'Verwaltung übernimmt komplettes Hotelservice inkl. Reinigung, Check-in, Marketing & 24/7 Gästebetreuung.')}</Note>}
+      {r.selfUseMonths > 0 && <Note>🏠 <b>{t('rechnung.selfUse', 'Selbstnutzung')}:</b> {t('rechnung.selfUseNote', '{{m}} Monate im Jahr eigene Nutzung. Die Umsatzsteuer wird nur für den vermieteten Anteil ({{share}} %) erstattet, in den Eigennutzungsmonaten fallen keine Mieteinnahmen an.', { m: r.selfUseMonths, share: Math.round(r.letShare * 1000) / 10 })}</Note>}
       <Note>{t('rechnung.cashflowNote', 'Der Cashflow zeigt die tatsächlichen Einnahmen nach allen Kosten, Kreditraten und Steuern. Positive Werte bedeuten Überschuss aus der Immobilie. Die einmalige USt.-Erstattung ist separat ausgewiesen.')}</Note>
 
       {/* 4. Tabelle B – Darlehen / EK / Werte */}
@@ -544,6 +549,8 @@ function CompareTable({ rows }: { rows: Row[] }) {
                 {row(t('rechnung.vatTotal', 'Umsatzsteuer gesamt'), r => r.res ? `+ ${eur(r.res.vatAmt)}` : '–')}
               </>)}
               {row(t('rechnung.purchasePriceGross', 'Kaufpreis brutto'), r => eur(r.res?.pGross))}
+              {rows.some(x => x.res && x.res.selfUseMonths > 0) && row(t('rechnung.selfUse', 'Selbstnutzung'), r => r.res && r.res.selfUseMonths > 0 ? t('rechnung.selfUseShort', '{{m}} Mon./Jahr', { m: r.res.selfUseMonths }) : '–')}
+              {rows.some(x => x.res && x.res.selfUseMonths > 0) && row(t('rechnung.vatRefundPartial', 'USt.-Erstattung anteilig'), r => r.res ? (r.res.letT === 'short' ? eur(r.res.vatRefund) : '–') : '–')}
               {/* Einrichtung NETTO ausweisen und die MwSt darunter - im Vergleich stand
                   vorher der Bruttowert (25.000 → 29.750) und wirkte wie ein anderer
                   Preis als in der Einzelrechnung (Sven 18.8.). */}

@@ -863,7 +863,7 @@ export function saleLineOf(o: UnitOutcome, year: number, p: SimParams, tranches:
   const debt = Math.round(ownDebt + trancheDebt)
   const soldInterval = delivered ? i + 1 : 0
   const vatClawback = (o.unit.letType === 'short' && delivered && soldInterval < VAT_ADJUST_YEARS)
-    ? Math.round(o.res.vatAmt * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
+    ? Math.round(o.res.vatRefund * (VAT_ADJUST_YEARS - soldInterval) / VAT_ADJUST_YEARS)
     : 0
   return {
     name: o.unit.name, value, cost, costIndexed, sellCost, debt, vatClawback, delivered,

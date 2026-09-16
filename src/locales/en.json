@@ -3951,7 +3951,11 @@
       "furnSumMissing": "⚠ No price column with furniture on file — {{p}} net without furniture applies.",
       "furnSumNone": "Deck: {{p}} net — furniture does not appear in the deck",
       "strategySim2": "Investment strategy (bundle purchase, equity allocation, reinvestment)",
-      "planAdded": "The plan is included."
+      "planAdded": "The plan is included.",
+      "selfUse": "Own use",
+      "month1": "month",
+      "monthN": "months",
+      "selfUsePerYear": "per year"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",
@@ -4829,7 +4833,8 @@
       "releasedHint": "The link is live for the client. You can send it now, by any route. Changes here take effect immediately and the link stays the same.",
       "release": "Release to client",
       "releasing": "Releasing…",
-      "releaseFail": "The release was not saved - are permissions missing?"
+      "releaseFail": "The release was not saved - are permissions missing?",
+      "selfUse": "🏠 {{m}} mo. own use"
     },
     "taskNewPerson": "New person (no CRM account needed)",
     "taskNewName": "Name",
@@ -5156,7 +5161,12 @@
     "vatShare5": "of which VAT at 5%",
     "vatShare19": "of which VAT at 19%",
     "netSuffix": "net",
-    "purchasePriceVat": "VAT on purchase price"
+    "purchasePriceVat": "VAT on purchase price",
+    "selfUse": "Own use",
+    "selfUseValue": "{{m}} months/year · rented {{share}} %",
+    "selfUseShort": "{{m}} mo./year",
+    "vatRefundPartial": "VAT refund (pro rata)",
+    "selfUseNote": "{{m}} months of own use per year. VAT is refunded only for the rented share ({{share}} %), and no rental income arises in the months of own use."
   },
   "automationRules": {
     "eventLeadCreated": "New lead",
@@ -5418,7 +5428,12 @@
     "vatReduced200": "Reduced – 5% up to 200 m² (transitional rule)",
     "livingSqmLabel": "Living area m²",
     "vatPreview": "{{red}} € net at 5% + {{std}} € net at 19% → {{vat}} € VAT, gross {{gross}} €",
-    "vatNoSqm": "⚠ Without a living area the full price is treated as eligible (5%). Please enter the living area."
+    "vatNoSqm": "⚠ Without a living area the full price is treated as eligible (5%). Please enter the living area.",
+    "selfUse": "Own use",
+    "selfUseMonths": "Months per year",
+    "month1": "month",
+    "monthN": "months",
+    "selfUseHint": "Rented {{share}} % of the year → VAT refund and rent pro rata"
   },
   "appointmentModal": {
     "stepBasis": "Basics",

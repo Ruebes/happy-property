@@ -143,6 +143,8 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
             // MwSt-Regelung der Einzelberechnung mitnehmen - sonst rechnet die
             // Strategie 19 %, waehrend die Einzelrechnung 5/19 gemischt zeigt.
             vatMode: p.vatMode, livingSqm: p.livingSqm,
+            // Mischnutzung (Selbstnutzung) nur bei Kurzzeit
+            selfUseMonths: letType === 'short' ? (p.selfUseMonths ?? 0) : 0,
           },
         }
       }))
@@ -530,6 +532,7 @@ export default function StrategySimulator({ lead, initialUnits, onClose }: {
                       <label className={lbl}>
                         {t('crm.sim.rent', 'Miete/Monat (€)')}
                         {u.calc?.season && <span className="text-orange-600"> · {t('crm.sim.fromSeason', 'aus Saisonmodell')}</span>}
+                        {(u.calc?.selfUseMonths ?? 0) > 0 && <span className="text-orange-600"> · {t('crm.sim.selfUse', '🏠 {{m}} Mon. Selbstnutzung', { m: u.calc?.selfUseMonths })}</span>}
                       </label>
                       {/* Eigene Miete eintippen hebt ein Saisonmodell auf - sonst
                           würde die Engine weiter mit dem Modell rechnen. */}
