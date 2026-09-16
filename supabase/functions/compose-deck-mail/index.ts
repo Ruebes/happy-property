@@ -13,6 +13,7 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { bookingUrl } from '../_shared/bookingLink.ts'
+import { uspBoxHtml } from '../_shared/socialFooter.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 // Terminlink kommt vom Aufrufer (persönlicher Link des Leads, ohne Fragebogen).
@@ -218,6 +219,7 @@ function buildHtml(m: Mail, items: MailItem[], firstName = '', compare?: Compare
     </tr></table>
   </td></tr>
   <tr><td style="padding:18px 40px 0 40px;"><p style="margin:0;font-family:${SANS};font-size:13px;line-height:1.6;color:${C.ink};"><a href="mailto:sven@happy-property.com" style="color:${C.navy};text-decoration:none;">sven@happy-property.com</a><br>+357 95 09 64 09<br><a href="https://happy-property.com" target="_blank" style="color:#888;text-decoration:none;">happy-property.com</a></p></td></tr>
+  <tr><td style="padding:28px 40px 0 40px;">${uspBoxHtml('de')}</td></tr>
   ${socialBlock}
 </table></td></tr></table></body></html>`
 }

@@ -20,7 +20,7 @@
 //   { ok: true, status: 'neu' | 'bestand', profile_id }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { SOCIAL_FOOTER_HTML } from '../_shared/socialFooter.ts'
+import { SOCIAL_FOOTER_HTML, uspBoxHtml } from '../_shared/socialFooter.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -145,7 +145,7 @@ Deno.serve(async (req: Request) => {
          ? `<p style="font-size:15px;color:#374151;">Deine Zugangsdaten hast du in einer separaten E-Mail bekommen.</p>`
          : `<p style="font-size:15px;color:#374151;">Melde dich einfach wie gewohnt an: <a href="${APP_URL}/login">${APP_URL}/login</a></p>`}
        <p style="font-size:15px;color:#374151;">Viele Grüße<br>Happy Property</p>
-       ${SOCIAL_FOOTER_HTML}`,
+       ${uspBoxHtml('de')}${SOCIAL_FOOTER_HTML}`,
     )
 
     // Hat Sven freigeschaltet, erfährt der Eigentümer davon: er soll wissen, wer
@@ -162,7 +162,7 @@ Deno.serve(async (req: Request) => {
            wurde <strong>${esc(profil.full_name ?? profil.email)}</strong> freigeschaltet und sieht dort dieselben
            Unterlagen wie du. Du kannst den Zugriff jederzeit im Portal wieder entfernen.</p>
            <p style="font-size:15px;color:#374151;">Viele Grüße<br>Happy Property</p>
-           ${SOCIAL_FOOTER_HTML}`,
+           ${uspBoxHtml('de')}${SOCIAL_FOOTER_HTML}`,
         )
       }
     }

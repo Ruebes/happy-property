@@ -17,7 +17,7 @@ import { unitGross } from '../_shared/price.ts'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
-import { SOCIAL_FOOTER_HTML, socialFooterHtml } from '../_shared/socialFooter.ts'
+import { SOCIAL_FOOTER_HTML, socialFooterHtml, uspBoxHtml } from '../_shared/socialFooter.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 
 const CORS = {
@@ -176,6 +176,7 @@ function buildWelcomeEmail(params: {
       </table>
     </td></tr>
   </table>
+  ${uspBoxHtml(lang === 'en' ? 'en' : 'de')}
   ${socialFooterHtml(lang === 'en' ? 'en' : 'de')}
 </body>
 </html>`

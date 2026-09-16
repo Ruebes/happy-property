@@ -24,6 +24,7 @@ import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { htmlToText as stripHtml } from '../_shared/htmlToText.ts'
 import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
+import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
@@ -688,7 +689,11 @@ Deno.serve(async (req: Request) => {
                 } catch (icsErr) { console.warn('[process-scheduled] ICS-Anhang fehlgeschlagen:', icsErr) }
               }
               // Abonnenten-Mails: Öffnungs-Pixel für den Flow-Split „E-Mail geöffnet?"
-              const htmlOut = (emailBody ?? msg.email_body) + (msg.subscriber_id
+              // USP-Kasten + Social-Footer an Kunden-/Abonnenten-Mails (Sven 16.9.: in JEDE
+              // Mail, auch No-Show/Kein-Termin). Bauträger-/Verwalter-Kontakte bleiben ohne.
+              const anKunde = !!msg.subscriber_id || !msg.recipient || msg.recipient === 'client'
+              const htmlBase = anKunde ? withSocialFooter(emailBody ?? msg.email_body, rcpt.language) : (emailBody ?? msg.email_body)
+              const htmlOut = htmlBase + (msg.subscriber_id
                 ? `<img src="${Deno.env.get('SUPABASE_URL')}/functions/v1/subscriber-optin?open=${msg.subscriber_id}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
                 : '')
               await sendEmail({
