@@ -37,7 +37,10 @@ interface Assignee {
   ext_lang: string | null
   channel: string; token: string; last_reminded_at: string | null
 }
-interface Task { id: string; title: string; description: string | null; due_date: string | null; status: string; archived: boolean; parent_task_id?: string | null }
+interface ExtCreator { name: string; email: string | null; phone: string | null; lang: string | null }
+// ext_creator: Aufgabe kam von AUSSEN über einen persönlichen Buchungslink (/buchen?g=…);
+// created_by ist dann nur der Link-Inhaber, der echte Absender steht hier.
+interface Task { id: string; title: string; description: string | null; due_date: string | null; status: string; archived: boolean; parent_task_id?: string | null; ext_creator?: ExtCreator | null }
 interface LinkedContact { name: string; role: string | null; phone: string | null; email: string | null }
 interface ParentCtx { id: string; title: string; description: string | null; creator: string; messages: { who: string; body: string; created_at: string }[] }
 
@@ -218,8 +221,16 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   // Teilaufgabe? Dann Hauptaufgabe + Verlauf mitschicken - sonst weiß der Empfänger
   // nicht, worauf sich z.B. eine Rückfrage bezieht (Vorfall Leonard/Sven 15.9.).
   const parent = await loadParentCtx(supabase, task.parent_task_id)
-  const introMailX = parent && kind === 'dispatch' ? 'ich bin Lotte und verteile die Aufgaben im Team. Hier ist eine Zuarbeit für dich - den Bezug findest du gleich darunter:' : introMail
-  const introWaX   = parent && kind === 'dispatch' ? '🐾 Hallo, hier ist Lotte. Ich hab eine Zuarbeit für dich - der Bezug steht gleich darunter:' : introWa
+  let introMailX = parent && kind === 'dispatch' ? 'ich bin Lotte und verteile die Aufgaben im Team. Hier ist eine Zuarbeit für dich - den Bezug findest du gleich darunter:' : introMail
+  let introWaX   = parent && kind === 'dispatch' ? '🐾 Hallo, hier ist Lotte. Ich hab eine Zuarbeit für dich - der Bezug steht gleich darunter:' : introWa
+  // Von außen gestellt (persönlicher Link): Absender nennen, sonst wüsste Sven nicht,
+  // von wem die Aufgabe kommt - created_by ist ja er selbst.
+  if (task.ext_creator && kind === 'dispatch') {
+    const c = task.ext_creator
+    const who = `${c.name}${c.email ? ` · ${c.email}` : ''}${c.phone ? ` · ${cleanPhone(c.phone)}` : ''}`
+    introMailX = `${esc(c.name)} hat dir über deinen persönlichen Link eine Aufgabe gestellt (${esc(who)}):`
+    introWaX   = `🐾 Hallo, hier ist Lotte. ${c.name} hat dir über deinen persönlichen Link eine Aufgabe gestellt (${who}):`
+  }
 
   // Texte auf Deutsch bauen, dann in die Empfängersprache übersetzen. translateOutbound
   // bewahrt HTML/URLs/Telefonnummern/E-Mails/Eigennamen (Lotte, Happy Property) und gibt
@@ -248,6 +259,55 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
   return { assignee: a.id, mail: wantMail, whatsapp: wantWa, lang, contacts: contacts.length }
 }
 
+// ── Fertigmeldung an einen EXTERNEN Aufgabengeber (persönlicher Link) ────────
+// Gleicher Riegel wie bei Teilaufgaben (done_notified_at, Compare-and-Swap), gleiche
+// Aufrufer (In-App, Token-Link, Sweep). Sprache aus ext_creator.lang.
+async function notifyExtCreatorDone(supabase: SupabaseClient, task: { id: string; title: string; ext_creator: ExtCreator | null; done_notified_at: string | null }) {
+  const c = task.ext_creator!
+  const { data: claimed } = await supabase.from('crm_tasks')
+    .update({ done_notified_at: new Date().toISOString() })
+    .eq('id', task.id).is('done_notified_at', null).select('id')
+  if (!claimed || claimed.length === 0) return { skipped: 'bereits_gemeldet' }
+  const release = async (why: unknown) => {
+    console.warn('[task-notify] Versand (extern) fehlgeschlagen, Meldung bleibt offen:', why)
+    await supabase.from('crm_tasks').update({ done_notified_at: null }).eq('id', task.id)
+  }
+  const en = c.lang === 'en'
+  const first = (c.name || '').split(' ')[0] || c.name
+  const safeTitle = task.title.replace(/[\r\n]+/g, ' ').slice(0, 160)
+  const waText = en
+    ? `✅ Done!\n\nHi ${first} 🐾\n\nSven has completed your task:\n\n*${task.title}*\n\nBest regards\nLotte 🐾`
+    : `✅ Erledigt!\n\nHallo ${first} 🐾\n\nSven hat deine Aufgabe erledigt:\n\n*${task.title}*\n\nLiebe Grüße\nLotte 🐾`
+  const phone = (c.phone ?? '').trim()
+  let via = 'keiner'
+  if (phone) {
+    const { error: waErr } = await supabase.functions.invoke('send-whatsapp', { body: { already_translated: true,
+      event_type: 'task_done_ext', override_text: waText,
+      lead_data: { lead_name: c.name || 'Gast', lead_phone: phone },
+      persona_image: await lotteBossBild(supabase),
+    } }).catch((e: unknown) => ({ error: e }))
+    if (waErr) { await release(waErr); return { skipped: 'versand_fehlgeschlagen' } }
+    via = 'whatsapp'
+  } else if (c.email) {
+    const { error: mailErr } = await supabase.functions.invoke('send-email', { body: { already_translated: true,
+      to: c.email, from_name: en ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang: en ? 'en' : 'de', auto: true,
+      subject: en ? `Done: ${safeTitle}` : `Erledigt: ${safeTitle}`,
+      html: `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+        <p>${en ? 'Hi' : 'Hallo'} ${esc(first)},</p>
+        <p>${en ? 'Sven has completed your task:' : 'Sven hat deine Aufgabe erledigt:'}</p>
+        <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
+          <p style="font-size:16px;font-weight:600;color:#111827;margin:0;">✅ ${esc(task.title)}</p>
+        </div>
+        <p>${en ? 'Best regards' : 'Liebe Grüße'}<br>Lotte 🐾</p>
+      </div>`,
+    } }).catch((e: unknown) => ({ error: e }))
+    if (mailErr) { await release(mailErr); return { skipped: 'versand_fehlgeschlagen' } }
+    via = 'mail'
+  }
+  console.log(`[task-notify] Externe Aufgabe ${task.id} erledigt → Meldung an ${c.name} via ${via}`)
+  return { notified: true, via, external: true }
+}
+
 // ── Fertigmeldung einer Teilaufgabe an den Aufgabengeber ────────────────────
 // Aufrufbar von allen drei Erledigt-Wegen (In-App-Button, Drag & Drop, Token-Link)
 // und zusätzlich vom 5-Minuten-Sweep. Damit daraus trotzdem GENAU EINE Nachricht
@@ -256,12 +316,14 @@ async function deliver(supabase: SupabaseClient, a: Assignee, task: Task, kind: 
 // zurück und hört auf.
 async function notifySubtaskDone(supabase: SupabaseClient, taskId: string) {
   const { data: t } = await supabase.from('crm_tasks')
-    .select('id, title, description, parent_task_id, created_by, completed_by, status, done_notified_at')
+    .select('id, title, description, parent_task_id, created_by, completed_by, status, done_notified_at, ext_creator')
     .eq('id', taskId).maybeSingle()
-  const task = t as { id: string; title: string; parent_task_id: string | null; created_by: string; completed_by: string | null; status: string; done_notified_at: string | null } | null
+  const task = t as { id: string; title: string; parent_task_id: string | null; created_by: string; completed_by: string | null; status: string; done_notified_at: string | null; ext_creator: ExtCreator | null } | null
   if (!task) return { skipped: 'not_found' }
-  if (!task.parent_task_id) return { skipped: 'keine_teilaufgabe' }
   if (task.status !== 'erledigt') return { skipped: 'nicht_erledigt' }
+  // Von außen gestellte Aufgabe (persönlicher Link): Rückmeldung an den externen Absender.
+  if (!task.parent_task_id && task.ext_creator) return await notifyExtCreatorDone(supabase, task)
+  if (!task.parent_task_id) return { skipped: 'keine_teilaufgabe' }
   // Wer sich selbst zuarbeitet, braucht keine Rückmeldung.
   if (task.completed_by && task.completed_by === task.created_by) {
     await supabase.from('crm_tasks').update({ done_notified_at: new Date().toISOString() }).eq('id', task.id).is('done_notified_at', null)
@@ -458,7 +520,7 @@ Deno.serve(async (req) => {
 
     if (mode === 'dispatch') {
       if (!task_id) return json({ error: 'task_id fehlt' }, 400)
-      const { data: task } = await supabase.from('crm_tasks').select('id,title,description,due_date,status,archived,parent_task_id').eq('id', task_id).single()
+      const { data: task } = await supabase.from('crm_tasks').select('id,title,description,due_date,status,archived,parent_task_id,ext_creator').eq('id', task_id).single()
       if (!task) return json({ error: 'Aufgabe nicht gefunden' }, 404)
       const { data: asg } = await supabase.from('crm_task_assignees').select('*').eq('task_id', task_id)
       const out = []
@@ -497,7 +559,7 @@ Deno.serve(async (req) => {
     // jeden Erledigt-Weg ab, auch einen, den es heute noch nicht gibt.
     if (mode === 'subtask_sweep') {
       const { data: due } = await supabase.from('crm_tasks').select('id')
-        .eq('status', 'erledigt').is('done_notified_at', null).not('parent_task_id', 'is', null).limit(50)
+        .eq('status', 'erledigt').is('done_notified_at', null).or('parent_task_id.not.is.null,ext_creator.not.is.null').limit(50)
       const out = []
       for (const r of (due ?? []) as { id: string }[]) out.push(await notifySubtaskDone(supabase, r.id))
       return json({ ok: true, swept: out.length, out })
@@ -508,7 +570,7 @@ Deno.serve(async (req) => {
       const cutoff = new Date(Date.now() - 20 * 3600_000).toISOString()   // max. 1×/Tag
       const { data: asg } = await supabase
         .from('crm_task_assignees')
-        .select('*, task:crm_tasks!inner(id,title,description,due_date,status,archived,parent_task_id)')
+        .select('*, task:crm_tasks!inner(id,title,description,due_date,status,archived,parent_task_id,ext_creator)')
         .neq('task.status', 'erledigt').eq('task.archived', false)
       let sent = 0
       for (const row of (asg ?? []) as (Assignee & { task: Task })[]) {

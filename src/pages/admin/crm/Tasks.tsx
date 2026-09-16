@@ -21,6 +21,9 @@ interface Task {
   due_date: string | null; accepted_at?: string | null
   // Gesetzt, wenn dies eine Teilaufgabe (Zuarbeit) zu einer anderen Aufgabe ist.
   parent_task_id?: string | null
+  // Von AUSSEN über einen persönlichen Buchungslink gestellt: created_by ist dann nur
+  // der Link-Inhaber, der echte Absender steht hier (Name/Mail/Telefon/Sprache).
+  ext_creator?: { name: string; email: string | null; phone: string | null; lang: string | null } | null
 }
 interface TaskMessage { id: string; task_id: string; sender_id: string | null; sender_label: string | null; recipient_id: string; body: string; read_at: string | null; created_at: string }
 interface Staff { id: string; full_name: string; email: string; role: string }
@@ -56,7 +59,8 @@ function statusPatch(tk: Task, status: TaskStatus, myId: string): Record<string,
   return patch
 }
 function notifyIfSubtaskDone(tk: Task, status: TaskStatus) {
-  if (status !== 'erledigt' || !tk.parent_task_id) return
+  // Auch von außen gestellte Aufgaben (ext_creator) melden dem Absender die Erledigung.
+  if (status !== 'erledigt' || (!tk.parent_task_id && !tk.ext_creator)) return
   supabase.functions.invoke('task-notify', { body: { mode: 'subtask_done', task_id: tk.id } })
     .catch(e => console.warn('[Tasks] subtask_done:', e))
 }
@@ -593,7 +597,7 @@ function DetailModal({ task, staff, myId, onClose, onChanged, onOpenTask }: { ta
               ? <input value={eTitle} onChange={e => setETitle(e.target.value)} className={inputCls + ' font-semibold'} />
               : <h2 className="text-lg font-semibold text-gray-900 truncate">{task.title}</h2>}
             <p className="text-xs text-gray-400 mt-0.5">
-              {t('crm.tasks.from', 'von')} {nameOf(task.created_by)}
+              {t('crm.tasks.from', 'von')} {task.ext_creator ? `${task.ext_creator.name} (${t('crm.tasks.viaLink', 'über persönlichen Link')})` : nameOf(task.created_by)}
               {parentCtx && <> · ↳ {t('crm.tasks.parentCtx', 'Zuarbeit zu')}: <span className="text-gray-600 font-medium">{parentCtx.title}</span></>}
             </p>
           </div>
@@ -1088,7 +1092,7 @@ export default function Tasks() {
                             <span className="inline-block mt-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5">✓ {t('crm.tasks.accepted', 'angenommen')}</span>
                           )}
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-2 text-[11px] text-gray-400">
-                            <span>{mine ? `→ ${nameOf(task.assigned_to)}` : `${t('crm.tasks.fromShort', 'von')} ${nameOf(task.created_by)}`}</span>
+                            <span>{task.ext_creator ? `${t('crm.tasks.fromShort', 'von')} ${task.ext_creator.name} ✉️` : mine ? `→ ${nameOf(task.assigned_to)}` : `${t('crm.tasks.fromShort', 'von')} ${nameOf(task.created_by)}`}</span>
                             <span>· {t('crm.tasks.createdOn', 'Gestellt')} {d2(task.created_at)}</span>
                             {task.due_date && (
                               <span className={isOverdue(task) ? 'text-red-500 font-semibold' : ''}>

@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
 
     const { data: task, error: tErr } = await supabase
       .from('crm_tasks')
-      .select('id, title, description, status, created_by, accepted_at, archived, parent_task_id')
+      .select('id, title, description, status, created_by, accepted_at, archived, parent_task_id, ext_creator')
       .eq('id', asg.task_id).single()
     if (tErr || !task) return json({ error: 'Aufgabe nicht gefunden' }, 404)
 
@@ -127,7 +127,8 @@ Deno.serve(async (req) => {
       await addNote('Als erledigt markiert.', '🏁 ')
       // Teilaufgabe? Dann bekommt der, der die Zuarbeit gestellt hat, eine Rueckmeldung.
       // Doppelmeldungen sind ausgeschlossen: task-notify riegelt ueber done_notified_at ab.
-      if (task.parent_task_id) {
+      // Ebenso bei Aufgaben, die von außen über einen persönlichen Link kamen (ext_creator).
+      if (task.parent_task_id || task.ext_creator) {
         await supabase.functions.invoke('task-notify', { body: { mode: 'subtask_done', task_id: task.id } })
           .catch((e: unknown) => console.warn('[task-action] subtask_done:', e))
       }

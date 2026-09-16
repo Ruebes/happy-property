@@ -8,6 +8,8 @@ import { supabase } from '../../../../lib/supabase'
 // Pro Person ein personalisierter Link auf Svens Kalender (/buchen/sven360?g=<token>)
 // mit Foto + vorausgefüllten Kontaktdaten. Buchung → Termin + Bestätigung per Mail
 // (von Lotte, mit Office-Bild) UND WhatsApp; Erinnerungen wie bei jedem Termin.
+// Seit 16.9.: je Link zwei Haken — Termin buchen und/oder Aufgabe stellen (landet als
+// Aufgabe bei Sven, Zustellung über task-notify, Erledigung wird zurückgemeldet).
 // Datenquelle: booking_invites (Burkhard/Giona bestehen bereits).
 
 const BOOKING_BASE = 'https://portal.happy-property.com/buchen/sven360?g='
@@ -25,6 +27,8 @@ interface Invite {
   image_focus: string | null
   lang: 'de' | 'en'
   internal: boolean
+  allow_calendar: boolean
+  allow_task: boolean
 }
 
 const slugify = (s: string) =>
@@ -47,6 +51,8 @@ function EditModal({ invite, existingTokens, onClose, onSaved }: {
   const [lang, setLang]   = useState<'de' | 'en'>(invite?.lang ?? 'de')
   const [focus, setFocus] = useState(invite?.image_focus ?? 'center 25%')
   const [internal, setInternal] = useState(invite?.internal ?? false)
+  const [allowCal, setAllowCal] = useState(invite?.allow_calendar ?? true)
+  const [allowTask, setAllowTask] = useState(invite?.allow_task ?? false)
   const [imageUrl, setImageUrl] = useState<string | null>(invite?.image_url ?? null)
   const [uploading, setUploading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -71,6 +77,7 @@ function EditModal({ invite, existingTokens, onClose, onSaved }: {
   const save = async () => {
     if (!name.trim()) { setErr(t('crm.booking.errName', 'Bitte einen Namen angeben.')); return }
     if (!email.trim() && !phone.trim()) { setErr(t('crm.booking.errContact', 'E-Mail oder Telefon nötig.')); return }
+    if (!allowCal && !allowTask) { setErr(t('crm.booking.errMode', 'Bitte mindestens einen Haken setzen: Termin oder Aufgabe.')); return }
     setSaving(true); setErr('')
     try {
       const row = {
@@ -83,6 +90,8 @@ function EditModal({ invite, existingTokens, onClose, onSaved }: {
         image_focus: focus,
         lang,
         internal,
+        allow_calendar: allowCal,
+        allow_task: allowTask,
       }
       if (isNew) {
         // Token eindeutig aus dem Namen ableiten
@@ -162,6 +171,18 @@ function EditModal({ invite, existingTokens, onClose, onSaved }: {
               ]} />
             </div>
           </div>
+          {/* Was darf die Person über den Link? Beides erlaubt → Umschalter auf der Seite. */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 space-y-2">
+            <p className="text-xs text-gray-500">{t('crm.booking.modeLbl', 'Was kann die Person über den Link?')}</p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={allowCal} onChange={e => setAllowCal(e.target.checked)} className="accent-[#ff795d] w-4 h-4" />
+              📅 {t('crm.booking.allowCalendar', 'Termin in deinen Kalender buchen')}
+            </label>
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" checked={allowTask} onChange={e => setAllowTask(e.target.checked)} className="accent-[#ff795d] w-4 h-4" />
+              ✅ {t('crm.booking.allowTask', 'Dir eine Aufgabe stellen (Aufgaben-App)')}
+            </label>
+          </div>
           <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
             <input type="checkbox" checked={internal} onChange={e => setInternal(e.target.checked)} className="accent-[#ff795d] w-4 h-4" />
             {t('crm.booking.internal', 'Interne Person (keine Kunden-Automatik)')}
@@ -194,7 +215,7 @@ export default function BookingLinks() {
     setLoading(true)
     try {
       const { data, error } = await supabase.from('booking_invites')
-        .select('id, token, slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal')
+        .select('id, token, slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal, allow_calendar, allow_task')
         .order('created_at', { ascending: true })
       if (error) throw error
       setItems((data as unknown as Invite[]) ?? [])
@@ -225,7 +246,7 @@ export default function BookingLinks() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">{t('crm.booking.title', 'Persönliche Buchungslinks')}</h1>
-            <p className="text-sm text-gray-500 mt-0.5">{t('crm.booking.subtitle', 'Pro Person ein Link auf deinen Kalender — mit Foto und vorausgefüllten Kontaktdaten. Bestätigung per Mail (von Lotte) und WhatsApp, Erinnerungen wie üblich.')}</p>
+            <p className="text-sm text-gray-500 mt-0.5">{t('crm.booking.subtitle', 'Pro Person ein Link — Termin in deinen Kalender buchen und/oder dir eine Aufgabe stellen. Mit Foto und vorausgefüllten Kontaktdaten, Bestätigung per Mail (von Lotte) und WhatsApp.')}</p>
           </div>
           <button onClick={() => setEditing({ invite: null })}
             className="px-3 py-1.5 rounded-xl text-white text-sm font-medium whitespace-nowrap" style={{ backgroundColor: '#ff795d' }}>
@@ -252,6 +273,8 @@ export default function BookingLinks() {
                       <span className="font-semibold text-gray-900 text-sm">{inv.guest_name || inv.token}</span>
                       {inv.lang === 'en' && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">EN</span>}
                       {inv.internal && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">{t('crm.booking.internalBadge', 'intern')}</span>}
+                      {inv.allow_calendar && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-50 text-orange-700">📅 {t('crm.booking.badgeCalendar', 'Termin')}</span>}
+                      {inv.allow_task && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700">✅ {t('crm.booking.badgeTask', 'Aufgabe')}</span>}
                     </div>
                     <p className="text-xs text-gray-400 mt-0.5 truncate">{[inv.guest_email, inv.guest_phone].filter(Boolean).join(' · ') || '—'}</p>
                     <div className="flex items-center gap-2 mt-1.5">

@@ -6,10 +6,13 @@ import { supabase } from '../lib/supabase'
 // Betreff + Dauer + Art (Vor Ort mit Adress-Autocomplete / WhatsApp / Zoom) +
 // Kontaktdaten → Termin in Svens Kalender, Bestätigung per Mail (.ics) + WhatsApp.
 // Optional: ?g=<token> lädt eine Einladung (vorbelegte Kontaktdaten + Bild + Sprache).
+// Seit 16.9.: Die Einladung bestimmt, was die Seite kann — Termin buchen, Aufgabe
+// stellen (landet in Svens Aufgaben-App) oder beides (Umschalter oben).
 // Komplett DE/EN umschaltbar.
 const CORAL = '#ff795d', AMBER = '#f59e0b'
 type Type = 'onsite' | 'whatsapp' | 'zoom'
 type Lang = 'de' | 'en'
+type Mode = 'calendar' | 'task'
 interface Day { date: string; times: { iso: string; label: string; preferred: boolean }[] }
 interface Guest { name: string | null; email: string | null; phone: string | null; subject: string | null }
 
@@ -37,6 +40,12 @@ const STR = {
     doneTitle: 'Termin gebucht!', zoomLink: 'Zoom-Link',
     greet: (n: string) => `Hallo ${n} 👋`, greetSub: 'Such dir einfach einen passenden Zeitpunkt aus.',
     confirm: (m: boolean, w: boolean) => `Du bekommst gleich eine Bestätigung${m ? ' per E-Mail (mit Kalender-Datei)' : ''}${m && w ? ' und' : ''}${w ? ' per WhatsApp' : ''}. Bis bald!`,
+    modeCal: '📅 Termin buchen', modeTask: '✅ Aufgabe stellen',
+    taskTitleLbl: 'Was soll erledigt werden?', taskTitlePh: 'z. B. Unterlagen für Notar zusammenstellen',
+    taskDescLbl: 'Details (optional)', taskDescPh: 'Alles, was Sven dafür wissen muss …',
+    taskDueLbl: 'Bis wann? (optional)', taskSubmit: 'Aufgabe stellen', taskGreetSub: 'Schreib einfach auf, was Sven für dich erledigen soll.',
+    errTaskTitle: 'Bitte angeben, was erledigt werden soll.', taskDoneTitle: 'Aufgabe gestellt!', taskDue: 'Frist',
+    taskConfirm: (m: boolean, w: boolean) => `Sven bekommt die Aufgabe sofort. Du bekommst eine Bestätigung${m ? ' per E-Mail' : ''}${m && w ? ' und' : ''}${w ? ' per WhatsApp' : ''} und eine Nachricht, sobald sie erledigt ist.`,
     locale: 'de-DE',
   },
   en: {
@@ -55,6 +64,12 @@ const STR = {
     doneTitle: 'Appointment booked!', zoomLink: 'Zoom link',
     greet: (n: string) => `Hi ${n} 👋`, greetSub: 'Just pick a time that works for you.',
     confirm: (m: boolean, w: boolean) => `You'll get a confirmation shortly${m ? ' by email (with calendar file)' : ''}${m && w ? ' and' : ''}${w ? ' by WhatsApp' : ''}. See you soon!`,
+    modeCal: '📅 Book appointment', modeTask: '✅ Assign a task',
+    taskTitleLbl: 'What needs to be done?', taskTitlePh: 'e.g. Prepare documents for the notary',
+    taskDescLbl: 'Details (optional)', taskDescPh: 'Everything Sven needs to know …',
+    taskDueLbl: 'By when? (optional)', taskSubmit: 'Assign task', taskGreetSub: 'Just write down what Sven should take care of for you.',
+    errTaskTitle: 'Please say what needs to be done.', taskDoneTitle: 'Task assigned!', taskDue: 'Due',
+    taskConfirm: (m: boolean, w: boolean) => `Sven gets the task right away. You'll receive a confirmation${m ? ' by email' : ''}${m && w ? ' and' : ''}${w ? ' by WhatsApp' : ''} and a message as soon as it's done.`,
     locale: 'en-GB',
   },
 } satisfies Record<Lang, unknown>
@@ -74,6 +89,11 @@ export default function BookingPage() {
   // bei Burkhards Selfie vor Mito Infinity in der unteren Bildhaelfte.
   const [imageFocus, setImageFocus] = useState('center 25%')
   const [notFound, setNotFound] = useState(false)
+  // Was der Link erlaubt (aus der Einladung) + aktiver Reiter
+  const [allowCal, setAllowCal] = useState(true); const [allowTask, setAllowTask] = useState(false)
+  const [mode, setMode] = useState<Mode>('calendar')
+  const [taskTitle, setTaskTitle] = useState(''); const [taskDesc, setTaskDesc] = useState(''); const [taskDue, setTaskDue] = useState('')
+  const [taskDone, setTaskDone] = useState<null | { dueStr: string }>(null)
   const [subject, setSubject] = useState(''); const [duration, setDuration] = useState(30)
   const [type, setType] = useState<Type>('whatsapp')
   const [address, setAddress] = useState(''); const [suggests, setSuggests] = useState<string[]>([])
@@ -91,6 +111,9 @@ export default function BookingPage() {
       if (d.image_url) setImage(d.image_url)
       if (d.image_focus) setImageFocus(String(d.image_focus))
       if (d.lang === 'de' || d.lang === 'en') setLang(d.lang)
+      const ac = d.allow_calendar !== false, at = d.allow_task === true
+      setAllowCal(ac); setAllowTask(at)
+      if (!ac && at) setMode('task')
       if (d.guest) {
         const g = d.guest as Guest; setGuest(g)
         if (g.name) setName(g.name)
@@ -106,7 +129,8 @@ export default function BookingPage() {
     try { const d = await call({ action: 'slots', slug, invite, duration: dur }); setDays(d.days ?? []); setDayIdx(0) }
     catch { setDays([]) } finally { setLoadingSlots(false) }
   }, [slug, invite])
-  useEffect(() => { loadSlots(duration) }, [duration, loadSlots])
+  // Reiner Aufgaben-Link: keine Slots laden (Edge würde 403 liefern)
+  useEffect(() => { if (allowCal) loadSlots(duration) }, [duration, loadSlots, allowCal])
 
   // Adress-Autocomplete (debounced)
   const tRef = useRef<number | undefined>(undefined)
@@ -135,6 +159,18 @@ export default function BookingPage() {
     try {
       const d = await call({ action: 'book', slug, invite, lang, startIso: pick, duration, subject: subject.trim(), type, address: address.trim() || undefined, name: name.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined })
       setDone({ dateStr: d.dateStr, typeLabel: d.typeLabel, zoomLink: d.zoomLink })
+    } catch (e) { setErr(e instanceof Error ? e.message : T.errFail) } finally { setBusy(false) }
+  }
+
+  const submitTask = async () => {
+    setErr('')
+    if (!taskTitle.trim()) return setErr(T.errTaskTitle)
+    if (!name.trim()) return setErr(T.errName)
+    if (!email.trim() && !phone.trim()) return setErr(T.errContact)
+    setBusy(true)
+    try {
+      const d = await call({ action: 'task', slug, invite, lang, title: taskTitle.trim(), description: taskDesc.trim() || undefined, dueDate: taskDue || undefined, name: name.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined })
+      setTaskDone({ dueStr: d.dueStr ?? '' })
     } catch (e) { setErr(e instanceof Error ? e.message : T.errFail) } finally { setBusy(false) }
   }
 
@@ -199,6 +235,17 @@ export default function BookingPage() {
 
         {notFound ? (
           <div className="p-8 text-center text-sm text-gray-500">{T.notFound}</div>
+        ) : taskDone ? (
+          <div className="p-6 text-center space-y-3">
+            <p className="text-3xl">✅</p>
+            <p className="text-base font-semibold text-gray-900">{T.taskDoneTitle}</p>
+            <div className="bg-green-50 border border-green-100 rounded-2xl p-4 text-sm text-gray-700 text-left">
+              <p className="font-medium">{taskTitle}</p>
+              {taskDesc && <p className="mt-1 text-xs text-gray-600 whitespace-pre-wrap">{taskDesc}</p>}
+              {taskDone.dueStr && <p className="mt-1">📅 {T.taskDue}: {taskDone.dueStr}</p>}
+            </div>
+            <p className="text-xs text-gray-500">{T.taskConfirm(!!email, !!phone)}</p>
+          </div>
         ) : done ? (
           <div className="p-6 text-center space-y-3">
             <p className="text-3xl">🎉</p>
@@ -216,9 +263,32 @@ export default function BookingPage() {
             {guest && (
               <div className="rounded-2xl bg-orange-50 border border-orange-100 px-4 py-3">
                 <p className="text-sm font-semibold text-gray-900">{T.greet((guest.name || '').split(' ')[0] || guest.name || '')}</p>
-                <p className="text-xs text-gray-600 mt-0.5">{T.greetSub}</p>
+                <p className="text-xs text-gray-600 mt-0.5">{mode === 'task' ? T.taskGreetSub : T.greetSub}</p>
               </div>
             )}
+            {/* Umschalter nur, wenn der Link beides erlaubt */}
+            {allowCal && allowTask && (
+              <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-gray-100">
+                {([['calendar', T.modeCal], ['task', T.modeTask]] as [Mode, string][]).map(([m, l]) => (
+                  <button key={m} onClick={() => { setMode(m); setErr('') }}
+                    className={`text-sm py-2 rounded-xl font-semibold transition ${mode === m ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>{l}</button>
+                ))}
+              </div>
+            )}
+            {mode === 'task' ? (<>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{T.taskTitleLbl}</label>
+                <input value={taskTitle} onChange={e => setTaskTitle(e.target.value)} className={input} placeholder={T.taskTitlePh} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{T.taskDescLbl}</label>
+                <textarea value={taskDesc} onChange={e => setTaskDesc(e.target.value)} rows={4} className={input} placeholder={T.taskDescPh} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{T.taskDueLbl}</label>
+                <input type="date" value={taskDue} min={new Date().toISOString().slice(0, 10)} onChange={e => setTaskDue(e.target.value)} className={input} />
+              </div>
+            </>) : (<>
             {/* Betreff */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">{T.subjectLbl}</label>
@@ -290,6 +360,7 @@ export default function BookingPage() {
                 <p className="text-[11px] text-gray-400 mt-2"><span style={{ color: AMBER }}>■</span> {T.hint}</p>
               </>)}
             </div>
+            </>)}
             {/* Kontakt */}
             <div className="space-y-2 pt-1 border-t border-gray-100">
               {guest && <p className="text-[11px] text-gray-400">{T.contactHdr} · {T.prefilled}</p>}
@@ -298,8 +369,8 @@ export default function BookingPage() {
               <input value={phone} onChange={e => setPhone(e.target.value)} className={input} placeholder={T.phonePh} />
             </div>
             {err && <p className="text-xs text-red-500">{err}</p>}
-            <button onClick={book} disabled={busy} className="w-full py-3 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: CORAL }}>
-              {busy ? '…' : T.book}
+            <button onClick={mode === 'task' ? submitTask : book} disabled={busy} className="w-full py-3 rounded-xl text-white text-sm font-semibold disabled:opacity-60" style={{ backgroundColor: CORAL }}>
+              {busy ? '…' : mode === 'task' ? T.taskSubmit : T.book}
             </button>
           </div>
         )}

@@ -5,7 +5,9 @@
 // Fenster: rund um die Uhr (0–24, Berlin) — Svens Vorgabe „24h buchbar, alles offen";
 // Bot-Zeiten (Mo–Fr 11–19, Sa/So 17–20) bevorzugt, ALLE anderen als „ungern" markiert. Belegte Zeiten (Google + CRM) sind raus.
 //
-// Actions: config | slots | places | book
+// Actions: config | slots | places | book | task
+// task: Gast stellt Sven über den Link eine Aufgabe (Einladung mit allow_task) —
+// landet als crm_tasks-Zeile bei Sven, Zustellung wie jede Aufgabe über task-notify.
 // Secrets: SUPABASE_URL, SERVICE_ROLE_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_API_KEY, ZOOM_*
 // Deploy: supabase functions deploy personal-booking --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
@@ -132,11 +134,14 @@ Deno.serve(async (req) => {
     }
 
     // Optionale Einladung (vorbelegte Kontaktdaten + Bild + Sprache je Gast)
-    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string; internal: boolean } | null = null
+    let inv: { slug: string; guest_name: string | null; guest_email: string | null; guest_phone: string | null; subject: string | null; image_url: string | null; image_focus: string | null; lang: string; internal: boolean; allow_calendar: boolean; allow_task: boolean } | null = null
     if (body.invite) {
-      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal').eq('token', String(body.invite)).maybeSingle()
+      const { data } = await admin.from('booking_invites').select('slug, guest_name, guest_email, guest_phone, subject, image_url, image_focus, lang, internal, allow_calendar, allow_task').eq('token', String(body.invite)).maybeSingle()
       inv = data as typeof inv
     }
+    // Was darf der Link? Ohne Einladung (nackter /buchen/sven360): nur Kalender.
+    const allowCalendar = inv ? inv.allow_calendar !== false : true
+    const allowTask     = inv ? inv.allow_task === true : false
     // Link laden (Slug aus Einladung oder direkt)
     const slug = (inv?.slug ?? String(body.slug ?? '')).trim()
     const { data: link } = await admin.from('personal_booking_links').select('slug, title, active, owner_id').eq('slug', slug).maybeSingle()
@@ -145,7 +150,11 @@ Deno.serve(async (req) => {
 
     if (action === 'config') return json({ ok: true, title: lk.title ?? 'Termin', owner: 'Sven Rüprich',
       guest: inv ? { name: inv.guest_name, email: inv.guest_email, phone: inv.guest_phone, subject: inv.subject } : null,
-      image_url: inv?.image_url ?? null, image_focus: inv?.image_focus ?? null, lang: inv?.lang ?? 'de' })
+      image_url: inv?.image_url ?? null, image_focus: inv?.image_focus ?? null, lang: inv?.lang ?? 'de',
+      allow_calendar: allowCalendar, allow_task: allowTask })
+
+    // Kalender-Aktionen nur, wenn der Link das erlaubt (reiner Aufgaben-Link).
+    if ((action === 'slots' || action === 'book') && !allowCalendar) return json({ error: 'Über diesen Link können keine Termine gebucht werden.' }, 403)
 
     // ── Freie Slots für die gewählte Dauer ─────────────────────────────────
     if (action === 'slots') {
@@ -264,6 +273,66 @@ Deno.serve(async (req) => {
         await admin.functions.invoke('send-whatsapp', { body: { event_type: 'personal_booking', override_text: waFull, lead_data: { lead_name: name, lead_phone: phone }, persona_image: lotteTerminBild(lang) } }).catch((e: unknown) => console.warn('[personal-booking] wa:', e))
       }
       return json({ ok: true, appointment: appt?.id, dateStr, typeLabel, zoomLink })
+    }
+
+    // ── Aufgabe stellen ────────────────────────────────────────────────────
+    // Der Gast stellt dem Link-Inhaber (Sven) eine Aufgabe. created_by MUSS ein
+    // Profil sein (FK) → Inhaber; der echte Absender steht in ext_creator und wird
+    // in der App als Aufgabengeber gezeigt. Zustellung an Sven läuft über den
+    // normalen Weg (crm_task_assignees + task-notify dispatch: Mail + WhatsApp von
+    // Lotte), Erledigung meldet task-notify dem Gast zurück (done_notified_at).
+    if (action === 'task') {
+      if (!allowTask) return json({ error: 'Über diesen Link können keine Aufgaben gestellt werden.' }, 403)
+      if (!lk.owner_id) return json({ error: 'Link hat keinen Inhaber.' }, 500)
+      const { title, description, dueDate, name, email, phone } = body as { title?: string; description?: string; dueDate?: string; name?: string; email?: string; phone?: string }
+      if (!title?.trim() || !name?.trim()) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
+      if (!email?.trim() && !phone?.trim()) return json({ error: 'Bitte E-Mail oder Telefon angeben.' }, 400)
+      const due = dueDate && /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : null
+      const lang = body.lang === 'en' ? 'en' : 'de'
+      const extCreator = { name: name.trim(), email: email?.trim() || null, phone: phone?.trim() || null, lang }
+
+      const { data: task, error: tErr } = await admin.from('crm_tasks').insert({
+        title: title.trim().slice(0, 200), description: description?.trim().slice(0, 4000) || null,
+        created_by: lk.owner_id, assigned_to: lk.owner_id, status: 'offen', due_date: due,
+        // Popups laufen über die assignee-Zeile → alten assigned_to-Pfad stummschalten (wie Tasks.tsx)
+        assigned_notified_at: new Date().toISOString(),
+        ext_creator: extCreator,
+      }).select('id').single()
+      if (tErr || !task) return json({ error: tErr?.message ?? 'Aufgabe konnte nicht angelegt werden.' }, 500)
+      await admin.from('crm_task_assignees').insert({ task_id: task.id, profile_id: lk.owner_id, channel: 'system' })
+      await admin.from('crm_task_messages').insert({
+        task_id: task.id, sender_id: null, sender_label: `${extCreator.name} (extern)`, recipient_id: lk.owner_id,
+        body: lang === 'en' ? '📨 Task submitted via personal link.' : '📨 Aufgabe über den persönlichen Link gestellt.',
+        // Statusnotiz: keine externe Meldung (task-notify überspringt sie nicht per Regex, daher Riegel direkt setzen)
+        ext_notified_at: new Date().toISOString(),
+      }).then(r => { if (r.error) console.warn('[personal-booking] task note:', r.error.message) })
+      // Zustellung an Sven (Lotte, Mail + WhatsApp mit Token-Link)
+      await admin.functions.invoke('task-notify', { body: { mode: 'dispatch', task_id: task.id } }).catch((e: unknown) => console.warn('[personal-booking] task dispatch:', e))
+
+      // Bestätigung an den Gast (Mail und/oder WhatsApp, von Lotte)
+      const first = extCreator.name.split(' ')[0] || extCreator.name
+      const dueStr = due ? new Intl.DateTimeFormat(lang === 'en' ? 'en-GB' : 'de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(`${due}T12:00:00`)) : ''
+      const TT = lang === 'en'
+        ? { subj: (t: string) => `Task received: ${t}`, greet: `Hi ${first},`, body: 'your task for Sven has been received. Lotte will make sure it gets done and will let you know as soon as it is finished.', due: 'Due', bye: 'Best regards<br>Lotte 🐾',
+            wa: (t: string, d: string) => `Hi ${first} 🐾\n\nthis is Lotte, Sven's personal assistant — your task for Sven has been received:\n\n*${t}*${d ? `\n📅 Due: ${d}` : ''}\n\nI'll let you know as soon as it's done.\nLotte 🐾` }
+        : { subj: (t: string) => `Aufgabe eingegangen: ${t}`, greet: `Hallo ${first},`, body: 'deine Aufgabe für Sven ist eingegangen. Lotte kümmert sich darum und meldet sich, sobald sie erledigt ist.', due: 'Frist', bye: 'Liebe Grüße<br>Lotte 🐾',
+            wa: (t: string, d: string) => `Hallo ${first} 🐾\n\nhier ist Lotte, die persönliche Assistentin von Sven — deine Aufgabe für Sven ist eingegangen:\n\n*${t}*${d ? `\n📅 Frist: ${d}` : ''}\n\nIch melde mich, sobald sie erledigt ist.\nLotte 🐾` }
+      const escH = (x: string) => x.replace(/</g, '&lt;')
+      if (extCreator.email) {
+        const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1f2937;">
+          <p>${TT.greet}</p><p>${TT.body}</p>
+          <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
+            <p style="font-size:16px;font-weight:600;margin:0 0 6px;color:#111827;">${escH(title.trim())}</p>
+            ${description?.trim() ? `<p style="margin:0;color:#374151;white-space:pre-wrap;">${escH(description.trim())}</p>` : ''}
+            ${dueStr ? `<p style="margin:6px 0 0;color:#6b7280;font-size:13px;">${TT.due}: ${dueStr}</p>` : ''}
+          </div><p>${TT.bye}</p></div>`
+        await admin.functions.invoke('send-email', { body: { already_translated: true, to: extCreator.email, subject: TT.subj(title.trim().replace(/[\r\n]+/g, ' ').slice(0, 160)), html, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, auto: true } }).catch((e: unknown) => console.warn('[personal-booking] task mail:', e))
+      }
+      if (extCreator.phone) {
+        // Bewusst ohne freie Beschreibung: send-whatsapp durchsucht den Body nach Links und hängt Bilder an.
+        await admin.functions.invoke('send-whatsapp', { body: { already_translated: true, event_type: 'personal_task', override_text: TT.wa(title.trim(), dueStr), lead_data: { lead_name: extCreator.name, lead_phone: extCreator.phone } } }).catch((e: unknown) => console.warn('[personal-booking] task wa:', e))
+      }
+      return json({ ok: true, task: task.id, dueStr })
     }
 
     return json({ error: 'unbekannte Aktion' }, 400)
