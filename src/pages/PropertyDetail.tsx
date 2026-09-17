@@ -8,6 +8,7 @@ import { supabase } from '../lib/supabase'
 import { unitGross, unitNet, unitVatAmount, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
+import { detachPropertyFromOwner, detachConfirmText } from '../lib/detachProperty'
 import type { CrmUnitPayment, CrmUnitDocument, ConstructionPhoto, CrmProjectUnit } from '../lib/crmTypes'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -779,6 +780,7 @@ export default function PropertyDetail() {
   const [ownerError, setOwnerError]     = useState('')
 
   const canEdit       = profile?.role === 'admin' || profile?.role === 'verwalter'
+  const isAdmin       = profile?.role === 'admin'
   const isEigentuemer = profile?.role === 'eigentuemer'
   const basePath = `/${profile?.role ?? 'eigentuemer'}/dashboard`
 
@@ -863,6 +865,24 @@ export default function PropertyDetail() {
   }
 
   // ── Fetch property ───────────────────────────────────────
+  // ── Vom Eigentümer trennen (nur Admin) ────────────────────────
+  // Verkauft / Reservierung geplatzt / Fehlzuordnung. Logik zentral in
+  // lib/detachProperty: Unit frei, Deal-Zuordnung weg, Portal-Objekt gelöscht.
+  const [detaching, setDetaching] = useState(false)
+  async function handleDetach() {
+    if (!property || !id) return
+    const label = `${property.project_name}${property.unit_number ? ` · Nr. ${property.unit_number}` : ''}`
+    if (!window.confirm(detachConfirmText(label))) return
+    setDetaching(true)
+    try {
+      await detachPropertyFromOwner(id, { actorId: profile?.id ?? null, unitId: linkedUnitId })
+      navigate('/admin/users', { replace: true })
+    } catch (e) {
+      setToast({ msg: `❌ ${e instanceof Error ? e.message : t('propertyDetail.detachFailed', 'Trennen fehlgeschlagen.')}`, type: 'error' })
+      setDetaching(false)
+    }
+  }
+
   const fetchProperty = useCallback(async () => {
     if (!id) return
     // Vollbild-Spinner NUR beim ersten Laden: Refetches nach Speichern/Löschen
@@ -2030,9 +2050,19 @@ export default function PropertyDetail() {
                   </div>
                 )}
 
-                {/* Bearbeiten Button – nur Admin/Verwalter */}
+                {/* Bearbeiten Button – nur Admin/Verwalter; Trennen nur Admin */}
                 {canEdit && (
-                  <div className="pt-1 border-t border-gray-100 flex justify-end">
+                  <div className="pt-1 border-t border-gray-100 flex justify-between items-center gap-2">
+                    {isAdmin ? (
+                      <button
+                        onClick={handleDetach}
+                        disabled={detaching}
+                        title={t('propertyDetail.detachTitle', 'Immobilie vom Kunden trennen (Portal-Objekt löschen, Wohnung im Projekt wieder frei)')}
+                        className="px-3 py-2 rounded-xl text-sm font-body text-red-600 border border-red-200
+                                   hover:bg-red-50 transition-colors disabled:opacity-40">
+                        🗑 {t('propertyDetail.detach', 'Vom Kunden trennen')}
+                      </button>
+                    ) : <span />}
                     <button
                       onClick={() => openOwnerEdit(p.owner!)}
                       className="px-4 py-2 rounded-xl text-white text-sm font-semibold font-body

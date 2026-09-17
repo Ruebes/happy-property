@@ -8,6 +8,7 @@ import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
 import { renderPortalAccessEmail } from '../../lib/welcomeEmail'
+import { detachPropertyFromOwner, detachConfirmText } from '../../lib/detachProperty'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -638,12 +639,22 @@ export default function AdminUsers() {
     setSaving(false)
   }
 
-  // ── Remove property from owner ───────────────────────────
-  async function handleRemoveProperty(propId: string, newOwnerId: string) {
+  // ── Immobilie vom Eigentümer trennen ─────────────────────
+  // Verkauft, Reservierung geplatzt, falsch zugeordnet: Portal-Objekt weg,
+  // Wohnung im Projekt wieder frei, Deal-Zuordnung aufgehoben (lib/detachProperty).
+  async function handleDetachProperty(p: Property) {
+    const label = `${p.project_name}${p.unit_number ? ` · Nr. ${p.unit_number}` : ''}`
+    if (!window.confirm(detachConfirmText(label))) return
     setSaving(true)
-    await supabase.from('properties').update({ owner_id: newOwnerId }).eq('id', propId)
-    fetchProps()
-    setSaving(false)
+    try {
+      await detachPropertyFromOwner(p.id, { actorId: profile?.id ?? null })
+      setToast(t('users.properties.detached', '✅ Immobilie vom Kunden getrennt'))
+      fetchProps()
+    } catch (e) {
+      setToast(`❌ ${e instanceof Error ? e.message : t('users.properties.detachFailed', 'Trennen fehlgeschlagen')}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   // ── Properties for the edited owner ─────────────────────
@@ -1244,9 +1255,12 @@ export default function AdminUsers() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleRemoveProperty(p.id, editUser!.id)}
-                                className="text-[10px] text-red-300 hover:text-red-500 font-body shrink-0 mt-0.5 transition-colors">
-                                ✕
+                                disabled={saving}
+                                onClick={() => handleDetachProperty(p)}
+                                title={t('users.properties.detachTitle', 'Immobilie vom Kunden trennen (Portal-Objekt löschen, Wohnung wieder frei)')}
+                                className="text-[10px] px-2 py-1 rounded-lg border border-red-200 text-red-500
+                                           hover:bg-red-50 font-body shrink-0 transition-colors disabled:opacity-40">
+                                🗑 {t('users.properties.detach', 'Trennen')}
                               </button>
                             </div>
                             {/* Badges: Typ, Status, Größe, Preis */}

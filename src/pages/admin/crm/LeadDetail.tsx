@@ -23,6 +23,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
+import { detachPropertyFromOwner, detachConfirmText } from '../../../lib/detachProperty'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -1510,34 +1511,40 @@ export default function LeadDetail() {
     await fetchAll(true)
   }
 
-  // ── Zugewiesene Wohnung vom Kunden entfernen ─────────────────────
-  // Löscht das verknüpfte Portal-Objekt (properties) und hebt die Zuordnung im
-  // Deal auf (unit_id + property_id). Verhindert „Geister-Objekte" beim Kunden.
+  // ── Zugewiesene Wohnung vom Kunden trennen ───────────────────────
+  // Verkauft, Reservierung geplatzt, Fehlzuordnung. Logik zentral in
+  // lib/detachProperty (auch von /admin/users und PropertyDetail genutzt):
+  // Portal-Objekt löschen, Unit freigeben, Deal-Zuordnung aufheben, Historie.
   async function handleRemoveWohnung() {
-    if (!deal?.unit_id) return
-    if (!window.confirm(
-      t('leadDetail.confirmRemoveUnit', 'Wohnung wirklich aus diesem Kunden entfernen?\n\nDas verknüpfte Objekt im Eigentümer-Portal wird gelöscht. Die Wohnung im Projekt selbst bleibt erhalten.')
-    )) return
+    if (!deal || (!deal.unit_id && !deal.property_id)) return
+    const label = pickedUnit
+      ? `${pickedUnit.projectName} · Nr. ${pickedUnit.unit.unit_number}`
+      : deal.property
+        ? `${deal.property.project_name}${deal.property.unit_number ? ` · Nr. ${deal.property.unit_number}` : ''}`
+        : t('leadDetail.unitHeaderFallback', 'Wohnung')
+    if (!window.confirm(detachConfirmText(label))) return
     try {
-      // 1. Portal-Objekt löschen (das taucht beim Kunden in der Verwaltung auf)
       if (deal.property_id) {
-        await supabase.from('properties').delete().eq('id', deal.property_id)
+        await detachPropertyFromOwner(deal.property_id, {
+          actorId: profile?.id ?? null,
+          unitId:  deal.unit_id,
+          leadId:  id,
+        })
+      } else {
+        // Kein Portal-Objekt (noch nicht angelegt): nur Unit + Deal lösen
+        await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id!)
+        await supabase.from('deals').update({ unit_id: null, property_id: null }).eq('id', deal.id)
+        await supabase.from('activities').insert({
+          lead_id:      id,
+          deal_id:      deal.id,
+          type:         'note',
+          direction:    'outbound',
+          subject:      t('leadDetail.logUnitRemovedSubject', 'Wohnung entfernt'),
+          content:      t('leadDetail.logUnitRemovedContent', 'Die zugewiesene Wohnung wurde vom Kunden entfernt und das Portal-Objekt gelöscht.'),
+          created_by:   profile?.id ?? null,
+          completed_at: new Date().toISOString(),
+        })
       }
-      // 2. Unit vom Portal-Objekt entkoppeln
-      await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id)
-      // 3. Zuordnung im Deal aufheben → Sync legt nichts mehr neu an
-      await supabase.from('deals').update({ unit_id: null, property_id: null }).eq('id', deal.id)
-      // 4. Aktivität protokollieren
-      await supabase.from('activities').insert({
-        lead_id:      id,
-        deal_id:      deal.id,
-        type:         'note',
-        direction:    'outbound',
-        subject:      t('leadDetail.logUnitRemovedSubject', 'Wohnung entfernt'),
-        content:      t('leadDetail.logUnitRemovedContent', 'Die zugewiesene Wohnung wurde vom Kunden entfernt und das Portal-Objekt gelöscht.'),
-        created_by:   profile?.id ?? null,
-        completed_at: new Date().toISOString(),
-      })
       setPickedUnit(null)
       setActiveTab('overview')
       showToast(t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
@@ -2542,6 +2549,13 @@ export default function LeadDetail() {
                           >
                             ✏️ {t('common.edit')}
                           </button>
+                          <button
+                            onClick={handleRemoveWohnung}
+                            title={t('leadDetail.removeUnitTitle', 'Wohnung vom Kunden entfernen und Portal-Objekt löschen')}
+                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                          >
+                            🗑 {t('leadDetail.detachShort', 'Trennen')}
+                          </button>
                         </div>
                       )}
 
@@ -2567,6 +2581,13 @@ export default function LeadDetail() {
                                 className="text-[11px] px-2.5 py-0.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50"
                               >
                                 ✏️ {t('common.edit')}
+                              </button>
+                              <button
+                                onClick={handleRemoveWohnung}
+                                title={t('leadDetail.removeUnitTitle', 'Wohnung vom Kunden entfernen und Portal-Objekt löschen')}
+                                className="text-[11px] px-2.5 py-0.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50"
+                              >
+                                🗑 {t('leadDetail.detachShort', 'Trennen')}
                               </button>
                             </div>
                           </div>

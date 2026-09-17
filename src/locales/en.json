@@ -1211,7 +1211,10 @@
       "inviting": "Granting access …",
       "hint": "Invited people see and can do exactly what you can: documents, payments, construction progress. Bank details stay excluded.",
       "inviteHint": "The person gets portal access and sees this property just like you. If they already have access, they are only added."
-    }
+    },
+    "detach": "Detach from customer",
+    "detachTitle": "Detach property from customer (deletes portal object, unit in project becomes available again)",
+    "detachFailed": "Detach failed."
   },
   "users": {
     "title": "User Management",
@@ -1271,7 +1274,11 @@
       "remove": "Remove",
       "assigned": "Property assigned.",
       "selectToAssign": "Select property …",
-      "open": "Open →"
+      "open": "Open →",
+      "detach": "Detach",
+      "detachTitle": "Detach property from customer (deletes portal object, unit becomes available again)",
+      "detached": "✅ Property detached from customer",
+      "detachFailed": "Detach failed"
     },
     "invite": {
       "emailSent": "Invitation email will be sent automatically",
@@ -5022,7 +5029,8 @@
     "uploadMailKindImage": "image",
     "uploadMailSubject": "New file in your Happy Property portal",
     "uploadingImages": "⏳ Uploading…",
-    "errNoProjectSelected": "No project selected"
+    "errNoProjectSelected": "No project selected",
+    "detachShort": "Detach"
   },
   "rechnung": {
     "notFound": "This calculation could not be found.",

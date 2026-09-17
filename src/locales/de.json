@@ -1211,7 +1211,10 @@
       "inviting": "Schalte frei …",
       "hint": "Eingeladene Personen sehen und dürfen dasselbe wie du: Unterlagen, Zahlungen, Baufortschritt. Bankdaten bleiben ausgenommen.",
       "inviteHint": "Die Person bekommt einen Portal-Zugang und sieht diese Wohnung wie du. Hat sie schon einen Zugang, wird sie nur freigeschaltet."
-    }
+    },
+    "detach": "Vom Kunden trennen",
+    "detachTitle": "Immobilie vom Kunden trennen (Portal-Objekt löschen, Wohnung im Projekt wieder frei)",
+    "detachFailed": "Trennen fehlgeschlagen."
   },
   "users": {
     "title": "Nutzerverwaltung",
@@ -1271,7 +1274,11 @@
       "remove": "Entfernen",
       "assigned": "Immobilie zugewiesen.",
       "selectToAssign": "Immobilie auswählen …",
-      "open": "Öffnen →"
+      "open": "Öffnen →",
+      "detach": "Trennen",
+      "detachTitle": "Immobilie vom Kunden trennen (Portal-Objekt löschen, Wohnung wieder frei)",
+      "detached": "✅ Immobilie vom Kunden getrennt",
+      "detachFailed": "Trennen fehlgeschlagen"
     },
     "invite": {
       "emailSent": "Einladungs-E-Mail wird automatisch versendet",
@@ -4904,7 +4911,8 @@
     "uploadMailKindImage": "Bild",
     "uploadMailSubject": "Neue Datei in Ihrem Happy Property Portal",
     "uploadingImages": "⏳ Wird hochgeladen…",
-    "errNoProjectSelected": "Kein Projekt ausgewählt"
+    "errNoProjectSelected": "Kein Projekt ausgewählt",
+    "detachShort": "Trennen"
   },
   "rechnung": {
     "notFound": "Diese Rechnung wurde nicht gefunden.",
