@@ -2470,7 +2470,8 @@
       "types": {
         "villa": "Villa",
         "apartment": "Apartment",
-        "studio": "Studio"
+        "studio": "Studio",
+        "townhouse": "Townhouse"
       },
       "statuses": {
         "available": "Available",

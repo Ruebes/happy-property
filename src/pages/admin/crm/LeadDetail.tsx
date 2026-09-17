@@ -1640,7 +1640,7 @@ export default function LeadDetail() {
           const propData = {
             project_name:  projectName,
             unit_number:   unitEditForm.unit_number.trim() || null,
-            type:          unitEditForm.type as 'villa' | 'apartment' | 'studio',
+            type:          unitEditForm.type as 'villa' | 'apartment' | 'studio' | 'townhouse',
             bedrooms:      parseInt(unitEditForm.bedrooms) || 0,
             size_sqm:      unitEditForm.size_sqm ? parseFloat(unitEditForm.size_sqm) : null,
             is_furnished:  unitEditForm.is_furnished,
@@ -1705,7 +1705,7 @@ export default function LeadDetail() {
               const propData = {
                 project_name:         projectName,
                 unit_number:          unitEditForm.unit_number.trim() || null,
-                type:                 unitEditForm.type as 'villa' | 'apartment' | 'studio',
+                type:                 unitEditForm.type as 'villa' | 'apartment' | 'studio' | 'townhouse',
                 bedrooms:             parseInt(unitEditForm.bedrooms) || 0,
                 size_sqm:             unitEditForm.size_sqm ? parseFloat(unitEditForm.size_sqm) : null,
                 is_furnished:         unitEditForm.is_furnished,
@@ -1943,7 +1943,7 @@ export default function LeadDetail() {
         const propData = {
           project_name:         project.name,
           unit_number:          unit.unit_number || null,
-          type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+          type:                 (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio' | 'townhouse',
           bedrooms:             unit.bedrooms ?? 0,
           bathrooms:            unit.bathrooms ?? null,
           size_sqm:             unit.size_sqm ?? null,

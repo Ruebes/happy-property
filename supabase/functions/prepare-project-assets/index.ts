@@ -434,7 +434,7 @@ const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer',
 const ROOM_EXT = new Set(['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht'])
 const EXTERIOR = new Set(['aussenbereich', 'fassade', 'aussicht'])
 // Vision-Ergebnis sortieren: jedes Bild ist geprüft → nur Sinnvolles bleibt.
-function sortCategorized(cat: Array<{ url: string; category: string; label: string }>) {
+function sortCategorized(cat: Array<{ url: string; category: string; label: string; unitType?: string }>) {
   const gallery   = cat.filter(c => ROOM_EXT.has(c.category))                 // beschriftete Strecken (Außen + Räume)
   const grundriss = cat.filter(c => c.category === 'grundriss')
   const karte     = cat.find(c => c.category === 'karte')?.url ?? null
@@ -524,18 +524,20 @@ const VISION_PROMPT = `Das sind Bilder aus den Unterlagen eines Immobilien-Proje
 - karte = Landkarte, Lageplan, Standort-Karte, Masterplan-Übersicht.
 - preisliste = Preisliste/Preis-Tabelle/Verfügbarkeitstabelle (Spalten mit Einheiten/Preisen).
 - dokument = Text-Seite, Logo, Deckblatt mit viel Text, Diagramm, Datenblatt, Banner, Farbverlauf — alles, was KEIN echtes Foto/Rendering eines Raums oder der Anlage ist.
-WICHTIG: Im Zweifel, ob ein Bild ein echtes Raum-/Außen-Rendering ist, ordne es preisliste/dokument zu (lieber aussortieren als Müll ins Deck). label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). Rufe label_images mit genau einem Eintrag pro Bild auf.`
+WICHTIG: Im Zweifel, ob ein Bild ein echtes Raum-/Außen-Rendering ist, ordne es preisliste/dokument zu (lieber aussortieren als Müll ins Deck). label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). unit_type = welcher Wohnungstyp zu sehen ist: villa (freistehendes Haus mit eigenem Pool/Garten), townhouse (Reihen-/Stadthaus, mehrgeschossig, eigener Eingang, Terrasse/Garten, aneinandergebaut), apartment (Wohnung in einem Mehrfamilienblock, Balkon), anlage (Gemeinschaftsanlage, Gesamtansicht, Pool/Gym/Lobby der Anlage) oder unklar. Rufe label_images mit genau einem Eintrag pro Bild auf.`
+// Wohnungstyp je Bild (Sven 17.9.: ein Townhouse-Deck zeigt nur Townhouse-Bilder).
+const UNIT_TYPES = ['villa', 'townhouse', 'apartment', 'anlage', 'unklar']
 const VISION_TOOL = {
   name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
-  input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' } }, required: ['index', 'category'] } } }, required: ['items'] },
+  input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' }, unit_type: { type: 'string', enum: UNIT_TYPES, description: 'Welcher Wohnungstyp ist zu sehen: villa, townhouse (Reihen-/Stadthaus mit eigenem Eingang/Garten), apartment (Wohnung in einem Mehrfamilienblock), anlage (Gemeinschaftsanlage wie Pool, Gym, Lobby, Gesamtansicht), unklar' } }, required: ['index', 'category'] } } }, required: ['items'] },
 }
 let lastVisionError = ''
-async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string }>> {
+async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string; unitType?: string }>> {
   lastVisionError = ''
   if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return urls.map(u => ({ url: u, category: 'sonstiges', label: '' })) }
   // In KLEINEN Batches (sonst sprengt base64 mehrerer Bilder das Anthropic-Request-Limit → 413).
   const BATCH = 6
-  const result = new Map<string, { category: string; label: string }>()
+  const result = new Map<string, { category: string; label: string; unitType?: string }>()
   for (let start = 0; start < urls.length; start += BATCH) {
     const batch = urls.slice(start, start + BATCH)
     const content: unknown[] = []
@@ -564,11 +566,11 @@ async function categorizeImages(urls: string[]): Promise<Array<{ url: string; ca
       if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
       for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
         const u = local[Number(it.index)]
-        if (u) result.set(u, { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? '') })
+        if (u) result.set(u, { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? ''), unitType: UNIT_TYPES.includes(String(it.unit_type ?? '')) ? String(it.unit_type) : 'unklar' })
       }
     } catch (e) { lastVisionError = `exception: ${(e as Error).message}` }
   }
-  return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '' }))
+  return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '', unitType: result.get(u)?.unitType ?? 'unklar' }))
 }
 
 // ── Standort-Pin auf der Karte lokalisieren (Vision) ─────────────────────────

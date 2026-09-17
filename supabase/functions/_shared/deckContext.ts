@@ -49,7 +49,7 @@ export interface DeckUnitCtx {
    *  Wohnung · drive = ORIGINAL-Bautraegerplan, zugeordnet von
    *  prepare-project-assets · suffix = dieselbe Wohnungsnummer ohne Zusatz wie
    *  "(P)" · bedroom_fallback = nur ueber die Zimmerzahl geraten. */
-  floorplanSource: 'unit_map' | 'hp' | 'drive' | 'suffix' | 'bedroom_fallback' | null
+  floorplanSource: 'unit_map' | 'hp' | 'drive' | 'suffix' | 'twin' | 'bedroom_fallback' | null
   /** true = der Grundriss wurde ueber Zimmerzahl statt ueber die Wohnungsnummer
    *  gefunden. Muss im Bericht sichtbar bleiben (Regel: Fallback markieren). */
   floorplanFallback: boolean
@@ -430,6 +430,23 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       const ohneZusatz = k.replace(/[a-z]$/, '')
       if (ohneZusatz && ohneZusatz !== k) nimm(fpMap[ohneZusatz], 'suffix')
     }
+    // 4b. BAUGLEICHE Wohnung desselben Projekts (gleicher Typ, gleiche Zimmerzahl,
+    //     gleiche Flaeche) mit hinterlegtem Plan - Reihen- und Spiegelgrundrisse
+    //     (Mamba C2/C3, BAIA Typ A). Quelle 'twin', im Deck als Hinweis sichtbar.
+    let twinNumber: string | null = null
+    if (!fpUrl && row && bedrooms != null && sizeSqm != null) {
+      const planOf = (r: Record<string, any>): string | null => {
+        const rk = String(r.unit_key ?? unitKey(r.unit_number))
+        for (const c of [fpMap[rk], r.hp_floorplan_url, r.floorplan_url]) if (typeof c === 'string' && c.trim() && istDarstellbaresBild(c)) return c
+        return null
+      }
+      const twin = rows.find(r => r !== row
+        && r.bedrooms === bedrooms
+        && r.size_sqm != null && Math.abs(Number(r.size_sqm) - sizeSqm) <= 0.6
+        && String(r.type ?? '') === String(row.type ?? '')
+        && planOf(r))
+      if (twin) { nimm(planOf(twin), 'twin'); if (fpUrl) twinNumber = String(twin.unit_number) }
+    }
     if (!fpUrl && bedrooms != null) {
       nimm(fpMap[`${bedrooms}br`], 'bedroom_fallback')
       if (fpUrl) fallback = true
@@ -449,7 +466,11 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       priceLines: price ? buildPriceLines(price, mode, vatMode, input.lang, sizeSqm) : [],
       priceSummary: price ? buildPriceSummary(price, vatMode) : null,
       floorplanUrl: fpUrl,
-      floorplanNote: fpNotes[k] ?? null,
+      floorplanNote: fpNotes[k] ?? (twinNumber
+        ? (input.lang === 'en'
+          ? `Floor plan of the identical unit ${twinNumber} (layout may be mirrored)`
+          : `Grundriss der baugleichen Wohnung ${twinNumber} (Ausführung ggf. spiegelverkehrt)`)
+        : null),
       floorplanSource: fpSource,
       floorplanFallback: fallback,
     })

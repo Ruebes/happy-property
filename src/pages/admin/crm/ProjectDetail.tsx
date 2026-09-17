@@ -527,7 +527,7 @@ export default function ProjectDetail() {
           const propData = {
             project_name:    project?.name ?? '',
             unit_number:     unit.unit_number || null,
-            type:            (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio',
+            type:            (unit.type ?? 'apartment') as 'villa' | 'apartment' | 'studio' | 'townhouse',
             bedrooms:        unit.bedrooms ?? 0,
             bathrooms:       unit.bathrooms ?? null,
             size_sqm:        unit.size_sqm ?? null,
@@ -1266,6 +1266,7 @@ export default function ProjectDetail() {
                         options={[
                           { value: 'apartment', label: t('crm.unit.types.apartment') },
                           { value: 'villa',     label: t('crm.unit.types.villa') },
+                          { value: 'townhouse', label: t('crm.unit.types.townhouse', 'Townhouse') },
                           { value: 'studio',    label: t('crm.unit.types.studio') },
                         ]}
                       />

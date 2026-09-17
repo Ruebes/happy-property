@@ -73,7 +73,7 @@ function json(body: unknown, status = 200) {
 }
 
 // Echte Drive-Bilder (oder Platzhalter) in die Bild-Slots hängen.
-type DeckImages = { heroVideo?: string; renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
+type DeckImages = { heroVideo?: string; renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string; unitType?: string }> }
 
 
 // ── Standort-Entfernungen + Marina-Sektion (DETERMINISTISCH, Deck-Standard) ───
@@ -783,7 +783,7 @@ Deno.serve(async (req) => {
       recipient_name?: string; angle?: string; briefing?: string; facts?: string
       month_label?: string
       job?: boolean
-      images?: { heroVideo?: string; renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string }> }
+      images?: { heroVideo?: string; renders?: string[]; floorplan?: string; floorplans?: string[]; map?: string; mapUrl?: string; mapMarker?: { x: number; y: number }; mapLat?: number; mapLng?: number; mapQuery?: string; gallery?: Array<{ url: string; category: string; label: string; unitType?: string }> }
       lead_id?: string; deal_id?: string; project_id?: string; unit_id?: string; batch_id?: string; created_by?: string
       // Mehrere Wohnungen EINES Projekts in EINEM Deck (je eigener unit-Block + Preis).
       // furniture_net = ausdruecklicher Moebelpreis je Wohnung aus dem Wizard.
@@ -835,25 +835,6 @@ Deno.serve(async (req) => {
       ? `\n\n=== SPRACHE: ENGLISCH (HART, HOECHSTE PRIORITAET) ===\nDer Empfaenger dieses Decks spricht Englisch. Schreibe JEDEN sichtbaren Text auf ENGLISCH: Ueberschriften, Kicker, Taglines, Fliesstext, Aufzaehlungen, Bildunterschriften, Labels der Preiszeilen, Zahlungsplan-Bezeichnungen, Handlungsaufforderungen. Die FAKTEN unten stehen auf Deutsch - uebersetze ihren Inhalt, uebernimm ihn nicht woertlich. NICHT uebersetzt werden: Eigennamen (Projekt- und Bautraegernamen, Ortsnamen, Wohnungsnummern, Markennamen), Zahlen, Preise, Flaechen und Datumsangaben. Waehrungsformat bleibt europaeisch (z.B. 499.000 EUR). Verwende britisches Englisch und dieselbe Ansprache wie im Deutschen: persoenlich und direkt (du -> you). Lass KEIN einzelnes deutsches Wort im englischen Satz stehen - auch nicht Fachbegriffe wie "raumhoch", "bodentief" oder "Fussbodenheizung"; uebersetze sie (floor-to-ceiling, underfloor heating).`
       : ''
 
-    // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
-    // gar kein Foto gibt - das System stopfte dann irgendein Bild darunter (Sven
-    // 26.8., The Cove: 4 Bilder, nur Fassade und Aussenbereich). Sie soll nur
-    // ueber das schreiben, was sich auch zeigen laesst.
-    const galIn = body.images?.gallery ?? []
-    const rendIn = body.images?.renders ?? []
-    let bildFakten = ''
-    if (galIn.length || rendIn.length) {
-      const katListe = [...new Set(galIn.map(g => g.category).filter(Boolean))]
-      const labels = galIn.map(g => g.label).filter(Boolean).slice(0, 20)
-      bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck existieren ${galIn.length || rendIn.length} Fotos.`
-      if (katListe.length) bildFakten += `\nMotive: ${katListe.join(', ')}.`
-      if (labels.length) bildFakten += `\nBildinhalte: ${labels.join(' | ')}.`
-      bildFakten += `\nBaue KEINEN eigenen Block (feature/columns) ueber ein Motiv, das hier NICHT vorkommt - ein Block ueber die Kueche ohne Kuechenfoto bekommt zwangslaeufig ein unpassendes Bild. Gibt es nur Aussenmotive, dann beschreibe Architektur, Lage und Aussenbereiche und halte dich bei Innenraeumen an den Text ohne eigenen Bildblock.`
-      if (galIn.length + rendIn.length < 6) {
-        bildFakten += `\nDer Bildbestand ist KLEIN: baue hoechstens ${Math.max(2, galIn.length || rendIn.length)} bebilderte feature/columns-Bloecke, sonst wiederholen sich die Fotos sichtbar.`
-      }
-    }
-
     // Gelernte Vorgaben (deck_ai_rules, kind='deck') → fließen in JEDES Deck ein (Auto-Grab +
     // Feinschliff). Global (project_id null) immer; projektspezifische nur für DIESES Projekt.
     const sbRules = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -885,6 +866,46 @@ Deno.serve(async (req) => {
       generic,
       units: unitInput,
     })
+    // ── Bilder auf den Wohnungstyp einschraenken (Sven 17.9.: ein Townhouse-Deck
+    // zeigt nur Townhouse-Bilder). Vision-Tag unitType je Galeriebild:
+    // villa/townhouse/apartment = zeigt diesen Typ, anlage/unklar = neutral.
+    // Greift nur, wenn ALLE angebotenen Wohnungen denselben Typ haben, die
+    // Galerie getaggt ist und danach noch genug Bilder bleiben.
+    if (body.images) {
+      const types = [...new Set(ctx.units.map(u => String(u.unitType ?? '').toLowerCase()).filter(Boolean))]
+      const gal0 = body.images.gallery ?? []
+      const tagged = gal0.some(g => typeof g.unitType === 'string' && g.unitType)
+      if (types.length === 1 && tagged) {
+        const want = types[0]
+        const neutral = (t: string) => !t || t === 'anlage' || t === 'unklar'
+        const gal1 = gal0.filter(g => { const t = String(g.unitType ?? '').toLowerCase(); return neutral(t) || t === want })
+        if (gal1.length >= 3 && gal1.length < gal0.length) {
+          const tagOf = new Map(gal0.map(g => [g.url, String(g.unitType ?? '').toLowerCase()]))
+          body.images.gallery = gal1
+          body.images.renders = (body.images.renders ?? []).filter(u => { const t = tagOf.get(u); return t === undefined || neutral(t) || t === want })
+          console.log(`[generate-deck] Bildfilter Wohnungstyp ${want}: ${gal0.length - gal1.length} Bild(er) anderer Typen ausgeblendet`)
+        }
+      }
+    }
+    // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
+    // gar kein Foto gibt - das System stopfte dann irgendein Bild darunter (Sven
+    // 26.8., The Cove: 4 Bilder, nur Fassade und Aussenbereich). Sie soll nur
+    // ueber das schreiben, was sich auch zeigen laesst.
+    const galIn = body.images?.gallery ?? []
+    const rendIn = body.images?.renders ?? []
+    let bildFakten = ''
+    if (galIn.length || rendIn.length) {
+      const katListe = [...new Set(galIn.map(g => g.category).filter(Boolean))]
+      const labels = galIn.map(g => g.label).filter(Boolean).slice(0, 20)
+      bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck existieren ${galIn.length || rendIn.length} Fotos.`
+      if (katListe.length) bildFakten += `\nMotive: ${katListe.join(', ')}.`
+      if (labels.length) bildFakten += `\nBildinhalte: ${labels.join(' | ')}.`
+      bildFakten += `\nBaue KEINEN eigenen Block (feature/columns) ueber ein Motiv, das hier NICHT vorkommt - ein Block ueber die Kueche ohne Kuechenfoto bekommt zwangslaeufig ein unpassendes Bild. Gibt es nur Aussenmotive, dann beschreibe Architektur, Lage und Aussenbereiche und halte dich bei Innenraeumen an den Text ohne eigenen Bildblock.`
+      if (galIn.length + rendIn.length < 6) {
+        bildFakten += `\nDer Bildbestand ist KLEIN: baue hoechstens ${Math.max(2, galIn.length || rendIn.length)} bebilderte feature/columns-Bloecke, sonst wiederholen sich die Fotos sichtbar.`
+      }
+    }
+
     const missingFloorplans = ctx.missingFloorplans
     if (missingFloorplans.length) {
       // GRUNDRISS-GARANTIE: fehlende Pläne laut melden statt still weglassen —

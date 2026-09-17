@@ -243,7 +243,7 @@ export const PHASE_WEBHOOK_EVENTS: Partial<Record<DealPhase, string>> = {
 // ── Project Types ────────────────────────────────────────────────────────────
 
 export type ProjectStatus = 'available' | 'under_construction' | 'sold_out' | 'completed'
-export type UnitType      = 'villa' | 'apartment' | 'studio'
+export type UnitType      = 'villa' | 'apartment' | 'studio' | 'townhouse'
 export type UnitStatus    = 'under_construction' | 'active' | 'proposal' | 'reserved' | 'sold'
 
 export interface CrmProject {
@@ -276,7 +276,7 @@ export interface CrmProject {
 // Cache der automatisch aus Drive importierten Deck-Assets (crm_projects.deck_assets).
 export interface DeckAssetsCache {
   renders?:    string[]
-  gallery?:    { url: string; category: string; label: string }[]
+  gallery?:    { url: string; category: string; label: string; unitType?: string }[]   // unitType: villa | townhouse | apartment | anlage | unklar (Vision)
   floorplans?: { floor: number | null; label: string; url: string }[]
   map?:        string | null
   mapUrl?:     string | null

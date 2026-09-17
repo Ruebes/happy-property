@@ -262,6 +262,10 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
       add({ key: 'grundriss_fallback', severity: 'hoch',
         what: `Der Grundriss für Wohnung ${u.unitNumber} stammt nur aus dem Zimmerzahl-Fallback (${u.bedrooms} Schlafzimmer) — es ist nicht der Plan dieser Wohnung.`,
         fix: 'Prüfen, ob der Plan wirklich zu dieser Wohnung passt, sonst Originalplan hinterlegen.' })
+    } else if (u.floorplanSource === 'twin') {
+      add({ key: 'grundriss_baugleich', severity: 'niedrig',
+        what: `Der Grundriss für ${u.unitNumber} stammt von der baugleichen Wohnung (gleicher Typ, Zimmerzahl und Fläche) — im Deck als Hinweis vermerkt.`,
+        evidence: `Quelle: ${u.floorplanSource}` })
     } else if (u.floorplanSource === 'suffix') {
       add({ key: 'grundriss_suffix', severity: 'niedrig',
         what: `Der Grundriss für ${u.unitNumber} wurde über die Wohnungsnummer ohne Zusatz gefunden.`,
