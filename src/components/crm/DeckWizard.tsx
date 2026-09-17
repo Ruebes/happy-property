@@ -398,13 +398,25 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         if (!background) onClose()
         return
       }
+      // VORAB pruefen, ob jedes Projekt Fakten hat - sonst laufen die ersten Decks
+      // durch, der Lauf bricht beim dritten Projekt ab, und nichts landet im
+      // Postausgang (Sven 17.9.: Mamba + Azure fertig, BAIA ohne Fakten, kein Entwurf).
+      const ohneFakten = groups.filter(g => !g[0].assets?.facts).map(g => g[0].projectName)
+      if (ohneFakten.length) throw new Error(t('crm.wizard.noFactsList', 'Keine Projekt-Fakten für: {{names}}. Erst im Projekt „Aus Drive laden" (bzw. Broschüre und Bilder hinterlegen), dann erneut starten - es wurde nichts erstellt.', { names: ohneFakten.join(', ') }))
       const links: { token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null }[] = []
+      // Scheitert ein Projekt, laufen die anderen trotzdem durch; die Ausfaelle
+      // stehen am Ende in der Meldung statt den ganzen Lauf zu kippen.
+      const gescheitert: string[] = []
       for (let i = 0; i < groups.length; i++) {
         setProgress(t('crm.wizard.generating', 'Erstelle Deck') + ` ${i + 1}/${groups.length} — ${groups[i][0].projectName}…`)
-        const r = await genProject(groups[i])
-        if (r) links.push(r)
+        try {
+          const r = await genProject(groups[i])
+          if (r) links.push(r)
+        } catch (e) {
+          gescheitert.push(e instanceof Error ? e.message : `${groups[i][0].projectName}: ${String(e)}`)
+        }
       }
-      if (!links.length) throw new Error(t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
+      if (!links.length) throw new Error(gescheitert.length ? gescheitert.join(' · ') : t('crm.wizard.noneDone', 'Kein Deck fertig geworden — bitte erneut versuchen.'))
       // Begleit-Mail von der KI schreiben lassen → Postausgang (Entwurf). Fällt bei Fehler
       // auf eine schlanke CI-Vorlage zurück, damit nie ohne Mail dastehen.
       const origin = window.location.origin
@@ -523,7 +535,8 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // Prüfbedürftige Decks sofort benennen — der Sinn des Quality-Gates ist,
       // dass Sven nur noch die roten anschauen muss.
       const rot = links.filter(l => l.quality === 'red')
-      const planNote = planTok ? ` ${t('crm.wizard.planAdded', 'Fahrplan liegt dabei.')}` : ''
+      const planNote = (planTok ? ` ${t('crm.wizard.planAdded', 'Fahrplan liegt dabei.')}` : '')
+        + (gescheitert.length ? ` ⚠️ ${t('crm.wizard.failedList', 'Nicht erstellt: {{list}}', { list: gescheitert.join(' · ') })}` : '')
       onDone(rot.length
         ? `⚠️ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${rot.length} ${t('crm.wizard.doneRed', 'davon prüfen:')} ${rot.map(l => l.label).join(', ')}${planNote}`
         : `✅ ${links.length} ${t('crm.wizard.doneToast', 'Deck(s) erstellt — liegen im Postausgang zur Freigabe.')} ${t('crm.wizard.doneGreen', 'Alle automatisch validiert.')}${planNote}`)

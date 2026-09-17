@@ -3957,7 +3957,9 @@
       "monthN": "months",
       "selfUsePerYear": "per year",
       "planSeason": "Own use: annual rent {{rent}} € instead of {{full}} €",
-      "planFlat": "Own use: rent for {{n}} of 12 months"
+      "planFlat": "Own use: rent for {{n}} of 12 months",
+      "noFactsList": "No project facts for: {{names}}. Run \"Load from Drive\" in the project first (or add brochure and images), then start again - nothing was created.",
+      "failedList": "Not created: {{list}}"
     },
     "registrations": {
       "confirmRemove": "Really remove this registration?",

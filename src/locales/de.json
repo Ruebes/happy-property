@@ -3957,7 +3957,9 @@
       "monthN": "Monate",
       "selfUsePerYear": "im Jahr",
       "planSeason": "Selbstnutzung: Jahresmiete {{rent}} € statt {{full}} €",
-      "planFlat": "Selbstnutzung: Miete für {{n}} von 12 Monaten"
+      "planFlat": "Selbstnutzung: Miete für {{n}} von 12 Monaten",
+      "noFactsList": "Keine Projekt-Fakten für: {{names}}. Erst im Projekt „Aus Drive laden\" (bzw. Broschüre und Bilder hinterlegen), dann erneut starten - es wurde nichts erstellt.",
+      "failedList": "Nicht erstellt: {{list}}"
     },
     "registrations": {
       "confirmRemove": "Registrierung wirklich entfernen?",
