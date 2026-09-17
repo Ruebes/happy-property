@@ -9,6 +9,10 @@ project_id = "vjlwgajmtqlwjjreowbu"
 [functions.timelines-webhook]
 verify_jwt = false
 
+# Eigener WhatsApp-Server (Evolution API): abgesichert ueber x-webhook-secret.
+[functions.evolution-webhook]
+verify_jwt = false
+
 [functions.calendly-webhook]
 verify_jwt = false
 

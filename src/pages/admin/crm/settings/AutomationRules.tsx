@@ -510,7 +510,7 @@ export default function AutomationRules() {
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700">
           <p className="font-medium mb-1">{t('automationRules.howItWorksTitle', 'Wie funktioniert das?')}</p>
           <p className="text-blue-600 text-xs leading-relaxed">
-            {t('automationRules.howItWorksBody', 'Bei jedem CRM-Ereignis (Lead erstellt, Phase wechselt) wird ')}<code className="bg-blue-100 px-1 rounded">schedule-message</code>{t('automationRules.howItWorksBody2', ' aufgerufen. Die Funktion liest aktive Regeln, rendert Templates mit Lead-Daten und legt geplante Nachrichten an. Der Scheduler ')}<code className="bg-blue-100 px-1 rounded">process-scheduled-messages</code>{t('automationRules.howItWorksBody3', ' läuft alle 5 Minuten und sendet fällige Nachrichten per E-Mail (Ionos SMTP) und/oder WhatsApp (Timelines API).')}
+            {t('automationRules.howItWorksBody', 'Bei jedem CRM-Ereignis (Lead erstellt, Phase wechselt) wird ')}<code className="bg-blue-100 px-1 rounded">schedule-message</code>{t('automationRules.howItWorksBody2', ' aufgerufen. Die Funktion liest aktive Regeln, rendert Templates mit Lead-Daten und legt geplante Nachrichten an. Der Scheduler ')}<code className="bg-blue-100 px-1 rounded">process-scheduled-messages</code>{t('automationRules.howItWorksBody3', ' läuft alle 5 Minuten und sendet fällige Nachrichten per E-Mail (Ionos SMTP) und/oder WhatsApp (eigener Server oder TimelinesAI, siehe Connectoren).')}
           </p>
         </div>
 

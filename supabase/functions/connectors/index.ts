@@ -9,6 +9,7 @@
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (+ die getesteten Keys)
 // Deploy:  supabase functions deploy connectors --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { getWaProvider, setWaProvider, evoConfig, evoConnectionState, evoNumber } from '../_shared/waProvider.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -86,9 +87,22 @@ const CHECKS: Check[] = [
     const u = Deno.env.get('IMAP_USER') ?? ''
     return u ? { ok: true, detail: `Holt Mails von ${u}` } : { ok: false, detail: 'IMAP_USER fehlt.' }
   } },
-  { key: 'TIMELINES', label: 'WhatsApp (TimelinesAI)', run: async () => {
+  // Zwei WhatsApp-Wege an derselben Nummer; aktiv ist nur einer (crm_settings.wa_provider).
+  { key: 'TIMELINES', label: 'WhatsApp (TimelinesAI)', run: async (sb) => {
     const tok = Deno.env.get('TIMELINES_API_KEY') ?? ''
-    return tok ? { ok: true, detail: 'Schlüssel hinterlegt (Versand aktiv).' } : { ok: false, detail: 'TIMELINES_API_KEY fehlt.' }
+    const aktiv = (await getWaProvider(sb)) === 'timelines'
+    if (!tok) return { ok: false, detail: 'TIMELINES_API_KEY fehlt.' }
+    return { ok: true, detail: aktiv ? 'AKTIV — Versand und Empfang laufen über TimelinesAI.' : 'Rückfallweg (nicht aktiv). Schlüssel hinterlegt.' }
+  } },
+  { key: 'EVOLUTION', label: 'WhatsApp (eigener Server, wa.happy-property.com)', run: async (sb) => {
+    const cfg = evoConfig()
+    if (!cfg.ok) return { ok: false, detail: 'EVOLUTION_URL / EVOLUTION_API_KEY fehlen.' }
+    const aktiv = (await getWaProvider(sb)) === 'evolution'
+    const st = await evoConnectionState()
+    const rolle = aktiv ? 'AKTIV — Versand und Empfang laufen über den eigenen Server.' : 'Rückfallweg (nicht aktiv).'
+    if (st === 'open') return { ok: true, detail: `${rolle} Nummer verbunden.` }
+    if (st === 'unknown') return { ok: false, detail: `${rolle} Server antwortet nicht.` }
+    return { ok: false, detail: `${rolle} Nummer NICHT verbunden (${st}) — „Neu verbinden" klicken.` }
   } },
   { key: 'GOOGLE_DRIVE_UPLOAD', label: 'Google Drive — Upload aus dem Eigentümerportal', run: async (sb) => {
     // Der Service-Account kann nicht hochladen (kein Speicherplatz) — das Portal
@@ -131,7 +145,40 @@ Deno.serve(async (req) => {
     const role = (prof as { role?: string } | null)?.role
     if (role !== 'admin' && role !== 'verwalter') return json({ error: 'Keine Berechtigung.' }, 403)
 
-    const body = await req.json().catch(() => ({})) as { action?: string; key?: string; value?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; key?: string; value?: string; provider?: string }
+
+    // ── WhatsApp-Weg umschalten (TimelinesAI ↔ eigener Server) ──────────────
+    // Wirkt sofort fuer send-whatsapp, Scheduler, Bot und beide Webhooks.
+    if (body.action === 'wa_provider') {
+      const p = body.provider === 'evolution' ? 'evolution' : body.provider === 'timelines' ? 'timelines' : null
+      if (!p) return json({ error: 'provider muss timelines oder evolution sein.' }, 400)
+      if (p === 'evolution') {
+        if (!evoConfig().ok) return json({ error: 'Evolution ist nicht konfiguriert (Secrets fehlen).' }, 400)
+        const st = await evoConnectionState()
+        if (st !== 'open') return json({ error: `Eigener Server ist nicht verbunden (Status: ${st}). Erst „Neu verbinden".` }, 400)
+      }
+      await setWaProvider(sb, p)
+      console.log(`[connectors] WhatsApp-Weg umgeschaltet auf ${p} durch ${uid}`)
+      return json({ ok: true, provider: p })
+    }
+
+    // ── Pairing-Code fuer den eigenen Server holen ─────────────────────────────
+    // Der Code laeuft nach kurzer Zeit ab; vorher die Instanz neu starten, sonst
+    // liefert Evolution manchmal einen toten Code (Erfahrung Mitja 17.9.2026).
+    if (body.action === 'wa_pair') {
+      const cfg = evoConfig()
+      if (!cfg.ok) return json({ error: 'Evolution ist nicht konfiguriert (Secrets fehlen).' }, 400)
+      const st = await evoConnectionState()
+      if (st === 'open') return json({ ok: true, state: 'open', detail: 'Nummer ist bereits verbunden.' })
+      const h = { apikey: cfg.key }
+      await fetch(`${cfg.url}/instance/restart/${cfg.instance}`, { method: 'POST', headers: h, ...timeout(15000) }).catch(() => null)
+      await new Promise(r => setTimeout(r, 2500))
+      const number = evoNumber(Deno.env.get('TIMELINES_WA_SENDER') ?? '35795154722')
+      const r = await fetch(`${cfg.url}/instance/connect/${cfg.instance}?number=${number}`, { headers: h, ...timeout(20000) })
+        .then(x => x.json()).catch(e => ({ error: String(e) })) as { pairingCode?: string; code?: string; error?: string }
+      if (!r.pairingCode) return json({ error: `Kein Pairing-Code erhalten: ${JSON.stringify(r).slice(0, 160)}` }, 502)
+      return json({ ok: true, state: st, pairingCode: r.pairingCode })
+    }
 
     if (body.action === 'status') {
       const results = await Promise.all(CHECKS.map(async c => {

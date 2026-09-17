@@ -4339,7 +4339,14 @@
       "tokenPh": "Neuen Token einfügen …",
       "saved": "✓ Gespeichert — Verbindung wird getestet…",
       "hint": "Schlüssel werden nur auf dem Server geprüft und nie im Browser angezeigt. Anbindungen ohne „Ändern\"-Knopf pflegst du über mich (Claude) oder die Supabase-Secrets.",
-      "driveConnect": "Verbinden"
+      "driveConnect": "Verbinden",
+      "waEvo": "eigenen Server",
+      "waSwitchConfirm": "WhatsApp-Versand und -Empfang ab sofort über {{label}} laufen lassen?",
+      "waSwitched": "✓ WhatsApp läuft jetzt über {{label}}.",
+      "waActivate": "Aktiv schalten",
+      "waPairing": "Hole Code…",
+      "waReconnect": "Neu verbinden",
+      "waPairHint": "Am Handy: WhatsApp → Einstellungen → Verknüpfte Geräte → Gerät hinzufügen → „Stattdessen mit Telefonnummer verknüpfen“ → diesen Code eingeben. Der Code läuft nach kurzer Zeit ab; dann einfach neu holen."
     },
     "ownerContent": {
       "title": "Eigentümer-Inhalte",

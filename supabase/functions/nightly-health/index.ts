@@ -18,6 +18,7 @@
 //   HEALTH_REPORT_TO = Empfänger des Morgenberichts (Standard: sven@happy-property.com)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { getWaProvider, evoConnectionState } from '../_shared/waProvider.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -664,6 +665,8 @@ const checkWaQuota: Check = {
   key: 'whatsapp_kontingent',
   title: 'WhatsApp-Monatskontingent fast aufgebraucht',
   run: async (sb) => {
+    // Nur bei TimelinesAI relevant - der eigene Server hat kein Monatskontingent.
+    if ((await getWaProvider(sb)) === 'evolution') return []
     const monatsStart = new Date(); monatsStart.setDate(1); monatsStart.setHours(0, 0, 0, 0)
     const { data } = await sb.from('wa_sent').select('phone').gt('sent_at', monatsStart.toISOString())
     const distinct = new Set(((data ?? []) as Array<{ phone: string }>).map(r => r.phone)).size
@@ -683,12 +686,41 @@ const checkWaQuota: Check = {
   },
 }
 
+// ── Pruefung 19: eigener WhatsApp-Server verbunden? ─────────────────────────
+// Seit 17.9.2026 laeuft WhatsApp ueber die Evolution API auf hp-server. Reisst die
+// Verbindung zum Handy ab (Baileys-Protokoll, passiert gelegentlich), geht still
+// nichts mehr raus und rein. Deshalb jeden Morgen den Live-Status abfragen.
+const checkWaConnection: Check = {
+  key: 'whatsapp_verbindung',
+  title: 'WhatsApp-Nummer auf dem eigenen Server nicht verbunden',
+  run: async (sb) => {
+    if ((await getWaProvider(sb)) !== 'evolution') return []
+    const st = await evoConnectionState()
+    if (st === 'open') return []
+    const { count: wartend } = await sb.from('scheduled_messages')
+      .select('id', { count: 'exact', head: true }).eq('status', 'pending').in('type', ['whatsapp', 'both'])
+    return [{
+      check_key: 'whatsapp_verbindung', severity: 'kritisch',
+      entity_kind: 'system', entity_id: 'evolution_connection', entity_label: 'WhatsApp-Versand',
+      what_plain: st === 'unknown'
+        ? 'Der eigene WhatsApp-Server (wa.happy-property.com) antwortet nicht. Solange geht KEINE WhatsApp raus und keine kommt rein.'
+        : `Die WhatsApp-Nummer ist auf dem eigenen Server nicht verbunden (Status: ${st}). Es geht KEINE WhatsApp raus und keine kommt rein - aktuell warten ${wartend ?? 0} Nachrichten.`,
+      action: 'proposed',
+      fix_plain: st === 'unknown'
+        ? 'Server pruefen (Coolify → evolution-api laeuft?). Bis dahin im CRM unter Einstellungen → Connectoren auf TimelinesAI zurueckschalten.'
+        : 'Im CRM unter Einstellungen → Connectoren bei „WhatsApp (eigener Server)" auf „Neu verbinden" klicken und den Code am Handy eingeben (WhatsApp → Verknüpfte Geräte → Gerät hinzufügen → mit Telefonnummer verknüpfen).',
+    }]
+  },
+}
+
 const CHECKS: Check[] = [
   checkPropertyDrift, checkDuplicateUnits, checkStaleDecks,
   checkEmptyPortals, checkAppointmentsNoOutcome, checkStuckMessages, checkFailedMessages,
   checkBrokenAutomationLinks, checkBookingInviteTargets, checkOptoutStillScheduled,
   checkLeadsNoContact, checkStuckRefining, checkDeckRuleBloat, checkFloorplanCoverage,
   checkDirtyPhones, checkFurnitureData, checkProjectBasics, checkCalcItemBasics,
+  // Pruefung 18 war bis 17.9.2026 definiert, aber nie registriert.
+  checkWaQuota, checkWaConnection,
 ]
 
 // ── Morgenbericht in Alltagssprache ─────────────────────────────────────────

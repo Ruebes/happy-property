@@ -18,6 +18,7 @@
 //   );
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { getWaProvider, evoConfig, EVO_DISCONNECTED_RE } from '../_shared/waProvider.ts'
 import { lotteBild } from '../_shared/lotte.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { SMTPClient }   from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
@@ -236,8 +237,11 @@ Deno.serve(async (req: Request) => {
 
   const smtpUser    = Deno.env.get('SMTP_USER')          ?? ''
   const smtpPass    = Deno.env.get('SMTP_PASS')          ?? ''
-  const waApiKey    = Deno.env.get('TIMELINES_API_KEY')  ?? ''
-  const waSender    = Deno.env.get('TIMELINES_WA_SENDER') ?? ''
+  // WhatsApp gilt als konfiguriert, wenn der AKTIVE Weg eingerichtet ist:
+  // TimelinesAI (Key + Absender) oder Evolution (eigener Server, URL + Key).
+  const waProvider  = await getWaProvider(supabase)
+  const waApiKey    = waProvider === 'evolution' ? (evoConfig().ok ? 'evolution' : '') : (Deno.env.get('TIMELINES_API_KEY') ?? '')
+  const waSender    = waProvider === 'evolution' ? evoConfig().instance : (Deno.env.get('TIMELINES_WA_SENDER') ?? '')
 
   // ── Sicherheitsnetz: Fertigmeldung erledigter Teilaufgaben ─────────────────
   // Muss VOR der Archivierung laufen — sonst verschluckt der Sonntagslauf alles,
@@ -760,10 +764,11 @@ Deno.serve(async (req: Request) => {
                 errors.push(`whatsapp: ${errMsg}`)
                 success = false
                 waQuotaHit = /quota_exceeded|mass sending quota/i.test(errMsg)
-                waAccountGone = /whatsapp account not found/i.test(errMsg)
+                // TimelinesAI: "Whatsapp account not found" / Evolution: Instanz getrennt.
+                waAccountGone = /whatsapp account not found/i.test(errMsg) || EVO_DISCONNECTED_RE.test(errMsg)
               }
             } else {
-              console.warn(`[process-scheduled] Timelines nicht konfiguriert – simulierter WA an ${phone}`)
+              console.warn(`[process-scheduled] WhatsApp (${waProvider}) nicht konfiguriert – simulierter WA an ${phone}`)
               await logActivity(supabase, {
                 lead_id: msg.lead_id,
                 deal_id: msg.deal_id,
@@ -788,7 +793,7 @@ Deno.serve(async (req: Request) => {
         // WhatsApp umgestellt, damit der Kunde die Mail nicht doppelt bekommt.
         const retryPlan =
           waQuotaHit    && retryCount < QUOTA_MAX_RETRIES   ? { min: QUOTA_RETRY_MIN,   max: QUOTA_MAX_RETRIES,   tag: 'quota',   grund: 'TimelinesAI-Kontingent erschöpft' } :
-          waAccountGone && retryCount < ACCOUNT_MAX_RETRIES ? { min: ACCOUNT_RETRY_MIN, max: ACCOUNT_MAX_RETRIES, tag: 'account', grund: 'WhatsApp-Konto in TimelinesAI nicht verbunden (Handy per QR-Code neu verbinden)' } :
+          waAccountGone && retryCount < ACCOUNT_MAX_RETRIES ? { min: ACCOUNT_RETRY_MIN, max: ACCOUNT_MAX_RETRIES, tag: 'account', grund: waProvider === 'evolution' ? 'WhatsApp-Nummer auf dem eigenen Server nicht verbunden (Pairing-Code neu eingeben)' : 'WhatsApp-Konto in TimelinesAI nicht verbunden (Handy per QR-Code neu verbinden)' } :
           null
         if (retryPlan) {
           const next = new Date(Date.now() + retryPlan.min * 60000).toISOString()

@@ -1,5 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { waAccountGone, waAccountRecovered } from '../_shared/waAccountAlert.ts'
+import { getWaProvider, evoSendText, evoSendMedia, evoErrorText, EVO_DISCONNECTED_RE } from '../_shared/waProvider.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
@@ -113,6 +114,13 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     )
 
+    // ── Versandweg: TimelinesAI oder eigener Server (Evolution API) ──
+    // Schalter in crm_settings (wa_provider). Alles davor (Template, Empfaenger,
+    // Doppel-Schutz, Anhang laden/verkleinern, Uebersetzung, Teilung) ist fuer
+    // beide Wege gleich; nur Upload und der eigentliche Send-Call unterscheiden sich.
+    const provider = await getWaProvider(supabase)
+    const viaEvolution = provider === 'evolution'
+
     // ── Template aus DB laden — NUR wenn kein override_text ───────
     // Direktsend-Aufrufer (Composer, Termin-Einladung, Postausgang) liefern den
     // fertigen Text mit; event_type ist dann nur ein Label fürs Activity-Log.
@@ -189,11 +197,15 @@ Deno.serve(async (req) => {
       throw new Error('Keine Empfänger konfiguriert und keine Lead-Nummer vorhanden')
     }
 
-    console.log(`[send-whatsapp] event_type="${event_type}" recipients=${recipients.length} sender="${senderPhone}"`)
+    console.log(`[send-whatsapp] event_type="${event_type}" recipients=${recipients.length} sender="${senderPhone}" provider=${provider}`)
 
     // ── An alle Empfänger senden ──────────────────────────────────
     // Anhang nur EINMAL hochladen und die UID für alle Empfänger wiederverwenden.
+    // Bei Evolution gibt es keinen Upload-Schritt: die fertigen Bytes gehen als
+    // Base64 direkt mit der Nachricht raus (attachBlob statt fileUidCache).
     let fileUidCache: string | null = null
+    let attachBlob: { bytes: Uint8Array; ctype: string; name: string } | null = null
+    const hasAttach = () => !!fileUidCache || !!attachBlob
     let attachError:  string | null = null
     let linkFallback = false     // Anhang ging nicht hoch → Link steht im Text
     // waSize auch fuer EXPLIZITE Anhaenge: ein Vorlagenbild aus dem Storage kommt
@@ -277,7 +289,7 @@ Deno.serve(async (req) => {
       // Video-Vorschaubild anhängen — so steht nie ein nackter Link im Chat.
       // (TimelinesAI erzeugt zwar eine Link-Vorschau, aber OHNE Bild und mit
       // fremdsprachiger Beschreibung — daher hängen wir das Bild selbst an.)
-      if (!attachUrl && !fileUidCache && typeof message === 'string') {
+      if (!attachUrl && !hasAttach() && typeof message === 'string') {
         const ytUrl = message.match(/https?:\/\/\S*(?:youtube\.com|youtu\.be)\/\S*/)?.[0]
         if (ytUrl) {
           const thumb = await youtubeThumb(ytUrl)
@@ -304,10 +316,10 @@ Deno.serve(async (req) => {
       // Erst jetzt das Absenderbild: Anhang, YouTube-Vorschau und Deck-Titelbild
       // hatten Vorrang. Ohne diese Reihenfolge haette der Bot bei jedem Angebot ein
       // Hundefoto statt der Immobilie geschickt.
-      if (!attachUrl && !fileUidCache && persona_image) {
+      if (!attachUrl && !hasAttach() && persona_image) {
         attachUrl = waSize(String(persona_image)); attachName = 'lotte.jpg'
       }
-      if (attachUrl && !fileUidCache) {
+      if (attachUrl && !hasAttach()) {
         try {
           // KEIN Accept: image/webp mehr — WhatsApp zeigt WebP-Dateien nicht als
           // Bild an (Sven: „es kommt ein Bild, kann es aber nicht laden"). PNG holen
@@ -355,6 +367,13 @@ Deno.serve(async (req) => {
                     : ctype === 'application/pdf' ? 'pdf' : ctype === 'image/webp' ? 'webp' : ''
           let name = attachName || String(attachUrl).split('/').pop() || 'anhang'
           if (ext) name = name.replace(/\.[A-Za-z0-9]+$/, '') + '.' + ext
+          if (viaEvolution) {
+            // Eigener Server: kein Upload, die Bytes gehen gleich mit dem Send-Call
+            // als Base64 raus. Kein 2-MB-Tarif-Limit mehr, aber WhatsApp selbst
+            // deckelt Bilder bei ~16 MB und Dokumente bei ~100 MB.
+            attachBlob = { bytes, ctype: ctype || 'application/octet-stream', name }
+            console.log(`[send-whatsapp] Anhang bereit fuer Evolution: ${name} (${Math.round(bytes.length / 1024)} KB)`)
+          } else {
           const form = new FormData()
           form.append('file', new Blob([bytes.buffer as ArrayBuffer], { type: ctype || 'application/octet-stream' }), name)
           form.append('filename', name)
@@ -369,6 +388,7 @@ Deno.serve(async (req) => {
           fileUidCache = (upJson?.data?.uid ?? upJson?.uid ?? upJson?.data?.file_uid ?? null) as string | null
           console.log(`[send-whatsapp] Upload ${upRes.status}, uid=${fileUidCache ?? 'KEINE'}`, fileUidCache ? '' : JSON.stringify(upJson))
           if (!fileUidCache) throw new Error(`Datei-Upload abgelehnt (HTTP ${upRes.status}): ${JSON.stringify(upJson).slice(0, 140)}`)
+          }
         } catch (e) {
           console.warn('[send-whatsapp] Anhang-Upload fehlgeschlagen, haenge Link an:', e)
           // Statt den Anhang stillschweigend fallen zu lassen: oeffentlichen Link
@@ -407,7 +427,7 @@ Deno.serve(async (req) => {
       // WhatsApp deckelt Unterschriften bei ~1024 Zeichen. Deshalb dort frueher
       // schneiden; der Rest geht als normale Folgenachrichten raus.
       let chunks: string[]
-      if (fileUidCache && message.length > CAPTION_LIMIT) {
+      if (hasAttach() && message.length > CAPTION_LIMIT) {
         const head = splitText(message, CAPTION_LIMIT)[0]
         chunks = [head, ...splitText(message.slice(head.length).trimStart())]
       } else {
@@ -417,34 +437,54 @@ Deno.serve(async (req) => {
 
       let sentAllParts = true
       for (let ci = 0; ci < chunks.length; ci++) {
-        const payload: Record<string, unknown> = {
-          phone:                  recipient.phone,
-          whatsapp_account_phone: senderPhone,
-          text:                   chunks[ci],
-        }
-        // Das Bild haengt am ersten Teil — so steht es oben im Chat und der
-        // Text liest sich darunter in einem Stueck weiter.
-        if (ci === 0 && fileUidCache) payload.file_uid = fileUidCache
-        console.log(`[send-whatsapp] Sende an ${recipient.phone} (Teil ${ci + 1}/${chunks.length})`, JSON.stringify(payload))
+        let ok: boolean, status: number, json: unknown
+        if (viaEvolution) {
+          // ── Eigener Server (Evolution API) ───────────────────────────
+          // Teil 1 mit Anhang = sendMedia (Text wird Bildunterschrift), sonst sendText.
+          const withMedia = ci === 0 && attachBlob
+          console.log(`[send-whatsapp] Evolution → ${recipient.phone} (Teil ${ci + 1}/${chunks.length}${withMedia ? ', mit Anhang' : ''})`)
+          const r = withMedia
+            ? await evoSendMedia(recipient.phone, { bytes: attachBlob!.bytes, mimetype: attachBlob!.ctype, fileName: attachBlob!.name, caption: chunks[ci] })
+            : await evoSendText(recipient.phone, chunks[ci])
+          ok = r.ok; status = r.status
+          // Klartext statt Roh-JSON, damit Scheduler/CRM den Fehler einordnen koennen.
+          json = r.ok ? { id: r.messageId ?? null, status: (r.data as { status?: string } | null)?.status ?? null }
+                      : { error: evoErrorText(r.status, r.data), raw: JSON.stringify(r.data ?? '').slice(0, 300) }
+          // Das Echo der eigenen Nachricht kommt gleich als MESSAGES_UPSERT (fromMe)
+          // im evolution-webhook an. Die ID VORHER als verarbeitet markieren, sonst
+          // landet jede API-Nachricht ein zweites Mal als "Sven tippt selbst" im Verlauf.
+          if (r.ok && r.messageId) { try { await supabase.from('wa_processed').insert({ message_uid: String(r.messageId) }) } catch { /* Dubletten-Insert ist ok */ } }
+        } else {
+          // ── TimelinesAI ──────────────────────────────────────────────
+          const payload: Record<string, unknown> = {
+            phone:                  recipient.phone,
+            whatsapp_account_phone: senderPhone,
+            text:                   chunks[ci],
+          }
+          // Das Bild haengt am ersten Teil — so steht es oben im Chat und der
+          // Text liest sich darunter in einem Stueck weiter.
+          if (ci === 0 && fileUidCache) payload.file_uid = fileUidCache
+          console.log(`[send-whatsapp] Sende an ${recipient.phone} (Teil ${ci + 1}/${chunks.length})`, JSON.stringify(payload))
 
-        const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type':  'application/json',
-            'Authorization': `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(payload),
-        })
-        const json = await res.json()
-        console.log(`[send-whatsapp] Antwort ${res.status} für ${recipient.phone}:`, JSON.stringify(json))
-        if (!res.ok) {
-          console.error(`[send-whatsapp] FEHLER ${res.status} für ${recipient.phone} (Teil ${ci + 1}/${chunks.length}):`, JSON.stringify(json))
-          results.push({ phone: recipient.phone, ok: false, status: res.status, data: json, part: ci + 1, parts: chunks.length })
+          const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type':  'application/json',
+              'Authorization': `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(payload),
+          })
+          json = await res.json(); ok = res.ok; status = res.status
+        }
+        console.log(`[send-whatsapp] Antwort ${status} für ${recipient.phone}:`, JSON.stringify(json))
+        if (!ok) {
+          console.error(`[send-whatsapp] FEHLER ${status} für ${recipient.phone} (Teil ${ci + 1}/${chunks.length}):`, JSON.stringify(json))
+          results.push({ phone: recipient.phone, ok: false, status, data: json, part: ci + 1, parts: chunks.length })
           sentAllParts = false
           break // Folgeteile ohne den Anfang ergeben keinen Sinn
         }
         if (ci === chunks.length - 1) {
-          results.push({ phone: recipient.phone, ok: true, status: res.status, data: json,
+          results.push({ phone: recipient.phone, ok: true, status, data: json,
             ...(chunks.length > 1 ? { parts: chunks.length } : {}) })
         } else {
           // Kurze Pause, damit die Teile beim Empfaenger sicher in der
@@ -464,12 +504,12 @@ Deno.serve(async (req) => {
     // ersten erfolgreichen Versand danach. Fehler hier dürfen den Versand nie kippen.
     try {
       const accountGone = results.some(r => !(r as { ok?: boolean }).ok
-        && /whatsapp account not found/i.test(JSON.stringify((r as { data?: unknown }).data ?? '')))
+        && (viaEvolution ? EVO_DISCONNECTED_RE : /whatsapp account not found/i).test(JSON.stringify((r as { data?: unknown }).data ?? '')))
       if (accountGone) {
-        const r = await waAccountGone(supabase, senderPhone, 'Whatsapp account not found')
+        const r = await waAccountGone(supabase, senderPhone, viaEvolution ? 'Instanz getrennt' : 'Whatsapp account not found', provider)
         console.warn(`[send-whatsapp] Konto ${senderPhone} nicht verbunden - Alarm: ${r}`)
       } else if (okResults.length > 0) {
-        const r = await waAccountRecovered(supabase, senderPhone)
+        const r = await waAccountRecovered(supabase, senderPhone, provider)
         if (r === 'mailed') console.warn(`[send-whatsapp] Konto ${senderPhone} wieder verbunden - Entwarnung verschickt`)
       }
     } catch (alertErr) {
@@ -524,7 +564,9 @@ Deno.serve(async (req) => {
         // im CRM nur ein technischer 403-Text, und niemand wusste, dass schlicht
         // das Kontingent alle ist (Sven 24.8., Fall Nikola Weber).
         ...(okResults.length === 0 && firstErr ? { error:
-          /quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? ''))
+          viaEvolution
+            ? String((firstErr.data as { error?: string } | null)?.error ?? `WhatsApp-Versand fehlgeschlagen (HTTP ${firstErr.status ?? '?'})`)
+            : /quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? ''))
             ? 'WhatsApp-Monatskontingent bei TimelinesAI ist aufgebraucht (50 Nachrichten im aktuellen Tarif). Bis zum Monatswechsel geht kein automatischer Versand mehr - Tarif unter app.timelines.ai/account/subscription hochstufen.'
             // 404 "Whatsapp account not found" = das Absender-Handy ist in TimelinesAI
             // abgemeldet (14.9.2026: alles tot, obwohl Kontingent voll). Klartext statt
@@ -535,7 +577,7 @@ Deno.serve(async (req) => {
           ...(/quota_exceeded|mass sending quota/i.test(JSON.stringify(firstErr.data ?? '')) ? { quota_exceeded: true } : {}) } : {}),
         // attached sagt, ob wirklich ein Bild dran war — "sent" allein reicht nicht,
         // ein gescheiterter Anhang faellt sonst nie auf.
-        attached: !!fileUidCache || linkFallback, ...(linkFallback ? { attach_as_link: true } : {}),
+        attached: hasAttach() || linkFallback, ...(linkFallback ? { attach_as_link: true } : {}),
         ...(attachError ? { attach_error: attachError } : {}) }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )

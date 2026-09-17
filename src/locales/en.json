@@ -4457,7 +4457,14 @@
       "tokenPh": "Paste new token …",
       "saved": "✓ Saved — testing connection…",
       "hint": "Keys are only checked on the server and never shown in the browser. Integrations without a “Change” button are maintained via Claude or the Supabase secrets.",
-      "driveConnect": "Connect"
+      "driveConnect": "Connect",
+      "waEvo": "our own server",
+      "waSwitchConfirm": "Route WhatsApp sending and receiving via {{label}} from now on?",
+      "waSwitched": "✓ WhatsApp now runs via {{label}}.",
+      "waActivate": "Make active",
+      "waPairing": "Fetching code…",
+      "waReconnect": "Reconnect",
+      "waPairHint": "On the phone: WhatsApp → Settings → Linked Devices → Link a Device → “Link with phone number instead” → enter this code. The code expires quickly; just fetch a new one."
     },
     "ownerContent": {
       "title": "Owner content",

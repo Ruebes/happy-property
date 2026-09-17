@@ -49,6 +49,38 @@ export default function Connectors() {
     } finally { setBusy('') }
   }
 
+  // ── WhatsApp-Weg: TimelinesAI ↔ eigener Server (Evolution) ──────────────
+  // Aktiv ist immer nur einer; die Karte des jeweils anderen zeigt „Aktiv schalten".
+  // „Neu verbinden" holt vom eigenen Server einen Pairing-Code fürs Handy.
+  const [pairCode, setPairCode] = useState('')
+  const switchProvider = async (provider: 'timelines' | 'evolution') => {
+    const label = provider === 'evolution' ? t('crm.conn.waEvo', 'eigenen Server') : 'TimelinesAI'
+    if (!confirm(t('crm.conn.waSwitchConfirm', 'WhatsApp-Versand und -Empfang ab sofort über {{label}} laufen lassen?', { label }))) return
+    setBusy('WA_SWITCH')
+    try {
+      const { data, error } = await supabase.functions.invoke('connectors', { body: { action: 'wa_provider', provider } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string }
+      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
+      showToast(t('crm.conn.waSwitched', '✓ WhatsApp läuft jetzt über {{label}}.', { label }))
+      await load(true)
+    } catch (e) {
+      showToast(`❌ ${e instanceof Error ? e.message : 'Umschalten fehlgeschlagen'}`)
+    } finally { setBusy('') }
+  }
+  const fetchPairCode = async () => {
+    setBusy('WA_PAIR'); setPairCode('')
+    try {
+      const { data, error } = await supabase.functions.invoke('connectors', { body: { action: 'wa_pair' } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string; pairingCode?: string; detail?: string }
+      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
+      if (d.pairingCode) setPairCode(d.pairingCode)
+      else showToast(`✓ ${d.detail ?? ''}`)
+    } catch (e) {
+      showToast(`❌ ${e instanceof Error ? e.message : 'Kein Code erhalten'}`)
+    } finally { setBusy('') }
+  }
+  const waActive = (key: string) => conns.find(c => c.key === key)?.detail.startsWith('AKTIV')
+
   const [ytOpen, setYtOpen] = useState(false)
   const ytConns = conns.filter(c => c.key.startsWith('YOUTUBE_'))
   const restConns = conns.filter(c => !c.key.startsWith('YOUTUBE_'))
@@ -69,6 +101,18 @@ export default function Connectors() {
                       🔗 {t('crm.conn.driveConnect', 'Verbinden')}
                     </a>
                   )}
+                  {(c.key === 'TIMELINES' || c.key === 'EVOLUTION') && !waActive(c.key) && (
+                    <button onClick={() => void switchProvider(c.key === 'EVOLUTION' ? 'evolution' : 'timelines')} disabled={busy === 'WA_SWITCH'}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0 disabled:opacity-50">
+                      🔀 {t('crm.conn.waActivate', 'Aktiv schalten')}
+                    </button>
+                  )}
+                  {c.key === 'EVOLUTION' && !c.ok && (
+                    <button onClick={() => void fetchPairCode()} disabled={busy === 'WA_PAIR'}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0 disabled:opacity-50">
+                      {busy === 'WA_PAIR' ? t('crm.conn.waPairing', 'Hole Code…') : `📲 ${t('crm.conn.waReconnect', 'Neu verbinden')}`}
+                    </button>
+                  )}
                   {c.editable && (
                     <button onClick={() => { setEditKey(editKey === c.key ? null : c.key); setEditVal('') }}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
@@ -76,6 +120,14 @@ export default function Connectors() {
                     </button>
                   )}
                 </div>
+                {c.key === 'EVOLUTION' && pairCode && (
+                  <div className="mt-3 rounded-xl bg-orange-50 border border-orange-100 p-3 text-sm text-gray-800">
+                    <p className="font-semibold tracking-widest text-2xl text-gray-900">{pairCode}</p>
+                    <p className="text-xs text-gray-600 mt-1">
+                      {t('crm.conn.waPairHint', 'Am Handy: WhatsApp → Einstellungen → Verknüpfte Geräte → Gerät hinzufügen → „Stattdessen mit Telefonnummer verknüpfen" → diesen Code eingeben. Der Code läuft nach kurzer Zeit ab; dann einfach neu holen.')}
+                    </p>
+                  </div>
+                )}
                 {editKey === c.key && (
                   <div className="mt-3 flex items-end gap-2 flex-wrap">
                     <input type="password" value={editVal} onChange={e => setEditVal(e.target.value)}
