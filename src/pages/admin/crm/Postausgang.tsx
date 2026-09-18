@@ -81,6 +81,18 @@ export default function Postausgang() {
   const planTokensOf = (body: string | null | undefined): string[] =>
     [...new Set([...(body ?? '').matchAll(/\/strategie\/([a-f0-9]+)/g)].map(m => m[1]))]
 
+  // Berechnungen, die zu DIESEM Eintrag gehoeren: die im Body verlinkten. Nur ein
+  // Eintrag OHNE Deck (frei geschriebene Mail) faellt auf alle Berechnungen des
+  // Kunden zurueck. Vorher galt der Fallback auch fuer Deck-Mails - dadurch hing
+  // an Jelenas Infinity-Deck die Mamba-Rechnung aus dem zweiten Wizard-Lauf
+  // (Sven 18.9.26: „Das soll eine zweite Mail werden"). Anzeige, Mail- und
+  // WhatsApp-Versand nutzen dieselbe Auswahl, damit rausgeht, was man sieht.
+  const calcsForRow = (row: Pick<OutboxRow, 'lead_id' | 'body' | 'deck_tokens'>): CalcRow[] => {
+    const inBody = new Set([...(row.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
+    const isDeckMail = (row.deck_tokens ?? []).length > 0
+    return calcs.filter(c => c.lead_id === row.lead_id && (inBody.size > 0 ? inBody.has(c.token) : !isDeckMail))
+  }
+
   // Beim Versand wird der Fahrplan fuer den Kunden freigeschaltet - vorher nicht.
   // Das ist der einzige Ort, an dem shared_at gesetzt wird (Sven 5.9.26).
   const releasePlans = async (body: string | null | undefined): Promise<void> => {
@@ -186,7 +198,7 @@ export default function Postausgang() {
     // Mailprogramm, auch wenn der Client nur den Text-Teil zeigt.
     const base = window.location.origin
     const deckToks = row.deck_tokens ?? []
-    const leadCalcs = calcs.filter(c => c.lead_id === row.lead_id)
+    const leadCalcs = calcsForRow(row)
     const origBody = row.body ?? ''
     const needDeck = deckToks.length > 0 && !origBody.includes('/deck/')
     const needCalc = leadCalcs.length > 0 && !origBody.includes('/rechnung/')
@@ -247,10 +259,8 @@ export default function Postausgang() {
     const deckToks = row.deck_tokens ?? []
     const deckLines = deckToks.map((tok, i) =>
       `🏠 ${t('crm.outbox.waDeckLabel', 'Sales Deck')}${deckToks.length > 1 ? ` ${i + 1}` : ''}: ${base}/deck/${tok}`)
-    // Gleiche Berechnungs-Auswahl wie in der Zeile angezeigt (im Body verlinkte, sonst alle des Leads)
-    const calcTokensInBody = new Set([...(row.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
-    const calcLines = calcs
-      .filter(c => c.lead_id === row.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
+    // Gleiche Berechnungs-Auswahl wie in der Zeile angezeigt
+    const calcLines = calcsForRow(row)
       .map(c => `📊 ${c.title?.trim() || t('crm.outbox.waCalcLabel', 'Deine Berechnung')}: ${base}/rechnung/${c.token}`)
     // Fahrplan: nur die in DIESEM Eintrag verlinkten, kein Fallback auf alle -
     // sonst schickt ein reiner Deck-Entwurf ungefragt den Fahrplan mit.
@@ -363,12 +373,8 @@ export default function Postausgang() {
 
         <div className="space-y-3">
           {rows.map(r => {
-            // Nur die Berechnungen anzeigen, die in DIESER Mail verlinkt sind — sonst
-            // erscheinen alle (auch alte Duplikate aus früheren Wizard-Läufen) und die
-            // Unterlagen wirken doppelt. Fallback: hat der Body keine /rechnung/-Links,
-            // alle des Leads zeigen.
-            const calcTokensInBody = new Set([...(r.body ?? '').matchAll(/\/rechnung\/([a-f0-9]+)/g)].map(m => m[1]))
-            const rowCalcs = calcs.filter(c => c.lead_id === r.lead_id && (calcTokensInBody.size === 0 || calcTokensInBody.has(c.token)))
+            // Nur die Berechnungen anzeigen, die zu DIESER Mail gehoeren (siehe calcsForRow).
+            const rowCalcs = calcsForRow(r)
             // Fahrplan nur, wenn er in diesem Eintrag wirklich verlinkt ist.
             const planToksInBody = planTokensOf(r.body)
             const rowPlans = plans.filter(pl => pl.lead_id === r.lead_id && planToksInBody.includes(pl.token))

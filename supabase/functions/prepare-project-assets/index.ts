@@ -10,6 +10,7 @@
 //
 // Body: { project_id, action: 'images'|'categorize'|'docs'|'facts', force? }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { geocodeProject } from '../_shared/geocodeProject.ts'
 // XLSX wird NUR im Spec-Zweig der docs-Aktion dynamisch geladen (memory-schwere
 // Library) — sonst belastet sie jede Invocation (auch categorize/brochure) und
 // trieb docs ins „Memory limit exceeded".
@@ -612,6 +613,30 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number; max_bytes?: number; set_hero?: boolean; dry_run?: boolean }
     const { project_id, action, folder_id, sync } = body
+
+    // ── geocode: Koordinaten per Google Places nachtragen ───────────────────────
+    // Ein Projekt (project_id) oder ALLE ohne latitude/longitude (all: true).
+    // Gleiche Logik wie generate-deck beim Deck-Bau (_shared/geocodeProject.ts):
+    // Treffer nur, wenn Google-Ortsname den Projektnamen enthaelt. force: true
+    // ueberschreibt vorhandene Koordinaten (Sichtpruefung im Ergebnis, kein Automatismus).
+    if (action === 'geocode') {
+      const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
+      let q = supabase.from('crm_projects').select('id, name, developer, location, latitude, longitude')
+      q = project_id ? q.eq('id', project_id) : q.is('latitude', null)
+      const { data: projs, error } = await q.order('name')
+      if (error) throw new Error(error.message)
+      const out: Array<Record<string, unknown>> = []
+      for (const pr of (projs ?? []) as Array<{ id: string; name: string; developer: string | null; location: string | null; latitude: number | null }>) {
+        const hit = await geocodeProject(pr)
+        if (hit && (pr.latitude == null || body.force)) {
+          if (!body.dry_run) await supabase.from('crm_projects').update({ latitude: hit.lat, longitude: hit.lng, maps_url: hit.mapsUrl }).eq('id', pr.id)
+          out.push({ name: pr.name, ok: true, place: hit.name, address: hit.address, lat: hit.lat, lng: hit.lng, query: hit.query })
+        } else {
+          out.push({ name: pr.name, ok: false, location: pr.location })
+        }
+      }
+      return json({ ok: true, action, geocoded: out.filter(o => o.ok).length, missing: out.filter(o => !o.ok).map(o => o.name), results: out })
+    }
 
     // ── nightly: alle angebundenen Drive-Ordner durchsuchen (Cron ~04:00 CY) ─────
     // Sven 14.8.: jede Nacht alle Ordner durchsuchen — unsere UND die der Developer.

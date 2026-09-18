@@ -17,6 +17,7 @@ import { eur, VAT_CAP_SQM } from '../_shared/deckVat.ts'
 import { buildDeckContext, MARINA_MODEL, type DeckContext, type FurnitureMode, type PaySchedule } from '../_shared/deckContext.ts'
 import { applyDeterministic, normalizeDashes, type ScrubEvent } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
+import { geocodeProject, mapQueryFallback } from '../_shared/geocodeProject.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -1062,19 +1063,31 @@ Deno.serve(async (req) => {
             const m = decodeURIComponent(pr.deck_assets?.mapUrl ?? '').match(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/)
             if (m) { body.images.mapLat = Number(m[1]); body.images.mapLng = Number(m[2]) }
           }
+          // Immer noch keine Koordinaten → Google Places nach dem Bauträger-Ort
+          // fragen und den Treffer AM PROJEKT speichern, damit das nur einmal
+          // passiert (Sven 18.9.26, Infinity/Jelena: 32 Projekte ohne Koordinaten,
+          // jede Karte daraus war eine Kategorie-Suche mit fremden Pins).
           if (body.images.mapLat == null) {
-            const loc = (pr.location ?? '').trim()
-            const nm  = (pr.name ?? projName ?? '').trim()
-            body.images.mapQuery = [nm, loc, 'Cyprus'].filter(Boolean).join(', ')
+            const hit = await geocodeProject({ name: pr.name ?? projName, developer: pr.developer, location: pr.location })
+            if (hit) {
+              body.images.mapLat = hit.lat; body.images.mapLng = hit.lng
+              console.log(`[generate-deck] Projekt geocodiert: ${hit.name} (${hit.lat},${hit.lng}) via „${hit.query}"`)
+              await sbRules.from('crm_projects').update({ latitude: hit.lat, longitude: hit.lng, maps_url: hit.mapsUrl })
+                .eq('id', body.project_id).is('latitude', null)
+            }
           }
-          // Bei bekannten Koordinaten IMMER den exakten Pin verlinken (auch wenn eine
-          // alte Such-mapUrl aus den deck_assets mitkommt) — sonst zeigt „In Maps öffnen"
-          // auf eine ungenaue Suche statt auf den Standort.
-          if (body.images.mapLat != null) {
-            body.images.mapUrl = `https://www.google.com/maps?q=${body.images.mapLat},${body.images.mapLng}`
-          } else if (!body.images.mapUrl) {
-            body.images.mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(body.images.mapQuery ?? projName)}`
+          if (body.images.mapLat == null) {
+            // Letzter Ausweg: reine Adress-/Ortssuche (ohne Projektnamen, sonst
+            // Kategorie-Suche). Zeigt mindestens den richtigen Ortsteil.
+            body.images.mapQuery = mapQueryFallback({ name: pr.name ?? projName, location: pr.location })
+            console.warn(`[generate-deck] keine Koordinaten für ${pr.name ?? projName} — Karte per Ortssuche „${body.images.mapQuery}"`)
           }
+          // „In Maps öffnen" zeigt IMMER auf das, was die Karte zeigt: exakter Pin bei
+          // Koordinaten, sonst dieselbe Ortssuche. Eine alte Such-mapUrl aus den
+          // deck_assets („Infinity mito infinity") wird nie durchgereicht.
+          body.images.mapUrl = body.images.mapLat != null
+            ? `https://www.google.com/maps?q=${body.images.mapLat},${body.images.mapLng}`
+            : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(body.images.mapQuery ?? projName)}`
         }
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
     }
