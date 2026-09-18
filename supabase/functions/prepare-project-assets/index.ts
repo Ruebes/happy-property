@@ -364,7 +364,31 @@ function folderCategory(name: string): 'floorplan' | 'location' | 'render' | nul
   const n = name.toLowerCase()
   if (/floor\s*plan|grundriss|drawings?/.test(n)) return 'floorplan'
   if (/location|lage|master\s*plan/.test(n))      return 'location'
-  if (/picture|photo|render|3d|gallery|interior|exterior|pool|view|cgi/.test(n)) return 'render'
+  if (/picture|photo|render|3d|gallery|interior|exterior|pool|view|cgi|block|villa|town.?house|apartment|playground|garden|amenit|club|gym|lobby/.test(n)) return 'render'
+  return null
+}
+// Wohnungstyp aus dem Ordnernamen des Bautraegers - zuverlaessiger als der
+// Vision-Blick aufs Bild: Mitos Mamba-"Apartments" (Block A/B) sind zweigeschossig
+// mit Grundstueck und sehen wie Townhouses aus, Vision taggte sie entsprechend.
+// Ordner "Block A Mamba" sagt aber eindeutig: Apartment-Block (Sven 18.9.26,
+// Jelena/Mamba: Apartment-Deck zeigte nur Villa- und Townhouse-Bilder).
+// blockTypes: Bauteil-Buchstabe → Wohnungstyp laut CRM-Units ("Block C&D" bei Mamba =
+// Townhouses C1-D3, "Block A" = Apartments). Ohne Treffer gilt Block = Apartment.
+function folderUnitType(name: string, blockTypes: Map<string, string> = new Map()): 'villa' | 'townhouse' | 'apartment' | 'anlage' | 'unklar' | null {
+  const n = name.toLowerCase()
+  const blk = n.match(/\bblock\s+([a-z](?:\s*[&,\/+]\s*[a-z])*)\b/)
+  if (blk) {
+    const letters = blk[1].split(/[^a-z]+/).filter(Boolean)
+    const types = letters.map(l => blockTypes.get(l)).filter((t): t is string => !!t)
+    const t = types[0]
+    if (t === 'villa' || t === 'townhouse' || t === 'apartment') return t
+    return 'apartment'
+  }
+  if (/villa/.test(n)) return 'villa'
+  if (/town.?house|maisonette|reihenhaus/.test(n)) return 'townhouse'
+  if (/apartment|\bapt\b|\bflat|tower|wohnung/.test(n)) return 'apartment'
+  if (/pool|playground|gym|lobby|club|garden|common|amenit|landscape|spielplatz|anlage|master\s*plan/.test(n)) return 'anlage'
+  if (/interior|innen|inside/.test(n)) return 'unklar'   // geteilte Innenraum-Renders: neutral, passen zu jedem Typ
   return null
 }
 function floorFromName(name: string): number | null {
@@ -394,7 +418,10 @@ function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 
 
 type DeckAssets = {
   renders?: string[]
-  gallery?: Array<{ url: string; category: string; label: string }>   // kategorisierte Renders (Vision)
+  gallery?: Array<{ url: string; category: string; label: string; unitType?: string }>   // kategorisierte Renders (Vision)
+  // Drive-Datei-ID → Storage-URL der schon gespiegelten Renders. Wiederholte
+  // Laeufe laden nur NEUE Bilder (30 Bilder frisch = Edge-Timeout, Mamba 18.9.26).
+  render_sources?: Record<string, string>
   floorplans?: Array<{ floor: number | null; label: string; url: string }>
   map?: string | null
   mapUrl?: string | null
@@ -611,7 +638,7 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   try {
-    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number; max_bytes?: number; set_hero?: boolean; dry_run?: boolean }
+    const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number; max_bytes?: number; set_hero?: boolean; dry_run?: boolean; max_new?: number }
     const { project_id, action, folder_id, sync } = body
 
     // ── geocode: Koordinaten per Google Places nachtragen ───────────────────────
@@ -1264,21 +1291,49 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'images') {
-      const MAX = 12_000_000, RENDER_CAP = 18, FP_CAP = 5
+      const MAX = 12_000_000, RENDER_CAP = 30, FP_CAP = 5
       const children = await listChildren(token, folderId)
-      const renderFiles: DriveFile[] = children.filter(f => isImg(f.mimeType))     // Bilder im Wurzelordner
+      // Bildquellen je Ordner getrennt sammeln: das Limit wird spaeter FAIR ueber
+      // die Ordner verteilt (Round-Robin), sonst fuellt ein grosser Interior-Ordner
+      // die Galerie und die Block-Renders kommen nie an (Mamba: 47 Bilder in 8 Ordnern).
+      // Bauteil → Wohnungstyp aus den CRM-Units (Mehrheit je Anfangsbuchstabe)
+      const blockTypes = new Map<string, string>()
+      {
+        const { data: us } = await supabase.from('crm_project_units').select('unit_number, type').eq('project_id', project_id)
+        const cnt = new Map<string, Map<string, number>>()
+        for (const u of (us ?? []) as Array<{ unit_number?: string; type?: string }>) {
+          const m = String(u.unit_number ?? '').trim().toLowerCase().match(/^([a-z])\s*\d/)
+          if (!m || !u.type) continue
+          const c = cnt.get(m[1]) ?? new Map<string, number>(); c.set(u.type, (c.get(u.type) ?? 0) + 1); cnt.set(m[1], c)
+        }
+        for (const [l, c] of cnt) blockTypes.set(l, [...c.entries()].sort((a, b) => b[1] - a[1])[0][0])
+      }
+      const sources: Array<{ files: DriveFile[]; unitType: ReturnType<typeof folderUnitType> }> = [
+        { files: children.filter(f => isImg(f.mimeType)), unitType: null },   // Bilder im Wurzelordner
+      ]
       const fpFiles: DriveFile[] = []
       let locFile: DriveFile | null = null
       for (const sub of children.filter(f => isFolder(f.mimeType))) {
-        const cat = folderCategory(sub.name)
-        if (!cat) continue
+        let cat = folderCategory(sub.name)
         const kids = await listChildren(token, sub.id)
+        // Ordner ohne erkennbares Stichwort ("Block A Mamba", "Villas Mamba"): sind
+        // es (fast) nur Bilder, ist es ein Render-Ordner - der Bautraeger benennt
+        // nach Bauteil, nicht nach unserem Vokabular.
+        if (!cat) {
+          const imgs = kids.filter(k => isImg(k.mimeType)).length
+          const other = kids.filter(k => !isImg(k.mimeType) && !isFolder(k.mimeType) && !/^video\//.test(k.mimeType)).length
+          if (imgs >= 2 && other === 0) cat = 'render'
+        }
+        if (!cat) continue
         // Grundrisse liegen bei manchen Bautraegern NUR als PDF im Ordner (Mamba:
         // 'Drawings'). Ohne PDF kommt fuer solche Projekte nie ein Grundriss an.
         if (cat === 'floorplan') fpFiles.push(...kids.filter(k => isImg(k.mimeType) || k.mimeType === 'application/pdf'))
         else if (cat === 'location') { if (!locFile) locFile = kids.find(k => isImg(k.mimeType)) ?? null }
-        else renderFiles.push(...kids.filter(k => isImg(k.mimeType)))
+        else sources.push({ files: kids.filter(k => isImg(k.mimeType)), unitType: folderUnitType(sub.name, blockTypes) })
       }
+      const renderFiles: DriveFile[] = sources.flatMap(s => s.files)
+      const hintOf = new Map<string, string>()   // Drive-Datei-ID → Wohnungstyp laut Ordner
+      for (const src of sources) if (src.unitType) for (const f of src.files) hintOf.set(f.id, src.unitType)
       const small = (f: DriveFile) => !f.size || parseInt(f.size, 10) <= MAX
       // Lose Kartenbilder im Ordner (z.B. "Google Maps Azure.png", "Lageplan.png") als KARTE erkennen,
       // nicht als Render — sonst landet die Karte in der Galerie und der Karten-Slot bleibt leer.
@@ -1292,8 +1347,30 @@ Deno.serve(async (req) => {
         locFile = cands.find(small) ?? cands[0] ?? null
       }
       const renders: string[] = []
-      for (const f of renderFiles.filter(f => !MAP_RE.test(f.name) && !JUNK_RE.test(f.name) && !RENDITE_RE.test(f.name)).filter(small).slice(0, RENDER_CAP)) {
-        try { renders.push(await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)) } catch { /* skip */ }
+      const hintByUrl = new Map<string, string>()
+      // Round-Robin ueber die Ordner bis zum Limit: jeder Ordner (Block A, Villas,
+      // Pool, Interior, …) ist in der Galerie vertreten.
+      const usable = (f: DriveFile) => !MAP_RE.test(f.name) && !JUNK_RE.test(f.name) && !RENDITE_RE.test(f.name) && small(f)
+      const queues = sources.map(s => s.files.filter(usable))
+      const picked: DriveFile[] = []
+      for (let i = 0; picked.length < RENDER_CAP && queues.some(q => q.length); i++) {
+        for (const q of queues) { const f = q.shift(); if (f && picked.length < RENDER_CAP) picked.push(f) }
+      }
+      const renderSources: Record<string, string> = {}
+      const known = assets.render_sources ?? {}
+      // Pro Lauf hoechstens FRESH_CAP NEUE Bilder (Download + Upload + Vision) -
+      // mehr sprengt das Edge-Zeitlimit. Der Rest kommt beim naechsten Lauf
+      // (nightly oder erneuter Aufruf); Antwort meldet `deferred`.
+      const FRESH_CAP = Number(body.max_new ?? 12)
+      let freshCount = 0, deferred = 0
+      for (const f of picked) {
+        if (!known[f.id]) { if (freshCount >= FRESH_CAP) { deferred++; continue }; freshCount++ }
+        try {
+          const url = known[f.id] ?? await uploadBytes(supabase, await driveBytes(token, f.id), f.mimeType, `projects/${project_id}/renders`, f.name)
+          renders.push(url)
+          renderSources[f.id] = url
+          const h = hintOf.get(f.id); if (h) hintByUrl.set(url, h)
+        } catch { /* skip */ }
       }
       // Fallback: keine Bilder im Drive-Ordner → bereits im CRM hinterlegte Projektbilder nutzen.
       if (!renders.length && Array.isArray(project.images)) {
@@ -1315,7 +1392,25 @@ Deno.serve(async (req) => {
       let vetted = renders
       if (renders.length) {
         try {
-          const s = sortCategorized(await categorizeImages(renders.slice(0, 18)))
+          // Schon beschriftete Bilder (gleiche Storage-URL) nicht erneut durch Vision
+          // schicken - nur die neuen. Spart Zeit und haelt Labels stabil.
+          const prevGal = new Map((assets.gallery ?? []).map(g => [g.url, g]))
+          const fresh = renders.slice(0, RENDER_CAP).filter(u => !prevGal.has(u))
+          const catNew = fresh.length ? await categorizeImages(fresh) : []
+          const catNewBy = new Map(catNew.map(c => [c.url, c]))
+          const cat = renders.slice(0, RENDER_CAP).map(u => catNewBy.get(u) ?? { ...prevGal.get(u)! })
+          // Ordner-Hinweis schlaegt den Vision-Tag - ausser Vision sieht die
+          // Gemeinschaftsanlage (Pool vor dem Block), die bleibt neutral.
+          const TYP_DE: Record<string, string> = { villa: 'Villa', townhouse: 'Townhouse', apartment: 'Apartment' }
+          for (const c of cat) {
+            const h = hintByUrl.get(c.url)
+            if (!h || (h !== 'anlage' && c.unitType === 'anlage')) continue
+            c.unitType = h
+            // Vision nannte Mitos Block-Apartments "Townhouse-Fassade" - das Label
+            // landet als Bildunterschrift im Deck, also den Typ im Text angleichen.
+            if (TYP_DE[h]) c.label = c.label.replace(/\b(townhouse|villa|apartment|wohnung)\b/gi, TYP_DE[h])
+          }
+          const s = sortCategorized(cat)
           if (s.renders.length) vetted = s.renders
           gallery = s.gallery
           for (const g of s.grundriss) floorplans.push({ floor: null, label: g.label || `Grundriss ${floorplans.length + 1}`, url: g.url })
@@ -1363,7 +1458,7 @@ Deno.serve(async (req) => {
       // genau dort statt in der Bildmitte. Nur neu rechnen, wenn Karte neu/ungeprüft.
       let mapMarker = assets.mapMarker ?? null
       if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
-      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker })
+      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker, render_sources: { ...known, ...renderSources } })
       // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur GEPRÜFTE Bilder
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
       if (vetted.length && curImgs.length === 0) {
@@ -1375,7 +1470,7 @@ Deno.serve(async (req) => {
       if (project.latitude == null || project.longitude == null) {
         try { locResult = await ingestLocation(token, folderId, supabase, project_id) } catch { /* best effort */ }
       }
-      return json({ ok: true, action, renders: vetted.length, dropped: renders.length - vetted.length, gallery: gallery.length, floorplans: floorplans.length, map: !!map, unitsMatched, location: locResult })
+      return json({ ok: true, action, renders: vetted.length, dropped: renders.length - vetted.length, gallery: gallery.length, floorplans: floorplans.length, map: !!map, unitsMatched, location: locResult, deferred })
     }
 
     // ── categorize ──────────────────────────────────────────────────────────────
@@ -1384,7 +1479,7 @@ Deno.serve(async (req) => {
     if (action === 'categorize') {
       const renders = assets.renders ?? []
       if (!renders.length) return json({ ok: true, action, gallery: 0, skipped: true, note: 'keine Renders' })
-      const cat = await categorizeImages(renders.slice(0, 18))
+      const cat = await categorizeImages(renders.slice(0, 30))
       const s = sortCategorized(cat)
       const floorplans = [...(assets.floorplans ?? [])]
       const seenFp = new Set(floorplans.map(f => f.url))
