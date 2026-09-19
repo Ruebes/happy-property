@@ -307,7 +307,9 @@ Deno.serve(async (req) => {
         const srcUrl = sources[si].from
         const rooms = (analysis.rooms ?? []).map(r => r.german).filter((x): x is string => !!x)
         const outdoor = analysis.outdoor ?? []
-        const floors = (analysis.floors ?? []).filter(f => f?.locator && f?.label).map(f => ({ locator: String(f.locator), label: String(f.label) }))
+        // source_index je Geschoss MITNEHMEN - vorher fiel er hier weg, und jedes
+        // Geschoss wurde vom selben Blatt gezeichnet bzw. uebersprungen.
+        const floors = (analysis.floors ?? []).filter(f => f?.locator && f?.label).map(f => ({ locator: String(f.locator), label: String(f.label), source_index: typeof f.source_index === 'number' ? f.source_index : undefined }))
         if (!floors.length && (analysis.plan_locator || analysis.floor_label)) floors.push({ locator: analysis.plan_locator ?? '', label: analysis.floor_label ?? '' })
         const titleUnit = unit?.type && /villa|haus/i.test(unit.type) ? `${body.unit_number}` : `WOHNUNG ${body.unit_number}`
         // Kein Gedankenstrich in Kundenmaterial (Svens Regel) - Punkt-Trenner.
@@ -402,7 +404,7 @@ Deno.serve(async (req) => {
           const png = await holeSeite(si)
           if (!png) throw new Error('Kein Referenzbild ladbar')
           refIds.push(await hfUploadImage(store, png, sources[si].mime))
-          gezeichnet.push({ locator: floors[0]?.locator ?? analysis.plan_locator ?? '', label: floors[0]?.label ?? floorLabel, refNr: 1 })
+          gezeichnet.push({ locator: floors[0]?.locator ?? analysis.plan_locator ?? '', label: floors[0]?.label ?? analysis.floor_label ?? '', refNr: 1 })
         }
         if (gezeichnet.length < floors.length) {
           console.warn(`[hp-floorplan] ${floors.length - gezeichnet.length} Geschoss(e) ohne Vorlage weggelassen`)

@@ -283,6 +283,10 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
       add({ key: 'grundriss_baugleich', severity: 'niedrig',
         what: `Der Grundriss für ${u.unitNumber} stammt von der baugleichen Wohnung (gleicher Typ, Zimmerzahl und Fläche) — im Deck als Hinweis vermerkt.`,
         evidence: `Quelle: ${u.floorplanSource}` })
+    } else if (u.floorplanUnapproved) {
+      add({ key: 'grundriss_nicht_freigegeben', severity: 'mittel',
+        what: `Der Grundriss für ${u.unitNumber} ist ein automatischer Zuschnitt aus dem Bauträgerblatt und noch nicht freigegeben.`,
+        fix: 'Im Projekt unter HP-Grundrisse prüfen und freigeben.' })
     } else if (u.floorplanSource === 'suffix') {
       add({ key: 'grundriss_suffix', severity: 'niedrig',
         what: `Der Grundriss für ${u.unitNumber} wurde über die Wohnungsnummer ohne Zusatz gefunden.`,

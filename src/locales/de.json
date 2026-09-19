@@ -2460,6 +2460,27 @@
         "released": "freigegeben — kommt in neue Decks.",
         "discarded": "verworfen.",
         "noPlan": "Kein Plan zum Freigeben vorhanden."
+      },
+      "assets": {
+        "title": "Grundrisse & Bilder aus dem Katalog",
+        "runCatalog": "Bauträgerpläne den Wohnungen zuordnen",
+        "help": "Zuschnitte aus den Bauträgerblättern kommen als „nicht freigegeben“ in neue Decks (Hinweis im Prüfbericht). Freigeben = gilt als geprüfter Plan dieser Wohnung. Ablehnen = nie im Deck.",
+        "plans": "Pläne",
+        "plan": "Plan",
+        "alsoFor": "gilt auch für",
+        "dims": "mit Maßen",
+        "noDims": "ohne Maße",
+        "approved": "freigegeben",
+        "review": "prüfen",
+        "classified": "automatisch",
+        "approve": "Freigeben",
+        "reject": "Ablehnen",
+        "sameLayoutPrompt": "Für welche weiteren Wohnungen gilt dieser Grundriss (baugleich/gespiegelt)? Wohnungsnummern mit Komma:",
+        "sameLayoutTitle": "Plan ausdrücklich auch für baugleiche Wohnungen freigeben",
+        "sheets": "{{n}} Bauträgerblatt/-blätter im Katalog",
+        "reviewImages": "Bilder zur Prüfung (Wohnungstyp unklar)",
+        "folder": "Ordner",
+        "catalogStarted": "{{n}} Bauträgerblatt/-blätter werden im Hintergrund ausgewertet (1-3 Min). Danach hier neu laden."
       }
     },
     "unit": {

@@ -12,6 +12,7 @@ import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
 import UnitImagesUploader from '../../../components/crm/UnitImagesUploader'
 import DeckChat from '../../../components/crm/DeckChat'
 import HpFloorplanPanel from '../../../components/crm/HpFloorplanPanel'
+import AssetReviewPanel from '../../../components/crm/AssetReviewPanel'
 
 const STORAGE_BUCKET = 'crm-project-images'
 
@@ -176,6 +177,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
       }
       // Vollausstattung (xlsx-Spec) → Text, in eigener schlanker Funktion (memory-sicher)
       void supabase.functions.invoke('parse-spec-xlsx', { body: { project_id: project.id } }).catch(() => {})
+      // Bauträger-Grundrissblätter je Wohnung aufloesen (Katalog, Hintergrund)
+      void supabase.functions.invoke('floorplan-catalog', { body: { project_id: project.id } }).catch(() => {})
       // Wohnungen aus der Preisliste anlegen (Vorschlags-Pool, nur im Deck-Wizard sichtbar) — im Hintergrund
       setIngestMsg({ ok: true, text: `⏳ ${t('crm.project.deck.stepUnits', 'Wohnungen aus Preisliste')}…` })
       try {
@@ -825,6 +828,7 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
 
                 {/* HP-Grundrisse je Wohnung (hp-floorplan: Bauträger-Plan → HP-Stil) */}
                 {project?.id && <HpFloorplanPanel projectId={project.id} />}
+                {project?.id && <AssetReviewPanel projectId={project.id} />}
 
                 {/* Generisches Projekt-Deck (zum Teilen im Zoom) */}
                 {project?.id && (project.deck_assets || form.drive_folder_id.trim()) && (

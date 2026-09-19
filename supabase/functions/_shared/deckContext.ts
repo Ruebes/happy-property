@@ -53,7 +53,11 @@ export interface DeckUnitCtx {
    *  Wohnung · drive = ORIGINAL-Bautraegerplan, zugeordnet von
    *  prepare-project-assets · suffix = dieselbe Wohnungsnummer ohne Zusatz wie
    *  "(P)" · bedroom_fallback = nur ueber die Zimmerzahl geraten. */
-  floorplanSource: 'unit_map' | 'hp' | 'drive' | 'suffix' | 'twin' | 'bedroom_fallback' | null
+  floorplanSource: 'unit_map' | 'hp' | 'catalog' | 'drive' | 'suffix' | 'twin' | 'bedroom_fallback' | null
+  /** Katalog-Plan, den Sven noch nicht freigegeben hat (status classified). */
+  floorplanUnapproved?: boolean
+  /** Der Plan traegt Massketten des Bautraegers (Katalog dimensions_present). */
+  floorplanDimensions?: boolean | null
   /** true = der Grundriss wurde ueber Zimmerzahl statt ueber die Wohnungsnummer
    *  gefunden. Muss im Bericht sichtbar bleiben (Regel: Fallback markieren). */
   floorplanFallback: boolean
@@ -391,6 +395,26 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
   const fpNotes: Record<string, string> = {}
   for (const [k, v] of Object.entries(da.unit_floorplan_notes ?? {})) if (typeof v === 'string') fpNotes[unitKey(k)] = v
 
+  // Katalog-Grundrisse je Wohnung (floorplan-catalog: Zuschnitte aus den
+  // Bautraegerblaettern, HP-Plaene, Handablagen). approved vor classified;
+  // Kombi-Bild (alle Geschosse) vor Einzelgeschoss.
+  type CatFp = { url: string; unit_key: string | null; same_layout_as: string[]; status: string; floors: string[]; dims: boolean | null }
+  let catFps: CatFp[] = []
+  try {
+    const { data: cf } = await sb.from('deck_assets_catalog')
+      .select('storage_url, unit_key, same_layout_as, status, floor_labels, dimensions_present')
+      .eq('project_id', input.projectId).eq('source_type', 'floorplan').eq('active', true).in('status', ['approved', 'classified'])
+    catFps = ((cf ?? []) as Array<Record<string, any>>).map(r => ({
+      url: String(r.storage_url), unit_key: r.unit_key ?? null, same_layout_as: (r.same_layout_as ?? []) as string[],
+      status: String(r.status), floors: (r.floor_labels ?? []) as string[], dims: r.dimensions_present ?? null,
+    }))
+  } catch { /* Katalog optional */ }
+  const catFor = (k: string, status: 'approved' | 'classified'): CatFp | null => {
+    const c = catFps.filter(f => f.status === status && istDarstellbaresBild(f.url) && (f.unit_key === k || f.same_layout_as.includes(k)))
+    c.sort((a, b) => (a.unit_key === k ? 0 : 1) - (b.unit_key === k ? 0 : 1) || b.floors.length - a.floors.length)
+    return c[0] ?? null
+  }
+
   const furnFor = (bedrooms: number | null, row: Record<string, any> | null): number => {
     if (mode === 'none' || mode === 'included') return 0
     if (furnIncluded) return 0
@@ -434,8 +458,12 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       if (!istDarstellbaresBild(u)) return
       fpUrl = u; fpSource = q
     }
+    let unapproved = false
+    let dims: boolean | null = null
     nimm(fpMap[k], 'unit_map')
+    if (!fpUrl) { const c = catFor(k, 'approved'); if (c) { nimm(c.url, 'catalog'); dims = c.dims } }
     nimm(row?.hp_floorplan_url, 'hp')
+    if (!fpUrl) { const c = catFor(k, 'classified'); if (c) { nimm(c.url, 'catalog'); dims = c.dims; unapproved = !!fpUrl } }
     nimm(row?.floorplan_url, 'drive')
     if (!fpUrl) {
       // Zusatz am Ende der Wohnungsnummer abstreifen: "b301p" -> "b301".
@@ -472,6 +500,8 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
         : null),
       floorplanSource: fpSource,
       floorplanFallback: fallback,
+      floorplanUnapproved: unapproved,
+      floorplanDimensions: dims,
     })
   }
   ctx.missingFloorplans = ctx.units.filter(u => !u.floorplanUrl).map(u => u.unitNumber)
