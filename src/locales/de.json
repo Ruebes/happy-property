@@ -6274,5 +6274,11 @@
     "total": "Gesamt (Jahr 1)",
     "vsFull": "Ohne Selbstnutzung bei gleicher Auslastung: {{rent}} €",
     "clickHint2": "Klick wechselt: vermietet / Selbstnutzung"
+  },
+  "deckQuality": {
+    "coverage": "Bilder: {{used}} von {{usable}} verwendbaren Projektbildern im Deck",
+    "coverageType": "Wohnungstyp {{type}}",
+    "coverageExcluded": "{{n}} Bilder anderer Typen ausgeschlossen",
+    "coverageReview": "{{n}} zur Prüfung"
   }
 }

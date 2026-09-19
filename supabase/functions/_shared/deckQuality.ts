@@ -290,6 +290,26 @@ export async function checkClaims(blocks: Block[], facts: string, ctx: DeckConte
   return { issues, failed: false }
 }
 
+// ── Karte: ist die Kartenquelle tatsaechlich erreichbar? ─────────────────────
+// Prueft die OpenStreetMap-Kachel, die der Renderer fuer die Koordinaten laedt.
+// Das Gate darf nicht nur "mapLat existiert" fragen (Sven 19.9.26).
+export async function checkMapSource(blocks: Block[]): Promise<Finding[]> {
+  const fb = blocks.find(b => b.type === 'facts')
+  if (!fb || typeof fb.mapLat !== 'number' || typeof fb.mapLng !== 'number') return []
+  const z = 15, n = 2 ** z
+  const x = Math.floor((fb.mapLng + 180) / 360 * n)
+  const latRad = fb.mapLat * Math.PI / 180
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n)
+  const url = `https://tile.openstreetmap.org/${z}/${x}/${y}.png`
+  try {
+    const r = await fetch(url, { method: 'HEAD', headers: { 'User-Agent': 'HappyPropertyDeckGate/1.0 (sven@happy-property.com)' } })
+    if (r.ok) return []
+    return [{ key: 'karte_nicht_erreichbar', severity: 'hoch', what: `Die Kartenkachel für die Projektkoordinaten antwortet mit HTTP ${r.status}.`, evidence: url }]
+  } catch (e) {
+    return [{ key: 'karte_nicht_erreichbar', severity: 'mittel', what: 'Die Kartenquelle (OpenStreetMap) war beim Prüfen nicht erreichbar.', evidence: e instanceof Error ? e.message : String(e) }]
+  }
+}
+
 // ── Englische Nachuebersetzung ───────────────────────────────────────────────
 // Rekursiv ueber ALLE Felder: deterministisch gesetzte Texte (Bild-Labels aus der
 // Datenbank, Zahlungsplan) ebenso wie Woerter, die die KI aus den deutschen

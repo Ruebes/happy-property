@@ -17,10 +17,13 @@ import { join } from 'path'
 const dir = mkdtempSync(join(tmpdir(), 'hpgate-'))
 const outGate = join(dir, 'gate.mjs')
 const outNorm = join(dir, 'norm.mjs')
+const outSel = join(dir, 'sel.mjs')
+execSync(`npx --yes esbuild supabase/functions/_shared/deckAssets.ts --bundle --format=esm --outfile=${outSel}`, { stdio: 'pipe' })
 execSync(`npx --yes esbuild supabase/functions/_shared/deckGate.ts --bundle --format=esm --outfile=${outGate}`, { stdio: 'pipe' })
 execSync(`npx --yes esbuild supabase/functions/_shared/deckNormalize.ts --bundle --format=esm --outfile=${outNorm}`, { stdio: 'pipe' })
 const { runDeckGate, checkImageTypes } = await import(outGate)
 const { buildPaymentBlock, applyDeterministic } = await import(outNorm)
+const { selectImages } = await import(outSel)
 
 let fails = 0
 const ok = (name, cond, detail = '') => {
@@ -184,6 +187,47 @@ const baseBlocks = (specs) => {
   ok('ohne Plan → grundriss_fehlt hoch (kein Ersatzplan)', has(r, 'grundriss_fehlt', 'hoch') && !has(r, 'grundriss_baugleich'), keys(r).join(', '))
   const norm = applyDeterministic(baseBlocks(['84,5 m²']), ctx({ units: [u], missingFloorplans: ['C-105'] }))
   ok('Normalisierung entfernt Grundriss-Block ohne Plan statt fremden Plan einzusetzen', !norm.blocks.some(b => b.type === 'floorplan'), norm.notes.join(' | '))
+}
+
+// ── Bildauswahl aus dem Katalog (Schritt 2) ──────────────────────────────────
+{
+  const A = (n, category, propertyType, extra = {}) => ({ id: n, url: IMG(n), category, label: n, propertyType, unitKey: null, status: 'classified', confidence: 0.9, ...extra })
+  const catalog = [
+    A('villa-pool', 'pool', 'villa'), A('villa-fassade', 'fassade', 'villa'), A('villa-wohnen', 'wohnzimmer', 'villa'),
+    A('apt-fassade', 'fassade', 'apartment'), A('apt-wohnen', 'wohnzimmer', 'apartment'),
+    A('pool-anlage', 'pool', 'project_generic'), A('unknown-kueche', 'kueche', 'unknown'),
+    A('apt-c105', 'fassade', 'apartment', { unitKey: 'c105' }), A('review-fassade', 'fassade', 'apartment', { status: 'review' }),
+  ]
+  const mk = () => [
+    { type: 'cover', title: 'Mamba' },
+    { type: 'unit', number: 'C-105' },
+    { type: 'feature', headline: 'Der Pool gehört dir', imageIntent: 'pool' },
+    { type: 'feature', headline: 'Kochen mit Blick', imageIntent: 'kueche' },
+    { type: 'feature', headline: 'Schlafen', imageIntent: 'schlafzimmer' },
+    { type: 'gallery', items: [{ title: 'x' }] },
+    { type: 'cta', headline: 'Weiter' },
+  ]
+  // gemischtes Projekt (Villa + Apartment), Apartment-Deck
+  const b1 = mk()
+  const r1 = selectImages(b1, catalog, ctx({ projectUnitTypes: ['apartment', 'villa', 'townhouse'] }), { lang: 'de' })
+  const imgs1 = b1.map(b => b.image).filter(Boolean)
+  ok('TE selectImages: kein Villa-Bild im Apartment-Deck', !imgs1.some(u => /villa/.test(u)) && !JSON.stringify(b1).includes('villa-'), imgs1.join(','))
+  ok('TE unit-Block bevorzugt Bild der eigenen Wohnung (unit_key)', b1[1].image === IMG('apt-c105'), String(b1[1].image))
+  ok('TE Pool-Block nimmt Anlagen-Pool (project_generic), nicht Villa-Pool', b1[2].image === IMG('pool-anlage'), String(b1[2].image))
+  ok('TE unknown-Bild im gemischten Projekt NICHT verwendet', !JSON.stringify(b1).includes('unknown-kueche'), '')
+  ok('TE fehlendes Motiv → kein Bild + bild_fehlt', b1[4].image === undefined && r1.findings.some(f => f.key === 'bild_fehlt'), JSON.stringify(r1.findings.map(f => f.key)))
+  ok('TE review-Bild nie auf Cover', b1[0].image !== IMG('review-fassade') && b1[0].image, String(b1[0].image))
+  ok('TE Galerie nur erlaubte Bilder', !JSON.stringify(b1.filter(b => b.type === 'gallery')).includes('villa-'), '')
+  ok('TE Coverage meldet ausgeschlossene Fremdtyp-Bilder', r1.coverage.excluded_wrong_type === 3 && r1.coverage.deck_type === 'apartment', JSON.stringify(r1.coverage))
+  // Ein-Typ-Projekt: unknown darf verwendet werden
+  const b2 = mk()
+  selectImages(b2, catalog.filter(a => a.propertyType !== 'villa'), ctx({ projectUnitTypes: ['apartment'] }), { lang: 'de' })
+  ok('TE unknown-Bild im Ein-Typ-Projekt erlaubt (Küche)', b2[3].image === IMG('unknown-kueche'), String(b2[3].image))
+  // Villa-Deck bekommt nur Villa + Anlage
+  const villaUnit = { ...unit, unitType: 'villa', unitKey: 'v01', unitNumber: 'Villa 01' }
+  const b3 = mk()
+  selectImages(b3, catalog, ctx({ units: [villaUnit], projectUnitTypes: ['apartment', 'villa'] }), { lang: 'de' })
+  ok('TE Villa-Deck: kein Apartment-Bild', !JSON.stringify(b3).includes('apt-'), '')
 }
 
 console.log(fails ? `\n❌ ${fails} Test(s) fehlgeschlagen` : '\n✅ Gate-Regressionstests bestanden')

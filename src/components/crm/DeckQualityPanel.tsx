@@ -31,6 +31,7 @@ interface Report {
   facts_snapshot?: Array<Record<string, unknown>>
   source?: string
   generated_at?: string
+  coverage?: { deck_type?: string | null; usable?: number; used?: number; excluded_wrong_type?: number; review?: number; by_type?: Record<string, { usable: number; used: number }> }
 }
 
 const SEV_STYLE: Record<string, string> = {
@@ -93,6 +94,15 @@ export default function DeckQualityPanel({ token, label, onClose }: { token: str
           {!loading && report && findings.length === 0 && (
             <p className="text-sm text-green-700 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
               {t('deckQuality.allClear', 'Keine Beanstandungen. Preise, Wohnungsdaten, Zahlungsplan, Grundriss und Bilder stimmen mit den hinterlegten Fakten überein.')}
+            </p>
+          )}
+
+          {!loading && report?.coverage && typeof report.coverage.usable === 'number' && (
+            <p className="text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+              {t('deckQuality.coverage', 'Bilder: {{used}} von {{usable}} verwendbaren Projektbildern im Deck', { used: report.coverage.used ?? 0, usable: report.coverage.usable })}
+              {report.coverage.deck_type ? ` · ${t('deckQuality.coverageType', 'Wohnungstyp {{type}}', { type: report.coverage.deck_type })}` : ''}
+              {report.coverage.excluded_wrong_type ? ` · ${t('deckQuality.coverageExcluded', '{{n}} Bilder anderer Typen ausgeschlossen', { n: report.coverage.excluded_wrong_type })}` : ''}
+              {report.coverage.review ? ` · ${t('deckQuality.coverageReview', '{{n}} zur Prüfung', { n: report.coverage.review })}` : ''}
             </p>
           )}
 

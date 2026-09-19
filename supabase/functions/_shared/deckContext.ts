@@ -91,6 +91,10 @@ export interface DeckContext {
   missingFloorplans: string[]
   /** Wohnungs-Schluessel, die im Projekt mehrfach vorkommen (Dubletten). */
   ambiguousUnitKeys: string[]
+  /** Alle Wohnungstypen des Projekts (apartment/villa/townhouse/studio). Ein
+   *  Projekt mit nur EINEM Typ darf unklassifizierte Bilder als Bilder dieses
+   *  Typs nutzen; gemischte Projekte nicht. Optional: alte Snapshots haben es nicht. */
+  projectUnitTypes?: string[]
 }
 
 export const MARINA_MODEL =
@@ -376,6 +380,7 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
     if (!byKey.has(k)) byKey.set(k, r)
   }
   ctx.ambiguousUnitKeys = [...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k)
+  ctx.projectUnitTypes = [...new Set(rows.map(r => String(r.type ?? '').toLowerCase()).filter(Boolean))]
 
   // Hinterlegte HP-Grundrisse (Quelle: deck_assets.unit_floorplans, Fallback-Key "<n>br").
   const da = (p.deck_assets ?? {}) as Record<string, any>

@@ -13,7 +13,8 @@ import { TRUTH_RULES } from '../_shared/deckRules.ts'
 import { buildDeckContext, type DeckContext, type FurnitureMode } from '../_shared/deckContext.ts'
 import { applyDeterministic } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
-import { auditBlockImages, checkClaims, checkImageTypes, translateGermanRemnants, type GalleryImage } from '../_shared/deckQuality.ts'
+import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, translateGermanRemnants, type GalleryImage } from '../_shared/deckQuality.ts'
+import { assetsFromGallery, loadCatalogAssets } from '../_shared/deckAssets.ts'
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
@@ -124,8 +125,15 @@ Deno.serve(async (req: Request) => {
         if (deck.project_id) {
           const { data: pr } = await supabase.from('crm_projects').select('deck_assets').eq('id', deck.project_id).maybeSingle()
           const da = (pr?.deck_assets ?? {}) as { renders?: string[]; gallery?: GalleryImage[]; map?: string; mapUrl?: string; facts?: string }
-          gal = (da.gallery ?? []).filter(g => g && typeof g.url === 'string')
           projectFacts = String(da.facts ?? '')
+          // Katalog zuerst (deck_assets_catalog), sonst die Galerie aus dem jsonb.
+          let assets = [] as Awaited<ReturnType<typeof loadCatalogAssets>>
+          try { assets = await loadCatalogAssets(supabase, deck.project_id as string) } catch (e) { console.warn('[refine-deck] Katalog:', e instanceof Error ? e.message : String(e)) }
+          if (!assets.length) assets = assetsFromGallery((da.gallery ?? []).filter(g => g && typeof g.url === 'string'))
+          gal = assets.filter(a => a.status !== 'rejected' && a.status !== 'review').map(a => ({
+            url: a.url, category: a.category, label: a.label,
+            unitType: a.propertyType === 'project_generic' ? 'anlage' : a.propertyType === 'unknown' ? undefined : a.propertyType,
+          }))
           const galOk = gal.filter(g => typErlaubt(g.unitType))
           const galUrls = new Set(galOk.map(g => g.url))
           const verboten = new Set(gal.filter(g => !typErlaubt(g.unitType)).map(g => g.url))
@@ -234,6 +242,7 @@ Deno.serve(async (req: Request) => {
               what: 'Die Bild-Text-Prüfung konnte nicht durchlaufen - die Bilder sind ungeprüft.', evidence: e instanceof Error ? e.message : String(e) })
           }
           findings.push(...checkImageTypes(finalBlocks, ctx, gal))
+          findings.push(...await checkMapSource(finalBlocks))
           if (ctx.lang === 'en') {
             try { await translateGermanRemnants(finalBlocks) }
             catch (e) { console.warn('[refine-deck] Uebersetzung fehlgeschlagen:', e instanceof Error ? e.message : String(e)) }

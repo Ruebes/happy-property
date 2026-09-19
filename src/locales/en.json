@@ -6392,5 +6392,11 @@
     "total": "Total (year 1)",
     "vsFull": "Without own use at the same occupancy: {{rent}} €",
     "clickHint2": "Click toggles: rented / own use"
+  },
+  "deckQuality": {
+    "coverage": "Images: {{used}} of {{usable}} usable project images in the deck",
+    "coverageType": "unit type {{type}}",
+    "coverageExcluded": "{{n}} images of other types excluded",
+    "coverageReview": "{{n}} pending review"
   }
 }

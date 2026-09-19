@@ -73,6 +73,21 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
   if (!blocks.some(b => b.type === 'facts')) {
     add({ key: 'keine_lage', severity: 'mittel', what: 'Es fehlt der Standort-Block (facts) mit Entfernungen und Karte.' })
   }
+  // Karte: der Renderer zeichnet sie aus Koordinaten (OpenStreetMap). Ohne
+  // Koordinaten bleibt nur die Google-Suche - das ist ein Befund, keine Karte.
+  {
+    const fb = blocks.find(b => b.type === 'facts')
+    if (fb) {
+      const coords = typeof fb.mapLat === 'number' && typeof fb.mapLng === 'number'
+      if (!coords && !fb.mapQuery && !fb.mapEmbed && !fb.image) {
+        add({ key: 'karte_fehlt', severity: 'hoch', what: 'Der Standort-Block hat keine Kartenquelle (keine Koordinaten, keine Suche, kein Bild).',
+          fix: 'Koordinaten am Projekt pflegen (Projektformular oder Geocoding).' })
+      } else if (!coords) {
+        add({ key: 'karte_ohne_koordinaten', severity: 'mittel', what: 'Die Karte läuft über eine Ortssuche statt über exakte Koordinaten - der Pin kann daneben liegen.',
+          evidence: String(fb.mapQuery ?? fb.image ?? '').slice(0, 120), fix: 'Koordinaten am Projekt pflegen.' })
+      }
+    }
+  }
 
   // ── Wohnungen ──────────────────────────────────────────────────────────────
   const unitBlocks = blocks.map((b, i) => ({ b, i })).filter(x => x.b.type === 'unit')

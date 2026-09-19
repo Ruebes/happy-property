@@ -16,7 +16,9 @@ import { eur, VAT_CAP_SQM } from '../_shared/deckVat.ts'
 import { buildDeckContext, MARINA_MODEL, type DeckContext, type FurnitureMode, type PaySchedule } from '../_shared/deckContext.ts'
 import { applyDeterministic, normalizeDashes, type ScrubEvent } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
-import { auditBlockImages, checkClaims, checkImageTypes, translateGermanRemnants } from '../_shared/deckQuality.ts'
+import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, translateGermanRemnants } from '../_shared/deckQuality.ts'
+import { assetsFromGallery, loadCatalogAssets, selectImages, type CatalogAsset } from '../_shared/deckAssets.ts'
+import type { GalleryImage } from '../_shared/deckGate.ts'
 import { geocodeProject, mapQueryFallback } from '../_shared/geocodeProject.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
@@ -39,7 +41,7 @@ So schreibst du gute Texte (das ist die halbe Miete — gib dir hier Mühe):
 
 Du rufst das Tool emit_deck auf — Feld "blocks" = die geordnete Liste der Deck-Blöcke.
 
-Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder NICHT setzen — die werden später eingehängt):
+Jeder Block hat ein "type" und passende Felder. Verfügbare Block-Typen (Bilder NICHT setzen — die werden später eingehängt). Bei cover, unit, feature und columns gibst du zusätzlich "imageIntent" an: welches Motiv das Bild zeigen soll (fassade, aussenbereich, aussicht, pool, wohnzimmer, esszimmer, kueche, schlafzimmer, badezimmer, gym, lobby). Nutze NUR Motive, die unter VERFUEGBARE BILDER stehen:
 
 - cover:    { type, kicker, title, tagline, forLine }   // forLine = "Für <Name> — <Monat Jahr>"
 - letter:   { type, kicker, headline, paragraphs:[string], signoff, signName }  // das persönliche Anschreiben
@@ -450,116 +452,33 @@ function injectAmenities(blocks: Array<Record<string, unknown>>, am?: AmenityAss
   blocks.splice(at, 0, ab)
 }
 
-// Welche Bildkategorie passt zu welchen Woertern im Blocktext? Reihenfolge zaehlt:
-// die erste Regel, die greift, gewinnt. Bisher bekam jeder Block einfach das
-// naechste Bild aus der Liste - ein Block ueber den Pool landete so unter einem
-// Fassadenfoto (Sven 26.8., The Cove).
-const BILD_REGELN: Array<{ re: RegExp; cats: string[] }> = [
-  { re: /\bpool|schwimm|sundeck|sonnendeck|planschen/i,           cats: ['pool', 'aussenbereich'] },
-  { re: /\bk[üu]che|kochen|kulinar|essbereich|esszimmer|dinner/i, cats: ['kueche', 'esszimmer', 'wohnzimmer'] },
-  { re: /schlafzimmer|schlafen|master|r[üu]ckzug|nachtruhe/i,      cats: ['schlafzimmer'] },
-  { re: /\bbad|badezimmer|dusche|wanne|sanit[äa]r|wellness/i,     cats: ['badezimmer'] },
-  { re: /wohnzimmer|wohnbereich|wohnen|lounge|sofa|kamin/i,        cats: ['wohnzimmer', 'esszimmer'] },
-  { re: /terrasse|veranda|garten|au[ßs]en|outdoor|bbq|grill/i,     cats: ['aussenbereich', 'fassade'] },
-  { re: /aussicht|blick|panorama|meer|sonnenunter|horizont/i,      cats: ['aussicht', 'aussenbereich', 'fassade'] },
-  { re: /\bgym|fitness|sport|yoga/i,                              cats: ['gym', 'lobby'] },
-  { re: /lobby|eingang|empfang|foyer/i,                            cats: ['lobby', 'fassade'] },
-  { re: /architekt|fassade|geb[äa]ude|bauweise|konstruktion/i,     cats: ['fassade'] },
-]
-
-// Der frühere Villa/Apartment-Schutz (passtZuTyp) ist entfallen: er brauchte ein
-// Label, das das Frontend nie mitschickte, und war dadurch wirkungslos. Die
-// Zuordnung läuft jetzt über die Wohnungsnummer im Deck-Kontext — eine Wohnung
-// bekommt ausschließlich ihren eigenen hinterlegten Plan.
-function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string, unitTyp?: string): void {
-  const renders = images?.renders ?? []
-  const gal = images?.gallery ?? []
-  let ri = 0, pi = 0
-  const verbraucht = new Set<string>()
-  const nextRender = () => renders.length ? renders[ri++ % renders.length] : `https://picsum.photos/seed/deck${++pi}/1600/1000`
-  // Bild zum TEXT des Blocks suchen: erst ueber die Vision-Kategorie, sonst ueber
-  // das Bild-Label. Noch nicht verwendete Bilder haben Vorrang, damit sich nicht
-  // dasselbe Foto durchs ganze Deck zieht.
-  const passendesBild = (b: Record<string, unknown>): string | null => {
-    if (!gal.length) return null
-    const txt = [b.headline, b.kicker, b.intro, b.text, b.tagline, b.title]
-      .filter(x => typeof x === 'string').join(' ')
-    if (!txt.trim()) return null
-    const regel = BILD_REGELN.find(r => r.re.test(txt))
-    const kandidaten: Array<{ url: string; category: string; label: string }> = []
-    if (regel) {
-      for (const c of regel.cats) kandidaten.push(...gal.filter(x => x.category === c))
-    }
-    // Zusaetzlich ueber das Label suchen (z.B. "Poolbereich mit Lounge").
-    for (const w of txt.toLowerCase().match(/[a-zäöüß]{5,}/g) ?? []) {
-      for (const x of gal) if (x.label && x.label.toLowerCase().includes(w) && !kandidaten.includes(x)) kandidaten.push(x)
-    }
-    if (!kandidaten.length) return null
-    return (kandidaten.find(x => !verbraucht.has(x.url)) ?? kandidaten[0]).url
-  }
-  const bildFuer = (b: Record<string, unknown>): string => {
-    // Hat der Block schon ein GEWOLLTES Bild (z.B. das Marina-Modell aus einer
-    // gelernten Vorgabe), bleibt es stehen. Vorher ueberschrieb die Zuordnung es
-    // mit einem beliebigen Render - im Marina-Abschnitt stand ein Esszimmer
-    // (Sven 27.8.).
-    const vorhanden = typeof b.image === 'string' ? b.image.trim() : ''
-    if (vorhanden.startsWith('http')) { verbraucht.add(vorhanden); return vorhanden }
-    const treffer = passendesBild(b)
-    const url = treffer ?? nextRender()
-    verbraucht.add(url)
-    return url
-  }
-  // ZWEI DURCHGAENGE: Bloecke mit klarem Motivbezug ("Der Pool gehoert nur dir")
-  // waehlen ZUERST, danach die allgemeinen (cover, unit). Sonst greift sich das
-  // Cover das Poolfoto und der Pool-Block bekommt die Fassade (Sven 26.8.).
-  const bildBloecke = blocks.filter(b => ['cover', 'unit', 'columns', 'feature'].includes(b.type as string))
-  const hatBezug = (b: Record<string, unknown>) => {
-    const txt = [b.headline, b.kicker, b.intro, b.text, b.tagline, b.title].filter(x => typeof x === 'string').join(' ')
-    return BILD_REGELN.some(r => r.re.test(txt))
-  }
-  for (const b of bildBloecke.filter(hatBezug)) b.image = bildFuer(b)
-  for (const b of bildBloecke.filter(b => !hatBezug(b))) b.image = bildFuer(b)
-
+// Karte an den facts-Block, Grundriss-Bilder loeschen. Die Blockbilder und
+// Bildstrecken setzt ab 19.9.26 ausschliesslich _shared/deckAssets.ts aus dem
+// Katalog (Wohnungstyp -> Wohnung -> Motiv), nie mehr "das naechste Bild".
+function assignMapAndFloorplan(blocks: Array<Record<string, unknown>>, images?: DeckImages, projName?: string): void {
   for (const b of blocks) {
     const t = b.type
-    // Cover: animierte Kamerafahrt (Higgsfield) statt Standbild, wenn vorhanden
     if (t === 'cover' && images?.heroVideo) b.video = images.heroVideo
     if (t === 'facts') {
-      // Standort-Karte, in Prioritäts-Reihenfolge:
-      // 1) Echte Koordinaten (lat/lng) → interaktive Google-Maps-Einbettung im Deck
-      //    (Deck.tsx baut den iframe). Pin sitzt IMMER exakt richtig (kein Vision-Marker
-      //    mehr, kein manueller Screenshot, funktioniert auch für Projekte ohne Drive).
-      // 2) Statischer Karten-Screenshot (Alt-Projekte) → Bild + Vision-Marker-Kreis.
-      // 3) Keine Karte → neutrales Render (kein Kreis auf zufälligem Foto).
+      // Standort-Karte: 1) Koordinaten (Renderer baut die Karte), 2) Such-Query,
+      // 3) statischer Screenshot mit Vision-Marker. Nie ein zufaelliges Render.
       if (images?.mapLat != null && images?.mapLng != null) {
         b.mapLat = images.mapLat
         b.mapLng = images.mapLng
         if (projName) b.mapLabel = projName
-        if (images?.map) b.image = images.map   // optionaler statischer Fallback (PDF/Alt-Clients)
+        if (images?.map) b.image = images.map   // statischer Fallback (PDF/Alt-Clients)
       } else if (images?.mapQuery) {
-        // Keine exakten Koordinaten → trotzdem INTERAKTIVE Karte per Such-Query
-        // (Projektname + Ort). Deck.tsx baut daraus das scrollbare Embed. Standard.
         b.mapQuery = images.mapQuery
         if (projName) b.mapLabel = projName
       } else if (images?.map) {
         b.image = images.map
         if (projName) b.mapLabel = projName
-        if (images.mapMarker) b.mapMarker = images.mapMarker   // %-Position des echten Pins (Vision)
-      } else {
-        b.image = nextRender()
+        if (images.mapMarker) b.mapMarker = images.mapMarker
       }
-      if (images?.mapUrl) b.mapUrl = images.mapUrl   // verlinkt auf Google Maps
+      if (images?.mapUrl) b.mapUrl = images.mapUrl
     }
-    // Grundrisse fasst die Bildzuordnung NICHT mehr an. Sie kamen hier aus einer
-    // Liste, die das Frontend zusammenstellte — im Zweifel der ERSTE Plan des
-    // Drive-Ordners (Dachplan, Masterplan, ein Plan einer fremden Wohnungsart).
-    // Zustaendig ist jetzt allein applyDeterministic in _shared/deckNormalize.ts,
-    // das je Wohnung genau den Plan setzt, den ihr der Deck-Kontext zuordnet.
-    // Fehlt einer, bleibt der Block leer und wird entfernt — nie ein Ersatzbild.
+    // Grundrisse setzt allein applyDeterministic (je Wohnung genau ihr Plan).
     if (t === 'floorplan') delete b.image
-    if (t === 'gallery' && Array.isArray(b.items)) {
-      for (const it of b.items as Array<Record<string, unknown>>) it.image = nextRender()
-    }
   }
 }
 
@@ -655,43 +574,39 @@ Deno.serve(async (req) => {
       generic,
       units: unitInput,
     })
-    // ── Bilder auf den Wohnungstyp einschraenken (Sven 17.9.: ein Townhouse-Deck
-    // zeigt nur Townhouse-Bilder). Vision-Tag unitType je Galeriebild:
-    // villa/townhouse/apartment = zeigt diesen Typ, anlage/unklar = neutral.
-    // Greift nur, wenn ALLE angebotenen Wohnungen denselben Typ haben, die
-    // Galerie getaggt ist und danach noch genug Bilder bleiben.
-    if (body.images) {
-      const types = [...new Set(ctx.units.map(u => String(u.unitType ?? '').toLowerCase()).filter(Boolean))]
-      const gal0 = body.images.gallery ?? []
-      const tagged = gal0.some(g => typeof g.unitType === 'string' && g.unitType)
-      if (types.length === 1 && tagged) {
-        const want = types[0]
-        const neutral = (t: string) => !t || t === 'anlage' || t === 'unklar'
-        const gal1 = gal0.filter(g => { const t = String(g.unitType ?? '').toLowerCase(); return neutral(t) || t === want })
-        if (gal1.length >= 3 && gal1.length < gal0.length) {
-          const tagOf = new Map(gal0.map(g => [g.url, String(g.unitType ?? '').toLowerCase()]))
-          body.images.gallery = gal1
-          body.images.renders = (body.images.renders ?? []).filter(u => { const t = tagOf.get(u); return t === undefined || neutral(t) || t === want })
-          console.log(`[generate-deck] Bildfilter Wohnungstyp ${want}: ${gal0.length - gal1.length} Bild(er) anderer Typen ausgeblendet`)
-        }
-      }
+    // ── Bildbestand aus dem Katalog (deck_assets_catalog) ────────────────────
+    // Fallback: die Galerie aus deck_assets, wenn der Katalog fuer das Projekt
+    // noch leer ist. Die Auswahl selbst (Typ -> Wohnung -> Motiv) macht
+    // _shared/deckAssets.ts nach der KI.
+    let assets: CatalogAsset[] = []
+    if (body.project_id) {
+      try { assets = await loadCatalogAssets(sbRules, body.project_id) }
+      catch (e) { console.warn('[generate-deck] Katalog nicht lesbar:', e instanceof Error ? e.message : String(e)) }
     }
-    // BILDBESTAND als harter Fakt: Die KI baute Bloecke ueber Raeume, von denen es
-    // gar kein Foto gibt - das System stopfte dann irgendein Bild darunter (Sven
-    // 26.8., The Cove: 4 Bilder, nur Fassade und Aussenbereich). Sie soll nur
-    // ueber das schreiben, was sich auch zeigen laesst.
-    const galIn = body.images?.gallery ?? []
-    const rendIn = body.images?.renders ?? []
+    if (!assets.length) assets = assetsFromGallery((body.images?.gallery ?? []) as GalleryImage[])
+    // Fuer Audit und Typ-Pruefung: Katalog als Galerie-Liste (unitType aus property_type).
+    const galForChecks: GalleryImage[] = assets.map(a => ({
+      url: a.url, category: a.category, label: a.label,
+      unitType: a.propertyType === 'project_generic' ? 'anlage' : a.propertyType === 'unknown' ? undefined : a.propertyType,
+    }))
+    // BILDBESTAND als harter Fakt: Die KI soll nur ueber Motive schreiben, die es
+    // auch als Bild gibt - sonst bekommt ein Kuechen-Block zwangslaeufig kein
+    // oder ein unpassendes Bild (Sven 26.8., The Cove).
     let bildFakten = ''
-    if (galIn.length || rendIn.length) {
-      const katListe = [...new Set(galIn.map(g => g.category).filter(Boolean))]
-      const labels = galIn.map(g => g.label).filter(Boolean).slice(0, 20)
-      bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck existieren ${galIn.length || rendIn.length} Fotos.`
-      if (katListe.length) bildFakten += `\nMotive: ${katListe.join(', ')}.`
-      if (labels.length) bildFakten += `\nBildinhalte: ${labels.join(' | ')}.`
-      bildFakten += `\nBaue KEINEN eigenen Block (feature/columns) ueber ein Motiv, das hier NICHT vorkommt - ein Block ueber die Kueche ohne Kuechenfoto bekommt zwangslaeufig ein unpassendes Bild. Gibt es nur Aussenmotive, dann beschreibe Architektur, Lage und Aussenbereiche und halte dich bei Innenraeumen an den Text ohne eigenen Bildblock.`
-      if (galIn.length + rendIn.length < 6) {
-        bildFakten += `\nDer Bildbestand ist KLEIN: baue hoechstens ${Math.max(2, galIn.length || rendIn.length)} bebilderte feature/columns-Bloecke, sonst wiederholen sich die Fotos sichtbar.`
+    {
+      const deckTypes = [...new Set(ctx.units.map(u => String(u.unitType ?? '').toLowerCase()).filter(Boolean))]
+      const deckTyp = deckTypes.length === 1 ? (deckTypes[0] === 'studio' ? 'apartment' : deckTypes[0]) : ''
+      const single = new Set((ctx.projectUnitTypes ?? []).map(t => (t === 'studio' ? 'apartment' : t))).size <= 1
+      const nutzbar = assets.filter(a => a.status !== 'rejected' && (a.propertyType === 'project_generic' || (deckTyp && (a.propertyType === deckTyp || (a.propertyType === 'unknown' && single)))))
+      if (nutzbar.length) {
+        const katListe = [...new Set(nutzbar.map(g => g.category))]
+        const labels = nutzbar.map(g => g.label).filter(Boolean).slice(0, 24)
+        bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck existieren ${nutzbar.length} Fotos${deckTyp ? ` fuer den Wohnungstyp ${deckTyp} und die Anlage` : ''}.\nMotive: ${katListe.join(', ')}.`
+        if (labels.length) bildFakten += `\nBildinhalte: ${labels.join(' | ')}.`
+        bildFakten += `\nSetze imageIntent NUR auf eines dieser Motive. Baue KEINEN eigenen Block (feature/columns) ueber ein Motiv, das hier NICHT vorkommt - er bliebe ohne Bild.`
+        if (nutzbar.length < 6) bildFakten += `\nDer Bildbestand ist KLEIN: baue hoechstens ${Math.max(2, nutzbar.length)} bebilderte feature/columns-Bloecke.`
+      } else {
+        bildFakten = `\n\n=== VERFUEGBARE BILDER (HART) ===\nFuer dieses Deck gibt es KEINE freigegebenen Fotos${deckTyp ? ` des Wohnungstyps ${deckTyp}` : ''}. Baue keine feature/columns-Bloecke, die ein Bild brauchen; beschreibe in Text.`
       }
     }
 
@@ -887,15 +802,7 @@ Deno.serve(async (req) => {
         }
       } catch { /* Karte optional — Deck wird trotzdem erzeugt */ }
     }
-    // Wohnungsart dieses Decks - entscheidet, welche Grundrisse ueberhaupt passen.
-    let deckUnitTyp = ''
-    if (body.unit_id) {
-      try {
-        const { data } = await sbRules.from('crm_project_units').select('type').eq('id', body.unit_id).maybeSingle()
-        deckUnitTyp = String((data as { type?: string } | null)?.type ?? '')
-      } catch { /* ohne Typ wird nicht gefiltert */ }
-    }
-    assignImages(blocks, body.images, projName, deckUnitTyp)
+    assignMapAndFloorplan(blocks, body.images, projName)
 
     // ── Karte: KEIN eigener map-Block mehr ───────────────────────────────────
     // Bis hierher setzte generate-deck einen Block { type: 'map' } ein. Den kennt
@@ -956,56 +863,14 @@ Deno.serve(async (req) => {
     // Render UND Grundriss - kuratiert in deck_assets, deshalb deterministisch.
     injectMasterplan(blocks, (enDeck && projAssets?.masterplan_en) || projAssets?.masterplan, enDeck)
     injectAmenities(blocks, (enDeck && projAssets?.amenities_en) || projAssets?.amenities, enDeck)
-    // Generisches Projekt-Deck: beschriftete Bildstrecken pro Bereich (Wohnen, Küche,
-    // Schlafen, Bäder, Pool, Lobby, Außen) aus den kategorisierten Renders einbauen,
-    // damit der Kunde im Zoom sieht, wie alles aussieht.
-    const gal = body.images?.gallery ?? []
-    if (gal.length) {
-      // Reihenfolge: zuerst Außen/Projekt (Sven: „immer Außenbilder zeigen"),
-      // dann ein Rundgang durch die Wohnung. Jedes Bild trägt sein echtes
-      // Vision-Label als Titel → Beschriftung passt garantiert zum Bildinhalt.
-      const galEN = deckLang === 'en'
-      const GROUPS: Array<{ cats: string[]; kicker: string; headline: string }> = galEN ? [
-        { cats: ['fassade', 'aussenbereich', 'aussicht'], kicker: 'Project',   headline: 'Exterior & Setting' },
-        { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Interiors',  headline: 'Living & Dining' },
-        { cats: ['kueche'],                             kicker: 'Interiors',  headline: 'Kitchen' },
-        { cats: ['schlafzimmer'],                       kicker: 'Interiors',  headline: 'Bedrooms' },
-        { cats: ['badezimmer'],                         kicker: 'Interiors',  headline: 'Bathrooms' },
-        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Pool & Sundeck' },
-        { cats: ['lobby', 'gym'],                       kicker: 'Amenities',  headline: 'Lobby & Communal Areas' },
-      ] : [
-        { cats: ['fassade', 'aussenbereich', 'aussicht'], kicker: 'Projekt',  headline: 'Außenansicht & Lage' },
-        { cats: ['wohnzimmer', 'esszimmer'],            kicker: 'Innenräume', headline: 'Wohnen & Essen' },
-        { cats: ['kueche'],                             kicker: 'Innenräume', headline: 'Küche' },
-        { cats: ['schlafzimmer'],                       kicker: 'Innenräume', headline: 'Schlafen' },
-        { cats: ['badezimmer'],                         kicker: 'Innenräume', headline: 'Bäder' },
-        { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Pool & Sundeck' },
-        { cats: ['lobby', 'gym'],                       kicker: 'Anlage',     headline: 'Lobby & Gemeinschaft' },
-      ]
-      const used = new Set<string>()
-      const galleryBlocks: Array<Record<string, unknown>> = []
-      for (const g of GROUPS) {
-        const imgs = gal.filter(x => g.cats.includes(x.category) && !used.has(x.url)).slice(0, 6)
-        if (!imgs.length) continue
-        imgs.forEach(x => used.add(x.url))
-        galleryBlocks.push({ type: 'gallery', kicker: g.kicker, headline: g.headline, items: imgs.map(x => ({ image: x.url, title: x.label || undefined })) })
-      }
-      // Konnten die Bilder nicht in Räume einsortiert werden (z.B. große Fotos, die
-      // Vision ablehnt) → trotzdem eine saubere Sammel-Bildstrecke zeigen.
-      if (!galleryBlocks.length && gal.length) {
-        galleryBlocks.push({ type: 'gallery', kicker: galEN ? 'Project' : 'Projekt', headline: galEN ? 'Impressions' : 'Eindrücke', items: gal.slice(0, 6).map(x => ({ image: x.url, title: x.label || undefined })) })
-      }
-      if (galleryBlocks.length) {
-        const filtered = blocks.filter(b => b.type !== 'gallery')   // Modell-Galerien ersetzen
-        // Erst zeigen, dann den Preis: die Bildstrecken landen VOR dem Zahlungsplan.
-        // Vorher hingen sie hinter ihm, der Zahlungsplan stand mitten im Deck.
-        let at = filtered.findIndex(b => b.type === 'amenity')
-        if (at < 0) at = filtered.findIndex(b => b.type === 'payment')
-        if (at < 0) at = filtered.findIndex(b => b.type === 'cta')
-        if (at < 0) at = filtered.length
-        blocks = [...filtered.slice(0, at), ...galleryBlocks, ...filtered.slice(at)]
-      }
-    }
+    // ── Bildauswahl aus dem Katalog (_shared/deckAssets.ts) ─────────────────
+    // Blockbilder (cover/unit/feature/columns) nach Wohnungstyp -> Wohnung -> Motiv,
+    // Bildstrecken aus ALLEN erlaubten Bildern. Kein Fremdtyp, kein Zufallsbild;
+    // fehlt ein passendes Bild, bleibt der Block leer und der Bericht sagt es.
+    const gal = galForChecks
+    const auswahl = selectImages(blocks, assets, ctx, { lang: deckLang })
+    const auswahlFindings: Finding[] = auswahl.findings
+    console.log(`[generate-deck] Bildauswahl: ${JSON.stringify({ usable: auswahl.coverage.usable, used: auswahl.coverage.used, excluded_wrong_type: auswahl.coverage.excluded_wrong_type })}`)
     // Echte Aufnahmen der Aussicht - NACH dem Galerie-Aufbau, weil der jeden
     // gallery-Block ersetzt.
     injectViews(blocks, (enDeck && projAssets?.views_en) || projAssets?.views, enDeck)
@@ -1045,6 +910,7 @@ Deno.serve(async (req) => {
     // Wohnungstyp je Bild deterministisch gegen die Vision-Tags (Villa-Render im
     // Apartment-Deck = hoch).
     auditFindings.push(...checkImageTypes(blocks, ctx, gal))
+    auditFindings.push(...await checkMapSource(blocks))
 
     // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
     // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer
@@ -1072,7 +938,7 @@ Deno.serve(async (req) => {
     // Es REPARIERT nichts still — was hier auffällt, steht als Befund im Bericht
     // und wird im CRM angezeigt. Ein RED-Deck bleibt erreichbar und versendbar.
     const gate = runDeckGate(blocks, ctx)
-    const findings: Finding[] = [...gate.findings, ...auditFindings]
+    const findings: Finding[] = [...gate.findings, ...auswahlFindings, ...auditFindings]
 
     // Zweite, semantische Prüfung: deckt der Faktenbestand die Behauptungen des
     // Decks? Sie kostet einen weiteren Claude-Aufruf. Synchron aufgerufen sprengt
@@ -1114,6 +980,7 @@ Deno.serve(async (req) => {
       })),
       images: blocks.map((b, i) => ({ block: i, type: String(b.type), image: typeof b.image === 'string' ? b.image : null }))
         .filter(x => x.image),
+      coverage: auswahl.coverage,
       completion: ctx.completion,
       payment_source: ctx.paymentSource,
       generated_at: new Date().toISOString(),

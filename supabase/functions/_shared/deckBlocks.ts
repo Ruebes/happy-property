@@ -52,8 +52,14 @@ const bool = { type: 'boolean' }
 const strArr = { type: 'array', items: { type: 'string' } }
 const objArr = { type: 'array', items: { type: 'object' } }
 
+/** Motive, die ein Blockbild zeigen kann. Die KI nennt je bebildertem Block
+ *  ihre Absicht (imageIntent); die Bildauswahl (_shared/deckAssets.ts) sucht dann
+ *  ein Bild dieses Motivs im richtigen Wohnungstyp. */
+export const ROOM_CATS = ['fassade', 'aussenbereich', 'aussicht', 'pool', 'wohnzimmer', 'esszimmer', 'kueche', 'schlafzimmer', 'badezimmer', 'gym', 'lobby'] as const
+
 /** Felder, die die KI in einem Block schreiben darf (Text und Struktur). */
 const TEXT_FIELDS: Record<string, unknown> = {
+  imageIntent: { type: 'string', enum: [...ROOM_CATS], description: 'Welches Motiv das Bild dieses Blocks zeigen soll (nur cover, unit, feature, columns).' },
   kicker: str, title: str, tagline: str, forLine: str, headline: str,
   paragraphs: strArr, signoff: str, signName: str,
   number: str, nickname: str, specs: strArr,

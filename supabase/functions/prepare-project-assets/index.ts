@@ -418,7 +418,7 @@ function docType(name: string): 'brochure' | 'pricelist' | 'spec' | 'cutlery' | 
 
 type DeckAssets = {
   renders?: string[]
-  gallery?: Array<{ url: string; category: string; label: string; unitType?: string }>   // kategorisierte Renders (Vision)
+  gallery?: CatImage[]   // kategorisierte Renders (Vision) inkl. confidence/status
   // Drive-Datei-ID → Storage-URL der schon gespiegelten Renders. Wiederholte
   // Laeufe laden nur NEUE Bilder (30 Bilder frisch = Edge-Timeout, Mamba 18.9.26).
   render_sources?: Record<string, string>
@@ -446,6 +446,28 @@ async function loadAssets(supabase: ReturnType<typeof createClient>, projectId: 
   const p = (data ?? {}) as Record<string, unknown>
   return { folderId: (p.drive_folder_id as string) ?? null, assets: (p.deck_assets as DeckAssets) ?? {}, project: p }
 }
+// Katalog nachziehen (deck_assets_catalog = maßgebliche Bildquelle der Deck-
+// Generierung, Migration 20260919). Der jsonb bleibt Kompatibilitätsschicht.
+// Danach status/confidence/folder_hint aus dem Vision-Lauf uebertragen - die
+// SQL-Funktion kennt nur Kategorie/Label/Typ.
+async function syncCatalog(supabase: ReturnType<typeof createClient>, projectId: string, hintByUrl?: Map<string, string>): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('hp_sync_deck_assets_catalog', { p_project_id: projectId })
+    if (error) { console.warn('[prepare-project-assets] Katalog-Sync:', error.message); return }
+    const { assets } = await loadAssets(supabase, projectId)
+    for (const g of assets.gallery ?? []) {
+      const patch: Record<string, unknown> = {}
+      if (g.confidence) patch.confidence = g.confidence === 'high' ? 0.9 : g.confidence === 'medium' ? 0.6 : 0.3
+      if (g.status === 'review') patch.status = 'review'
+      const h = hintByUrl?.get(g.url)
+      if (h) patch.folder_hint = h
+      if (!Object.keys(patch).length) continue
+      // Hand-Entscheidungen (approved/rejected) nicht ueberschreiben.
+      await supabase.from('deck_assets_catalog').update(patch).eq('project_id', projectId).eq('storage_url', g.url).in('status', ['unclassified', 'classified', 'review'])
+    }
+  } catch (e) { console.warn('[prepare-project-assets] Katalog-Sync:', e instanceof Error ? e.message : String(e)) }
+}
+
 async function saveAssets(supabase: ReturnType<typeof createClient>, projectId: string, patch: DeckAssets, extra?: Record<string, unknown>) {
   const { assets } = await loadAssets(supabase, projectId)
   const merged = { ...assets, ...patch, updated_at: new Date().toISOString() }
@@ -456,13 +478,13 @@ async function saveAssets(supabase: ReturnType<typeof createClient>, projectId: 
 // ── Bild-Kategorisierung via Claude-Vision ───────────────────────────────────────
 // Klassifiziert jeden Render (Wohnzimmer/Schlafzimmer/Pool/Lobby/Außen …) + kurze
 // deutsche Bezeichnung → beschriftete Bildstrecken im generischen Projekt-Deck.
-const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'karte', 'preisliste', 'dokument', 'sonstiges']
+const CATS = ['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht', 'grundriss', 'karte', 'preisliste', 'dokument', 'collage', 'screenshot', 'text_overlay', 'junk', 'sonstiges']
 // Zeigbare Außen-/Raumbilder (kommen ins Deck, beschriftet). Alles andere wird
 // umgeroutet (grundriss→Floorplans, karte→Karte) oder verworfen (preisliste/dokument).
 const ROOM_EXT = new Set(['wohnzimmer', 'schlafzimmer', 'kueche', 'badezimmer', 'esszimmer', 'pool', 'lobby', 'gym', 'aussenbereich', 'fassade', 'aussicht'])
 const EXTERIOR = new Set(['aussenbereich', 'fassade', 'aussicht'])
 // Vision-Ergebnis sortieren: jedes Bild ist geprüft → nur Sinnvolles bleibt.
-function sortCategorized(cat: Array<{ url: string; category: string; label: string; unitType?: string }>) {
+function sortCategorized(cat: CatImage[]) {
   const gallery   = cat.filter(c => ROOM_EXT.has(c.category))                 // beschriftete Strecken (Außen + Räume)
   const grundriss = cat.filter(c => c.category === 'grundriss')
   const karte     = cat.find(c => c.category === 'karte')?.url ?? null
@@ -552,20 +574,25 @@ const VISION_PROMPT = `Das sind Bilder aus den Unterlagen eines Immobilien-Proje
 - karte = Landkarte, Lageplan, Standort-Karte, Masterplan-Übersicht.
 - preisliste = Preisliste/Preis-Tabelle/Verfügbarkeitstabelle (Spalten mit Einheiten/Preisen).
 - dokument = Text-Seite, Logo, Deckblatt mit viel Text, Diagramm, Datenblatt, Banner, Farbverlauf — alles, was KEIN echtes Foto/Rendering eines Raums oder der Anlage ist.
-WICHTIG: Im Zweifel, ob ein Bild ein echtes Raum-/Außen-Rendering ist, ordne es preisliste/dokument zu (lieber aussortieren als Müll ins Deck). label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). unit_type = welcher Wohnungstyp zu sehen ist: villa (freistehendes Haus mit eigenem Pool/Garten), townhouse (Reihen-/Stadthaus, mehrgeschossig, eigener Eingang, Terrasse/Garten, aneinandergebaut), apartment (Wohnung in einem Mehrfamilienblock, Balkon), anlage (Gemeinschaftsanlage, Gesamtansicht, Pool/Gym/Lobby der Anlage) oder unklar. Rufe label_images mit genau einem Eintrag pro Bild auf.`
+- collage = MEHRERE Fotos/Renderings in einem Bild (Raster, Streifen, Bildkombination).
+- screenshot = Bildschirmfoto (Handy-Statusleiste, Home-Balken, Browser-Rahmen, Chat-Oberfläche, Rand eines anderen Programms).
+- text_overlay = Rendering mit großer Textüberlagerung, Wasserzeichen, Preis- oder Werbeeinblendung.
+- junk = unbrauchbar (verwackelt, winzig, Baustellenfoto ohne Aussage, Personenfoto, Nicht-Immobilie).
+WICHTIG: Im Zweifel, ob ein Bild ein echtes Raum-/Außen-Rendering ist, ordne es preisliste/dokument/collage/screenshot zu (lieber aussortieren als Müll ins Deck). confidence = wie sicher du bei Kategorie UND unit_type bist: high (eindeutig), medium, low (geraten). label = kurze deutsche Bezeichnung (z.B. Wohnzimmer, Master-Schlafzimmer, Dachpool mit Blick über Paphos, Lobby, Fassade bei Nacht). unit_type = welcher Wohnungstyp zu sehen ist: villa (freistehendes Haus mit eigenem Pool/Garten), townhouse (Reihen-/Stadthaus, mehrgeschossig, eigener Eingang, Terrasse/Garten, aneinandergebaut), apartment (Wohnung in einem Mehrfamilienblock, Balkon), anlage (Gemeinschaftsanlage, Gesamtansicht, Pool/Gym/Lobby der Anlage) oder unklar. Rufe label_images mit genau einem Eintrag pro Bild auf.`
 // Wohnungstyp je Bild (Sven 17.9.: ein Townhouse-Deck zeigt nur Townhouse-Bilder).
 const UNIT_TYPES = ['villa', 'townhouse', 'apartment', 'anlage', 'unklar']
 const VISION_TOOL = {
   name: 'label_images', description: 'Kategorie + Bezeichnung je Bild.',
-  input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' }, unit_type: { type: 'string', enum: UNIT_TYPES, description: 'Welcher Wohnungstyp ist zu sehen: villa, townhouse (Reihen-/Stadthaus mit eigenem Eingang/Garten), apartment (Wohnung in einem Mehrfamilienblock), anlage (Gemeinschaftsanlage wie Pool, Gym, Lobby, Gesamtansicht), unklar' } }, required: ['index', 'category'] } } }, required: ['items'] },
+  input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' }, unit_type: { type: 'string', enum: UNIT_TYPES, description: 'Welcher Wohnungstyp ist zu sehen: villa, townhouse (Reihen-/Stadthaus mit eigenem Eingang/Garten), apartment (Wohnung in einem Mehrfamilienblock), anlage (Gemeinschaftsanlage wie Pool, Gym, Lobby, Gesamtansicht), unklar' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } }, required: ['index', 'category'] } } }, required: ['items'] },
 }
 let lastVisionError = ''
-async function categorizeImages(urls: string[]): Promise<Array<{ url: string; category: string; label: string; unitType?: string }>> {
+type CatImage = { url: string; category: string; label: string; unitType?: string; confidence?: string; status?: string }
+async function categorizeImages(urls: string[]): Promise<CatImage[]> {
   lastVisionError = ''
   if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return urls.map(u => ({ url: u, category: 'sonstiges', label: '' })) }
   // In KLEINEN Batches (sonst sprengt base64 mehrerer Bilder das Anthropic-Request-Limit → 413).
   const BATCH = 6
-  const result = new Map<string, { category: string; label: string; unitType?: string }>()
+  const result = new Map<string, { category: string; label: string; unitType?: string; confidence?: string }>()
   for (let start = 0; start < urls.length; start += BATCH) {
     const batch = urls.slice(start, start + BATCH)
     const content: unknown[] = []
@@ -594,11 +621,11 @@ async function categorizeImages(urls: string[]): Promise<Array<{ url: string; ca
       if (typeof items === 'string') { try { items = JSON.parse(items) } catch { items = [] } }
       for (const it of (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>) {
         const u = local[Number(it.index)]
-        if (u) result.set(u, { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? ''), unitType: UNIT_TYPES.includes(String(it.unit_type ?? '')) ? String(it.unit_type) : 'unklar' })
+        if (u) result.set(u, { category: String(it.category ?? 'sonstiges'), label: String(it.label ?? ''), unitType: UNIT_TYPES.includes(String(it.unit_type ?? '')) ? String(it.unit_type) : 'unklar', confidence: ['high', 'medium', 'low'].includes(String(it.confidence ?? '')) ? String(it.confidence) : 'medium' })
       }
     } catch (e) { lastVisionError = `exception: ${(e as Error).message}` }
   }
-  return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '', unitType: result.get(u)?.unitType ?? 'unklar' }))
+  return urls.map(u => ({ url: u, category: result.get(u)?.category ?? 'sonstiges', label: result.get(u)?.label ?? '', unitType: result.get(u)?.unitType ?? 'unklar', confidence: result.get(u)?.confidence ?? 'low' }))
 }
 
 // ── Standort-Pin auf der Karte lokalisieren (Vision) ─────────────────────────
@@ -1080,6 +1107,7 @@ Deno.serve(async (req) => {
       const floorplans = [...(assets.floorplans ?? []).filter(f => keep(f.url)), ...s.grundriss.map((g, i) => ({ floor: null, label: g.label || `Grundriss ${i + 1}`, url: g.url }))]
       const map = assets.map ?? s.karte ?? null
       await saveAssets(supabase, project_id, { renders, gallery, floorplans, map })
+      await syncCatalog(supabase, project_id)
       const byCat: Record<string, number> = {}
       for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
       return json({ ok: true, action, extracted: jpegs.length, uploaded: urls.length, categories: byCat, gallery: gallery.length, floorplans: floorplans.length, debug: lastVisionError })
@@ -1403,8 +1431,18 @@ Deno.serve(async (req) => {
           // Gemeinschaftsanlage (Pool vor dem Block), die bleibt neutral.
           const TYP_DE: Record<string, string> = { villa: 'Villa', townhouse: 'Townhouse', apartment: 'Apartment' }
           for (const c of cat) {
+            // Klassifizierung ist keine Freigabe: unsicher = review (nie automatisch
+            // auf cover/unit), Ordner und Vision widersprechen sich = review + unklar.
+            c.status = c.confidence === 'low' ? 'review' : 'classified'
             const h = hintByUrl.get(c.url)
             if (!h || (h !== 'anlage' && c.unitType === 'anlage')) continue
+            const vis = String(c.unitType ?? '')
+            const widerspruch = ['villa', 'townhouse', 'apartment'].includes(vis) && ['villa', 'townhouse', 'apartment'].includes(h) && vis !== h
+            if (widerspruch && c.confidence === 'high') {
+              // Ordner sagt Block A (Apartment), Vision ist sich sicher: Villa → Sven entscheidet.
+              c.status = 'review'; c.unitType = 'unklar'
+              continue
+            }
             c.unitType = h
             // Vision nannte Mitos Block-Apartments "Townhouse-Fassade" - das Label
             // landet als Bildunterschrift im Deck, also den Typ im Text angleichen.
@@ -1457,6 +1495,7 @@ Deno.serve(async (req) => {
       let mapMarker = assets.mapMarker ?? null
       if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
       await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker, render_sources: { ...known, ...renderSources } })
+      await syncCatalog(supabase, project_id, hintByUrl)
       // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur GEPRÜFTE Bilder
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
       if (vetted.length && curImgs.length === 0) {
@@ -1486,6 +1525,7 @@ Deno.serve(async (req) => {
       let mapMarker = assets.mapMarker ?? null
       if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
       await saveAssets(supabase, project_id, { renders: s.renders.length ? s.renders : renders, gallery: s.gallery, floorplans, map, mapMarker })
+      await syncCatalog(supabase, project_id)
       const byCat: Record<string, number> = {}
       for (const c of cat) byCat[c.category] = (byCat[c.category] ?? 0) + 1
       return json({ ok: true, action, gallery: s.gallery.length, kept: s.renders.length, dropped: renders.length - s.renders.length, categories: byCat, debug: lastVisionError })

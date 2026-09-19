@@ -117,6 +117,66 @@ function UnitBlock(b: Extract<DeckBlock, { type: 'unit' }>) {
   )
 }
 
+// ── Standort-Karte ohne Google-Embed ─────────────────────────────────────────
+// Der keyless Google-Embed (maps.google.com/maps?…&output=embed) antwortet mit
+// einem Redirect samt X-Frame-Options - je nach Browser blieb das iframe leer
+// (Sven 19.9.26: "Karte fehlt"). Jetzt: OpenStreetMap-Kacheln als Bildraster,
+// Pin exakt auf den Koordinaten, kein iframe, kein Schluessel, kein Redirect.
+// Laden die Kacheln nicht, faellt die Karte auf das statische Bild oder den
+// Link zurueck - nie auf eine leere Flaeche.
+const OSM_ZOOM = 15
+const TILE = 256
+function OsmMap({ lat, lng, label, fallbackImage, openHref }: { lat: number; lng: number; label?: string; fallbackImage?: string; openHref: string }) {
+  const { t } = useTranslation()
+  const [failed, setFailed] = useState(0)
+  const n = 2 ** OSM_ZOOM
+  const xf = (lng + 180) / 360 * n
+  const latRad = lat * Math.PI / 180
+  const yf = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n
+  const cx = Math.floor(xf), cy = Math.floor(yf)
+  // Pixelversatz des Pins innerhalb der Mittelkachel
+  const offX = (xf - cx) * TILE, offY = (yf - cy) * TILE
+  // 5x3 Kacheln decken ein 16:9-Fenster bis ~1100 px Breite ab.
+  const cols = [-2, -1, 0, 1, 2], rows = [-1, 0, 1]
+  const tiles = rows.flatMap(dy => cols.map(dx => ({ dx, dy, x: (cx + dx + n) % n, y: cy + dy })))
+  const broken = failed >= tiles.length / 2
+  return (
+    <div className="mt-8">
+      <div className="relative w-full overflow-clip rounded-xl border border-gray-200 bg-[#e8e4dc]" style={{ aspectRatio: '16 / 9' }}>
+        {broken && fallbackImage ? (
+          <Img src={fallbackImage} className="absolute inset-0 h-full w-full object-cover" />
+        ) : broken ? (
+          <a href={openHref} target="_blank" rel="noopener noreferrer" className="absolute inset-0 flex items-center justify-center text-sm text-gray-600 underline">
+            {t('deck.openInGoogleMaps', 'In Google Maps öffnen')}
+          </a>
+        ) : (
+          <div className="absolute left-1/2 top-1/2" style={{ transform: `translate(${-offX}px, ${-offY}px)` }}>
+            {tiles.map(tl => (
+              <img key={`${tl.dx}:${tl.dy}`} alt="" loading="eager" decoding="async"
+                src={`https://tile.openstreetmap.org/${OSM_ZOOM}/${tl.x}/${tl.y}.png`}
+                onError={() => setFailed(f => f + 1)}
+                className="absolute select-none pointer-events-none"
+                style={{ width: TILE, height: TILE, left: tl.dx * TILE, top: tl.dy * TILE, maxWidth: 'none' }} />
+            ))}
+          </div>
+        )}
+        {!broken && (
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-full pointer-events-none flex flex-col items-center">
+            <span className="text-sm font-semibold px-3 py-1 rounded-full text-white shadow-lg whitespace-nowrap mb-1" style={{ background: '#ff795d' }}>📍 {label || t('deck.mapIframeTitle', 'Standort')}</span>
+            <svg width="22" height="30" viewBox="0 0 22 30" aria-hidden="true"><path d="M11 0C4.9 0 0 4.9 0 11c0 8 11 19 11 19s11-11 11-19C22 4.9 17.1 0 11 0z" fill="#ff795d"/><circle cx="11" cy="11" r="4.5" fill="#fff"/></svg>
+          </div>
+        )}
+        {!broken && (
+          <span className="absolute bottom-1 right-2 text-[10px] text-gray-600 bg-white/70 px-1 rounded">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a></span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <a href={openHref} target="_blank" rel="noopener noreferrer" className="text-xs font-medium px-3 py-1.5 rounded-full text-white shadow" style={{ background: 'rgba(27,27,34,0.88)' }}>🗺 {t('deck.openInGoogleMaps', 'In Google Maps öffnen')} →</a>
+      </div>
+    </div>
+  )
+}
+
 function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
   const { t } = useTranslation()
   const items = b.items ?? []
@@ -147,15 +207,15 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
           </div>
         ))}
       </div>
-      {((b.mapLat != null && b.mapLng != null) || b.mapQuery || b.mapEmbed) ? (() => {
-      // INTERAKTIVE Karte (Deck-Standard): scroll-/zoombares keyless Google-Embed
-      // (output=embed, kein API-Key). mapEmbed (z.B. Routen-/Richtungs-Karte) hat
-      // Vorrang; sonst exakte Koordinaten; sonst Such-Query aus Projektname+Ort.
-      const hasCoords = b.mapLat != null && b.mapLng != null
-      const q = hasCoords ? `${b.mapLat},${b.mapLng}` : encodeURIComponent(b.mapQuery ?? '')
-      const z = hasCoords ? 15 : 14
-      const src = b.mapEmbed ?? `https://maps.google.com/maps?q=${q}&z=${z}&output=embed`
-      const openHref = b.mapUrl || `https://www.google.com/maps?q=${q}`
+      {(b.mapLat != null && b.mapLng != null) ? (
+        <OsmMap lat={b.mapLat} lng={b.mapLng} label={b.mapLabel} fallbackImage={b.image}
+          openHref={b.mapUrl || `https://www.google.com/maps?q=${b.mapLat},${b.mapLng}`} />
+      ) : (b.mapQuery || b.mapEmbed) ? (() => {
+      // Ohne Koordinaten: Such-Query als Google-Embed (Ausnahme, Projekte ohne
+      // Geocoding). Mit Koordinaten zeichnet OsmMap die Karte selbst.
+      const q = encodeURIComponent(b.mapQuery ?? '')
+      const src = b.mapEmbed ?? `https://www.google.com/maps/embed?origin=mfe&pb=!1m2!2m1!1s${q}`
+      const openHref = b.mapUrl || `https://www.google.com/maps/search/?api=1&query=${q}`
       return (
         <div className="mt-8">
           <div className="relative w-full overflow-hidden rounded-xl border border-gray-200" style={{ aspectRatio: '16 / 9' }}>
@@ -164,7 +224,6 @@ function FactsBlock(b: Extract<DeckBlock, { type: 'facts' }>) {
               src={src}
               className="absolute inset-0 h-full w-full"
               style={{ border: 0 }}
-              loading="lazy"
               referrerPolicy="no-referrer-when-downgrade"
               allowFullScreen
             />
