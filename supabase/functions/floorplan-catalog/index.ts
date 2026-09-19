@@ -289,6 +289,16 @@ Deno.serve(async (req) => {
             jobs.push({ kind: 'crop', page: no, units: matched.map(u => u.unit_number), floor, rect: [x0, y0, x1, y1], dims: !!pl.dimensions_present, conf: pl.confidence, status, note: pl.note, labelCheck: labelHits.length ? (contains ? 'ok' : 'erweitert') : 'keine_textposition' })
           }
         }
+        // Dieselbe Wohnung + dasselbe Geschoss mehrfach (Rasterblaetter ohne
+        // Textpositionen, Emerald 20.9.26) → beide zur Pruefung, keiner automatisch.
+        // Ebenso: ohne Textposition und nur mittlere Sicherheit → Pruefung.
+        const seenKey = new Map<string, number>()
+        jobs.forEach(j => { if (j.kind === 'crop') { const k = `${j.units.join('/')}|${j.floor}`; seenKey.set(k, (seenKey.get(k) ?? 0) + 1) } })
+        for (const j of jobs) {
+          if (j.kind !== 'crop') continue
+          if ((seenKey.get(`${j.units.join('/')}|${j.floor}`) ?? 0) > 1) j.status = 'review'
+          if (j.labelCheck === 'keine_textposition' && j.conf !== 'high') j.status = 'review'
+        }
         // Kombi-Auftraege: je Wohnung (und je Eltern-Einheit) mit >1 Zuschnitt.
         const perUnit = new Map<string, number[]>()
         jobs.forEach((j, i) => {

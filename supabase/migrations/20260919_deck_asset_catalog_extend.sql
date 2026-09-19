@@ -141,8 +141,15 @@ begin
   on conflict (storage_bucket, storage_path) do update set
     unit_key = coalesce(deck_assets_catalog.unit_key, excluded.unit_key),
     unit_id = coalesce(deck_assets_catalog.unit_id, excluded.unit_id),
-    same_layout_as = (select array_agg(distinct x) from unnest(deck_assets_catalog.same_layout_as || excluded.same_layout_as) x),
+    same_layout_as = coalesce((select array_agg(distinct x) from unnest(deck_assets_catalog.same_layout_as || excluded.same_layout_as) x), '{}'),
     active = true;
+
+  -- 4) Renders, die im aktuellen Blob nicht mehr vorkommen (Galerie neu aufgebaut),
+  --    deaktivieren - sonst bleiben alte, ungetaggte Zeilen als Bildquelle stehen.
+  update deck_assets_catalog c set active = false
+   where c.project_id = p_project_id and c.active and c.source_type = 'developer_render'
+     and c.status <> 'approved'
+     and not exists (select 1 from jsonb_array_elements(coalesce(v_da->'gallery','[]'::jsonb)) x where x->>'url' = c.storage_url);
 
   return v_n;
 end $$;
