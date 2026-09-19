@@ -3869,7 +3869,9 @@
       "save": "Speichern",
       "plansSection": "Investitions-Fahrplan",
       "planHint": "Der Kunde kann den Fahrplan erst öffnen, wenn dieser Eintrag hinausgegangen ist. Die Vorschau zählt nicht als Kundenaufruf.",
-      "waPlanLabel": "Dein Investitions-Fahrplan"
+      "waPlanLabel": "Dein Investitions-Fahrplan",
+      "redDeckOverride": "⚠️ {{n}} Deck(s) haben offene Befunde aus der automatischen Prüfung und sind NICHT freigegeben:",
+      "redDeckOverrideAsk": "Trotzdem senden? (Override - du übernimmst die Verantwortung für den Inhalt.)"
     },
     "staff": {
       "errNameEmail": "Name und E-Mail nötig",
@@ -5688,7 +5690,8 @@
     "deckLabel": "Deck {{n}}",
     "planFallbackTitle": "Investitions-Fahrplan",
     "planLive": "beim Kunden",
-    "planDraft": "noch nicht sichtbar"
+    "planDraft": "noch nicht sichtbar",
+    "qualityRedTitle": "Nicht freigegeben: {{n}} Befund(e) aus der automatischen Prüfung. Versand nur mit Override."
   },
   "deckWizard": {
     "genericError": "Fehler",

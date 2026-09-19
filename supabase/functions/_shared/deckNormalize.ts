@@ -220,7 +220,12 @@ export function removeFurniture(blocks: Block[], sink: ScrubEvent[]): Block[] {
 }
 
 // ── Zahlungsplan deterministisch bauen ───────────────────────────────────────
-export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null): Block {
+// Sprache kommt aus dem Kontext: vorher war der Block immer deutsch, auch im
+// englischen Deck, und nach jedem Feinschliff stand er wieder deutsch drin.
+// Reservierung: netto hinterlegt, gezahlt wird mit 19 % MwSt (Sven 19.9.26) -
+// ausser reservationVat ist ausdruecklich false (MITO: 20.000 EUR glatt).
+export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gross: number } | null, lang: 'de' | 'en' = 'de'): Block {
+  const EN = lang === 'en'
   const stages = sched.stages ?? []
   const half = Math.ceil(stages.length / 2)
   const fmt = (n: number) => Math.round(n).toLocaleString('de-DE') + ' €'
@@ -236,29 +241,42 @@ export function buildPaymentBlock(sched: PaySchedule, basis?: { net: number; gro
       brutto.push(v); rest -= v
     })
   }
+  const netto = EN ? 'net' : 'netto'
   const stageVal = (s: PayStage, i: number) => hasBasis ? fmt(brutto[i]) : `${s.pct} %`
   const stageSub = (s: PayStage) => {
     const parts: string[] = []
     if (s.sub) parts.push(s.sub)
-    if (hasBasis) parts.push(`${s.pct} % · ${fmt(s.pct / 100 * basis!.net)} netto`)
+    if (hasBasis) parts.push(`${s.pct} % · ${fmt(s.pct / 100 * basis!.net)} ${netto}`)
     return parts.length ? parts.join(' · ') : undefined
   }
   const p1: Array<Record<string, unknown>> = []
   if (sched.reservation) {
-    p1.push({ label: 'Reservierung', sub: hasBasis ? 'sofort fällig · sichert die Wohnung' : 'sichert die Wohnung', value: fmt(sched.reservation) })
+    const mitMwst = sched.reservationVat !== false
+    const resBrutto = mitMwst ? Math.round(sched.reservation * 1.19) : sched.reservation
+    const resSub = [
+      mitMwst ? (EN ? `${fmt(sched.reservation)} net plus 19 % VAT` : `${fmt(sched.reservation)} netto zzgl. 19 % MwSt`) : null,
+      EN ? 'due immediately · secures the unit' : 'sofort fällig · sichert die Wohnung',
+    ].filter(Boolean).join(' · ')
+    p1.push({ label: EN ? 'Reservation' : 'Reservierung', sub: resSub, value: fmt(resBrutto) })
   }
   stages.slice(0, half).forEach((s, i) => p1.push({ label: s.label, sub: stageSub(s), value: stageVal(s, i) }))
   const p2 = stages.slice(half).map((s, i) => ({ label: s.label, sub: stageSub(s), value: stageVal(s, half + i) }))
   return {
     type: 'payment',
-    kicker: 'Zahlungsplan',
-    headline: 'Der Zahlungsplan im Überblick',
-    intro: 'In klaren Stufen über die Bauphasen verteilt — transparent und nachvollziehbar.',
-    phase1: { label: 'Start', title: 'Reservierung & Vertrag', rows: p1 },
-    phase2: { label: 'Bauphase & Übergabe', title: 'Raten nach Baufortschritt', rows: p2 },
+    kicker: EN ? 'Payment plan' : 'Zahlungsplan',
+    headline: EN ? 'The payment plan at a glance' : 'Der Zahlungsplan im Überblick',
+    intro: EN
+      ? 'Spread in clear stages across the construction phases - transparent and easy to follow.'
+      : 'In klaren Stufen über die Bauphasen verteilt - transparent und nachvollziehbar.',
+    phase1: { label: EN ? 'Start' : 'Start', title: EN ? 'Reservation & contract' : 'Reservierung & Vertrag', rows: p1 },
+    phase2: { label: EN ? 'Construction & handover' : 'Bauphase & Übergabe', title: EN ? 'Instalments by construction progress' : 'Raten nach Baufortschritt', rows: p2 },
     note: hasBasis
-      ? 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.'
-      : 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.',
+      ? (EN
+        ? 'The reservation and the first instalment on signing are due immediately; further instalments follow the construction progress. The reservation is credited against the first instalment. Main amounts gross (incl. VAT); the net amount is shown in addition.'
+        : 'Reservierung und die erste Rate bei Vertragsunterzeichnung sind sofort fällig; weitere Raten folgen mit dem Baufortschritt. Die Reservierung wird auf die erste Rate angerechnet. Hauptbeträge brutto (inkl. MwSt); der jeweilige Nettobetrag ist zusätzlich ausgewiesen.')
+      : (EN
+        ? 'The reservation amount is credited on signing the contract. Percentages refer to the purchase price; final amounts according to the developer terms.'
+        : 'Der Reservierungsbetrag wird bei Vertragsunterzeichnung angerechnet. Prozentsätze bezogen auf den Kaufpreis; finale Beträge gemäß Bauträger-Konditionen.'),
   }
 }
 
@@ -365,7 +383,7 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
     if (idx >= 0) {
       for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].type === 'payment') { blocks.splice(i, 1); if (i < at) at-- }
     } else if (at < 0) at = blocks.length
-    blocks.splice(at, 0, buildPaymentBlock(ctx.paymentSchedule, basis))
+    blocks.splice(at, 0, buildPaymentBlock(ctx.paymentSchedule, basis, ctx.lang))
     notes.push(`Zahlungsplan deterministisch gesetzt (${ctx.paymentSource})`)
   }
 
@@ -394,7 +412,7 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
     if (fpBlocks.length < withPlan.length) {
       const proto = fpBlocks[fpBlocks.length - 1]
       const neue: Block[] = Array.from({ length: withPlan.length - fpBlocks.length }, () => {
-        if (!proto) return { type: 'floorplan', kicker: 'Grundriss & Flächen' }
+        if (!proto) return { type: 'floorplan', kicker: ctx.lang === 'en' ? 'Floor plan & areas' : 'Grundriss & Flächen' }
         const clone = JSON.parse(JSON.stringify(proto)) as Block
         // Zahlen und Aufzaehlung des Prototyps gehoeren zur ANDEREN Wohnung.
         delete clone.stats; delete clone.bullets; delete clone.rooms; delete clone.planNote
@@ -435,8 +453,8 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
       if (u.floorplanNote) fb.planNote = u.floorplanNote
       else delete fb.planNote
       if (withPlan.length > 1) {
-        fb.kicker = `Grundriss & Flächen · ${u.unitNumber}`
-        if (!fb.headline || /grundriss/i.test(String(fb.headline))) fb.headline = `${u.unitNumber} — Grundriss`
+        fb.kicker = ctx.lang === 'en' ? `Floor plan & areas · ${u.unitNumber}` : `Grundriss & Flächen · ${u.unitNumber}`
+        if (!fb.headline || /grundriss|floor plan/i.test(String(fb.headline))) fb.headline = ctx.lang === 'en' ? `${u.unitNumber} - Floor plan` : `${u.unitNumber} - Grundriss`
       }
     }
     // Erst die Bloecke, die ihre Wohnung selbst nennen.
@@ -452,13 +470,18 @@ export function applyDeterministic(inputBlocks: Block[], ctx: DeckContext): Norm
       if (u) zuweisen(fb, u)
     }
   }
-  // Ein PDF als Grundriss ist im Deck unsichtbar (der Renderer nutzt <img> und
-  // faellt still auf eine graue Flaeche zurueck). Bild entwerten, damit der Block
-  // gleich mit entfernt wird — und im Bericht auftaucht.
+  // Ein Grundriss-Block darf NUR den Plan tragen, den der Deck-Kontext dieser
+  // Wohnung zuordnet. Alles andere (PDF, Render, Plan einer fremden Wohnung, ein
+  // per Feinschliff eingesetztes Bild) wird entwertet - der Block faellt dann
+  // gleich mit weg und der Bericht nennt es.
+  const erlaubtePlaene = new Set(ctx.units.map(u => u.floorplanUrl).filter(Boolean) as string[])
   for (const b of blocks) {
     if (b.type !== 'floorplan' || typeof b.image !== 'string') continue
     if (/\.(pdf|docx?|xlsx?)($|\?|#)/i.test(b.image)) {
       notes.push('Grundriss-Block mit nicht darstellbarer Quelle (PDF) entfernt')
+      delete b.image
+    } else if (!erlaubtePlaene.has(b.image)) {
+      notes.push(`Grundriss-Block mit fremdem Bild entfernt (${b.image.slice(-40)})`)
       delete b.image
     }
   }

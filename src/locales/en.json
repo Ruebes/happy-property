@@ -3869,7 +3869,9 @@
       "save": "Save",
       "plansSection": "Investment plan",
       "planHint": "The customer can only open the plan once this entry has been sent. The preview does not count as a customer visit.",
-      "waPlanLabel": "Your investment plan"
+      "waPlanLabel": "Your investment plan",
+      "redDeckOverride": "⚠️ {{n}} deck(s) have open findings from the automatic check and are NOT approved:",
+      "redDeckOverrideAsk": "Send anyway? (Override - you take responsibility for the content.)"
     },
     "staff": {
       "errNameEmail": "Name and email required",
@@ -5806,7 +5808,8 @@
     "deckLabel": "Deck {{n}}",
     "planFallbackTitle": "Investment plan",
     "planLive": "with the customer",
-    "planDraft": "not visible yet"
+    "planDraft": "not visible yet",
+    "qualityRedTitle": "Not approved: {{n}} finding(s) from the automatic check. Sending only with override."
   },
   "deckWizard": {
     "genericError": "Error",

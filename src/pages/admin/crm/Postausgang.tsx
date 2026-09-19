@@ -31,7 +31,7 @@ interface OutboxRow {
   whatsapp_sent_at: string | null
   lead?: { first_name: string; last_name: string; phone: string | null; whatsapp: string | null; email: string | null } | null
 }
-interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null }
+interface DeckMeta { revision: number; refining: boolean; refine_error: string | null; approved_at: string | null; quality_status: string | null; quality_findings: number }
 interface CalcRow { id: string; token: string; title: string | null; lead_id: string | null; approved_at: string | null }
 // Investitions-Fahrplan. Anders als Deck und Berechnung ist er erst fuer den
 // Kunden erreichbar, wenn shared_at gesetzt ist - das passiert beim Versand.
@@ -67,11 +67,15 @@ export default function Postausgang() {
   const fetchDeckMeta = useCallback(async (tokens: string[]) => {
     if (!tokens.length) return
     const { data } = await supabase.from('sales_decks')
-      .select('token, revision, refining, refine_error, approved_at').in('token', tokens)
+      .select('token, revision, refining, refine_error, approved_at, quality_status, quality_report').in('token', tokens)
     setDeckMeta(prev => {
       const next = { ...prev }
-      for (const r of (data ?? []) as Array<{ token: string } & DeckMeta>) {
-        next[r.token] = { revision: r.revision ?? 0, refining: !!r.refining, refine_error: r.refine_error ?? null, approved_at: r.approved_at ?? null }
+      for (const r of (data ?? []) as Array<{ token: string; quality_report?: { findings?: unknown[] } | null } & DeckMeta>) {
+        next[r.token] = {
+          revision: r.revision ?? 0, refining: !!r.refining, refine_error: r.refine_error ?? null, approved_at: r.approved_at ?? null,
+          quality_status: r.quality_status ?? null,
+          quality_findings: Array.isArray(r.quality_report?.findings) ? r.quality_report!.findings!.length : 0,
+        }
       }
       return next
     })
@@ -136,12 +140,12 @@ export default function Postausgang() {
   }, [anyRefining, allTokens, fetchDeckMeta])
 
   const onRefineStarted = (token: string) => {
-    setDeckMeta(prev => ({ ...prev, [token]: { revision: prev[token]?.revision ?? 0, refine_error: null, approved_at: prev[token]?.approved_at ?? null, refining: true } }))
+    setDeckMeta(prev => ({ ...prev, [token]: { quality_status: prev[token]?.quality_status ?? null, quality_findings: prev[token]?.quality_findings ?? 0, revision: prev[token]?.revision ?? 0, refine_error: null, approved_at: prev[token]?.approved_at ?? null, refining: true } }))
   }
   const toggleDeckApprove = async (token: string) => {
     const cur = deckMeta[token]?.approved_at
     const val = cur ? null : new Date().toISOString()
-    setDeckMeta(prev => ({ ...prev, [token]: { revision: prev[token]?.revision ?? 0, refining: prev[token]?.refining ?? false, refine_error: prev[token]?.refine_error ?? null, approved_at: val } }))
+    setDeckMeta(prev => ({ ...prev, [token]: { quality_status: prev[token]?.quality_status ?? null, quality_findings: prev[token]?.quality_findings ?? 0, revision: prev[token]?.revision ?? 0, refining: prev[token]?.refining ?? false, refine_error: prev[token]?.refine_error ?? null, approved_at: val } }))
     await supabase.from('sales_decks').update({ approved_at: val }).eq('token', token)
   }
   const toggleCalcApprove = async (c: CalcRow) => {
@@ -181,6 +185,27 @@ export default function Postausgang() {
     } catch { return '' }
   }
 
+  // Versandsperre bei rotem Quality-Gate (Sven 19.9.26): ein Deck mit offenen
+  // Befunden geht nur nach ausdruecklichem Override raus. Frische Werte aus der
+  // Datenbank, nicht aus dem Cache - der Feinschliff kann inzwischen gelaufen sein.
+  const redDeckOverride = async (row: OutboxRow): Promise<boolean> => {
+    const toks = row.deck_tokens ?? []
+    if (!toks.length) return true
+    const { data } = await supabase.from('sales_decks').select('token, quality_status, quality_report').in('token', toks)
+    const rot = ((data ?? []) as Array<{ token: string; quality_status: string | null; quality_report?: { findings?: Array<{ severity?: string; what?: string }> } | null }>)
+      .filter(d => d.quality_status === 'red')
+    if (!rot.length) return true
+    const liste = rot.map(d => {
+      const hart = (d.quality_report?.findings ?? []).filter(f => f.severity === 'kritisch' || f.severity === 'hoch').slice(0, 4)
+      return `• Deck ${d.token.slice(0, 6)}…: ${hart.map(f => f.what ?? '').join(' | ').slice(0, 300)}`
+    }).join('\n')
+    const ok = window.confirm(
+      t('crm.outbox.redDeckOverride', '⚠️ {{n}} Deck(s) haben offene Befunde aus der automatischen Prüfung und sind NICHT freigegeben:', { n: rot.length })
+      + `\n\n${liste}\n\n`
+      + t('crm.outbox.redDeckOverrideAsk', 'Trotzdem senden? (Override - du übernimmst die Verantwortung für den Inhalt.)'))
+    return ok
+  }
+
   const send = async (row: OutboxRow, resend = false) => {
     // Immer die AKTUELLE Mailadresse aus dem Lead ziehen — Sven korrigiert sie im
     // Kunden; recipient_email auf dem Postausgang-Eintrag kann veraltet sein.
@@ -213,6 +238,7 @@ export default function Postausgang() {
       sendBody = origBody.includes('</body>') ? origBody.replace('</body>', `${block}</body>`) : origBody + block
     }
     const autoNote = (needDeck || needCalc) ? `ℹ️ ${t('crm.outbox.autoLinks', 'Deck-/Berechnungs-Links fehlten im Text — sie werden automatisch ergänzt.')}\n\n` : ''
+    if (!(await redDeckOverride(row))) return
     const regWarn = await registrationWarning(row)
     if (!window.confirm(regWarn + autoNote + (resend ? t('crm.outbox.confirmResend', 'Mail ERNEUT senden an:') : t('crm.outbox.confirmSend', 'Mail jetzt an den Kunden senden?')) + `\n\n${to}`)) return
     setBusyId(row.id)
@@ -279,6 +305,7 @@ export default function Postausgang() {
       ? t('crm.outbox.waBody', 'Hallo {{name}},\n\nschön, dass wir gesprochen haben! Hier sind deine persönlichen Angebote:\n\n{{links}}\n\nSchau sie dir in Ruhe an – bei Fragen bin ich jederzeit für dich da.\n\nViele Grüße\nSven · Happy Property', { name: fn, links })
       : fallback
     const regWarnWa = await registrationWarning(row)
+    if (!(await redDeckOverride(row))) return
     if (!window.confirm(regWarnWa + t('crm.outbox.confirmWa', 'Diese WhatsApp jetzt senden?') + `\n\n→ ${phone}\n\n${text}`)) return
     setBusyId(row.id)
     try {
@@ -474,6 +501,9 @@ export default function Postausgang() {
                             )}
                             {err && !refining && (
                               <span className="px-1 py-1 bg-red-100 text-red-600 text-xs" title={t('postausgang.refineFailedTitle', 'Bearbeitung fehlgeschlagen: {{err}}', { err })}>⚠</span>
+                            )}
+                            {m?.quality_status === 'red' && !refining && (
+                              <span className="px-1.5 py-1 bg-red-600 text-white text-xs font-semibold" title={t('postausgang.qualityRedTitle', 'Nicht freigegeben: {{n}} Befund(e) aus der automatischen Prüfung. Versand nur mit Override.', { n: m.quality_findings })}>⛔ {m.quality_findings}</span>
                             )}
                             <button onClick={() => void toggleDeckApprove(tok)} title={approved ? t('postausgang.unapprove', 'Bestätigung aufheben') : t('postausgang.approve', 'Als fertig bestätigen')}
                               className={`text-xs px-1.5 py-1 ${approved ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500 hover:bg-green-100 hover:text-green-700'}`}>✓</button>

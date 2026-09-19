@@ -8,7 +8,6 @@
 // Bild-Slots (Stufe 1: Platzhalter zum Beurteilen der Texte/Struktur).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
-import { translateOutbound } from '../_shared/translate.ts'
 import { jsonrepair } from 'https://esm.sh/jsonrepair@3.8.0'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { emitDeckSchema } from '../_shared/deckBlocks.ts'
@@ -17,6 +16,7 @@ import { eur, VAT_CAP_SQM } from '../_shared/deckVat.ts'
 import { buildDeckContext, MARINA_MODEL, type DeckContext, type FurnitureMode, type PaySchedule } from '../_shared/deckContext.ts'
 import { applyDeterministic, normalizeDashes, type ScrubEvent } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
+import { auditBlockImages, checkClaims, checkImageTypes, translateGermanRemnants } from '../_shared/deckQuality.ts'
 import { geocodeProject, mapQueryFallback } from '../_shared/geocodeProject.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
@@ -93,6 +93,8 @@ const BEACHES: Array<{ label: string; lat: number; lng: number }> = [
   { label: 'Geroskipou Beach',  lat: 34.7420, lng: 32.4560 },
 ]
 const MARINA_SITE  = { lat: 34.8306, lng: 32.3868 }   // Potima Bay (Kissonerga) — kalibriert an Mamba (3,8 km Straße)
+/** Bis zu dieser Strassenentfernung gilt ein Projekt als Marina-Nahlage. */
+const MARINA_NAH_KM = 5
 // MARINA_MODEL kommt aus _shared/deckContext.ts — dieselbe Konstante braucht auch
 // die Normalisierung, die nach jedem Feinschliff läuft.
 const MARINA_ARTICLE = 'https://knews.kathimerini.com.cy/en/news/after-19-years-of-delays-the-paphos-marina-is-back-on-the-table'
@@ -174,12 +176,19 @@ function buildMarinaBlocks(projName: string, fromSub: string, lat?: number | nul
   }]
   if (lat != null && lng != null) {
     const km  = roadKm(haversineKm(lat, lng, MARINA_SITE.lat, MARINA_SITE.lng))
+    // Nahlage (Sven 19.9.26): Projekte im Umkreis von 5 km bekommen die staerkere
+    // Fassung - die Marina liegt praktisch vor der Tuer, das darf das Deck sagen.
+    const nah = km <= MARINA_NAH_KM
     out.push({
       type: 'marina',
       kicker: lang === 'en' ? 'Location · New Paphos Marina' : 'Lage · Neue Paphos-Marina',
-      headline: lang === 'en'
-        ? `Just along the coast: approx. ${fmtKm(km)} to the marina.`
-        : `Nur die Küste entlang: ca. ${fmtKm(km)} zur Marina.`,
+      headline: nah
+        ? (lang === 'en'
+          ? `Practically on the doorstep: approx. ${fmtKm(km)} to the new marina.`
+          : `Praktisch vor der Tür: ca. ${fmtKm(km)} zur neuen Marina.`)
+        : (lang === 'en'
+          ? `Just along the coast: approx. ${fmtKm(km)} to the marina.`
+          : `Nur die Küste entlang: ca. ${fmtKm(km)} zur Marina.`),
       fromLabel: projName || (lang === 'en' ? 'Project' : 'Projekt'), fromSub,
       toLabel: lang === 'en' ? 'Paphos Marina' : 'Paphos-Marina', toSub: 'Potima Bay · Kissonerga',
       distance: `${lang === 'en' ? 'approx.' : 'ca.'} ${fmtKm(km)}`,
@@ -554,227 +563,6 @@ function assignImages(blocks: Array<Record<string, unknown>>, images?: DeckImage
   }
 }
 
-// ── Bild-Text-ENDKONTROLLE (Sven 28.8.26: „Bilder passen oftmals nicht zum Text") ──
-// Nach der Zuordnung prueft EIN Vision-Call alle Text-Bild-Paare der unit/feature/
-// columns-Bloecke. Unpassende Bilder werden gegen ein passendes, noch unbenutztes
-// Galerie-Bild getauscht (Kategorie kommt vom Modell, Tausch bleibt deterministisch).
-// Best-effort: jeder Fehler laesst das Deck unveraendert.
-const AUDIT_CATS = ['fassade', 'aussenbereich', 'aussicht', 'pool', 'wohnzimmer', 'esszimmer', 'kueche', 'schlafzimmer', 'badezimmer', 'gym', 'lobby']
-async function auditBlockImages(blocks: Array<Record<string, unknown>>, gal: Array<{ url: string; category: string; label: string }>): Promise<void> {
-  if (!gal.length) return
-  const kandidatenBloecke = blocks.filter(b =>
-    ['unit', 'feature', 'columns'].includes(String(b.type)) &&
-    typeof b.image === 'string' && (b.image as string).startsWith('http') &&
-    b.image !== MARINA_MODEL,
-  ).slice(0, 10)
-  if (!kandidatenBloecke.length) return
-  const thumb = (u: string) => {
-    const marker = '/storage/v1/object/public/'
-    const i = u.indexOf(marker)
-    if (i < 0 || u.includes('?')) return u
-    return `${u.slice(0, i)}/storage/v1/render/image/public/${u.slice(i + marker.length)}?width=512&height=512&resize=contain`
-  }
-  // Bilder selbst laden + als base64 schicken (URL-Quellen laufen bei Anthropic in
-  // Download-Timeouts, gleiche Lehre wie categorizeImages 20.6.).
-  const imgs = await Promise.all(kandidatenBloecke.map(async b => {
-    try {
-      const r = await fetch(thumb(String(b.image)))
-      if (!r.ok) return null
-      const mime = (r.headers.get('content-type') ?? 'image/jpeg').split(';')[0]
-      const bytes = new Uint8Array(await r.arrayBuffer())
-      let bin = ''
-      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-      return { mime: mime.startsWith('image/') ? mime : 'image/jpeg', b64: btoa(bin) }
-    } catch { return null }
-  }))
-  const content: Array<Record<string, unknown>> = []
-  const geprueft: Array<Record<string, unknown>> = []
-  kandidatenBloecke.forEach((b, i) => {
-    const im = imgs[i]
-    if (!im) return
-    const thema = [b.kicker, b.headline, b.title, b.tagline].filter(x => typeof x === 'string').join(' — ').slice(0, 180)
-    if (!thema.trim()) return
-    content.push({ type: 'text', text: `PAAR ${geprueft.length}: Thema/Überschrift: „${thema}"` })
-    content.push({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.b64 } })
-    geprueft.push(b)
-  })
-  if (!geprueft.length) return
-  content.push({ type: 'text', text: 'Prüfe je Paar, ob das BILD inhaltlich zur Überschrift passt (Pool-Text braucht Poolbild, Küchen-Text Küche/Essbereich, Aussichts-Text einen Ausblick, Fassaden-/Architektur-Text ein Außenbild). Sei tolerant: ein stimmiges Stimmungsbild ist ok — melde NUR klare Fehlgriffe (Yoga-Raum unter „Einrichtungspaket", Esszimmer unter „Marina"). Gib bei Fehlgriffen die passende Kategorie an.' })
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'x-api-key': ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6', max_tokens: 1500,
-        tools: [{
-          name: 'emit_audit',
-          description: 'Bild-Text-Abgleich je Paar.',
-          input_schema: {
-            type: 'object',
-            properties: {
-              items: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    index:    { type: 'integer' },
-                    matches:  { type: 'boolean' },
-                    category: { type: 'string', enum: AUDIT_CATS, description: 'Bei matches=false: welche Bild-Kategorie zum Text passen würde.' },
-                  },
-                  required: ['index', 'matches'],
-                },
-              },
-            },
-            required: ['items'],
-          },
-        }],
-        tool_choice: { type: 'tool', name: 'emit_audit' },
-        messages: [{ role: 'user', content }],
-      }),
-    })
-    if (!res.ok) { console.warn(`[generate-deck] Bild-Audit: Anthropic ${res.status}`); return }
-    const data = await res.json() as { content?: Array<{ type?: string; input?: { items?: Array<{ index?: number; matches?: boolean; category?: string }> } }> }
-    const items = (data.content ?? []).find(c => c.type === 'tool_use')?.input?.items ?? []
-    const belegt = new Set(blocks.map(b => b.image).filter(x => typeof x === 'string') as string[])
-    let getauscht = 0
-    for (const it of items) {
-      if (it.matches !== false || typeof it.index !== 'number') continue
-      const b = geprueft[it.index]
-      if (!b) continue
-      const ersatz = gal.find(x => x.category === it.category && !belegt.has(x.url)) ?? gal.find(x => x.category === it.category)
-      if (ersatz) {
-        console.log(`[generate-deck] Bild-Audit: „${String(b.headline ?? b.kicker ?? '').slice(0, 60)}" → ${it.category} (${ersatz.label || ersatz.url.slice(-24)})`)
-        b.image = ersatz.url
-        belegt.add(ersatz.url)
-        getauscht++
-      }
-    }
-    if (getauscht) console.log(`[generate-deck] Bild-Audit: ${getauscht} Bild(er) getauscht`)
-  } catch (e) {
-    console.warn('[generate-deck] Bild-Audit uebersprungen:', e instanceof Error ? e.message : String(e))
-  }
-}
-
-
-// ── Zweite KI-Prüfung: sind die Behauptungen des Decks gedeckt? ──────────────
-// Diese Instanz erzeugt KEINE Fakten. Ihre einzige Aufgabe: prüfen, ob das Deck
-// objektbezogene Aussagen enthält, die der Faktenbestand nicht hergibt
-// (Meerblick, privater Pool, Dachterrasse, voll möbliert, Hotelservice,
-// Mietgarantie, schlüsselfertig …). Bei Unsicherheit lieber melden als
-// durchwinken — der Befund führt zu RED, nicht zu einer stillen Löschung.
-const CLAIM_SYSTEM = `Du bist Faktenprüfer für ein Immobilien-Verkaufsdeck. Du bekommst (a) die belegten FAKTEN und (b) das fertige DECK als indizierte Blockliste.
-
-Deine EINZIGE Aufgabe: Finde objektbezogene BEHAUPTUNGEN im Deck, die durch die Fakten NICHT gedeckt sind. Du erzeugst selbst keine Fakten und schlägst keine Texte vor.
-
-Prüfe besonders: Meerblick, Blick auf etwas Bestimmtes, privater Pool, eigener Garten, Dachterrasse, Aufzug, Tiefgarage, Stellplatz, Fußbodenheizung, Klimaanlage, Photovoltaik, Gym, Sauna, voll möbliert, schlüsselfertig, Hotelservice/Hotelkonzept, Mietgarantie, garantierte Rendite oder Auslastung, Garantiedauer, Fertigstellungstermin, Entfernungen, Flächen, Zimmerzahl, Etage, Verfügbarkeit/Knappheit, Marktaussagen und Wertsteigerungszahlen.
-
-Bewertung je geprüfter Aussage:
-- unsupported = die Fakten sagen dazu NICHTS.
-- conflict    = die Fakten sagen etwas ANDERES.
-- covered     = die Fakten decken die Aussage. Nutze diesen Wert IMMER, wenn du eine Aussage geprüft und für gedeckt befunden hast — sie wird automatisch verworfen. Schreibe NIEMALS 'gedeckt' in die Begründung eines unsupported- oder conflict-Fundes; das ist ein Widerspruch in sich.
-
-severity: high = harte Objekteigenschaft, Preis, Zahlungsplan, Garantie oder Termin. medium = weichere Eigenschaft oder Marktaussage. low = Stilfrage.
-
-Nicht zu melden: Stimmungsbilder ohne Tatsachenbehauptung (etwa das Licht am Abend, das Gefühl auf der Terrasse), allgemeine Ansprache, Formulierungen über den KUNDEN aus dem Briefing.
-
-Im Zweifel MELDEN. Ein übersehener falscher Fakt ist teurer als ein Fehlalarm.
-
-Rufe emit_claim_check auf.`
-
-async function checkClaims(
-  blocks: Array<Record<string, unknown>>, facts: string, ctx: DeckContext,
-): Promise<{ issues: Array<Record<string, unknown>>; failed: boolean; error?: string }> {
-  // Deterministisch gesetzte Blöcke von der Prüfung ausnehmen: die Entfernungs-Chips
-  // rechnet das System aus den Projekt-Koordinaten, die Marina-Sektion trägt ihre
-  // Quellen selbst im Text. Ohne diese Ausnahme meldete der Prüfer sie als
-  // „durch keinen Fakt gedeckt" — und JEDES Deck wäre rot geworden.
-  const systemIdx: number[] = []
-  blocks.forEach((b, i) => {
-    if (b.type === 'marina' || b.type === 'video') systemIdx.push(i)
-    else if (typeof b.image === 'string' && b.image === MARINA_MODEL) systemIdx.push(i)
-  })
-  const factsIdx = blocks.findIndex(b => b.type === 'facts')
-  // Nur die Textfelder schicken — Bilder/URLs interessieren hier nicht und
-  // sprengen nur das Kontextfenster.
-  const TEXT_FELDER = ['kicker', 'title', 'tagline', 'headline', 'text', 'quote', 'intro', 'note', 'paragraphs', 'specs', 'items', 'cols', 'cards', 'groups', 'bullets', 'steps', 'phase1', 'phase2', 'priceLines', 'number']
-  const schlank = blocks.map((b, i) => {
-    const o: Record<string, unknown> = { index: i, type: b.type }
-    for (const f of TEXT_FELDER) if (b[f] !== undefined) o[f] = b[f]
-    return o
-  })
-  const hart = ctx.units.map(u => ({
-    wohnung: u.unitNumber, zimmer: u.bedrooms, wohnflaeche_m2: u.sizeSqm,
-    terrasse_m2: u.terraceSqm, grundstueck_m2: u.plotSqm, etage: u.floor, typ: u.unitType,
-    netto: u.netProperty, moebel_netto: u.netFurniture,
-    mwst: u.price?.vatTotal ?? null, brutto: u.price?.gross ?? null,
-  }))
-  const faktenText = [
-    `VERIFIZIERTE STAMMDATEN (aus dem CRM, hoechste Prioritaet):\n${JSON.stringify(hart, null, 1)}`,
-    `Einrichtung: ${ctx.furnitureMode === 'included' ? 'im Kaufpreis enthalten' : ctx.furnitureMode === 'none' ? 'wird ohne Moebel verkauft' : ctx.furnitureUnknown ? 'nicht gepflegt (unbekannt)' : 'NICHT im Kaufpreis, kostet extra'}`,
-    ctx.completion ? `Geplante Fertigstellung: ${ctx.completion}` : 'Fertigstellung: nicht gepflegt',
-    ctx.paymentSchedule ? `Zahlungsplan: ${ctx.paymentSchedule.stages.map(s => `${s.label} ${s.pct} %`).join(' · ')}` : 'Zahlungsplan: keiner hinterlegt',
-    `\nPROJEKT-FAKTEN (aus den Bautraeger-Dokumenten):\n${facts.slice(0, 60000)}`,
-  ].join('\n')
-
-  const res = await callAnthropic(ANTHROPIC_API_KEY, {
-    model: 'claude-sonnet-4-6',
-    max_tokens: 4000,
-    system: CLAIM_SYSTEM,
-    tools: [{
-      name: 'emit_claim_check',
-      description: 'Meldet ungedeckte oder widersprüchliche Behauptungen im Deck.',
-      input_schema: {
-        type: 'object',
-        properties: {
-          status: { type: 'string', enum: ['pass', 'review_required'] },
-          issues: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                severity:    { type: 'string', enum: ['high', 'medium', 'low'] },
-                block_index: { type: 'integer' },
-                claim:       { type: 'string', description: 'Die beanstandete Aussage, wörtlich.' },
-                reason:      { type: 'string' },
-                evidence:    { type: 'string', description: 'Was die Fakten stattdessen sagen — oder dass sie schweigen.' },
-                status:      { type: 'string', enum: ['unsupported', 'conflict', 'covered'] },
-              },
-              required: ['severity', 'claim', 'status', 'reason'],
-            },
-          },
-        },
-        required: ['status', 'issues'],
-      },
-    }],
-    tool_choice: { type: 'tool', name: 'emit_claim_check' },
-    messages: [{ role: 'user', content: [
-      `FAKTEN:\n${faktenText}`,
-      systemIdx.length
-        ? `\nNICHT PRÜFEN — Systembausteine: Die Blöcke mit den Indizes ${systemIdx.join(', ')} setzt das System deterministisch ein. Ihre Zahlen stammen aus den Projekt-Koordinaten bzw. aus fest hinterlegten, im Text selbst zitierten Quellen (Gov.cy, Knight Frank, Zentralbank Zypern, Kathimerini). Melde zu diesen Blöcken NICHTS.`
-        : '',
-      factsIdx >= 0
-        ? `\nTEILWEISE NICHT PRÜFEN: Im Block ${factsIdx} sind die Entfernungs-Einträge (Feld items) aus den Geokoordinaten des Projekts berechnet — melde sie NICHT. Überschrift und Fließtext dieses Blocks prüfst du normal.`
-        : '',
-      `\nDECK (indizierte Blöcke):\n${JSON.stringify(schlank).slice(0, 120000)}`,
-    ].filter(Boolean).join('\n') }],
-    label: 'claim_check',
-    attempts: 2,
-  })
-  if (!res.ok) return { issues: [], failed: true, error: res.error }
-  const out = toolInput<{ issues?: Array<Record<string, unknown>> }>(res)
-  const roh = Array.isArray(out?.issues) ? out!.issues : []
-  // Gedeckte Aussagen und Selbstwidersprüche verwerfen: das Modell listet trotz
-  // Anweisung gelegentlich Aussagen auf, die es in der Begründung selbst als
-  // gedeckt bezeichnet. Solche Fehlalarme würden jedes Deck rot färben.
-  const issues = roh.filter(it => {
-    if (String(it.status) === 'covered') return false
-    const grund = `${String(it.evidence ?? '')} ${String(it.reason ?? '')}`
-    return !/^\s*gedeckt\b|\bist gedeckt\b|\.\s*gedeckt\.?\s*$|gedeckt durch/i.test(grund)
-  })
-  if (issues.length !== roh.length) console.log(`[generate-deck] Behauptungsprüfung: ${roh.length - issues.length} gedeckte Aussage(n) verworfen`)
-  return { issues, failed: false }
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
@@ -963,6 +751,14 @@ Deno.serve(async (req) => {
         .map(([bed, net]) => `- ${bed}-Schlafzimmer: ${eur(Number(net))} netto`)
         .join('\n')
       extraFacts += `\n\n=== MÖBELPAKETE (Vollausstattung, als 'inventory'-Block oder Fakt nennen; Nettopreise je Wohnungstyp) ===\n${lines}`
+    }
+    // Marina-Nahlage (<= 5 km Strasse): die KI darf die Marina als Lage-Argument in
+    // Key Facts und Anschreiben nutzen. Zahlen dazu liefert NUR die Systemsektion.
+    if (ctx.lat != null && ctx.lng != null) {
+      const marinaKm = roadKm(haversineKm(ctx.lat, ctx.lng, MARINA_SITE.lat, MARINA_SITE.lng))
+      if (marinaKm <= MARINA_NAH_KM) {
+        extraFacts += `\n\n=== MARINA-NAHLAGE (HART) ===\nDas Projekt liegt ca. ${fmtKm(marinaKm)} von der geplanten neuen Paphos-Marina (Potima Bay, Kissonerga) entfernt - das ist Nahlage. Nenne die Marina-Nähe als eigenes Kauf-Argument in den Key Facts (benefits) und im Anschreiben. Schreibe dazu KEINE eigenen Zahlen (keine Millionen, keine Prozente, keine Liegeplätze) - die stehen in der Marina-Sektion, die das System einsetzt.`
+      }
     }
     const factsAug = body.facts.trim() + extraFacts + bildFakten + langHinweis
 
@@ -1234,10 +1030,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Bild-Text-Endkontrolle: klar unpassende Bilder gegen passende Galerie-Bilder
-    // tauschen (EIN Vision-Call, best-effort — darf die Generierung NIE reissen).
-    try { await auditBlockImages(blocks, gal) }
-    catch (e) { console.warn('[generate-deck] Bild-Audit uebersprungen:', e instanceof Error ? e.message : String(e)) }
+    // Bild-Text-Endkontrolle (_shared/deckQuality.ts): unpassende Bilder werden
+    // nur gegen Bilder des richtigen Wohnungstyps getauscht, sonst geleert; jedes
+    // Ergebnis ist ein Befund im Bericht. Darf die Generierung nie reissen.
+    const auditFindings: Finding[] = []
+    try {
+      const audit = await auditBlockImages(blocks, gal, ctx)
+      auditFindings.push(...audit.findings)
+      if (audit.swapped) console.log(`[generate-deck] Bild-Audit: ${audit.swapped} Bild(er) getauscht`)
+    } catch (e) {
+      auditFindings.push({ key: 'bildpruefung_ausgefallen', severity: 'mittel',
+        what: 'Die Bild-Text-Prüfung konnte nicht durchlaufen - die Bilder sind ungeprüft.', evidence: e instanceof Error ? e.message : String(e) })
+    }
+    // Wohnungstyp je Bild deterministisch gegen die Vision-Tags (Villa-Render im
+    // Apartment-Deck = hoch).
+    auditFindings.push(...checkImageTypes(blocks, ctx, gal))
 
     // Grundriss-Block ohne Bild komplett entfernen: passt kein Plan zur Wohnungsart
     // (Mamba hat nur Maisonette-Plaene, The Cove gar keine), bleibt sonst ein leerer
@@ -1248,45 +1055,15 @@ Deno.serve(async (req) => {
       if (blocks.length !== vorher) console.log('[generate-deck] leeren Grundriss-Block entfernt (kein passender Plan)')
     }
 
-    // ── Auffang: KEIN deutscher Text im englischen Deck ──────────────────────
-    // Rekursiv ueber ALLE Felder, nicht nur ueber eine Feldliste - vorher rutschten
-    // einzelne Woerter durch, weil sie in einem nicht geprueften Feld standen
-    // ("schluesselfertig" mitten im englischen Absatz, Sven 27.8.). Betroffen sind
-    // deterministisch gesetzte Texte (Bild-Labels aus der Datenbank) ebenso wie
-    // Woerter, die die KI aus den deutschen Fakten uebernommen hat.
+    // ── Auffang: KEIN deutscher Text im englischen Deck (_shared/deckQuality.ts) ──
     if (deckLang === 'en') {
-      const DEUTSCH = /[äöüßÄÖÜ]|\b(mit|und|der|die|das|im|Blick|Ansicht|Aussen|Innen|raumhoh\w*|bodentief\w*|schluesselfertig|Fussboden\w*|Wohnzimmer|Schlafzimmer|Kueche|Terrasse|Grundstueck|Bautraeger|Uebergabe|Wertsteigerung|Zahlungsplan)\b/i
-      const traeger: Array<{ o: Record<string | number, unknown>; k: string | number }> = []
-      const sammle = (n: unknown) => {
-        if (Array.isArray(n)) {
-          n.forEach((v, i) => {
-            if (typeof v === 'string') { if (DEUTSCH.test(v) && !v.startsWith('http')) traeger.push({ o: n as unknown as Record<string | number, unknown>, k: i }) }
-            else sammle(v)
-          })
-        } else if (n && typeof n === 'object') {
-          for (const [k, v] of Object.entries(n as Record<string, unknown>)) {
-            if (typeof v === 'string') { if (DEUTSCH.test(v) && !v.startsWith('http')) traeger.push({ o: n as Record<string | number, unknown>, k }) }
-            else sammle(v)
-          }
-        }
-      }
-      sammle(blocks)
-      if (traeger.length) {
-        try {
-          const roh = traeger.map(t => String(t.o[t.k]))
-          const tr = await translateOutbound({ subject: null, body: JSON.stringify(roh), whatsapp: null }, 'en')
-          const out = JSON.parse(tr.body ?? '[]') as string[]
-          if (Array.isArray(out) && out.length === traeger.length) {
-            traeger.forEach((t, i) => { if (typeof out[i] === 'string' && out[i].trim()) t.o[t.k] = out[i] })
-            console.log(`[generate-deck] ${traeger.length} deutsche Textstellen ins Englische uebersetzt`)
-          } else console.warn('[generate-deck] Uebersetzung verworfen: Anzahl passt nicht')
-        } catch (err) {
-          console.warn('[generate-deck] Uebersetzung fehlgeschlagen:', err instanceof Error ? err.message : String(err))
-        }
+      try {
+        const n = await translateGermanRemnants(blocks)
+        if (n) console.log(`[generate-deck] ${n} deutsche Textstellen ins Englische uebersetzt`)
+      } catch (err) {
+        console.warn('[generate-deck] Uebersetzung fehlgeschlagen:', err instanceof Error ? err.message : String(err))
       }
     }
-
-
 
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -1295,7 +1072,7 @@ Deno.serve(async (req) => {
     // Es REPARIERT nichts still — was hier auffällt, steht als Befund im Bericht
     // und wird im CRM angezeigt. Ein RED-Deck bleibt erreichbar und versendbar.
     const gate = runDeckGate(blocks, ctx)
-    const findings: Finding[] = [...gate.findings]
+    const findings: Finding[] = [...gate.findings, ...auditFindings]
 
     // Zweite, semantische Prüfung: deckt der Faktenbestand die Behauptungen des
     // Decks? Sie kostet einen weiteren Claude-Aufruf. Synchron aufgerufen sprengt

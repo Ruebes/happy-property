@@ -21,13 +21,17 @@ export interface PriceLine { label: string; value: string; strong?: boolean }
 export interface PriceSummary { net: string; vatRate: string; vat: string; gross: string }
 
 export interface PayStage { label: string; sub?: string; pct: number }
-export interface PaySchedule { reservation?: number; currency?: string; stages: PayStage[] }
+/** reservationVat: Reservierung wird netto angegeben und mit 19 % MwSt gezahlt
+ *  (Sven 19.9.26: gilt bei allen Bautraegern; einzige Ausnahme MITO mit 20.000 EUR
+ *  glatt). Fehlt das Feld, gilt true. */
+export interface PaySchedule { reservation?: number; reservationVat?: boolean; currency?: string; stages: PayStage[] }
 
 export interface DeckUnitCtx {
   unitId: string | null
   unitNumber: string
   unitKey: string
   bedrooms: number | null
+  bathrooms: number | null
   sizeSqm: number | null
   terraceSqm: number | null
   plotSqm: number | null
@@ -98,7 +102,7 @@ export const MARINA_MODEL =
  *  hat den Widerspruch gemeldet: Title Deeds sind laut Agent-Guide eine SEPARATE
  *  Gebuehr (1.500 EUR + MwSt), nicht Teil der 10-%-Rate. */
 export const LUMA_PAYMENT: PaySchedule = {
-  reservation: 10000, currency: 'EUR',
+  reservation: 10000, reservationVat: true, currency: 'EUR',
   stages: [
     { label: 'Bei Vertragsunterzeichnung', sub: 'abzüglich Reservierung', pct: 35 },
     { label: '2. Rate · Baufortschritt', pct: 20 },
@@ -133,16 +137,21 @@ export function normalizePaySchedule(raw: unknown): PaySchedule | null {
     return t.toLowerCase().replace(/(^|[\s\-/])(\p{L})/gu, (_m, pre, c) => pre + c.toUpperCase())
   }
   let reservation: number | undefined
+  let reservationVat: boolean | undefined
   const stages: PayStage[] = []
   for (const r of raw as Array<Record<string, unknown>>) {
     const roh = String(r.percent ?? r.pct ?? '')
     const label = lesbar(String(r.label ?? ''))
     const sub = r.trigger ? String(r.trigger) : (r.sub ? String(r.sub) : undefined)
     if (/%/.test(roh)) stages.push({ label, sub, pct: zahl(roh) })
-    else if (/€|eur/i.test(roh)) reservation = zahl(roh)
+    else if (/€|eur/i.test(roh)) {
+      reservation = zahl(roh)
+      // Formular-Zeile darf `vat: false` tragen (MITO: 20.000 EUR glatt).
+      if (typeof r.vat === 'boolean') reservationVat = r.vat
+    }
     else if (typeof r.pct === 'number') stages.push({ label, sub, pct: r.pct })
   }
-  return stages.length ? { reservation, currency: 'EUR', stages } : null
+  return stages.length ? { reservation, reservationVat, currency: 'EUR', stages } : null
 }
 
 // ── Preiszeilen ──────────────────────────────────────────────────────────────
@@ -356,7 +365,7 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
 
   // Alle Wohnungen des Projekts — fuer Zimmerzahl, Flaeche, Typ und Dubletten.
   const { data: allU } = await sb.from('crm_project_units')
-    .select('id, unit_number, unit_key, bedrooms, size_sqm, terrace_sqm, plot_sqm, floor, type, price_net, price_net_furnished, floorplan_url, hp_floorplan_url')
+    .select('id, unit_number, unit_key, bedrooms, bathrooms, size_sqm, terrace_sqm, plot_sqm, floor, type, price_net, price_net_furnished, floorplan_url, hp_floorplan_url')
     .eq('project_id', input.projectId)
   const rows = (allU ?? []) as Array<Record<string, any>>
   const byKey = new Map<string, Record<string, any>>()
@@ -411,12 +420,10 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
     //   4. dieselbe Wohnungsnummer ohne Zusatz: "B-301 (P)" -> "B-301".
     //      Emerald Park fuehrt die Penthouses als "(P)", die Plaene ohne Zusatz —
     //      dadurch fanden 13 von 30 Wohnungen ihren vorhandenen Plan nicht.
-    //   5. NUR wenn nichts davon greift: Zimmerzahl-Typplan, ausdruecklich als
-    //      Fallback markiert.
+    //   (5. Zimmerzahl-Typplan und baugleiche Wohnung: abgeschaltet, s.u.)
     // Kein Treffer heisst KEIN Grundriss — niemals ein Ersatzbild.
     let fpUrl: string | null = null
     let fpSource: DeckUnitCtx['floorplanSource'] = null
-    let fallback = false
     const nimm = (u: unknown, q: DeckUnitCtx['floorplanSource']) => {
       if (fpUrl || typeof u !== 'string' || !u.trim()) return
       if (!istDarstellbaresBild(u)) return
@@ -430,33 +437,20 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       const ohneZusatz = k.replace(/[a-z]$/, '')
       if (ohneZusatz && ohneZusatz !== k) nimm(fpMap[ohneZusatz], 'suffix')
     }
-    // 4b. BAUGLEICHE Wohnung desselben Projekts (gleicher Typ, gleiche Zimmerzahl,
-    //     gleiche Flaeche) mit hinterlegtem Plan - Reihen- und Spiegelgrundrisse
-    //     (Mamba C2/C3, BAIA Typ A). Quelle 'twin', im Deck als Hinweis sichtbar.
-    let twinNumber: string | null = null
-    if (!fpUrl && row && bedrooms != null && sizeSqm != null) {
-      const planOf = (r: Record<string, any>): string | null => {
-        const rk = String(r.unit_key ?? unitKey(r.unit_number))
-        for (const c of [fpMap[rk], r.hp_floorplan_url, r.floorplan_url]) if (typeof c === 'string' && c.trim() && istDarstellbaresBild(c)) return c
-        return null
-      }
-      const twin = rows.find(r => r !== row
-        && r.bedrooms === bedrooms
-        && r.size_sqm != null && Math.abs(Number(r.size_sqm) - sizeSqm) <= 0.6
-        && String(r.type ?? '') === String(row.type ?? '')
-        && planOf(r))
-      if (twin) { nimm(planOf(twin), 'twin'); if (fpUrl) twinNumber = String(twin.unit_number) }
-    }
-    if (!fpUrl && bedrooms != null) {
-      nimm(fpMap[`${bedrooms}br`], 'bedroom_fallback')
-      if (fpUrl) fallback = true
-    }
+    // Zwillings-Plan (baugleiche Wohnung) und Zimmerzahl-Typplan sind ABGESCHALTET
+    // (Sven 19.9.26): ein automatisch zugewiesener C3-Plan fuer C2 ist nicht
+    // akzeptabel, solange nicht ausdruecklich bestaetigt ist, dass beide denselben
+    // Grundriss haben. Lieber kein Grundriss (Befund hoch) als ein falscher. Eine
+    // Freigabe je Wohnung kommt mit dem Asset-Katalog (same_layout_as / mirror_of).
+    const twinNumber: string | null = null
+    const fallback = false
 
     ctx.units.push({
       unitId: u.unit_id ?? row?.id ?? null,
       unitNumber: u.unit_number,
       unitKey: k,
       bedrooms,
+      bathrooms: row?.bathrooms != null ? Number(row.bathrooms) : null,
       sizeSqm,
       terraceSqm: row?.terrace_sqm != null ? Number(row.terrace_sqm) : null,
       plotSqm: row?.plot_sqm != null ? Number(row.plot_sqm) : null,

@@ -12,7 +12,8 @@ import { refineBlockSchema } from '../_shared/deckBlocks.ts'
 import { TRUTH_RULES } from '../_shared/deckRules.ts'
 import { buildDeckContext, type DeckContext, type FurnitureMode } from '../_shared/deckContext.ts'
 import { applyDeterministic } from '../_shared/deckNormalize.ts'
-import { runDeckGate } from '../_shared/deckGate.ts'
+import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
+import { auditBlockImages, checkClaims, checkImageTypes, translateGermanRemnants, type GalleryImage } from '../_shared/deckQuality.ts'
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
@@ -80,16 +81,58 @@ Deno.serve(async (req: Request) => {
     const runRefine = async (): Promise<{ blocks?: number; summary?: string; error?: string; quality?: 'green' | 'red' }> => {
       try {
         const blocks = (deck.content?.blocks) ?? deck.content ?? []
-        // Verfügbare Bilder aus den Projekt-Assets (für Bild-Tausch)
+        type Blk = Record<string, unknown>
+
+        // ── Deck-Kontext ZUERST: er bestimmt Wohnungstyp (Bild-Allowlist), Sprache
+        // und die harten Zahlen fuer Normalisierung und Gate.
+        let ctx = (deck.deck_context ?? null) as DeckContext | null
+        if (!ctx && deck.project_id) {
+          // Altes Deck ohne gespeicherten Kontext: aus der Datenbank rekonstruieren.
+          const units: Array<{ unit_number: string }> = []
+          if (deck.unit_id) {
+            const { data: u } = await supabase.from('crm_project_units').select('unit_number').eq('id', deck.unit_id).maybeSingle()
+            const nr = (u as { unit_number?: string } | null)?.unit_number
+            if (nr) units.push({ unit_number: nr })
+          }
+          if (!units.length) {
+            for (const b of blocks as Blk[]) {
+              if (b.type === 'unit' && typeof b.number === 'string' && b.number.trim()) units.push({ unit_number: b.number.trim() })
+            }
+          }
+          try {
+            ctx = await buildDeckContext(supabase, {
+              projectId: deck.project_id as string,
+              angle: String(deck.angle ?? 'investment'),
+              lang: 'de',
+              furnitureMode: undefined as FurnitureMode | undefined,
+              units,
+            })
+          } catch (e) {
+            console.warn('[refine-deck] Kontext nicht rekonstruierbar:', e instanceof Error ? e.message : String(e))
+          }
+        }
+        const deckTypen = [...new Set((ctx?.units ?? []).map(u => String(u.unitType ?? '').toLowerCase()).filter(Boolean))]
+        const deckTyp = deckTypen.length === 1 ? deckTypen[0] : ''
+        const typErlaubt = (t: unknown) => !deckTyp || !t || t === 'anlage' || t === 'unklar' || String(t).toLowerCase() === deckTyp
+
+        // Verfügbare Bilder aus den Projekt-Assets (für Bild-Tausch) - NUR Bilder,
+        // die zum Wohnungstyp des Decks passen. Ein Villa-Render darf im
+        // Apartment-Deck auch per Feinschliff nicht auftauchen.
         let assetsTxt = '(keine Projekt-Assets verfügbar)'
+        let gal: GalleryImage[] = []
+        let projectFacts = ''
         if (deck.project_id) {
           const { data: pr } = await supabase.from('crm_projects').select('deck_assets').eq('id', deck.project_id).maybeSingle()
-          const da = (pr?.deck_assets ?? {}) as { renders?: string[]; gallery?: Array<{ url: string; label?: string; category?: string }>; map?: string; mapUrl?: string; floorplans?: Array<{ url: string; label?: string }> }
+          const da = (pr?.deck_assets ?? {}) as { renders?: string[]; gallery?: GalleryImage[]; map?: string; mapUrl?: string; facts?: string }
+          gal = (da.gallery ?? []).filter(g => g && typeof g.url === 'string')
+          projectFacts = String(da.facts ?? '')
+          const galOk = gal.filter(g => typErlaubt(g.unitType))
+          const galUrls = new Set(galOk.map(g => g.url))
+          const verboten = new Set(gal.filter(g => !typErlaubt(g.unitType)).map(g => g.url))
           assetsTxt = JSON.stringify({
-            renders: da.renders ?? [],
-            gallery: (da.gallery ?? []).map(g => ({ url: g.url, was: g.label || g.category || '' })),
+            gallery: galOk.map(g => ({ url: g.url, was: g.label || g.category || '' })),
+            renders: (da.renders ?? []).filter(u => galUrls.has(u) || !verboten.has(u)),
             map: da.map ?? null, mapUrl: da.mapUrl ?? null,
-            floorplans: (da.floorplans ?? []).map(f => ({ url: f.url, was: f.label || '' })),
           })
         }
         // Gelernte Vorgaben (kind='deck'): global immer + projektspezifische dieses Decks
@@ -120,7 +163,6 @@ Deno.serve(async (req: Request) => {
           messages: [{ role: 'user', content: userMsg }],
           label: 'emit_edits',
         })
-        type Blk = Record<string, unknown>
         if (!res.ok) throw new Error(`Claude nicht erreichbar (${res.attempts} Versuche): ${res.error}`)
         const patch = toolInput<{
           edits?: Array<{ index: number; block: Blk }>; remove?: number[]
@@ -175,54 +217,54 @@ Deno.serve(async (req: Request) => {
         // nie durchgelassen hätte, und löschte dabei die harten Zahlen. Ab jetzt
         // gilt derselbe Weg wie bei der Erstgenerierung:
         //   Patch anwenden → deterministisch normalisieren → Gate → GREEN/RED.
-        let ctx = (deck.deck_context ?? null) as DeckContext | null
-        if (!ctx && deck.project_id) {
-          // Altes Deck ohne gespeicherten Kontext: aus der Datenbank rekonstruieren.
-          const units: Array<{ unit_number: string }> = []
-          if (deck.unit_id) {
-            const { data: u } = await supabase.from('crm_project_units').select('unit_number').eq('id', deck.unit_id).maybeSingle()
-            const nr = (u as { unit_number?: string } | null)?.unit_number
-            if (nr) units.push({ unit_number: nr })
-          }
-          if (!units.length) {
-            // Wohnungsnummern aus den vorhandenen unit-Blöcken ableiten.
-            for (const b of newBlocks) {
-              if (b.type === 'unit' && typeof b.number === 'string' && b.number.trim()) units.push({ unit_number: b.number.trim() })
-            }
-          }
-          try {
-            ctx = await buildDeckContext(supabase, {
-              projectId: deck.project_id as string,
-              angle: String(deck.angle ?? 'investment'),
-              lang: 'de',
-              furnitureMode: undefined as FurnitureMode | undefined,
-              units,
-            })
-          } catch (e) {
-            console.warn('[refine-deck] Kontext nicht rekonstruierbar:', e instanceof Error ? e.message : String(e))
-          }
-        }
-
         let finalBlocks = newBlocks
         let quality: { status: 'green' | 'red'; report: Record<string, unknown> } | null = null
         if (ctx) {
+          // Derselbe Nachlauf wie bei der Erstgenerierung (_shared/deckQuality.ts):
+          //   normalisieren → Bild-Audit + Typ-Prüfung → EN-Nachübersetzung →
+          //   Gate → Behauptungsprüfung → GREEN/RED.
           const norm = applyDeterministic(finalBlocks, ctx)
           finalBlocks = norm.blocks as Blk[]
+          const findings: Finding[] = []
+          try {
+            const audit = await auditBlockImages(finalBlocks, gal, ctx)
+            findings.push(...audit.findings)
+          } catch (e) {
+            findings.push({ key: 'bildpruefung_ausgefallen', severity: 'mittel',
+              what: 'Die Bild-Text-Prüfung konnte nicht durchlaufen - die Bilder sind ungeprüft.', evidence: e instanceof Error ? e.message : String(e) })
+          }
+          findings.push(...checkImageTypes(finalBlocks, ctx, gal))
+          if (ctx.lang === 'en') {
+            try { await translateGermanRemnants(finalBlocks) }
+            catch (e) { console.warn('[refine-deck] Uebersetzung fehlgeschlagen:', e instanceof Error ? e.message : String(e)) }
+          }
           const gate = runDeckGate(finalBlocks, ctx)
+          findings.push(...gate.findings)
+          try {
+            const claim = await checkClaims(finalBlocks, projectFacts, ctx)
+            if (claim.issues.length) findings.push(...claimIssuesToFindings(claim.issues))
+            if (claim.failed) findings.push({ key: 'behauptungspruefung_ausgefallen', severity: 'mittel',
+              what: 'Die Behauptungsprüfung konnte nicht durchlaufen — die Aussagen im Deck sind ungeprüft.', evidence: claim.error ?? '' })
+          } catch (e) {
+            findings.push({ key: 'behauptungspruefung_ausgefallen', severity: 'mittel',
+              what: 'Die Behauptungsprüfung konnte nicht durchlaufen — die Aussagen im Deck sind ungeprüft.', evidence: e instanceof Error ? e.message : String(e) })
+          }
+          const status: 'green' | 'red' = findings.some(f => f.severity === 'kritisch' || f.severity === 'hoch') ? 'red' : 'green'
           quality = {
-            status: gate.status,
+            status,
             report: {
-              status: gate.status,
+              status,
               checked_blocks: gate.checkedBlocks,
-              findings: gate.findings,
+              findings,
               normalization: norm.notes,
               scrub_events: norm.scrubEvents,
+              images: finalBlocks.map((b, i) => ({ block: i, type: String(b.type), image: typeof b.image === 'string' ? b.image : null })).filter(x => x.image),
               source: 'refine',
               instruction: instruction!.trim().slice(0, 500),
               generated_at: new Date().toISOString(),
             },
           }
-          console.log(`[refine-deck] Quality-Gate: ${gate.status.toUpperCase()} — ${gate.findings.length} Befund(e)`)
+          console.log(`[refine-deck] Quality-Gate: ${status.toUpperCase()} — ${findings.length} Befund(e)`)
         } else {
           console.warn('[refine-deck] ohne Deck-Kontext — keine Re-Normalisierung, kein Gate')
         }

@@ -1418,11 +1418,12 @@ Deno.serve(async (req) => {
         } catch { /* Vision optional — Kandidaten bleiben */ }
       }
 
-      // Grundriss je Unit zuordnen. Reihenfolge: ZUERST die Wohnungsnummer im
-      // Label oder Dateinamen (eindeutig), erst danach die Etage (grob).
-      // Teil-Wohnungen eines Doppelapartments (parent_unit_id) bekommen NUR bei
-      // exaktem Nummern-Treffer einen Plan — ein Etagen-Treffer wuerde sonst den
-      // Plan der Nachbarwohnung an A2a haengen.
+      // Grundriss je Unit zuordnen: NUR ueber die Wohnungsnummer im Label oder
+      // Dateinamen. Der fruehere Etagen-Treffer (gleiche Etage = gleicher Plan)
+      // haengte jeder Wohnung eines Geschosses dasselbe Blatt an - auch das der
+      // Nachbarwohnung. Abgeschaltet (Sven 19.9.26: lieber kein Grundriss als ein
+      // falscher). Blattweise Plaene (Block A: A1/A2/A3 auf einer Seite) loest
+      // kuenftig die Blatt-Analyse des Asset-Katalogs auf.
       let unitsMatched = 0
       if (floorplans.length) {
         const { data: units } = await supabase.from('crm_project_units')
@@ -1447,10 +1448,7 @@ Deno.serve(async (req) => {
         for (const u of sortiert) {
           if (u.floorplan_url) continue
           const nummer = String(u.unit_number ?? '')
-          const perNummer = floorplans.find(fp => nummerTrifft(`${fp.label ?? ''} ${fp.url ?? ''}`, nummer))
-          const match = perNummer ?? (u.parent_unit_id
-            ? undefined
-            : floorplans.find(fp => fp.floor === ((u.floor as number) ?? parseInt(nummer.charAt(0), 10))))
+          const match = floorplans.find(fp => nummerTrifft(`${fp.label ?? ''} ${fp.url ?? ''}`, nummer))
           if (match) { await supabase.from('crm_project_units').update({ floorplan_url: match.url }).eq('id', u.id as string); unitsMatched++ }
         }
       }
