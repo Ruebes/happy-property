@@ -485,6 +485,9 @@ export function runDeckGate(blocks: Block[], ctx: DeckContext): GateResult {
           for (const m of text.matchAll(/\b(erdgeschoss|ground\s+floor)\b/gi)) treffer.push({ v: 0, idx: m.index ?? 0, roh: m[0] })
           for (const x of treffer) {
             if (etagen.has(x.v)) continue
+            // Stellplatz/Tiefgarage/Lobby/Cafe im Erdgeschoss ist keine Wohnungs-Etage.
+            const umfeld = text.slice(Math.max(0, x.idx - 70), x.idx + x.roh.length + 40)
+            if (/stellplatz|parkplatz|tiefgarage|garage|parking|lobby|caf[eé]|gym|abstellraum|storage/i.test(umfeld)) continue
             const key = `et:${x.v}`; if (gemeldet.has(key)) continue; gemeldet.add(key)
             add({ key: 'etage_abweichung', severity: 'hoch', block: i,
               what: `Im Text steht „${x.roh}", in den Stammdaten Etage ${[...etagen].join(' / ')}.`,

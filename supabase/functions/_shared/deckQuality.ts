@@ -199,7 +199,7 @@ export async function checkClaims(blocks: Block[], facts: string, ctx: DeckConte
       return o
     })
   const hart = ctx.units.map(u => ({
-    wohnung: u.unitNumber, zimmer: u.bedrooms, baeder: u.bathrooms, wohnflaeche_m2: u.sizeSqm,
+    wohnung: u.unitNumber, zimmer: u.bedrooms, baeder: u.bathrooms ?? 'Anzahl nicht erfasst (mindestens ein Bad ist Standard, keine Behauptung)', wohnflaeche_m2: u.sizeSqm,
     terrasse_m2: u.terraceSqm, grundstueck_m2: u.plotSqm, etage: u.floor, typ: u.unitType,
     netto_immobilie: u.netProperty, moebel_netto: u.netFurniture,
     netto_gesamt: u.price?.netTotal ?? null, mwst: u.price?.vatTotal ?? null, brutto: u.price?.gross ?? null,
@@ -210,7 +210,11 @@ export async function checkClaims(blocks: Block[], facts: string, ctx: DeckConte
   const resGross = resNet != null ? (sched?.reservationVat !== false ? Math.round(resNet * 1.19) : resNet) : null
   const zahlungsplan = sched
     ? [
-        resNet != null ? `Reservierung ${resNet.toLocaleString('de-DE')} € netto${sched.reservationVat !== false ? ` zzgl. 19 % MwSt = ${resGross!.toLocaleString('de-DE')} € brutto` : ' (ohne MwSt)'}, wird auf die erste Rate angerechnet` : 'keine Reservierung hinterlegt',
+        resNet != null
+          ? (sched.reservationVat !== false
+              ? `Reservierung ${resNet.toLocaleString('de-DE')} € netto zzgl. 19 % MwSt = ${resGross!.toLocaleString('de-DE')} € brutto, wird auf die erste Rate angerechnet`
+              : `Reservierung ${resNet.toLocaleString('de-DE')} € pauschal (Bruttobetrag, keine MwSt zusätzlich; "${resNet.toLocaleString('de-DE')} € brutto" und "${resNet.toLocaleString('de-DE')} €" meinen dasselbe), wird auf die erste Rate angerechnet`)
+          : 'keine Reservierung hinterlegt',
         ...sched.stages.map(s => `${s.label}${s.sub ? ` (${s.sub})` : ''}: ${s.pct} %`),
         'Raten werden brutto (inkl. 19 % MwSt) auf den Bruttopreis gerechnet; die Netto-Unterzeile bezieht sich auf den Nettopreis inkl. Möbelpaket, falls eines dabei ist.',
       ].join('\n  ')

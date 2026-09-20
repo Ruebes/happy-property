@@ -483,7 +483,8 @@ export async function buildDeckContext(sb: Sb, input: BuildContextInput): Promis
       unitNumber: u.unit_number,
       unitKey: k,
       bedrooms,
-      bathrooms: row?.bathrooms != null ? Number(row.bathrooms) : null,
+      // 0 = Importvorgabe "unbekannt" (143 von 401 Units, 20.9.26); eine Wohnung hat nie 0 Baeder.
+      bathrooms: row?.bathrooms != null && Number(row.bathrooms) > 0 ? Number(row.bathrooms) : null,
       sizeSqm,
       terraceSqm: row?.terrace_sqm != null ? Number(row.terrace_sqm) : null,
       plotSqm: row?.plot_sqm != null ? Number(row.plot_sqm) : null,
