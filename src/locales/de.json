@@ -2480,7 +2480,9 @@
         "sheets": "{{n}} Bauträgerblatt/-blätter im Katalog",
         "reviewImages": "Bilder zur Prüfung (Wohnungstyp unklar)",
         "folder": "Ordner",
-        "catalogStarted": "{{n}} Bauträgerblatt/-blätter werden im Hintergrund ausgewertet (1-3 Min). Danach hier neu laden."
+        "catalogStarted": "{{n}} Bauträgerblatt/-blätter werden im Hintergrund ausgewertet (1-3 Min). Danach hier neu laden.",
+        "sectionTitle": "Grundrisse & Deck-Bilder",
+        "sectionDesc": "Pläne je Wohnung aus den Bauträgerblättern, HP-Grundrisse und Bilder zur Prüfung. Freigaben wirken auf neue Decks."
       }
     },
     "unit": {

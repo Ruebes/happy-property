@@ -2480,7 +2480,9 @@
         "sheets": "{{n}} developer sheet(s) in the catalog",
         "reviewImages": "Images pending review (unit type unclear)",
         "folder": "folder",
-        "catalogStarted": "{{n}} developer sheet(s) are being analysed in the background (1-3 min). Reload here afterwards."
+        "catalogStarted": "{{n}} developer sheet(s) are being analysed in the background (1-3 min). Reload here afterwards.",
+        "sectionTitle": "Floor plans & deck images",
+        "sectionDesc": "Per-unit plans from developer sheets, HP floor plans and images pending review. Approvals apply to new decks."
       }
     },
     "unit": {

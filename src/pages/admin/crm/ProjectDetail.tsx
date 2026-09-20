@@ -11,6 +11,8 @@ import type {
 } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import ConstructionPhotos from '../../../components/crm/ConstructionPhotos'
+import AssetReviewPanel from '../../../components/crm/AssetReviewPanel'
+import HpFloorplanPanel from '../../../components/crm/HpFloorplanPanel'
 
 // ── Local types ───────────────────────────────────────────────────────────────
 
@@ -1177,6 +1179,16 @@ export default function ProjectDetail() {
           </div>
         )}
       </div>
+
+      {/* ── Grundrisse & Katalog (Deck-Assets) ── */}
+      {projectId && (
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 px-6 py-4">
+          <h2 className="font-semibold text-gray-900">{t('crm.project.assets.sectionTitle', 'Grundrisse & Deck-Bilder')}</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{t('crm.project.assets.sectionDesc', 'Pläne je Wohnung aus den Bauträgerblättern, HP-Grundrisse und Bilder zur Prüfung. Freigaben wirken auf neue Decks.')}</p>
+          <HpFloorplanPanel projectId={projectId} />
+          <AssetReviewPanel projectId={projectId} />
+        </div>
+      )}
 
       {/* ── Baustellenbilder ── */}
       <div className="mt-6">
