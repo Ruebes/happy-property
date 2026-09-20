@@ -59,7 +59,7 @@ export const ROOM_CATS = ['fassade', 'aussenbereich', 'aussicht', 'pool', 'wohnz
 
 /** Felder, die die KI in einem Block schreiben darf (Text und Struktur). */
 const TEXT_FIELDS: Record<string, unknown> = {
-  imageIntent: { type: 'string', enum: [...ROOM_CATS], description: 'Welches Motiv das Bild dieses Blocks zeigen soll (nur cover, unit, feature, columns).' },
+  imageIntent: { type: 'string', enum: [...ROOM_CATS, 'living', 'bedroom', 'bathroom', 'kitchen', 'dining', 'exterior', 'view', 'balcony', 'terrace', 'garden', 'facade', 'project_generic'], description: 'Welches Motiv das Bild dieses Blocks zeigen soll (nur cover, unit, feature, columns). Die konkrete Bilddatei waehlt das System.' },
   kicker: str, title: str, tagline: str, forLine: str, headline: str,
   paragraphs: strArr, signoff: str, signName: str,
   number: str, nickname: str, specs: strArr,

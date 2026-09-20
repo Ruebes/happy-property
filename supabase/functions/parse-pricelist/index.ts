@@ -169,14 +169,28 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
     let raw = tu?.input?.units
     if (typeof raw === 'string') { try { raw = JSON.parse(raw) } catch { raw = [] } }
     const units = (Array.isArray(raw) ? raw : []) as Unit[]
-    if (!units.length) throw new Error('Keine Einheiten erkannt')
+    if (!units.length) {
+      // Nicht raten, nicht aus aehnlichen Projekten uebernehmen: als Datenproblem
+      // am Projekt festhalten (Finding price_list_unreadable im Deck/CRM).
+      if (body.project_id) {
+        const { data: pr } = await supabase.from('crm_projects').select('deck_assets').eq('id', body.project_id).maybeSingle()
+        const da = ((pr as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+        await supabase.from('crm_projects').update({ deck_assets: { ...da, import_status: { ...((da.import_status ?? {}) as Record<string, unknown>), pricelist: 'unreadable', pricelist_at: new Date().toISOString(), pricelist_url: url } } }).eq('id', body.project_id)
+      }
+      throw new Error('Keine Einheiten erkannt')
+    }
+    if (body.project_id) {
+      const { data: pr } = await supabase.from('crm_projects').select('deck_assets').eq('id', body.project_id).maybeSingle()
+      const da = ((pr as { deck_assets?: Record<string, unknown> } | null)?.deck_assets ?? {}) as Record<string, unknown>
+      await supabase.from('crm_projects').update({ deck_assets: { ...da, import_status: { ...((da.import_status ?? {}) as Record<string, unknown>), pricelist: 'ok', pricelist_at: new Date().toISOString(), pricelist_units: units.length } } }).eq('id', body.project_id)
+    }
 
     let created = 0, deleted = 0, updated = 0
     if (body.create && body.project_id) {
       // Namens-Normalisierung: Penthouse-Suffix „(P)" und Sonderzeichen ignorieren,
       // sonst matcht „C-301 (P)" (Liste) nicht auf „C-301" (Bestand) → Duplikate.
       const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s*\(p\)\s*$/, '').replace(/[^a-z0-9]/g, '')
-      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, plot_sqm, status, parent_unit_id').eq('project_id', body.project_id)
+      const { data: existing } = await supabase.from('crm_project_units').select('id, unit_number, source, price_net, price_net_furnished, price_gross, plot_sqm, status, parent_unit_id, price_override, status_override, developer_price_net, developer_price_net_furnished').eq('project_id', body.project_id)
       const have = new Set((existing ?? []).map(r => norm((r as { unit_number: string }).unit_number)))
       // An eigene Deals gebundene Units NIE anfassen
       const { data: dealUnits } = await supabase.from('deals').select('unit_id').not('unit_id', 'is', null)
@@ -200,7 +214,7 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
       const listByNum = new Map<string, Unit>()
       for (const u of units) if (u.unit_number) { const k = norm(u.unit_number); avail.set(k, (u.availability as string) || 'available'); listByNum.set(k, u) }
 
-      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; plot_sqm: number | null; status: string | null; parent_unit_id: string | null }
+      type ExRow = { id: string; unit_number: string; source: string | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; plot_sqm: number | null; status: string | null; parent_unit_id: string | null; price_override?: boolean; status_override?: boolean; developer_price_net?: number | null; developer_price_net_furnished?: number | null }
       // Doppelapartments: eine Einheit mit manuell gepflegten Unter-Einheiten (z.B.
       // Mamba A2 → A2a/A2b) NIE löschen — der Fremdschlüssel würde die Unter-Einheiten
       // mitnehmen und die Portal-Wohnungen des Eigentümers wären weg.
@@ -225,7 +239,9 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
 
       // (1) LÖSCHEN: freie Drive-Units, die jetzt sold/reserved oder (bei vollständiger Liste)
       // ganz verschwunden sind. Manuelle + Deal-Units bleiben unangetastet.
-      const toDelete = driveFree.filter(isUnavail).map(r => r.id)
+      // Manuell gepflegter Status (status_override) gewinnt: der Import nimmt
+      // solche Wohnungen weder raus noch reaktiviert er sie (Sven 20.9.26).
+      const toDelete = driveFree.filter(r => isUnavail(r) && !r.status_override).map(r => r.id)
       if (toDelete.length) {
         const { error } = await supabase.from('crm_project_units').delete().in('id', toDelete)
         if (!error) deleted = toDelete.length
@@ -245,17 +261,29 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
         // Zweite Preisspalte des Bautraegers (inkl. Moebel/Geraete) - der Deck-Wizard
         // nimmt sie, wenn Sven "mit Moebeln" waehlt (ARCA 101: 400.800 / 417.800).
         const newFurn = num(lu.price_net_furnished)
-        const patch: Record<string, number | string> = {}
-        if (newNet != null && Number(newNet) !== Number(r.price_net)) patch.price_net = newNet
-        if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
-        if (newFurn != null && Number(newFurn) !== Number(r.price_net_furnished)) patch.price_net_furnished = newFurn
+        const patch: Record<string, number | string | null> = {}
+        // Bauträgerpreis IMMER mitschreiben (Nachvollziehbarkeit); der wirksame
+        // Preis nur, wenn Sven ihn nicht bewusst überschrieben hat (price_override).
+        const devChanged = (newNet != null && Number(newNet) !== Number(r.developer_price_net ?? NaN)) || (newFurn != null && Number(newFurn) !== Number(r.developer_price_net_furnished ?? NaN))
+        if (devChanged) {
+          if (newNet != null) patch.developer_price_net = newNet
+          if (newFurn != null) patch.developer_price_net_furnished = newFurn
+          patch.developer_price_at = new Date().toISOString()
+        }
+        if (!r.price_override) {
+          if (newNet != null && Number(newNet) !== Number(r.price_net)) { patch.price_net = newNet; if (!devChanged) { patch.developer_price_net = newNet; patch.developer_price_at = new Date().toISOString() } }
+          if (newGross != null && Number(newGross) !== Number(r.price_gross)) patch.price_gross = newGross
+          if (newFurn != null && Number(newFurn) !== Number(r.price_net_furnished)) patch.price_net_furnished = newFurn
+        } else if (newNet != null && Number(newNet) !== Number(r.price_net)) {
+          console.log(`[parse-pricelist] ${r.unit_number}: Bauträgerpreis ${newNet} ≠ CRM ${r.price_net} (manuell überschrieben, nicht angefasst)`)
+        }
         // Grundstuecksgroesse bei Villen nachtragen (Sven 26.8.).
         const newPlot = num(lu.plot_sqm)
         if (newPlot != null && Number(newPlot) !== Number(r.plot_sqm)) patch.plot_sqm = newPlot
         // REAKTIVIERUNG: Der Bauträger führt die Unit wieder mit Preis (available),
         // bei uns steht sie noch sold/reserved (z.B. freigegebene Reservierung oder
         // wieder eröffneter Block) → zurück in den anbietbaren Zustand.
-        if (r.status === 'sold' || r.status === 'reserved') patch.status = 'proposal'
+        if ((r.status === 'sold' || r.status === 'reserved') && !r.status_override) { patch.status = 'proposal'; patch.developer_status = 'available' }
         if (Object.keys(patch).length) {
           const { error } = await supabase.from('crm_project_units').update(patch).eq('id', r.id)
           if (!error) updated++
@@ -293,6 +321,10 @@ NIEMALS den „starting from"/„ab €…"-Richtpreis aus der Abschnitts-Übers
           plot_sqm:    num(u.plot_sqm),
           price_net:   num(u.price_net),
           price_net_furnished: num(u.price_net_furnished),
+          developer_price_net: num(u.price_net),
+          developer_price_net_furnished: num(u.price_net_furnished),
+          developer_price_at: new Date().toISOString(),
+          developer_status: (u.availability as string) || 'available',
           price_gross: num(u.price_gross),
           vat_rate:    num(u.vat_rate) ?? 19,
           status:      'proposal',   // nur verfügbare Units → im Wizard vorschlagbar

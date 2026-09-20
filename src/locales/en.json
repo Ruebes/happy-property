@@ -2406,7 +2406,10 @@
         "videoToYoutube": "to YouTube",
         "videoUploading": "uploading…",
         "videoUploadConfirm": "Upload the video \"{{name}}\" to the YouTube channel as unlisted? It will only be reachable through the link in the deck.",
-        "videoUploadError": "Upload failed"
+        "videoUploadError": "Upload failed",
+        "deckReadyRed": "Generic deck created - with findings, please review.",
+        "imagesLeft": "more images",
+        "imagesStillLeft": "still pending, please load again"
       },
       "saveTimeout": "Timeout – connection too slow. Please try again.",
       "unknownError": "Unknown error",
@@ -2482,7 +2485,20 @@
         "folder": "folder",
         "catalogStarted": "{{n}} developer sheet(s) are being analysed in the background (1-3 min). Reload here afterwards.",
         "sectionTitle": "Floor plans & deck images",
-        "sectionDesc": "Per-unit plans from developer sheets, HP floor plans and images pending review. Approvals apply to new decks."
+        "sectionDesc": "Per-unit plans from developer sheets, HP floor plans and images pending review. Approvals apply to new decks.",
+        "setUnitPrompt": "Unit number this asset belongs to (empty = no specific unit):",
+        "unitUnknown": "Unit {{n}} does not exist in this project.",
+        "noUnits": "No units in the CRM - decks for this project have no property data (project_data_missing).",
+        "pricelistUnreadable": "Price list unreadable (price_list_unreadable) - prices/availability are not updated.",
+        "imagesPartial": "Image import incomplete ({{n}} images pending) - run \"Load from Drive\" again.",
+        "mirrorOf": "mirrored from",
+        "mirrorPrompt": "This plan is the mirrored version of which unit? (empty = none)",
+        "mirrorTitle": "Mark as mirrored version of another unit",
+        "category": "Category",
+        "propertyType": "Unit type",
+        "setUnit": "Assign unit",
+        "markGenericTitle": "Applies to all unit types (complex, surroundings) and is approved",
+        "markGeneric": "Generic"
       }
     },
     "unit": {

@@ -32,6 +32,10 @@ export interface CatalogAsset {
   unitKey: string | null
   status: 'unclassified' | 'classified' | 'approved' | 'review' | 'rejected'
   confidence: number | null
+  source?: string
+  fileName?: string | null
+  width?: number | null
+  height?: number | null
 }
 
 export type Block = Record<string, unknown>
@@ -46,7 +50,7 @@ type Sb = { from: (t: string) => any }
 /** Katalogzeilen eines Projekts (nur zeigbare Renders, nicht rejected). */
 export async function loadCatalogAssets(sb: Sb, projectId: string): Promise<CatalogAsset[]> {
   const { data, error } = await sb.from('deck_assets_catalog')
-    .select('id, storage_url, primary_category, label, property_type, unit_key, status, confidence, source_type')
+    .select('id, storage_url, primary_category, label, property_type, unit_key, status, confidence, source_type, source, source_file_name, width, height')
     .eq('project_id', projectId).eq('active', true).neq('status', 'rejected')
     .in('source_type', ['developer_render', 'ai_generated', 'other'])
   if (error) throw new Error(`Katalog: ${error.message}`)
@@ -58,6 +62,8 @@ export async function loadCatalogAssets(sb: Sb, projectId: string): Promise<Cata
       unitKey: (r.unit_key as string | null) ?? null,
       status: (r.status as CatalogAsset['status']) ?? 'unclassified',
       confidence: r.confidence == null ? null : Number(r.confidence),
+      source: (r.source as string) ?? 'drive', fileName: (r.source_file_name as string | null) ?? null,
+      width: r.width == null ? null : Number(r.width), height: r.height == null ? null : Number(r.height),
     }))
 }
 
@@ -89,12 +95,24 @@ const BILD_REGELN: Array<{ re: RegExp; cats: RoomCat[] }> = [
   { re: /architekt|fassade|geb[äa]ude|bauweise|konstruktion|lage|standort|umgebung|nachbarschaft/i, cats: ['fassade', 'aussenbereich', 'aussicht'] },
 ]
 
+/** Englische/alternative Absichten der KI auf die Katalog-Kategorien abbilden. */
+const INTENT_ALIAS: Record<string, RoomCat[]> = {
+  living: ['wohnzimmer', 'esszimmer'], bedroom: ['schlafzimmer'], bathroom: ['badezimmer'], kitchen: ['kueche', 'esszimmer'],
+  dining: ['esszimmer', 'wohnzimmer', 'kueche'], exterior: ['fassade', 'aussenbereich', 'aussicht'], pool: ['pool', 'aussenbereich'],
+  view: ['aussicht', 'aussenbereich'], balcony: ['aussenbereich', 'aussicht'], terrace: ['aussenbereich', 'aussicht'], garden: ['aussenbereich'],
+  facade: ['fassade', 'aussenbereich'], lobby: ['lobby', 'fassade'], gym: ['gym', 'lobby'], project_generic: ['fassade', 'aussenbereich', 'pool', 'aussicht', 'lobby'],
+}
+export function intentToCats(intent: unknown): RoomCat[] | null {
+  const k = String(intent ?? '').toLowerCase().trim()
+  if (!k) return null
+  if (isRoomCat(k)) { const regel = BILD_REGELN.find(r => r.cats[0] === k); return regel ? [k, ...regel.cats.filter(c => c !== k)] : [k] }
+  return INTENT_ALIAS[k] ?? null
+}
+
 /** Zweck eines Blocks: erst die Absicht der KI (imageIntent), sonst der Text. */
 export function blockPurpose(b: Block): RoomCat[] | null {
-  if (isRoomCat(b.imageIntent)) {
-    const regel = BILD_REGELN.find(r => r.cats[0] === b.imageIntent)
-    return regel ? [b.imageIntent, ...regel.cats.filter(c => c !== b.imageIntent)] : [b.imageIntent]
-  }
+  const viaIntent = intentToCats(b.imageIntent)
+  if (viaIntent) return viaIntent
   const t = String(b.type)
   if (t === 'cover') return ['fassade', 'aussenbereich', 'aussicht', 'pool']
   const txt = [b.headline, b.kicker, b.intro, b.text, b.tagline, b.title].filter(x => typeof x === 'string').join(' ')
@@ -130,7 +148,9 @@ export function selectImages(blocks: Block[], assetsIn: CatalogAsset[], ctx: Dec
     if (a.propertyType === 'unknown') return singleType
     return false
   }
-  const assets = assetsIn.filter(a => a.status !== 'rejected' && typOk(a))
+  // review-Assets nie automatisch - auch nicht in Bildstrecken (Sven 20.9.26):
+  // erst Freigabe im Pruefpanel.
+  const assets = assetsIn.filter(a => a.status !== 'rejected' && a.status !== 'review' && typOk(a))
   const wrongClass = assetsIn.filter(a => a.status !== 'rejected' && !typOk(a) && a.propertyType !== 'unknown')
   const excludedUnknown = assetsIn.filter(a => a.status !== 'rejected' && !typOk(a) && a.propertyType === 'unknown')
   const used = new Map<string, number>()
@@ -147,11 +167,13 @@ export function selectImages(blocks: Block[], assetsIn: CatalogAsset[], ctx: Dec
       && (forUnit || !a.unitKey || !unitKeys.has(a.unitKey)))
     if (!pool.length) return null
     // Unbenutzt vor benutzt, dann Motiv-Praeferenz, dann Naehe zur Wohnung.
+    const px = (a: CatalogAsset) => (a.width ?? 0) * (a.height ?? 0)
     pool.sort((x, y) =>
       usage(x.url) - usage(y.url)
       || cats.indexOf(x.category) - cats.indexOf(y.category)
       || rang(x, forUnit) - rang(y, forUnit)
-      || (y.confidence ?? 0) - (x.confidence ?? 0))
+      || (y.confidence ?? 0) - (x.confidence ?? 0)
+      || px(y) - px(x))
     return pool[0]
   }
 
@@ -205,7 +227,10 @@ export function selectImages(blocks: Block[], assetsIn: CatalogAsset[], ctx: Dec
     { cats: ['pool'],                               kicker: 'Highlight',  headline: 'Pool & Sundeck' },
     { cats: ['lobby', 'gym'],                       kicker: 'Anlage',     headline: 'Lobby & Gemeinschaft' },
   ]
-  const cap = opts.galleryCap ?? 8
+  // Kein kuenstlicher Deckel (Sven 20.9.26): so viele zulaessige Bilder wie es
+  // gibt, gruppiert nach Motiv. Nur eine Obergrenze gegen Bildstrecken, die
+  // niemand mehr scrollt.
+  const cap = opts.galleryCap ?? 24
   const galleryBlocks: Block[] = []
   const inGallery = new Set<string>()
   for (const g of GROUPS) {
@@ -219,7 +244,7 @@ export function selectImages(blocks: Block[], assetsIn: CatalogAsset[], ctx: Dec
   }
   // Rest: alles, was erlaubt ist und noch nirgends gezeigt wird (Sven: Assets
   // moeglichst breit nutzen, nicht kuenstlich auf wenige Bilder kuerzen).
-  const rest = assets.filter(a => !inGallery.has(a.url) && usage(a.url) === 0).slice(0, 12)
+  const rest = assets.filter(a => !inGallery.has(a.url) && usage(a.url) === 0).slice(0, cap)
   if (rest.length >= 2) {
     rest.forEach(a => { inGallery.add(a.url); take(a) })
     galleryBlocks.push({ type: 'gallery', kicker: EN ? 'Project' : 'Projekt', headline: EN ? 'More impressions' : 'Weitere Eindrücke', items: rest.map(a => ({ image: a.url, title: a.label || undefined })) })
@@ -255,11 +280,20 @@ export function selectImages(blocks: Block[], assetsIn: CatalogAsset[], ctx: Dec
     if (usage(a.url) > 0) byCat[a.category].used++
   }
   const duplicates = [...used.entries()].filter(([, n]) => n > 1).length
+  const duplicateUsage = [...used.values()].reduce((s, n) => s + Math.max(0, n - 1), 0)
+  const by = (key: (a: CatalogAsset) => string, list: CatalogAsset[]) => {
+    const o: Record<string, { usable: number; used: number }> = {}
+    for (const a of list) { const k = key(a) || '-'; o[k] = o[k] ?? { usable: 0, used: 0 }; o[k].usable++; if (usage(a.url) > 0) o[k].used++ }
+    return o
+  }
+  const unusedRelevant = assets.filter(a => usage(a.url) === 0).map(a => `${a.category}: ${a.label || a.fileName || a.url.slice(-30)}`).slice(0, 30)
   const coverage = {
     deck_type: deckTyp || null, single_type_project: singleType,
-    total: assetsIn.length, usable, used: usedN, ratio: usable ? Math.round(usedN / usable * 100) / 100 : null,
+    total: assetsIn.length, usable, used: usedN, unique_images: used.size, duplicate_usage: duplicateUsage,
+    ratio: usable ? Math.round(usedN / usable * 100) / 100 : null,
     excluded_wrong_type: wrongClass.length, excluded_unknown: excludedUnknown.length, review: assetsIn.filter(a => a.status === 'review').length,
-    by_type: byType, by_category: byCat, duplicates,
+    by_type: byType, by_category: byCat, by_unit_key: by(a => a.unitKey ?? '', assets), by_source: by(a => a.source ?? 'drive', assets), by_status: by(a => a.status, assetsIn.filter(a => a.status !== 'rejected')),
+    unused_relevant: unusedRelevant, duplicates,
   }
   if (usable && usedN / usable < 0.5) {
     findings.push({ key: 'bild_coverage_niedrig', severity: 'niedrig',

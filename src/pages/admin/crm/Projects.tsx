@@ -168,7 +168,17 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (error) throw new Error(error.message)
         const d = data as { error?: string; renders?: number; floorplans?: number; unitsMatched?: number; gallery?: number; found?: Record<string, boolean>; facts_chars?: number; background?: boolean; extracted?: number; uploaded?: number; im_deck?: number; zu_gross?: number; codec?: number }
         if (d?.error) throw new Error(d.error)
-        if (action === 'images')     summary.push(t('crm.project.deck.summaryImages', '{{renders}} Bilder, {{floorplans}} Grundrisse ({{unitsMatched}} Units zugeordnet)', { renders: d.renders ?? 0, floorplans: d.floorplans ?? 0, unitsMatched: d.unitsMatched ?? 0 }))
+        if (action === 'images') {
+          // Zeitbudget je Lauf: bleiben Bilder uebrig (deferred), sofort weiterladen
+          // statt den Import als "fertig" erscheinen zu lassen (Paramount 20.9.26).
+          let dd = d as { deferred?: number; renders?: number; floorplans?: number; unitsMatched?: number }
+          for (let k = 0; k < 4 && (dd.deferred ?? 0) > 0; k++) {
+            setIngestMsg({ ok: true, text: `⏳ ${label} (${dd.deferred} ${t('crm.project.deck.imagesLeft', 'weitere Bilder')})…` })
+            const { data: d2 } = await supabase.functions.invoke('prepare-project-assets', { body: { project_id: project.id, action: 'images', folder_id: folderId || undefined } })
+            dd = (d2 ?? {}) as typeof dd
+          }
+          summary.push(t('crm.project.deck.summaryImages', '{{renders}} Bilder, {{floorplans}} Grundrisse ({{unitsMatched}} Units zugeordnet)', { renders: dd.renders ?? d.renders ?? 0, floorplans: dd.floorplans ?? d.floorplans ?? 0, unitsMatched: dd.unitsMatched ?? d.unitsMatched ?? 0 }) + ((dd.deferred ?? 0) > 0 ? ` (${dd.deferred} ${t('crm.project.deck.imagesStillLeft', 'noch offen, bitte erneut laden')})` : ''))
+        }
         if (action === 'categorize') summary.push(t('crm.project.deck.summaryCategorized', '{{gallery}} Bilder einsortiert', { gallery: d.gallery ?? 0 }))
         if (action === 'videos')     summary.push(t('crm.project.deck.summaryVideos', '{{n}} Videos im Deck', { n: d.im_deck ?? 0 }) + ((d.zu_gross ?? 0) + (d.codec ?? 0) ? ` (${(d.zu_gross ?? 0) + (d.codec ?? 0)} ${t('crm.project.deck.videosBlocked', 'nicht nutzbar')})` : ''))
         if (action === 'docs')       summary.push(t('crm.project.deck.summaryDocs', 'Dokumente: {{docs}}', { docs: Object.entries(d.found ?? {}).filter(([, v]) => v).map(([k]) => k).join(', ') || t('crm.project.deck.none', 'keine') }))
@@ -242,16 +252,30 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         body: { generic: true, background: true, project_id: project.id, facts: da.facts, images, month_label: month },
       })
       if (error) throw new Error(error.message)
-      const d = data as { token?: string; background?: boolean; error?: string }
+      const d = data as { token?: string; background?: boolean; error?: string; job_id?: string }
       if (d?.error) throw new Error(d.error)
-      // Hintergrund-Generierung (~80s): auf den neuen deck_token am Projekt pollen.
+      // Hintergrund-Generierung: auf den JOB pollen (Status + Token), nicht auf einen
+      // neuen deck_token - der bleibt beim generischen Deck absichtlich gleich.
       let token = d.token ?? null
-      if (!token && d.background) {
+      if (!token && d.background && d.job_id) {
+        for (let i = 0; i < 60 && !token; i++) {
+          await new Promise(r => setTimeout(r, 5000))
+          const { data: job } = await supabase.from('deck_generation_jobs').select('status, deck_token, error, quality_status').eq('id', d.job_id).maybeSingle()
+          const j = job as { status: string; deck_token: string | null; error: string | null; quality_status: string | null } | null
+          if (!j) continue
+          if (j.status === 'failed') throw new Error(j.error ?? t('crm.project.deck.genericError', 'Fehler'))
+          if ((j.status === 'ready' || j.status === 'review_required') && j.deck_token) {
+            token = j.deck_token
+            if (j.quality_status === 'red') setDeckMsg({ ok: true, text: t('crm.project.deck.deckReadyRed', 'Allgemeines Deck erstellt - mit Befunden, bitte prüfen.'), token })
+          }
+        }
+      } else if (!token && d.background) {
+        // Alte Function ohne job_id: Fallback auf deck_generated_at
         for (let i = 0; i < 30 && !token; i++) {
           await new Promise(r => setTimeout(r, 5000))
-          const { data: pr } = await supabase.from('crm_projects').select('deck_token').eq('id', project.id).maybeSingle()
-          const nt = (pr?.deck_token as string | null) ?? null
-          if (nt && nt !== prevToken) token = nt
+          const { data: pr } = await supabase.from('crm_projects').select('deck_token, deck_generated_at').eq('id', project.id).maybeSingle()
+          const gen = (pr?.deck_generated_at as string | null) ?? null
+          if (gen && Date.now() - Date.parse(gen) < 6 * 60 * 1000) token = (pr?.deck_token as string | null) ?? prevToken
         }
       }
       if (!token) { setDeckMsg({ ok: false, text: t('crm.project.deck.deckTimeout', 'Deck dauert ungewöhnlich lange — bitte gleich nochmal „Deck öffnen" prüfen.') }); return }

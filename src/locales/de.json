@@ -2406,7 +2406,10 @@
         "videoToYoutube": "zu YouTube",
         "videoUploading": "lädt…",
         "videoUploadConfirm": "Video „{{name}}\" nicht gelistet auf den YouTube-Kanal laden? Es ist danach nur über den Link im Deck erreichbar.",
-        "videoUploadError": "Upload fehlgeschlagen"
+        "videoUploadError": "Upload fehlgeschlagen",
+        "deckReadyRed": "Allgemeines Deck erstellt - mit Befunden, bitte prüfen.",
+        "imagesLeft": "weitere Bilder",
+        "imagesStillLeft": "noch offen, bitte erneut laden"
       },
       "saveTimeout": "Timeout – Verbindung zu langsam. Bitte erneut versuchen.",
       "unknownError": "Unbekannter Fehler",
@@ -2482,7 +2485,20 @@
         "folder": "Ordner",
         "catalogStarted": "{{n}} Bauträgerblatt/-blätter werden im Hintergrund ausgewertet (1-3 Min). Danach hier neu laden.",
         "sectionTitle": "Grundrisse & Deck-Bilder",
-        "sectionDesc": "Pläne je Wohnung aus den Bauträgerblättern, HP-Grundrisse und Bilder zur Prüfung. Freigaben wirken auf neue Decks."
+        "sectionDesc": "Pläne je Wohnung aus den Bauträgerblättern, HP-Grundrisse und Bilder zur Prüfung. Freigaben wirken auf neue Decks.",
+        "setUnitPrompt": "Wohnungsnummer, zu der dieses Asset gehört (leer = keine bestimmte Wohnung):",
+        "unitUnknown": "Wohnung {{n}} gibt es im Projekt nicht.",
+        "noUnits": "Keine Wohnungen im CRM - Decks für dieses Projekt haben keine Objektdaten (project_data_missing).",
+        "pricelistUnreadable": "Preisliste nicht lesbar (price_list_unreadable) - Preise/Verfügbarkeit werden nicht aktualisiert.",
+        "imagesPartial": "Bildimport unvollständig ({{n}} Bilder warten) - „Aus Drive laden“ erneut ausführen.",
+        "mirrorOf": "gespiegelt von",
+        "mirrorPrompt": "Dieser Plan ist die gespiegelte Ausführung welcher Wohnung? (leer = keine)",
+        "mirrorTitle": "Als gespiegelte Ausführung einer anderen Wohnung markieren",
+        "category": "Motiv",
+        "propertyType": "Wohnungstyp",
+        "setUnit": "Wohnung zuordnen",
+        "markGenericTitle": "Gilt für alle Wohnungstypen (Anlage, Umgebung) und ist freigegeben",
+        "markGeneric": "Anlage"
       }
     },
     "unit": {

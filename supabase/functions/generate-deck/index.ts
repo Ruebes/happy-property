@@ -546,11 +546,22 @@ Deno.serve(async (req) => {
     // Gelernte Vorgaben (deck_ai_rules, kind='deck') → fließen in JEDES Deck ein (Auto-Grab +
     // Feinschliff). Global (project_id null) immer; projektspezifische nur für DIESES Projekt.
     const sbRules = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-    let rulesQ = sbRules.from('deck_ai_rules').select('rule').eq('active', true).eq('kind', 'deck')
+    let rulesQ = sbRules.from('deck_ai_rules').select('id, rule').eq('active', true).eq('kind', 'deck')
     rulesQ = body.project_id ? rulesQ.or(`project_id.is.null,project_id.eq.${body.project_id}`) : rulesQ.is('project_id', null)
     const { data: aiRules } = await rulesQ
     const learnedTxt = (aiRules ?? []).map((r: { rule: string }) => `- ${r.rule}`).join('\n')
     const learnedBlock = learnedTxt ? `GELERNTE VORGABEN (immer beachten):\n${learnedTxt}\n\n` : ''
+    // Regeln duerfen Stil vorgeben, keine Fakten: Preise, Raten, Reservierungen,
+    // Flaechen, Termine. Solche Regeln werden NICHT geloescht, sondern als Befund
+    // gemeldet (ai_rule_contains_fact) - Sven entscheidet.
+    const datenFindings: Finding[] = []
+    for (const r of (aiRules ?? []) as Array<{ id: string; rule: string }>) {
+      const m = r.rule.match(/(\d{1,3}(?:\.\d{3})+|\d+(?:[.,]\d+)?)\s*(€|eur\b|euro\b|%|m²|qm\b|monate?\b|k\b|tsd)/i)
+      if (!m) continue
+      datenFindings.push({ key: 'ai_rule_contains_fact', severity: 'mittel',
+        what: `Eine gelernte Deck-Regel enthält einen Fakt (${m[0].trim()}). Fakten gehören ins CRM, nicht in Prompt-Regeln.`,
+        evidence: `rule_id ${r.id}: ${r.rule.slice(0, 200)}`, fix: 'Regel im Deck-Chat/CRM deaktivieren oder den Wert ins Projekt übernehmen.' })
+    }
 
     // ── Deck-Kontext: ALLE harten Fakten deterministisch aus der Datenbank ────
     // Wohnungen, Preise, MwSt, Zahlungsplan, Grundrisse — gebaut in
@@ -574,6 +585,28 @@ Deno.serve(async (req) => {
       generic,
       units: unitInput,
     })
+    // ── Datenprobleme nicht erraten, sondern melden ──────────────────────────
+    if (!generic && ctx.units.length && ctx.units.every(u => !u.sizeSqm && !u.price)) {
+      datenFindings.push({ key: 'project_data_missing', severity: 'hoch',
+        what: 'Die angebotene(n) Wohnung(en) haben im CRM weder Fläche noch Preis - das Deck hätte keine belastbaren Objektdaten.',
+        evidence: ctx.units.map(u => u.unitNumber).join(', '), fix: 'Wohnungsdaten im Projekt pflegen oder Preisliste importieren.' })
+    }
+    if (!(ctx.projectUnitTypes ?? []).length) {
+      datenFindings.push({ key: 'project_data_missing', severity: generic ? 'mittel' : 'hoch',
+        what: 'Das Projekt hat keine Wohnungen im CRM.', fix: 'Preisliste importieren (Aus Drive laden) oder Wohnungen anlegen.' })
+    }
+    if (body.project_id) {
+      try {
+        const { data: prS } = await sbRules.from('crm_projects').select('deck_assets->import_status').eq('id', body.project_id).maybeSingle()
+        const st = (prS as { import_status?: Record<string, unknown> } | null)?.import_status ?? {}
+        if (st.pricelist === 'unreadable') datenFindings.push({ key: 'price_list_unreadable', severity: 'hoch',
+          what: 'Die Bauträger-Preisliste konnte nicht gelesen werden - Preise und Verfügbarkeit im CRM sind möglicherweise veraltet.',
+          evidence: String(st.pricelist_url ?? ''), fix: 'Preisliste prüfen (Format) oder Wohnungen von Hand pflegen.' })
+        if (st.images === 'partial') datenFindings.push({ key: 'image_import_partial', severity: 'niedrig',
+          what: `Der Bildimport ist unvollständig (${st.images_deferred ?? '?'} Bilder warten) - "Aus Drive laden" erneut ausführen.` })
+      } catch { /* optional */ }
+    }
+
     // ── Bildbestand aus dem Katalog (deck_assets_catalog) ────────────────────
     // Fallback: die Galerie aus deck_assets, wenn der Katalog fuer das Projekt
     // noch leer ist. Die Auswahl selbst (Typ -> Wohnung -> Motiv) macht
@@ -938,7 +971,7 @@ Deno.serve(async (req) => {
     // Es REPARIERT nichts still — was hier auffällt, steht als Befund im Bericht
     // und wird im CRM angezeigt. Ein RED-Deck bleibt erreichbar und versendbar.
     const gate = runDeckGate(blocks, ctx)
-    const findings: Finding[] = [...gate.findings, ...auswahlFindings, ...auditFindings]
+    const findings: Finding[] = [...gate.findings, ...datenFindings, ...auswahlFindings, ...auditFindings]
 
     // Zweite, semantische Prüfung: deckt der Faktenbestand die Behauptungen des
     // Decks? Sie kostet einen weiteren Claude-Aufruf. Synchron aufgerufen sprengt

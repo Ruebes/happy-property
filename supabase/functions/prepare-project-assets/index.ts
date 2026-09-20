@@ -439,6 +439,7 @@ type DeckAssets = {
     codecs?: string[]; url?: string; youtube_url?: string; reason?: string; score?: number
   }>
   updated_at?: string
+  import_status?: Record<string, unknown>
 }
 async function loadAssets(supabase: ReturnType<typeof createClient>, projectId: string): Promise<{ folderId: string | null; assets: DeckAssets; project: Record<string, unknown> }> {
   const { data } = await supabase.from('crm_projects')
@@ -458,7 +459,7 @@ async function syncCatalog(supabase: ReturnType<typeof createClient>, projectId:
     for (const g of assets.gallery ?? []) {
       const patch: Record<string, unknown> = {}
       if (g.confidence) patch.confidence = g.confidence === 'high' ? 0.9 : g.confidence === 'medium' ? 0.6 : 0.3
-      if (g.status === 'review') patch.status = 'review'
+      if (g.status === 'review') { patch.status = 'review'; patch.review_reason = g.reviewReason ?? 'zur Prüfung' }
       const h = hintByUrl?.get(g.url)
       if (h) patch.folder_hint = h
       if (!Object.keys(patch).length) continue
@@ -586,7 +587,7 @@ const VISION_TOOL = {
   input_schema: { type: 'object', properties: { items: { type: 'array', items: { type: 'object', properties: { index: { type: 'number' }, category: { type: 'string', enum: CATS }, label: { type: 'string' }, unit_type: { type: 'string', enum: UNIT_TYPES, description: 'Welcher Wohnungstyp ist zu sehen: villa, townhouse (Reihen-/Stadthaus mit eigenem Eingang/Garten), apartment (Wohnung in einem Mehrfamilienblock), anlage (Gemeinschaftsanlage wie Pool, Gym, Lobby, Gesamtansicht), unklar' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] } }, required: ['index', 'category'] } } }, required: ['items'] },
 }
 let lastVisionError = ''
-type CatImage = { url: string; category: string; label: string; unitType?: string; confidence?: string; status?: string }
+type CatImage = { url: string; category: string; label: string; unitType?: string; confidence?: string; status?: string; reviewReason?: string }
 async function categorizeImages(urls: string[]): Promise<CatImage[]> {
   lastVisionError = ''
   if (!ANTHROPIC_API_KEY) { lastVisionError = 'ANTHROPIC_API_KEY fehlt'; return urls.map(u => ({ url: u, category: 'sonstiges', label: '' })) }
@@ -1434,13 +1435,14 @@ Deno.serve(async (req) => {
             // Klassifizierung ist keine Freigabe: unsicher = review (nie automatisch
             // auf cover/unit), Ordner und Vision widersprechen sich = review + unklar.
             c.status = c.confidence === 'low' ? 'review' : 'classified'
+            if (c.confidence === 'low') c.reviewReason = 'Vision unsicher (confidence low)'
             const h = hintByUrl.get(c.url)
             if (!h || (h !== 'anlage' && c.unitType === 'anlage')) continue
             const vis = String(c.unitType ?? '')
             const widerspruch = ['villa', 'townhouse', 'apartment'].includes(vis) && ['villa', 'townhouse', 'apartment'].includes(h) && vis !== h
             if (widerspruch && c.confidence === 'high') {
               // Ordner sagt Block A (Apartment), Vision ist sich sicher: Villa → Sven entscheidet.
-              c.status = 'review'; c.unitType = 'unklar'
+              c.status = 'review'; c.unitType = 'unklar'; c.reviewReason = `Ordner sagt ${h}, Vision sieht ${vis}`
               continue
             }
             c.unitType = h
@@ -1494,7 +1496,10 @@ Deno.serve(async (req) => {
       // genau dort statt in der Bildmitte. Nur neu rechnen, wenn Karte neu/ungeprüft.
       let mapMarker = assets.mapMarker ?? null
       if (map && (map !== assets.map || !mapMarker)) { const mm = await detectMapMarker(map); if (mm) mapMarker = mm }
-      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker, render_sources: { ...known, ...renderSources } })
+      // Import-Status: partial = es warten noch Bilder (Zeitbudget), der naechste Lauf
+      // (Klick oder nightly) macht weiter; nichts wird doppelt geladen (render_sources).
+      await saveAssets(supabase, project_id, { renders: vetted, gallery, floorplans, map, mapUrl, mapMarker, render_sources: { ...known, ...renderSources },
+        import_status: { ...((assets as { import_status?: Record<string, unknown> }).import_status ?? {}), images: deferred > 0 ? 'partial' : 'complete', images_deferred: deferred, images_at: new Date().toISOString() } })
       await syncCatalog(supabase, project_id, hintByUrl)
       // Titelbild + 2 weitere fürs Projekt-Screen (crm_projects.images) — nur GEPRÜFTE Bilder
       const curImgs = Array.isArray(project.images) ? (project.images as string[]).filter(u => typeof u === 'string' && u.startsWith('http')) : []
