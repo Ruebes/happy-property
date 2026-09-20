@@ -89,6 +89,7 @@ Deno.serve(async (req: Request) => {
       from_name?:       string           // Anzeigename des Absenders (Adresse bleibt smtpUser), z.B. „Lotte · Happy Property"
       lang?:            string           // Empfängersprache (de|en); fehlt sie, wird sie am Empfänger aufgelöst
       already_translated?: boolean       // true = Aufrufer hat selbst übersetzt (keine zweite Runde durch die KI)
+      no_footer?:       boolean          // true = KEIN Happy-Property-USP-Kasten/Social-Footer (fremde Marke, z.B. Weblift-Meldungen)
       // Direkter Anhang (z.B. generierte Rechnung) — Base64-kodiert, ohne Storage-Umweg.
       attachment?:      { filename: string; content_base64: string; content_type?: string } | null
       // Mehrere frei angehängte Dateien (z.B. aus dem Kunden-Mail-Composer).
@@ -212,7 +213,9 @@ Deno.serve(async (req: Request) => {
 
     // „Folge uns"-Social-Footer an ALLE Mails (die nicht schon Social-Links haben,
     // z.B. Deck-/Newsletter-Mails) — zentral, deckt alle send-email-Aufrufer ab.
-    html = withSocialFooter(html, zielSprache)
+    // Ausnahme no_footer: Mails einer anderen Marke (Weblift) tragen nie
+    // Happy-Property-Branding (Sven 20.9.26: zwei völlig getrennte Dinge).
+    if (!body.no_footer) html = withSocialFooter(html, zielSprache)
 
     // Mail-Öffnungs-Pixel (1x1) ans Ende des HTML hängen — meldet beim Öffnen an
     // track-engagement (Engagement-Tracking fürs CRM-Dashboard).
