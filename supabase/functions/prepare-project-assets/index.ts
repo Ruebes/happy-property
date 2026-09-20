@@ -11,6 +11,7 @@
 // Body: { project_id, action: 'images'|'categorize'|'docs'|'facts', force? }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { geocodeProject } from '../_shared/geocodeProject.ts'
+import { applyFactOverrides } from '../_shared/deckFacts.ts'
 // XLSX wird NUR im Spec-Zweig der docs-Aktion dynamisch geladen (memory-schwere
 // Library) — sonst belastet sie jede Invocation (auch categorize/brochure) und
 // trieb docs ins „Memory limit exceeded".
@@ -429,6 +430,9 @@ type DeckAssets = {
   doc_urls?: Record<string, string>
   spec_text?: string
   facts?: string
+  facts_raw?: string                 // unveraenderter Import (Historie)
+  fact_overrides?: Array<{ find: string; replace: string; reason?: string; at?: string; by?: string }>
+  facts_overrides_applied?: number
   // Bewegtbild aus dem Drive-Ordner, inklusive der Dateien, die NICHT ins Deck
   // koennen (Codec/Groesse). Der Grund steht dabei, damit nichts still scheitert.
   videos?: Array<{
@@ -1647,7 +1651,11 @@ Deno.serve(async (req) => {
         const data = await res.json() as { facts?: string }
         if (data.facts) {
           const header = `=== PROJEKT ${project.name ?? ''} (${project.location ?? 'Paphos'}) ===\nBauträger: ${project.developer ?? ''}.`
-          await saveAssets(supabase, project_id, { facts: `${header}\n\n${data.facts}`.trim() })
+          const raw = `${header}\n\n${data.facts}`.trim()
+          // Dauerhafte Fakt-Korrekturen (deck_assets.fact_overrides) auch nach Neuimport;
+          // der Rohtext bleibt als facts_raw erhalten.
+          const fo = applyFactOverrides(raw, assets.fact_overrides)
+          await saveAssets(supabase, project_id, { facts: fo.text, facts_raw: raw, facts_overrides_applied: fo.applied })
         }
       }
       // Claude liest die Broschüre (~60s). Im Browser-Fall im HINTERGRUND laufen lassen

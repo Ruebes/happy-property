@@ -20,6 +20,7 @@ import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, transla
 import { assetsFromGallery, loadCatalogAssets, selectImages, type CatalogAsset } from '../_shared/deckAssets.ts'
 import type { GalleryImage } from '../_shared/deckGate.ts'
 import { geocodeProject, mapQueryFallback } from '../_shared/geocodeProject.ts'
+import { applyFactOverrides, paymentScheduleFacts } from '../_shared/deckFacts.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -597,8 +598,12 @@ Deno.serve(async (req) => {
     }
     if (body.project_id) {
       try {
-        const { data: prS } = await sbRules.from('crm_projects').select('deck_assets->import_status').eq('id', body.project_id).maybeSingle()
+        const { data: prS } = await sbRules.from('crm_projects').select('deck_assets->import_status, deck_assets->fact_overrides').eq('id', body.project_id).maybeSingle()
         const st = (prS as { import_status?: Record<string, unknown> } | null)?.import_status ?? {}
+        // Fakt-Korrekturen (deck_assets.fact_overrides) auf den mitgeschickten Faktentext:
+        // der Wizard schickt deck_assets.facts, das kann ein alter Import sein.
+        const fo = applyFactOverrides(body.facts, (prS as { fact_overrides?: unknown } | null)?.fact_overrides)
+        if (fo.applied) { body.facts = fo.text; console.log(`[generate-deck] ${fo.applied} Fakt-Korrektur(en) angewendet`) }
         if (st.pricelist === 'unreadable') datenFindings.push({ key: 'price_list_unreadable', severity: 'hoch',
           what: 'Die Bauträger-Preisliste konnte nicht gelesen werden - Preise und Verfügbarkeit im CRM sind möglicherweise veraltet.',
           evidence: String(st.pricelist_url ?? ''), fix: 'Preisliste prüfen (Format) oder Wohnungen von Hand pflegen.' })
@@ -708,6 +713,9 @@ Deno.serve(async (req) => {
         extraFacts += `\n\n=== MARINA-NAHLAGE (HART) ===\nDas Projekt liegt ca. ${fmtKm(marinaKm)} von der geplanten neuen Paphos-Marina (Potima Bay, Kissonerga) entfernt - das ist Nahlage. Nenne die Marina-Nähe als eigenes Kauf-Argument in den Key Facts (benefits) und im Anschreiben. Schreibe dazu KEINE eigenen Zahlen (keine Millionen, keine Prozente, keine Liegeplätze) - die stehen in der Marina-Sektion, die das System einsetzt.`
       }
     }
+    // Strukturierter CRM-Zahlungsplan als harter Faktblock - Prosa aus der Broschuere
+    // (z.B. veraltete Fristen) darf ihn nicht ueberstimmen.
+    extraFacts += paymentScheduleFacts(ctx.paymentSchedule)
     const factsAug = body.facts.trim() + extraFacts + bildFakten + langHinweis
 
     const userMsg = learnedBlock + (generic ? [
