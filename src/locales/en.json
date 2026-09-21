@@ -2986,7 +2986,13 @@
       "guestMail": "Email (optional)",
       "guestPhone": "Mobile (optional)",
       "guestSave": "Add to appointment",
-      "guestHint": "Without contact details the name only appears in the appointment and calendar - no invitation goes out."
+      "guestHint": "Without contact details the name only appears in the appointment and calendar - no invitation goes out.",
+      "cyprusTimeParen": "(Cyprus time)",
+      "tzLabel": "Time is in",
+      "tzBerlin": "🇩🇪 German time (CET)",
+      "tzNicosia": "🇨🇾 Cyprus time",
+      "tzLocalHint": "The customer sees {{von}}–{{bis}}. In your calendar: {{local}}.",
+      "tzSameHint": "The customer sees the time exactly as entered."
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",

@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/auth'
 import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent } from '../../lib/googleCalendar'
 import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
 import { DECK_LOGO, DECK_PHOTO } from '../../lib/deckTypes'
+import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BERLIN, APPT_TZ_NICOSIA, type ApptTz } from '../../lib/tz'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -121,6 +122,7 @@ interface InviteParams {
   firstName: string; isEdit: boolean; title: string
   dateStr: string; von: string; bis: string
   apptType: ApptType
+  tz?: ApptTz
   zoomLink?: string; zoomPassword?: string
   location?: string; locationUrl?: string; phone?: string
   gcalHref: string
@@ -143,7 +145,9 @@ function buildInviteHtml(pr: InviteParams): string {
     : (de ? `ich freue mich auf unser Treffen! Hier die Details:` : `I'm looking forward to our meeting. Here are the details:`)
   // Remote-Termine (Zoom/Telefon/WhatsApp): Uhrzeit in KUNDENZEIT (Deutschland) — der
   // Kunde sitzt i.d.R. in DE. Vor Ort = Ortszeit (Zypern, das Venue), ohne Zusatz.
-  const tzNote = pr.apptType === 'inperson' ? '' : (de ? ' (deutsche Zeit)' : ' (German time)')
+  const tzNote = pr.apptType === 'inperson' && (pr.tz ?? APPT_TZ_NICOSIA) === APPT_TZ_NICOSIA
+    ? ''
+    : (pr.tz === APPT_TZ_NICOSIA ? (de ? ' (Zypern-Zeit)' : ' (Cyprus time)') : (de ? ' (deutsche Zeit)' : ' (German time)'))
   const uhr = de ? ' Uhr' : ''
   const where = pr.apptType === 'inperson'
     ? (pr.location
@@ -240,8 +244,14 @@ export default function AppointmentModal({
 
   // ── Step 1: Basis (bei Bearbeitung aus dem Termin vorbefüllt) ──
   const [title, setTitle]       = useState(appointment?.title ?? '')
+  // Termin-Zone: In dieser Zone werden Von/Bis eingegeben UND dem Kunden angezeigt.
+  // Vorgabe wie bisher (vor Ort = Zypern, sonst Deutschland); Sven kann je Termin
+  // umschalten (z.B. „10:00 MEZ" → Kunde sieht 10:00 MEZ, Kalender zeigt 11:00 Zypern).
+  const [tz, setTz]             = useState<ApptTz>(() => apptTzOf(appointment))
+  const [tzTouched, setTzTouched] = useState(!!appointment?.timezone)
   const [date, setDate]         = useState<string>(() => {
-    const src = appointment ? new Date(appointment.start_time) : initialDate
+    if (appointment) return isoToZoned(appointment.start_time, apptTzOf(appointment)).date
+    const src = initialDate
     if (src) {
       const y = src.getFullYear()
       const m = String(src.getMonth() + 1).padStart(2, '0')
@@ -250,14 +260,23 @@ export default function AppointmentModal({
     }
     return ''
   })
-  const toTime = (iso?: string) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const [von, setVon]           = useState(appointment ? isoToZoned(appointment.start_time, apptTzOf(appointment)).time : '10:00')
+  const [bis, setBis]           = useState(appointment ? isoToZoned(appointment.end_time, apptTzOf(appointment)).time : '11:00')
+  const [apptType, setApptTypeRaw] = useState<ApptType>(appointment?.type ?? 'zoom')
+  // Typwechsel zieht die Zone nach, solange Sven sie nicht selbst gesetzt hat.
+  const setApptType = (tp: ApptType) => {
+    setApptTypeRaw(tp)
+    if (!tzTouched) setTz(defaultApptTz(tp))
   }
-  const [von, setVon]           = useState(appointment ? toTime(appointment.start_time) : '10:00')
-  const [bis, setBis]           = useState(appointment ? toTime(appointment.end_time) : '11:00')
-  const [apptType, setApptType] = useState<ApptType>(appointment?.type ?? 'zoom')
+  // Zonenwechsel: Uhrzeit bleibt wie eingegeben (10:00 bleibt 10:00), nur die Bedeutung
+  // ändert sich — genau das will Sven. Beim Bearbeiten eines bestehenden Termins ebenso.
+  const chooseTz = (z: ApptTz) => { setTz(z); setTzTouched(true) }
+  // Browser-Zone (Svens Kalenderanzeige) — nur für den Hinweis „bei dir: …".
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || APPT_TZ_NICOSIA
+  const localHint = (() => {
+    if (!date || !von || !bis || localTz === tz) return ''
+    try { return `${fmtTimeIn(zonedToIso(date, von, tz), localTz)}–${fmtTimeIn(zonedToIso(date, bis, tz), localTz)}` } catch { return '' }
+  })()
   const [description, setDescription] = useState(appointment?.description ?? '')
 
   // ── Step 2: Details ───────────────────────────────────────────
@@ -491,7 +510,7 @@ export default function AppointmentModal({
     setZoomGenerating(true)
     setZoomError('')
     try {
-      const start_time = new Date(`${date}T${von}`).toISOString()
+      const start_time = zonedToIso(date, von, tz)
       const [vonH, vonM] = von.split(':').map(Number)
       const [bisH, bisM] = bis.split(':').map(Number)
       const duration_minutes = Math.max(30, (bisH * 60 + bisM) - (vonH * 60 + vonM))
@@ -520,9 +539,10 @@ export default function AppointmentModal({
     setSaveError('')
     const warnings: string[] = []
     try {
-      const startD = new Date(`${date}T${von}`)
-      const endD   = new Date(`${date}T${bis}`)
-      if (endD < startD) endD.setDate(endD.getDate() + 1)   // Termin über Mitternacht
+      // Eingabe in der gewählten Termin-Zone → UTC (DST-sicher, nicht Browser-Zone).
+      const startD = new Date(zonedToIso(date, von, tz))
+      const endD   = new Date(zonedToIso(date, bis, tz))
+      if (endD < startD) endD.setTime(endD.getTime() + 24 * 60 * 60 * 1000)   // Termin über Mitternacht
       const start_time = startD.toISOString()
       const end_time   = endD.toISOString()
 
@@ -563,6 +583,7 @@ export default function AppointmentModal({
         title,
         description:     description || null,
         type:            apptType,
+        timezone:        tz,
         start_time,
         end_time,
         lead_id:         selectedLeadId || null,
@@ -685,7 +706,7 @@ export default function AppointmentModal({
       // Kunden-Anzeige der Uhrzeit: Remote-Termine in KUNDENZEIT (Deutschland), vor-Ort
       // in Ortszeit (Zypern = Venue). start_time ist als UTC gespeichert (korrekt) — das
       // hier ist reine Anzeige-Umrechnung, damit der Kunde nicht 1h daneben liegt.
-      const dispTz = apptType === 'inperson' ? 'Asia/Nicosia' : 'Europe/Berlin'
+      const dispTz = tz
       const fmtHM = (iso: string) => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: dispTz }).format(new Date(iso))
       const vonDisp = fmtHM(start_time)
       const bisDisp = fmtHM(end_time)
@@ -782,7 +803,7 @@ export default function AppointmentModal({
               ? new Date(start_time).toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
               : dateStr
             const html = buildInviteHtml({
-              firstName: tgt.firstName, isEdit, title, dateStr: dateStrM, von: vonDisp, bis: bisDisp, apptType,
+              firstName: tgt.firstName, isEdit, title, dateStr: dateStrM, von: vonDisp, bis: bisDisp, apptType, tz,
               zoomLink: effZoomLink || undefined, zoomPassword: effZoomPassword || undefined,
               location: effLocation || undefined, locationUrl: effLocationUrl || undefined,
               phone: tgt.leadId ? (effPhone || undefined) : undefined, gcalHref,
@@ -831,7 +852,7 @@ export default function AppointmentModal({
             const tt = i18n.getFixedT(tgt.lang)
             const localeL = tgt.lang === 'en' ? 'en-GB' : 'de-DE'
             const dateStrL = new Date(start_time).toLocaleDateString(localeL, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
-            const tzHintL = apptType === 'inperson' ? '' : ' ' + tt('crm.appt.germanTimeParen', '(deutsche Zeit)')
+            const tzHintL = apptType === 'inperson' && tz === APPT_TZ_NICOSIA ? '' : ' ' + (tz === APPT_TZ_NICOSIA ? tt('crm.appt.cyprusTimeParen', '(Zypern-Zeit)') : tt('crm.appt.germanTimeParen', '(deutsche Zeit)'))
             const whereText = apptType === 'zoom' && effZoomLink
               ? `\nZoom-Link: ${effZoomLink}${effZoomPassword ? `\n${tt('crm.appt.passwordLabel', 'Passwort')}: ${effZoomPassword}` : ''}`
               : apptType === 'inperson'
@@ -1005,6 +1026,35 @@ export default function AppointmentModal({
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ff795d]/40"
                   />
                 </div>
+              </div>
+
+              {/* Zeitzone der Eingabe = Zeitzone der Kundenanzeige */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('crm.appt.tzLabel', 'Uhrzeit gilt in')}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([APPT_TZ_BERLIN, APPT_TZ_NICOSIA] as ApptTz[]).map(z => (
+                    <button
+                      key={z}
+                      type="button"
+                      onClick={() => chooseTz(z)}
+                      className="px-3 py-2 rounded-lg text-sm font-medium border transition-colors"
+                      style={
+                        tz === z
+                          ? { backgroundColor: '#1a2332', color: '#fff', borderColor: '#1a2332' }
+                          : { backgroundColor: '#fff', color: '#374151', borderColor: '#d1d5db' }
+                      }
+                    >
+                      {z === APPT_TZ_BERLIN ? t('crm.appt.tzBerlin', '🇩🇪 Deutsche Zeit (MEZ)') : t('crm.appt.tzNicosia', '🇨🇾 Zypern-Zeit')}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {localHint
+                    ? t('crm.appt.tzLocalHint', 'Der Kunde sieht {{von}}–{{bis}}. In deinem Kalender: {{local}}.', { von, bis, local: localHint })
+                    : t('crm.appt.tzSameHint', 'Der Kunde sieht die Uhrzeit genau so wie eingegeben.')}
+                </p>
               </div>
 
               {/* Type */}

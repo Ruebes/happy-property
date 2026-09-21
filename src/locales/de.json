@@ -2986,7 +2986,13 @@
       "guestMail": "E-Mail (optional)",
       "guestPhone": "Handy (optional)",
       "guestSave": "Zum Termin hinzufügen",
-      "guestHint": "Ohne Kontaktdaten steht der Name nur im Termin und im Kalender - eine Einladung geht dann nicht raus."
+      "guestHint": "Ohne Kontaktdaten steht der Name nur im Termin und im Kalender - eine Einladung geht dann nicht raus.",
+      "cyprusTimeParen": "(Zypern-Zeit)",
+      "tzLabel": "Uhrzeit gilt in",
+      "tzBerlin": "🇩🇪 Deutsche Zeit (MEZ)",
+      "tzNicosia": "🇨🇾 Zypern-Zeit",
+      "tzLocalHint": "Der Kunde sieht {{von}}–{{bis}}. In deinem Kalender: {{local}}.",
+      "tzSameHint": "Der Kunde sieht die Uhrzeit genau so wie eingegeben."
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

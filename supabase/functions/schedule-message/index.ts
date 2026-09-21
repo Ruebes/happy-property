@@ -193,9 +193,9 @@ Deno.serve(async (req: Request) => {
     // echten Beratungstermin liegt, {{termin_datum}}/{{zoom_link}}/{{termin_link}} in
     // einer Kundennachricht ueberschreiben.
     const { data: nextAppt } = await supabase.from('crm_appointments')
-      .select('start_time, zoom_link, manage_token, type, location, location_url').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
+      .select('start_time, zoom_link, manage_token, type, timezone, location, location_url').eq('lead_id', lead_id).eq('internal', false).gte('start_time', nowIso).order('start_time', { ascending: true }).limit(1).maybeSingle()
     const { data: lastAppt } = await supabase.from('crm_appointments')
-      .select('zoom_link, start_time, manage_token, type, location, location_url').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
+      .select('zoom_link, start_time, manage_token, type, timezone, location, location_url').eq('lead_id', lead_id).eq('internal', false).order('start_time', { ascending: false }).limit(1).maybeSingle()
     const apptStart = (nextAppt as { start_time?: string } | null)?.start_time ?? null
     const zoomLink  = ((nextAppt as { zoom_link?: string } | null)?.zoom_link) || ((lastAppt as { zoom_link?: string } | null)?.zoom_link) || ''
     // Öffentlicher „Termin verwalten"-Link (verschieben/absagen ohne Login)
@@ -210,18 +210,23 @@ Deno.serve(async (req: Request) => {
     // Termin zurück (apptStart ist nur der ZUKÜNFTIGE — für before_appointment-Timing).
     const apptDisplayStart = apptStart ?? (lastAppt as { start_time?: string } | null)?.start_time ?? null
     // Vor-Ort-Termine: Der Kunde ist VOR ORT auf Zypern → Ortszeit statt deutscher Zeit.
-    const apptRef = (nextAppt ?? lastAppt) as { type?: string | null; location?: string | null; location_url?: string | null } | null
+    const apptRef = (nextAppt ?? lastAppt) as { type?: string | null; timezone?: string | null; location?: string | null; location_url?: string | null } | null
     const isInperson = apptRef?.type === 'inperson'
+    // Termin-Zone: von Sven im Termin-Popup gewählt (crm_appointments.timezone). Ohne
+    // Wert gilt die alte Regel: vor Ort = Zypern, sonst deutsche Zeit.
+    const apptTz = apptRef?.timezone === 'Asia/Nicosia' || apptRef?.timezone === 'Europe/Berlin'
+      ? apptRef.timezone : (isInperson ? 'Asia/Nicosia' : 'Europe/Berlin')
     const terminOrt = isInperson ? (apptRef?.location ?? '') : ''
     const terminOrtLink = isInperson ? (apptRef?.location_url ?? '') : ''
     const terminDatum = apptDisplayStart ? (() => {
-      const d = new Date(apptDisplayStart), TZ = isInperson ? 'Asia/Nicosia' : 'Europe/Berlin'
+      const d = new Date(apptDisplayStart), TZ = apptTz
       const day  = new Intl.DateTimeFormat('de-DE', { weekday: 'long', timeZone: TZ }).format(d)
       const date = new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'long', year: 'numeric', timeZone: TZ }).format(d)
       const time = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: TZ }).format(d)
       const tz   = new Intl.DateTimeFormat('de-DE', { timeZoneName: 'short', hour: '2-digit', timeZone: TZ })
         .formatToParts(d).find(p => p.type === 'timeZoneName')?.value || 'MEZ'
-      return isInperson ? `${day}, ${date} um ${time} Uhr` : `${day}, ${date} um ${time} Uhr (${tz})`
+      // Kürzel weglassen nur bei vor Ort in Ortszeit (Kunde ist auf Zypern) — sonst immer anzeigen.
+      return isInperson && TZ === 'Asia/Nicosia' ? `${day}, ${date} um ${time} Uhr` : `${day}, ${date} um ${time} Uhr (${tz})`
     })() : ''
 
     const basePlaceholders: Record<string, string> = {

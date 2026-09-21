@@ -636,6 +636,8 @@ export interface CrmAppointment {
   title:           string
   description:     string | null
   type:            AppointmentType
+  // Eingabe-/Anzeigezone (Europe/Berlin | Asia/Nicosia). NULL = Typ-Regel (inperson=Zypern, sonst DE).
+  timezone:        'Europe/Berlin' | 'Asia/Nicosia' | null
   start_time:      string
   end_time:        string
   lead_id:         string | null
