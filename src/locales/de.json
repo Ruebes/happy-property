@@ -2992,7 +2992,8 @@
       "tzBerlin": "🇩🇪 Deutsche Zeit (MEZ)",
       "tzNicosia": "🇨🇾 Zypern-Zeit",
       "tzLocalHint": "Der Kunde sieht {{von}}–{{bis}}. In deinem Kalender: {{local}}.",
-      "tzSameHint": "Der Kunde sieht die Uhrzeit genau so wie eingegeben."
+      "tzSameHint": "Der Kunde sieht die Uhrzeit genau so wie eingegeben.",
+      "movedHint": "Termin verschoben — Lead & Teilnehmer bekommen die neue Zeit per E-Mail und WhatsApp (unten abwählbar)."
     },
     "notesSaved": "Notiz gespeichert",
     "leadNotFound": "Lead nicht gefunden",

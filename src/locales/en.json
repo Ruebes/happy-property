@@ -2992,7 +2992,8 @@
       "tzBerlin": "🇩🇪 German time (CET)",
       "tzNicosia": "🇨🇾 Cyprus time",
       "tzLocalHint": "The customer sees {{von}}–{{bis}}. In your calendar: {{local}}.",
-      "tzSameHint": "The customer sees the time exactly as entered."
+      "tzSameHint": "The customer sees the time exactly as entered.",
+      "movedHint": "Appointment moved — lead & attendees get the new time by email and WhatsApp (untick below to skip)."
     },
     "notesSaved": "Note saved",
     "leadNotFound": "Lead not found",

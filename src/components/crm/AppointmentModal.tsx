@@ -450,6 +450,22 @@ export default function AppointmentModal({
   const [saveToGoogle, setSaveToGoogle]         = useState(false)
   const [sendEmailInvite, setSendEmailInvite]   = useState(false)
   const [sendWhatsAppInvite, setSendWhatsAppInvite] = useState(false)
+  // Termin verschoben (Datum/Uhrzeit/Zone geändert)? Dann Mail + WhatsApp automatisch
+  // vorwählen — Sven (21.9.): „Wenn ich den Termin verschiebe, soll der Kunde direkt
+  // wieder Mail und WhatsApp bekommen." Manuelles Abwählen bleibt respektiert.
+  const timeChanged = (() => {
+    if (!appointment || !date || !von || !bis) return false
+    try {
+      const s = zonedToIso(date, von, tz), e0 = new Date(zonedToIso(date, bis, tz))
+      if (e0 < new Date(s)) e0.setTime(e0.getTime() + 24 * 60 * 60 * 1000)
+      return new Date(s).getTime() !== new Date(appointment.start_time).getTime()
+          || e0.getTime() !== new Date(appointment.end_time).getTime()
+    } catch { return false }
+  })()
+  const [inviteTouched, setInviteTouched] = useState(false)
+  useEffect(() => {
+    if (timeChanged && !inviteTouched) { setSendEmailInvite(true); setSendWhatsAppInvite(true) }
+  }, [timeChanged, inviteTouched])
   const [saving, setSaving]                     = useState(false)
   const [saveError, setSaveError]               = useState('')
   // Termin ist gespeichert, aber Nebenwirkungen (Google-Sync/Einladung) schlugen fehl:
@@ -1552,13 +1568,18 @@ export default function AppointmentModal({
                 </p>
               )}
 
+              {isEdit && timeChanged && (
+                <p className="text-xs rounded-lg px-3 py-2" style={{ backgroundColor: '#fff4f0', color: '#b5432a' }}>
+                  ⏰ {t('crm.appt.movedHint', 'Termin verschoben — Lead & Teilnehmer bekommen die neue Zeit per E-Mail und WhatsApp (unten abwählbar).')}
+                </p>
+              )}
               {/* Email invite checkbox (mit Kalender-Anhang) — Lead und/oder Teilnehmer */}
               {(selectedLeadId || leadId || attendees.length > 0) && (
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={sendEmailInvite}
-                    onChange={e => setSendEmailInvite(e.target.checked)}
+                    onChange={e => { setInviteTouched(true); setSendEmailInvite(e.target.checked) }}
                     className="rounded border-gray-300"
                   />
                   <span className="text-sm text-gray-700">
@@ -1575,7 +1596,7 @@ export default function AppointmentModal({
                   <input
                     type="checkbox"
                     checked={sendWhatsAppInvite}
-                    onChange={e => setSendWhatsAppInvite(e.target.checked)}
+                    onChange={e => { setInviteTouched(true); setSendWhatsAppInvite(e.target.checked) }}
                     className="rounded border-gray-300"
                   />
                   <span className="text-sm text-gray-700">
