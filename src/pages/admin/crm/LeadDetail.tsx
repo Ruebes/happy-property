@@ -677,7 +677,7 @@ export default function LeadDetail() {
       if (upErr) throw upErr
       const { data: unitForProject } = await supabase
         .from('crm_project_units').select('project_id').eq('id', deal.unit_id).maybeSingle()
-      await supabase.from('crm_unit_documents').insert({
+      const { error: insErr } = await supabase.from('crm_unit_documents').insert({
         unit_id:     deal.unit_id,
         project_id:  (unitForProject as { project_id: string } | null)?.project_id ?? null,
         name:        unitDocForm.name.trim(),
@@ -688,6 +688,11 @@ export default function LeadDetail() {
         notes:       unitDocForm.notes.trim() || null,
         uploaded_by: profile?.id ?? null,
       })
+      if (insErr) {
+        // Zeile fehlgeschlagen → Datei nicht als Waise liegen lassen
+        await supabase.storage.from('unit-documents').remove([path]).catch(() => null)
+        throw insErr
+      }
       setUnitDocFile(null)
       setUnitDocForm({ name: '', doc_type: 'sonstiges', notes: '' })
       if (unitDocFileRef.current) unitDocFileRef.current.value = ''

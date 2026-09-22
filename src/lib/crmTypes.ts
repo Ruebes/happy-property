@@ -427,7 +427,7 @@ export interface Invoice {
 }
 
 export type UnitRentalType = 'short' | 'long'
-export type UnitDocType   = 'kaufvertrag' | 'mietvertrag' | 'zahlungsbeleg' | 'grundriss' | 'rechnung' | 'sonstiges'
+export type UnitDocType   = 'kaufvertrag' | 'mietvertrag' | 'zahlungsbeleg' | 'grundriss' | 'rechnung' | 'developer' | 'sonstiges'
 
 export interface CrmProjectUnit {
   id:             string

@@ -62,11 +62,12 @@ export default function DevMails() {
       let docTarget = ''
       if (dl?.unit_id && m.attachments.length) {
         for (const a of m.attachments) {
-          await supabase.from('crm_unit_documents').insert({
+          const { error: insErr } = await supabase.from('crm_unit_documents').insert({
             unit_id: dl.unit_id, project_id: dl.project_id, name: a.name,
             file_name: a.name, file_path: a.url, doc_type: 'developer',
             notes: `Von ${m.from_addr} · ${m.subject}`.slice(0, 500),
           })
+          if (insErr) throw insErr
         }
         docTarget = t('crm.devmails.toUnitDocs', ' + in die Wohnungs-Dokumente gelegt')
       }

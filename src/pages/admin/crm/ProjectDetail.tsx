@@ -971,7 +971,7 @@ export default function ProjectDetail() {
       const { error: upErr } = await supabase.storage
         .from('unit-documents').upload(path, pendingFile, { upsert: false })
       if (upErr) throw upErr
-      await supabase.from('crm_unit_documents').insert({
+      const { error: insErr } = await supabase.from('crm_unit_documents').insert({
         unit_id:     editUnit.id,
         project_id:  projectId,
         name:        docForm.name.trim(),
@@ -982,6 +982,10 @@ export default function ProjectDetail() {
         notes:       docForm.notes.trim() || null,
         uploaded_by: profile?.id ?? null,
       })
+      if (insErr) {
+        await supabase.storage.from('unit-documents').remove([path]).catch(() => null)
+        throw insErr
+      }
       setPendingFile(null)
       setDocForm({ name: '', doc_type: 'sonstiges', notes: '' })
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -993,6 +997,7 @@ export default function ProjectDetail() {
       }
     } catch (err) {
       console.error('[ProjectDetail] Upload error:', err)
+      showToast(`❌ ${err instanceof Error ? err.message : t('crm.pd.uploadFailed', 'Fehler beim Upload')}`)
     } finally { setUploadingDoc(false) }
   }
 
