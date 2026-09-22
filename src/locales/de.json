@@ -1940,7 +1940,9 @@
       "pipelineDesc": "Nachrichten je Lead-Phase (WhatsApp / E-Mail)",
       "otherTitle": "Weitere Nachrichten",
       "otherDesc": "System-Nachrichten außerhalb der Pipeline — reinklicken zum Bearbeiten.",
-      "active2": "Aktiv"
+      "active2": "Aktiv",
+      "shareContact": "Kontaktkarte per WhatsApp mitschicken (z.B. Anwalt, Developer)",
+      "shareContactHint": "Geht als speicherbare Kontaktkarte direkt nach dem Text raus."
     },
     "contacts": {
       "title": "Geschäftskontakte",

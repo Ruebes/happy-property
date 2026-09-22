@@ -601,6 +601,7 @@ export interface AutomationRule {
   timing_type:          'after_event' | 'before_appointment'
   drive_trigger:        boolean
   drive_share:          string[] | null
+  share_contact:        string | null   // Kontaktkarte per WhatsApp: 'bc:<id>' | 'dc:<id>' | 'unit_developer'
   created_at:           string
   updated_at:           string
 }

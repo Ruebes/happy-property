@@ -1,6 +1,6 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { waAccountGone, waAccountRecovered } from '../_shared/waAccountAlert.ts'
-import { getWaProvider, evoSendText, evoSendMedia, evoErrorText, EVO_DISCONNECTED_RE } from '../_shared/waProvider.ts'
+import { getWaProvider, evoSendText, evoSendMedia, evoSendContact, evoErrorText, EVO_DISCONNECTED_RE, type WaContactCard } from '../_shared/waProvider.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
@@ -104,6 +104,9 @@ Deno.serve(async (req) => {
                      // Default false: eine vergessene Markierung zeigt eine Nachricht
                      // zu viel; eine echte Kundennachricht zu verstecken waere schlimmer.
       allow_duplicate, // true = Doppel-Schutz umgehen (bewusst gleicher Text erneut)
+      contact_card,  // optionale Kontaktkarte {name, phone, email?, organization?}: geht
+                     // NACH dem Text als vCard raus (Evolution sendContact). Ueber
+                     // TimelinesAI gibt es keine Karte -> Name + Nummer als Textzeile.
     } = await req.json()
 
     const apiKey      = Deno.env.get('TIMELINES_API_KEY')     ?? ''
@@ -120,6 +123,10 @@ Deno.serve(async (req) => {
     // beide Wege gleich; nur Upload und der eigentliche Send-Call unterscheiden sich.
     const provider = await getWaProvider(supabase)
     const viaEvolution = provider === 'evolution'
+    const cc = contact_card as Partial<WaContactCard> | null | undefined
+    const card: WaContactCard | null = cc && typeof cc.name === 'string' && typeof cc.phone === 'string' && cc.phone.replace(/[^0-9]/g, '').length >= 8
+      ? { name: cc.name.trim(), phone: cc.phone.trim(), email: cc.email ?? null, organization: cc.organization ?? null }
+      : null
 
     // ── Template aus DB laden — NUR wenn kein override_text ───────
     // Direktsend-Aufrufer (Composer, Termin-Einladung, Postausgang) liefern den
@@ -495,6 +502,27 @@ Deno.serve(async (req) => {
       // Erfolgreich raus → merken, damit derselbe Text nicht erneut an diese Nummer
       // geht. Hash immer ueber den GESAMTEN Text, unabhaengig von der Teilung.
       if (sentAllParts && bh) { try { await supabase.from('wa_sent').insert({ phone: recipient.phone, body_hash: bh }) } catch { /* egal */ } }
+
+      // ── Kontaktkarte hinterher ───────────────────────────────────
+      // Erst wenn der Text komplett draussen ist. Ein Fehler hier kippt den
+      // Versand nicht (Text ist ja angekommen), landet aber im Ergebnis.
+      if (sentAllParts && card) {
+        await new Promise(r => setTimeout(r, 700))
+        if (viaEvolution) {
+          const r = await evoSendContact(recipient.phone, card)
+          console.log(`[send-whatsapp] Kontaktkarte "${card.name}" → ${recipient.phone}: ${r.status}`)
+          if (r.ok && r.messageId) { try { await supabase.from('wa_processed').insert({ message_uid: String(r.messageId) }) } catch { /* ok */ } }
+          if (!r.ok) results.push({ phone: recipient.phone, ok: false, status: r.status, contact_card: true, data: { error: evoErrorText(r.status, r.data) } })
+        } else {
+          const line = `${card.name}${card.organization ? ` (${card.organization})` : ''}\n${card.phone}${card.email ? `\n${card.email}` : ''}`
+          const res = await fetch('https://app.timelines.ai/integrations/api/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify({ phone: recipient.phone, whatsapp_account_phone: senderPhone, text: line }),
+          })
+          if (!res.ok) results.push({ phone: recipient.phone, ok: false, status: res.status, contact_card: true, data: await res.json().catch(() => null) })
+        }
+      }
     }
 
     const okResults = results.filter(r => (r as { ok?: boolean }).ok)

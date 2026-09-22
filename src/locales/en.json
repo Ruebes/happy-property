@@ -1940,7 +1940,9 @@
       "pipelineDesc": "Messages per lead stage (WhatsApp / email)",
       "otherTitle": "Other messages",
       "otherDesc": "System messages outside the pipeline — click in to edit.",
-      "active2": "Active"
+      "active2": "Active",
+      "shareContact": "Attach a contact card via WhatsApp (e.g. lawyer, developer)",
+      "shareContactHint": "Sent as a saveable contact card right after the text."
     },
     "contacts": {
       "title": "Business Contacts",

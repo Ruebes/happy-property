@@ -88,6 +88,24 @@ export function evoSendText(phone: string, text: string): Promise<EvoResult> {
   return evoCall(`/message/sendText/${instance}`, { number: evoNumber(phone), text, linkPreview: true })
 }
 
+// Kontaktkarte (vCard) — der Empfaenger kann sie mit einem Tipp speichern.
+// wuid = Nummer als reine Ziffern (so identifiziert WhatsApp den Kontakt),
+// phoneNumber = Anzeigeform.
+export type WaContactCard = { name: string; phone: string; email?: string | null; organization?: string | null }
+export function evoSendContact(phone: string, card: WaContactCard): Promise<EvoResult> {
+  const { instance } = evoConfig()
+  return evoCall(`/message/sendContact/${instance}`, {
+    number: evoNumber(phone),
+    contact: [{
+      fullName:     card.name,
+      wuid:         evoNumber(card.phone),
+      phoneNumber:  card.phone,
+      ...(card.organization ? { organization: card.organization } : {}),
+      ...(card.email        ? { email: card.email } : {}),
+    }],
+  })
+}
+
 // Medien als Base64 (Bytes haben wir ohnehin schon geladen und ggf. verkleinert);
 // so muss Evolution die Datei nicht selbst aus dem Storage ziehen.
 export function evoSendMedia(phone: string, opts: {

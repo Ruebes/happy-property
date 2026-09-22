@@ -137,7 +137,7 @@ Deno.serve(async (req: Request) => {
       const { data } = await supabase.from('deals').select('developer, commission_amount, unit_id, registration_notes, finanzierung_de_notes').eq('id', deal_id).maybeSingle()
       dealData = data as typeof dealData
     }
-    let unitNumber = '', objektName = '', kaufpreis = '', kaufpreisBrutto = '', mwst = '', mwstSatz = '', unitDevEmail = '', unitDevPhone = ''
+    let unitNumber = '', objektName = '', kaufpreis = '', kaufpreisBrutto = '', mwst = '', mwstSatz = '', unitDevEmail = '', unitDevPhone = '', unitDevName = '', unitDevOrg = ''
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -159,10 +159,12 @@ Deno.serve(async (req: Request) => {
           const devId = (dev as { id?: string } | null)?.id
           if (devId) {
             const { data: c } = await supabase.from('crm_developer_contacts')
-              .select('email, phone, whatsapp').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
-            const cc = c as { email?: string; phone?: string; whatsapp?: string } | null
+              .select('name, email, phone, whatsapp').eq('developer_id', devId).order('is_primary', { ascending: false }).limit(1).maybeSingle()
+            const cc = c as { name?: string; email?: string; phone?: string; whatsapp?: string } | null
             unitDevEmail = cc?.email ?? ''
             unitDevPhone = (cc?.whatsapp || cc?.phone) ?? ''
+            unitDevName  = cc?.name ?? ''
+            unitDevOrg   = devName
           }
         }
       }
@@ -290,11 +292,40 @@ Deno.serve(async (req: Request) => {
       return out
     }
 
+    // Kontaktkarte (vCard) fuer WhatsApp: Token wie bei recipient -> {name, phone, email, organization}.
+    // Beim Einplanen aufgeloest, damit die Karte den Stand von JETZT traegt.
+    type ContactCard = { name: string; phone: string; email: string | null; organization: string | null }
+    const resolveContactCard = async (tk: string | null): Promise<ContactCard | null> => {
+      if (!tk || tk === 'client') return null
+      if (tk === 'unit_developer') return unitDevPhone && unitDevName ? { name: unitDevName, phone: unitDevPhone, email: unitDevEmail || null, organization: unitDevOrg || null } : null
+      if (tk.startsWith('bc:')) {
+        const { data } = await supabase.from('crm_business_contacts').select('first_name, last_name, company, role, email, phone, whatsapp').eq('id', tk.slice(3)).maybeSingle()
+        const c = data as { first_name?: string; last_name?: string | null; company?: string | null; role?: string | null; email?: string | null; phone?: string | null; whatsapp?: string | null } | null
+        const phone = c?.whatsapp || c?.phone
+        if (!c || !phone) return null
+        return { name: `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim(), phone, email: c.email ?? null, organization: c.company || c.role || null }
+      }
+      if (tk.startsWith('dc:')) {
+        const { data } = await supabase.from('crm_developer_contacts').select('name, email, phone, whatsapp, developer_id').eq('id', tk.slice(3)).maybeSingle()
+        const c = data as { name?: string; email?: string | null; phone?: string | null; whatsapp?: string | null; developer_id?: string } | null
+        const phone = c?.whatsapp || c?.phone
+        if (!c || !phone) return null
+        let org: string | null = null
+        if (c.developer_id) {
+          const { data: d } = await supabase.from('crm_developers').select('name').eq('id', c.developer_id).maybeSingle()
+          org = (d as { name?: string } | null)?.name ?? null
+        }
+        return { name: c.name ?? '', phone, email: c.email ?? null, organization: org }
+      }
+      return null
+    }
+
     let scheduled = 0, skipped = 0
     for (const rule of rules as Array<{
       id: string; message_type: string; delay_minutes: number; email_template_id: string | null
       whatsapp_event_type: string | null; recipient: string | null
       appointment_condition: string | null; timing_type: string | null; drive_trigger: boolean | null; drive_share: string[] | null
+      share_contact: string | null
     }>) {
       // C) Timing
       let scheduledAt: Date
@@ -362,6 +393,7 @@ Deno.serve(async (req: Request) => {
         whatsapp_image_url: waImage,
         rule_id: rule.id, recipient: rule.recipient ?? 'client',
         appointment_condition: rule.appointment_condition ?? 'none',
+        contact_card: (effectiveType === 'whatsapp' || effectiveType === 'both') ? await resolveContactCard(rule.share_contact) : null,
       })
       if (insertErr) console.error(`[schedule-message] Insert Fehler Regel ${rule.id}:`, insertErr.message)
       else scheduled++

@@ -99,9 +99,11 @@ async function sendWhatsApp(params: {
   name?:        string
   imageUrl?:    string | null
   alsLotte?:    boolean          // true = Kunde → Lotte-Bild (nachrangig hinter Vorlagen-/Deck-Bild)
+  contactCard?: unknown          // Kontaktkarte (vCard), geht nach dem Text raus
 }): Promise<void> {
   const { data, error } = await params.supabase.functions.invoke('send-whatsapp', {
     body: { already_translated: true,
+      ...(params.contactCard ? { contact_card: params.contactCard } : {}),
       event_type: 'scheduled', override_text: params.message,
       lead_data: { lead_name: params.name ?? 'Kunde', lead_phone: params.phone },
       ...(params.imageUrl ? { file_url: params.imageUrl, file_name: 'bild.jpg' } : {}),
@@ -442,6 +444,7 @@ Deno.serve(async (req: Request) => {
       email_body:    string | null
       whatsapp_text: string | null
       recipient:     string | null
+      contact_card?: unknown
       appointment_condition: string | null
       bot_nudge_stage:  number | null
       bot_nudge_source: string | null
@@ -750,6 +753,7 @@ Deno.serve(async (req: Request) => {
                   // damit ALLE automatischen Kunden-WhatsApps eine Bildkarte haben.
                   // Partner/Developer (bc:/dc:/unit_developer) bekommen keins.
                   alsLotte: !msg.recipient || msg.recipient === 'client',
+                  contactCard: msg.contact_card ?? null,
                 })
                 await logActivity(supabase, {
                   lead_id: msg.lead_id,

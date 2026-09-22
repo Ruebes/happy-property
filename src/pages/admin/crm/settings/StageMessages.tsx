@@ -98,6 +98,8 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
   const [apptCond,    setApptCond]    = useState<string>(rule?.appointment_condition ?? 'none')
   const [timingType,  setTimingType]  = useState<string>(rule?.timing_type ?? 'after_event')
   const [driveTrigger, setDriveTrigger] = useState<boolean>(rule?.drive_trigger ?? false)
+  // Kontaktkarte (vCard) per WhatsApp mitschicken, z.B. Anwalt bei Reservierung
+  const [shareContact, setShareContact] = useState<string>(rule?.share_contact ?? '')
   const [driveShare,  setDriveShare]  = useState<string[]>(rule?.drive_share ?? [])
   const [emailSubject, setEmailSubject] = useState(linkedEmail?.subject ?? '')
   const [emailBody,   setEmailBody]   = useState(linkedEmail?.body ?? '')
@@ -220,6 +222,7 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
         timing_type:         timingType,
         drive_trigger:       driveTrigger,
         drive_share:         driveTrigger && driveShare.length ? driveShare : null,
+        share_contact:       wantWa && shareContact && shareContact !== 'client' ? shareContact : null,
         updated_at:          new Date().toISOString(),
       }
       if (rule) {
@@ -351,6 +354,22 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
               </div>
             )}
           </div>
+
+          {/* Kontaktkarte per WhatsApp */}
+          {wantWa && (
+            <div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={!!shareContact} onChange={e => setShareContact(e.target.checked ? 'unit_developer' : '')} />
+                {t('crm.stageEditor.shareContact', 'Kontaktkarte per WhatsApp mitschicken (z.B. Anwalt, Developer)')}
+              </label>
+              {!!shareContact && (
+                <div className="mt-2">
+                  <RecipientPicker value={shareContact} onChange={v => setShareContact(v || 'unit_developer')} channel="whatsapp" />
+                  <p className="text-xs text-gray-400 mt-1">{t('crm.stageEditor.shareContactHint', 'Geht als speicherbare Kontaktkarte direkt nach dem Text raus.')}</p>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Platzhalter */}
           <div className="bg-gray-50 rounded-xl p-3">
