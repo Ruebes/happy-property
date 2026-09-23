@@ -3056,7 +3056,7 @@ export default function LeadDetail() {
                         {deal.property && (
                           <div className="flex gap-2">
                             <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.property', 'Immobilie')}</dt>
-                            <dd>
+                            <dd className="flex items-center gap-2 min-w-0">
                               <Link
                                 to={`/admin/properties/${deal.property.id}`}
                                 className="text-orange-500 hover:underline"
@@ -3066,10 +3066,11 @@ export default function LeadDetail() {
                               </Link>
                               <button
                                 onClick={handleRemoveWohnung}
-                                className="ml-3 text-xs px-2 py-0.5 rounded-lg text-red-600 border border-red-200 hover:bg-red-50"
+                                className="text-lg leading-none opacity-60 hover:opacity-100 flex-shrink-0"
                                 title={t('leadDetail.removeUnitTitle', 'Wohnung vom Kunden entfernen und Portal-Objekt löschen')}
+                                aria-label={t('leadDetail.removeUnit', 'Wohnung entfernen')}
                               >
-                                🗑 {t('leadDetail.removeUnit', 'Wohnung entfernen')}
+                                🗑
                               </button>
                             </dd>
                           </div>
