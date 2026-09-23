@@ -217,12 +217,12 @@ const PORTAL_ORIGIN = 'https://portal.happy-property.com'
 async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
   const cutoff = new Date(Date.now() - 5 * 60_000).toISOString()
   const { data: jobs } = await supabase.from('deck_generation_jobs')
-    .select('id, lead_id, project_id, deck_token, completed_at, request')
+    .select('id, lead_id, project_id, deck_token, created_at, completed_at, request')
     .eq('kind', 'deck').not('lead_id', 'is', null).not('deck_token', 'is', null)
     .in('status', ['ready', 'review_required']).is('outbox_at', null)
     .gte('completed_at', DECK_NET_START).lte('completed_at', cutoff)
     .order('completed_at').limit(30)
-  type Job = { id: string; lead_id: string; project_id: string | null; deck_token: string; completed_at: string; request: { briefing?: string; angle?: string } | null }
+  type Job = { id: string; lead_id: string; project_id: string | null; deck_token: string; created_at: string; completed_at: string; request: { briefing?: string; angle?: string } | null }
   const byLead = new Map<string, Job[]>()
   for (const j of ((jobs ?? []) as Job[])) {
     const g = byLead.get(j.lead_id); if (g) g.push(j); else byLead.set(j.lead_id, [j])
@@ -295,8 +295,23 @@ async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
         available_count: available, total_count: total,
       })
     }
+    // Berechnungen, die der Wizard VOR den Decks angelegt hat (bis 30 Min vor dem
+    // ersten Job), je Projektname anhängen; "Immobilienvergleich" = Gesamt-Vergleich.
+    const firstStart = mine.map(j => j.created_at).sort()[0]
+    const { data: calcs } = await supabase.from('property_calculations')
+      .select('token, title, content').eq('lead_id', leadId)
+      .gte('created_at', new Date(new Date(firstStart).getTime() - 30 * 60_000).toISOString())
+      .lte('created_at', firstStart)
+    let compareLink: string | undefined
+    for (const c of ((calcs ?? []) as Array<{ token: string; title: string | null; content: { items?: Array<{ project?: string }> } | null }>)) {
+      const link = `${PORTAL_ORIGIN}/rechnung/${c.token}`
+      if (c.title === 'Immobilienvergleich') { compareLink = link; continue }
+      const proj = c.content?.items?.[0]?.project
+      const it = items.find(x => x.project === proj && !x.calc_link)
+      if (it) it.calc_link = link
+    }
     const tokens = mine.map(j => j.deck_token)
-    const links = items.map(it => `<li><a href="${it.link}">${String(it.label).replace(/</g, '&lt;')}</a></li>`).join('')
+    const links = items.map(it => `<li><a href="${it.link}">${String(it.label).replace(/</g, '&lt;')}</a>${it.calc_link ? ` · <a href="${it.calc_link}">Berechnung</a>` : ''}</li>`).join('')
     const { data: ob, error: obErr } = await supabase.from('deck_outbox').insert({
       lead_id: l.id, recipient_email: l.email, status: 'draft', deck_tokens: tokens,
       subject: items.length > 1 ? 'Deine Wohnungs-Vorschläge von Happy Property' : `Dein Vorschlag: ${items[0].label}`,
@@ -314,6 +329,7 @@ async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
         body: {
           recipient_name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim(), first_name: l.first_name,
           briefing: req0.briefing, angle: req0.angle, items, booking_url: bookingUrl(l.booking_token),
+          ...(compareLink ? { calc_link: compareLink, calc_label: 'Dein Immobilienvergleich - alle Wohnungen direkt gegenübergestellt' } : {}),
         },
         headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
       })

@@ -408,6 +408,42 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       // Postausgang (Sven 17.9.: Mamba + Azure fertig, BAIA ohne Fakten, kein Entwurf).
       const ohneFakten = groups.filter(g => !g[0].assets?.facts).map(g => g[0].projectName)
       if (ohneFakten.length) throw new Error(t('crm.wizard.noFactsList', 'Keine Projekt-Fakten für: {{names}}. Erst im Projekt „Aus Drive laden" (bzw. Broschüre und Bilder hinterlegen), dann erneut starten - es wurde nichts erstellt.', { names: ohneFakten.join(', ') }))
+      // Berechnungen ZUERST anlegen: sie haengen nicht am Deck, und so gehen Svens
+      // Wizard-Parameter nicht verloren, wenn der Tab waehrend der Deck-Erstellung
+      // neu geladen wird (Thomas Hellige 23.9.: Deck da, Berechnung nie entstanden).
+      // Das Postausgang-Netz in process-scheduled-messages haengt sie dann an.
+      const calcLinkByProject: Record<string, string> = {}
+      let compareLink: string | undefined
+      if (withCalc) {
+        const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
+        const allItems: CalcItem[] = []
+        // EINE Berechnung PRO PROJEKT — alle Wohnungen des Projekts als Items.
+        for (let i = 0; i < groups.length; i++) {
+          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${groups.length}…`)
+          const items = groups[i].map(buildCalcItem)
+          allItems.push(...items)
+          const title = items.length > 1
+            ? `Berechnung ${groups[i][0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
+            : `Rechnung ${items[0].label}`
+          const content = { with_calc: true, recipient_name: recipientName, items }
+          const { data: calcRow, error: cErr } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
+          }).select('token').single()
+          if (cErr) throw cErr
+          const tok = (calcRow as { token?: string } | null)?.token
+          if (tok) calcLinkByProject[groups[i][0].projectId] = `${window.location.origin}/rechnung/${tok}`
+        }
+        // Projektübergreifender Gesamt-Vergleich NUR bei ≥2 PROJEKTEN.
+        if (groups.length >= 2) {
+          setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
+          const content = { with_calc: true, recipient_name: recipientName, items: allItems }
+          const { data: cmpRow } = await supabase.from('property_calculations').insert({
+            lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
+          }).select('token').single()
+          const tok = (cmpRow as { token?: string } | null)?.token
+          if (tok) compareLink = `${window.location.origin}/rechnung/${tok}`
+        }
+      }
       const links: { token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null }[] = []
       // Scheitert ein Projekt, laufen die anderen trotzdem durch; die Ausfaelle
       // stehen am Ende in der Meldung statt den ganzen Lauf zu kippen.
@@ -433,44 +469,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
         const { count: free }  = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid).not('status', 'in', '(sold,reserved)').is('property_id', null).is('parent_unit_id', null)
         availByProject[pid] = { available: free ?? 0, total: total ?? 0 }
       }
-      const calcLinkByToken: Record<string, string> = {}
-      let compareLink: string | undefined
-      if (withCalc) {
-        const recipientName = `${lead.first_name} ${lead.last_name}`.trim()
-        const allItems: CalcItem[] = []
-        // EINE Berechnung PRO PROJEKT — alle Wohnungen des Projekts als Items (Zahlen je
-        // Wohnung unterscheiden sich). Ein /rechnung-Link je Projekt-Deck.
-        for (let i = 0; i < links.length; i++) {
-          const l = links[i]
-          setProgress(t('crm.wizard.calcCreating', 'Erstelle Berechnung') + ` ${i + 1}/${links.length}…`)
-          const items = l.items.map(buildCalcItem)
-          allItems.push(...items)
-          const title = items.length > 1
-            ? `Berechnung ${l.items[0].projectName} (${items.length} ${t('crm.wizard.apartments', 'Wohnungen')})`
-            : `Rechnung ${items[0].label}`
-          const content = { with_calc: true, recipient_name: recipientName, items }
-          const { data: calcRow } = await supabase.from('property_calculations').insert({
-            lead_id: lead.id, recipient_name: recipientName, title, with_calc: true, content,
-          }).select('token').single()
-          const tok = (calcRow as { token?: string } | null)?.token
-          if (tok) calcLinkByToken[l.token] = `${origin}/rechnung/${tok}`
-        }
-        // Projektübergreifender Gesamt-Vergleich NUR bei ≥2 PROJEKTEN (vergleicht die Projekte).
-        if (links.length >= 2) {
-          setProgress(t('crm.wizard.compareCreating', 'Erstelle Immobilienvergleich…'))
-          const content = { with_calc: true, recipient_name: recipientName, items: allItems }
-          const { data: cmpRow } = await supabase.from('property_calculations').insert({
-            lead_id: lead.id, recipient_name: recipientName, title: 'Immobilienvergleich', with_calc: true, content,
-          }).select('token').single()
-          const tok = (cmpRow as { token?: string } | null)?.token
-          if (tok) compareLink = `${origin}/rechnung/${tok}`
-        }
-      }
       const mailItems = links.map(l => {
         const f = l.items[0]
         return {
           label: l.label, link: `${origin}/deck/${l.token}`,
-          calc_link: calcLinkByToken[l.token],   // Rendite-Berechnung des Projekts (alle Wohnungen)
+          calc_link: calcLinkByProject[f.projectId],   // Rendite-Berechnung des Projekts (alle Wohnungen)
           image: f.assets?.renders?.[0] ?? f.assets?.gallery?.[0]?.url,   // Projektbild für die Mail-Kachel
           project: f.projectName, unit: l.items.map(it => it.unit.unit_number).join(', '),
           bedrooms: f.unit.bedrooms, size_sqm: f.unit.size_sqm, terrace_sqm: f.unit.terrace_sqm,
