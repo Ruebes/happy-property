@@ -305,7 +305,7 @@ async function sendWa(phone: string, text: string, asSven = false): Promise<void
   if (!r.attached) console.warn('[booking-bot] Lotte-Bild fehlte bei', phone)
 }
 async function logWa(admin: SupabaseClient, leadId: string, text: string, dir: 'inbound' | 'outbound'): Promise<void> {
-  const content = (dir === 'outbound' ? withSignoff(text) : text).slice(0, 2000)
+  const content = (dir === 'outbound' ? withSignoff(text) : text).slice(0, 20000)
   try { await admin.from('activities').insert({ lead_id: leadId, type: 'whatsapp', direction: dir, subject: dir === 'outbound' ? 'WhatsApp: Termin-Bot' : 'WhatsApp erhalten', content, completed_at: new Date().toISOString(), auto: dir === 'outbound' }) } catch { /* egal */ }
 }
 

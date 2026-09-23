@@ -202,7 +202,7 @@ async function logActivity(supabase: ReturnType<typeof createClient>, params: {
     type:         params.type,
     direction:    'outbound',
     subject:      params.subject,
-    content:      params.content?.slice(0, 2000) ?? null,
+    content:      params.content?.slice(0, 20000) ?? null,
     completed_at: new Date().toISOString(),
     auto:         true,   // Drip/Stage/Automatik → im Posteingang ausgeblendet
   })

@@ -1084,7 +1084,7 @@ export default function LeadDetail() {
         type:       'email',
         direction:  'outbound',
         subject:    isClient ? resolvedSubject : `${resolvedSubject} → ${recipient?.name} <${toEmail}>`,
-        content:    resolvedBody.replace(/<[^>]+>/g, '').slice(0, 500),
+        content:    resolvedBody.replace(/<[^>]+>/g, '').slice(0, 20000),
         created_by: profile?.id ?? null,
       })
 
@@ -1130,7 +1130,7 @@ export default function LeadDetail() {
         type:       'whatsapp',
         direction:  'outbound',
         subject:    `WhatsApp → ${recipient?.name} (${phone})`,
-        content:    body.slice(0, 500),
+        content:    body.slice(0, 20000),
         created_by: profile?.id ?? null,
         completed_at: new Date().toISOString(),
       })

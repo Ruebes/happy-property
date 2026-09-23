@@ -232,7 +232,7 @@ export default function Inbox() {
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'whatsapp', direction: 'outbound',
           subject: `WhatsApp → ${current.name}`,
-          content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 2000),
+          content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 20000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       } else {
@@ -248,7 +248,7 @@ export default function Inbox() {
         if ((data as { success?: boolean } | null)?.success === false) throw new Error((data as { error?: string }).error || 'E-Mail')
         await supabase.from('activities').insert({
           lead_id: current.lead_id, type: 'email', direction: 'outbound',
-          subject, content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 2000),
+          subject, content: `${text}${files.length ? '\n' + files.map(f => `📎 ${f.name}`).join('\n') : ''}`.slice(0, 20000),
           created_by: profile?.id ?? null, completed_at: new Date().toISOString(), auto: false,
         })
       }
