@@ -752,7 +752,7 @@ export default function PropertyDetail() {
   const [unmarkConfirmId,  setUnmarkConfirmId]  = useState<string | null>(null)
 
   // Verträge: Doc-Upload (crm_unit_documents)
-  const [contractDocType,   setContractDocType]   = useState<'kaufvertrag' | 'mietvertrag' | 'sonstige'>('kaufvertrag')
+  const [contractDocType,   setContractDocType]   = useState<'kaufvertrag' | 'mietvertrag' | 'sonstiges'>('kaufvertrag')
   const [contractDocName,   setContractDocName]   = useState('')
   const [contractDocFile,   setContractDocFile]   = useState<File | null>(null)
   const [contractDocSaving, setContractDocSaving] = useState(false)
@@ -1687,7 +1687,8 @@ export default function PropertyDetail() {
       setToast({ msg: t('propertyDetail.contracts.documentUploaded', 'Dokument hochgeladen ✓') })
     } catch (err) {
       console.error('[handleUploadContractDoc]', err)
-      setToast({ msg: t('propertyDetail.purchases.uploadFailed', 'Upload fehlgeschlagen.'), type: 'error' })
+      const detail = err && typeof err === 'object' && 'message' in err ? `: ${(err as { message: string }).message}` : ''
+      setToast({ msg: t('propertyDetail.purchases.uploadFailed', 'Upload fehlgeschlagen.') + detail, type: 'error' })
     } finally {
       setContractDocSaving(false)
     }
@@ -2657,10 +2658,10 @@ export default function PropertyDetail() {
 
                 {/* Typ-Auswahl */}
                 <div className="flex gap-2 flex-wrap">
-                  {(['kaufvertrag', 'mietvertrag', 'sonstige'] as const).map(docType => (
+                  {(['kaufvertrag', 'mietvertrag', 'sonstiges'] as const).map(docType => (
                     <button
                       key={docType}
-                      onClick={() => { setContractDocType(docType); if (docType !== 'sonstige') setContractDocName('') }}
+                      onClick={() => { setContractDocType(docType); if (docType !== 'sonstiges') setContractDocName('') }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors
                         ${contractDocType === docType
                           ? 'text-white' : 'border border-gray-200 text-gray-600 hover:border-orange-300'}`}
@@ -2671,7 +2672,7 @@ export default function PropertyDetail() {
                 </div>
 
                 {/* Name (nur bei Sonstige) */}
-                {contractDocType === 'sonstige' && (
+                {contractDocType === 'sonstiges' && (
                   <div>
                     <label className="text-xs text-gray-500 font-body block mb-1">{t('propertyDetail.contracts.nameLabel', 'Bezeichnung')} <span className="text-red-400">*</span></label>
                     <input
@@ -2716,7 +2717,7 @@ export default function PropertyDetail() {
                   </button>
                   <button
                     onClick={handleUploadContractDoc}
-                    disabled={contractDocSaving || !contractDocFile || (contractDocType === 'sonstige' && !contractDocName.trim())}
+                    disabled={contractDocSaving || !contractDocFile || (contractDocType === 'sonstiges' && !contractDocName.trim())}
                     className="px-5 py-2 rounded-xl text-white text-sm font-semibold font-body
                                hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
                     style={{ backgroundColor: 'var(--color-highlight)' }}>
