@@ -1123,7 +1123,9 @@ Deno.serve(async (req) => {
         created_by: body.created_by ?? null,
         started_at: new Date().toISOString(),
         attempt: 1,
-        request: { angle, lang: deckLang, generic, furniture_mode: ctx.furnitureMode, units: ctx.units.map(u => u.unitNumber) },
+        request: { angle, lang: deckLang, generic, furniture_mode: ctx.furnitureMode, units: ctx.units.map(u => u.unitNumber),
+          // Briefing für das Postausgang-Netz (process-scheduled-messages), falls der Browser abbricht
+          briefing: (body.briefing ?? '').slice(0, 4000) || undefined },
       }).select('id').maybeSingle()
       jobId = (job as { id?: string } | null)?.id ?? null
     }

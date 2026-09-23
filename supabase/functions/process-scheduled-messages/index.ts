@@ -27,6 +27,7 @@ import { encodeMimeSubject } from '../_shared/mimeSubject.ts'
 import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { withSocialFooter } from '../_shared/socialFooter.ts'
 import { buildIcs, toB64 } from '../_shared/ics.ts'
+import { bookingUrl } from '../_shared/bookingLink.ts'
 
 // Wiederholung bei TimelinesAI-Kontingent (403 quota_exceeded): 8 x 10 Min = 80 Min,
 // länger als das beobachtete Sperrfenster (~50 Min am 11.9.2026). 10 Min bleibt
@@ -208,6 +209,123 @@ async function logActivity(supabase: ReturnType<typeof createClient>, params: {
   })
 }
 
+// ── Sales-Deck-Waisen → Postausgang-Entwurf ──────────────────────────────────
+// Stichtag: ältere Jobs (vor Einführung des Netzes) nie nachträglich anfassen.
+const DECK_NET_START = '2026-09-23T14:00:00Z'
+const PORTAL_ORIGIN = 'https://portal.happy-property.com'
+
+async function deckOutboxSweep(supabase: ReturnType<typeof createClient>) {
+  const cutoff = new Date(Date.now() - 5 * 60_000).toISOString()
+  const { data: jobs } = await supabase.from('deck_generation_jobs')
+    .select('id, lead_id, project_id, deck_token, completed_at, request')
+    .eq('kind', 'deck').not('lead_id', 'is', null).not('deck_token', 'is', null)
+    .in('status', ['ready', 'review_required']).is('outbox_at', null)
+    .gte('completed_at', DECK_NET_START).lte('completed_at', cutoff)
+    .order('completed_at').limit(30)
+  type Job = { id: string; lead_id: string; project_id: string | null; deck_token: string; completed_at: string; request: { briefing?: string; angle?: string } | null }
+  const byLead = new Map<string, Job[]>()
+  for (const j of ((jobs ?? []) as Job[])) {
+    const g = byLead.get(j.lead_id); if (g) g.push(j); else byLead.set(j.lead_id, [j])
+  }
+  for (const [leadId, list] of byLead) {
+    // Läuft für den Lead noch etwas (Wizard mit mehreren Projekten) oder ist das
+    // letzte Deck jünger als 5 Min, darf der Browser noch selbst fertig werden.
+    const { data: busy } = await supabase.from('deck_generation_jobs').select('id')
+      .eq('lead_id', leadId).is('completed_at', null)
+      .gte('created_at', new Date(Date.now() - 30 * 60_000).toISOString()).limit(1)
+    if (busy?.length) continue
+    const { data: fresh } = await supabase.from('deck_generation_jobs').select('id')
+      .eq('lead_id', leadId).gt('completed_at', cutoff).limit(1)
+    if (fresh?.length) continue
+
+    // Schon im Postausgang (Browser war schneller)? Dann nur stempeln.
+    const orphans: Job[] = []
+    for (const j of list) {
+      const { data: ob } = await supabase.from('deck_outbox').select('id')
+        .eq('lead_id', leadId).contains('deck_tokens', [j.deck_token]).limit(1)
+      if (ob?.length) await supabase.from('deck_generation_jobs').update({ outbox_at: new Date().toISOString() }).eq('id', j.id)
+      else orphans.push(j)
+    }
+    if (!orphans.length) continue
+    // Claim (CAS), damit parallele Läufe keinen doppelten Entwurf anlegen.
+    const { data: claimed } = await supabase.from('deck_generation_jobs')
+      .update({ outbox_at: new Date().toISOString() })
+      .in('id', orphans.map(j => j.id)).is('outbox_at', null).select('id')
+    const claimedIds = new Set(((claimed ?? []) as { id: string }[]).map(c => c.id))
+    const mine = orphans.filter(j => claimedIds.has(j.id))
+    if (!mine.length) continue
+
+    const { data: lead } = await supabase.from('leads')
+      .select('id, first_name, last_name, email, booking_token').eq('id', leadId).maybeSingle()
+    const l = lead as { id: string; first_name: string | null; last_name: string | null; email: string | null; booking_token: string | null } | null
+    if (!l) continue
+    const items: Record<string, unknown>[] = []
+    for (const j of mine) {
+      const { data: deck } = await supabase.from('sales_decks')
+        .select('project_id, deck_context').eq('token', j.deck_token).maybeSingle()
+      const d = deck as { project_id: string | null; deck_context: { units?: Array<{ unitId?: string }> } | null } | null
+      const pid = d?.project_id ?? j.project_id
+      const { data: proj } = pid
+        ? await supabase.from('crm_projects').select('name, deck_assets').eq('id', pid).maybeSingle()
+        : { data: null }
+      const p = proj as { name: string; deck_assets: { facts?: string; renders?: string[] } | null } | null
+      const unitIds = (d?.deck_context?.units ?? []).map(u => u.unitId).filter(Boolean) as string[]
+      const { data: units } = unitIds.length
+        ? await supabase.from('crm_project_units').select('unit_number, bedrooms, size_sqm, terrace_sqm, floor, price_net').in('id', unitIds)
+        : { data: [] }
+      const us = (units ?? []) as Array<{ unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; floor: number | null; price_net: number | null }>
+      const u = us[0]
+      let available: number | null = null, total: number | null = null
+      if (pid) {
+        const { count: t } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
+        const { count: f } = await supabase.from('crm_project_units').select('id', { count: 'exact', head: true }).eq('project_id', pid)
+          .not('status', 'in', '(sold,reserved)').is('property_id', null).is('parent_unit_id', null)
+        available = f ?? null; total = t ?? null
+      }
+      const name = p?.name ?? 'Projekt'
+      items.push({
+        label: us.length > 1 ? `${name} (${us.length} Wohnungen)` : `${name}${u ? ` · ${u.unit_number}` : ''}`,
+        link: `${PORTAL_ORIGIN}/deck/${j.deck_token}`,
+        image: p?.deck_assets?.renders?.[0],
+        project: name, unit: us.map(x => x.unit_number).join(', '),
+        bedrooms: u?.bedrooms, size_sqm: u?.size_sqm, terrace_sqm: u?.terrace_sqm, floor: u?.floor,
+        price: us.length > 1 ? `${us.length} Wohnungen`
+          : (u?.price_net ? `${Number(u.price_net).toLocaleString('de-DE')} € netto` : undefined),
+        facts: (p?.deck_assets?.facts ?? '').slice(0, 2600),
+        available_count: available, total_count: total,
+      })
+    }
+    const tokens = mine.map(j => j.deck_token)
+    const links = items.map(it => `<li><a href="${it.link}">${String(it.label).replace(/</g, '&lt;')}</a></li>`).join('')
+    const { data: ob, error: obErr } = await supabase.from('deck_outbox').insert({
+      lead_id: l.id, recipient_email: l.email, status: 'draft', deck_tokens: tokens,
+      subject: items.length > 1 ? 'Deine Wohnungs-Vorschläge von Happy Property' : `Dein Vorschlag: ${items[0].label}`,
+      body: `<p>Hallo ${(l.first_name ?? '').replace(/</g, '&lt;')},</p><p>hier sind deine persönlichen Vorschläge:</p><ul>${links}</ul><p>Liebe Grüße,<br>Sven · Happy Property Cyprus</p>`,
+    }).select('id').single()
+    if (obErr) {
+      // Stempel zurücknehmen, sonst geht das Deck endgültig verloren.
+      await supabase.from('deck_generation_jobs').update({ outbox_at: null }).in('id', mine.map(j => j.id))
+      console.warn('[deck-net] Postausgang-Insert fehlgeschlagen:', obErr.message)
+      continue
+    }
+    const req0 = mine[0].request ?? {}
+    try {
+      const { data: mail } = await supabase.functions.invoke('compose-deck-mail', {
+        body: {
+          recipient_name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim(), first_name: l.first_name,
+          briefing: req0.briefing, angle: req0.angle, items, booking_url: bookingUrl(l.booking_token),
+        },
+        headers: { Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}` },
+      })
+      const mm = mail as { subject?: string; html?: string } | null
+      if (mm?.subject && mm?.html) {
+        await supabase.from('deck_outbox').update({ subject: mm.subject, body: mm.html }).eq('id', (ob as { id: string }).id)
+      }
+    } catch (e) { console.warn('[deck-net] KI-Mail fehlgeschlagen, Fallback bleibt:', e) }
+    console.log(`[deck-net] Entwurf für Lead ${leadId} angelegt (${tokens.length} Deck(s))`)
+  }
+}
+
 // ── Hauptfunktion ─────────────────────────────────────────────────────────────
 
 // Läuft --no-verify-jwt: nur Cron (Service-Role-Bearer) oder eingeloggte Staff-
@@ -273,6 +391,15 @@ Deno.serve(async (req: Request) => {
       })
     }
   } catch (e) { console.warn('[process-scheduled] Bug-Fertigmeldung:', e) }
+
+  // ── Sicherheitsnetz Sales Decks: fertige Decks ohne Postausgang-Entwurf ──────
+  // Der DeckWizard legt den Entwurf im Browser an, nachdem alle Decks fertig sind.
+  // Lädt Sven den Tab vorher neu (Hintergrund-Modus), fehlt der Entwurf (Thomas
+  // Hellige, 23.9.). Hier: 5 Min nach dem letzten fertigen Deck eines Leads, wenn
+  // nichts mehr läuft und kein Entwurf die Tokens enthält → Entwurf anlegen.
+  try {
+    await deckOutboxSweep(supabase)
+  } catch (e) { console.warn('[process-scheduled] Deck-Postausgang-Netz:', e) }
 
   // ── Pipeline „Immobilienauswahl" → Portal-Zugang von Lotte (nur NEUE Wechsel) ─
   // FLOW_START schützt die 22 Bestands-Deals vor einem Massen-Versand; Marker

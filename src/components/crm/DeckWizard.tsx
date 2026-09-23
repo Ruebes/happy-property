@@ -312,6 +312,11 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     // Vergleich/Mail fertig sind und im Postausgang liegen — Sven kann derweil weiterarbeiten.
     if (background) onClose()
     setBusy(true); setErr('')
+    // Der Lauf lebt in diesem Tab: Neu laden/Schliessen bricht ihn ab, bevor der
+    // Postausgang-Entwurf steht. Browser fragt deshalb nach. (Faengt es trotzdem
+    // jemand ab, legt process-scheduled-messages den Entwurf nach 5 Min an.)
+    const warnUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warnUnload)
     try {
       // Korb nach PROJEKT gruppieren → pro Projekt EIN Deck + EINE Berechnung (mit allen
       // gewählten Wohnungen des Projekts). Reihenfolge = erste Auswahl-Reihenfolge.
@@ -546,6 +551,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
       if (background) onDone(`❌ ${t('crm.wizard.bgError', 'Erstellung fehlgeschlagen')}: ${msg}`)
       else setErr(msg)
     } finally {
+      window.removeEventListener('beforeunload', warnUnload)
       setBusy(false); setProgress('')
     }
   }
