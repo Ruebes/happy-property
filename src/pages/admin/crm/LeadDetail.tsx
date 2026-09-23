@@ -3064,6 +3064,13 @@ export default function LeadDetail() {
                                 {deal.property.project_name}
                                 {deal.property.unit_number ? ` – ${deal.property.unit_number}` : ''}
                               </Link>
+                              <button
+                                onClick={handleRemoveWohnung}
+                                className="ml-3 text-xs px-2 py-0.5 rounded-lg text-red-600 border border-red-200 hover:bg-red-50"
+                                title={t('leadDetail.removeUnitTitle', 'Wohnung vom Kunden entfernen und Portal-Objekt löschen')}
+                              >
+                                🗑 {t('leadDetail.removeUnit', 'Wohnung entfernen')}
+                              </button>
                             </dd>
                           </div>
                         )}
