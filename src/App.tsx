@@ -33,6 +33,7 @@ const Deck    = lazy(() => import('./pages/Deck'))
 const Rechnung = lazy(() => import('./pages/Rechnung'))
 const Strategie = lazy(() => import('./pages/Strategie'))
 const AnalyticsReport = lazy(() => import('./pages/Report'))
+const SharedPage = lazy(() => import('./pages/SharedPage'))
 const SeoReportPage   = lazy(() => import('./pages/SeoReport'))
 const TaskAction = lazy(() => import('./pages/TaskAction'))
 const BookingPage = lazy(() => import('./pages/BookingPage'))
@@ -165,6 +166,7 @@ export default function App() {
             <Route path="/s/:code" element={<ShortLink />} />
             <Route path="/revolut" element={<RevolutCallback />} />
             <Route path="/report/:token" element={<AnalyticsReport />} />
+            <Route path="/seite/:token" element={<SharedPage />} />
             <Route path="/seo-report/:token" element={<SeoReportPage />} />
             <Route path="/deck/:token" element={<Deck />} />
             <Route path="/deck/:token/print" element={<Deck />} />
