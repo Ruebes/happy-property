@@ -861,7 +861,7 @@ export default function Newsletter() {
                 ))}
               </div>
               {previewTab === 'html' && (
-                <iframe title="Mail-Vorschau" sandbox="" srcDoc={preview.html} className="w-full flex-1 min-h-[60vh] bg-white" />
+                <iframe title="Mail-Vorschau" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={preview.html} className="w-full flex-1 min-h-[60vh] bg-white" />
               )}
               {previewTab === 'text' && (
                 <pre className="w-full flex-1 min-h-[60vh] overflow-auto bg-gray-50 p-5 text-sm text-gray-800 whitespace-pre-wrap font-sans">{htmlToText(preview.html) || t('crm.newsletter.emptyText', '(kein Text)')}</pre>
