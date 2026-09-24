@@ -593,6 +593,28 @@ Deno.serve(async (req: Request) => {
     // bauen (z.B. nach Template-Fixes). Nutzt die vorhandenen Deck-Klone des
     // Empfängers; das status-Guard im Update verhindert Rennen mit dem Cron. ──
     if (body.action === 'rebuild_pending') {
+      // HTML-Modus: Mail + WhatsApp aller noch wartenden Nachrichten aus dem
+      // aktuellen html_body/whatsapp_body neu bauen (Zeitplan bleibt).
+      if (camp.content_mode === 'html') {
+        const raw = String(camp.html_body ?? '')
+        const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id, subscriber_id, email_body, whatsapp_text').eq('campaign_id', camp.id).eq('status', 'pending')
+        let rebuilt = 0, skipped = 0
+        for (const m of (pend ?? []) as Array<{ id: string; lead_id: string | null; subscriber_id: string | null; email_body: string | null; whatsapp_text: string | null }>) {
+          const src = m.lead_id
+            ? (await sb.from('leads').select('first_name, last_name, email, phone').eq('id', m.lead_id).maybeSingle()).data
+            : (await sb.from('newsletter_subscribers').select('first_name, last_name, email, phone').eq('id', m.subscriber_id).maybeSingle()).data
+          if (!src) { skipped++; continue }
+          const r = src as { first_name: string | null; last_name: string | null; email: string | null; phone: string | null }
+          const first = firstNameOf(r)
+          const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, subscriber_id: m.subscriber_id, ...r })
+          const upd: Record<string, string> = {}
+          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl)
+          if (m.whatsapp_text) upd.whatsapp_text = `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
+          const { error: ue } = await sb.from('scheduled_messages').update(upd).eq('id', m.id).eq('status', 'pending')
+          if (ue) skipped++; else rebuilt++
+        }
+        return json({ ok: true, rebuilt, skipped })
+      }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
       const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id').eq('campaign_id', camp.id).eq('status', 'pending')
