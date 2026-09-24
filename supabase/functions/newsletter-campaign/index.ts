@@ -77,8 +77,8 @@ const TZ = 'Europe/Berlin'
 const SEND_START_H = 8, SEND_END_H = 20
 const STEP_SEC = 180            // Grundabstand 3 Min (alles mit WhatsApp)
 const JITTER_SEC = 60           // + Zufall bis 60s
-const MAIL_STEP_SEC = 60        // reine E-Mails: Grundabstand 1 Min
-const MAIL_JITTER_SEC = 20      // + Zufall bis 20s
+const MAIL_STEP_SEC = 20        // reine E-Mails: Grundabstand 20 s (Sender schafft max. 20 je 5 Min)
+const MAIL_JITTER_SEC = 5       // + Zufall bis 5s
 
 interface CampaignProperty {
   project_id: string; project_name: string
