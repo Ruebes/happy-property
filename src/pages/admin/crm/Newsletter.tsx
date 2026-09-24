@@ -130,6 +130,7 @@ export default function Newsletter() {
   // Inhalts-Modus: 'structured' = aus Objekten bauen; 'html' = eigenes HTML einfügen.
   const [contentMode, setContentMode] = useState<'structured' | 'html'>('structured')
   const [htmlBody, setHtmlBody] = useState('')
+  const [waBody, setWaBody] = useState('')
 
   const showToastMsg = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
 
@@ -182,6 +183,7 @@ export default function Newsletter() {
       list_ids: listIds,
       content_mode: contentMode,
       html_body: contentMode === 'html' ? htmlBody : null,
+      whatsapp_body: contentMode === 'html' && waBody.trim() ? waBody : null,
       created_by: profile?.id ?? null,
       updated_at: new Date().toISOString(),
     }
@@ -195,7 +197,7 @@ export default function Newsletter() {
     const id = (data as { id: string }).id
     setCampaignId(id)
     return id
-  }, [campaignId, title, subject, intro, outro, props, listMode, listIds, contentMode, htmlBody, profile])
+  }, [campaignId, title, subject, intro, outro, props, listMode, listIds, contentMode, htmlBody, waBody, profile])
 
   // Wohnung aus dem Picker in einen Projekt-Slot einsortieren
   const addUnit = (unit: CrmProjectUnit, project: { id: string; name: string }) => {
@@ -270,7 +272,7 @@ export default function Newsletter() {
 
   const resetWizard = () => {
     setCampaignId(null); setTitle(''); setSubject(''); setIntro(''); setOutro('')
-    setProps([]); setStatus(null); setContentMode('structured'); setHtmlBody('')
+    setProps([]); setStatus(null); setContentMode('structured'); setHtmlBody(''); setWaBody('')
   }
 
   // Gespeicherten Entwurf zurück in den Wizard laden
@@ -279,11 +281,11 @@ export default function Newsletter() {
     try {
       const { data, error } = await supabase.from('newsletter_campaigns').select('*').eq('id', id).single()
       if (error) throw error
-      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown; content_mode?: string; html_body?: string | null; list_mode?: string; list_ids?: string[] }
+      const c = data as { id: string; title: string; subject: string; intro_text: string; outro_text: string; properties: unknown; content_mode?: string; html_body?: string | null; whatsapp_body?: string | null; list_mode?: string; list_ids?: string[] }
       setCampaignId(c.id)
       setTitle(c.title ?? ''); setSubject(c.subject ?? '')
       setIntro(c.intro_text ?? ''); setOutro(c.outro_text ?? '')
-      setContentMode(c.content_mode === 'html' ? 'html' : 'structured'); setHtmlBody(c.html_body ?? '')
+      setContentMode(c.content_mode === 'html' ? 'html' : 'structured'); setHtmlBody(c.html_body ?? ''); setWaBody(c.whatsapp_body ?? '')
       if (c.list_mode === 'include' || c.list_mode === 'exclude') { setListMode(c.list_mode); setListIds(Array.isArray(c.list_ids) ? c.list_ids : []) }
       else { setListMode('all'); setListIds([]) }
       const raw = Array.isArray(c.properties) ? c.properties as Array<Partial<WizProperty> & { units?: WizUnit[] }> : []
@@ -650,6 +652,10 @@ export default function Newsletter() {
               <p className="mt-1 text-[11px] text-gray-400">
                 {t('crm.newsletter.htmlHint', 'Wird als HTML-Mail verschickt; für Empfänger ohne HTML entsteht automatisch eine Text-Version. Aus dem HTML wird zusätzlich eine WhatsApp-Version gebaut. Ein Abmelde-Link wird automatisch ergänzt, falls keiner enthalten ist. Schau dir alles vorher über „Vorschau" an.')}
               </p>
+              <label className="block text-xs font-semibold text-gray-500 mb-1 mt-4">{t('crm.newsletter.waLabel', 'Eigener WhatsApp-Text (optional)')} <span className="text-gray-400 font-normal">({'{{vorname}}'} {t('crm.newsletter.possible', 'möglich')})</span></label>
+              <textarea value={waBody} onChange={e => setWaBody(e.target.value)} rows={8} className={`${input} text-sm`}
+                placeholder={t('crm.newsletter.waPh', 'Leer lassen = WhatsApp-Version wird automatisch aus dem HTML gebaut.')} />
+              <p className="mt-1 text-[11px] text-gray-400">{t('crm.newsletter.waHint', 'Geht an Abonnenten mit Handynummer. Bei aufwendigen Mail-Layouts lieber einen eigenen, kurzen Chat-Text schreiben. *fett* und Links funktionieren.')}</p>
             </div>
             )}
           </div>

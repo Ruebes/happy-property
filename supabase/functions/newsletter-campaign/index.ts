@@ -44,6 +44,11 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
   }
   return html
 }
+// WhatsApp-Fassung im HTML-Modus: eigener Text (whatsapp_body), falls gepflegt,
+// sonst automatisch aus dem HTML abgeleitet. Aufwendige Mail-Layouts (Tabellen,
+// Kacheln) ergeben abgeleitet keinen sauberen Chat-Text.
+const waFrom = (camp: { whatsapp_body?: string | null }, raw: string, first: string): string =>
+  camp.whatsapp_body?.trim() ? personalize(camp.whatsapp_body, first).trim() : htmlToWhatsapp(personalize(raw, first))
 const unsubUrlFor = (lead: { lead_id?: string | null; subscriber_id?: string | null }): string =>
   lead.lead_id ? `${SITE}/abmelden?l=${lead.lead_id}` : lead.subscriber_id ? `${SITE}/abmelden?s=${lead.subscriber_id}` : `${SITE}/abmelden`
 
@@ -70,8 +75,10 @@ const SOCIALS = [
 ]
 const TZ = 'Europe/Berlin'
 const SEND_START_H = 8, SEND_END_H = 20
-const STEP_SEC = 180            // Grundabstand 3 Min
+const STEP_SEC = 180            // Grundabstand 3 Min (alles mit WhatsApp)
 const JITTER_SEC = 60           // + Zufall bis 60s
+const MAIL_STEP_SEC = 60        // reine E-Mails: Grundabstand 1 Min
+const MAIL_JITTER_SEC = 20      // + Zufall bis 20s
 
 interface CampaignProperty {
   project_id: string; project_name: string
@@ -100,6 +107,24 @@ function clampToWindow(d: Date): Date {
     t = new Date(t.getTime() + (SEND_START_H - h) * 3600e3)
   }
   return t
+}
+
+// Zwei getrennte Takte: reine E-Mails duerfen schneller raus (Mailserver
+// verkraftet das), alles mit WhatsApp-Anteil bleibt beim langsamen Takt,
+// weil schnelle WhatsApp-Serien die Nummer sperren lassen.
+function makePacer(base: number): (typ: string) => Date {
+  let mail = clampToWindow(new Date(base))
+  let wa = clampToWindow(new Date(base))
+  return (typ: string) => {
+    if (typ === 'email') {
+      const slot = mail
+      mail = clampToWindow(new Date(slot.getTime() + (MAIL_STEP_SEC + Math.floor(Math.random() * MAIL_JITTER_SEC)) * 1000))
+      return slot
+    }
+    const slot = wa
+    wa = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
+    return slot
+  }
 }
 
 function firstNameOf(l: { first_name: string | null }): string {
@@ -417,10 +442,21 @@ Deno.serve(async (req: Request) => {
 
     // Leads UND Listen-Abonnenten, ueber die E-Mail entdoppelt: wer beides ist,
     // zaehlt einmal — als Lead (der hat die reichhaltigeren Daten).
-    const combined = async (mode: string, ids: string[]) => {
-      const leads = await loadAudience(sb)
+    // excludeLeadIds: Leads, die diese Kampagne NIE bekommen (z. B. Kaeufer des
+    // beworbenen Projekts). Ihre Adressen (inkl. Zweitadressen) sperren auch
+    // gleichlautende Listen-Abonnenten.
+    const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = []) => {
+      const blocked = new Set<string>()
+      if (excludeLeadIds.length) {
+        const { data: ex } = await sb.from('leads').select('email, alt_emails').in('id', excludeLeadIds)
+        for (const r of (ex ?? []) as Array<{ email: string | null; alt_emails: string[] | null }>) {
+          for (const m of [r.email, ...(r.alt_emails ?? [])]) if (m) blocked.add(m.trim().toLowerCase())
+        }
+      }
+      const exIds = new Set(excludeLeadIds)
+      const leads = (await loadAudience(sb)).filter(l => !exIds.has(l.id) && !blocked.has(l.email.trim().toLowerCase()))
       const subs = await loadListAudience(sb, mode, ids)
-      const seen = new Set(leads.map(l => l.email.trim().toLowerCase()))
+      const seen = new Set([...leads.map(l => l.email.trim().toLowerCase()), ...blocked])
       const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string; phone: string | null }> =
         leads.map(l => ({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email, phone: null }))
       for (const s of subs) {
@@ -436,7 +472,12 @@ Deno.serve(async (req: Request) => {
 
     // ── Zielgruppen-Zähler (Wizard-Anzeige) ──────────────────────────────────
     if (body.action === 'audience') {
-      const list = await combined(body.list_mode ?? 'all', body.list_ids ?? [])
+      let excl: string[] = []
+      if (body.campaign_id) {
+        const { data: c } = await sb.from('newsletter_campaigns').select('exclude_lead_ids').eq('id', body.campaign_id).maybeSingle()
+        excl = ((c as { exclude_lead_ids?: string[] } | null)?.exclude_lead_ids ?? [])
+      }
+      const list = await combined(body.list_mode ?? 'all', body.list_ids ?? [], excl)
       const nurLeads = list.filter(x => x.lead_id).length
       return json({ ok: true, total: list.length, leads: nurLeads, abonnenten: list.length - nurLeads })
     }
@@ -519,7 +560,7 @@ Deno.serve(async (req: Request) => {
       if (camp.content_mode === 'html') {
         const raw = String(camp.html_body ?? '')
         const demoUrl = `${SITE}/termin?src=empfehlung&ref=beispiel`
-        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: `${htmlToWhatsapp(personalize(raw, 'Vorname'))}\n\n${affiliateWhatsappBlock(demoUrl)}` })
+        return json({ ok: true, subject: personalize(camp.subject, 'Vorname'), html: customEmailHtml(raw, 'Vorname', `${SITE}/abmelden`, demoUrl), whatsapp: `${waFrom(camp, raw, 'Vorname')}\n\n${affiliateWhatsappBlock(demoUrl)}` })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
       const deckTokens: Record<string, string> = {}
@@ -561,6 +602,7 @@ Deno.serve(async (req: Request) => {
       const lead = leadRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; newsletter_optout_at: string | null } | null
       if (!lead?.email) return json({ error: 'Lead hat keine E-Mail' }, 400)
       if (lead.newsletter_optout_at) return json({ error: 'Lead hat den Newsletter abbestellt' }, 409)
+      if (((camp.exclude_lead_ids ?? []) as string[]).includes(lead.id)) return json({ error: 'Lead ist von dieser Kampagne ausgeschlossen' }, 409)
       const { data: dup } = await sb.from('scheduled_messages').select('id').eq('lead_id', lead.id).eq('campaign_id', camp.id).limit(1)
       if (dup && dup.length) return json({ error: 'Lead hat diese Kampagne bereits erhalten' }, 409)
       const properties = (camp.properties ?? []) as CampaignProperty[]
@@ -633,7 +675,7 @@ Deno.serve(async (req: Request) => {
       // ── Eigenes-HTML-Modus: keine Deck-Klone, HTML + WhatsApp direkt planen ──
       if (camp.content_mode === 'html') {
         if (!camp.html_body?.trim()) return json({ error: 'Es ist kein HTML eingegeben.' }, 400)
-        const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[])
+        const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[], (camp.exclude_lead_ids ?? []) as string[])
         if (!audience.length) return json({ error: 'Zielgruppe ist leer' }, 400)
         await sb.from('newsletter_campaigns').update({ status: 'launching', recipients_total: audience.length, recipients_done: 0, updated_at: new Date().toISOString() }).eq('id', camp.id)
         const raw = String(camp.html_body)
@@ -641,7 +683,7 @@ Deno.serve(async (req: Request) => {
           try {
             const startAt = body.start_at ? new Date(body.start_at) : null
             const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
-            let slot = clampToWindow(new Date(base))
+            const nextSlot = makePacer(base)
             let done = 0, skipped = 0
             for (const lead of audience) {
               try {
@@ -649,6 +691,7 @@ Deno.serve(async (req: Request) => {
                 const hatMail = !!lead.email, hatTel = !!lead.phone
                 const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
                 const affiliateUrl = await affiliateUrlFor(sb, lead)
+                const slot = nextSlot(typ)
                 const { error: se } = await sb.from('scheduled_messages').insert({
                   lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
@@ -656,12 +699,11 @@ Deno.serve(async (req: Request) => {
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
                   email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl) : null,
                   whatsapp_text: hatTel
-                    ? `${htmlToWhatsapp(personalize(raw, first))}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
+                    ? `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
                     : null,
                   recipient: 'client', appointment_condition: 'none',
                 })
                 if (se) { skipped++; console.error(`[newsletter-html] ${lead.email}:`, se.message); continue }
-                slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
                 done++
                 if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
               } catch (leadErr) { skipped++; console.error('[newsletter-html] Empfänger übersprungen:', leadErr) }
@@ -680,7 +722,7 @@ Deno.serve(async (req: Request) => {
 
       if (!properties.length || properties.some(p => !p.master_deck_token)) return json({ error: 'Master-Decks fehlen' }, 400)
 
-      const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[])
+      const audience = await combined(String(camp.list_mode ?? 'all'), (camp.list_ids ?? []) as string[], (camp.exclude_lead_ids ?? []) as string[])
       if (!audience.length) return json({ error: 'Zielgruppe ist leer' }, 400)
       await sb.from('newsletter_campaigns').update({ status: 'launching', recipients_total: audience.length, recipients_done: 0, updated_at: new Date().toISOString() }).eq('id', camp.id)
       const projectImages = await loadProjectImages(sb, properties.map((p: CampaignProperty) => p.project_id))
@@ -698,7 +740,7 @@ Deno.serve(async (req: Request) => {
           // Geplanter Versandstart: Staffelung beginnt frühestens zum Wunschtermin
           const startAt = body.start_at ? new Date(body.start_at) : null
           const base = startAt && startAt.getTime() > Date.now() ? startAt.getTime() : Date.now() + 120e3
-          let slot = clampToWindow(new Date(base))
+          const nextSlot = makePacer(base)
           let done = 0, skipped = 0
           for (const lead of audience) {
             // Pro-Empfänger-Fehlerbehandlung: EIN problematischer Lead darf nie
@@ -743,6 +785,7 @@ Deno.serve(async (req: Request) => {
               const typ = hatMail && hatTel ? 'both' : hatTel ? 'whatsapp' : 'email'
               const waText = hatTel ? buildWhatsappText(camp, first, deckTokens, { campaignId: String(camp.id), affiliateUrl }) : null
               const waBild = hatTel ? properties.map(p => projectImages[p.project_id]).find(Boolean) ?? null : null
+              const slot = nextSlot(typ)
               const { error: se } = await sb.from('scheduled_messages').insert({
                 lead_id: lead.lead_id, subscriber_id: lead.subscriber_id,
                 type: typ, event_type: 'newsletter', campaign_id: camp.id,
@@ -752,7 +795,6 @@ Deno.serve(async (req: Request) => {
                 recipient: 'client', appointment_condition: 'none',
               })
               if (se) { skipped++; console.error(`[newsletter] Mail-Planung ${lead.email}:`, se.message); continue }
-              slot = clampToWindow(new Date(slot.getTime() + (STEP_SEC + Math.floor(Math.random() * JITTER_SEC)) * 1000))
               done++
               if (done % 10 === 0) await sb.from('newsletter_campaigns').update({ recipients_done: done }).eq('id', camp.id)
             } catch (leadErr) {
