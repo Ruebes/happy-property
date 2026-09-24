@@ -31,10 +31,13 @@ const AFFILIATE_FALLBACK = `${'https://portal.happy-property.com'}/termin?src=em
 // unsubUrl = Ein-Klick-Abmeldelink des Empfängers (/abmelden?l=<lead> bzw. ?s=<sub>).
 // {{abmelden}} im HTML wird dadurch ersetzt; fehlt ein Abmelde-Link ganz, hängen
 // wir aus DSGVO-Gründen einen an.
-function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string): string {
+function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string, terminUrl?: string): string {
   // {{tippgeber_link}} = persoenlicher Empfehlungs-Link des Empfaengers; fehlt er
   // (Vorschau/Test), zeigt der Platzhalter auf die allgemeine Termin-Seite.
+  // {{termin_link}} = Buchungslink; bei Leads mit Direkteinstieg (?b=booking_token):
+  // Fragebogen + Kontaktformular entfallen, es geht direkt zum Kalender.
   let html = personalize(rawHtml, first)
+    .split('{{termin_link}}').join(terminUrl ?? `${SITE}/termin?src=newsletter`)
     .split('{{abmelden}}').join(unsubUrl)
     .split('{{tippgeber_link}}').join(affiliateUrl ?? AFFILIATE_FALLBACK)
   if (affiliateUrl && !/tippgeber|empfehlung/i.test(rawHtml)) html = injectAffiliateSection(html, first, affiliateUrl)
@@ -49,6 +52,18 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
 // Kacheln) ergeben abgeleitet keinen sauberen Chat-Text.
 const waFrom = (camp: { whatsapp_body?: string | null }, raw: string, first: string): string =>
   camp.whatsapp_body?.trim() ? personalize(camp.whatsapp_body, first).trim() : htmlToWhatsapp(personalize(raw, first))
+// Termin-Link je Empfaenger: Leads kennen wir (booking_token) -> Direkteinstieg
+// in den Kalender. Listen-Abonnenten sind keine Leads -> ohne Fragebogen (?f=none),
+// nur Kontaktformular.
+async function terminUrlFor(sb: SupabaseClient, r: { lead_id?: string | null }, campId: string): Promise<string> {
+  const utm = `src=newsletter&utm_source=newsletter&utm_medium=email&utm_campaign=nl-${campId.slice(0, 8)}`
+  if (r.lead_id) {
+    const { data } = await sb.from('leads').select('booking_token').eq('id', r.lead_id).maybeSingle()
+    const tok = (data as { booking_token?: string | null } | null)?.booking_token
+    if (tok) return `${SITE}/termin?direkt=1&b=${encodeURIComponent(tok)}&${utm}`
+  }
+  return `${SITE}/termin?f=none&${utm}`
+}
 const unsubUrlFor = (lead: { lead_id?: string | null; subscriber_id?: string | null }): string =>
   lead.lead_id ? `${SITE}/abmelden?l=${lead.lead_id}` : lead.subscriber_id ? `${SITE}/abmelden?s=${lead.subscriber_id}` : `${SITE}/abmelden`
 
@@ -599,6 +614,8 @@ Deno.serve(async (req: Request) => {
         const raw = String(camp.html_body ?? '')
         const { data: pend } = await sb.from('scheduled_messages').select('id, lead_id, subscriber_id, email_body, whatsapp_text').eq('campaign_id', camp.id).eq('status', 'pending')
         let rebuilt = 0, skipped = 0
+        // Hunderte Empfaenger sprengen das 150-s-Limit der Anfrage -> im Hintergrund.
+        const work = (async () => {
         for (const m of (pend ?? []) as Array<{ id: string; lead_id: string | null; subscriber_id: string | null; email_body: string | null; whatsapp_text: string | null }>) {
           const src = m.lead_id
             ? (await sb.from('leads').select('first_name, last_name, email, phone').eq('id', m.lead_id).maybeSingle()).data
@@ -608,11 +625,17 @@ Deno.serve(async (req: Request) => {
           const first = firstNameOf(r)
           const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, subscriber_id: m.subscriber_id, ...r })
           const upd: Record<string, string> = {}
-          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl)
+          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, await terminUrlFor(sb, m, String(camp.id)))
           if (m.whatsapp_text) upd.whatsapp_text = `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
           const { error: ue } = await sb.from('scheduled_messages').update(upd).eq('id', m.id).eq('status', 'pending')
           if (ue) skipped++; else rebuilt++
         }
+        console.log(`[newsletter] rebuild_pending ${camp.id}: ${rebuilt} neu, ${skipped} uebersprungen`)
+        })()
+        // deno-lint-ignore no-explicit-any
+        const rt = (globalThis as any).EdgeRuntime
+        if (rt?.waitUntil) { rt.waitUntil(work); return json({ ok: true, background: true, total: (pend ?? []).length }) }
+        await work
         return json({ ok: true, rebuilt, skipped })
       }
       const properties = (camp.properties ?? []) as CampaignProperty[]
@@ -692,7 +715,8 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'test_mail') {
       const to = (body.to ?? 'sven@happy-property.com').trim()
       if (camp.content_mode === 'html') {
-        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven', `${SITE}/abmelden`, `${SITE}/termin?src=empfehlung&ref=beispiel`)
+        const testLead = (await sb.from('leads').select('id').eq('email', to.toLowerCase()).limit(1).maybeSingle()).data as { id?: string } | null
+        const html = customEmailHtml(String(camp.html_body ?? ''), 'Sven', `${SITE}/abmelden`, `${SITE}/termin?src=empfehlung&ref=beispiel`, await terminUrlFor(sb, { lead_id: testLead?.id ?? null }, String(camp.id)))
         const { error: se } = await sb.functions.invoke('send-email', { body: { to, subject: `[TEST] ${personalize(camp.subject, 'Sven')}`, html } })
         if (se) return json({ error: `Testversand: ${se.message}` }, 502)
         return json({ ok: true })
@@ -737,7 +761,7 @@ Deno.serve(async (req: Request) => {
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
                   status: 'pending', scheduled_at: slot.toISOString(),
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
-                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl) : null,
+                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id))) : null,
                   whatsapp_text: hatTel
                     ? `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
                     : null,
