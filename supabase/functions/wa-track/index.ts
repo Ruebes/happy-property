@@ -393,13 +393,17 @@ Deno.serve(async (req) => {
     }
 
     if (req.method === 'POST') {
+      // Body IMMER zuerst komplett lesen, auch wenn wir gleich verwerfen: eine
+      // Antwort vor dem Ende eines grossen Uploads (Replay-Snapshot ~300 KB)
+      // haelt den Request bis zum Wall-Clock-Limit offen → Gateway-504 nach
+      // 160 s ohne CORS-Header ("blocked by CORS policy" in der Konsole).
+      const body = await req.text()
       const ua = req.headers.get('user-agent') ?? ''
       if (BOT_RE.test(ua)) return new Response(null, { status: 204, headers: CORS })
       // Interne Besucher (Sven & Team) per IP-Sperrliste komplett ignorieren.
       const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim()
       const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
       if (await isBlockedIp(sb, ip)) return new Response(null, { status: 204, headers: CORS })
-      const body = await req.text()
       const data = JSON.parse(body || '{}') as {
         a?: string
         session?: SessionInfo; events?: TrackEvent[]
