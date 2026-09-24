@@ -411,9 +411,9 @@ async function loadListAudience(
 }
 
 // Zielgruppe: Leads ohne aktiven Deal, ohne Opt-out, mit E-Mail
-async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string }>> {
+async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone?: string | null }>> {
   const [{ data: leads }, { data: deals }, { data: optouts }] = await Promise.all([
-    sb.from('leads').select('id, first_name, last_name, email').is('newsletter_optout_at', null),
+    sb.from('leads').select('id, first_name, last_name, email, phone').is('newsletter_optout_at', null),
     sb.from('deals').select('lead_id, phase, archived_from_phase'),
     sb.from('communication_optouts').select('lead_id'),
   ])
@@ -421,8 +421,8 @@ async function loadAudience(sb: SupabaseClient): Promise<Array<{ id: string; fir
     d.phase !== 'deal_verloren' && d.phase !== 'archiviert' && !d.archived_from_phase,
   ).map((d: { lead_id: string }) => d.lead_id))
   const opt = new Set((optouts ?? []).map((o: { lead_id: string }) => o.lead_id))
-  return ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null }>)
-    .filter(l => l.email && l.email.includes('@') && !active.has(l.id) && !opt.has(l.id)) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string }>
+  return ((leads ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null }>)
+    .filter(l => l.email && l.email.includes('@') && !active.has(l.id) && !opt.has(l.id)) as Array<{ id: string; first_name: string | null; last_name: string | null; email: string; phone: string | null }>
 }
 
 Deno.serve(async (req: Request) => {
@@ -445,26 +445,44 @@ Deno.serve(async (req: Request) => {
     // excludeLeadIds: Leads, die diese Kampagne NIE bekommen (z. B. Kaeufer des
     // beworbenen Projekts). Ihre Adressen (inkl. Zweitadressen) sperren auch
     // gleichlautende Listen-Abonnenten.
+    // Entdopplung ueber E-Mail UND Telefonnummer: dieselbe Person kann als Lead
+    // und in mehreren Listen stehen, teils mit anderer Mail, aber gleicher Nummer
+    // (Klaviyo-Import hat Telefon-Dubletten). Jeder Mensch bekommt genau EINE
+    // Nachricht; Lead geht vor Abonnent (reichere Daten).
+    const mailKey = (m: string | null | undefined) => {
+      const e = (m ?? '').trim().toLowerCase()
+      return e.includes('@') ? e.replace(/@googlemail\.com$/, '@gmail.com') : ''
+    }
+    const telKey = (t: string | null | undefined) => {
+      let d = (t ?? '').replace(/\D/g, '').replace(/^00/, '')
+      if (d.startsWith('0')) d = '49' + d.slice(1)
+      return d.length >= 8 ? d.slice(-10) : ''
+    }
     const combined = async (mode: string, ids: string[], excludeLeadIds: string[] = []) => {
-      const blocked = new Set<string>()
+      const seenMail = new Set<string>(), seenTel = new Set<string>()
       if (excludeLeadIds.length) {
-        const { data: ex } = await sb.from('leads').select('email, alt_emails').in('id', excludeLeadIds)
-        for (const r of (ex ?? []) as Array<{ email: string | null; alt_emails: string[] | null }>) {
-          for (const m of [r.email, ...(r.alt_emails ?? [])]) if (m) blocked.add(m.trim().toLowerCase())
+        const { data: ex } = await sb.from('leads').select('email, alt_emails, phone').in('id', excludeLeadIds)
+        for (const r of (ex ?? []) as Array<{ email: string | null; alt_emails: string[] | null; phone: string | null }>) {
+          for (const m of [r.email, ...(r.alt_emails ?? [])]) { const k = mailKey(m); if (k) seenMail.add(k) }
+          const t = telKey(r.phone); if (t) seenTel.add(t)
         }
       }
       const exIds = new Set(excludeLeadIds)
-      const leads = (await loadAudience(sb)).filter(l => !exIds.has(l.id) && !blocked.has(l.email.trim().toLowerCase()))
-      const subs = await loadListAudience(sb, mode, ids)
-      const seen = new Set([...leads.map(l => l.email.trim().toLowerCase()), ...blocked])
-      const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string; phone: string | null }> =
-        leads.map(l => ({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email, phone: null }))
-      for (const s of subs) {
-        // Ohne E-Mail gibt es nichts zu entdoppeln (reine WhatsApp-Abonnenten) —
-        // die kommen immer dazu.
-        const key = s.email.trim().toLowerCase()
-        if (key && seen.has(key)) continue
-        if (key) seen.add(key)
+      const isDup = (mail: string, tel: string) => (!!mail && seenMail.has(mail)) || (!!tel && seenTel.has(tel))
+      const mark = (mail: string, tel: string) => { if (mail) seenMail.add(mail); if (tel) seenTel.add(tel) }
+      const merged: Array<{ lead_id: string | null; subscriber_id: string | null; first_name: string | null; last_name: string | null; email: string; phone: string | null }> = []
+      for (const l of await loadAudience(sb)) {
+        if (exIds.has(l.id)) continue
+        const mk = mailKey(l.email), tk = telKey(l.phone)
+        if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
+        mark(mk, tk)
+        merged.push({ lead_id: l.id, subscriber_id: null, first_name: l.first_name, last_name: l.last_name, email: l.email, phone: null })
+      }
+      for (const s of await loadListAudience(sb, mode, ids)) {
+        const mk = mailKey(s.email), tk = telKey(s.phone)
+        if (!mk && !tk) continue
+        if (/@(test|example)\./.test(mk) || isDup(mk, tk)) continue
+        mark(mk, tk)
         merged.push({ lead_id: null, subscriber_id: s.subscriber_id, first_name: s.first_name, last_name: s.last_name, email: s.email, phone: s.phone })
       }
       return merged
