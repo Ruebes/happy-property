@@ -39,6 +39,9 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
   let html = personalize(rawHtml, first)
     .split('{{termin_link}}').join(terminUrl ?? `${SITE}/termin?src=newsletter`)
     .split('{{abmelden}}').join(unsubUrl)
+    // {{tippgeber_share}} = WhatsApp-Weitergabe mit fertigem Text + persoenlichem Link
+    // (vor {{tippgeber_link}} ersetzen, der Link steckt URL-kodiert im Share-Text).
+    .split('{{tippgeber_share}}').join(`https://wa.me/?text=${encodeURIComponent(affiliateShareText(affiliateUrl ?? AFFILIATE_FALLBACK))}`)
     .split('{{tippgeber_link}}').join(affiliateUrl ?? AFFILIATE_FALLBACK)
   if (affiliateUrl && !/tippgeber|empfehlung/i.test(rawHtml)) html = injectAffiliateSection(html, first, affiliateUrl)
   if (!/abmelden|unsubscribe|abbestellen/i.test(html)) {
