@@ -302,6 +302,285 @@ async function generatePersonaImage(sb: SupabaseClient, postId: string, prompt: 
   return url
 }
 
+// ── Autopilot: Zypern-Zeit, Wochenplan, Drive-Warteschlangen ─────────────────
+// Der Autopilot plant Reels, Lotte-Posts und News selbst ein (Wochenplan in
+// crm_settings social_autopilot) und legt sie 1 bis 3 Tage vorher als fertige,
+// freigegebene Posts in den Redaktionsplan. auto_publish postet sie zur Uhrzeit.
+function cyOffsetMinutes(d: Date): number {
+  const m: Record<string, string> = {}
+  for (const pt of new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Nicosia', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(d)) m[pt.type] = pt.value
+  return (Date.UTC(+m.year, +m.month - 1, +m.day, +m.hour === 24 ? 0 : +m.hour, +m.minute, +m.second) - d.getTime()) / 60000
+}
+// UTC-Zeitpunkt zu Zypern-Datum (YYYY-MM-DD) + Uhrzeit (HH:MM)
+function cyAt(ymd: string, hm: string): Date {
+  const [y, mo, d] = ymd.split('-').map(Number)
+  const [h, mi] = hm.split(':').map(Number)
+  const guess = new Date(Date.UTC(y, mo - 1, d, h, mi))
+  return new Date(guess.getTime() - cyOffsetMinutes(guess) * 60000)
+}
+const cyYmd = (d: Date) => new Date(d.getTime() + cyOffsetMinutes(d) * 60000).toISOString().slice(0, 10)
+const WEEKDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
+
+type ApKind = 'reel' | 'news' | 'lotte'
+interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string }
+interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[] }
+interface ApState { state?: 'pending' | 'ready' | 'failed'; attempts?: number; error?: string; task?: boolean }
+interface ApWant { key: string; kind: ApKind; ymd: string; when: Date; liWhen: Date | null }
+async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
+  try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as ApCfg } catch { return {} }
+}
+// Soll-Slots der nächsten Tage. Reels + Lotte bis 3 Tage voraus (Sven sieht sie
+// rechtzeitig im Kalender), News höchstens 36 h voraus, damit sie aktuell bleiben.
+function autopilotWanted(cfg: ApCfg, nowMs: number): ApWant[] {
+  const out: ApWant[] = []
+  const todayCy = cyYmd(new Date(nowMs))
+  for (let i = 0; i <= 3; i++) {
+    const base = new Date(`${todayCy}T12:00:00Z`)
+    base.setUTCDate(base.getUTCDate() + i)
+    const ymd = base.toISOString().slice(0, 10)
+    const dow = base.getUTCDay()
+    for (const s of (cfg.slots ?? []).filter(x => x.dow === dow)) {
+      const when = cyAt(ymd, s.time)
+      const lead = when.getTime() - nowMs
+      if (lead < 15 * 60000) continue                                   // zu knapp oder vorbei
+      if (s.kind === 'news' && lead > 36 * 3600000) continue            // News erst kurz vorher
+      const liWhen = s.li_time ? cyAt(ymd, s.li_time) : null
+      out.push({ key: `${ymd}|${s.kind}`, kind: s.kind, ymd, when, liWhen: liWhen && liWhen.getTime() - nowMs > 15 * 60000 ? liWhen : null })
+    }
+  }
+  return out.sort((a, b) => a.when.getTime() - b.when.getTime())
+}
+
+interface DriveFile { id: string; name: string; mimeType: string; size?: string; createdTime?: string }
+async function driveChildren(token: string, folderId: string): Promise<DriveFile[]> {
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`)
+  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=500`, { headers: { Authorization: `Bearer ${token}` } })
+  const d = await r.json() as { files?: DriveFile[]; error?: { message?: string } }
+  if (!r.ok) throw new Error(`Drive-Ordner ${folderId}: ${d.error?.message ?? r.status}`)
+  return d.files ?? []
+}
+const baseName = (n: string) => n.replace(/\.[^.]+$/, '').trim().toLowerCase()
+// Reel-Warteschlange: alle Videos im Reels-Ordner (eine Unterordner-Ebene mit),
+// ältestes zuerst, ohne die schon verplanten (news_source = drive:<id>).
+// Textdatei mit gleichem Namen = fertiger Posting-Text.
+async function reelQueue(sb: SupabaseClient, token: string, folderId: string): Promise<{ queue: DriveFile[]; texts: Map<string, string>; total: number }> {
+  const top = await driveChildren(token, folderId)
+  const all = [...top]
+  for (const f of top.filter(x => x.mimeType === 'application/vnd.google-apps.folder')) all.push(...await driveChildren(token, f.id))
+  const texts = new Map<string, string>()
+  for (const f of all) if (f.mimeType === 'text/plain' || /\.txt$/i.test(f.name)) texts.set(baseName(f.name), f.id)
+  const videos = all.filter(f => f.mimeType.startsWith('video/'))
+    .sort((a, b) => (a.createdTime ?? '').slice(0, 16).localeCompare((b.createdTime ?? '').slice(0, 16)) || a.name.localeCompare(b.name, 'de', { numeric: true }))
+  const { data: used } = await sb.from('social_posts').select('news_source').like('news_source', 'drive:%')
+  const usedIds = new Set(((used ?? []) as Array<{ news_source: string }>).map(u => u.news_source.slice(6)))
+  return { queue: videos.filter(v => !usedIds.has(v.id)), texts, total: videos.length }
+}
+// Video aus Drive direkt in den Storage streamen (kein Komplett-Puffer im Worker).
+async function driveVideoToStorage(token: string, file: DriveFile, path: string): Promise<string> {
+  const size = Number(file.size ?? 0)
+  if (size > 300 * 1048576) throw new Error(`Reel „${file.name}" ist zu groß (${Math.round(size / 1048576)} MB, max. 300 MB).`)
+  const dl = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}?alt=media&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${token}` } })
+  if (!dl.ok || !dl.body) throw new Error(`Drive-Download ${file.name}: ${dl.status}`)
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const up = await fetch(`${Deno.env.get('SUPABASE_URL')}/storage/v1/object/ad-creatives/${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, apikey: key, 'Content-Type': file.mimeType || 'video/mp4', 'x-upsert': 'true', 'cache-control': '3600' },
+    body: dl.body,
+  })
+  if (!up.ok) throw new Error(`Storage-Upload ${file.name}: ${up.status} ${(await up.text()).slice(0, 200)}`)
+  return `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+}
+
+// Lotte-Bild: trainierte Soul-ID + bis zu 2 zufällige echte Fotos aus dem Ordner
+// „Lotte Bilder" als Referenz (Sven legt dort laufend Fotos ab). Scheitert das,
+// Soul-ID allein, danach die bisherige Persona-Kette.
+async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
+  const cfg = await personaCfg(sb)
+  const soul = cfg.lotte_soul_id
+  const refs: Array<{ id: string }> = []
+  if (cfg.lotte_folder) {
+    try {
+      const token = await driveToken()
+      const pics = (await driveChildren(token, cfg.lotte_folder)).filter(f => f.mimeType.startsWith('image/'))
+      for (const f of pics.sort(() => Math.random() - 0.5).slice(0, 2)) {
+        try { const b = await driveDownload(token, f.id); refs.push({ id: await hfUploadImage(sb, new Uint8Array(await b.arrayBuffer()), b.type || 'image/jpeg') }) }
+        catch (e) { console.warn('[social-agent] Lotte-Referenz übersprungen:', e instanceof Error ? e.message : String(e)) }
+      }
+    } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
+  }
+  const full = `${prompt}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Photorealistic, natural lighting, realistic materials, no text, no watermark.`
+  const tries: Array<[string, Record<string, unknown>]> = []
+  if (soul && refs.length) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul, image_references: refs }])
+  if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
+  if (refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
+  for (const [job, params] of tries) {
+    try {
+      const bytes = await hfGenerateBytes(sb, job, params)
+      const path = `social/${postId}-lotte-${Date.now()}.png`
+      const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+      if (upErr) throw new Error(`Upload: ${upErr.message}`)
+      const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
+      await sb.from('social_posts').update({ image_urls: [url], image_url: url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+      return url
+    } catch (e) { console.warn(`[social-agent] Lotte-Bild via ${job} fehlgeschlagen:`, e instanceof Error ? e.message : String(e)) }
+  }
+  return await generatePersonaImage(sb, postId, prompt, ['lotte'])
+}
+
+// News-Recherche → Ideen (social_ideas). avoid = Themen, die schon liefen.
+async function newsScan(sb: SupabaseClient, anthropicKey: string, avoid: string[] = []): Promise<Array<{ id: string; headline: string; core: string; source_url: string | null; angle: string }>> {
+  const system = `${BRAND}
+
+Du recherchierst AKTUELLE Nachrichten (letzte ~14 Tage), die sich für Social-Media-
+Posts von Happy Property eignen. Zwei Blickwinkel:
+1) ZYPERN — besonders RECHTLICHES & PRAKTISCHES für Investoren UND Auswanderer:
+   Gesetzes-/Steueränderungen (MwSt, Non-Dom, IP-Box, Rente), Aufenthalts-/Visa-Regeln,
+   Title-Deeds-Reformen, Kaufprozess, dazu Markt/Preise/Infrastruktur (Paphos/Limassol).
+2) DEUTSCHLAND — alles, was sich MEDIAL AUSSCHLACHTEN lässt: Mietrecht/Mieterschutz,
+   Mietendeckel, Enteignungsdebatten, Steuererhöhungen, Grundsteuer-Chaos, Heizungsgesetz,
+   Wirtschafts-/Standortfrust — als Kontrast-Aufhänger („echte Rendite & freier Markt in
+   Zypern statt Gängelung in DE").
+Suche gezielt, wähle die 3 besten Fundstücke und liefere je: Schlagzeile, 1-Satz-Kern,
+Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.${avoid.length ? `\n\nDIESE THEMEN HATTEN WIR SCHON (nicht wiederholen, auch nicht leicht abgewandelt):\n${avoid.map(a => `- ${a}`).join('\n')}` : ''}`
+  const resp = await claude(anthropicKey, {
+    system,
+    messages: [{ role: 'user', content: 'Bitte recherchiere jetzt und liefere die 3 besten aktuellen Fundstücke mit Post-Ideen (deutsch, kompakt).' }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
+    max_tokens: 3000,
+  })
+  const blocks = (resp.content ?? []) as Array<{ type: string; text?: string }>
+  const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
+  if (!text) throw new Error('Recherche lieferte kein Ergebnis.')
+  // Fundstücke strukturieren → Ideensammlung (social_ideas)
+  const ideasTool = {
+    name: 'save_ideas', description: 'Speichert die Fundstücke als Ideen.',
+    input_schema: { type: 'object', properties: { ideas: { type: 'array', items: { type: 'object', properties: {
+      headline: { type: 'string' }, core: { type: 'string', description: '1-Satz-Kern' },
+      url: { type: 'string' }, post_idea: { type: 'string', description: 'konkrete Post-Idee im Happy-Property-Ton' },
+    }, required: ['headline', 'core', 'post_idea'] } } }, required: ['ideas'] },
+  }
+  const structured = await claude(anthropicKey, {
+    system: 'Du überträgst Recherche-Fundstücke 1:1 in save_ideas — nichts erfinden, nichts weglassen.',
+    messages: [{ role: 'user', content: `Übertrage diese Fundstücke in save_ideas:\n\n${text}` }],
+    tools: [ideasTool], tool_choice: { type: 'tool', name: 'save_ideas' }, max_tokens: 3000,
+  })
+  const tuIdeas = ((structured.content ?? []) as Array<{ type: string; name?: string; input?: { ideas?: Array<{ headline?: string; core?: string; url?: string; post_idea?: string }> } }>).find(b => b.type === 'tool_use' && b.name === 'save_ideas')
+  const list = (tuIdeas?.input?.ideas ?? []).filter(i => i.headline)
+  if (!list.length) throw new Error('Fundstücke konnten nicht strukturiert werden.')
+  const rows = list.map(i => ({ headline: i.headline!.slice(0, 300), core: (i.core ?? '').slice(0, 600), source_url: i.url || null, angle: (i.post_idea ?? '').slice(0, 800) }))
+  const { data, error } = await sb.from('social_ideas').insert(rows).select('id, headline, core, source_url, angle')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Array<{ id: string; headline: string; core: string; source_url: string | null; angle: string }>
+}
+
+// Idee → fertige Texte (Meta/LinkedIn/optional Newsletter) + Bilder. Wirft bei
+// Fehlern — der Aufrufer entscheidet, wie das sichtbar wird.
+async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, o: { metaPostId: string; liPostId: string; wantNewsletter: boolean; imgCount: number }): Promise<void> {
+  const stamp = () => new Date().toISOString()
+  const outTool = {
+    name: 'set_outputs', description: 'Liefert die fertigen Texte für alle gewünschten Ziele.',
+    input_schema: { type: 'object', properties: {
+      meta_caption: { type: 'string', description: 'Caption für Facebook + Instagram' },
+      linkedin_caption: { type: 'string', description: 'Caption für LinkedIn' },
+      newsletter_subject: { type: 'string', description: 'Betreff für den Newsletter' },
+      newsletter_html: { type: 'string', description: 'Ausführlicher Newsletter als HTML' },
+      image_prompt: { type: 'string', description: 'Englischer Bild-Prompt, fotorealistisch, OHNE Text im Bild' },
+    }, required: ['image_prompt'] },
+  }
+  const wants: string[] = []
+  if (o.metaPostId) wants.push('- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.')
+  if (o.liPostId) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
+  if (o.wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
+  const resp2 = await claude(anthropicKey, {
+    system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
+    messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
+    tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
+  })
+  const tu = ((resp2.content ?? []) as Array<{ type: string; name?: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use' && b.name === 'set_outputs')
+  const out = tu?.input
+  if (!out) throw new Error('Texterstellung lieferte kein Ergebnis.')
+  if (o.metaPostId && !out.meta_caption) throw new Error('Meta-Text fehlt.')
+  if (o.liPostId && !out.linkedin_caption) throw new Error('LinkedIn-Text fehlt.')
+
+  if (o.metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: out.meta_caption, updated_at: stamp() }).eq('id', o.metaPostId)
+  if (o.liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: out.linkedin_caption, updated_at: stamp() }).eq('id', o.liPostId)
+  if (o.wantNewsletter && out.newsletter_html) {
+    await sb.from('newsletter_campaigns').insert({
+      title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
+      content_mode: 'html', html_body: out.newsletter_html, status: 'draft',
+    })
+  }
+  // Bilder: erst an den Meta-Post, dann dieselben an LinkedIn kopieren
+  const primary = o.metaPostId || o.liPostId
+  if (primary && out.image_prompt) {
+    for (let i = 1; i <= o.imgCount; i++) {
+      const vary = o.imgCount > 1 ? ` — image ${i} of ${o.imgCount} of a carousel: vary subject, angle and lighting, keep one consistent photorealistic style.` : ''
+      await generatePostImage(sb, primary, `${out.image_prompt}${vary}`)
+    }
+    if (o.liPostId && o.metaPostId) {
+      const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', o.metaPostId).maybeSingle()
+      const urls = ((cur as { image_urls?: string[] } | null)?.image_urls ?? [])
+      if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: stamp() }).eq('id', o.liPostId)
+    }
+  }
+}
+
+const LOTTE_SYSTEM = `Du bist Lotte: Svens schokobraune Labrador-Hündin und die heimliche Chefin im Büro
+von Happy Property in Paphos. Du postest selbst, in Ich-Form, frech, trocken, witzig und
+provokant. Dein Leben: Sonne in Paphos, Meer, Terrasse, Leckerlis, Mittagsschlaf und ein
+Chef, der den ganzen Tag über Rendite redet. Du schaust mit mildem Mitleid nach Deutschland:
+Formulare, Grundsteuer-Bescheide, Heizungsgesetz, Mietendeckel, Tagesgeld-Zinsen, Nieselregen,
+Handwerker-Termine in 8 Wochen, Leute, die seit 10 Jahren "bald mal investieren" wollen.
+
+DU BIST KEINE NACHRICHTENSPRECHERIN: keine Studien, keine Gutachten, keine Statistiken,
+keine Nachrichten nacherzählen. EINE Beobachtung, EINE Pointe. Kurz und knackig.
+PROVOKANT heißt: zugespitzte Meinung, Seitenhieb, Augenzwinkern, ein Satz, über den man
+stolpert und den man kommentieren oder teilen will. Frech, nie gemein.
+GRENZEN (hart): keine Parteien und keine Politiker nennen (auch nicht CDU, CSU, Union, SPD,
+Grüne, FDP, AfD, Linke, BSW, Regierung XY), keine Gruppen von Menschen herabsetzen, keine
+Beleidigungen, keine Themen wie Krieg, Religion, Migration, Tod. Keine Zahlen erfinden,
+keine Renditeversprechen, kein "garantiert".
+FORMAT: Zeile 1 = Hook (max. 10 Wörter, darf provozieren). Dann 2 bis 3 sehr kurze Absätze.
+Unterschrift "🐾 Lotte". Danach 3 bis 5 Hashtags (#zypern #paphos plus passende).
+Gesamt 250 bis 600 Zeichen. Echte Umlaute (ä, ö, ü, ß). Kein Gedankenstrich (— oder –),
+nur normale Bindestriche. Gern am Ende eine kurze Frage, die zum Kommentieren reizt.`
+
+// Themen-Würfel für Lotte: sorgt für Abwechslung, ohne auf Nachrichten angewiesen zu sein.
+const LOTTE_THEMES = [
+  'Formulare und Behördenpost in Deutschland', 'Tagesgeld-Zinsen vs. Mieteinnahmen', 'Wetter in Deutschland vs. Paphos',
+  'Nebenkostenabrechnung', 'Leute, die seit Jahren "bald mal" investieren wollen', 'Heizungsgesetz und Wärmepumpen-Frust',
+  'Grundsteuer-Bescheid', 'Bausparvertrag von Oma', 'Sven redet schon wieder über Rendite', 'Siesta und Mittagsschlaf auf der Terrasse',
+  'Handwerker-Termine in Deutschland', 'Feriengäste in unseren Wohnungen', 'Pool statt Balkon im Nieselregen', 'Montagmorgen',
+  'Steuererklärung', 'Makler-Floskeln wie "gepflegt" und "ruhige Lage"', 'Baustellenbesuch mit Sven', 'Mietendeckel und Vermieterfrust',
+  'Leckerli-Inflation', 'Neujahrsvorsätze, die nie umgesetzt werden', 'Kunden, die nach dem ersten Besuch nicht mehr heim wollen',
+]
+
+
+// Reel-Text ohne Textdatei: aus dem Dateinamen (Titel) einen Posting-Text bauen.
+async function reelCaption(anthropicKey: string, title: string): Promise<string> {
+  const resp = await claude(anthropicKey, {
+    system: `${BRAND}\n\nDu schreibst den Posting-Text zu einem kurzen Reel (Sven spricht in die Kamera). Du kennst nur den Titel. Erfinde keine Zahlen oder Details, die nicht im Titel stehen. Rufe GENAU EINMAL set_caption auf.`,
+    messages: [{ role: 'user', content: `REEL-TITEL: ${title}\n\nCaption für Instagram + Facebook: Hook in Zeile 1, 2 bis 3 kurze Absätze, die neugierig aufs Reel machen, Hinweis "Termin über den Link in der Bio", 3 bis 5 Hashtags. Max. 700 Zeichen.` }],
+    tools: [{ name: 'set_caption', description: 'Fertige Caption.', input_schema: { type: 'object', properties: { caption: { type: 'string' } }, required: ['caption'] } }],
+    tool_choice: { type: 'tool', name: 'set_caption' }, max_tokens: 1200,
+  })
+  const cap = (((resp.content ?? []) as Array<{ type: string; input?: { caption?: string } }>).find(b => b.type === 'tool_use')?.input?.caption ?? '').trim()
+  if (!cap) throw new Error('Reel-Text konnte nicht erstellt werden.')
+  return cap
+}
+
+// Einmalige Aufgabe an Sven (Admin), dedupliziert über den Titel-Anfang.
+async function taskForSven(sb: SupabaseClient, title: string, description: string, dedupe: string): Promise<void> {
+  const { data: dup } = await sb.from('crm_tasks').select('id').ilike('title', `%${dedupe}%`).neq('status', 'erledigt').eq('archived', false).limit(1)
+  if (dup && dup.length) return
+  const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
+  const adminId = (admin as { id: string } | null)?.id ?? null
+  const { data: task } = await sb.from('crm_tasks').insert({ title, description, created_by: adminId, status: 'offen' }).select('id').single()
+  const taskId = (task as { id: string } | null)?.id
+  if (taskId && adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
+}
+
 // 16:9-Thumbnail → 1080×1350-Insta-Format: Hintergrund = unscharfe, abgedunkelte
 // Cover-Version des Bilds selbst (bilinear aus stark verkleinerter Quelle = Blur),
 // Original pixelgenau mittig. Deterministisch — kein KI-Risiko, keine Balken.
@@ -1198,47 +1477,7 @@ Regeln:
 
     // ── News-Recherche → Aufgabe für Sven ─────────────────────────────────────
     if (body.action === 'news_scan') {
-      const system = `${BRAND}
-
-Du recherchierst AKTUELLE Nachrichten (letzte ~14 Tage), die sich für Social-Media-
-Posts von Happy Property eignen. Zwei Blickwinkel:
-1) ZYPERN — besonders RECHTLICHES & PRAKTISCHES für Investoren UND Auswanderer:
-   Gesetzes-/Steueränderungen (MwSt, Non-Dom, IP-Box, Rente), Aufenthalts-/Visa-Regeln,
-   Title-Deeds-Reformen, Kaufprozess, dazu Markt/Preise/Infrastruktur (Paphos/Limassol).
-2) DEUTSCHLAND — alles, was sich MEDIAL AUSSCHLACHTEN lässt: Mietrecht/Mieterschutz,
-   Mietendeckel, Enteignungsdebatten, Steuererhöhungen, Grundsteuer-Chaos, Heizungsgesetz,
-   Wirtschafts-/Standortfrust — als Kontrast-Aufhänger („echte Rendite & freier Markt in
-   Zypern statt Gängelung in DE").
-Suche gezielt, wähle die 3 besten Fundstücke und liefere je: Schlagzeile, 1-Satz-Kern,
-Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
-      const resp = await claude(anthropicKey, {
-        system,
-        messages: [{ role: 'user', content: 'Bitte recherchiere jetzt und liefere die 3 besten aktuellen Fundstücke mit Post-Ideen (deutsch, kompakt).' }],
-        tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }],
-        max_tokens: 3000,
-      })
-      const blocks = (resp.content ?? []) as Array<{ type: string; text?: string }>
-      const text = blocks.filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
-      if (!text) return json({ error: 'Recherche lieferte kein Ergebnis.' }, 502)
-      // Fundstücke strukturieren → Ideensammlung (social_ideas) statt Aufgabe/Mail
-      const ideasTool = {
-        name: 'save_ideas', description: 'Speichert die Fundstücke als Ideen.',
-        input_schema: { type: 'object', properties: { ideas: { type: 'array', items: { type: 'object', properties: {
-          headline: { type: 'string' }, core: { type: 'string', description: '1-Satz-Kern' },
-          url: { type: 'string' }, post_idea: { type: 'string', description: 'konkrete Post-Idee im Happy-Property-Ton' },
-        }, required: ['headline', 'core', 'post_idea'] } } }, required: ['ideas'] },
-      }
-      const structured = await claude(anthropicKey, {
-        system: 'Du überträgst Recherche-Fundstücke 1:1 in save_ideas — nichts erfinden, nichts weglassen.',
-        messages: [{ role: 'user', content: `Übertrage diese Fundstücke in save_ideas:\n\n${text}` }],
-        tools: [ideasTool], tool_choice: { type: 'tool', name: 'save_ideas' }, max_tokens: 3000,
-      })
-      const tuIdeas = ((structured.content ?? []) as Array<{ type: string; name?: string; input?: { ideas?: Array<{ headline?: string; core?: string; url?: string; post_idea?: string }> } }>).find(b => b.type === 'tool_use' && b.name === 'save_ideas')
-      const list = (tuIdeas?.input?.ideas ?? []).filter(i => i.headline)
-      if (!list.length) return json({ error: 'Fundstücke konnten nicht strukturiert werden.' }, 502)
-      const rows = list.map(i => ({ headline: i.headline!.slice(0, 300), core: (i.core ?? '').slice(0, 600), source_url: i.url || null, angle: (i.post_idea ?? '').slice(0, 800) }))
-      const { error: ie } = await sb.from('social_ideas').insert(rows)
-      if (ie) return json({ error: ie.message }, 500)
+      const rows = await newsScan(sb, anthropicKey)
       return json({ ok: true, ideas: rows.length })
     }
 
@@ -1281,55 +1520,10 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       }
       await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: postIds }).eq('id', ideaId)
 
-      const outTool = {
-        name: 'set_outputs', description: 'Liefert die fertigen Texte für alle gewünschten Ziele.',
-        input_schema: { type: 'object', properties: {
-          meta_caption: { type: 'string', description: 'Caption für Facebook + Instagram' },
-          linkedin_caption: { type: 'string', description: 'Caption für LinkedIn' },
-          newsletter_subject: { type: 'string', description: 'Betreff für den Newsletter' },
-          newsletter_html: { type: 'string', description: 'Ausführlicher Newsletter als HTML' },
-          image_prompt: { type: 'string', description: 'Englischer Bild-Prompt, fotorealistisch, OHNE Text im Bild' },
-        }, required: ['image_prompt'] },
-      }
-      const wants: string[] = []
-      if (wantMeta) wants.push('- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.')
-      if (wantLi) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
-      if (wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
-
       const job = (async () => {
         const stamp = () => new Date().toISOString()
         try {
-          const resp2 = await claude(anthropicKey, {
-            system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
-            messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
-            tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
-          })
-          const tu = ((resp2.content ?? []) as Array<{ type: string; name?: string; input?: Record<string, string> }>).find(b => b.type === 'tool_use' && b.name === 'set_outputs')
-          const out = tu?.input
-          if (!out) throw new Error('Texterstellung lieferte kein Ergebnis.')
-
-          if (metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: out.meta_caption, updated_at: stamp() }).eq('id', metaPostId)
-          if (liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: out.linkedin_caption, updated_at: stamp() }).eq('id', liPostId)
-          if (wantNewsletter && out.newsletter_html) {
-            await sb.from('newsletter_campaigns').insert({
-              title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
-              content_mode: 'html', html_body: out.newsletter_html, status: 'draft',
-            })
-          }
-
-          // Bilder: erst an den Meta-Post, dann dieselben an LinkedIn kopieren
-          const primary = metaPostId || liPostId
-          if (primary && out.image_prompt) {
-            for (let i = 1; i <= imgCount; i++) {
-              const vary = imgCount > 1 ? ` — image ${i} of ${imgCount} of a carousel: vary subject, angle and lighting, keep one consistent photorealistic style.` : ''
-              await generatePostImage(sb, primary, `${out.image_prompt}${vary}`)
-            }
-            if (liPostId && metaPostId) {
-              const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', metaPostId).maybeSingle()
-              const urls = ((cur as { image_urls?: string[] } | null)?.image_urls ?? [])
-              if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: stamp() }).eq('id', liPostId)
-            }
-          }
+          await ideaContent(sb, anthropicKey, idea, { metaPostId, liPostId, wantNewsletter, imgCount })
         } catch (e) {
           console.error('[social-agent] use_idea Hintergrund:', e)
           // Entwürfe nicht stumm leer lassen — Hinweis in den Post schreiben.
@@ -1368,30 +1562,256 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       return json({ ok: true, valid: false, task_id: taskId })
     }
 
+    // ── Autopilot: Wochenplan selbst befüllen (Cron alle 20 Min) ──────────────
+    // Je Lauf höchstens EIN neuer Job (Reel, Lotte oder News). Der Slot wird
+    // zuerst als Entwurf mit autopilot_slot reserviert (eindeutiger Index), der
+    // Inhalt entsteht im Hintergrund; erst wenn alles fertig ist, wird der Post
+    // "geplant" (= freigegeben) und damit von auto_publish zur Uhrzeit gepostet.
+    if (body.action === 'autopilot') {
+      const force = (body as Record<string, unknown>).force === true
+      const cfg = await autopilotCfg(sb)
+      if (!cfg.enabled && !force) return json({ ok: true, skipped: 'Autopilot ist aus.' })
+      const nowMs = Date.now()
+      const stamp = () => new Date().toISOString()
+      type ApRow = { id: string; autopilot_slot: string; status: string; news_source: string | null; post_results: { autopilot?: ApState } | null; updated_at: string; scheduled_for: string | null }
+      const apOf = (r: ApRow): ApState => r.post_results?.autopilot ?? {}
+      const setAp = (id: string, st: ApState) => sb.from('social_posts').update({ post_results: { autopilot: st }, updated_at: stamp() }).eq('id', id)
+
+      // 1) Hängende Jobs (Worker beendet) als fehlgeschlagen werten
+      const { data: openRows } = await sb.from('social_posts').select('id, autopilot_slot, status, news_source, post_results, updated_at, scheduled_for').not('autopilot_slot', 'is', null).eq('status', 'entwurf')
+      let busy = false
+      for (const r of (openRows ?? []) as ApRow[]) {
+        const st = apOf(r)
+        if (st.state !== 'pending') continue
+        if (nowMs - Date.parse(r.updated_at) > 20 * 60000) await setAp(r.id, { ...st, state: 'failed', error: st.error ?? 'Zeitüberschreitung im Hintergrund-Job' })
+        else busy = true
+      }
+      if (busy && !force) return json({ ok: true, skipped: 'Ein Autopilot-Job läuft noch.' })
+
+      // 2) Soll-Slots + vorhandene Slots
+      const wanted = autopilotWanted(cfg, nowMs)
+      if (!wanted.length) return json({ ok: true, skipped: 'Keine offenen Slots im Planungsfenster.' })
+      const { data: haveRows } = await sb.from('social_posts').select('id, autopilot_slot, status, news_source, post_results, updated_at, scheduled_for').in('autopilot_slot', wanted.map(w => w.key))
+      const have = new Map(((haveRows ?? []) as ApRow[]).map(r => [r.autopilot_slot, r]))
+
+      // Reel-Warteschlange nur laden, wenn ein Reel-Slot offen ist
+      let reels: Awaited<ReturnType<typeof reelQueue>> | null = null
+      let dToken = ''
+      const needsReel = wanted.some(w => w.kind === 'reel' && (!have.has(w.key) || apOf(have.get(w.key)!).state === 'failed'))
+      if (needsReel && cfg.reels_folder) {
+        dToken = await driveToken()
+        reels = await reelQueue(sb, dToken, cfg.reels_folder)
+        if (reels.queue.length < 3) {
+          await taskForSven(sb, `🎞️ Reel-Warteschlange: nur noch ${reels.queue.length} Reel${reels.queue.length === 1 ? '' : 's'}`,
+            `Der Social-Media-Autopilot postet Dienstag bis Sonntag jeden Tag ein Reel. In der Warteschlange ${reels.queue.length ? `liegen nur noch ${reels.queue.length}` : 'liegt keins mehr'}.\n\nNeue fertige Reels (MP4, hochkant) einfach in den Drive-Ordner legen: https://drive.google.com/drive/folders/${cfg.reels_folder}\n(Google Drive > Happy Property Marke > Social Media > Reels)\n\nTipp: Claude schneidet dir aus jedem YouTube-Video 6 Reels, das ist genau eine Woche.`,
+            'Reel-Warteschlange')
+        }
+      }
+
+      // 3) Nächsten Slot wählen: fehlt ganz, oder fehlgeschlagen mit < 3 Versuchen
+      let pick: ApWant | null = null
+      let existing: ApRow | null = null
+      for (const w of wanted) {
+        const r = have.get(w.key)
+        if (w.kind === 'reel' && !r && !(reels?.queue.length)) continue
+        if (!r) { pick = w; break }
+        const st = apOf(r)
+        if (r.status !== 'entwurf' || st.state !== 'failed') continue
+        if ((st.attempts ?? 0) >= 3) {
+          if (!st.task) {
+            await taskForSven(sb, `🤖 Autopilot: ${w.kind === 'reel' ? 'Reel' : w.kind === 'lotte' ? 'Lotte-Post' : 'News-Post'} für ${WEEKDAY_DE[new Date(`${w.ymd}T12:00:00Z`).getUTCDay()]} ${w.ymd.slice(8, 10)}.${w.ymd.slice(5, 7)}. klappt nicht`,
+              `Der Autopilot hat es dreimal versucht. Letzter Fehler:\n${st.error ?? 'unbekannt'}\n\nDer Entwurf liegt im Redaktionsplan (Tools > Social Media). Du kannst ihn dort fertig machen und freigeben oder löschen.`,
+              `Autopilot: ${w.key}`)
+            await setAp(r.id, { ...st, task: true })
+          }
+          continue
+        }
+        pick = w; existing = r; break
+      }
+      if (!pick) return json({ ok: true, skipped: 'Alles verplant.', slots: wanted.length })
+
+      const attempts = (existing ? apOf(existing).attempts ?? 0 : 0) + 1
+      const kind = pick.kind
+      const TOPIC: Record<ApKind, string> = { reel: 'reel', news: 'news', lotte: 'weisheit' }
+      // Reel schon beim Reservieren festlegen (news_source = drive:<id>), damit
+      // zwei Slots nie dasselbe Video bekommen.
+      let reelFile: DriveFile | null = null
+      if (kind === 'reel') {
+        const src = existing?.news_source?.startsWith('drive:') ? existing.news_source.slice(6) : ''
+        if (src) {
+          // Wiederholung: dasselbe Video wie beim ersten Versuch
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${src}?fields=id,name,mimeType,size,createdTime&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${dToken || (dToken = await driveToken())}` } })
+          if (r.ok) reelFile = await r.json() as DriveFile
+        } else reelFile = reels?.queue[0] ?? null
+        if (!reelFile) return json({ ok: true, skipped: 'Kein Reel verfügbar.' })
+      }
+      const pending: ApState = { state: 'pending', attempts }
+      let postId = existing?.id ?? ''
+      if (!postId) {
+        const { data: ins, error: insErr } = await sb.from('social_posts').insert({
+          topic: TOPIC[kind],
+          title: kind === 'reel' ? `🎞️ ${reelFile!.name.replace(/\.[^.]+$/, '')}`.slice(0, 200) : kind === 'lotte' ? '🐾 Lotte · entsteht …' : '📰 News · entsteht …',
+          platforms: kind === 'reel' ? (cfg.reel_platforms?.length ? cfg.reel_platforms : ['facebook', 'instagram']) : ['facebook', 'instagram'],
+          format: 'single', status: 'entwurf', scheduled_for: pick.when.toISOString(),
+          autopilot_slot: pick.key, post_results: { autopilot: pending },
+          news_source: reelFile ? `drive:${reelFile.id}` : null,
+        }).select('id').single()
+        if (insErr) return json({ ok: true, skipped: `Slot ${pick.key} schon reserviert (${insErr.message}).` })
+        postId = (ins as { id: string }).id
+      } else {
+        await sb.from('social_posts').update({ post_results: { autopilot: pending }, scheduled_for: pick.when.toISOString(), updated_at: stamp() }).eq('id', postId)
+      }
+
+      const slot = pick
+      const job = (async () => {
+        const liKey = `${slot.ymd}|news-li`
+        let liPostId = ''
+        try {
+          if (kind === 'reel') {
+            const f = reelFile!
+            const url = await driveVideoToStorage(dToken || await driveToken(), f, `social/reels/${f.id}.${/quicktime/.test(f.mimeType) ? 'mov' : 'mp4'}`)
+            const txtId = reels?.texts.get(baseName(f.name))
+            let caption = ''
+            if (txtId) caption = (await (await driveDownload(dToken || await driveToken(), txtId)).text()).trim()
+            if (!caption) caption = await reelCaption(anthropicKey, f.name.replace(/\.[^.]+$/, '').replace(/^reel\s*\d+\s*[-:]\s*/i, ''))
+            await sb.from('social_posts').update({ video_url: url, content: caption, image_url: null, image_urls: [], status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
+          } else if (kind === 'lotte') {
+            const { data: prev } = await sb.from('social_posts').select('content').eq('topic', 'weisheit').not('content', 'is', null).order('created_at', { ascending: false }).limit(12)
+            const prevHooks = ((prev ?? []) as Array<{ content: string }>).map(x => x.content.split('\n').find(l => l.trim())?.trim() ?? '').filter(Boolean)
+            const theme = LOTTE_THEMES[Math.floor(Math.random() * LOTTE_THEMES.length)]
+            const resp = await claude(anthropicKey, {
+              system: `${BRAND}\n\n${LOTTE_SYSTEM}\n\nRufe GENAU EINMAL set_lotte auf.`,
+              messages: [{ role: 'user', content: `Schreib Lottes nächsten Post für ${WEEKDAY_DE[new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()]}.\n\n${prevHooks.length ? `SO HAT LOTTE ZULETZT ANGEFANGEN (neues Thema, anderer Witz, nichts wiederholen):\n${prevHooks.map(h => `- ${h}`).join('\n')}\n\n` : ''}THEMA HEUTE: ${theme}\n\nimage_prompt: englisch, eine WITZIGE, fotorealistische Szene, in der Lotte (chocolate brown labrador) etwas Menschliches tut und damit die Pointe sichtbar macht (z.B. mit Sonnenbrille auf der Poolliege, vor einem Stapel Papierkram mit genervtem Blick, mit Bauhelm auf der Baustelle). Ort meist Paphos/Zypern: Sonne, Terrasse, Pool, Meer, weiße Neubauten. Kein Text, keine Schrift, keine Schilder im Bild.` }],
+              tools: [{ name: 'set_lotte', description: 'Fertiger Lotte-Post.', input_schema: { type: 'object', properties: {
+                title: { type: 'string', description: 'Kurzer interner Titel (max. 60 Zeichen)' },
+                caption: { type: 'string' }, image_prompt: { type: 'string' },
+              }, required: ['title', 'caption', 'image_prompt'] } }],
+              tool_choice: { type: 'tool', name: 'set_lotte' }, max_tokens: 2000,
+            })
+            const out = (((resp.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
+            if (!out.caption || !out.image_prompt) throw new Error('Lotte-Text konnte nicht erstellt werden.')
+            await sb.from('social_posts').update({ title: `🐾 ${out.title ?? 'Lotte'}`.slice(0, 200), content: out.caption, image_prompt: out.image_prompt, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
+            await generateLotteImage(sb, postId, out.image_prompt)
+            await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
+          } else {
+            // News: frische, unbenutzte Idee (max. 4 Tage alt), sonst neu recherchieren
+            const { data: recent } = await sb.from('social_posts').select('title').eq('topic', 'news').order('created_at', { ascending: false }).limit(25)
+            const avoid = ((recent ?? []) as Array<{ title: string | null }>).map(x => (x.title ?? '').replace(/^📰\s*(in · )?/, '')).filter(t => t && !/entsteht/.test(t))
+            const { data: ideaRows } = await sb.from('social_ideas').select('id, headline, core, source_url, angle').eq('status', 'neu').gte('created_at', new Date(nowMs - 4 * 86400000).toISOString()).order('created_at', { ascending: false }).limit(10)
+            let ideas = (ideaRows ?? []) as Array<{ id: string; headline: string; core: string; source_url: string | null; angle: string }>
+            ideas = ideas.filter(i => !avoid.some(a => a.toLowerCase() === i.headline.toLowerCase()))
+            if (!ideas.length) ideas = await newsScan(sb, anthropicKey, avoid)
+            const idea = ideas[0]
+            if (!idea) throw new Error('Keine aktuelle News gefunden.')
+            if (slot.liWhen) {
+              const { data: liRow } = await sb.from('social_posts').select('id').eq('autopilot_slot', liKey).maybeSingle()
+              liPostId = (liRow as { id: string } | null)?.id ?? ''
+              if (!liPostId) {
+                const { data: li, error: liErr } = await sb.from('social_posts').insert({
+                  topic: 'news', title: `📰 in · ${idea.headline}`.slice(0, 200), platforms: ['linkedin'], format: 'single', status: 'entwurf',
+                  scheduled_for: slot.liWhen.toISOString(), autopilot_slot: liKey, post_results: { autopilot: pending }, news_source: idea.source_url,
+                }).select('id').single()
+                if (liErr) throw new Error(`LinkedIn-Entwurf: ${liErr.message}`)
+                liPostId = (li as { id: string }).id
+              } else {
+                await sb.from('social_posts').update({ title: `📰 in · ${idea.headline}`.slice(0, 200), content: null, image_url: null, image_urls: [], news_source: idea.source_url, updated_at: stamp() }).eq('id', liPostId)
+              }
+            }
+            await sb.from('social_posts').update({ title: `📰 ${idea.headline}`.slice(0, 200), news_source: idea.source_url, content: null, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
+            await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: [postId, liPostId].filter(Boolean) }).eq('id', idea.id)
+            await ideaContent(sb, anthropicKey, idea, { metaPostId: postId, liPostId, wantNewsletter: false, imgCount: 1 })
+            const { data: chk } = await sb.from('social_posts').select('image_url').eq('id', postId).maybeSingle()
+            if (!(chk as { image_url?: string | null } | null)?.image_url) throw new Error('Bild konnte nicht erzeugt werden.')
+            const ready = { status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }
+            await sb.from('social_posts').update(ready).eq('id', postId)
+            if (liPostId) await sb.from('social_posts').update(ready).eq('id', liPostId)
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error(`[social-agent] Autopilot ${slot.key}:`, msg)
+          await setAp(postId, { state: 'failed', attempts, error: msg.slice(0, 500) })
+          if (liPostId) await setAp(liPostId, { state: 'failed', attempts, error: msg.slice(0, 500) })
+        }
+      })()
+      if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job); else await job
+      return json({ ok: true, started: pick.key, kind, attempt: attempts, post_id: postId, reel: reelFile?.name ?? null })
+    }
+
+    // ── Autopilot-Status fürs Studio: Wochenplan, Reel-Warteschlange, Lotte-Fotos ──
+    if (body.action === 'autopilot_status') {
+      const cfg = await autopilotCfg(sb)
+      let queue: string[] = [], total = 0, lotte = 0, until: string | null = null, err = ''
+      try {
+        const token = await driveToken()
+        if (cfg.reels_folder) {
+          const q = await reelQueue(sb, token, cfg.reels_folder)
+          queue = q.queue.map(f => f.name.replace(/\.[^.]+$/, '')); total = q.total
+          // Bis wann reicht die Warteschlange? Reel-Slots ab morgen abzählen, die
+          // noch keinen Post haben.
+          const { data: planned } = await sb.from('social_posts').select('autopilot_slot').like('autopilot_slot', '%|reel')
+          const plannedSet = new Set(((planned ?? []) as Array<{ autopilot_slot: string }>).map(r => r.autopilot_slot))
+          let left = queue.length
+          const d = new Date(`${cyYmd(new Date())}T12:00:00Z`)
+          const reelSlots = (cfg.slots ?? []).filter(s => s.kind === 'reel')
+          let lastCovered: string | null = null
+          for (let i = 0; i < 120 && reelSlots.length; i++) {
+            const ymd = d.toISOString().slice(0, 10)
+            const rs = reelSlots.find(s => s.dow === d.getUTCDay())
+            if (rs && cyAt(ymd, rs.time).getTime() > Date.now()) {
+              if (plannedSet.has(`${ymd}|reel`)) lastCovered = ymd
+              else if (left > 0) { left--; lastCovered = ymd }
+              else if (i > 0) break
+            }
+            d.setUTCDate(d.getUTCDate() + 1)
+          }
+          until = lastCovered
+        }
+        if (cfg.lotte_folder) lotte = (await driveChildren(token, cfg.lotte_folder)).filter(f => f.mimeType.startsWith('image/')).length
+      } catch (e) { err = e instanceof Error ? e.message : String(e) }
+      return json({ ok: true, enabled: cfg.enabled === true, slots: cfg.slots ?? [], folders: { reels: cfg.reels_folder ?? null, lotte: cfg.lotte_folder ?? null, social: cfg.social_folder ?? null }, reels: { queued: queue.length, total, next: queue.slice(0, 5), until }, lotte_photos: lotte, error: err || null })
+    }
+
     // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──
     if (body.action === 'auto_publish') {
       // Halbstündlicher Cron: postet zur GEPLANTEN Uhrzeit (fällig = Zeit erreicht).
-      // Frequenz-Wächter je Kanal: FB/Insta max. 1 Post/Tag, LinkedIn max. 1 Post/Tag.
+      // Frequenz-Wächter je Kanal und Tag: FB/Insta max. 3 (Autopilot braucht 2:
+      // Bildpost 12:30 + Reel 18:30), LinkedIn max. 1, YouTube max. 1.
       const nowIso = new Date().toISOString()
       const today = nowIso.slice(0, 10)
-      const { data: due } = await sb.from('social_posts').select('id, platforms')
+      const apCfg = await autopilotCfg(sb)
+      const { data: due } = await sb.from('social_posts').select('id, platforms, content, image_url, image_urls, video_url, post_results, autopilot_slot')
         .eq('status', 'geplant').lte('scheduled_for', nowIso)
-        .order('scheduled_for', { ascending: true }).limit(10)
-      const dueList = (due as { id: string; platforms: string[] }[] | null) ?? []
-      if (!dueList.length) return json({ ok: true, skipped: 'Kein fälliger freigegebener Post.' })
-      const { data: doneToday } = await sb.from('social_posts').select('platforms').gte('posted_at', `${today}T00:00:00Z`)
-      const posted = (doneToday as { platforms: string[] }[] | null) ?? []
-      const metaDone = posted.some(p => (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram'))
-      const liDone = posted.some(p => (p.platforms ?? []).includes('linkedin'))
-      const ytDone = posted.some(p => (p.platforms ?? []).includes('youtube'))
-      const next = dueList.find(p => {
-        const isMeta = (p.platforms ?? []).some(x => x === 'facebook' || x === 'instagram')
-        const isLi = (p.platforms ?? []).includes('linkedin')
-        const isYt = (p.platforms ?? []).includes('youtube')
-        return !(isMeta && metaDone) && !(isLi && liDone) && !(isYt && ytDone)
+        .order('scheduled_for', { ascending: true }).limit(20)
+      type DueRow = { id: string; platforms: string[]; content: string | null; image_url: string | null; image_urls: string[] | null; video_url: string | null; post_results: Record<string, { pending?: boolean }> | null; autopilot_slot: string | null }
+      // Nur wirklich fertige Posts: Text da, kein Fehlerhinweis, Instagram mit Bild/Video.
+      // Autopilot aus → auch dessen schon geplante Posts nicht mehr posten.
+      const dueList = ((due as DueRow[] | null) ?? []).filter(p => {
+        if (p.autopilot_slot && apCfg.enabled === false) return false
+        const c = (p.content ?? '').trim()
+        if (!c || c.startsWith('⚠️')) return false
+        const media = !!(p.video_url || p.image_url || (Array.isArray(p.image_urls) && p.image_urls.length))
+        return !((p.platforms ?? []).includes('instagram') && !media)
       })
-      if (!next) return json({ ok: true, skipped: 'Tageslimit erreicht (max. 1 Post/Tag je Kanal).' })
-      body.post_id = next.id
+      if (!dueList.length) return json({ ok: true, skipped: 'Kein fälliger freigegebener Post.' })
+      // Angefangene Reels (Instagram hat noch verarbeitet) zuerst zu Ende bringen
+      const resume = dueList.find(p => Object.values(p.post_results ?? {}).some(r => r && typeof r === 'object' && r.pending))
+      if (resume) {
+        body.post_id = resume.id
+      } else {
+        const { data: doneToday } = await sb.from('social_posts').select('platforms').gte('posted_at', `${today}T00:00:00Z`)
+        const posted = (doneToday as { platforms: string[] }[] | null) ?? []
+        const cnt = (f: (pl: string[]) => boolean) => posted.filter(p => f(p.platforms ?? [])).length
+        const isMeta = (pl: string[]) => pl.some(x => x === 'facebook' || x === 'instagram')
+        const metaFull = cnt(isMeta) >= 3
+        const liFull = cnt(pl => pl.includes('linkedin')) >= 1
+        const ytFull = cnt(pl => pl.includes('youtube')) >= 1
+        const next = dueList.find(p => {
+          const pl = p.platforms ?? []
+          return !(isMeta(pl) && metaFull) && !(pl.includes('linkedin') && liFull) && !(pl.includes('youtube') && ytFull)
+        })
+        if (!next) return json({ ok: true, skipped: 'Tageslimit erreicht (FB/Insta 3, LinkedIn 1, YouTube 1 pro Tag).' })
+        body.post_id = next.id
+      }
       body.action = 'publish'   // unten normal veröffentlichen
     }
 
@@ -1414,7 +1834,12 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       // Connectoren), sonst Env-Secret.
       const { data: liRow } = await sb.from('connector_secrets').select('value').eq('key', 'LINKEDIN_ACCESS_TOKEN').maybeSingle()
       const liToken = (liRow as { value: string } | null)?.value ?? Deno.env.get('LINKEDIN_ACCESS_TOKEN') ?? ''
-      const results: Record<string, { ok: boolean; id?: string; error?: string }> = {}
+      const results: Record<string, { ok: boolean; id?: string; error?: string; url?: string; pending?: boolean; container?: string; tries?: number }> = {}
+      // Wiederaufnahme (Reel): was schon geklappt hat, NICHT doppelt posten;
+      // ein Instagram-Container in Verarbeitung wird weiterverfolgt.
+      const prevRes = ((post as { post_results?: Record<string, { ok?: boolean; id?: string; url?: string; pending?: boolean; container?: string; tries?: number }> | null } | null)?.post_results ?? {})
+      for (const pf of p.platforms ?? []) { const r = prevRes[pf]; if (r && r.ok === true) results[pf] = { ok: true, id: r.id, url: r.url } }
+      const igPrev = prevRes.instagram && prevRes.instagram.pending ? prevRes.instagram : null
 
       // Facebook-Seite + IG-Account einmal ermitteln
       let pageId = '', pageToken = '', igId = ''
@@ -1427,8 +1852,8 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
           igId = page.instagram_business_account?.id ?? ''
         } catch (e) {
           const msg = (e as Error).message
-          if (p.platforms.includes('facebook')) results.facebook = { ok: false, error: msg }
-          if (p.platforms.includes('instagram')) results.instagram = { ok: false, error: msg }
+          if (p.platforms.includes('facebook') && !results.facebook) results.facebook = { ok: false, error: msg }
+          if (p.platforms.includes('instagram') && !results.instagram) results.instagram = { ok: false, error: msg }
         }
       }
       // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
@@ -1468,18 +1893,30 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
         try {
           if (!igId) throw new Error('Kein Instagram-Business-Konto mit der Seite verknüpft.')
           if (videoUrl) {
-            // Instagram-REEL: Container anlegen → Verarbeitung abwarten → publish
-            const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'REELS', video_url: videoUrl, caption: p.content, share_to_feed: 'true', access_token: pageToken }) }).then(x => x.json())
-            if (c.error) throw new Error(c.error.message)
+            // Instagram-REEL: Container anlegen → Verarbeitung abwarten → publish.
+            // Dauert die Verarbeitung länger, merken wir uns den Container und
+            // auto_publish macht in 30 Min weiter (kein zweiter Facebook-Post).
+            let cid = igPrev?.container ?? ''
+            if (!cid) {
+              const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'REELS', video_url: videoUrl, caption: p.content, share_to_feed: 'true', access_token: pageToken }) }).then(x => x.json())
+              if (c.error) throw new Error(c.error.message)
+              cid = c.id
+            }
             let stat = ''
             for (let i = 0; i < 12; i++) {
               await new Promise(res => setTimeout(res, 10000))
-              const st = await fetch(`https://graph.facebook.com/v21.0/${c.id}?fields=status_code&access_token=${pageToken}`).then(x => x.json())
+              const st = await fetch(`https://graph.facebook.com/v21.0/${cid}?fields=status_code&access_token=${pageToken}`).then(x => x.json())
               stat = st.status_code ?? ''
-              if (stat === 'FINISHED' || stat === 'ERROR') break
+              if (stat === 'FINISHED' || stat === 'ERROR' || stat === 'EXPIRED') break
             }
-            if (stat === 'ERROR') throw new Error('Instagram konnte das Video nicht verarbeiten (Format/Länge prüfen: MP4, 9:16, max. 15 Min).')
-            if (stat !== 'FINISHED') throw new Error('Video-Verarbeitung dauert noch — bitte in 1–2 Minuten erneut „Jetzt posten" klicken.')
+            if (stat === 'ERROR' || stat === 'EXPIRED') throw new Error('Instagram konnte das Video nicht verarbeiten (Format/Länge prüfen: MP4, 9:16, max. 15 Min).')
+            if (stat !== 'FINISHED') {
+              const tries = (igPrev?.tries ?? 0) + 1
+              if (tries >= 8) throw new Error('Instagram verarbeitet das Reel seit über 3 Stunden nicht. Bitte manuell posten.')
+              results.instagram = { ok: false, pending: true, container: cid, tries, error: 'Instagram verarbeitet das Reel noch, nächster Versuch automatisch in 30 Min.' }
+              throw { __done: true }
+            }
+            const c = { id: cid }
             const pubV = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: c.id, access_token: pageToken }) }).then(x => x.json())
             if (pubV.error) throw new Error(pubV.error.message)
             results.instagram = { ok: true, id: pubV.id }
@@ -1509,7 +1946,7 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
       }
       // LinkedIn (optional — Token muss Sven einmalig hinterlegen)
       // ── YouTube: Video-Upload über die Data API (Svens Kanal) ────────────────
-      if (p.platforms.includes('youtube')) {
+      if (p.platforms.includes('youtube') && !results.youtube) {
         const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
         const [cid, csec, rtok] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
         if (!videoUrl) {
@@ -1542,7 +1979,7 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
         }
       }
 
-      if (p.platforms.includes('linkedin')) {
+      if (p.platforms.includes('linkedin') && !results.linkedin) {
         if (videoUrl) {
           results.linkedin = { ok: false, error: 'Video/Reel auf LinkedIn noch nicht angebunden — bitte dort manuell posten.' }
         } else if (!liToken) {
@@ -1582,11 +2019,13 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.`
           } catch (e) { results.linkedin = { ok: false, error: (e as Error).message } }
         }
       }
-      const allOk = Object.values(results).length > 0 && Object.values(results).every(r => r.ok)
       const anyOk = Object.values(results).some(r => r.ok)
+      const anyPending = Object.values(results).some(r => r.pending)
+      const prevPostedAt = (post as { posted_at?: string | null } | null)?.posted_at ?? null
       await sb.from('social_posts').update({
-        status: allOk ? 'gepostet' : anyOk ? 'gepostet' : 'fehlgeschlagen',
-        posted_at: anyOk ? new Date().toISOString() : null,
+        // Instagram verarbeitet noch → bleibt "geplant", auto_publish macht weiter
+        status: anyPending ? 'geplant' : anyOk ? 'gepostet' : 'fehlgeschlagen',
+        posted_at: anyOk ? (prevPostedAt ?? new Date().toISOString()) : null,
         post_results: results, updated_at: new Date().toISOString(),
       }).eq('id', body.post_id)
       return json({ ok: anyOk, results })

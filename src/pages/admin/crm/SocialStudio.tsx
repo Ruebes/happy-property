@@ -20,7 +20,7 @@ interface SocialPost {
   format: string; status: string; scheduled_for: string | null
   project_id: string | null; unit_id: string | null; news_source: string | null
   post_results: Record<string, { ok: boolean; id?: string; error?: string }> | null
-  created_at: string; posted_at: string | null
+  created_at: string; posted_at: string | null; autopilot_slot?: string | null
 }
 interface ChatMsg { role: 'user' | 'assistant'; content: string }
 interface ProjectOpt { id: string; name: string; deck_assets: { renders?: string[]; gallery?: string[] } | null }
@@ -38,8 +38,6 @@ const STATUS_BADGE: Record<string, { de: string; cls: string }> = {
   gepostet: { de: 'Gepostet', cls: 'bg-green-100 text-green-700' },
   fehlgeschlagen: { de: 'Fehlgeschlagen', cls: 'bg-red-100 text-red-700' },
 }
-
-interface Idea { id: string; headline: string; core: string; source_url: string | null; angle: string; status: string; created_at: string }
 
 // Hübscher Bildanzahl-Wähler (Chips statt Stepper)
 function CountPicker({ value, onChange, min = 2, max = 10 }: { value: number; onChange: (n: number) => void; min?: number; max?: number }) {
@@ -578,81 +576,6 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
   )
 }
 
-// ── Idee verwenden: Ziele + Format + Bildanzahl → Edge use_idea ─────────────
-function UseIdeaModal({ idea, onClose, onDone }: { idea: Idea; onClose: () => void; onDone: (msg: string) => void }) {
-  const { t } = useTranslation()
-  const [plats, setPlats] = useState<string[]>(['facebook', 'instagram'])
-  const [nl, setNl] = useState(false)
-  const [format, setFormat] = useState<'single' | 'carousel'>('single')
-  const [count, setCount] = useState(3)
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const toggle = (k: string) => setPlats(p => p.includes(k) ? p.filter(x => x !== k) : [...p, k])
-  const social = plats.length > 0
-  const create = async () => {
-    if (!social && !nl) { setErr(t('crm.social.ideaNeedTarget', 'Bitte mindestens ein Ziel wählen.')); return }
-    setBusy(true); setErr('')
-    try {
-      const { data, error } = await supabase.functions.invoke('social-agent', {
-        body: { action: 'use_idea', idea_id: idea.id, platforms: plats, newsletter: nl, format, image_count: count },
-      })
-      const d = (data ?? {}) as { ok?: boolean; error?: string; post_ids?: string[]; campaign_id?: string | null; images_pending?: number; newsletter_pending?: boolean }
-      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      const parts: string[] = []
-      if (d.post_ids?.length) parts.push(`${d.post_ids.length} ${t('crm.social.ideaPostsMade', 'Post-Entwurf/Entwürfe')}`)
-      if (d.campaign_id || d.newsletter_pending) parts.push(t('crm.social.ideaNlMade', 'Newsletter-Entwurf'))
-      onDone(`✓ ${parts.join(' + ')} ${t('crm.social.ideaBgHint', '— Texte und Bilder entstehen im Hintergrund, die Liste füllt sich von selbst (~1 Min).')}`)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setBusy(false) }
-  }
-  const pill = (on: boolean) => `px-3 py-1.5 rounded-lg text-sm font-medium border ${on ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-600 border-gray-200'}`
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4" onClick={e => e.stopPropagation()}>
-        <div>
-          <p className="font-semibold text-gray-900">💡 {t('crm.social.ideaUseTitle', 'Idee verwenden')}</p>
-          <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{idea.headline}</p>
-        </div>
-        <div>
-          <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaTargets', 'Wohin damit?')}</p>
-          <div className="flex flex-wrap gap-1.5">
-            <button onClick={() => toggle('facebook')} className={pill(plats.includes('facebook'))}>Facebook</button>
-            <button onClick={() => toggle('instagram')} className={pill(plats.includes('instagram'))}>Instagram</button>
-            <button onClick={() => toggle('linkedin')} className={pill(plats.includes('linkedin'))}>LinkedIn</button>
-            <button onClick={() => setNl(v => !v)} className={pill(nl)}>✉️ Newsletter</button>
-          </div>
-        </div>
-        {social && (
-          <div>
-            <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaImages', 'Bildmaterial')}</p>
-            <div className="flex gap-1.5 items-center flex-wrap">
-              <button onClick={() => setFormat('single')} className={pill(format === 'single')}>🖼 {t('crm.social.single', 'Einzelbild')}</button>
-              <button onClick={() => setFormat('carousel')} className={pill(format === 'carousel')}>🎠 {t('crm.social.carousel', 'Karussell')}</button>
-
-            </div>
-            {format === 'carousel' && (
-              <div className="mt-2">
-                <p className="text-xs font-medium text-gray-500 mb-1.5">{t('crm.social.ideaImgCount', 'Bilder')}:</p>
-                <CountPicker value={count} onChange={setCount} />
-              </div>
-            )}
-            {format === 'carousel' && plats.includes('linkedin') && (
-              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.ideaLiHint', 'Karussell gilt für FB/Insta — LinkedIn erhält das erste Bild als Einzelpost.')}</p>
-            )}
-          </div>
-        )}
-        <p className="text-[11px] text-gray-400">{t('crm.social.ideaFlowHint', 'Es entstehen Entwürfe: Caption je Plattform (Newsletter ausführlich), Bilder werden im Hintergrund erstellt. Freigeben & Termin wie gewohnt im Post.')}</p>
-        {err && <p className="text-sm text-red-600">❌ {err}</p>}
-        <div className="flex gap-2 justify-end">
-          <button onClick={onClose} disabled={busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-600">{t('common.cancel', 'Abbrechen')}</button>
-          <button onClick={() => void create()} disabled={busy} className="px-5 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
-            {busy ? t('crm.social.ideaCreating', 'Texte werden erstellt… (~20 s)') : `✨ ${t('crm.social.ideaCreate', 'Erstellen')}`}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // ── Redaktionsplan: Monatskalender über Social-Posts + Newsletter ───────────
 interface NlEntry { id: string; title: string; status: string; date: string | null }
 
@@ -722,8 +645,9 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
                   return (
                     <button key={pp.id} onClick={() => onOpenPost(pp)}
                       className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 ${cls}`}
-                      title={`${stLabel} · ${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
-                      <span className="shrink-0">{isDraft ? '📝' : pp.status === 'gepostet' ? '✓' : '✅'}</span>
+                      title={`${pp.autopilot_slot ? '🤖 Autopilot · ' : ''}${stLabel} · ${tp?.label ?? pp.topic} · ${pp.platforms.join(', ')} · ${(pp.content ?? '').slice(0, 80)}`}>
+                      <span className="shrink-0">{isDraft ? (pp.autopilot_slot ? '🤖' : '📝') : pp.status === 'gepostet' ? '✓' : '✅'}</span>
+                      {pp.video_url && !pp.image_url && <span className="shrink-0">🎞</span>}
                       {pp.image_url && <img src={pp.image_url} alt="" loading="lazy" className="w-4 h-4 rounded-sm object-cover shrink-0" />}
                       {pp.platforms.map(pl => PLAT_CHIP[pl] ? (
                         <span key={pl} className={`shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] ${PLAT_CHIP[pl].cls}`}>{PLAT_CHIP[pl].txt}</span>
@@ -753,6 +677,131 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
         <span className="text-gray-400">{t('crm.social.legendPlatforms', 'f = Facebook · IG = Instagram · in = LinkedIn · NL = Newsletter')}</span>
         <span className="text-gray-400">{t('crm.social.planHint', 'Klick auf einen Eintrag öffnet ihn · „+" am Tag legt einen Post für diesen Tag an.')}</span>
       </div>
+    </div>
+  )
+}
+
+// ── Autopilot: Wochenplan + Reel-Warteschlange + Lotte-Fotos ─────────────────
+// Der Server (social-agent autopilot, Cron alle 20 Min) plant Reels, Lotte-Posts
+// und News selbst ein. Hier nur Überblick + An/Aus. Plan in crm_settings social_autopilot.
+interface ApSlot { dow: number; kind: 'reel' | 'news' | 'lotte'; time: string; li_time?: string }
+interface ApStatus {
+  enabled: boolean; slots: ApSlot[]
+  folders: { reels: string | null; lotte: string | null; social: string | null }
+  reels: { queued: number; total: number; next: string[]; until: string | null }
+  lotte_photos: number; error: string | null
+}
+function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
+  const { t } = useTranslation()
+  const [st, setSt] = useState<ApStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'autopilot_status' } })
+    const d = (data ?? {}) as ApStatus & { ok?: boolean; error?: string | null }
+    if (error || !d.ok) { setErr(d.error || error?.message || 'Fehler'); return }
+    setSt(d); setErr(d.error ?? '')
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const toggle = async () => {
+    if (!st) return
+    setBusy(true)
+    try {
+      const { data } = await supabase.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
+      const cfg = JSON.parse((data as { value?: string } | null)?.value ?? '{}') as Record<string, unknown>
+      cfg.enabled = !st.enabled
+      const { error } = await supabase.from('crm_settings').update({ value: JSON.stringify(cfg, null, 2), updated_at: new Date().toISOString() }).eq('key', 'social_autopilot')
+      if (error) throw error
+      setSt({ ...st, enabled: !st.enabled })
+      onChanged()
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler') } finally { setBusy(false) }
+  }
+
+  const KIND: Record<string, { icon: string; label: string; cls: string }> = {
+    reel: { icon: '🎞️', label: t('crm.social.apReel', 'Reel'), cls: 'bg-orange-50 text-orange-800 border-orange-200' },
+    news: { icon: '📰', label: t('crm.social.apNews', 'News'), cls: 'bg-blue-50 text-blue-800 border-blue-200' },
+    lotte: { icon: '🐾', label: t('crm.social.apLotte', 'Lotte'), cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+    youtube: { icon: '🎬', label: t('crm.social.apYoutube', 'YouTube-Video'), cls: 'bg-red-50 text-red-700 border-red-200' },
+  }
+  const days = [1, 2, 3, 4, 5, 6, 0]
+  const dayName = (d: number) => [t('crm.social.wdSo', 'So'), t('crm.social.wdMo', 'Mo'), t('crm.social.wdDi', 'Di'), t('crm.social.wdMi', 'Mi'), t('crm.social.wdDo', 'Do'), t('crm.social.wdFr', 'Fr'), t('crm.social.wdSa', 'Sa')][d]
+  const entries = (d: number) => {
+    const list: Array<{ time: string; kind: string; li?: boolean }> = []
+    for (const s of st?.slots ?? []) if (s.dow === d) {
+      list.push({ time: s.time, kind: s.kind })
+      if (s.li_time) list.push({ time: s.li_time, kind: s.kind, li: true })
+    }
+    if (d === 1) { list.push({ time: '18:30', kind: 'youtube' }); list.push({ time: '08:30', kind: 'youtube', li: true }) }
+    return list.sort((a, b) => a.time.localeCompare(b.time))
+  }
+  const folderUrl = (id: string | null) => id ? `https://drive.google.com/drive/folders/${id}` : null
+  const untilLabel = st?.reels.until ? new Date(`${st.reels.until}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : null
+  const lowReels = !!st && st.reels.queued < 3
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="font-semibold text-gray-900">🤖 {t('crm.social.apTitle', 'Autopilot')}
+            {st && <span className={`ml-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${st.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+              {st.enabled ? t('crm.social.apOn', 'läuft') : t('crm.social.apOff', 'aus')}
+            </span>}
+          </p>
+          <p className="text-xs text-gray-500 mt-0.5 max-w-2xl">{t('crm.social.apSub', 'Plant und postet selbstständig: jeden Tag ein Reel (außer montags, da läuft das YouTube-Video), 2 Lotte-Posts und 5 News pro Woche. Die Posts stehen 1 bis 3 Tage vorher fertig im Kalender. Du kannst jeden öffnen, ändern oder löschen.')}</p>
+        </div>
+        {canEdit && st && (
+          <button onClick={() => void toggle()} disabled={busy}
+            className={`px-3 py-1.5 rounded-xl text-sm font-medium border disabled:opacity-50 ${st.enabled ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-transparent text-white'}`}
+            style={st.enabled ? undefined : { backgroundColor: '#ff795d' }}>
+            {st.enabled ? `⏸ ${t('crm.social.apPause', 'Pausieren')}` : `▶ ${t('crm.social.apStart', 'Einschalten')}`}
+          </button>
+        )}
+      </div>
+
+      {!st && !err && <p className="text-xs text-gray-400">{t('common.loading', 'lädt …')}</p>}
+      {err && <p className="text-xs text-red-600">❌ {err}</p>}
+
+      {st && (<>
+        <div className="grid grid-cols-7 gap-1">
+          {days.map(d => (
+            <div key={d} className="rounded-lg bg-gray-50 p-1.5 min-h-[72px]">
+              <p className="text-[11px] font-semibold text-gray-500 text-center mb-1">{dayName(d)}</p>
+              <div className="space-y-0.5">
+                {entries(d).map((e, i) => {
+                  const k = KIND[e.kind]
+                  return (
+                    <div key={i} className={`text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 ${k.cls}`} title={`${e.time} · ${k.label}${e.li ? ' · LinkedIn' : ''}`}>
+                      <span className="shrink-0">{k.icon}</span>
+                      <span className="shrink-0 tabular-nums">{e.time}</span>
+                      {e.li && <span className="shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] bg-[#0A66C2] text-white">in</span>}
+                      <span className="truncate hidden md:inline">{k.label}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-[11px] text-gray-400">{t('crm.social.apTimes', 'Uhrzeiten = Zypern-Zeit. Reels auf Facebook + Instagram, Lotte und News auf Facebook + Instagram, News Di/Do/Fr zusätzlich auf LinkedIn.')}</p>
+
+        <div className="grid sm:grid-cols-2 gap-2">
+          <div className={`rounded-xl border p-3 ${lowReels ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}`}>
+            <p className="text-sm font-medium text-gray-900">🎞️ {t('crm.social.apReelQueue', 'Reels in der Warteschlange')}: {st.reels.queued}</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {untilLabel ? t('crm.social.apReelUntil', 'Reicht bis {{d}}.', { d: untilLabel }) : t('crm.social.apReelEmpty', 'Keine Reels mehr eingeplant.')}
+              {lowReels && <> {t('crm.social.apReelLow', 'Bitte neue Reels in den Ordner legen.')}</>}
+            </p>
+            {st.reels.next.length > 0 && <p className="text-[11px] text-gray-400 mt-1 truncate">{t('crm.social.apNext', 'Als Nächstes')}: {st.reels.next[0]}</p>}
+            {folderUrl(st.folders.reels) && <a href={folderUrl(st.folders.reels)!} target="_blank" rel="noreferrer" className="text-xs underline text-gray-600 mt-1 inline-block">{t('crm.social.apOpenFolder', 'Drive-Ordner öffnen')} ↗</a>}
+          </div>
+          <div className="rounded-xl border border-gray-100 p-3">
+            <p className="text-sm font-medium text-gray-900">🐾 {t('crm.social.apLottePhotos', 'Lotte-Fotos als Vorlage')}: {st.lotte_photos}</p>
+            <p className="text-xs text-gray-500 mt-0.5">{t('crm.social.apLotteHint', 'Echte Fotos von Lotte hier ablegen. Je mehr Perspektiven, desto echter sieht sie auf den KI-Bildern aus.')}</p>
+            {folderUrl(st.folders.lotte) && <a href={folderUrl(st.folders.lotte)!} target="_blank" rel="noreferrer" className="text-xs underline text-gray-600 mt-1 inline-block">{t('crm.social.apOpenFolder', 'Drive-Ordner öffnen')} ↗</a>}
+          </div>
+        </div>
+      </>)}
     </div>
   )
 }
@@ -870,9 +919,6 @@ export default function SocialStudio() {
   const [view, setView] = useState<'plan' | 'list' | 'archive'>('plan')
   const [archiveMonth, setArchiveMonth] = useState('')
   const [newsletters, setNewsletters] = useState<NlEntry[]>([])
-  const [ideas, setIdeas] = useState<Idea[]>([])
-  const [ideasOpen, setIdeasOpen] = useState(true)
-  const [useIdea, setUseIdea] = useState<Idea | null>(null)
   const [newTopicLabel, setNewTopicLabel] = useState('')
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
@@ -881,7 +927,7 @@ export default function SocialStudio() {
     if (!quiet) setLoading(true)
     try {
       const [{ data: ps }, { data: ts }, { data: prs }] = await Promise.all([
-        supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(300),
         supabase.from('social_topics').select('*').order('sort'),
         supabase.from('crm_projects').select('id, name, deck_assets').order('name'),
       ])
@@ -903,8 +949,6 @@ export default function SocialStudio() {
         nl = nl.map(n => ({ ...n, date: firstByCamp.get(n.id) ?? n.date }))
       }
       setNewsletters(nl.filter(n => n.date))
-      const { data: id2 } = await supabase.from('social_ideas').select('*').order('created_at', { ascending: false }).limit(50)
-      setIdeas((id2 as unknown as Idea[]) ?? [])
     } catch (err) {
       console.error('[SocialStudio] fetchAll:', err)
     } finally { setLoading(false) }
@@ -965,26 +1009,6 @@ export default function SocialStudio() {
     } catch (err) { console.error('[SocialStudio] createForDay:', err); showToast('❌ Konnte den Post nicht anlegen') }
   }
 
-  const deleteIdea = async (i: Idea) => {
-    if (!window.confirm(t('crm.social.ideaDelConfirm', 'Diese Idee löschen?') as string)) return
-    const { error } = await supabase.from('social_ideas').delete().eq('id', i.id)
-    if (error) { showToast(`❌ ${error.message}`); return }
-    setIdeas(arr => arr.filter(x => x.id !== i.id))
-  }
-
-  const runNewsScan = async () => {
-    setBusyKey('news')
-    try {
-      const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'news_scan' } })
-      const d = (data ?? {}) as { ok?: boolean; error?: string }
-      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
-      showToast(t('crm.social.newsDone', '💡 Recherche fertig — die Fundstücke liegen unten in der Ideensammlung.'))
-      void fetchAll()
-    } catch (e) {
-      showToast(`❌ ${e instanceof Error ? e.message : 'Recherche fehlgeschlagen'}`)
-    } finally { setBusyKey('') }
-  }
-
   const deletePost = async (p: SocialPost) => {
     if (!window.confirm(t('crm.social.deleteConfirm', 'Diesen Post-Entwurf löschen?') as string)) return
     const { error } = await supabase.from('social_posts').delete().eq('id', p.id)
@@ -1021,10 +1045,6 @@ export default function SocialStudio() {
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium ${view === k ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500'}`}>{lbl}</button>
             ))}
           </div>
-          <button onClick={() => void runNewsScan()} disabled={busyKey === 'news'}
-            className="px-3 py-1.5 rounded-xl text-sm font-medium border border-gray-200 hover:bg-gray-50 disabled:opacity-50">
-            {busyKey === 'news' ? t('crm.social.newsWorking', 'Recherchiert (~1 Min)…') : t('crm.social.newsBtn', '📰 News jetzt recherchieren')}
-          </button>
         </div>
 
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
@@ -1067,42 +1087,9 @@ export default function SocialStudio() {
           )}
         </div>
 
-        {!loading && view === 'plan' && ideas.length > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm">
-            <button onClick={() => setIdeasOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3">
-              <p className="font-semibold text-gray-900">💡 {t('crm.social.ideas', 'Ideensammlung')}
-                <span className="ml-2 text-sm font-normal text-gray-400">{ideas.filter(i => i.status === 'neu').length} {t('crm.social.ideasNew', 'neu')}</span>
-              </p>
-              <span className="text-gray-400">{ideasOpen ? '▾' : '▸'}</span>
-            </button>
-            {ideasOpen && (
-              <div className="px-4 pb-4 space-y-2">
-                {ideas.map(i => (
-                  <div key={i.id} className={`border rounded-xl p-3 ${i.status === 'verwendet' ? 'border-gray-100 opacity-60' : 'border-gray-200'}`}>
-                    <div className="flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold text-gray-900">{i.headline}
-                          {i.status === 'verwendet' && <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ {t('crm.social.ideaUsed', 'verwendet')}</span>}
-                        </p>
-                        {i.core && <p className="text-xs text-gray-600 mt-0.5">{i.core}</p>}
-                        {i.angle && <p className="text-xs text-gray-400 italic mt-0.5">💬 {i.angle}</p>}
-                        <p className="text-[11px] text-gray-400 mt-1">{new Date(i.created_at).toLocaleDateString('de-DE')}
-                          {i.source_url && <> · <a href={i.source_url} target="_blank" rel="noreferrer" className="underline">{t('crm.social.ideaSource', 'Quelle')} ↗</a></>}
-                        </p>
-                      </div>
-                      <div className="flex flex-col gap-1 shrink-0">
-                        <button onClick={() => setUseIdea(i)} className="text-xs px-3 py-1.5 rounded-lg text-white font-medium" style={{ backgroundColor: '#ff795d' }}>▶ {t('crm.social.ideaUse', 'Verwenden')}</button>
-                        <button onClick={() => void deleteIdea(i)} className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">🗑</button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {!loading && view === 'plan' && (<>
+          <AutopilotPanel canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'} onChanged={() => void fetchAll(true)} />
+
           <InteractionsSection />
 
           <PlanCalendar posts={posts} newsletters={newsletters} topics={topics}
@@ -1159,12 +1146,6 @@ export default function SocialStudio() {
           </div>
         )}
       </div>
-      {useIdea && <UseIdeaModal idea={useIdea} onClose={() => setUseIdea(null)}
-        onDone={msg => {
-          setUseIdea(null); showToast(msg); setView('list'); void fetchAll()
-          // Texte/Bilder laufen serverseitig weiter — still nachladen.
-          for (const ms of [15000, 40000, 80000, 140000]) setTimeout(() => void fetchAll(true), ms)
-        }} />}
       {openPost && <PostEditor post={openPost} allPosts={posts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
     </DashboardLayout>
   )
