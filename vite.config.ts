@@ -59,6 +59,9 @@ export default defineConfig({
           /^\/auth\//,
           /^\/(bewertung|deck|rechnung|re|strategie|akte|partner|termin|sign|buchen|zusage|abmelden|anmelden|report|seo-report)(\/|$)/,
           /^\/(t|s)\//,
+          // Vercel-Rewrites auf Edge Functions (Zypern-Report-PDF, Kalender-Feed):
+          // der SW darf hier nie index.html ausliefern.
+          /^\/(zypern-report|cal)(\/|$)/,
         ],
         runtimeCaching: [
           {

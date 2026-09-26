@@ -5,6 +5,10 @@
       "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/cal?a=:id"
     },
     {
+      "source": "/zypern-report",
+      "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/zypern-report"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

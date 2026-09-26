@@ -337,6 +337,50 @@ async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
   try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as ApCfg } catch { return {} }
 }
+// Stichwort-Automatik (Function social-keywords): Wer das Stichwort kommentiert,
+// bekommt den Zypern-Report per Nachricht. NUR wenn sie eingeschaltet ist UND der
+// Scan wirklich läuft, enden die News-Posts am Di, Fr und So (Zypern-Wochentag des
+// Slots) mit dieser Aufforderung, und Lottes Samstags-Post bekommt eine Zeile dazu.
+// "Läuft" = letzter Lauf (crm_settings social_keywords_last_run.at, Cron alle 3 Min.)
+// jünger als 20 Minuten. Sonst verspräche der Post etwas, das niemand verschickt.
+const KW_NEWS_DOWS = [2, 5, 0]
+const KW_RUN_MAX_AGE_MS = 20 * 60 * 1000
+// kw = eingestelltes Stichwort in Großbuchstaben (auch wenn ausgeschaltet),
+// cta = Stichwort nur, wenn eingeschaltet und der Scan läuft, sonst null.
+async function keywordState(sb: SupabaseClient): Promise<{ kw: string | null; cta: string | null }> {
+  const { data } = await sb.from('crm_settings').select('key, value').in('key', ['social_keywords', 'social_keywords_last_run'])
+  const rows = (data ?? []) as Array<{ key: string; value: string | null }>
+  const parse = (key: string): Record<string, unknown> => {
+    try { const v = JSON.parse(rows.find(r => r.key === key)?.value ?? '{}'); return v && typeof v === 'object' ? v as Record<string, unknown> : {} } catch { return {} }
+  }
+  const c = parse('social_keywords') as { enabled?: boolean; keywords?: unknown }
+  const last = parse('social_keywords_last_run') as { at?: unknown }
+  const list = Array.isArray(c.keywords) ? c.keywords : []
+  const kw = list.map(k => (typeof k === 'string' ? k.trim().replace(/^#+/, '') : '')).find(Boolean)?.toUpperCase() ?? null
+  const lastAt = Date.parse(typeof last.at === 'string' ? last.at : '')
+  const running = Number.isFinite(lastAt) && Date.now() - lastAt < KW_RUN_MAX_AGE_MS
+  return { kw, cta: c.enabled === true && kw && running ? kw : null }
+}
+async function keywordCta(sb: SupabaseClient): Promise<string | null> {
+  try { return (await keywordState(sb)).cta } catch { return null }
+}
+// Ohne Stichwort-Aufforderung (anderer Tag, ausgeschaltet oder Scan steht) darf die
+// KI kein eigenes Kommentar-Stichwort erfinden, das dann niemand beantwortet.
+const KW_AVOID_INSTRUCTION = 'Keine Kommentar-Stichwörter als Handlungsaufforderung verwenden (nicht "kommentiere X"), stattdessen eine Frage an die Community oder den Hinweis auf den Termin-Link in der Bio.'
+const kwNewsInstruction = (kw: string) => `Die Handlungsaufforderung am Ende ist diesmal NUR das Stichwort (keine Frage, kein Termin-Link): Wer ${kw} kommentiert, bekommt unseren aktuellen Zypern-Report als PDF per Nachricht. Formuliere das natürlich und jedes Mal etwas anders, zum Beispiel "Kommentiere ${kw} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht." Das Stichwort ${kw} steht wörtlich in Großbuchstaben im Text, vor den Hashtags. Nichts versprechen, was nicht im Report steht.`
+const kwLotteInstruction = (kw: string) => `ZUSATZ FÜR HEUTE: Baue vor der Unterschrift diese Zeile ein, gern leicht abgewandelt, das Stichwort ${kw} wörtlich in Großbuchstaben: "Kommentier ${kw}, dann schickt dir mein Chef den Zypern-Report. Ich hab ihn schon gelesen. Also die Bilder." Dafür keine zusätzliche Frage am Ende.`
+// Sicherheitsnetz: fehlt das Stichwort im fertigen Text, die Aufforderung vor der
+// Unterschrift bzw. den Hashtags einfügen (sonst wüsste niemand, was zu tun ist).
+function ensureKeywordCta(caption: string, kw: string, line: string): string {
+  const k = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  if (new RegExp(`(?<![\\p{L}\\p{N}_])${k}(?![\\p{L}\\p{N}_])`, 'u').test(caption)) return caption
+  const lines = caption.trimEnd().split('\n')
+  let i = lines.length
+  while (i > 0 && (!lines[i - 1].trim() || /^\s*(#[^\s#]+\s*)+$/.test(lines[i - 1]) || /^\s*🐾/.test(lines[i - 1]))) i--
+  const head = lines.slice(0, i).join('\n').trimEnd()
+  const tail = lines.slice(i).join('\n').trim()
+  return tail ? `${head}\n\n${line}\n\n${tail}` : `${head}\n\n${line}`
+}
 // Wie weit im Voraus je Art erzeugt wird. Reels (Inhalt steht ja fest) so weit
 // die Warteschlange reicht, Lotte eine Woche, News + LinkedIn 3 Tage (aktuell
 // genug, und Sven sieht die nächsten Tage immer fertig in der Vorschau).
@@ -510,7 +554,7 @@ Quelle (URL), und eine konkrete Post-Idee (1–2 Sätze) im Happy-Property-Ton.$
 
 // Idee → fertige Texte (Meta/LinkedIn/optional Newsletter) + Bilder. Wirft bei
 // Fehlern — der Aufrufer entscheidet, wie das sichtbar wird.
-async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, o: { metaPostId: string; liPostId: string; wantNewsletter: boolean; imgCount: number }): Promise<void> {
+async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, o: { metaPostId: string; liPostId: string; wantNewsletter: boolean; imgCount: number; ctaKeyword?: string | null }): Promise<void> {
   const stamp = () => new Date().toISOString()
   const outTool = {
     name: 'set_outputs', description: 'Liefert die fertigen Texte für alle gewünschten Ziele.',
@@ -523,7 +567,11 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
     }, required: ['image_prompt'] },
   }
   const wants: string[] = []
-  if (o.metaPostId) wants.push('- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.')
+  // Stichwort-Tag: feste Report-Aufforderung. Sonst, sobald ein Stichwort eingestellt
+  // ist: keine selbst erfundenen Kommentar-Stichwörter.
+  let kwAvoid = false
+  if (o.metaPostId && !o.ctaKeyword) { try { kwAvoid = !!(await keywordState(sb)).kw } catch { kwAvoid = false } }
+  if (o.metaPostId) wants.push(`- meta_caption: locker & direkt, Hook in Zeile 1, kurze Absätze, 3–6 passende Hashtags, klare Handlungsaufforderung. Max ~1200 Zeichen.${o.ctaKeyword ? ` ${kwNewsInstruction(o.ctaKeyword)}` : kwAvoid ? ` ${KW_AVOID_INSTRUCTION}` : ''}`)
   if (o.liPostId) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
   if (o.wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
   const resp2 = await claude(anthropicKey, {
@@ -537,7 +585,8 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
   if (o.metaPostId && !out.meta_caption) throw new Error('Meta-Text fehlt.')
   if (o.liPostId && !out.linkedin_caption) throw new Error('LinkedIn-Text fehlt.')
 
-  if (o.metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: noDash(out.meta_caption), updated_at: stamp() }).eq('id', o.metaPostId)
+  const metaCaption = out.meta_caption && o.ctaKeyword ? ensureKeywordCta(out.meta_caption, o.ctaKeyword, `Kommentiere ${o.ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht. 📩`) : out.meta_caption
+  if (o.metaPostId && metaCaption) await sb.from('social_posts').update({ content: noDash(metaCaption), updated_at: stamp() }).eq('id', o.metaPostId)
   if (o.liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: noDash(out.linkedin_caption), updated_at: stamp() }).eq('id', o.liPostId)
   if (o.wantNewsletter && out.newsletter_html) {
     await sb.from('newsletter_campaigns').insert({
@@ -1809,9 +1858,11 @@ Regeln:
             const { data: prev } = await sb.from('social_posts').select('content').eq('topic', 'weisheit').not('content', 'is', null).order('created_at', { ascending: false }).limit(12)
             const prevHooks = ((prev ?? []) as Array<{ content: string }>).map(x => x.content.split('\n').find(l => l.trim())?.trim() ?? '').filter(Boolean)
             const theme = LOTTE_THEMES[Math.floor(Math.random() * LOTTE_THEMES.length)]
+            // Samstag + Stichwort-Automatik an: Lotte wirbt augenzwinkernd für den Report
+            const lotteKw = new Date(`${slot.ymd}T12:00:00Z`).getUTCDay() === 6 ? await keywordCta(sb) : null
             const resp = await claude(anthropicKey, {
               system: `${BRAND}\n\n${LOTTE_SYSTEM}\n\nRufe GENAU EINMAL set_lotte auf.`,
-              messages: [{ role: 'user', content: `Schreib Lottes nächsten Post für ${WEEKDAY_DE[new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()]}.\n\n${prevHooks.length ? `SO HAT LOTTE ZULETZT ANGEFANGEN (neues Thema, anderer Witz, nichts wiederholen):\n${prevHooks.map(h => `- ${h}`).join('\n')}\n\n` : ''}THEMA HEUTE: ${theme}\n\nimage_prompt: englisch, eine WITZIGE, fotorealistische Szene, in der Lotte (chocolate brown labrador) etwas Menschliches tut und damit die Pointe sichtbar macht (z.B. mit Sonnenbrille auf der Poolliege, vor einem Stapel Papierkram mit genervtem Blick, mit Bauhelm auf der Baustelle). Ort meist Paphos/Zypern: Sonne, Terrasse, Pool, Meer, weiße Neubauten. Kein Text, keine Schrift, keine Schilder im Bild.` }],
+              messages: [{ role: 'user', content: `Schreib Lottes nächsten Post für ${WEEKDAY_DE[new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()]}.\n\n${prevHooks.length ? `SO HAT LOTTE ZULETZT ANGEFANGEN (neues Thema, anderer Witz, nichts wiederholen):\n${prevHooks.map(h => `- ${h}`).join('\n')}\n\n` : ''}THEMA HEUTE: ${theme}\n\nimage_prompt: englisch, eine WITZIGE, fotorealistische Szene, in der Lotte (chocolate brown labrador) etwas Menschliches tut und damit die Pointe sichtbar macht (z.B. mit Sonnenbrille auf der Poolliege, vor einem Stapel Papierkram mit genervtem Blick, mit Bauhelm auf der Baustelle). Ort meist Paphos/Zypern: Sonne, Terrasse, Pool, Meer, weiße Neubauten. Kein Text, keine Schrift, keine Schilder im Bild.${lotteKw ? `\n\n${kwLotteInstruction(lotteKw)}` : ''}` }],
               tools: [{ name: 'set_lotte', description: 'Fertiger Lotte-Post.', input_schema: { type: 'object', properties: {
                 title: { type: 'string', description: 'Kurzer interner Titel (max. 60 Zeichen)' },
                 caption: { type: 'string' }, image_prompt: { type: 'string' },
@@ -1820,6 +1871,7 @@ Regeln:
             })
             const out = (((resp.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
             if (!out.caption || !out.image_prompt) throw new Error('Lotte-Text konnte nicht erstellt werden.')
+            if (lotteKw) out.caption = ensureKeywordCta(out.caption, lotteKw, `Kommentier ${lotteKw}, dann schickt dir mein Chef den Zypern-Report. Ich hab ihn schon gelesen. Also die Bilder.`)
             await sb.from('social_posts').update({ title: `🐾 ${out.title ?? 'Lotte'}`.slice(0, 200), content: noDash(out.caption), image_prompt: out.image_prompt, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
             await generateLotteImage(sb, postId, out.image_prompt)
             await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
@@ -1878,7 +1930,9 @@ Regeln:
             }
             await sb.from('social_posts').update({ title: `📰 ${idea.headline}`.slice(0, 200), news_source: idea.source_url, content: null, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
             await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: [postId, liPostId].filter(Boolean) }).eq('id', idea.id)
-            await ideaContent(sb, anthropicKey, idea, { metaPostId: postId, liPostId, wantNewsletter: false, imgCount: 1 })
+            // Di, Fr, So: Stichwort-Aufforderung statt allgemeiner Handlungsaufforderung (nur wenn die Automatik an ist)
+            const newsKw = KW_NEWS_DOWS.includes(new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()) ? await keywordCta(sb) : null
+            await ideaContent(sb, anthropicKey, idea, { metaPostId: postId, liPostId, wantNewsletter: false, imgCount: 1, ctaKeyword: newsKw })
             const { data: chk } = await sb.from('social_posts').select('image_url').eq('id', postId).maybeSingle()
             if (!(chk as { image_url?: string | null } | null)?.image_url) throw new Error('Bild konnte nicht erzeugt werden.')
             const ready = { status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }

@@ -915,6 +915,278 @@ function PlaceholderModal({ ph, st, onClose, onCreated }: { ph: ApUpcoming; st: 
   )
 }
 
+// ── Stichwort-Automatik: Kommentar „PAPHOS" → Zypern-Report per Nachricht ─────
+// Daten aus der Function social-keywords (status) + zypern_reports (neuester Live-
+// Report). Alles optional gelesen: unbekannte Status-Werte oder fehlende Tabellen
+// dürfen die Seite nie weiß machen.
+interface KwRow { id: string; platform?: string | null; author_name?: string | null; comment_text?: string | null; comment_at?: string | null; created_at?: string | null; status?: string | null; error?: string | null; clicked_at?: string | null; click_count?: number | null }
+interface KwLastRun { at?: string; scanned?: number; found?: number; sent?: number; failed?: number; pending?: number; skipped?: number; errors?: string[] }
+interface KwStatus { config?: { enabled?: boolean; keywords?: string[]; dm_template?: string; public_reply?: boolean } | null; last_run?: KwLastRun | null; totals?: { sent?: number; clicked?: number } | null; rows?: KwRow[] | null }
+interface KwReport { month?: string | null; status?: string | null; pdf_url?: string | null; published_at?: string | null; started_at?: string | null; error?: string | null }
+// Scan-Cron läuft alle 3 Min.; älter als 20 Min. = steht (dann auch keine Aufforderung in Posts).
+const KW_RUN_MAX_AGE_MS = 20 * 60 * 1000
+// Ein Neuaufbau, der länger als 15 Min. „building" ist, gilt als hängengeblieben.
+const KW_BUILD_MAX_AGE_MS = 15 * 60 * 1000
+// Zeile mit dem Stichwort in Großbuchstaben als ganzes Wort (nicht als #Hashtag).
+const kwLineRe = (kw: string) => {
+  const k = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?<![\\p{L}\\p{N}_#])${k}(?![\\p{L}\\p{N}_])`, 'u')
+}
+const KW_STATUS: Record<string, { icon: string; de: string; cls: string }> = {
+  sent: { icon: '✓', de: 'gesendet', cls: 'text-green-700' },
+  pending: { icon: '⏳', de: 'wartet', cls: 'text-amber-700' },
+  failed: { icon: '❌', de: 'fehlgeschlagen', cls: 'text-red-600' },
+  skipped: { icon: '⏭', de: 'übersprungen', cls: 'text-gray-400' },
+}
+
+function KeywordAutomationCard({ canEdit }: { canEdit: boolean }) {
+  const { t } = useTranslation()
+  const [st, setSt] = useState<KwStatus | null>(null)
+  const [report, setReport] = useState<KwReport | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState<'' | 'toggle' | 'build'>('')
+  const [note, setNote] = useState('')
+  const [building, setBuilding] = useState(false)
+  const pollRef = useRef<number | null>(null)
+  useEffect(() => () => { if (pollRef.current) window.clearTimeout(pollRef.current) }, [])
+
+  // Liefert, ob gerade ein Report neu gebaut wird (fürs Nachladen nach „Neu erstellen").
+  const load = useCallback(async (): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.functions.invoke('social-keywords', { body: { action: 'status' } })
+      const d = (data ?? {}) as KwStatus & { error?: string }
+      if (error || d.error) throw new Error(d.error || error?.message || 'Fehler')
+      setSt(d); setErr('')
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler') }
+    try {
+      // Während eines Neuaufbaus steht die Zeile auf „building", ihr PDF ist aber
+      // weiter online: daher die neueste Ausgabe mit Veröffentlichung/PDF zeigen.
+      const { data } = await supabase.from('zypern_reports').select('month, status, pdf_url, published_at, started_at, error')
+        .order('month', { ascending: false }).limit(12)
+      const list = (Array.isArray(data) ? data : []) as KwReport[]
+      const live = list.find(r => r.published_at || r.pdf_url) ?? null
+      const now = Date.now()
+      const isBuilding = list.some(r => r.status === 'building'
+        && (!live || String(r.month ?? '') >= String(live.month ?? ''))
+        && (!r.started_at || now - Date.parse(r.started_at) < KW_BUILD_MAX_AGE_MS))
+      setReport(live); setBuilding(isBuilding)
+      return isBuilding
+    } catch { setReport(null); setBuilding(false); return false }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  // Nach „Neu erstellen": alle 20 s nachladen, bis der Bau fertig ist (max. ~6 Min.).
+  const pollBuild = useCallback((left: number) => {
+    if (pollRef.current) window.clearTimeout(pollRef.current)
+    pollRef.current = window.setTimeout(() => {
+      void (async () => {
+        const still = await load()
+        if (still && left > 1) { pollBuild(left - 1); return }
+        pollRef.current = null
+        if (!still) setNote('')
+      })()
+    }, 20000)
+  }, [load])
+
+  const enabled = !!st?.config?.enabled
+
+  // Beim Ausschalten: Stichwort-Zeile aus künftigen, schon geplanten Autopilot-Posts
+  // entfernen (sonst verspricht der Post etwas, das niemand mehr verschickt).
+  const stripKeywordCta = async (kws: string[]): Promise<number> => {
+    const res = kws.map(kwLineRe)
+    const { data, error } = await supabase.from('social_posts').select('id, content')
+      .eq('status', 'geplant').gt('scheduled_for', new Date().toISOString())
+      .not('autopilot_slot', 'is', null).not('content', 'is', null).limit(500)
+    if (error) throw error
+    let cleaned = 0
+    for (const p of (data ?? []) as Array<{ id: string; content: string | null }>) {
+      const content = p.content ?? ''
+      const lines = content.split('\n')
+      const kept = lines.filter(l => !res.some(re => re.test(l)))
+      if (kept.length === lines.length) continue
+      const next = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+      if (!next) continue
+      const { error: uErr } = await supabase.from('social_posts').update({ content: next, updated_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'geplant')
+      if (!uErr) cleaned++
+    }
+    return cleaned
+  }
+
+  const toggle = async () => {
+    if (!st) return
+    const turnOn = !enabled
+    setBusy('toggle'); setNote('')
+    try {
+      // Lesen, ändern, schreiben: alle übrigen Felder (Stichwörter, Nachricht …) bleiben.
+      const { data, error: rErr } = await supabase.from('crm_settings').select('value').eq('key', 'social_keywords').maybeSingle()
+      if (rErr) throw rErr
+      let cfg: Record<string, unknown> = {}
+      try { cfg = JSON.parse((data as { value?: string } | null)?.value ?? '{}') as Record<string, unknown> } catch { cfg = {} }
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) cfg = {}
+      cfg.enabled = turnOn
+      // Kommentare aus der Aus-Zeit nicht nachträglich beantworten
+      if (turnOn) cfg.active_since = new Date().toISOString()
+      const { error } = await supabase.from('crm_settings').update({ value: JSON.stringify(cfg, null, 2), updated_at: new Date().toISOString() }).eq('key', 'social_keywords')
+      if (error) throw error
+      if (!turnOn) {
+        const kws = (Array.isArray(cfg.keywords) ? cfg.keywords : [])
+          .map(k => (typeof k === 'string' ? k.trim().replace(/^#+/, '').toUpperCase() : '')).filter(Boolean)
+        if (kws.length) {
+          try {
+            const n = await stripKeywordCta(kws)
+            setNote(n
+              ? t('crm.social.kwCleaned', 'Ausgeschaltet. Aus {{n}} geplanten Posts wurde die Stichwort-Aufforderung entfernt.', { n })
+              : t('crm.social.kwCleanedNone', 'Ausgeschaltet. Kein geplanter Post enthielt die Stichwort-Aufforderung.'))
+          } catch (e) {
+            setNote(`⚠️ ${t('crm.social.kwCleanFailed', 'Ausgeschaltet, aber die geplanten Posts konnten nicht bereinigt werden:')} ${e instanceof Error ? e.message : 'Fehler'}`)
+          }
+        }
+      }
+      await load()
+    } catch (e) { setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setBusy('') }
+  }
+  const rebuild = async () => {
+    setBusy('build'); setNote('')
+    try {
+      const { data, error } = await supabase.functions.invoke('zypern-report', { body: { action: 'build', force: true } })
+      const d = (data ?? {}) as { error?: string }
+      if (error || d.error) throw new Error(d.error || error?.message || 'Fehler')
+      setNote(t('crm.social.kwReportBuilding', '📄 Der Report wird neu erstellt. Das dauert ein paar Minuten, danach steht hier der neue Stand.'))
+      await load()
+      pollBuild(18)
+    } catch (e) { setNote(`❌ ${e instanceof Error ? e.message : 'Fehler'}`) } finally { setBusy('') }
+  }
+
+  const fmt = (iso?: string | null) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  }
+  const monthLabel = (m?: string | null) => {
+    const mm = /^(\d{4})-(\d{2})$/.exec(m ?? '')
+    if (!mm) return m ?? ''
+    return new Date(Number(mm[1]), Number(mm[2]) - 1, 1).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })
+  }
+  const keywords = (st?.config?.keywords ?? []).filter(k => typeof k === 'string' && k.trim())
+  const last = st?.last_run ?? null
+  const lastAtMs = last?.at ? Date.parse(last.at) : NaN
+  // Eingeschaltet, aber der Scan-Cron läuft nicht: dann bekommen Posts auch keine Aufforderung
+  const scanStalled = enabled && !(Number.isFinite(lastAtMs) && Date.now() - lastAtMs < KW_RUN_MAX_AGE_MS)
+  const lastErrors = Array.isArray(last?.errors) ? last!.errors!.filter(x => typeof x === 'string') : []
+  const rows = (Array.isArray(st?.rows) ? st!.rows! : []).slice(0, 10)
+  const statusOf = (s?: string | null) => KW_STATUS[s ?? ''] ?? { icon: '•', de: s ?? '?', cls: 'text-gray-400' }
+
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="font-semibold text-gray-900">💬 {t('crm.social.kwTitle', 'Stichwort-Automatik')}
+            {st && <span className={`ml-2 text-[11px] px-2 py-0.5 rounded-full font-medium ${enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+              {enabled ? t('crm.social.kwOn', 'läuft') : t('crm.social.kwOff', 'aus')}
+            </span>}
+          </p>
+          <p className="text-xs text-gray-500 mt-0.5 max-w-2xl">{t('crm.social.kwSub', 'Wer unter einem Post oder einer Anzeige das Stichwort kommentiert, bekommt automatisch den aktuellen Zypern-Report als PDF per Nachricht und eine kurze Antwort unter dem Kommentar. Wird alle 3 Minuten geprüft.')}</p>
+        </div>
+        {canEdit && st && (
+          <button onClick={() => void toggle()} disabled={busy === 'toggle'}
+            className={`px-3 py-1.5 rounded-xl text-sm font-medium border disabled:opacity-50 ${enabled ? 'border-gray-200 text-gray-600 hover:bg-gray-50' : 'border-transparent text-white'}`}
+            style={enabled ? undefined : { backgroundColor: '#ff795d' }}>
+            {enabled ? `⏸ ${t('crm.social.kwPause', 'Ausschalten')}` : `▶ ${t('crm.social.kwStart', 'Einschalten')}`}
+          </button>
+        )}
+      </div>
+
+      {!st && !err && <p className="text-xs text-gray-400">{t('common.loading', 'lädt …')}</p>}
+      {err && <p className="text-xs text-red-600">❌ {err}</p>}
+      {note && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{note}</p>}
+      {st && !enabled && <p className="text-xs rounded-lg px-3 py-2 bg-gray-50 text-gray-600">⏸ {t('crm.social.kwPausedNote', 'Ausgeschaltet: Kommentare werden nicht beantwortet, und die Posts enthalten keine Stichwort-Aufforderung.')}</p>}
+      {st && scanStalled && <p className="text-xs rounded-lg px-3 py-2 bg-orange-50 border border-orange-200 text-orange-800">⚠️ {t('crm.social.kwScanStalled', 'Eingeschaltet, aber die automatische Prüfung ist seit über 20 Minuten nicht gelaufen. Solange werden keine Kommentare beantwortet, und neue Posts bekommen keine Stichwort-Aufforderung.')}</p>}
+
+      {st && (<>
+        <div className="grid sm:grid-cols-3 gap-2">
+          <div className="rounded-xl border border-gray-100 p-3">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.social.kwKeywords', 'Stichwort')}</p>
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {keywords.length ? keywords.map(k => (
+                <span key={k} className="text-xs font-bold px-2 py-0.5 rounded-full bg-[#1a2332] text-white tracking-wide">{k.toUpperCase()}</span>
+              )) : <span className="text-xs text-gray-400">{t('crm.social.kwNoKeywords', 'Kein Stichwort eingestellt.')}</span>}
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1.5">{t('crm.social.kwCtaDays', 'Aufforderung in den News-Posts Di, Fr, So und in Lottes Samstags-Post.')}</p>
+          </div>
+          <div className="rounded-xl border border-gray-100 p-3">
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.social.kwReport', 'Zypern-Report')}</p>
+            {report?.month ? (<>
+              <p className="text-sm font-medium text-gray-900 mt-1">📄 {monthLabel(report.month)}
+                {building && <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-800">⏳ {t('crm.social.kwReportRebuilding', 'wird neu erstellt')}</span>}
+              </p>
+              {report.published_at && <p className="text-[11px] text-gray-400 mt-0.5">{t('crm.social.kwReportStand', 'Stand {{date}}', { date: fmt(report.published_at) })}</p>}
+              {!building && report.error && <p className="text-[11px] text-orange-700 mt-0.5" title={report.error}>⚠️ {t('crm.social.kwReportRebuildFailed', 'Der letzte Neuaufbau ist fehlgeschlagen, der bisherige Report bleibt online.')}</p>}
+            </>) : building
+              ? <p className="text-xs text-amber-700 mt-1">⏳ {t('crm.social.kwReportFirstBuild', 'Der Report wird gerade erstellt. Das dauert ein paar Minuten.')}</p>
+              : <p className="text-xs text-orange-700 mt-1">{t('crm.social.kwReportNone', 'Noch kein Report online. Bis dahin werden keine Nachrichten verschickt.')}</p>}
+            <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+              {report?.pdf_url && <a href={report.pdf_url} target="_blank" rel="noreferrer" className="text-xs underline text-gray-600">{t('crm.social.kwReportOpen', 'PDF öffnen')} ↗</a>}
+              {canEdit && (
+                <button onClick={() => void rebuild()} disabled={busy === 'build' || building} className="px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                  {busy === 'build' ? '…' : `🔄 ${t('crm.social.kwReportRebuild', 'Neu erstellen')}`}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className={`rounded-xl border p-3 ${lastErrors.length ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}`}>
+            <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">{t('crm.social.kwLastRun', 'Letzte Prüfung')}</p>
+            {last?.at ? (<>
+              <p className="text-sm text-gray-900 mt-1">{fmt(last.at)}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{t('crm.social.kwLastRunStats', '{{found}} neue Treffer · {{sent}} gesendet · {{failed}} fehlgeschlagen', { found: last.found ?? 0, sent: last.sent ?? 0, failed: last.failed ?? 0 })}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">{t('crm.social.kwTotals', 'Insgesamt {{sent}} verschickt, {{clicked}} geöffnet', { sent: st.totals?.sent ?? 0, clicked: st.totals?.clicked ?? 0 })}</p>
+              {lastErrors.length > 0 && (
+                <div className="mt-1.5 space-y-0.5">
+                  <p className="text-xs font-medium text-orange-800">⚠️ {t('crm.social.kwLastRunErrors', 'Probleme beim letzten Lauf:')}</p>
+                  {lastErrors.slice(0, 3).map((x, i) => <p key={i} className="text-[11px] text-orange-800 leading-snug">{x}</p>)}
+                </div>
+              )}
+            </>) : <p className="text-xs text-gray-400 mt-1">{t('crm.social.kwLastRunNone', 'Noch keine Prüfung gelaufen.')}</p>}
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs font-semibold text-gray-700 mb-1">{t('crm.social.kwRecent', 'Letzte Anfragen')}</p>
+          {rows.length === 0 ? (
+            <p className="text-xs text-gray-400">{t('crm.social.kwEmpty', 'Noch niemand hat das Stichwort kommentiert.')}</p>
+          ) : (
+            <div className="divide-y divide-gray-50 border border-gray-100 rounded-xl">
+              {rows.map(r => {
+                const s = statusOf(r.status)
+                const chip = PLAT_CHIP[r.platform ?? '']
+                return (
+                  <div key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                    <span className={`px-1.5 py-0.5 rounded font-bold text-[10px] shrink-0 ${chip?.cls ?? 'bg-gray-200 text-gray-700'}`}>{chip?.txt ?? (r.platform ?? '?')}</span>
+                    <span className="font-medium text-gray-800 truncate min-w-0" title={r.comment_text ?? ''}>{r.author_name || t('crm.social.kwUnknownName', 'Unbekannt')}</span>
+                    <span className="text-gray-400 shrink-0 tabular-nums">{fmt(r.comment_at ?? r.created_at)}</span>
+                    <span className="ml-auto flex items-center gap-2 shrink-0">
+                      {r.clicked_at && <span className="text-[11px] text-emerald-700" title={t('crm.social.kwOpenedHint', 'Report-Link geöffnet ({{n}}x)', { n: r.click_count ?? 1 })}>👁 {t('crm.social.kwOpened', 'geöffnet')}</span>}
+                      <span className={`font-semibold ${s.cls}`} title={r.error ?? t(`crm.social.kwStatus_${r.status ?? 'unknown'}`, s.de)}>
+                        {s.icon} <span className="hidden sm:inline font-normal">{t(`crm.social.kwStatus_${r.status ?? 'unknown'}`, s.de)}</span>
+                      </span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {st.config?.dm_template && (
+          <details className="text-xs">
+            <summary className="cursor-pointer text-gray-500 hover:text-gray-700">{t('crm.social.kwDmPreview', 'Nachricht ansehen, die verschickt wird')}</summary>
+            <p className="mt-1.5 whitespace-pre-wrap rounded-lg bg-gray-50 px-3 py-2 text-gray-700">{st.config.dm_template}</p>
+          </details>
+        )}
+      </>)}
+    </div>
+  )
+}
+
 // ── Seite ────────────────────────────────────────────────────────────────────
 
 // ── Interaktionen: Kommentare + Direktnachrichten (FB/IG/YouTube) ────────────
@@ -1245,6 +1517,8 @@ export default function SocialStudio() {
         {!loading && view === 'plan' && (<>
           <AutopilotPanel st={ap} err={apErr} canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'}
             onToggled={() => { void loadAp(); void fetchAll(true) }} onOpenSlot={openSlot} />
+
+          <KeywordAutomationCard canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'} />
 
           <InteractionsSection />
 
