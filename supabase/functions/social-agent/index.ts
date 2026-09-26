@@ -2241,7 +2241,21 @@ Regeln:
             if (c.error) throw new Error(c.error.message)
             creationId = c.id
           }
-          const pub = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: creationId, access_token: pageToken }) }).then(x => x.json())
+          // Instagram braucht einen Moment, bis der Container fertig ist. Ohne Warten
+          // scheiterten 4 von 10 Bild-Posts mit „Media ID is not available" (Analyse
+          // 26.9.2026): erst status_code FINISHED abwarten, dann veröffentlichen.
+          for (let i = 0; i < 12; i++) {
+            const st = await fetch(`https://graph.facebook.com/v21.0/${creationId}?fields=status_code&access_token=${pageToken}`).then(x => x.json()).catch(() => ({})) as { status_code?: string }
+            if (st.status_code === 'FINISHED') break
+            if (st.status_code === 'ERROR' || st.status_code === 'EXPIRED') throw new Error('Instagram konnte das Bild nicht verarbeiten.')
+            await new Promise(res => setTimeout(res, 3000))
+          }
+          let pub: { id?: string; error?: { message?: string } } = {}
+          for (let i = 0; i < 3; i++) {
+            pub = await fetch(`https://graph.facebook.com/v21.0/${igId}/media_publish`, { method: 'POST', body: new URLSearchParams({ creation_id: creationId, access_token: pageToken }) }).then(x => x.json())
+            if (!pub.error || !/not available|not ready|2207027/i.test(JSON.stringify(pub.error))) break
+            await new Promise(res => setTimeout(res, 5000))
+          }
           if (pub.error) throw new Error(pub.error.message)
           results.instagram = { ok: true, id: pub.id }
         } catch (e) { if (!(e as { __done?: boolean }).__done) results.instagram = { ok: false, error: (e as Error).message } }
