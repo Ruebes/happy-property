@@ -323,7 +323,9 @@ const WEEKDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 
 type ApKind = 'reel' | 'news' | 'lotte' | 'linkedin'
 interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string }
-interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[] }
+// li_slots getrennt von slots: ältere Studio-Versionen im Browser-Cache kennen die Art
+// 'linkedin' nicht und stürzten daran ab (weiße Seite, 26.9.2026).
+interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[]; li_slots?: ApSlot[] }
 interface ApState { state?: 'pending' | 'ready' | 'failed'; attempts?: number; error?: string; task?: boolean }
 interface ApWant { key: string; kind: ApKind; ymd: string; when: Date; liWhen: Date | null }
 async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
@@ -343,7 +345,7 @@ function autopilotSlots(cfg: ApCfg, nowMs: number, days: number): ApWant[] {
     base.setUTCDate(base.getUTCDate() + i)
     const ymd = base.toISOString().slice(0, 10)
     const dow = base.getUTCDay()
-    for (const s of (cfg.slots ?? []).filter(x => x.dow === dow)) {
+    for (const s of [...(cfg.slots ?? []), ...(cfg.li_slots ?? [])].filter(x => x.dow === dow)) {
       const when = cyAt(ymd, s.time)
       const lead = when.getTime() - nowMs
       if (lead < 15 * 60000) continue                                   // zu knapp oder vorbei
@@ -1891,7 +1893,7 @@ Regeln:
         if (when.getTime() > nowMs2) upcoming.push({ key: `${ymd}|youtube`, kind: 'youtube', when: when.toISOString(), ymd, lead_h: 36 })
       }
       upcoming.sort((a, b) => a.when.localeCompare(b.when))
-      return json({ ok: true, enabled: cfg.enabled === true, slots: cfg.slots ?? [], upcoming, folders: { reels: cfg.reels_folder ?? null, lotte: cfg.lotte_folder ?? null, social: cfg.social_folder ?? null }, reels: { queued: queue.length, total, next: queue.slice(0, 5), until }, lotte_photos: lotte, error: err || null })
+      return json({ ok: true, enabled: cfg.enabled === true, slots: cfg.slots ?? [], li_slots: cfg.li_slots ?? [], upcoming, folders: { reels: cfg.reels_folder ?? null, lotte: cfg.lotte_folder ?? null, social: cfg.social_folder ?? null }, reels: { queued: queue.length, total, next: queue.slice(0, 5), until }, lotte_photos: lotte, error: err || null })
     }
 
     // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──

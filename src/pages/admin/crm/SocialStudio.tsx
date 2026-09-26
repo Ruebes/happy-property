@@ -743,7 +743,7 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay, 
 interface ApSlot { dow: number; kind: string; time: string; li_time?: string }
 interface ApUpcoming { key: string; kind: string; when: string; ymd: string; lead_h: number; missing?: boolean }
 interface ApStatus {
-  enabled: boolean; slots: ApSlot[]; upcoming: ApUpcoming[]
+  enabled: boolean; slots: ApSlot[]; li_slots?: ApSlot[]; upcoming: ApUpcoming[]
   folders: { reels: string | null; lotte: string | null; social: string | null }
   reels: { queued: number; total: number; next: string[]; until: string | null }
   lotte_photos: number; error: string | null
@@ -783,7 +783,7 @@ function AutopilotPanel({ st, err, canEdit, onToggled, onOpenSlot }: {
   const dayName = (d: number) => [t('crm.social.wdSo', 'So'), t('crm.social.wdMo', 'Mo'), t('crm.social.wdDi', 'Di'), t('crm.social.wdMi', 'Mi'), t('crm.social.wdDo', 'Do'), t('crm.social.wdFr', 'Fr'), t('crm.social.wdSa', 'Sa')][d]
   const entries = (d: number) => {
     const list: Array<{ time: string; kind: string; li?: boolean }> = []
-    for (const s of st?.slots ?? []) if (s.dow === d) list.push({ time: s.time, kind: s.kind })
+    for (const s of [...(st?.slots ?? []), ...(st?.li_slots ?? [])]) if (s.dow === d) list.push({ time: s.time, kind: s.kind })
     // Montag: YouTube-Wochenpost (Leonard lädt hoch, Posts entstehen automatisch)
     if (d === 1) { list.push({ time: '08:30', kind: 'youtube', li: true }); list.push({ time: '18:30', kind: 'youtube' }) }
     return list.sort((a, b) => a.time.localeCompare(b.time))

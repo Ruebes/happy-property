@@ -6,6 +6,7 @@ insert into social_topics (key, label, icon, sort) values ('linkedin', 'LinkedIn
 update crm_settings set value = (
   select jsonb_set(value::jsonb, '{slots}', (
     select jsonb_agg(s - 'li_time') from jsonb_array_elements(value::jsonb -> 'slots') s
-  ) || '[{"dow": 2, "kind": "linkedin", "time": "08:30"}, {"dow": 4, "kind": "linkedin", "time": "08:30"}]'::jsonb)::text
+  ))::text
 ), updated_at = now()
-where key = 'social_autopilot' and value not like '%"linkedin"%';
+where key = 'social_autopilot';
+-- Die LinkedIn-Termine selbst stehen in li_slots (20260926110000).
