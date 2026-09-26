@@ -123,7 +123,7 @@ export async function hfGenerateBytes(store: HfStore, jobType: string, params: R
   const hdr = hdrs(token, ws)
   const sub = await fetch(`${HF_BASE}/images/${jobType}/generations`, { method: 'POST', headers: hdr, body: JSON.stringify({ params }) })
   const sd = await sub.json() as { id?: string }
-  if (!sub.ok || !sd.id) throw new Error(`Higgsfield submit: ${JSON.stringify(sd).slice(0, 200)}`)
+  if (!sub.ok || !sd.id) throw new Error(`Higgsfield submit: ${JSON.stringify(sd).slice(0, 700)}`)
   // Typisch ~30-90 s. Deckel 240 s: bei Higgsfield-Last liefen Jobs wiederholt
   // in den alten 150-s-Deckel (26.8.26), obwohl das Bild kurz danach fertig war.
   for (let i = 0; i < 48; i++) {

@@ -165,18 +165,63 @@ async function editPostImage(sb: SupabaseClient, postId: string, sourceUrl: stri
 // Bild erzeugen: Higgsfield Soul Location (fotorealistisch, Svens Abo). In
 // ad-creatives/social hochladen, an image_urls anhängen. Genutzt von image-
 // Aktion + Chat-Tool make_image. NUR Higgsfield, kein OpenAI-Fallback.
+// ── Echt wirkende Bilder statt KI-Hochglanz (Svens Feedback 26.9.2026) ─────
+// Test mit 5 Higgsfield-Modellen: Der KI-Look kam vor allem vom Prompt
+// („photorealistic, golden hour, shallow depth of field, high detail"). Als
+// gewöhnliches Handyfoto beschrieben (harte Schatten, Staub, Stromleitungen,
+// Solarboiler) wirken selbst günstige Modelle echt. Am echtesten: Nano Banana 2
+// (Dev-API-Jobtyp nano_banana_flash) und Seedream 5 Pro.
+// Modell kommt aus crm_settings social_image_cfg (mit Zeitplan, z. B. ab 1.10.
+// höchste Qualität, wenn neue Credits da sind) und fällt bei Fehlern auf das
+// günstige soul_location zurück.
+const CANDID_SUFFIX = 'Casual but well-composed smartphone photo of a real place on a nice day, natural daylight with real shadows, true-to-life colors, authentic textures and small real-world imperfections. No hands, arms or feet in the frame, no bokeh, no HDR, no cinematic color grading, no lens flare, no text, no watermark, no logos.'
+const AI_LOOK_WORDS = /\b(photo-?realistic|hyper-?realistic|ultra-?realistic|realistic|cinematic|golden[- ]hour|dramatic (lighting|light|sky)|moody|stunning|breathtaking|gorgeous|beautiful|professional( real estate)?( photo(graph)?| photography)?|crisp|high(ly)? detail(ed)?|8k|4k|uhd|shallow depth of field|depth of field|bokeh|award[- ]winning|masterpiece|studio lighting|drone shot|aerial( drone)?( shot| view)?|glossy|pristine|immaculate)\b,?/gi
+function candidPrompt(scene: string): string {
+  const clean = scene.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').replace(/\s+([.,;])/g, '$1').replace(/^[,.;\s]+/, '').trim()
+  return `${clean}${/[.!]$/.test(clean) ? '' : '.'} ${CANDID_SUFFIX}`
+}
+// Bildidee → alltägliche, fotografierbare Szene (Blickwinkel, Tageszeit, echte Details).
+async function toCandidScene(idea: string): Promise<string> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+  if (!key) return idea
+  try {
+    const r = await claude(key, {
+      system: 'You turn an image idea for a real-estate social media post into ONE paragraph (max 90 words, English) that describes an ORDINARY real-life photo someone could take with a phone: concrete vantage point (street level, balcony, window, table), time of day, what is visible, authentic local details (on Cyprus: flat roofs with solar water heaters and white water tanks, white render with dust, power lines, parked small cars, bougainvillea, construction cranes; in Germany: grey Altbau facades, Kopfsteinpflaster, bikes, overcast light). It must still be a photo a proud owner or local would happily post: clear subject, pleasant weather and light, tidy composition, attractive but real (no plastic garden chairs, no clutter, no hands or body parts in frame). Keep the meaning of the idea. Never use: drone/aerial, golden hour, cinematic, dramatic, stunning, photorealistic, bokeh, depth of field, professional. No people in focus, no text, no signs, no logos. Output only the paragraph.',
+      messages: [{ role: 'user', content: idea }], max_tokens: 400,
+    })
+    const t = (((r.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim()
+    return t.length > 40 ? t : idea
+  } catch { return idea }
+}
+interface ImgModel { model: string; params?: Record<string, unknown> }
+interface ImgCfg extends ImgModel { schedule?: Array<ImgModel & { from: string }>; fallback?: ImgModel }
+async function imageModels(sb: SupabaseClient): Promise<{ primary: ImgModel; fallback: ImgModel }> {
+  const cheap: ImgModel = { model: 'soul_location', params: { aspect_ratio: '1:1' } }
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_image_cfg').maybeSingle()
+  let cfg: ImgCfg = cheap
+  try { cfg = { ...cheap, ...JSON.parse((data as { value?: string } | null)?.value ?? '{}') as ImgCfg } } catch { /* Standard */ }
+  let primary: ImgModel = { model: cfg.model, params: cfg.params }
+  for (const s of (cfg.schedule ?? []).filter(x => x?.from && Date.parse(x.from) <= Date.now()).sort((a, b) => Date.parse(a.from) - Date.parse(b.from))) primary = { model: s.model, params: s.params }
+  return { primary, fallback: cfg.fallback ?? cheap }
+}
 async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
-  const bytes = await hfGenerateBytes(sb, 'soul_location', {
-    prompt: `${prompt}. Photorealistic, natural lighting, realistic materials, high detail, no text, no watermark.`,
-    aspect_ratio: '1:1',
-  })
+  const scene = await toCandidScene(prompt)
+  const { primary, fallback } = await imageModels(sb)
+  let bytes: Uint8Array
+  try {
+    bytes = await hfGenerateBytes(sb, primary.model, { ...(primary.params ?? {}), prompt: candidPrompt(scene) })
+  } catch (e) {
+    if (primary.model === fallback.model) throw e
+    console.warn(`[social-agent] Bildmodell ${primary.model} fehlgeschlagen, Rückfall auf ${fallback.model}:`, e instanceof Error ? e.message : String(e))
+    bytes = await hfGenerateBytes(sb, fallback.model, { ...(fallback.params ?? {}), prompt: candidPrompt(scene) })
+  }
   const path = `social/${postId}-${Date.now()}.png`
   const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
   if (upErr) throw new Error(`Upload: ${upErr.message}`)
   const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
   const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
   const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
-  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: prompt, updated_at: new Date().toISOString() }).eq('id', postId)
+  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: scene, updated_at: new Date().toISOString() }).eq('id', postId)
   return url
 }
 
@@ -487,7 +532,7 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       }
     } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
   }
-  const full = `${prompt}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Photorealistic, natural lighting, realistic materials, no text, no watermark.`
+  const full = `${prompt.replace(AI_LOOK_WORDS, '').replace(/\s{2,}/g, ' ').trim()}. The dog is Lotte, a chocolate brown labrador retriever (the trained character), she must look exactly like the reference photos: same coat color, same face, same build. Candid smartphone photo taken by her owner, natural daylight with real shadows, true-to-life colors, real fur texture, slightly imperfect framing. No bokeh, no HDR, no cinematic grading, no text, no watermark.`
   const tries: Array<[string, Record<string, unknown>]> = []
   if (soul && refs.length) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul, image_references: refs }])
   if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
@@ -563,7 +608,7 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
       linkedin_caption: { type: 'string', description: 'Caption für LinkedIn' },
       newsletter_subject: { type: 'string', description: 'Betreff für den Newsletter' },
       newsletter_html: { type: 'string', description: 'Ausführlicher Newsletter als HTML' },
-      image_prompt: { type: 'string', description: 'Englischer Bild-Prompt, fotorealistisch, OHNE Text im Bild' },
+      image_prompt: { type: 'string', description: 'Englisch: eine ALLTÄGLICHE, echte Szene, wie sie jemand mit dem Handy fotografieren würde (Ort, Blickwinkel, Tageszeit, konkrete Details). Keine Drohnenaufnahme, kein goldenes Licht, keine Wörter wie photorealistic/cinematic. Kein Text im Bild.' },
     }, required: ['image_prompt'] },
   }
   const wants: string[] = []
@@ -1112,6 +1157,26 @@ Regeln:
     }
 
     // ── Bild via Higgsfield → ad-creatives/social/… ──────────────────────────
+    // ── Bild eines Posts ersetzen (neues Rezept/Modell), Text bleibt ────────────
+    if (body.action === 'regen_image') {
+      const { data: pr } = await sb.from('social_posts').select('id, status, image_prompt, title, content').eq('id', String(body.post_id ?? '')).maybeSingle()
+      const post = pr as { id: string; status: string; image_prompt: string | null; title: string | null; content: string | null } | null
+      if (!post) return json({ error: 'Post nicht gefunden' }, 404)
+      if (post.status === 'gepostet') return json({ error: 'Post ist schon gelaufen' }, 400)
+      const idea = String(body.prompt ?? '').trim() || post.image_prompt || `${post.title ?? ''}. ${(post.content ?? '').slice(0, 400)}`
+      const job = (async () => {
+        await sb.from('social_posts').update({ image_urls: [], image_url: null, updated_at: new Date().toISOString() }).eq('id', post.id)
+        await generatePostImage(sb, post.id, idea)
+      })()
+      if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(job.catch(e => console.error('[social-agent] regen_image:', e))); else await job
+      return json({ ok: true, pending: true })
+    }
+    // ── Higgsfield-Jobtyp prüfen, ohne ein Bild zu erzeugen (ungültiges Format) ──
+    if (body.action === 'hf_probe') {
+      try { await hfGenerateBytes(sb, String(body.job_type ?? ''), { ...(((body as Record<string, unknown>).params as Record<string, unknown>) ?? {}), prompt: 'probe', aspect_ratio: 'zz' }); return json({ ok: false, note: 'unerwartet erzeugt' }) }
+      catch (e) { return json({ ok: true, error: e instanceof Error ? e.message : String(e) }) }
+    }
+
     if (body.action === 'image') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       const { data: post } = await sb.from('social_posts').select('image_prompt, content, topic').eq('id', body.post_id).maybeSingle()
@@ -1862,7 +1927,7 @@ Regeln:
             const lotteKw = new Date(`${slot.ymd}T12:00:00Z`).getUTCDay() === 6 ? await keywordCta(sb) : null
             const resp = await claude(anthropicKey, {
               system: `${BRAND}\n\n${LOTTE_SYSTEM}\n\nRufe GENAU EINMAL set_lotte auf.`,
-              messages: [{ role: 'user', content: `Schreib Lottes nächsten Post für ${WEEKDAY_DE[new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()]}.\n\n${prevHooks.length ? `SO HAT LOTTE ZULETZT ANGEFANGEN (neues Thema, anderer Witz, nichts wiederholen):\n${prevHooks.map(h => `- ${h}`).join('\n')}\n\n` : ''}THEMA HEUTE: ${theme}\n\nimage_prompt: englisch, eine WITZIGE, fotorealistische Szene, in der Lotte (chocolate brown labrador) etwas Menschliches tut und damit die Pointe sichtbar macht (z.B. mit Sonnenbrille auf der Poolliege, vor einem Stapel Papierkram mit genervtem Blick, mit Bauhelm auf der Baustelle). Ort meist Paphos/Zypern: Sonne, Terrasse, Pool, Meer, weiße Neubauten. Kein Text, keine Schrift, keine Schilder im Bild.${lotteKw ? `\n\n${kwLotteInstruction(lotteKw)}` : ''}` }],
+              messages: [{ role: 'user', content: `Schreib Lottes nächsten Post für ${WEEKDAY_DE[new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()]}.\n\n${prevHooks.length ? `SO HAT LOTTE ZULETZT ANGEFANGEN (neues Thema, anderer Witz, nichts wiederholen):\n${prevHooks.map(h => `- ${h}`).join('\n')}\n\n` : ''}THEMA HEUTE: ${theme}\n\nimage_prompt: englisch, eine WITZIGE Szene, die wie ein echtes Handyfoto von Lottes Besitzer aussieht, in der Lotte (chocolate brown labrador) etwas Menschliches tut und damit die Pointe sichtbar macht (z.B. mit Sonnenbrille auf der Poolliege, vor einem Stapel Papierkram mit genervtem Blick, mit Bauhelm auf der Baustelle). Ort meist Paphos/Zypern: Sonne, Terrasse, Pool, Meer, weiße Neubauten. Kein Text, keine Schrift, keine Schilder im Bild.${lotteKw ? `\n\n${kwLotteInstruction(lotteKw)}` : ''}` }],
               tools: [{ name: 'set_lotte', description: 'Fertiger Lotte-Post.', input_schema: { type: 'object', properties: {
                 title: { type: 'string', description: 'Kurzer interner Titel (max. 60 Zeichen)' },
                 caption: { type: 'string' }, image_prompt: { type: 'string' },
@@ -1894,7 +1959,7 @@ Regeln:
                 title: { type: 'string', description: 'Kurzer interner Titel = Thema (max. 70 Zeichen)' },
                 caption: { type: 'string', description: 'Der komplette Post-Text inkl. Quelle und 3 Hashtags' },
                 source_url: { type: 'string' },
-                image_prompt: { type: 'string', description: 'Englischer Prompt für ein seriöses, fotorealistisches Editorial-Foto zum Thema, ohne Personen im Vordergrund, ohne Text, ohne Schilder, ohne Flaggen' },
+                image_prompt: { type: 'string', description: 'Englisch: eine ruhige, alltägliche Szene zum Thema, wie sie ein Fotograf der Lokalzeitung mit dem Handy aufnehmen würde (Ort, Blickwinkel, Tageszeit, echte Details). Keine Personen im Vordergrund, kein Text, keine Schilder, keine Flaggen, keine Wörter wie photorealistic/cinematic.' },
               }, required: ['title', 'caption', 'image_prompt'] } }],
               tool_choice: { type: 'tool', name: 'set_linkedin' }, max_tokens: 3000,
             })
