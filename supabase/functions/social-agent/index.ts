@@ -20,6 +20,11 @@
 //          Higgsfield-Tokens liegen ÄNDERBAR in connector_secrets (rotieren!):
 //          HIGGSFIELD_ACCESS_TOKEN/_REFRESH_TOKEN/_EXPIRES_AT/_WORKSPACE_ID
 //          Bild-KI = AUSSCHLIESSLICH Higgsfield (Sven 11.8.26), kein OpenAI mehr.
+// Zugriff: läuft ohne Gateway-JWT-Prüfung, deshalb prüft authorize() jede Anfrage selbst:
+//          x-cron-secret = connector_secrets.CRON_SECRET_SOCIAL (pg_cron), Bearer =
+//          SUPABASE_SERVICE_ROLE_KEY (yt-center) oder Nutzer-JWT eines Admins/Verwalters
+//          bzw. Mitarbeiters mit passendem Recht (funnel / thumbnails / youtube).
+//          Der Publishable Key allein reicht NICHT (steht im Frontend-Bundle).
 // Deploy:  supabase functions deploy social-agent --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
@@ -31,7 +36,7 @@ declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefi
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -820,12 +825,53 @@ async function igFrame(jpgBytes: Uint8Array): Promise<Uint8Array | null> {
   } catch (e) { console.warn('[social-agent] igFrame:', e); return null }
 }
 
+// ── Zugriffsschutz ────────────────────────────────────────────────────────────
+// Welche Mitarbeiter-Rechte eine Aktion öffnen (Admin/Verwalter dürfen alles) -
+// spiegelt die Routen im Frontend: Social-Studio = funnel, Thumbnail-Studio =
+// thumbnails, YouTube-Center (lädt auch die Thumbnail-Liste) = youtube.
+function permsFor(action: string): string[] {
+  if (action.startsWith('thumbnail_')) return ['thumbnails', 'youtube']
+  if (action === 'youtube_post' || action === 'yt_check') return ['youtube', 'funnel']
+  return ['funnel']
+}
+function sameSecret(a: string, b: string): boolean {
+  if (!a || !b || a.length !== b.length) return false
+  let d = 0
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return d === 0
+}
+/** null = erlaubt, sonst die fertige 401/403-Antwort. */
+async function authorize(sb: SupabaseClient, req: Request, action: string): Promise<Response | null> {
+  const cronSecret = req.headers.get('x-cron-secret') ?? ''
+  if (cronSecret) {
+    const { data } = await sb.from('connector_secrets').select('value').eq('key', 'CRON_SECRET_SOCIAL').maybeSingle()
+    if (sameSecret(cronSecret, (data as { value?: string } | null)?.value ?? '')) return null
+    return json({ error: 'Nicht angemeldet' }, 401)
+  }
+  const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!jwt) return json({ error: 'Nicht angemeldet' }, 401)
+  if (sameSecret(jwt, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return null
+  const { data: u } = await sb.auth.getUser(jwt)
+  const uid = u?.user?.id
+  if (!uid) return json({ error: 'Nicht angemeldet' }, 401)
+  const { data: prof } = await sb.from('profiles').select('role, permissions').eq('id', uid).maybeSingle()
+  const p = prof as { role?: string | null; permissions?: Record<string, boolean> | null } | null
+  const perms = permsFor(action)
+  const ok = p?.role === 'admin' || p?.role === 'verwalter'
+    || (p?.role === 'mitarbeiter' && perms.some(k => !!p.permissions?.[k]))
+    // Rolle 'funnel' kommt laut Routing ins Social-Studio, aber nicht in Thumbnails/YouTube
+    || (p?.role === 'funnel' && perms[0] === 'funnel')
+  return ok ? null : json({ error: 'Keine Berechtigung' }, 403)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
   try {
     const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
+    const denied = await authorize(sb, req, body.action ?? '')
+    if (denied) return denied
 
     // ── Chat: Post formulieren/verfeinern, Agent setzt den Text direkt ─────────
     if (body.action === 'chat') {
