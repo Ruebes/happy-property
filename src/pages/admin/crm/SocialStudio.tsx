@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -92,7 +92,10 @@ function suggestSlot(platforms: string[], posts: SocialPost[], excludeId?: strin
 // Nachgebaute Feed-Karten (keine echten Plattform-Assets): Textkürzung wie auf
 // der Plattform (FB ~280 / IG ~125 / LinkedIn ~210 Zeichen + „mehr"), Karussell
 // mit Pfeilen/Punkten (LinkedIn zeigt nur das erste Bild).
-function PostPreview({ content, images, format, platforms, onClose }: { content: string; images: string[]; format: string; platforms: string[]; onClose: () => void }) {
+function PostPreview({ content, images, format, platforms, onClose, video, onEdit, onDelete, heading }: {
+  content: string; images: string[]; format: string; platforms: string[]; onClose: () => void
+  video?: string | null; onEdit?: () => void; onDelete?: () => void; heading?: string
+}) {
   const { t } = useTranslation()
   const available = ['facebook', 'instagram', 'linkedin'].filter(x => platforms.includes(x))
   const tabs = available.length ? available : ['facebook', 'instagram', 'linkedin']
@@ -110,7 +113,14 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
   const Avatar = ({ letter }: { letter: string }) => (
     <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shrink-0" style={{ backgroundColor: '#ff795d' }}>{letter}</div>
   )
-  const Carousel = ({ square }: { square?: boolean }) => img ? (
+  // Reel/Video: Instagram hochkant 9:16, Facebook/LinkedIn im Feed-Player
+  const videoEl = (reel?: boolean) => video ? (
+    <div className={`relative bg-black ${reel ? 'aspect-[9/16]' : ''}`}>
+      <video key={video} src={video} controls playsInline preload="metadata" className={`w-full ${reel ? 'h-full object-cover' : 'max-h-[520px] object-contain'}`} />
+      {reel && <span className="absolute top-2 left-2 text-[11px] bg-black/60 text-white rounded-full px-2 py-0.5">🎞 Reel</span>}
+    </div>
+  ) : null
+  const media = (square?: boolean) => video ? videoEl(square) : img ? (
     <div className={`relative bg-gray-100 ${square ? 'aspect-square' : ''}`}>
       <img src={img} alt="" className={`w-full ${square ? 'h-full object-cover' : 'max-h-[420px] object-cover'}`} />
       {isCar && (<>
@@ -126,6 +136,15 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="bg-gray-50 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        {(heading || onEdit) && (
+          <div className="flex items-center justify-between gap-2 px-4 pt-3">
+            <p className="text-sm font-semibold text-gray-900 truncate">{heading}</p>
+            <div className="flex gap-1.5 shrink-0">
+              {onDelete && <button onClick={onDelete} className="px-3 py-1.5 rounded-lg text-sm border border-gray-200 text-gray-500 hover:text-red-600">🗑 {t('crm.social.prevDelete', 'Löschen')}</button>}
+              {onEdit && <button onClick={onEdit} className="px-3 py-1.5 rounded-lg text-sm font-medium text-white" style={{ backgroundColor: '#ff795d' }}>✏️ {t('crm.social.prevEdit', 'Bearbeiten')}</button>}
+            </div>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2 p-3 border-b border-gray-200 flex-wrap">
           <div className="flex gap-1 bg-gray-200/70 rounded-xl p-1">
             {tabs.map(k => (
@@ -149,7 +168,7 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
                 <div className="leading-tight"><p className="text-[15px] font-semibold text-gray-900">Immobilien in Zypern</p><p className="text-xs text-gray-500">{t('crm.social.prevNow', 'Gerade eben')} · 🌍</p></div>
               </div>
               <p className="px-3 pb-3 text-[15px] text-gray-900 whitespace-pre-wrap">{shown}{cut && more}</p>
-              <Carousel />
+              {media()}
               <div className="flex justify-around text-sm text-gray-500 border-t border-gray-100 py-2 px-3">
                 <span>👍 {t('crm.social.prevLike', 'Gefällt mir')}</span><span>💬 {t('crm.social.prevComment', 'Kommentieren')}</span><span>↗ {t('crm.social.prevShare', 'Teilen')}</span>
               </div>
@@ -160,7 +179,7 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
                 <p className="text-sm font-semibold text-gray-900">happy_property_cyprus</p>
                 <span className="ml-auto text-gray-400">···</span>
               </div>
-              <Carousel square />
+              {media(true)}
               <div className="flex gap-4 px-3 pt-3 text-xl text-gray-800"><span>♡</span><span>💬</span><span>➤</span><span className="ml-auto">🔖</span></div>
               <p className="px-3 py-2 text-sm text-gray-900 whitespace-pre-wrap"><span className="font-semibold">happy_property_cyprus</span> {shown}{cut && more}</p>
             </>)}
@@ -170,13 +189,14 @@ function PostPreview({ content, images, format, platforms, onClose }: { content:
                 <div className="leading-tight"><p className="text-sm font-semibold text-gray-900">Sven Rüprich</p><p className="text-xs text-gray-500">Happy Property Cyprus · {t('crm.social.prevNow', 'Gerade eben')}</p></div>
               </div>
               <p className="px-3 pb-3 text-sm text-gray-900 whitespace-pre-wrap">{shown}{cut && more}</p>
-              <Carousel />
+              {media()}
               <div className="flex justify-around text-sm text-gray-500 border-t border-gray-100 py-2 px-3">
                 <span>👍 {t('crm.social.prevLike', 'Gefällt mir')}</span><span>💬 {t('crm.social.prevComment', 'Kommentieren')}</span><span>🔁 {t('crm.social.prevShare', 'Teilen')}</span>
               </div>
             </>)}
           </div>
         </div>
+        {video && tab === 'linkedin' && <p className="text-[11px] text-amber-600 text-center pb-1">{t('crm.social.prevLiVideo', 'Videos gehen auf LinkedIn nicht automatisch raus.')}</p>}
         <p className="text-[11px] text-gray-400 text-center pb-3">{t('crm.social.prevHint', 'Nachbildung — die Plattform kann Details anders darstellen. IG/FB ~Textkürzung wie im Feed; LinkedIn zeigt bei Karussells das erste Bild.')}</p>
       </div>
     </div>
@@ -188,7 +208,8 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
   const { t } = useTranslation()
   const [content, setContent] = useState(post.content ?? '')
   const [platforms, setPlatforms] = useState<string[]>(post.platforms)
-  const [scheduled, setScheduled] = useState(post.scheduled_for ? post.scheduled_for.slice(0, 16) : '')
+  // datetime-local erwartet ORTSZEIT — die DB liefert UTC (vorher: Uhrzeit verrutschte beim Speichern um die Zeitzone)
+  const [scheduled, setScheduled] = useState(post.scheduled_for ? toLocalInput(new Date(post.scheduled_for)) : '')
   const [images, setImages] = useState<string[]>(() => {
     const arr = Array.isArray(post.image_urls) ? post.image_urls.filter(Boolean) : []
     return arr.length ? arr : (post.image_url ? [post.image_url] : [])
@@ -301,10 +322,17 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     } finally { setBusy('') }
   }
 
+  const apState = (post.post_results as { autopilot?: { state?: string } } | null)?.autopilot?.state
+  const apPending = !!post.autopilot_slot && apState === 'pending'
+  // Von Hand bearbeiteter Autopilot-Post: als übernommen markieren, damit der
+  // Autopilot ihn nie überschreibt oder neu erzeugt.
+  const apTaken = post.autopilot_slot ? { post_results: { ...(post.post_results ?? {}), autopilot: { ...((post.post_results as { autopilot?: object } | null)?.autopilot ?? {}), state: 'manual' } } } : {}
   const save = async (silent = false) => {
+    if (apPending) { setNote(`⏳ ${t('crm.social.apPendingEdit', 'Der Autopilot erstellt diesen Post gerade. Bitte in 2 bis 3 Minuten erneut öffnen.')}`); return }
     setBusy('save')
     try {
       const { error } = await supabase.from('social_posts').update({
+        ...apTaken,
         content: content || null, platforms, format,
         project_id: projectId || null, unit_id: unitId || null,
         image_urls: images, image_url: images[0] ?? null,
@@ -329,9 +357,11 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
     if (!scheduled) { setNote(`❌ ${t('crm.social.scheduleNoTime', 'Bitte oben unter „Geplant für" eine Zeit setzen.')}`); return }
     const when = new Date(scheduled)
     if (!window.confirm(t('crm.social.scheduleConfirm', 'Diesen Post zur geplanten Zeit ({{t}}) automatisch auf {{p}} posten?', { t: when.toLocaleString('de-DE'), p: platforms.join(' + ') }) as string)) return
+    if (apPending) { setNote(`⏳ ${t('crm.social.apPendingEdit', 'Der Autopilot erstellt diesen Post gerade. Bitte in 2 bis 3 Minuten erneut öffnen.')}`); return }
     setBusy('publish'); setNote('')
     try {
       const { error } = await supabase.from('social_posts').update({
+        ...apTaken,
         content: content || null, platforms, format,
         project_id: projectId || null, unit_id: unitId || null,
         image_urls: images, image_url: images[0] ?? null,
@@ -514,7 +544,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
               <label className="block text-xs font-medium text-gray-500 mb-1">{t('crm.social.schedule', 'Geplant für')}</label>
               <input type="datetime-local" value={scheduled} onChange={e => { setScheduled(e.target.value); autoSug.current = false; setSuggestion('') }} className={inp} />
               {suggestion && <p className="text-[11px] text-emerald-600 mt-1">💡 {t('crm.social.suggested', 'Vorschlag vom System (anpassbar)')}: {suggestion}</p>}
-              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHintAuto', 'Mit Datum + Speichern landet der Post in der Warteschlange: Die Automatik veröffentlicht EINEN fälligen Post pro Tag (vormittags) auf die gewählten Plattformen.')}</p>
+              <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.scheduleHintAuto2', 'Freigegebene Posts mit Datum gehen zur geplanten Uhrzeit automatisch auf die gewählten Plattformen raus.')}</p>
             </div>
 
             {/* 🎥 Video/Reel: FB-Video + Instagram-Reel (LinkedIn: manuell) */}
@@ -548,17 +578,23 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
               <p className="text-[11px] text-gray-400 mt-1">{t('crm.social.videoHint', 'Mit Video wird auf Facebook ein Video-Post und auf Instagram ein REEL veröffentlicht — Bilder werden dann ignoriert. LinkedIn: Video bitte manuell.')}</p>
             </div>
 
-            {post.post_results && (
+            {apPending && (
+              <p className="text-sm rounded-lg px-3 py-2 bg-amber-50 text-amber-800">⏳ {t('crm.social.apPendingEdit', 'Der Autopilot erstellt diesen Post gerade. Bitte in 2 bis 3 Minuten erneut öffnen.')}</p>
+            )}
+            {post.autopilot_slot && (
+              <p className="text-xs text-gray-500">🤖 {t('crm.social.apMade', 'Vom Autopilot erstellt. Du kannst alles ändern, löschen oder auf Entwurf stellen, dann geht er nicht raus.')}</p>
+            )}
+            {post.post_results && Object.entries(post.post_results).filter(([k]) => k !== 'autopilot').length > 0 && (
               <div className="text-xs text-gray-500 space-y-0.5">
-                {Object.entries(post.post_results).map(([k, v]) => (
-                  <p key={k}>{k}: {v.ok ? '✓ gepostet' : `❌ ${v.error}`}</p>
+                {Object.entries(post.post_results).filter(([k]) => k !== 'autopilot').map(([k, v]) => (
+                  <p key={k}>{k}: {v.ok ? '✓ gepostet' : `${(v as { pending?: boolean }).pending ? '⏳' : '❌'} ${v.error ?? ''}`}</p>
                 ))}
               </div>
             )}
             {note && <p className="text-sm rounded-lg px-3 py-2 bg-gray-50 text-gray-700 whitespace-pre-wrap">{note}</p>}
           </div>
           <div className="p-4 border-t border-gray-100 shrink-0 flex items-center gap-2 flex-wrap">
-            <button onClick={() => setShowPreview(true)} disabled={!content.trim()} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+            <button onClick={() => setShowPreview(true)} disabled={!content.trim() && !videoUrl} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               👁 {t('crm.social.preview', 'Vorschau')}
             </button>
             <button onClick={() => void save()} disabled={!!busy} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50">
@@ -569,7 +605,7 @@ function PostEditor({ post, topics, projects, allPosts, onClose }: { post: Socia
               {busy === 'publish' ? t('crm.social.scheduling', 'Wird eingeplant…') : `🗓 ${t('crm.social.scheduleGo', 'Zur geplanten Zeit posten')}`}
             </button>
           </div>
-          {showPreview && <PostPreview content={content} images={images} format={format} platforms={platforms} onClose={() => setShowPreview(false)} />}
+          {showPreview && <PostPreview content={content} images={images} video={videoUrl} format={format} platforms={platforms} onClose={() => setShowPreview(false)} />}
         </div>
       </div>
     </div>
@@ -587,9 +623,10 @@ const PLAT_CHIP: Record<string, { txt: string; cls: string }> = {
   youtube: { txt: '▶', cls: 'bg-[#FF0000] text-white' },
 }
 
-function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }: {
+function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay, placeholders = [], apPaused = false, onOpenPlaceholder }: {
   posts: SocialPost[]; newsletters: NlEntry[]; topics: Topic[]
   onOpenPost: (p: SocialPost) => void; onCreateForDay: (day: Date) => void
+  placeholders?: ApUpcoming[]; apPaused?: boolean; onOpenPlaceholder?: (ph: ApUpcoming) => void
 }) {
   const { t } = useTranslation()
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
@@ -624,6 +661,7 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
           const isToday = d.getTime() === today.getTime()
           const dayPosts = posts.filter(pp => sameDay(d, pp.scheduled_for) || (pp.status === 'gepostet' && !pp.scheduled_for && sameDay(d, pp.created_at)))
           const dayNls = newsletters.filter(n => sameDay(d, n.date))
+          const dayPh = placeholders.filter(ph => sameDay(d, ph.when))
           return (
             <div key={i} className={`group min-h-[84px] rounded-lg border p-1 text-left align-top ${inMonth ? 'border-gray-100 bg-white' : 'border-transparent bg-gray-50/60'} ${isToday ? 'ring-2 ring-orange-300' : ''}`}>
               <div className="flex items-center justify-between">
@@ -634,13 +672,15 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
               <div className="space-y-0.5 mt-0.5">
                 {dayPosts.map(pp => {
                   const tp = topics.find(x => x.key === pp.topic)
-                  const isDraft = pp.status === 'entwurf'
+                  const paused = apPaused && !!pp.autopilot_slot && pp.status === 'geplant'
+                  const isDraft = pp.status === 'entwurf' || paused
                   const cls = pp.status === 'gepostet' ? 'bg-green-50 text-green-800 border-green-200'
                     : pp.status === 'fehlgeschlagen' ? 'bg-red-50 text-red-700 border-red-200'
                     : isDraft ? 'bg-gray-50 text-gray-500 border-dashed border-gray-300'
                     : 'bg-blue-50 text-blue-800 border-blue-200'
                   const stLabel = pp.status === 'gepostet' ? t('crm.social.status.gepostet', 'Gepostet')
                     : pp.status === 'fehlgeschlagen' ? t('crm.social.status.fehlgeschlagen', 'Fehlgeschlagen')
+                    : paused ? t('crm.social.apPausedPost', 'Autopilot pausiert, geht nicht raus')
                     : isDraft ? t('crm.social.status.entwurf', 'Entwurf') : t('crm.social.planApprovedFull', 'Freigegeben — wird so gepostet')
                   return (
                     <button key={pp.id} onClick={() => onOpenPost(pp)}
@@ -653,6 +693,20 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
                         <span key={pl} className={`shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] ${PLAT_CHIP[pl].cls}`}>{PLAT_CHIP[pl].txt}</span>
                       ) : null)}
                       <span className="truncate">{(pp.title ?? pp.content ?? '').replace(/^[^A-Za-zÄÖÜäöü0-9]+/, '').slice(0, 24)}</span>
+                    </button>
+                  )
+                })}
+                {dayPh.map(ph => {
+                  const k = AP_KIND[ph.kind] ?? AP_KIND.news
+                  const missing = !!ph.missing
+                  const time = new Date(ph.when).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+                  return (
+                    <button key={ph.key} onClick={() => onOpenPlaceholder?.(ph)}
+                      className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border border-dashed flex items-center gap-0.5 ${missing ? 'bg-orange-50 text-orange-700 border-orange-300' : 'bg-white text-gray-400 border-gray-300 hover:text-gray-600'}`}
+                      title={`🤖 ${t(`crm.social.apKind_${ph.kind}`, k.de)} · ${time} · ${missing ? t('crm.social.phReelMissingShort', 'Reel fehlt') : t('crm.social.phComes', 'kommt automatisch')}`}>
+                      <span className="shrink-0">🤖</span>
+                      <span className="shrink-0">{k.icon}</span>
+                      <span className="truncate">{time} {missing ? t('crm.social.phReelMissingShort', 'Reel fehlt') : t(`crm.social.apKind_${ph.kind}`, k.de)}</span>
                     </button>
                   )
                 })}
@@ -675,69 +729,70 @@ function PlanCalendar({ posts, newsletters, topics, onOpenPost, onCreateForDay }
         <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-green-100 border border-green-200 mr-1" />{t('crm.social.legendPosted', 'gepostet')}</span>
         <span><span className="inline-block w-2.5 h-2.5 rounded-sm bg-purple-100 border border-purple-200 mr-1" />{t('crm.social.legendNewsletter', 'Newsletter')}</span>
         <span className="text-gray-400">{t('crm.social.legendPlatforms', 'f = Facebook · IG = Instagram · in = LinkedIn · NL = Newsletter')}</span>
-        <span className="text-gray-400">{t('crm.social.planHint', 'Klick auf einen Eintrag öffnet ihn · „+" am Tag legt einen Post für diesen Tag an.')}</span>
+        <span>🤖 <span className="inline-block w-2.5 h-2.5 rounded-sm bg-white border border-dashed border-gray-300 mr-1" />{t('crm.social.legendAuto', 'kommt automatisch, Vorschau sobald erstellt')}</span>
+        <span className="text-gray-400">{t('crm.social.planHint2', 'Klick auf einen Eintrag zeigt die Vorschau · „+" am Tag legt einen Post für diesen Tag an.')}</span>
       </div>
     </div>
   )
 }
 
 // ── Autopilot: Wochenplan + Reel-Warteschlange + Lotte-Fotos ─────────────────
-// Der Server (social-agent autopilot, Cron alle 20 Min) plant Reels, Lotte-Posts
-// und News selbst ein. Hier nur Überblick + An/Aus. Plan in crm_settings social_autopilot.
-interface ApSlot { dow: number; kind: 'reel' | 'news' | 'lotte'; time: string; li_time?: string }
+// Der Server (social-agent autopilot, Cron alle 10 Min) plant Reels, Lotte-, News-
+// und LinkedIn-Posts selbst ein. Plan in crm_settings social_autopilot. Status samt
+// kommender Slots lädt die Seite (autopilot_status) und teilt ihn mit dem Kalender.
+interface ApSlot { dow: number; kind: string; time: string; li_time?: string }
+interface ApUpcoming { key: string; kind: string; when: string; ymd: string; lead_h: number; missing?: boolean }
 interface ApStatus {
-  enabled: boolean; slots: ApSlot[]
+  enabled: boolean; slots: ApSlot[]; upcoming: ApUpcoming[]
   folders: { reels: string | null; lotte: string | null; social: string | null }
   reels: { queued: number; total: number; next: string[]; until: string | null }
   lotte_photos: number; error: string | null
 }
-function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: () => void }) {
+const AP_KIND: Record<string, { icon: string; de: string; cls: string }> = {
+  reel: { icon: '🎞️', de: 'Reel', cls: 'bg-orange-50 text-orange-800 border-orange-200' },
+  news: { icon: '📰', de: 'News', cls: 'bg-blue-50 text-blue-800 border-blue-200' },
+  lotte: { icon: '🐾', de: 'Lotte', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
+  linkedin: { icon: '💼', de: 'LinkedIn', cls: 'bg-sky-50 text-sky-800 border-sky-200' },
+  youtube: { icon: '🎬', de: 'YouTube (Leonard)', cls: 'bg-red-50 text-red-700 border-red-200' },
+}
+const apDow = (ymd: string) => new Date(`${ymd}T12:00:00Z`).getUTCDay()
+
+function AutopilotPanel({ st, err, canEdit, onToggled, onOpenSlot }: {
+  st: ApStatus | null; err: string; canEdit: boolean; onToggled: () => void
+  onOpenSlot: (kind: string, dow: number, li?: boolean) => void
+}) {
   const { t } = useTranslation()
-  const [st, setSt] = useState<ApStatus | null>(null)
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const load = useCallback(async () => {
-    const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'autopilot_status' } })
-    const d = (data ?? {}) as ApStatus & { ok?: boolean; error?: string | null }
-    if (error || !d.ok) { setErr(d.error || error?.message || 'Fehler'); return }
-    setSt(d); setErr(d.error ?? '')
-  }, [])
-  useEffect(() => { void load() }, [load])
+  const [toggleErr, setToggleErr] = useState('')
 
   const toggle = async () => {
     if (!st) return
-    setBusy(true)
+    setBusy(true); setToggleErr('')
     try {
       const { data } = await supabase.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
       const cfg = JSON.parse((data as { value?: string } | null)?.value ?? '{}') as Record<string, unknown>
       cfg.enabled = !st.enabled
       const { error } = await supabase.from('crm_settings').update({ value: JSON.stringify(cfg, null, 2), updated_at: new Date().toISOString() }).eq('key', 'social_autopilot')
       if (error) throw error
-      setSt({ ...st, enabled: !st.enabled })
-      onChanged()
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler') } finally { setBusy(false) }
+      onToggled()
+    } catch (e) { setToggleErr(e instanceof Error ? e.message : 'Fehler') } finally { setBusy(false) }
   }
 
-  const KIND: Record<string, { icon: string; label: string; cls: string }> = {
-    reel: { icon: '🎞️', label: t('crm.social.apReel', 'Reel'), cls: 'bg-orange-50 text-orange-800 border-orange-200' },
-    news: { icon: '📰', label: t('crm.social.apNews', 'News'), cls: 'bg-blue-50 text-blue-800 border-blue-200' },
-    lotte: { icon: '🐾', label: t('crm.social.apLotte', 'Lotte'), cls: 'bg-amber-50 text-amber-800 border-amber-200' },
-    youtube: { icon: '🎬', label: t('crm.social.apYoutube', 'YouTube-Video'), cls: 'bg-red-50 text-red-700 border-red-200' },
-  }
+  const kindLabel = (k: string) => t(`crm.social.apKind_${k}`, AP_KIND[k]?.de ?? k)
   const days = [1, 2, 3, 4, 5, 6, 0]
   const dayName = (d: number) => [t('crm.social.wdSo', 'So'), t('crm.social.wdMo', 'Mo'), t('crm.social.wdDi', 'Di'), t('crm.social.wdMi', 'Mi'), t('crm.social.wdDo', 'Do'), t('crm.social.wdFr', 'Fr'), t('crm.social.wdSa', 'Sa')][d]
   const entries = (d: number) => {
     const list: Array<{ time: string; kind: string; li?: boolean }> = []
-    for (const s of st?.slots ?? []) if (s.dow === d) {
-      list.push({ time: s.time, kind: s.kind })
-      if (s.li_time) list.push({ time: s.li_time, kind: s.kind, li: true })
-    }
-    if (d === 1) { list.push({ time: '18:30', kind: 'youtube' }); list.push({ time: '08:30', kind: 'youtube', li: true }) }
+    for (const s of st?.slots ?? []) if (s.dow === d) list.push({ time: s.time, kind: s.kind })
+    // Montag: YouTube-Wochenpost (Leonard lädt hoch, Posts entstehen automatisch)
+    if (d === 1) { list.push({ time: '08:30', kind: 'youtube', li: true }); list.push({ time: '18:30', kind: 'youtube' }) }
     return list.sort((a, b) => a.time.localeCompare(b.time))
   }
   const folderUrl = (id: string | null) => id ? `https://drive.google.com/drive/folders/${id}` : null
-  const untilLabel = st?.reels.until ? new Date(`${st.reels.until}T12:00:00`).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : null
-  const lowReels = !!st && st.reels.queued < 3
+  const untilDate = st?.reels.until ? new Date(`${st.reels.until}T12:00:00`) : null
+  const untilLabel = untilDate ? untilDate.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : null
+  const lowReels = !!st && (!untilDate || untilDate.getTime() - Date.now() < 5 * 86400000)
+  const error = err || toggleErr
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 space-y-3">
@@ -748,7 +803,7 @@ function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: (
               {st.enabled ? t('crm.social.apOn', 'läuft') : t('crm.social.apOff', 'aus')}
             </span>}
           </p>
-          <p className="text-xs text-gray-500 mt-0.5 max-w-2xl">{t('crm.social.apSub', 'Plant und postet selbstständig: jeden Tag ein Reel (außer montags, da läuft das YouTube-Video), 2 Lotte-Posts und 5 News pro Woche. Die Posts stehen 1 bis 3 Tage vorher fertig im Kalender. Du kannst jeden öffnen, ändern oder löschen.')}</p>
+          <p className="text-xs text-gray-500 mt-0.5 max-w-2xl">{t('crm.social.apSub2', 'Plant und postet selbstständig: jeden Tag ein Reel (außer montags, da läuft das YouTube-Video), pro Woche 2 Lotte-Posts, 5 News und 2 LinkedIn-Posts. Alles steht unten im Kalender. Klick auf einen Eintrag zeigt die Vorschau, dort kannst du ihn auch bearbeiten oder löschen.')}</p>
         </div>
         {canEdit && st && (
           <button onClick={() => void toggle()} disabled={busy}
@@ -759,8 +814,9 @@ function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: (
         )}
       </div>
 
-      {!st && !err && <p className="text-xs text-gray-400">{t('common.loading', 'lädt …')}</p>}
-      {err && <p className="text-xs text-red-600">❌ {err}</p>}
+      {st && !st.enabled && <p className="text-xs rounded-lg px-3 py-2 bg-gray-50 text-gray-600">⏸ {t('crm.social.apPausedNote', 'Pausiert: Autopilot-Posts gehen nicht raus und es wird nichts Neues geplant. Was während der Pause fällig war, wird beim Einschalten nicht nachgeholt.')}</p>}
+      {!st && !error && <p className="text-xs text-gray-400">{t('common.loading', 'lädt …')}</p>}
+      {error && <p className="text-xs text-red-600">❌ {error}</p>}
 
       {st && (<>
         <div className="grid grid-cols-7 gap-1">
@@ -769,30 +825,31 @@ function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: (
               <p className="text-[11px] font-semibold text-gray-500 text-center mb-1">{dayName(d)}</p>
               <div className="space-y-0.5">
                 {entries(d).map((e, i) => {
-                  const k = KIND[e.kind]
+                  const k = AP_KIND[e.kind] ?? AP_KIND.news
                   return (
-                    <div key={i} className={`text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 ${k.cls}`} title={`${e.time} · ${k.label}${e.li ? ' · LinkedIn' : ''}`}>
+                    <button key={i} onClick={() => onOpenSlot(e.kind, d, e.li)}
+                      className={`w-full text-left text-[10px] leading-tight px-1 py-0.5 rounded border flex items-center gap-0.5 hover:brightness-95 ${k.cls}`}
+                      title={`${e.time} · ${kindLabel(e.kind)}${e.li ? ' · LinkedIn' : ''} · ${t('crm.social.apClickNext', 'Klick: nächsten Post ansehen')}`}>
                       <span className="shrink-0">{k.icon}</span>
                       <span className="shrink-0 tabular-nums">{e.time}</span>
-                      {e.li && <span className="shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] bg-[#0A66C2] text-white">in</span>}
-                      <span className="truncate hidden md:inline">{k.label}</span>
-                    </div>
+                      {(e.li || e.kind === 'linkedin') && <span className="shrink-0 rounded px-0.5 text-[8px] font-bold leading-[11px] bg-[#0A66C2] text-white">in</span>}
+                      <span className="truncate hidden md:inline">{kindLabel(e.kind)}</span>
+                    </button>
                   )
                 })}
               </div>
             </div>
           ))}
         </div>
-        <p className="text-[11px] text-gray-400">{t('crm.social.apTimes', 'Uhrzeiten = Zypern-Zeit. Reels auf Facebook + Instagram, Lotte und News auf Facebook + Instagram, News Di/Do/Fr zusätzlich auf LinkedIn.')}</p>
+        <p className="text-[11px] text-gray-400">{t('crm.social.apTimes2', 'Uhrzeiten = Zypern-Zeit. Reels, Lotte und News auf Facebook + Instagram, LinkedIn-Posts auf deinem LinkedIn-Profil. YouTube macht Leonard.')}</p>
 
         <div className="grid sm:grid-cols-2 gap-2">
           <div className={`rounded-xl border p-3 ${lowReels ? 'border-orange-300 bg-orange-50' : 'border-gray-100'}`}>
-            <p className="text-sm font-medium text-gray-900">🎞️ {t('crm.social.apReelQueue', 'Reels in der Warteschlange')}: {st.reels.queued}</p>
+            <p className="text-sm font-medium text-gray-900">🎞️ {untilLabel ? t('crm.social.apReelsUntil', 'Reels eingeplant bis {{d}}', { d: untilLabel }) : t('crm.social.apReelEmpty', 'Keine Reels mehr eingeplant.')}</p>
             <p className="text-xs text-gray-500 mt-0.5">
-              {untilLabel ? t('crm.social.apReelUntil', 'Reicht bis {{d}}.', { d: untilLabel }) : t('crm.social.apReelEmpty', 'Keine Reels mehr eingeplant.')}
+              {t('crm.social.apReelsMore', 'Noch {{n}} weitere im Ordner.', { n: st.reels.queued })}
               {lowReels && <> {t('crm.social.apReelLow', 'Bitte neue Reels in den Ordner legen.')}</>}
             </p>
-            {st.reels.next.length > 0 && <p className="text-[11px] text-gray-400 mt-1 truncate">{t('crm.social.apNext', 'Als Nächstes')}: {st.reels.next[0]}</p>}
             {folderUrl(st.folders.reels) && <a href={folderUrl(st.folders.reels)!} target="_blank" rel="noreferrer" className="text-xs underline text-gray-600 mt-1 inline-block">{t('crm.social.apOpenFolder', 'Drive-Ordner öffnen')} ↗</a>}
           </div>
           <div className="rounded-xl border border-gray-100 p-3">
@@ -802,6 +859,58 @@ function AutopilotPanel({ canEdit, onChanged }: { canEdit: boolean; onChanged: (
           </div>
         </div>
       </>)}
+    </div>
+  )
+}
+
+// Noch nicht erzeugter Autopilot-Slot: was kommt wann, optional sofort erzeugen.
+function PlaceholderModal({ ph, st, onClose, onCreated }: { ph: ApUpcoming; st: ApStatus | null; onClose: () => void; onCreated: (msg: string) => void }) {
+  const { t } = useTranslation()
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const k = AP_KIND[ph.kind] ?? AP_KIND.news
+  const when = new Date(ph.when)
+  const fmt = (d: Date) => d.toLocaleString('de-DE', { weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  const madeAt = new Date(when.getTime() - ph.lead_h * 3600000)
+  const reelsLeft = !ph.missing && (st?.reels.queued ?? 0) > 0
+  const text = ph.kind === 'reel'
+    ? (reelsLeft ? t('crm.social.phReelSoon', 'Das nächste Reel aus dem Drive-Ordner wird hier in wenigen Minuten automatisch eingeplant.') : t('crm.social.phReelMissing', 'Für diesen Tag ist kein Reel mehr im Drive-Ordner. Leg neue Reels ab, dann wird der Tag automatisch befüllt.'))
+    : ph.kind === 'lotte' ? t('crm.social.phLotte', 'Lottes Post (Text und Bild) entsteht automatisch etwa eine Woche vorher. Danach siehst du ihn hier in der Vorschau.')
+    : ph.kind === 'linkedin' ? t('crm.social.phLinkedin', 'Dein LinkedIn-Post (politisch angehaucht, streitbar, seriös) entsteht 3 Tage vorher zu einem aktuellen Thema, mit Quelle. Danach siehst du ihn hier in der Vorschau.')
+    : ph.kind === 'youtube' ? t('crm.social.phYoutube', 'Leonard lädt das YouTube-Video hoch. Die Posts dazu (Facebook, Instagram, LinkedIn) entstehen automatisch.')
+    : t('crm.social.phNews', 'Der News-Post entsteht 3 Tage vorher mit einer aktuellen Nachricht (Text und Bild), damit er frisch ist. Danach siehst du ihn hier in der Vorschau.')
+  const canCreateNow = ph.kind === 'lotte' || ph.kind === 'news' || ph.kind === 'linkedin' || (ph.kind === 'reel' && reelsLeft)
+  const createNow = async () => {
+    setBusy(true); setErr('')
+    try {
+      const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'autopilot', force: true, slot_key: ph.key } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string; started?: string; skipped?: string }
+      if (error || d.error || !d.ok) throw new Error(d.error || error?.message || 'Fehler')
+      if (!d.started) throw new Error(d.skipped || 'Konnte nicht gestartet werden.')
+      onCreated(t('crm.social.phStarted', '🤖 Wird erstellt (1 bis 3 Minuten). Der Post erscheint dann im Kalender.'))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Fehler'); setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <p className="font-semibold text-gray-900">{k.icon} {t(`crm.social.apKind_${ph.kind}`, k.de)} · {fmt(when)}</p>
+        <p className="text-sm text-gray-600">{text}</p>
+        {ph.kind !== 'youtube' && ph.kind !== 'reel' && madeAt.getTime() > Date.now() && (
+          <p className="text-xs text-gray-400">🤖 {t('crm.social.phMadeAt', 'Wird automatisch erstellt ab {{d}}.', { d: fmt(madeAt) })}</p>
+        )}
+        {ph.kind === 'reel' && !reelsLeft && st?.folders.reels && (
+          <a href={`https://drive.google.com/drive/folders/${st.folders.reels}`} target="_blank" rel="noreferrer" className="text-xs underline text-gray-600 inline-block">{t('crm.social.apOpenFolder', 'Drive-Ordner öffnen')} ↗</a>
+        )}
+        {err && <p className="text-sm text-red-600">❌ {err}</p>}
+        <div className="flex gap-2 justify-end pt-1">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl text-sm border border-gray-200 text-gray-600">{t('common.close', 'Schließen')}</button>
+          {canCreateNow && (
+            <button onClick={() => void createNow()} disabled={busy} className="px-4 py-2 rounded-xl text-sm font-semibold text-white disabled:opacity-60" style={{ backgroundColor: '#ff795d' }}>
+              {busy ? t('crm.social.phStarting', 'Startet …') : `⚡ ${t('crm.social.phCreateNow', 'Jetzt schon erstellen')}`}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
@@ -919,6 +1028,10 @@ export default function SocialStudio() {
   const [view, setView] = useState<'plan' | 'list' | 'archive'>('plan')
   const [archiveMonth, setArchiveMonth] = useState('')
   const [newsletters, setNewsletters] = useState<NlEntry[]>([])
+  const [ap, setAp] = useState<ApStatus | null>(null)
+  const [apErr, setApErr] = useState('')
+  const [previewPost, setPreviewPost] = useState<SocialPost | null>(null)
+  const [placeholder, setPlaceholder] = useState<ApUpcoming | null>(null)
   const [newTopicLabel, setNewTopicLabel] = useState('')
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
@@ -954,6 +1067,43 @@ export default function SocialStudio() {
     } finally { setLoading(false) }
   }, [])
   useEffect(() => { void fetchAll() }, [fetchAll])
+
+  // Autopilot-Status (Wochenplan, kommende Slots, Reel-Warteschlange)
+  const loadAp = useCallback(async () => {
+    const { data, error } = await supabase.functions.invoke('social-agent', { body: { action: 'autopilot_status' } })
+    const d = (data ?? {}) as ApStatus & { ok?: boolean; error?: string | null }
+    if (error || !d.ok) { setApErr(d.error || error?.message || 'Fehler'); return }
+    setAp({ ...d, upcoming: d.upcoming ?? [] }); setApErr(d.error ?? '')
+  }, [])
+  useEffect(() => { void loadAp() }, [loadAp])
+
+  // Plan-Slots ohne fertigen Post → Platzhalter im Kalender (nur wenn Autopilot läuft)
+  const placeholders = useMemo(() => {
+    if (!ap?.enabled) return []
+    const keys = new Set(posts.map(p => p.autopilot_slot).filter(Boolean) as string[])
+    const sameDay = (a: string, b: string) => new Date(a).toDateString() === new Date(b).toDateString()
+    let reelsLeft = ap.reels.queued
+    return ap.upcoming.filter(u => u.kind === 'youtube'
+      ? !posts.some(p => p.topic === 'youtube' && p.status !== 'verworfen' && !!p.scheduled_for && sameDay(p.scheduled_for, u.when))
+      : !keys.has(u.key))
+      .map(u => {
+        if (u.kind !== 'reel') return u
+        const missing = reelsLeft <= 0
+        reelsLeft--
+        return { ...u, missing }
+      })
+  }, [ap, posts])
+
+  // Wochenplan-Chip → nächster Termin dieser Art an diesem Wochentag: fertiger Post
+  // in die Vorschau, sonst Platzhalter-Info.
+  const openSlot = (kind: string, dow: number, li?: boolean) => {
+    const next = (ap?.upcoming ?? []).find(u => u.kind === kind && apDow(u.ymd) === dow)
+    if (!next) { showToast(t('crm.social.apNoNext', 'Kein kommender Termin gefunden.')); return }
+    const post = kind === 'youtube'
+      ? livePosts.find(p => p.topic === 'youtube' && !!p.scheduled_for && p.platforms.includes('linkedin') === !!li && new Date(p.scheduled_for).toDateString() === new Date(next.when).toDateString())
+      : livePosts.find(p => p.autopilot_slot === next.key)
+    if (post) setPreviewPost(post); else setPlaceholder(next)
+  }
 
   const createPost = async () => {
     setBusyKey('new')
@@ -1011,21 +1161,26 @@ export default function SocialStudio() {
 
   const deletePost = async (p: SocialPost) => {
     if (!window.confirm(t('crm.social.deleteConfirm', 'Diesen Post-Entwurf löschen?') as string)) return
-    const { error } = await supabase.from('social_posts').delete().eq('id', p.id)
+    // Autopilot-Posts nicht hart löschen, sondern verwerfen: sonst erzeugt der
+    // Autopilot den Termin neu (bei Reels sogar mit demselben Video).
+    const { error } = p.autopilot_slot
+      ? await supabase.from('social_posts').update({ status: 'verworfen', updated_at: new Date().toISOString() }).eq('id', p.id)
+      : await supabase.from('social_posts').delete().eq('id', p.id)
     if (error) { showToast(`❌ ${error.message}`); return }
     void fetchAll()
   }
 
   const d2 = (s: string | null) => s ? new Date(s).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : null
-  const queued = posts.filter(p => p.status === 'geplant').length
+  const livePosts = posts.filter(p => p.status !== 'verworfen')
+  const queued = livePosts.filter(p => p.status === 'geplant').length
   // „Posts" zeigt aktive Entwürfe/Freigaben; gelaufene (gepostet) wandern ins Archiv.
   const monthOf = (p: SocialPost) => (p.posted_at ?? p.scheduled_for ?? p.created_at).slice(0, 7)
-  const archivePosts = posts.filter(p => p.status === 'gepostet')
+  const archivePosts = livePosts.filter(p => p.status === 'gepostet')
   const archiveMonths = Array.from(new Set(archivePosts.map(monthOf))).sort().reverse()
   const monthLabel = (m: string) => { try { return new Date(`${m}-01T00:00:00`).toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }) } catch { return m } }
   const shownPosts = view === 'archive'
     ? (archiveMonth ? archivePosts.filter(p => monthOf(p) === archiveMonth) : archivePosts)
-    : posts.filter(p => p.status !== 'gepostet')
+    : livePosts.filter(p => p.status !== 'gepostet')
 
   return (
     <DashboardLayout basePath="/admin/crm">
@@ -1088,12 +1243,14 @@ export default function SocialStudio() {
         </div>
 
         {!loading && view === 'plan' && (<>
-          <AutopilotPanel canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'} onChanged={() => void fetchAll(true)} />
+          <AutopilotPanel st={ap} err={apErr} canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'}
+            onToggled={() => { void loadAp(); void fetchAll(true) }} onOpenSlot={openSlot} />
 
           <InteractionsSection />
 
-          <PlanCalendar posts={posts} newsletters={newsletters} topics={topics}
-            onOpenPost={p => setOpenPost(p)} onCreateForDay={d => void createForDay(d)} />
+          <PlanCalendar posts={livePosts} newsletters={newsletters} topics={topics} apPaused={!!ap && !ap.enabled}
+            onOpenPost={p => setPreviewPost(p)} onCreateForDay={d => void createForDay(d)}
+            placeholders={placeholders} onOpenPlaceholder={ph => setPlaceholder(ph)} />
         </>)}
 
         {view === 'archive' && !loading && (
@@ -1146,7 +1303,25 @@ export default function SocialStudio() {
           </div>
         )}
       </div>
-      {openPost && <PostEditor post={openPost} allPosts={posts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
+      {previewPost && (() => {
+        const pp = previewPost
+        const imgs = Array.isArray(pp.image_urls) && pp.image_urls.length ? pp.image_urls.filter(Boolean) : (pp.image_url ? [pp.image_url] : [])
+        const when = pp.scheduled_for ?? pp.posted_at
+        const st = STATUS_BADGE[pp.status] ?? STATUS_BADGE.entwurf
+        const heading = `${pp.autopilot_slot ? '🤖 ' : ''}${t(`crm.social.status.${pp.status}`, st.de)}${when ? ` · ${new Date(when).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''} · ${(pp.title ?? '').replace(/^[^A-Za-zÄÖÜäöü0-9]+/, '')}`
+        return (
+          <PostPreview content={pp.content ?? ''} images={imgs} video={pp.video_url} format={pp.format} platforms={pp.platforms}
+            heading={heading} onClose={() => setPreviewPost(null)}
+            onDelete={pp.status !== 'gepostet' ? () => { setPreviewPost(null); void deletePost(pp) } : undefined}
+            onEdit={() => { setPreviewPost(null); setOpenPost(pp) }} />
+        )
+      })()}
+      {placeholder && <PlaceholderModal ph={placeholder} st={ap} onClose={() => setPlaceholder(null)}
+        onCreated={msg => {
+          setPlaceholder(null); showToast(msg)
+          for (const ms of [20000, 60000, 120000, 200000]) setTimeout(() => void fetchAll(true), ms)
+        }} />}
+      {openPost && <PostEditor post={openPost} allPosts={livePosts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
     </DashboardLayout>
   )
 }

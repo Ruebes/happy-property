@@ -321,7 +321,7 @@ function cyAt(ymd: string, hm: string): Date {
 const cyYmd = (d: Date) => new Date(d.getTime() + cyOffsetMinutes(d) * 60000).toISOString().slice(0, 10)
 const WEEKDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 
-type ApKind = 'reel' | 'news' | 'lotte'
+type ApKind = 'reel' | 'news' | 'lotte' | 'linkedin'
 interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string }
 interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[] }
 interface ApState { state?: 'pending' | 'ready' | 'failed'; attempts?: number; error?: string; task?: boolean }
@@ -330,12 +330,15 @@ async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
   try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as ApCfg } catch { return {} }
 }
-// Soll-Slots der nächsten Tage. Reels + Lotte bis 3 Tage voraus (Sven sieht sie
-// rechtzeitig im Kalender), News höchstens 36 h voraus, damit sie aktuell bleiben.
-function autopilotWanted(cfg: ApCfg, nowMs: number): ApWant[] {
+// Wie weit im Voraus je Art erzeugt wird. Reels (Inhalt steht ja fest) so weit
+// die Warteschlange reicht, Lotte eine Woche, News + LinkedIn 3 Tage (aktuell
+// genug, und Sven sieht die nächsten Tage immer fertig in der Vorschau).
+const AP_LEAD_H: Record<ApKind, number> = { reel: 14 * 24, lotte: 7 * 24, news: 72, linkedin: 72 }
+// Alle Plan-Slots (Zypern-Datum/-Zeit) von heute an für `days` Tage.
+function autopilotSlots(cfg: ApCfg, nowMs: number, days: number): ApWant[] {
   const out: ApWant[] = []
   const todayCy = cyYmd(new Date(nowMs))
-  for (let i = 0; i <= 3; i++) {
+  for (let i = 0; i <= days; i++) {
     const base = new Date(`${todayCy}T12:00:00Z`)
     base.setUTCDate(base.getUTCDate() + i)
     const ymd = base.toISOString().slice(0, 10)
@@ -344,22 +347,33 @@ function autopilotWanted(cfg: ApCfg, nowMs: number): ApWant[] {
       const when = cyAt(ymd, s.time)
       const lead = when.getTime() - nowMs
       if (lead < 15 * 60000) continue                                   // zu knapp oder vorbei
-      if (s.kind === 'news' && lead > 36 * 3600000) continue            // News erst kurz vorher
       const liWhen = s.li_time ? cyAt(ymd, s.li_time) : null
       out.push({ key: `${ymd}|${s.kind}`, kind: s.kind, ymd, when, liWhen: liWhen && liWhen.getTime() - nowMs > 15 * 60000 ? liWhen : null })
     }
   }
   return out.sort((a, b) => a.when.getTime() - b.when.getTime())
 }
+// Slots, die der Autopilot JETZT befüllen soll (innerhalb der Vorlaufzeit je Art)
+const autopilotWanted = (cfg: ApCfg, nowMs: number): ApWant[] =>
+  autopilotSlots(cfg, nowMs, 14).filter(w => w.when.getTime() - nowMs <= AP_LEAD_H[w.kind] * 3600000)
 
-interface DriveFile { id: string; name: string; mimeType: string; size?: string; createdTime?: string }
+interface DriveFile { id: string; name: string; mimeType: string; size?: string; createdTime?: string; thumbnailLink?: string }
 async function driveChildren(token: string, folderId: string): Promise<DriveFile[]> {
   const q = encodeURIComponent(`'${folderId}' in parents and trashed = false`)
-  const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType,size,createdTime)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=500`, { headers: { Authorization: `Bearer ${token}` } })
-  const d = await r.json() as { files?: DriveFile[]; error?: { message?: string } }
-  if (!r.ok) throw new Error(`Drive-Ordner ${folderId}: ${d.error?.message ?? r.status}`)
-  return d.files ?? []
+  const out: DriveFile[] = []
+  let pageToken = ''
+  for (let i = 0; i < 20; i++) {
+    const r = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=nextPageToken,files(id,name,mimeType,size,createdTime,thumbnailLink)&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=allDrives&pageSize=500${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`, { headers: { Authorization: `Bearer ${token}` } })
+    const d = await r.json() as { files?: DriveFile[]; nextPageToken?: string; error?: { message?: string } }
+    if (!r.ok) throw new Error(`Drive-Ordner ${folderId}: ${d.error?.message ?? r.status}`)
+    out.push(...(d.files ?? []))
+    if (!d.nextPageToken) break
+    pageToken = d.nextPageToken
+  }
+  return out
 }
+// Kein KI-Gedankenstrich in Kundentexten (Svens Regel): — und – werden zu "-"
+const noDash = (t: string) => t.replace(/\s*[—–]\s*/g, (m) => /^\s|\s$/.test(m) ? ' - ' : '-')
 const baseName = (n: string) => n.replace(/\.[^.]+$/, '').trim().toLowerCase()
 // Reel-Warteschlange: alle Videos im Reels-Ordner (eine Unterordner-Ebene mit),
 // ältestes zuerst, ohne die schon verplanten (news_source = drive:<id>).
@@ -404,7 +418,20 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
       const token = await driveToken()
       const pics = (await driveChildren(token, cfg.lotte_folder)).filter(f => f.mimeType.startsWith('image/'))
       for (const f of pics.sort(() => Math.random() - 0.5).slice(0, 2)) {
-        try { const b = await driveDownload(token, f.id); refs.push({ id: await hfUploadImage(sb, new Uint8Array(await b.arrayBuffer()), b.type || 'image/jpeg') }) }
+        try {
+          // Große Handyfotos NICHT im Worker dekodieren (Speicherlimit): Drive liefert
+          // eine verkleinerte Vorschau (1280 px), nur kleine Dateien kommen im Original.
+          let bytes: Uint8Array | null = null, type = 'image/jpeg'
+          if (f.thumbnailLink) {
+            const tr = await fetch(f.thumbnailLink.replace(/=s\d+(-[a-z])?$/, '=s1280'), { headers: { Authorization: `Bearer ${token}` } })
+            if (tr.ok) { bytes = new Uint8Array(await tr.arrayBuffer()); type = tr.headers.get('content-type') || 'image/jpeg' }
+          }
+          if (!bytes) {
+            if (Number(f.size ?? 0) > 2 * 1048576) throw new Error(`${f.name}: keine Vorschau, Original zu groß`)
+            const b = await driveDownload(token, f.id); bytes = new Uint8Array(await b.arrayBuffer()); type = b.type || 'image/jpeg'
+          }
+          refs.push({ id: await hfUploadImage(sb, bytes, type) })
+        }
         catch (e) { console.warn('[social-agent] Lotte-Referenz übersprungen:', e instanceof Error ? e.message : String(e)) }
       }
     } catch (e) { console.warn('[social-agent] Lotte-Ordner nicht lesbar:', e instanceof Error ? e.message : String(e)) }
@@ -413,7 +440,7 @@ async function generateLotteImage(sb: SupabaseClient, postId: string, prompt: st
   const tries: Array<[string, Record<string, unknown>]> = []
   if (soul && refs.length) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul, image_references: refs }])
   if (soul) tries.push(['text2image_soul_v2', { prompt: full, aspect_ratio: '1:1', quality: '2k', custom_reference_id: soul }])
-  if (refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
+  if (!soul && refs.length) tries.push(['nano_banana', { prompt: `Create a new photorealistic image: ${full}`, aspect_ratio: '1:1', image_references: refs }])
   for (const [job, params] of tries) {
     try {
       const bytes = await hfGenerateBytes(sb, job, params)
@@ -503,8 +530,8 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
   if (o.metaPostId && !out.meta_caption) throw new Error('Meta-Text fehlt.')
   if (o.liPostId && !out.linkedin_caption) throw new Error('LinkedIn-Text fehlt.')
 
-  if (o.metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: out.meta_caption, updated_at: stamp() }).eq('id', o.metaPostId)
-  if (o.liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: out.linkedin_caption, updated_at: stamp() }).eq('id', o.liPostId)
+  if (o.metaPostId && out.meta_caption) await sb.from('social_posts').update({ content: noDash(out.meta_caption), updated_at: stamp() }).eq('id', o.metaPostId)
+  if (o.liPostId && out.linkedin_caption) await sb.from('social_posts').update({ content: noDash(out.linkedin_caption), updated_at: stamp() }).eq('id', o.liPostId)
   if (o.wantNewsletter && out.newsletter_html) {
     await sb.from('newsletter_campaigns').insert({
       title: `📰 ${idea.headline}`.slice(0, 200), subject: (out.newsletter_subject || idea.headline).slice(0, 200),
@@ -556,6 +583,40 @@ const LOTTE_THEMES = [
   'Leckerli-Inflation', 'Neujahrsvorsätze, die nie umgesetzt werden', 'Kunden, die nach dem ersten Besuch nicht mehr heim wollen',
 ]
 
+
+// LinkedIn (Sven, 2x pro Woche): eigene Posts, nicht die News-Captions. Politisch
+// angehaucht, streitbar, aber seriös (Svens Vorgabe 26.9.2026).
+const LINKEDIN_SYSTEM = `Du schreibst LinkedIn-Posts für Sven Rüprich: Deutscher Unternehmer, lebt in Paphos,
+Gründer von Happy Property (Neubau-Kapitalanlagen auf Zypern für deutschsprachige Investoren).
+Ich-Perspektive, Sven spricht selbst. Leser: Unternehmer, Selbstständige, Kapitalanleger, Vermieter.
+
+ZIEL: Diskussion auslösen. Politisch angehaucht und streitbar, aber seriös. Eine klare,
+pointierte These zu einer AKTUELLEN politischen oder wirtschaftlichen Entwicklung in
+Deutschland (oder der EU), die Vermögen, Vermieter, Unternehmer oder Sparer betrifft.
+Belegt mit 1 bis 2 konkreten Fakten (Gesetz, Zahl, Beschluss) aus einer echten Quelle.
+Sachlicher Ton, klare Kante in der Aussage.
+
+AUFBAU: Zeile 1 = These, die zum Widerspruch reizt (max. 15 Wörter). Dann Kontext mit den
+belegten Fakten. Dann Svens Einordnung aus Sicht von jemandem, der Kapital anlegt und im
+EU-Ausland lebt. Zypern nur als kurzer Vergleich, wenn es sich natürlich ergibt, KEINE
+Werbung, kein Verkaufsaufruf, kein Termin-Link. Schluss: eine offene Frage an die Leser,
+die zum Kommentieren und Widersprechen einlädt. Letzte Zeile: "Quelle: <URL>".
+Danach genau 3 dezente Hashtags. Länge 1.000 bis 1.800 Zeichen, Absätze mit Leerzeile.
+
+GRENZEN (hart): Politik und Entscheidungen kritisieren, nie Menschen. Parteien und
+Politiker nur sachlich nennen, wenn es für den Fakt nötig ist, keine Parteienschelte, kein
+Spott über Personen, keine Beleidigungen, kein Populismus ("die da oben"), keine
+Verschwörungserzählungen. Keine Themen Migration, Religion, Krieg, Gender. Keine Zahlen
+erfinden, nur was die Quelle hergibt. Keine Renditeversprechen.`
+
+const LINKEDIN_THEMES = [
+  'Mietrecht, Mietpreisbremse, Mietendeckel-Debatte', 'Grundsteuer-Reform und Hebesätze der Kommunen',
+  'Erbschaftsteuer und Vermögensteuer-Debatte', 'Rente, Rentenniveau und private Altersvorsorge',
+  'Bürokratie, Genehmigungsdauer, Digitalisierung der Verwaltung', 'Wohnungsbau-Krise, Baugenehmigungen, Neubauzahlen',
+  'Heizungsgesetz und Energiepolitik für Eigentümer', 'Steuer- und Abgabenlast für Selbstständige und Mittelstand',
+  'Standort Deutschland, Unternehmer wandern ab', 'Sparer, Inflation und Zinsen', 'Wegzugsbesteuerung und Kapitalverkehr in der EU',
+  'Kommunale Zweckentfremdungsverbote und Ferienwohnungen',
+]
 
 // Reel-Text ohne Textdatei: aus dem Dateinamen (Titel) einen Posting-Text bauen.
 async function reelCaption(anthropicKey: string, title: string): Promise<string> {
@@ -1589,8 +1650,10 @@ Regeln:
       if (busy && !force) return json({ ok: true, skipped: 'Ein Autopilot-Job läuft noch.' })
 
       // 2) Soll-Slots + vorhandene Slots
-      const wanted = autopilotWanted(cfg, nowMs)
-      if (!wanted.length) return json({ ok: true, skipped: 'Keine offenen Slots im Planungsfenster.' })
+      // slot_key (Studio: „Jetzt schon erstellen"): genau diesen Slot, auch außerhalb der Vorlaufzeit
+      const slotKey = typeof (body as Record<string, unknown>).slot_key === 'string' ? String((body as Record<string, unknown>).slot_key) : ''
+      const wanted = slotKey ? autopilotSlots(cfg, nowMs, 42).filter(w => w.key === slotKey) : autopilotWanted(cfg, nowMs)
+      if (!wanted.length) return json({ ok: true, skipped: slotKey ? 'Diesen Termin gibt es im Plan nicht (mehr).' : 'Keine offenen Slots im Planungsfenster.' })
       const { data: haveRows } = await sb.from('social_posts').select('id, autopilot_slot, status, news_source, post_results, updated_at, scheduled_for').in('autopilot_slot', wanted.map(w => w.key))
       const have = new Map(((haveRows ?? []) as ApRow[]).map(r => [r.autopilot_slot, r]))
 
@@ -1598,12 +1661,28 @@ Regeln:
       let reels: Awaited<ReturnType<typeof reelQueue>> | null = null
       let dToken = ''
       const needsReel = wanted.some(w => w.kind === 'reel' && (!have.has(w.key) || apOf(have.get(w.key)!).state === 'failed'))
+      let driveErr = ''
       if (needsReel && cfg.reels_folder) {
-        dToken = await driveToken()
-        reels = await reelQueue(sb, dToken, cfg.reels_folder)
-        if (reels.queue.length < 3) {
-          await taskForSven(sb, `🎞️ Reel-Warteschlange: nur noch ${reels.queue.length} Reel${reels.queue.length === 1 ? '' : 's'}`,
-            `Der Social-Media-Autopilot postet Dienstag bis Sonntag jeden Tag ein Reel. In der Warteschlange ${reels.queue.length ? `liegen nur noch ${reels.queue.length}` : 'liegt keins mehr'}.\n\nNeue fertige Reels (MP4, hochkant) einfach in den Drive-Ordner legen: https://drive.google.com/drive/folders/${cfg.reels_folder}\n(Google Drive > Happy Property Marke > Social Media > Reels)\n\nTipp: Claude schneidet dir aus jedem YouTube-Video 6 Reels, das ist genau eine Woche.`,
+        try {
+          dToken = await driveToken()
+          reels = await reelQueue(sb, dToken, cfg.reels_folder)
+        } catch (e) {
+          // Drive nicht lesbar → Reels überspringen, News/Lotte/LinkedIn laufen weiter
+          driveErr = e instanceof Error ? e.message : String(e)
+          reels = null
+          await taskForSven(sb, '🤖 Autopilot: Reels-Ordner im Drive nicht lesbar',
+            `Der Autopilot kommt nicht an den Drive-Ordner mit den Reels (Happy Property Marke > Social Media > Reels). Fehler:\n${driveErr}\n\nNews-, Lotte- und LinkedIn-Posts laufen weiter, nur Reels werden nicht eingeplant. Bitte Claude Bescheid geben.`,
+            'Reels-Ordner im Drive nicht lesbar')
+        }
+      }
+      if (reels && cfg.reels_folder) {
+        // Reichweite = schon eingeplante künftige Reels + noch nicht eingeplante im Ordner
+        const { count: plannedReels } = await sb.from('social_posts').select('id', { count: 'exact', head: true })
+          .like('autopilot_slot', '%|reel').in('status', ['entwurf', 'geplant']).gt('scheduled_for', new Date(nowMs).toISOString())
+        const cover = (plannedReels ?? 0) + reels.queue.length
+        if (cover < 3) {
+          await taskForSven(sb, `🎞️ Reel-Warteschlange: nur noch ${cover} Reel${cover === 1 ? '' : 's'}`,
+            `Der Social-Media-Autopilot postet Dienstag bis Sonntag jeden Tag ein Reel. Eingeplant bzw. im Ordner ${cover ? `sind nur noch ${cover}` : 'ist keins mehr'}.\n\nNeue fertige Reels (MP4, hochkant) einfach in den Drive-Ordner legen: https://drive.google.com/drive/folders/${cfg.reels_folder}\n(Google Drive > Happy Property Marke > Social Media > Reels)\n\nTipp: Claude schneidet dir aus jedem YouTube-Video 6 Reels, das ist genau eine Woche.`,
             'Reel-Warteschlange')
         }
       }
@@ -1619,9 +1698,10 @@ Regeln:
         if (r.status !== 'entwurf' || st.state !== 'failed') continue
         if ((st.attempts ?? 0) >= 3) {
           if (!st.task) {
-            await taskForSven(sb, `🤖 Autopilot: ${w.kind === 'reel' ? 'Reel' : w.kind === 'lotte' ? 'Lotte-Post' : 'News-Post'} für ${WEEKDAY_DE[new Date(`${w.ymd}T12:00:00Z`).getUTCDay()]} ${w.ymd.slice(8, 10)}.${w.ymd.slice(5, 7)}. klappt nicht`,
+            const tTitle = `🤖 Autopilot: ${w.kind === 'reel' ? 'Reel' : w.kind === 'lotte' ? 'Lotte-Post' : w.kind === 'linkedin' ? 'LinkedIn-Post' : 'News-Post'} für ${WEEKDAY_DE[new Date(`${w.ymd}T12:00:00Z`).getUTCDay()]} ${w.ymd.slice(8, 10)}.${w.ymd.slice(5, 7)}. klappt nicht`
+            await taskForSven(sb, tTitle,
               `Der Autopilot hat es dreimal versucht. Letzter Fehler:\n${st.error ?? 'unbekannt'}\n\nDer Entwurf liegt im Redaktionsplan (Tools > Social Media). Du kannst ihn dort fertig machen und freigeben oder löschen.`,
-              `Autopilot: ${w.key}`)
+              tTitle)
             await setAp(r.id, { ...st, task: true })
           }
           continue
@@ -1632,7 +1712,7 @@ Regeln:
 
       const attempts = (existing ? apOf(existing).attempts ?? 0 : 0) + 1
       const kind = pick.kind
-      const TOPIC: Record<ApKind, string> = { reel: 'reel', news: 'news', lotte: 'weisheit' }
+      const TOPIC: Record<ApKind, string> = { reel: 'reel', news: 'news', lotte: 'weisheit', linkedin: 'linkedin' }
       // Reel schon beim Reservieren festlegen (news_source = drive:<id>), damit
       // zwei Slots nie dasselbe Video bekommen.
       let reelFile: DriveFile | null = null
@@ -1640,8 +1720,9 @@ Regeln:
         const src = existing?.news_source?.startsWith('drive:') ? existing.news_source.slice(6) : ''
         if (src) {
           // Wiederholung: dasselbe Video wie beim ersten Versuch
-          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${src}?fields=id,name,mimeType,size,createdTime&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${dToken || (dToken = await driveToken())}` } })
+          const r = await fetch(`https://www.googleapis.com/drive/v3/files/${src}?fields=id,name,mimeType,size,createdTime,trashed&supportsAllDrives=true`, { headers: { Authorization: `Bearer ${dToken || (dToken = await driveToken())}` } })
           if (r.ok) reelFile = await r.json() as DriveFile
+          if (!reelFile || (reelFile as DriveFile & { trashed?: boolean }).trashed) reelFile = reels?.queue[0] ?? null
         } else reelFile = reels?.queue[0] ?? null
         if (!reelFile) return json({ ok: true, skipped: 'Kein Reel verfügbar.' })
       }
@@ -1650,8 +1731,8 @@ Regeln:
       if (!postId) {
         const { data: ins, error: insErr } = await sb.from('social_posts').insert({
           topic: TOPIC[kind],
-          title: kind === 'reel' ? `🎞️ ${reelFile!.name.replace(/\.[^.]+$/, '')}`.slice(0, 200) : kind === 'lotte' ? '🐾 Lotte · entsteht …' : '📰 News · entsteht …',
-          platforms: kind === 'reel' ? (cfg.reel_platforms?.length ? cfg.reel_platforms : ['facebook', 'instagram']) : ['facebook', 'instagram'],
+          title: kind === 'reel' ? `🎞️ ${reelFile!.name.replace(/\.[^.]+$/, '')}`.slice(0, 200) : kind === 'lotte' ? '🐾 Lotte · entsteht …' : kind === 'linkedin' ? '💼 LinkedIn · entsteht …' : '📰 News · entsteht …',
+          platforms: kind === 'reel' ? (cfg.reel_platforms?.length ? cfg.reel_platforms : ['facebook', 'instagram']) : kind === 'linkedin' ? ['linkedin'] : ['facebook', 'instagram'],
           format: 'single', status: 'entwurf', scheduled_for: pick.when.toISOString(),
           autopilot_slot: pick.key, post_results: { autopilot: pending },
           news_source: reelFile ? `drive:${reelFile.id}` : null,
@@ -1659,7 +1740,7 @@ Regeln:
         if (insErr) return json({ ok: true, skipped: `Slot ${pick.key} schon reserviert (${insErr.message}).` })
         postId = (ins as { id: string }).id
       } else {
-        await sb.from('social_posts').update({ post_results: { autopilot: pending }, scheduled_for: pick.when.toISOString(), updated_at: stamp() }).eq('id', postId)
+        await sb.from('social_posts').update({ post_results: { autopilot: pending }, scheduled_for: pick.when.toISOString(), ...(reelFile ? { news_source: `drive:${reelFile.id}` } : {}), updated_at: stamp() }).eq('id', postId)
       }
 
       const slot = pick
@@ -1674,6 +1755,7 @@ Regeln:
             let caption = ''
             if (txtId) caption = (await (await driveDownload(dToken || await driveToken(), txtId)).text()).trim()
             if (!caption) caption = await reelCaption(anthropicKey, f.name.replace(/\.[^.]+$/, '').replace(/^reel\s*\d+\s*[-:]\s*/i, ''))
+            caption = noDash(caption)
             await sb.from('social_posts').update({ video_url: url, content: caption, image_url: null, image_urls: [], status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
           } else if (kind === 'lotte') {
             const { data: prev } = await sb.from('social_posts').select('content').eq('topic', 'weisheit').not('content', 'is', null).order('created_at', { ascending: false }).limit(12)
@@ -1690,8 +1772,37 @@ Regeln:
             })
             const out = (((resp.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
             if (!out.caption || !out.image_prompt) throw new Error('Lotte-Text konnte nicht erstellt werden.')
-            await sb.from('social_posts').update({ title: `🐾 ${out.title ?? 'Lotte'}`.slice(0, 200), content: out.caption, image_prompt: out.image_prompt, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
+            await sb.from('social_posts').update({ title: `🐾 ${out.title ?? 'Lotte'}`.slice(0, 200), content: noDash(out.caption), image_prompt: out.image_prompt, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
             await generateLotteImage(sb, postId, out.image_prompt)
+            await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
+          } else if (kind === 'linkedin') {
+            const { data: prevLi } = await sb.from('social_posts').select('title').eq('topic', 'linkedin').order('created_at', { ascending: false }).limit(12)
+            const prevTitles = ((prevLi ?? []) as Array<{ title: string | null }>).map(x => (x.title ?? '').replace(/^💼\s*/, '')).filter(t => t && !/entsteht/.test(t))
+            const theme = LINKEDIN_THEMES[Math.floor(Math.random() * LINKEDIN_THEMES.length)]
+            const research = await claude(anthropicKey, {
+              system: `${BRAND}\n\n${LINKEDIN_SYSTEM}`,
+              messages: [{ role: 'user', content: `Recherchiere eine AKTUELLE Entwicklung (letzte 14 Tage) in Deutschland oder der EU, die sich für Svens nächsten LinkedIn-Post eignet. Bevorzugtes Themenfeld heute: ${theme}. Wenn es dort nichts Aktuelles und Belastbares gibt, nimm ein anderes Feld aus dieser Liste: ${LINKEDIN_THEMES.join('; ')}.\n${prevTitles.length ? `\nDIESE THEMEN HATTE SVEN SCHON (nicht wiederholen):\n${prevTitles.map(x => `- ${x}`).join('\n')}\n` : ''}\nLiefere: das Thema, die Fakten mit Quelle (URL) und dann den fertigen Post-Text nach den Regeln.` }],
+              tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+              max_tokens: 4000,
+            })
+            const draft = ((research.content ?? []) as Array<{ type: string; text?: string }>).filter(b => b.type === 'text').map(b => b.text).join('\n').trim()
+            if (!draft) throw new Error('LinkedIn-Recherche lieferte kein Ergebnis.')
+            const structured = await claude(anthropicKey, {
+              system: `${BRAND}\n\n${LINKEDIN_SYSTEM}\n\nDu übernimmst den fertigen Entwurf in set_linkedin. Glätte nur Regelverstöße (Gedankenstriche, Werbung, Parteienschelte, fehlende Quelle), erfinde nichts dazu.`,
+              messages: [{ role: 'user', content: `ENTWURF MIT RECHERCHE:\n\n${draft}` }],
+              tools: [{ name: 'set_linkedin', description: 'Fertiger LinkedIn-Post.', input_schema: { type: 'object', properties: {
+                title: { type: 'string', description: 'Kurzer interner Titel = Thema (max. 70 Zeichen)' },
+                caption: { type: 'string', description: 'Der komplette Post-Text inkl. Quelle und 3 Hashtags' },
+                source_url: { type: 'string' },
+                image_prompt: { type: 'string', description: 'Englischer Prompt für ein seriöses, fotorealistisches Editorial-Foto zum Thema, ohne Personen im Vordergrund, ohne Text, ohne Schilder, ohne Flaggen' },
+              }, required: ['title', 'caption', 'image_prompt'] } }],
+              tool_choice: { type: 'tool', name: 'set_linkedin' }, max_tokens: 3000,
+            })
+            const out = (((structured.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; source_url?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
+            if (!out.caption || !out.image_prompt) throw new Error('LinkedIn-Text konnte nicht erstellt werden.')
+            if (!out.source_url && !/Quelle:\s*https?:\/\//.test(out.caption)) throw new Error('LinkedIn-Text ohne Quelle, wird neu erstellt.')
+            await sb.from('social_posts').update({ title: `💼 ${out.title ?? 'LinkedIn'}`.slice(0, 200), content: noDash(out.caption), news_source: out.source_url || null, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
+            await generatePostImage(sb, postId, out.image_prompt)
             await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
           } else {
             // News: frische, unbenutzte Idee (max. 4 Tage alt), sonst neu recherchieren
@@ -1768,37 +1879,61 @@ Regeln:
         }
         if (cfg.lotte_folder) lotte = (await driveChildren(token, cfg.lotte_folder)).filter(f => f.mimeType.startsWith('image/')).length
       } catch (e) { err = e instanceof Error ? e.message : String(e) }
-      return json({ ok: true, enabled: cfg.enabled === true, slots: cfg.slots ?? [], folders: { reels: cfg.reels_folder ?? null, lotte: cfg.lotte_folder ?? null, social: cfg.social_folder ?? null }, reels: { queued: queue.length, total, next: queue.slice(0, 5), until }, lotte_photos: lotte, error: err || null })
+      // Kommende Plan-Slots für den Kalender (auch noch nicht erzeugte), Zypern-Zeit → UTC.
+      // Montag 18:30 = YouTube-Wochenpost (macht Leonard, Post entsteht automatisch).
+      const nowMs2 = Date.now()
+      const upcoming = autopilotSlots(cfg, nowMs2, 42).map(w => ({ key: w.key, kind: w.kind as string, when: w.when.toISOString(), ymd: w.ymd, lead_h: AP_LEAD_H[w.kind] }))
+      for (let i = 0; i <= 42; i++) {
+        const d = new Date(`${cyYmd(new Date(nowMs2))}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + i)
+        if (d.getUTCDay() !== 1) continue
+        const ymd = d.toISOString().slice(0, 10)
+        const when = cyAt(ymd, '18:30')
+        if (when.getTime() > nowMs2) upcoming.push({ key: `${ymd}|youtube`, kind: 'youtube', when: when.toISOString(), ymd, lead_h: 36 })
+      }
+      upcoming.sort((a, b) => a.when.localeCompare(b.when))
+      return json({ ok: true, enabled: cfg.enabled === true, slots: cfg.slots ?? [], upcoming, folders: { reels: cfg.reels_folder ?? null, lotte: cfg.lotte_folder ?? null, social: cfg.social_folder ?? null }, reels: { queued: queue.length, total, next: queue.slice(0, 5), until }, lotte_photos: lotte, error: err || null })
     }
 
     // ── Auto-Tagespost: EIN fälliger geplanter Post pro Tag (FB/Insta-Queue) ──
     if (body.action === 'auto_publish') {
       // Halbstündlicher Cron: postet zur GEPLANTEN Uhrzeit (fällig = Zeit erreicht).
-      // Frequenz-Wächter je Kanal und Tag: FB/Insta max. 3 (Autopilot braucht 2:
+      // Frequenz-Wächter je Kanal und ZYPERN-Tag: FB/Insta max. 3 (Autopilot braucht 2:
       // Bildpost 12:30 + Reel 18:30), LinkedIn max. 1, YouTube max. 1.
-      const nowIso = new Date().toISOString()
-      const today = nowIso.slice(0, 10)
+      const nowMs = Date.now()
+      const nowIso = new Date(nowMs).toISOString()
+      const dayStartIso = cyAt(cyYmd(new Date(nowMs)), '00:00').toISOString()
       const apCfg = await autopilotCfg(sb)
-      const { data: due } = await sb.from('social_posts').select('id, platforms, content, image_url, image_urls, video_url, post_results, autopilot_slot')
+      const { data: due } = await sb.from('social_posts').select('id, platforms, content, scheduled_for, post_results, autopilot_slot')
         .eq('status', 'geplant').lte('scheduled_for', nowIso)
-        .order('scheduled_for', { ascending: true }).limit(20)
-      type DueRow = { id: string; platforms: string[]; content: string | null; image_url: string | null; image_urls: string[] | null; video_url: string | null; post_results: Record<string, { pending?: boolean }> | null; autopilot_slot: string | null }
-      // Nur wirklich fertige Posts: Text da, kein Fehlerhinweis, Instagram mit Bild/Video.
-      // Autopilot aus → auch dessen schon geplante Posts nicht mehr posten.
-      const dueList = ((due as DueRow[] | null) ?? []).filter(p => {
-        if (p.autopilot_slot && apCfg.enabled === false) return false
+        .order('scheduled_for', { ascending: true }).limit(100)
+      type DueRow = { id: string; platforms: string[]; content: string | null; scheduled_for: string; post_results: Record<string, { pending?: boolean }> | null; autopilot_slot: string | null }
+      const isPending = (p: DueRow) => Object.values(p.post_results ?? {}).some(r => r && typeof r === 'object' && r.pending)
+      const dueAll = (due as DueRow[] | null) ?? []
+      // Autopilot-Posts, die mehr als 3 h überfällig sind (z. B. nach einer Pause),
+      // NICHT nachholen, sondern verwerfen: sonst kommt nach dem Wiedereinschalten
+      // eine Welle alter Posts. Angefangene Reels (Instagram verarbeitet) ausgenommen.
+      for (const p of dueAll) {
+        if (!p.autopilot_slot || isPending(p)) continue
+        if (nowMs - Date.parse(p.scheduled_for) > 3 * 3600000) {
+          // Reel-Video wieder freigeben (news_source leeren) → kommt an einem späteren Tag
+          await sb.from('social_posts').update({ status: 'verworfen', ...(p.autopilot_slot.endsWith('|reel') ? { news_source: null } : {}), post_results: { ...(p.post_results ?? {}), skipped: { ok: false, error: 'Zu spät, nicht nachgeholt (Autopilot war pausiert oder das Tageslimit war erreicht).' } }, updated_at: nowIso }).eq('id', p.id)
+        }
+      }
+      // Nur Posts mit Text und ohne Fehlerhinweis. Autopilot pausiert (oder Plan nicht
+      // lesbar) → dessen Posts bleiben liegen.
+      const dueList = dueAll.filter(p => {
+        if (p.autopilot_slot && apCfg.enabled !== true) return false
+        if (p.autopilot_slot && !isPending(p) && nowMs - Date.parse(p.scheduled_for) > 3 * 3600000) return false
         const c = (p.content ?? '').trim()
-        if (!c || c.startsWith('⚠️')) return false
-        const media = !!(p.video_url || p.image_url || (Array.isArray(p.image_urls) && p.image_urls.length))
-        return !((p.platforms ?? []).includes('instagram') && !media)
+        return !!c && !c.startsWith('⚠️')
       })
       if (!dueList.length) return json({ ok: true, skipped: 'Kein fälliger freigegebener Post.' })
       // Angefangene Reels (Instagram hat noch verarbeitet) zuerst zu Ende bringen
-      const resume = dueList.find(p => Object.values(p.post_results ?? {}).some(r => r && typeof r === 'object' && r.pending))
+      const resume = dueList.find(isPending)
       if (resume) {
         body.post_id = resume.id
       } else {
-        const { data: doneToday } = await sb.from('social_posts').select('platforms').gte('posted_at', `${today}T00:00:00Z`)
+        const { data: doneToday } = await sb.from('social_posts').select('platforms').gte('posted_at', dayStartIso)
         const posted = (doneToday as { platforms: string[] }[] | null) ?? []
         const cnt = (f: (pl: string[]) => boolean) => posted.filter(p => f(p.platforms ?? [])).length
         const isMeta = (pl: string[]) => pl.some(x => x === 'facebook' || x === 'instagram')
@@ -1905,8 +2040,8 @@ Regeln:
             let stat = ''
             for (let i = 0; i < 12; i++) {
               await new Promise(res => setTimeout(res, 10000))
-              const st = await fetch(`https://graph.facebook.com/v21.0/${cid}?fields=status_code&access_token=${pageToken}`).then(x => x.json())
-              stat = st.status_code ?? ''
+              const st = await fetch(`https://graph.facebook.com/v21.0/${cid}?fields=status_code&access_token=${pageToken}`).then(x => x.json()).catch(() => ({}))
+              stat = (st as { status_code?: string }).status_code ?? ''
               if (stat === 'FINISHED' || stat === 'ERROR' || stat === 'EXPIRED') break
             }
             if (stat === 'ERROR' || stat === 'EXPIRED') throw new Error('Instagram konnte das Video nicht verarbeiten (Format/Länge prüfen: MP4, 9:16, max. 15 Min).')
