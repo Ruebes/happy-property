@@ -4,6 +4,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import { CustomSelect } from '../../../components/CustomSelect'
+import SocialGrowthPanel from '../../../components/crm/SocialGrowthPanel'
 
 // ── Social Media Studio ───────────────────────────────────────────────────────
 // Organische Posts für Facebook/Instagram/LinkedIn. Kategorien kommen aus
@@ -1517,6 +1518,8 @@ export default function SocialStudio() {
         {!loading && view === 'plan' && (<>
           <AutopilotPanel st={ap} err={apErr} canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'}
             onToggled={() => { void loadAp(); void fetchAll(true) }} onOpenSlot={openSlot} />
+
+          <SocialGrowthPanel />
 
           <KeywordAutomationCard canEdit={profile?.role === 'admin' || profile?.role === 'verwalter'} />
 

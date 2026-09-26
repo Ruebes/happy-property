@@ -31,6 +31,7 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
+import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides } from './carousel.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -204,17 +205,19 @@ async function imageModels(sb: SupabaseClient): Promise<{ primary: ImgModel; fal
   for (const s of (cfg.schedule ?? []).filter(x => x?.from && Date.parse(x.from) <= Date.now()).sort((a, b) => Date.parse(a.from) - Date.parse(b.from))) primary = { model: s.model, params: s.params }
   return { primary, fallback: cfg.fallback ?? cheap }
 }
-async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
+async function candidImageBytes(sb: SupabaseClient, prompt: string): Promise<{ bytes: Uint8Array; scene: string }> {
   const scene = await toCandidScene(prompt)
   const { primary, fallback } = await imageModels(sb)
-  let bytes: Uint8Array
   try {
-    bytes = await hfGenerateBytes(sb, primary.model, { ...(primary.params ?? {}), prompt: candidPrompt(scene) })
+    return { bytes: await hfGenerateBytes(sb, primary.model, { ...(primary.params ?? {}), prompt: candidPrompt(scene) }), scene }
   } catch (e) {
     if (primary.model === fallback.model) throw e
     console.warn(`[social-agent] Bildmodell ${primary.model} fehlgeschlagen, Rückfall auf ${fallback.model}:`, e instanceof Error ? e.message : String(e))
-    bytes = await hfGenerateBytes(sb, fallback.model, { ...(fallback.params ?? {}), prompt: candidPrompt(scene) })
+    return { bytes: await hfGenerateBytes(sb, fallback.model, { ...(fallback.params ?? {}), prompt: candidPrompt(scene) }), scene }
   }
+}
+async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
+  const { bytes, scene } = await candidImageBytes(sb, prompt)
   const path = `social/${postId}-${Date.now()}.png`
   const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
   if (upErr) throw new Error(`Upload: ${upErr.message}`)
@@ -372,12 +375,12 @@ const cyYmd = (d: Date) => new Date(d.getTime() + cyOffsetMinutes(d) * 60000).to
 const WEEKDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa']
 
 type ApKind = 'reel' | 'news' | 'lotte' | 'linkedin'
-interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string }
+interface ApSlot { dow: number; kind: ApKind; time: string; li_time?: string; format?: 'single' | 'carousel' }
 // li_slots getrennt von slots: ältere Studio-Versionen im Browser-Cache kennen die Art
 // 'linkedin' nicht und stürzten daran ab (weiße Seite, 26.9.2026).
 interface ApCfg { enabled?: boolean; reels_folder?: string; lotte_folder?: string; social_folder?: string; reel_platforms?: string[]; slots?: ApSlot[]; li_slots?: ApSlot[] }
 interface ApState { state?: 'pending' | 'ready' | 'failed'; attempts?: number; error?: string; task?: boolean }
-interface ApWant { key: string; kind: ApKind; ymd: string; when: Date; liWhen: Date | null }
+interface ApWant { key: string; kind: ApKind; ymd: string; when: Date; liWhen: Date | null; format?: 'single' | 'carousel' }
 async function autopilotCfg(sb: SupabaseClient): Promise<ApCfg> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_autopilot').maybeSingle()
   try { return JSON.parse((data as { value?: string } | null)?.value ?? '{}') as ApCfg } catch { return {} }
@@ -426,6 +429,64 @@ function ensureKeywordCta(caption: string, kw: string, line: string): string {
   const tail = lines.slice(i).join('\n').trim()
   return tail ? `${head}\n\n${line}\n\n${tail}` : `${head}\n\n${line}`
 }
+// ── Facebook-Caption ohne Kommentar-Köder ─────────────────────────────────────
+// Facebook stuft "Comment Baiting" (Aufforderung, ein bestimmtes Wort zu
+// kommentieren) herab. Für Facebook ersetzen wir deshalb jede Zeile mit so einer
+// Aufforderung durch einen Nachrichten-Hinweis und kappen die Hashtags auf 5.
+// Instagram bekommt weiter die Original-Caption (dort läuft die Stichwort-Automatik).
+const FB_BAIT_LINE = 'Schreib uns eine Nachricht, wir schicken dir alle Infos.'
+const FB_MAX_HASHTAGS = 5
+const FB_Q = `"'„“”‚‘’«»‹›`
+// Stichwort = ein GROSS geschriebenes Wort (mind. 2 Zeichen, optional mit #) oder EIN Wort
+// in Anführungszeichen. Zitate mit Leerzeichen („Zypern ist zu teuer") und Wortenden
+// (iOS) zählen nicht als Stichwort.
+const FB_WORD = `(?:(?<![\\p{L}\\p{N}_#])#?[A-ZÄÖÜ][A-ZÄÖÜ0-9]+(?![\\p{L}\\p{N}_])|[${FB_Q}][^${FB_Q}\\s]{1,30}[${FB_Q}])`
+const FB_FILL = '(?:(?:einfach|gern|gerne|jetzt|kurz|hier|unten|uns|mir|mal|doch|nur)\\s+){0,3}'
+const FB_BAIT_RES = [
+  // Kommentier PAPHOS / Kommentiere „PAPHOS" / Kommentiere einfach mit dem Wort PAPHOS
+  new RegExp(`(?<!\\p{L})[Kk]ommentier(?:e)?\\s+${FB_FILL}(?:mit\\s+)?(?:(?:dem|das)\\s+(?:Wort|Stichwort)\\s+)?${FB_WORD}`, 'u'),
+  // Ein Kommentar mit PAPHOS / Kommentar: „PAPHOS"
+  new RegExp(`(?<!\\p{L})[Kk]ommentar(?:\\s*:|\\s+mit)?\\s+(?:(?:dem|das)\\s+(?:Wort|Stichwort)\\s+)?${FB_WORD}`, 'u'),
+  // Schreib PAPHOS in die Kommentare / Schreibe uns „PAPHOS" unten in die Kommentare / als Kommentar
+  new RegExp(`(?<!\\p{L})[Ss]chreib(?:e|t)?\\s+${FB_FILL}(?:(?:das|dem)\\s+(?:Wort|Stichwort)\\s+)?${FB_WORD}\\s+${FB_FILL}(?:in\\s+(?:die|den)\\s+Kommentar|als\\s+Kommentar|unter\\s+(?:den|diesen)\\s+(?:Post|Beitrag))`, 'u'),
+  // Wer PAPHOS kommentiert, ... / Einfach PAPHOS kommentieren
+  new RegExp(`(?<!\\p{L})(?:[Ww]er|[Ee]infach|[Gg]erne?)\\s+${FB_WORD}\\s+(?:in\\s+die\\s+Kommentare\\s+schreib|kommentier)`, 'u'),
+  // ... PAPHOS in die Kommentare
+  new RegExp(`${FB_WORD}\\s+${FB_FILL}in\\s+die\\s+Kommentare`, 'u'),
+]
+const FB_TAG_RE = /(^|[^\p{L}\p{N}_&/])#([\p{L}_][\p{L}\p{N}_]*)/gu
+const FB_HAS_TAG = /(^|[^\p{L}\p{N}_&/])#[\p{L}_]/u
+function isCommentBaitLine(line: string): boolean {
+  return FB_BAIT_RES.some(re => re.test(line))
+}
+function fbCaption(text: string | null | undefined): string {
+  const src = String(text ?? '')
+  if (!src.trim()) return src
+  // 1) Köder-Zeilen ersetzen (der Hinweis steht nur einmal, weitere Köder-Zeilen entfallen)
+  let hinted = src.includes(FB_BAIT_LINE)
+  const lines: string[] = []
+  for (const line of src.split(/\r?\n/)) {
+    if (!isCommentBaitLine(line)) { lines.push(line); continue }
+    if (!hinted) { lines.push(FB_BAIT_LINE); hinted = true }
+  }
+  // 2) Hashtags auf 5 kappen. Hashtags im Fließtext zählen zuerst und bleiben als
+  //    Wort stehen (nur das # fällt weg), reine Hashtag-Zeilen werden gekürzt.
+  const isTagLine = (l: string) => FB_HAS_TAG.test(l) && /^[\s·•|,.\p{Extended_Pictographic}\uFE0F\u200D]*$/u.test(l.replace(FB_TAG_RE, '$1'))
+  let budget = FB_MAX_HASHTAGS
+  const take = () => (budget > 0 ? (budget--, true) : false)
+  const inText = lines.map(l => (isTagLine(l) ? l : l.replace(FB_TAG_RE, (m, pre: string, tag: string) => (take() ? m : `${pre}${tag}`))))
+  const out: string[] = []
+  for (const l of inText) {
+    if (!isTagLine(l)) { out.push(l); continue }
+    const kept = l.replace(FB_TAG_RE, (m, pre: string) => (take() ? m : pre)).replace(/[ \t]{2,}/g, ' ').trim()
+    if (kept && !/^[\s·•|,.]*$/.test(kept)) out.push(kept)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
+}
+// Zugangsdaten nie speichern oder zurückgeben (Fehlertexte können die URL enthalten)
+function redactToken(s: unknown): string {
+  return String(s ?? '').replace(/access_token=[^&\s)"\\]+/g, 'access_token=[entfernt]').replace(/\bEAA[A-Za-z0-9]{30,}/g, '[entfernt]')
+}
 // Wie weit im Voraus je Art erzeugt wird. Reels (Inhalt steht ja fest) so weit
 // die Warteschlange reicht, Lotte eine Woche, News + LinkedIn 3 Tage (aktuell
 // genug, und Sven sieht die nächsten Tage immer fertig in der Vorschau).
@@ -444,7 +505,7 @@ function autopilotSlots(cfg: ApCfg, nowMs: number, days: number): ApWant[] {
       const lead = when.getTime() - nowMs
       if (lead < 15 * 60000) continue                                   // zu knapp oder vorbei
       const liWhen = s.li_time ? cyAt(ymd, s.li_time) : null
-      out.push({ key: `${ymd}|${s.kind}`, kind: s.kind, ymd, when, liWhen: liWhen && liWhen.getTime() - nowMs > 15 * 60000 ? liWhen : null })
+      out.push({ key: `${ymd}|${s.kind}`, kind: s.kind, ymd, when, liWhen: liWhen && liWhen.getTime() - nowMs > 15 * 60000 ? liWhen : null, format: s.format })
     }
   }
   return out.sort((a, b) => a.when.getTime() - b.when.getTime())
@@ -620,7 +681,7 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
   if (o.liPostId) wants.push('- linkedin_caption: professioneller, persönlicher Ton (Ich-Perspektive Sven), mehr Substanz und Einordnung, Absätze mit Luft, genau 3 dezente Hashtags. 1200–2000 Zeichen.')
   if (o.wantNewsletter) wants.push('- newsletter_subject + newsletter_html: AUSFÜHRLICH (300–500 Wörter), sauberes HTML (h2/p/ul/strong, KEINE Bilder), Anrede „Hallo {{vorname}}", Thema für Investoren/Auswanderer einordnen, Quelle als Link, am Ende Einladung zum Gespräch mit Link https://portal.happy-property.com/termin .')
   const resp2 = await claude(anthropicKey, {
-    system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Rufe am Ende GENAU EINMAL set_outputs auf.`,
+    system: `${BRAND}\n\nDu machst aus einer News-Idee fertige, sofort nutzbare Inhalte. Erfinde keine Zahlen; nutze nur, was die Idee hergibt, und ordne ein. Nenne keine Parteien, Politiker, Kandidaten oder Wahlen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Behörde), sonst zeigt Meta den Beitrag kaum Nicht-Followern. Rufe am Ende GENAU EINMAL set_outputs auf.`,
     messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '—'}\nPost-Winkel: ${idea.angle}\n\nERSTELLE:\n${wants.join('\n')}\n- image_prompt: passend zum Thema (immer).` }],
     tools: [outTool], tool_choice: { type: 'tool', name: 'set_outputs' }, max_tokens: 4000,
   })
@@ -652,6 +713,78 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
       if (urls.length) await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: stamp() }).eq('id', o.liPostId)
     }
   }
+}
+
+// ── News-Karussell: 6 bis 8 gestaltete Slides statt Einzelbild (Sven 26.9.2026) ──
+// Titel-Slide mit echtem Handyfoto-Look (Higgsfield), danach Zahlen/Erklärung/
+// Checkliste auf Creme, Schluss-Slide Navy mit Aufruf. Texte kommen von Claude,
+// nur aus der News-Idee (keine erfundenen Zahlen).
+async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, postId: string, ctaKeyword: string | null): Promise<void> {
+  const stamp = () => new Date().toISOString()
+  const tool = {
+    name: 'set_carousel', description: 'Fertiges Karussell.',
+    input_schema: { type: 'object', properties: {
+      caption: { type: 'string', description: 'Caption für Instagram + Facebook' },
+      cover_image_prompt: { type: 'string', description: 'Englisch: alltägliche, echte Szene passend zum Thema, wie ein Handyfoto (Ort, Blickwinkel, Tageszeit). Kein Text im Bild.' },
+      slides: { type: 'array', items: { type: 'object', properties: {
+        type: { type: 'string', enum: ['cover', 'fact', 'point', 'list', 'cta'] },
+        kicker: { type: 'string' }, title: { type: 'string' }, subtitle: { type: 'string' },
+        value: { type: 'string' }, label: { type: 'string' }, text: { type: 'string' }, source: { type: 'string' },
+        body: { type: 'string' }, items: { type: 'array', items: { type: 'string' } }, button: { type: 'string' },
+      }, required: ['type'] } },
+    }, required: ['caption', 'cover_image_prompt', 'slides'] },
+  }
+  const ctaRule = ctaKeyword
+    ? `Letzte Slide (cta): title z. B. "Den ganzen Report willst du?", body ein Satz, button genau "Kommentiere ${ctaKeyword}". Die Caption endet mit: Kommentiere ${ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht.`
+    : 'Letzte Slide (cta): title z. B. "Speicher dir das für später", body ein Satz, button genau "Beitrag speichern". Keine Kommentar-Stichwörter als Aufforderung, stattdessen in der Caption eine echte Frage an die Community.'
+  const resp = await claude(anthropicKey, {
+    system: `${BRAND}\n\nDu baust aus einer News ein Instagram-Karussell (6 bis 8 Slides), das man speichern will: klare Zahlen, verständlich eingeordnet, was es für Käufer und Kapitalanleger bedeutet. NUR Fakten aus der Idee, keine erfundenen Zahlen, keine Renditeprognosen. KEINE Parteien, Politiker, Kandidaten oder Wahlen nennen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Volksentscheid, Behörde), sonst stuft Meta den Beitrag als politisch ein und zeigt ihn kaum Nicht-Followern. ECHTE UMLAUTE (ä, ö, ü, ß) in jeder Slide, nie ae/oe/ue/ss als Ersatz. Zeichenlimits strikt einhalten (sonst wird gekürzt): cover title max. 45, subtitle max. 70, kicker max. 28; fact value max. 9 Zeichen (z. B. "1.241" oder "+8,9 %"), label max. 60, text max. 170, source nur Name der Quelle; point title max. 55, body max. 320; list title max. 55, 3 bis 4 items je max. 65; cta title max. 45, body max. 140. Reihenfolge: cover, dann 3 bis 6 Slides aus fact/point/list, dann cta. Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), dann 2 bis 3 kurze Absätze, dann Aufruf, dann 3 bis 5 Hashtags. Rufe GENAU EINMAL set_carousel auf.`,
+    messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '-'}\nWinkel: ${idea.angle}\n\n${ctaRule}` }],
+    tools: [tool], tool_choice: { type: 'tool', name: 'set_carousel' }, max_tokens: 4000,
+  })
+  const out = (((resp.content ?? []) as Array<{ type: string; name?: string; input?: { caption?: string; cover_image_prompt?: string; slides?: unknown[] } }>).find(b => b.type === 'tool_use' && b.name === 'set_carousel')?.input ?? {})
+  if (!out.caption || !out.slides) throw new Error('Karussell-Text konnte nicht erstellt werden.')
+  const clean = (v: unknown): unknown => typeof v === 'string' ? noDash(v) : Array.isArray(v) ? v.map(clean) : (v && typeof v === 'object') ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, clean(x)])) : v
+  let rawSlides: unknown = clean(out.slides)
+  // Transliterationen (fuer, Waehrend, heisst) sind ein Tell: einmal reparieren lassen
+  const TRANSLIT = /\b(fuer|ueber|koennen|koennte|muessen|waehrend|haelt|zurueck|naechste|spaeter|heisst|groesser|groesste|laeuft|Eigentuemer|Kaeufer|Waehrung|Laender|haeufig|moeglich|natuerlich|wuerde|fuehrt|gegenueber|Gruenen?|aendern|Aenderung|Loesung|oeffentlich|Buero|Steuererklaerung)\b/i
+  if (TRANSLIT.test(JSON.stringify(rawSlides))) {
+    const fix = await claude(anthropicKey, {
+      system: 'Du korrigierst deutsche Texte: ersetze ae/oe/ue/ss-Umschreibungen durch echte Umlaute und ß, wo das Wort sie verlangt (fuer→für, Waehrend→Während, heisst→heißt). Sonst nichts ändern. Gib das JSON-Array unverändert in der Struktur zurück, nur als JSON.',
+      messages: [{ role: 'user', content: JSON.stringify(rawSlides) }], max_tokens: 4000,
+    })
+    const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
+    try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
+    if (TRANSLIT.test(JSON.stringify(rawSlides))) throw new Error('Karussell-Texte ohne echte Umlaute, wird neu erstellt.')
+  }
+  const slides = normalizeSlides(rawSlides)
+  const n = slides.length
+  const base = Deno.env.get('SUPABASE_URL')
+  const ts = Date.now()
+  const urls: string[] = []
+  let scene = ''
+  for (let i = 0; i < n; i++) {
+    const s = slides[i]
+    let bytes: Uint8Array, ct = 'image/png', ext = 'png'
+    if (i === 0 && s.type === 'cover') {
+      try {
+        const img = await candidImageBytes(sb, out.cover_image_prompt || idea.headline)
+        scene = img.scene
+        bytes = await composeCover(img.bytes, await svgToPng(coverOverlaySvg(s, n)))
+        ct = 'image/jpeg'; ext = 'jpg'
+      } catch (e) {
+        console.warn('[social-agent] Karussell-Titelfoto fehlgeschlagen, Titel ohne Foto:', e instanceof Error ? e.message : String(e))
+        bytes = await svgToPng(slideSvg(s, i, n))
+      }
+    } else bytes = await svgToPng(slideSvg(s, i, n))
+    const path = `social/${postId}-car-${ts}-${i + 1}.${ext}`
+    const { error } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: ct, upsert: true })
+    if (error) throw new Error(`Upload Slide ${i + 1}: ${error.message}`)
+    urls.push(`${base}/storage/v1/object/public/ad-creatives/${path}`)
+  }
+  let caption = noDash(out.caption)
+  if (ctaKeyword) caption = ensureKeywordCta(caption, ctaKeyword, `Kommentiere ${ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht. 📩`)
+  await sb.from('social_posts').update({ content: caption, image_urls: urls, image_url: urls[0], format: 'carousel', image_prompt: scene || out.cover_image_prompt || null, updated_at: stamp() }).eq('id', postId)
 }
 
 const LOTTE_SYSTEM = `Du bist Lotte: Svens schokobraune Labrador-Hündin und die heimliche Chefin im Büro
@@ -1531,8 +1664,14 @@ Regeln:
         try {
           const posts = await fetch(`${G}/${pageId}/posts?fields=id,message&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; message?: string }>; error?: { message?: string } }
           if (posts.error) throw new Error(posts.error.message)
+          let fbErrN = 0
           for (const post of posts.data ?? []) {
-            const cs2 = await fetch(`${G}/${post.id}/comments?fields=id,from{name,id},message,created_time,comments.limit(10){from}&filter=stream&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string; comments?: { data?: Array<{ from?: { id?: string } }> } }> }
+            const cs2 = await fetch(`${G}/${post.id}/comments?fields=id,from{name,id},message,created_time,comments.limit(10){from}&filter=stream&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; from?: { name?: string; id?: string }; message?: string; created_time?: string; comments?: { data?: Array<{ from?: { id?: string } }> } }>; error?: { message?: string; code?: number } }
+            if (cs2.error) {
+              // Graph-Fehler nicht mehr verschlucken (wie bei den IG-Kommentaren, max. 3 aufführen)
+              if (++fbErrN <= 3) errs.push(`fb_comments ${post.id}: ${redactToken(`${cs2.error.message ?? 'unbekannter Fehler'}${cs2.error.code ? ` (#${cs2.error.code})` : ''}`).slice(0, 200)}`)
+              continue
+            }
             for (const c of cs2.data ?? []) {
               if (!c.message || c.from?.id === pageId) continue
               // Schon von der Seite beantwortet (egal ob per App oder Portal) → überspringen
@@ -1540,6 +1679,7 @@ Regeln:
               await up({ _bucket: 'fb_comments', platform: 'facebook', kind: 'comment', external_id: c.id, thread_ref: post.id, post_preview: (post.message ?? '').slice(0, 120), author_name: c.from?.name ?? null, author_id: c.from?.id ?? null, text: c.message, happened_at: c.created_time ?? null, raw: c })
             }
           }
+          if (fbErrN > 3) errs.push(`fb_comments: ${fbErrN - 3} weitere Posts mit Fehler`)
         } catch (e) { errs.push(`fb_comments: ${(e as Error).message}`) }
         // FB- + IG-Direktnachrichten (Conversations)
         for (const plat of ['messenger', 'instagram'] as const) {
@@ -1559,22 +1699,43 @@ Regeln:
             }
           } catch (e) { errs.push(`${plat}_msgs: ${(e as Error).message}`) }
         }
-        // IG-Kommentare (letzte 25 Medien)
+        // IG-Kommentare (letzte 25 Medien). Token im Header, jeder Graph-Fehler landet
+        // in errors (vorher wurde er lautlos verschluckt), author_id = from.id.
         if (igId) {
+          type GErr = { error?: { message?: string; code?: number } }
+          const igGet = async <T>(path: string, params: Record<string, string>): Promise<T & GErr> => {
+            const u = new URL(`${G}/${path}`)
+            for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v)
+            try {
+              const r = await fetch(u, { headers: { Authorization: `Bearer ${pageToken}` }, signal: AbortSignal.timeout(25000) })
+              const d = await r.json().catch(() => null) as (T & GErr) | null
+              return d ?? ({ error: { message: `HTTP ${r.status}` } } as T & GErr)
+            } catch (e) { return { error: { message: (e as Error).message } } as T & GErr }
+          }
+          const gMsg = (e: GErr['error']) => redactToken(`${e?.message ?? 'unbekannter Fehler'}${e?.code ? ` (#${e.code})` : ''}`).slice(0, 200)
           try {
-            const igMe = await fetch(`${G}/${igId}?fields=username&access_token=${pageToken}`).then(r => r.json()) as { username?: string }
+            const igMe = await igGet<{ username?: string }>(igId, { fields: 'username' })
+            if (igMe.error) errs.push(`ig_me: ${gMsg(igMe.error)}`)
             const igUser = igMe.username ?? 'happy_property_cyprus'
-            const media = await fetch(`${G}/${igId}/media?fields=id,caption&limit=25&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; caption?: string }>; error?: { message?: string } }
-            if (media.error) throw new Error(media.error.message)
+            const media = await igGet<{ data?: Array<{ id: string; caption?: string }> }>(`${igId}/media`, { fields: 'id,caption', limit: '25' })
+            if (media.error) throw new Error(gMsg(media.error))
+            let igErrN = 0
             for (const md of media.data ?? []) {
-              const cs3 = await fetch(`${G}/${md.id}/comments?fields=id,username,text,timestamp,replies.limit(10){username}&limit=50&access_token=${pageToken}`).then(r => r.json()) as { data?: Array<{ id: string; username?: string; text?: string; timestamp?: string; replies?: { data?: Array<{ username?: string }> } }> }
+              const cs3 = await igGet<{ data?: Array<{ id: string; from?: { id?: string; username?: string }; username?: string; text?: string; timestamp?: string; replies?: { data?: Array<{ username?: string }> } }> }>(`${md.id}/comments`, { fields: 'id,from,username,text,timestamp,replies.limit(10){username}', limit: '50' })
+              if (cs3.error) {
+                // je Medium ein Fehler ist meist derselbe (Rechte/Token) - nur die ersten 3 aufführen
+                if (++igErrN <= 3) errs.push(`ig_comments ${md.id}: ${gMsg(cs3.error)}`)
+                continue
+              }
               for (const c of cs3.data ?? []) {
-                if (!c.text || c.username === igUser) continue
+                const uname = c.username ?? c.from?.username
+                if (!c.text || uname === igUser || c.from?.id === igId) continue
                 if ((c.replies?.data ?? []).some(r2 => r2.username === igUser)) continue
-                await up({ _bucket: 'ig_comments', platform: 'instagram', kind: 'comment', external_id: c.id, thread_ref: md.id, post_preview: (md.caption ?? '').slice(0, 120), author_name: c.username ?? null, author_id: null, text: c.text, happened_at: c.timestamp ?? null, raw: c })
+                await up({ _bucket: 'ig_comments', platform: 'instagram', kind: 'comment', external_id: c.id, thread_ref: md.id, post_preview: (md.caption ?? '').slice(0, 120), author_name: uname ?? null, author_id: c.from?.id ?? null, text: c.text, happened_at: c.timestamp ?? null, raw: c })
               }
             }
-          } catch (e) { errs.push(`ig_comments: ${(e as Error).message}`) }
+            if (igErrN > 3) errs.push(`ig_comments: ${igErrN - 3} weitere Medien mit Fehler`)
+          } catch (e) { errs.push(`ig_comments: ${redactToken((e as Error).message)}`) }
         }
       }
       // YouTube-Kommentare (wenn OAuth-Connector eingerichtet)
@@ -1597,7 +1758,11 @@ Regeln:
           }
         } catch (e) { errs.push(`yt: ${(e as Error).message}`) }
       }
-      return json({ ok: true, ...out, errors: errs })
+      // Letzten Lauf merken (für die Anzeige im Studio), Fehlertexte ohne Zugangsdaten
+      const errors = errs.map(e => redactToken(e).slice(0, 300))
+      const { error: lrErr } = await sb.from('crm_settings').upsert({ key: 'social_interactions_last_run', value: JSON.stringify({ at: new Date().toISOString(), counts: out, errors }), updated_at: new Date().toISOString() }, { onConflict: 'key' })
+      if (lrErr) console.error('[social-agent] interactions last_run:', lrErr.message)
+      return json({ ok: true, ...out, errors })
     }
 
     // ── Interaktion beantworten (Kommentar-Reply / DM) ───────────────────────
@@ -1997,7 +2162,8 @@ Regeln:
             await sb.from('social_ideas').update({ status: 'verwendet', used_post_ids: [postId, liPostId].filter(Boolean) }).eq('id', idea.id)
             // Di, Fr, So: Stichwort-Aufforderung statt allgemeiner Handlungsaufforderung (nur wenn die Automatik an ist)
             const newsKw = KW_NEWS_DOWS.includes(new Date(`${slot.ymd}T12:00:00Z`).getUTCDay()) ? await keywordCta(sb) : null
-            await ideaContent(sb, anthropicKey, idea, { metaPostId: postId, liPostId, wantNewsletter: false, imgCount: 1, ctaKeyword: newsKw })
+            if (slot.format === 'carousel') await buildNewsCarousel(sb, anthropicKey, idea, postId, newsKw)
+            else await ideaContent(sb, anthropicKey, idea, { metaPostId: postId, liPostId, wantNewsletter: false, imgCount: 1, ctaKeyword: newsKw })
             const { data: chk } = await sb.from('social_posts').select('image_url').eq('id', postId).maybeSingle()
             if (!(chk as { image_url?: string | null } | null)?.image_url) throw new Error('Bild konnte nicht erzeugt werden.')
             const ready = { status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }
@@ -2160,10 +2326,12 @@ Regeln:
       }
       // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
       if (p.platforms.includes('facebook') && pageId && !results.facebook) {
+        // Facebook-Text ohne Kommentar-Köder und mit max. 5 Hashtags (Instagram behält das Original)
+        const fbText = fbCaption(p.content)
         try {
           if (videoUrl) {
             // Video/Reel: Facebook nimmt eine öffentliche Datei-URL direkt an
-            const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/videos`, { method: 'POST', body: new URLSearchParams({ file_url: videoUrl, description: p.content, access_token: pageToken }) }).then(x => x.json())
+            const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/videos`, { method: 'POST', body: new URLSearchParams({ file_url: videoUrl, description: fbText, access_token: pageToken }) }).then(x => x.json())
             if (r.error) throw new Error(r.error.message)
             results.facebook = { ok: true, id: r.id }
           } else if (isCarousel) {
@@ -2174,7 +2342,7 @@ Regeln:
               if (r.error) throw new Error(r.error.message)
               mediaIds.push(r.id)
             }
-            const params = new URLSearchParams({ message: p.content, access_token: pageToken })
+            const params = new URLSearchParams({ message: fbText, access_token: pageToken })
             mediaIds.forEach((id, i) => params.append(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })))
             const r = await fetch(`https://graph.facebook.com/v21.0/${pageId}/feed`, { method: 'POST', body: params }).then(x => x.json())
             if (r.error) throw new Error(r.error.message)
@@ -2182,8 +2350,8 @@ Regeln:
           } else {
             const url = p.image_url ? `https://graph.facebook.com/v21.0/${pageId}/photos` : `https://graph.facebook.com/v21.0/${pageId}/feed`
             const params = new URLSearchParams(p.image_url
-              ? { url: p.image_url, caption: p.content, access_token: pageToken }
-              : { message: p.content, access_token: pageToken })
+              ? { url: p.image_url, caption: fbText, access_token: pageToken }
+              : { message: fbText, access_token: pageToken })
             const r = await fetch(url, { method: 'POST', body: params }).then(x => x.json())
             if (r.error) throw new Error(r.error.message)
             results.facebook = { ok: true, id: r.post_id ?? r.id }
@@ -2232,6 +2400,13 @@ Regeln:
               const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ image_url: u, is_carousel_item: 'true', access_token: pageToken }) }).then(x => x.json())
               if (c.error) throw new Error(c.error.message)
               children.push(c.id)
+            }
+            for (const cid of children) {                       // Kind-Container müssen fertig sein
+              for (let i = 0; i < 8; i++) {
+                const st = await fetch(`https://graph.facebook.com/v21.0/${cid}?fields=status_code&access_token=${pageToken}`).then(x => x.json()).catch(() => ({})) as { status_code?: string }
+                if (st.status_code === 'FINISHED' || st.status_code === 'ERROR') break
+                await new Promise(res => setTimeout(res, 2000))
+              }
             }
             const c = await fetch(`https://graph.facebook.com/v21.0/${igId}/media`, { method: 'POST', body: new URLSearchParams({ media_type: 'CAROUSEL', children: children.join(','), caption: p.content, access_token: pageToken }) }).then(x => x.json())
             if (c.error) throw new Error(c.error.message)
