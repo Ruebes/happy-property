@@ -216,21 +216,35 @@ async function candidImageBytes(sb: SupabaseClient, prompt: string): Promise<{ b
     return { bytes: await hfGenerateBytes(sb, fallback.model, { ...(fallback.params ?? {}), prompt: candidPrompt(scene) }), scene }
   }
 }
-// Hook-Overlay für Einzelbilder: Standard EIN, abschaltbar über crm_settings
-// key social_image_hook ({"enabled":false}). Nur dort, wo der Aufrufer einen
-// Hook liefert; Lotte läuft über generateLotteImage und bleibt immer ohne Text.
-async function hookOverlayOn(sb: SupabaseClient): Promise<boolean> {
+// Hook-Overlay für Einzelbilder. crm_settings key social_image_hook:
+//   {"mode":"test"} (Standard) = abwechselnd mit und ohne Hook, damit sich an
+//     der eigenen Zielgruppe messen lässt, was wirkt. Die Studien widersprechen
+//     sich (Fanpage Karma +38 % Reichweite, Agorapulse das Gegenteil), deshalb
+//     wird geprüft statt geglaubt. Auswertung: View social_format_performance.
+//   {"mode":"on"} / {"mode":"off"} = immer bzw. nie.
+// Lotte läuft über generateLotteImage und bleibt immer ohne Text.
+async function useHookOverlay(sb: SupabaseClient): Promise<boolean> {
   const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_image_hook').maybeSingle()
-  try { return (JSON.parse((data as { value?: string } | null)?.value ?? '{}') as { enabled?: boolean }).enabled !== false } catch { return true }
+  let mode = 'test'
+  try { mode = (JSON.parse((data as { value?: string } | null)?.value ?? '{}') as { mode?: string }).mode ?? 'test' } catch { /* Standard */ }
+  if (mode === 'on') return true
+  if (mode === 'off') return false
+  // Test: die Posts abwechseln lassen. Grundlage ist die Zahl der Einzelbilder
+  // mit Hook gegenüber denen ohne, damit beide Gruppen gleich groß bleiben.
+  const { count: withHook } = await sb.from('social_posts').select('id', { count: 'exact', head: true }).not('image_hook', 'is', null)
+  return (withHook ?? 0) % 2 === 0
 }
 
 async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string, hook?: string): Promise<string> {
   const { bytes: raw, scene } = await candidImageBytes(sb, prompt)
   let bytes = raw, ct = 'image/png', ext = 'png'
-  if (hook && hook.trim() && await hookOverlayOn(sb)) {
+  let usedHook: string | null = null
+  if (hook && hook.trim() && await useHookOverlay(sb)) {
+    const text = noDash(hook.trim())
     try {
-      bytes = await composeCover(raw, await svgToPng(hookOverlaySvg(noDash(hook.trim()))))
+      bytes = await composeCover(raw, await svgToPng(hookOverlaySvg(text)))
       ct = 'image/jpeg'; ext = 'jpg'
+      usedHook = text
     } catch (e) {
       console.warn('[social-agent] Hook-Overlay fehlgeschlagen, Bild ohne Text:', e instanceof Error ? e.message : String(e))
     }
@@ -241,7 +255,7 @@ async function generatePostImage(sb: SupabaseClient, postId: string, prompt: str
   const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
   const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
   const list = Array.isArray((cur as { image_urls?: string[] } | null)?.image_urls) ? (cur as { image_urls: string[] }).image_urls : []
-  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: scene, updated_at: new Date().toISOString() }).eq('id', postId)
+  await sb.from('social_posts').update({ image_urls: [...list, url], image_url: list[0] ?? url, image_prompt: scene, image_hook: usedHook, updated_at: new Date().toISOString() }).eq('id', postId)
   return url
 }
 
@@ -869,7 +883,7 @@ async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea:
     ? `Letzte Slide (cta): title z. B. "Den ganzen Report willst du?", body ein Satz, button genau "Kommentiere ${ctaKeyword}". Die Caption endet mit: Kommentiere ${ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht.`
     : 'Letzte Slide (cta): title z. B. "Speicher dir das für später", body ein Satz, button genau "Beitrag speichern". Keine Kommentar-Stichwörter als Aufforderung, stattdessen in der Caption eine echte Frage an die Community.'
   const resp = await claude(anthropicKey, {
-    system: `${BRAND}\n\nDu baust aus einer News ein Instagram-Karussell (7 bis 9 Slides), das man speichern und weiterschicken will: klare Zahlen, verständlich eingeordnet, was es für Käufer und Kapitalanleger bedeutet. NUR Fakten aus der Idee, keine erfundenen Zahlen. KEINE RENDITE- ODER ERTRAGSZAHLEN auf den Slides, auch nicht aus der Vorlage übernommen: keine Prozent pro Jahr, kein Gesamtertrag, keine Mietrendite, keine Wertsteigerung in Prozent. Steuersätze, Kaufpreise, Transaktionszahlen und Marktdaten sind erlaubt. KEINE Parteien, Politiker, Kandidaten oder Wahlen nennen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Volksentscheid, Behörde), sonst stuft Meta den Beitrag als politisch ein und zeigt ihn kaum Nicht-Followern. ECHTE UMLAUTE (ä, ö, ü, ß) in jeder Slide, nie ae/oe/ue/ss als Ersatz. DEUTSCHE WÖRTER, wo es ein gängiges gibt: Wiederverkauf statt Resale, Umsatz oder Volumen statt Turnover, Nachfrage statt Demand. Eingebürgerte Wörter wie Deal oder Investment sind in Ordnung.
+    system: `${BRAND}\n\nDu baust aus einer News ein Instagram-Karussell (7 bis 9 Slides), das man speichern und weiterschicken will: klare Zahlen, verständlich eingeordnet, was es für Käufer und Kapitalanleger bedeutet. NUR Fakten aus der Idee, keine erfundenen Zahlen. KEINE Parteien, Politiker, Kandidaten oder Wahlen nennen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Volksentscheid, Behörde), sonst stuft Meta den Beitrag als politisch ein und zeigt ihn kaum Nicht-Followern. ECHTE UMLAUTE (ä, ö, ü, ß) in jeder Slide, nie ae/oe/ue/ss als Ersatz. DEUTSCHE WÖRTER, wo es ein gängiges gibt: Wiederverkauf statt Resale, Umsatz oder Volumen statt Turnover, Nachfrage statt Demand. Eingebürgerte Wörter wie Deal oder Investment sind in Ordnung.
 
 REIHENFOLGE, genau so: cover, stake, dann 3 bis 5 Slides aus fact/point/list, dann recap, dann cta.
 
@@ -905,20 +919,6 @@ Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), 
     const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
     try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
     if (TRANSLIT.test(JSON.stringify(rawSlides))) throw new Error('Karussell-Texte ohne echte Umlaute, wird neu erstellt.')
-  }
-  // Renditeversprechen gehören nicht auf eine Slide. Im Fließtext einer Caption
-  // gehen sie unter, groß auf einem Bild sind sie eine Zusage: Svens Regel (keine
-  // Renditeprognosen in Werbemitteln) und bei Meta ein Ablehnungsgrund. Der
-  // Quelltext eines Posts kann so eine Zahl enthalten, die Slides dürfen es nicht.
-  const YIELD = /(?:\d+(?:[.,]\d+)?\s*(?:bis|-|–)\s*)?\d+(?:[.,]\d+)?\s*(?:%|Prozent)\s*(?:p\.?\s?a\.?|pro\s+Jahr|[a-zäöüß]*rendite|Gesamtertrag|Wertsteigerung)|(?:[a-zäöüß]*rendite|Gesamtertrag|Wertsteigerung)\D{0,24}\d+(?:[.,]\d+)?\s*(?:%|Prozent)/i
-  if (YIELD.test(JSON.stringify(rawSlides))) {
-    const fix = await claude(anthropicKey, {
-      system: 'Du entfernst Rendite- und Ertragsversprechen aus Slide-Texten. Jede Angabe wie "11-14 % p.a.", "8 % Mietrendite" oder "Gesamtertrag 12 Prozent" muss raus. Formuliere die Aussage ohne die Zahl neu, sachlich und ohne Ersatzversprechen (z. B. "Neubau mit Title Deeds"). Steuersätze, Preise, Transaktionszahlen und Marktdaten bleiben unverändert. Sonst nichts ändern. Gib das JSON-Array unverändert in der Struktur zurück, nur als JSON.',
-      messages: [{ role: 'user', content: JSON.stringify(rawSlides) }], max_tokens: 4000,
-    })
-    const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
-    try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
-    if (YIELD.test(JSON.stringify(rawSlides))) throw new Error('Karussell mit Renditeversprechen, wird neu erstellt.')
   }
   const slides = normalizeSlides(rawSlides)
   const n = slides.length
@@ -970,7 +970,9 @@ Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), 
   }
   let caption = noDash(out.caption)
   if (ctaKeyword) caption = ensureKeywordCta(caption, ctaKeyword, `Kommentiere ${ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht. 📩`)
-  await sb.from('social_posts').update({ content: caption, image_urls: urls, image_url: urls[0], format: 'carousel', image_prompt: scene || out.cover_image_prompt || null, updated_at: stamp() }).eq('id', postId)
+  // Der Cover-Titel IST der Hook im Bild: fuer die Auswertung mitschreiben.
+  const coverTitle = slides[0].type === 'cover' ? slides[0].title : null
+  await sb.from('social_posts').update({ content: caption, image_urls: urls, image_url: urls[0], format: 'carousel', image_prompt: scene || out.cover_image_prompt || null, image_hook: coverTitle, updated_at: stamp() }).eq('id', postId)
 }
 
 const LOTTE_SYSTEM = `Du bist Lotte: Svens schokobraune Labrador-Hündin und die heimliche Chefin im Büro
