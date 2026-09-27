@@ -31,7 +31,7 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
-import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides } from './carousel.ts'
+import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg } from './carousel.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -216,10 +216,27 @@ async function candidImageBytes(sb: SupabaseClient, prompt: string): Promise<{ b
     return { bytes: await hfGenerateBytes(sb, fallback.model, { ...(fallback.params ?? {}), prompt: candidPrompt(scene) }), scene }
   }
 }
-async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string): Promise<string> {
-  const { bytes, scene } = await candidImageBytes(sb, prompt)
-  const path = `social/${postId}-${Date.now()}.png`
-  const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+// Hook-Overlay für Einzelbilder: Standard EIN, abschaltbar über crm_settings
+// key social_image_hook ({"enabled":false}). Nur dort, wo der Aufrufer einen
+// Hook liefert; Lotte läuft über generateLotteImage und bleibt immer ohne Text.
+async function hookOverlayOn(sb: SupabaseClient): Promise<boolean> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'social_image_hook').maybeSingle()
+  try { return (JSON.parse((data as { value?: string } | null)?.value ?? '{}') as { enabled?: boolean }).enabled !== false } catch { return true }
+}
+
+async function generatePostImage(sb: SupabaseClient, postId: string, prompt: string, hook?: string): Promise<string> {
+  const { bytes: raw, scene } = await candidImageBytes(sb, prompt)
+  let bytes = raw, ct = 'image/png', ext = 'png'
+  if (hook && hook.trim() && await hookOverlayOn(sb)) {
+    try {
+      bytes = await composeCover(raw, await svgToPng(hookOverlaySvg(noDash(hook.trim()))))
+      ct = 'image/jpeg'; ext = 'jpg'
+    } catch (e) {
+      console.warn('[social-agent] Hook-Overlay fehlgeschlagen, Bild ohne Text:', e instanceof Error ? e.message : String(e))
+    }
+  }
+  const path = `social/${postId}-${Date.now()}.${ext}`
+  const { error: upErr } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: ct, upsert: true })
   if (upErr) throw new Error(`Upload: ${upErr.message}`)
   const url = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/ad-creatives/${path}`
   const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', postId).maybeSingle()
@@ -670,6 +687,7 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
       newsletter_subject: { type: 'string', description: 'Betreff für den Newsletter' },
       newsletter_html: { type: 'string', description: 'Ausführlicher Newsletter als HTML' },
       image_prompt: { type: 'string', description: 'Englisch: eine ALLTÄGLICHE, echte Szene, wie sie jemand mit dem Handy fotografieren würde (Ort, Blickwinkel, Tageszeit, konkrete Details). Keine Drohnenaufnahme, kein goldenes Licht, keine Wörter wie photorealistic/cinematic. Kein Text im Bild.' },
+      image_hook: { type: 'string', description: 'Deutsch, max. 52 Zeichen, höchstens 6 Wörter: der Hook, der unten INS Bild gesetzt wird. Zahl mit Folge, Widerspruch, Schmerz oder Neugierlücke. Keine Themenbenennung, keine Überschrift, kein Punkt am Ende. Echte Umlaute.' },
     }, required: ['image_prompt'] },
   }
   const wants: string[] = []
@@ -705,7 +723,8 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
   if (primary && out.image_prompt) {
     for (let i = 1; i <= o.imgCount; i++) {
       const vary = o.imgCount > 1 ? ` — image ${i} of ${o.imgCount} of a carousel: vary subject, angle and lighting, keep one consistent photorealistic style.` : ''
-      await generatePostImage(sb, primary, `${out.image_prompt}${vary}`)
+      // Hook nur aufs erste Bild: in der Galerie ist das das Titelbild.
+      await generatePostImage(sb, primary, `${out.image_prompt}${vary}`, i === 1 ? out.image_hook : undefined)
     }
     if (o.liPostId && o.metaPostId) {
       const { data: cur } = await sb.from('social_posts').select('image_urls').eq('id', o.metaPostId).maybeSingle()
@@ -715,11 +734,123 @@ async function ideaContent(sb: SupabaseClient, anthropicKey: string, idea: { hea
   }
 }
 
-// ── News-Karussell: 6 bis 8 gestaltete Slides statt Einzelbild (Sven 26.9.2026) ──
-// Titel-Slide mit echtem Handyfoto-Look (Higgsfield), danach Zahlen/Erklärung/
-// Checkliste auf Creme, Schluss-Slide Navy mit Aufruf. Texte kommen von Claude,
-// nur aus der News-Idee (keine erfundenen Zahlen).
-async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, postId: string, ctaKeyword: string | null): Promise<void> {
+// Titelfoto aus dem Bestand: greift, wenn Higgsfield kein Bild liefert (leeres
+// Guthaben, Ausfall). Nimmt nur echte KI-Szenenfotos früherer Posts. Strikt
+// ausgeschlossen: Karussell-Slides und YouTube-Vorschaubilder (haben schon Text
+// drauf), Lotte (Hundefoto passt nicht auf eine News), Posts mit mehreren
+// Bildern (dort lässt sich der Prompt keinem einzelnen Bild zuordnen) und
+// Bilder, die selbst schon aus dem Bestand stammen. Bleibt nichts übrig, gibt
+// es kein Foto und der Titel steht auf Navy - besser als ein fremdes Motiv.
+const STOCK_BAD_PROMPT = /labrador|chocolate brown dog|\bdog\b|Lotte|Bestandsfoto|Vorhandenes Foto/i
+// Die Themen stehen auf Deutsch, die Bild-Prompts auf Englisch: beide Formen auf
+// denselben Schlüssel bringen, sonst trifft der Abgleich nie.
+const PLACES = /\b(paphos|limassol|larnaka|larnaca|nikosia|nicosia|zyper[a-zä]*|zyprisch[a-z]*|cyprus|cypriot|deutschland|deutsch[a-z]*|german[a-z]*|berlin[a-z]*|hamburg[a-z]*|münchen|muenchen|munich|frankfurt[a-z]*|köln|koeln|cologne)\b/gi
+const PLACE_KEY: Array<[RegExp, string]> = [
+  [/^(zyper|zyprisch|cyprus|cypriot)/, 'cyprus'],
+  [/^(deutsch|german)/, 'german'],
+  [/^(larnaka|larnaca)/, 'larnaca'],
+  [/^(nikosia|nicosia)/, 'nicosia'],
+  [/^(münchen|muenchen|munich)/, 'munich'],
+  [/^(köln|koeln|cologne)/, 'cologne'],
+  [/^berlin/, 'berlin'],
+  [/^hamburg/, 'hamburg'],
+  [/^frankfurt/, 'frankfurt'],
+]
+const placeSet = (t: string) => new Set((String(t ?? '').toLowerCase().match(PLACES) ?? []).map(w => {
+  for (const [re, key] of PLACE_KEY) if (re.test(w)) return key
+  return w
+}))
+// Orte hängen zusammen: Paphos liegt auf Zypern, Berlin in Deutschland. Ein
+// deutsches Motiv unter einer Zypern-Nachricht ist immer falsch, und umgekehrt.
+const CY_PLACES = new Set(['cyprus', 'paphos', 'limassol', 'larnaca', 'nicosia'])
+const DE_PLACES = new Set(['german', 'berlin', 'hamburg', 'munich', 'frankfurt', 'cologne'])
+function placeRegions(set: Set<string>): Set<string> {
+  const r = new Set<string>()
+  for (const w of set) { if (CY_PLACES.has(w)) r.add('cy'); if (DE_PLACES.has(w)) r.add('de') }
+  return r
+}
+// true, wenn das Motiv eine Region zeigt, um die es im Beitrag nicht geht.
+function wrongPlace(photoPrompt: string, wantRegions: Set<string>): boolean {
+  if (!wantRegions.size) return false
+  const have = placeRegions(placeSet(photoPrompt))
+  if (!have.size) return false
+  for (const r of have) if (!wantRegions.has(r)) return true
+  return false
+}
+
+// Titelfoto aus dem Bestand: greift, wenn Higgsfield kein Bild liefert (leeres
+// Guthaben, Ausfall). Nimmt nur echte KI-Szenenfotos früherer Posts. Strikt
+// ausgeschlossen: Karussell-Slides und YouTube-Vorschaubilder (haben schon Text
+// drauf), Lotte (Hundefoto passt nicht auf eine News), Posts mit mehreren
+// Bildern (dort lässt sich der Prompt keinem einzelnen Bild zuordnen) und
+// Motive aus der falschen Region. Bleibt nichts übrig, gibt es kein Foto und der
+// Titel steht auf Navy - besser als ein Motiv, das dem Text widerspricht.
+async function stockPhotoUrl(sb: SupabaseClient, hint: string, ownPostId?: string): Promise<string | null> {
+  const usable = (u: string): boolean => {
+    if (!u || u.includes('-car-')) return false
+    const file = u.split('/').pop() ?? ''
+    return !file.startsWith('yt-')
+  }
+  const want = placeSet(hint)
+  const wantR = placeRegions(want)
+  // Baut ein bestehender Post um, ist sein eigenes Foto die erste Wahl - aber nur,
+  // wenn es nicht die falsche Gegend zeigt. Sonst schleppt der Umbau einen alten
+  // Fehlgriff mit und stellt ihn groß auf den Titel.
+  if (ownPostId) {
+    const { data: own } = await sb.from('social_posts').select('image_urls, image_prompt').eq('id', ownPostId).maybeSingle()
+    const o = own as { image_urls?: string[] | null; image_prompt?: string | null } | null
+    if (o && !wrongPlace(o.image_prompt ?? '', wantR)) {
+      for (const u of (o.image_urls ?? [])) if (usable(u)) return u
+    }
+  }
+  const { data } = await sb.from('social_posts')
+    .select('image_urls, image_prompt, autopilot_slot, video_url, topic')
+    .not('image_prompt', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(80)
+  const rows = (data ?? []) as Array<{ image_urls?: string[] | null; image_prompt?: string | null; autopilot_slot?: string | null; video_url?: string | null; topic?: string | null }>
+  if (!wantR.size) return null
+  const scored: Array<{ url: string; score: number }> = []
+  for (const r of rows) {
+    if (r.video_url) continue
+    if (/lotte/i.test(r.autopilot_slot ?? '') || r.topic === 'weisheit') continue
+    const prompt = r.image_prompt ?? ''
+    if (prompt.length < 40 || STOCK_BAD_PROMPT.test(prompt)) continue
+    const imgs = (r.image_urls ?? []).filter(usable)
+    // Nur Ein-Bild-Posts: sonst gehört der Prompt nicht eindeutig zu diesem Bild.
+    if (imgs.length !== 1) continue
+    const have = placeSet(prompt)
+    const haveR = placeRegions(have)
+    if (!haveR.size || wrongPlace(prompt, wantR)) continue
+    let cities = 0
+    for (const w of have) if (want.has(w) && w !== 'cyprus' && w !== 'german') cities++
+    // Mehr abgedeckte Regionen schlagen weniger: bei „Deutschland oder Zypern"
+    // gewinnt das Bild, das beide zeigt, gegen eines mit nur einer Seite.
+    scored.push({ url: imgs[0], score: haveR.size + cities })
+  }
+  if (!scored.length) return null
+  const top = Math.max(...scored.map(x => x.score))
+  const best = scored.filter(x => x.score === top).slice(0, 6)
+  return best[Math.floor(Math.random() * best.length)].url
+}
+
+// Bild erst laden, wenn es gebraucht wird (siehe Ressourcenlimit oben).
+async function fetchPhoto(url: string): Promise<Uint8Array | null> {
+  try {
+    const r = await fetch(url)
+    if (!r.ok) return null
+    const b = new Uint8Array(await r.arrayBuffer())
+    return b.byteLength > 5000 ? b : null
+  } catch { return null }
+}
+
+// ── News-Karussell: 7 bis 9 gestaltete Slides statt Einzelbild (Sven 26.9.2026) ──
+// Aufbau seit der Recherche 27.9.2026: Titel-Slide mit Hook auf echtem
+// Handyfoto-Look (Higgsfield, sonst Bestandsfoto), dann Einsatz-Slide als
+// zweiter Titel, dann Zahlen/Erklärung/Checkliste auf Creme, dann der Merk-Slide
+// zum Weiterschicken, zuletzt Navy mit Aufruf. Texte kommen von Claude, nur aus
+// der News-Idee (keine erfundenen Zahlen).
+async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea: { headline: string; core: string; source_url: string | null; angle: string }, postId: string, ctaKeyword: string | null, coverPhotoUrl?: string | null): Promise<void> {
   const stamp = () => new Date().toISOString()
   const tool = {
     name: 'set_carousel', description: 'Fertiges Karussell.',
@@ -727,7 +858,7 @@ async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea:
       caption: { type: 'string', description: 'Caption für Instagram + Facebook' },
       cover_image_prompt: { type: 'string', description: 'Englisch: alltägliche, echte Szene passend zum Thema, wie ein Handyfoto (Ort, Blickwinkel, Tageszeit). Kein Text im Bild.' },
       slides: { type: 'array', items: { type: 'object', properties: {
-        type: { type: 'string', enum: ['cover', 'fact', 'point', 'list', 'cta'] },
+        type: { type: 'string', enum: ['cover', 'stake', 'fact', 'point', 'list', 'recap', 'cta'] },
         kicker: { type: 'string' }, title: { type: 'string' }, subtitle: { type: 'string' },
         value: { type: 'string' }, label: { type: 'string' }, text: { type: 'string' }, source: { type: 'string' },
         body: { type: 'string' }, items: { type: 'array', items: { type: 'string' } }, button: { type: 'string' },
@@ -738,7 +869,25 @@ async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea:
     ? `Letzte Slide (cta): title z. B. "Den ganzen Report willst du?", body ein Satz, button genau "Kommentiere ${ctaKeyword}". Die Caption endet mit: Kommentiere ${ctaKeyword} und du bekommst unseren aktuellen Zypern-Report als PDF per Nachricht.`
     : 'Letzte Slide (cta): title z. B. "Speicher dir das für später", body ein Satz, button genau "Beitrag speichern". Keine Kommentar-Stichwörter als Aufforderung, stattdessen in der Caption eine echte Frage an die Community.'
   const resp = await claude(anthropicKey, {
-    system: `${BRAND}\n\nDu baust aus einer News ein Instagram-Karussell (6 bis 8 Slides), das man speichern will: klare Zahlen, verständlich eingeordnet, was es für Käufer und Kapitalanleger bedeutet. NUR Fakten aus der Idee, keine erfundenen Zahlen, keine Renditeprognosen. KEINE Parteien, Politiker, Kandidaten oder Wahlen nennen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Volksentscheid, Behörde), sonst stuft Meta den Beitrag als politisch ein und zeigt ihn kaum Nicht-Followern. ECHTE UMLAUTE (ä, ö, ü, ß) in jeder Slide, nie ae/oe/ue/ss als Ersatz. Zeichenlimits strikt einhalten (sonst wird gekürzt): cover title max. 45, subtitle max. 70, kicker max. 28; fact value max. 9 Zeichen (z. B. "1.241" oder "+8,9 %"), label max. 60, text max. 170, source nur Name der Quelle; point title max. 55, body max. 320; list title max. 55, 3 bis 4 items je max. 65; cta title max. 45, body max. 140. Reihenfolge: cover, dann 3 bis 6 Slides aus fact/point/list, dann cta. Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), dann 2 bis 3 kurze Absätze, dann Aufruf, dann 3 bis 5 Hashtags. Rufe GENAU EINMAL set_carousel auf.`,
+    system: `${BRAND}\n\nDu baust aus einer News ein Instagram-Karussell (7 bis 9 Slides), das man speichern und weiterschicken will: klare Zahlen, verständlich eingeordnet, was es für Käufer und Kapitalanleger bedeutet. NUR Fakten aus der Idee, keine erfundenen Zahlen. KEINE RENDITE- ODER ERTRAGSZAHLEN auf den Slides, auch nicht aus der Vorlage übernommen: keine Prozent pro Jahr, kein Gesamtertrag, keine Mietrendite, keine Wertsteigerung in Prozent. Steuersätze, Kaufpreise, Transaktionszahlen und Marktdaten sind erlaubt. KEINE Parteien, Politiker, Kandidaten oder Wahlen nennen: politische Vorgänge nur als Sachthema (Gesetz, Beschluss, Volksentscheid, Behörde), sonst stuft Meta den Beitrag als politisch ein und zeigt ihn kaum Nicht-Followern. ECHTE UMLAUTE (ä, ö, ü, ß) in jeder Slide, nie ae/oe/ue/ss als Ersatz. DEUTSCHE WÖRTER, wo es ein gängiges gibt: Wiederverkauf statt Resale, Umsatz oder Volumen statt Turnover, Nachfrage statt Demand. Eingebürgerte Wörter wie Deal oder Investment sind in Ordnung.
+
+REIHENFOLGE, genau so: cover, stake, dann 3 bis 5 Slides aus fact/point/list, dann recap, dann cta.
+
+DER TITEL IST DER HOOK und entscheidet über fast alles: er ist das Einzige, was Leute im Feed sehen, bevor sie weiterscrollen. Höchstens 6 Wörter, und er muss mindestens einen dieser Auslöser haben:
+- Zahl mit Folge: "1.241 Euro mehr, ab Januar"
+- Widerspruch zur Erwartung: "Neubau ist hier billiger"
+- Schmerz benennen: "Dein Steuerberater kennt das nicht"
+- Neugierlücke: "Der Satz, der 40.000 kostet"
+- Wer bin ich: "Für jeden mit Wohnung in Deutschland"
+VERBOTEN als Titel: die Nachricht nur benennen ("Zypern ändert die Grundsteuer"), Themenlabel ("Steuern auf Zypern"), Behördensprache. Wenn der Titel auch als Zeitungsüberschrift funktionieren würde, ist er falsch. Das subtitle ist das Versprechen: was bekommt man beim Wischen.
+
+stake ist der zweite Titel, denn im Profil-Raster sieht man auch diese Slide. EIN Satz, warum das jetzt zählt, mit Einsatz oder Preis. Keine Hinführung, kein "In diesem Beitrag zeigen wir".
+
+recap ist die Slide, die weitergeschickt wird. Sie fasst 4 bis 6 Punkte so zusammen, dass sie allein verständlich sind, ohne die Slides davor. Keine Verweise wie "wie oben gezeigt". Jeder Punkt ein eigener Gedanke, keine Wiederholung derselben Zahl.
+
+Zeichenlimits strikt einhalten (sonst wird gekürzt): cover title max. 38, subtitle max. 62, kicker max. 28; stake text max. 100; fact value max. 9 Zeichen (z. B. "1.241" oder "+8,9 %"), label max. 56, text max. 170, source nur Name der Quelle; point title max. 44, body max. 300; list title max. 40, 3 bis 4 items je max. 60; recap title max. 40, 4 bis 6 items je max. 58; cta title max. 38, body max. 130.
+
+Caption: Zeile 1 = Such-Satz mit Stichwort (z. B. "Immobilien in Paphos: ..."), dann 2 bis 3 kurze Absätze, dann Aufruf, dann 3 bis 5 Hashtags. Rufe GENAU EINMAL set_carousel auf.`,
     messages: [{ role: 'user', content: `NEWS-IDEE\nSchlagzeile: ${idea.headline}\nKern: ${idea.core}\nQuelle: ${idea.source_url ?? '-'}\nWinkel: ${idea.angle}\n\n${ctaRule}` }],
     tools: [tool], tool_choice: { type: 'tool', name: 'set_carousel' }, max_tokens: 4000,
   })
@@ -757,6 +906,20 @@ async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea:
     try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
     if (TRANSLIT.test(JSON.stringify(rawSlides))) throw new Error('Karussell-Texte ohne echte Umlaute, wird neu erstellt.')
   }
+  // Renditeversprechen gehören nicht auf eine Slide. Im Fließtext einer Caption
+  // gehen sie unter, groß auf einem Bild sind sie eine Zusage: Svens Regel (keine
+  // Renditeprognosen in Werbemitteln) und bei Meta ein Ablehnungsgrund. Der
+  // Quelltext eines Posts kann so eine Zahl enthalten, die Slides dürfen es nicht.
+  const YIELD = /(?:\d+(?:[.,]\d+)?\s*(?:bis|-|–)\s*)?\d+(?:[.,]\d+)?\s*(?:%|Prozent)\s*(?:p\.?\s?a\.?|pro\s+Jahr|[a-zäöüß]*rendite|Gesamtertrag|Wertsteigerung)|(?:[a-zäöüß]*rendite|Gesamtertrag|Wertsteigerung)\D{0,24}\d+(?:[.,]\d+)?\s*(?:%|Prozent)/i
+  if (YIELD.test(JSON.stringify(rawSlides))) {
+    const fix = await claude(anthropicKey, {
+      system: 'Du entfernst Rendite- und Ertragsversprechen aus Slide-Texten. Jede Angabe wie "11-14 % p.a.", "8 % Mietrendite" oder "Gesamtertrag 12 Prozent" muss raus. Formuliere die Aussage ohne die Zahl neu, sachlich und ohne Ersatzversprechen (z. B. "Neubau mit Title Deeds"). Steuersätze, Preise, Transaktionszahlen und Marktdaten bleiben unverändert. Sonst nichts ändern. Gib das JSON-Array unverändert in der Struktur zurück, nur als JSON.',
+      messages: [{ role: 'user', content: JSON.stringify(rawSlides) }], max_tokens: 4000,
+    })
+    const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
+    try { rawSlides = clean(JSON.parse(txt)) } catch { /* unten prüfen */ }
+    if (YIELD.test(JSON.stringify(rawSlides))) throw new Error('Karussell mit Renditeversprechen, wird neu erstellt.')
+  }
   const slides = normalizeSlides(rawSlides)
   const n = slides.length
   const base = Deno.env.get('SUPABASE_URL')
@@ -767,13 +930,36 @@ async function buildNewsCarousel(sb: SupabaseClient, anthropicKey: string, idea:
     const s = slides[i]
     let bytes: Uint8Array, ct = 'image/png', ext = 'png'
     if (i === 0 && s.type === 'cover') {
-      try {
-        const img = await candidImageBytes(sb, out.cover_image_prompt || idea.headline)
-        scene = img.scene
-        bytes = await composeCover(img.bytes, await svgToPng(coverOverlaySvg(s, n)))
-        ct = 'image/jpeg'; ext = 'jpg'
-      } catch (e) {
-        console.warn('[social-agent] Karussell-Titelfoto fehlgeschlagen, Titel ohne Foto:', e instanceof Error ? e.message : String(e))
+      const overlay = await svgToPng(coverOverlaySvg(s, n))
+      // Mitgegebenes Foto (Umbau eines bestehenden Posts) spart das KI-Bild.
+      // Reihenfolge: mitgegebenes Foto (Umbau) → frisches KI-Bild → Bestandsfoto.
+      let photo: Uint8Array | null = null
+      if (coverPhotoUrl) {
+        photo = await fetchPhoto(coverPhotoUrl)
+        if (photo) scene = 'Vorhandenes Foto des Posts'
+      }
+      if (!photo) {
+        try {
+          const img = await candidImageBytes(sb, out.cover_image_prompt || idea.headline)
+          scene = img.scene
+          photo = img.bytes
+        } catch (e) {
+          console.warn('[social-agent] Higgsfield-Titelfoto fehlgeschlagen, versuche Bestandsfoto:', e instanceof Error ? e.message : String(e))
+          const u = await stockPhotoUrl(sb, `${out.cover_image_prompt ?? ''} ${idea.headline} ${idea.core}`, postId)
+          photo = u ? await fetchPhoto(u) : null
+          if (photo) scene = 'Bestandsfoto (kein neues Bild verfügbar)'
+        }
+      }
+      if (photo) {
+        try {
+          bytes = await composeCover(photo, overlay)
+          ct = 'image/jpeg'; ext = 'jpg'
+        } catch (e) {
+          console.warn('[social-agent] Titelfoto nicht verwertbar, Titel ohne Foto:', e instanceof Error ? e.message : String(e))
+          bytes = await svgToPng(slideSvg(s, i, n))
+        }
+      } else {
+        console.warn('[social-agent] Kein Titelfoto verfügbar, Titel auf Navy-Fläche.')
         bytes = await svgToPng(slideSvg(s, i, n))
       }
     } else bytes = await svgToPng(slideSvg(s, i, n))
@@ -1096,7 +1282,7 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; hook?: string; new_image?: boolean; sync?: boolean; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
     const denied = await authorize(sb, req, body.action ?? '')
     if (denied) return denied
 
@@ -1280,6 +1466,46 @@ Regeln:
     }
 
     // ── Vergleichs-Karussell direkt erzeugen (aus dem Studio) ─────────────────
+    // Bestehenden Einzelbild-News-Post auf Karussell umbauen. Gedacht für Posts,
+    // die vor der Umstellung geplant wurden: der Text ist da, das Foto ist da,
+    // es fehlen nur die gestalteten Slides. Braucht kein neues KI-Bild, das
+    // vorhandene Foto des Posts wird das Titelbild.
+    if (body.action === 'recarousel') {
+      if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
+      if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
+      const { data: row } = await sb.from('social_posts').select('id, title, content, news_source, format, status').eq('id', body.post_id).maybeSingle()
+      const post = row as { id: string; title: string | null; content: string | null; news_source: string | null; format: string | null; status: string | null } | null
+      if (!post) return json({ error: 'Post nicht gefunden' }, 404)
+      if (post.format === 'carousel') return json({ error: 'Ist schon ein Karussell' }, 400)
+      if (!post.content) return json({ error: 'Post hat keinen Text' }, 400)
+      const headline = (post.title ?? '').replace(/^[^\p{L}\d]+/u, '').trim()
+      const kwState = await keywordState(sb)
+      // Das Foto, das der Post schon hat, wird das Titelbild: kein neues KI-Bild
+      // nötig. body.new_image = true erzwingt trotzdem ein frisches.
+      const reuse = body.new_image === true ? null : await stockPhotoUrl(sb, `${post.title ?? ''} ${post.content ?? ''}`, post.id)
+      let failure: string | null = null
+      const job = async () => {
+        try {
+          await buildNewsCarousel(sb, anthropicKey, {
+            headline: headline || 'News',
+            core: post.content ?? '',
+            source_url: post.news_source,
+            angle: 'Aus dem bereits geplanten Post übernehmen: gleiche Aussage, gleiche Zahlen, nur als Karussell.',
+          }, post.id, kwState.cta, reuse)
+        } catch (e) {
+          failure = e instanceof Error ? e.message : String(e)
+          console.error('[social-agent] recarousel:', failure)
+          // Grund im Post hinterlegen, sonst bleibt nur ein stiller Fehlschlag.
+          await sb.from('social_posts').update({ post_results: { recarousel: { error: failure, at: new Date().toISOString() } } }).eq('id', post.id)
+        }
+      }
+      // sync = auf das Ergebnis warten (Fehlersuche); sonst im Hintergrund.
+      if (body.sync !== true && typeof EdgeRuntime !== 'undefined') { EdgeRuntime.waitUntil(job()); return json({ ok: true, pending: true }) }
+      await job()
+      const { data: after } = await sb.from('social_posts').select('format, image_urls').eq('id', post.id).maybeSingle()
+      return json({ ok: !failure, pending: false, error: failure, result: after })
+    }
+
     if (body.action === 'comparison_carousel') {
       const b = body as unknown as { post_id?: string; slides?: CmpSlide[]; replace?: boolean }
       if (!b.post_id || !Array.isArray(b.slides) || !b.slides.length) return json({ error: 'post_id und slides erforderlich' }, 400)
@@ -1320,10 +1546,13 @@ Regeln:
       // dauern zu lange für einen synchronen Klick — der Button bekäme sonst
       // einen Gateway-Abbruch („Failed to send a request to the Edge Function").
       const inc = p?.topic === 'weisheit' ? ['lotte'] : []
+      // Hook ins Bild: nur wenn ausdrücklich mitgeschickt, und nie bei Lotte
+      // (die Pointe steht in der Caption, ein Overlay verrät sie).
+      const hook = inc.length ? undefined : (typeof body.hook === 'string' ? body.hook.slice(0, 60) : undefined)
       const job = async () => {
         try {
           if (inc.length) await generatePersonaImage(sb, body.post_id, prompt, inc)
-          else await generatePostImage(sb, body.post_id, prompt)
+          else await generatePostImage(sb, body.post_id, prompt, hook)
         } catch (e) {
           console.error('[social-agent] image bg:', e)
           // Sicherheitsnetz: Persona fehlgeschlagen → normales Bild versuchen
