@@ -169,7 +169,32 @@ Deno.serve(async (req) => {
       // Öffnungs-Pixel für Sequenz-Mails an Abonnenten (Split „E-Mail geöffnet?")
       const openSub = new URL(req.url).searchParams.get('open') ?? ''
       if (openSub) {
-        try { await sb.from('engagement_events').insert({ type: 'email_open', subscriber_id: openSub, label: 'sequence' }) }
+        try {
+          // Dedupe wie in track-engagement: Mail-Programme (Gmail-Proxy, Vorschau)
+          // laden den Pixel mehrfach — dieselbe Öffnung nur einmal je 2 h zählen.
+          const since = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+          const { data: dup } = await sb.from('engagement_events')
+            .select('id').eq('type', 'email_open').eq('subscriber_id', openSub)
+            .gte('occurred_at', since).limit(1)
+          if (!dup || !dup.length) {
+            // Abonnent, der auch als Lead im CRM steht: Lead-Bezug mitschreiben,
+            // damit die Öffnung in der Lead-Akte auftaucht und das Dashboard den
+            // Namen kennt (sonst stand dort „Jemand hat deine E-Mail geöffnet").
+            const { data: sub } = await sb.from('newsletter_subscribers')
+              .select('email').eq('id', openSub).maybeSingle()
+            const mail = ((sub as { email?: string | null } | null)?.email ?? '').trim()
+            let leadId: string | null = null
+            if (mail) {
+              // ilike statt eq (Groß-/Kleinschreibung egal), aber _ und % in der
+              // Adresse sind Platzhalter und würden fremde Leads treffen → maskieren.
+              const muster = mail.replace(/([\\%_])/g, '\\$1')
+              const { data: lead } = await sb.from('leads')
+                .select('id').ilike('email', muster).limit(1)
+              leadId = ((lead ?? [])[0] as { id?: string } | undefined)?.id ?? null
+            }
+            await sb.from('engagement_events').insert({ type: 'email_open', subscriber_id: openSub, lead_id: leadId, label: 'sequence' })
+          }
+        }
         catch (e) { console.warn('[subscriber-optin] open-pixel:', e) }
         const gif = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0))
         return new Response(gif, { headers: { ...CORS, 'Content-Type': 'image/gif', 'Cache-Control': 'no-store' } })

@@ -56,6 +56,10 @@ interface EngageEvent {
   label: string | null
   occurred_at: string
   lead: { first_name: string; last_name: string } | null
+  // Newsletter-Abonnenten haben keinen Lead im CRM — Name kommt aus
+  // newsletter_subscribers (nachgeladen, s. fetchData).
+  subscriber_id: string | null
+  subscriber: { first_name: string | null; last_name: string | null; email: string | null } | null
 }
 
 interface DashboardState {
@@ -174,7 +178,7 @@ export default function CrmDashboard() {
         // Widget 2: Kunden-Engagement (Deck/Berechnung angesehen, Mail geöffnet)
         supabase
           .from('engagement_events')
-          .select('id, type, label, occurred_at, lead:leads(first_name, last_name)')
+          .select('id, type, label, occurred_at, subscriber_id, lead:leads(first_name, last_name)')
           .order('occurred_at', { ascending: false })
           .limit(30),
       ])
@@ -199,6 +203,23 @@ export default function CrmDashboard() {
         if (paidAt >= startOfWeek) commissionWeek += amount
       })
 
+      // Namen der Newsletter-Abonnenten nachladen: engagement_events hat keinen
+      // Fremdschlüssel auf newsletter_subscribers, deshalb kein eingebetteter Join.
+      // Ohne das stand im Widget „Jemand hat deine E-Mail geöffnet" statt des Namens.
+      const engagement = (engagementRes.data ?? []) as unknown as EngageEvent[]
+      const subIds = [...new Set(engagement.map(e => e.subscriber_id).filter(Boolean))] as string[]
+      if (subIds.length) {
+        const { data: subs } = await supabase
+          .from('newsletter_subscribers')
+          .select('id, first_name, last_name, email')
+          .in('id', subIds)
+        const byId = new Map((subs ?? []).map((sub: { id: string; first_name: string | null; last_name: string | null; email: string | null }) => [sub.id, sub]))
+        engagement.forEach(e => {
+          const sub = e.subscriber_id ? byId.get(e.subscriber_id) : undefined
+          e.subscriber = sub ? { first_name: sub.first_name, last_name: sub.last_name, email: sub.email } : null
+        })
+      }
+
       setState({
         totalLeads: totalLeadsRes.count ?? 0,
         newThisWeek: newThisWeekRes.count ?? 0,
@@ -208,7 +229,7 @@ export default function CrmDashboard() {
         commissionYear,
         openTasksToday: (openTasksRes.data ?? []) as unknown as TaskActivity[],
         systemActivity: (sysActivityRes.data ?? []) as unknown as SysActivity[],
-        engagement: (engagementRes.data ?? []) as unknown as EngageEvent[],
+        engagement,
         loading: false,
       })
     } catch (err) {
@@ -268,6 +289,17 @@ export default function CrmDashboard() {
     return e.type
   }
   const engageIcon = (type: string) => type === 'email_open' ? '✉️' : type === 'calc_view' ? '📊' : '🏠'
+  // Name im Engagement-Widget: Lead zuerst, sonst Newsletter-Abonnent (Name, sonst
+  // E-Mail). „Jemand" bleibt nur, wenn wirklich niemand zuzuordnen ist.
+  const engageName = (e: EngageEvent) => {
+    const lead = e.lead ? `${e.lead.first_name ?? ''} ${e.lead.last_name ?? ''}`.trim() : ''
+    if (lead) return lead
+    const sub = e.subscriber
+    const subName = sub ? `${sub.first_name ?? ''} ${sub.last_name ?? ''}`.trim() : ''
+    if (subName) return subName
+    if (sub?.email) return sub.email
+    return t('crm.dashboard.someone', 'Jemand')
+  }
 
   const maxPhaseCount = Math.max(1, ...Object.values(state.dealsPerPhase))
 
@@ -316,7 +348,7 @@ export default function CrmDashboard() {
               : <ul className="space-y-2.5 max-h-80 overflow-y-auto">{state.engagement.map(e => (
                   <li key={e.id} className="flex items-start gap-2.5 text-sm">
                     <span className="text-base shrink-0 mt-0.5">{engageIcon(e.type)}</span>
-                    <span className="flex-1 min-w-0 text-gray-700"><b>{leadName(e.lead)}</b> {engageAction(e)}</span>
+                    <span className="flex-1 min-w-0 text-gray-700"><b>{engageName(e)}</b> {engageAction(e)}</span>
                     <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{relTime(e.occurred_at)}</span>
                   </li>))}</ul>}
           </div>
