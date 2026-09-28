@@ -1022,8 +1022,15 @@ AUFBAU: Zeile 1 = These, die zum Widerspruch reizt (max. 15 Wörter). Dann Konte
 belegten Fakten. Dann Svens Einordnung aus Sicht von jemandem, der Kapital anlegt und im
 EU-Ausland lebt. Zypern nur als kurzer Vergleich, wenn es sich natürlich ergibt, KEINE
 Werbung, kein Verkaufsaufruf, kein Termin-Link. Schluss: eine offene Frage an die Leser,
-die zum Kommentieren und Widersprechen einlädt. Letzte Zeile: "Quelle: <URL>".
-Danach genau 3 dezente Hashtags. Länge 1.000 bis 1.800 Zeichen, Absätze mit Leerzeile.
+die zum Kommentieren und Widersprechen einlädt. Danach genau 3 dezente Hashtags.
+
+KEIN LINK IM POST. Die Quelle gehört NICHT in den Text, sie wird automatisch als erster
+Kommentar gesetzt. Links im Beitragstext kosten auf LinkedIn Reichweite. Gib die URL im
+Feld source_url zurück, nicht im Text.
+
+LÄNGE 1.300 bis 2.000 Zeichen, Absätze mit Leerzeile. Ausführlich schlägt knapp: Posts mit
+20 und mehr Sätzen erreichen auf LinkedIn mehr Menschen als kurze. Nutze den Platz für
+Einordnung und ein konkretes Beispiel, nicht für Füllwörter.
 
 GRENZEN (hart): Politik und Entscheidungen kritisieren, nie Menschen. Parteien und
 Politiker nur sachlich nennen, wenn es für den Fakt nötig ist, keine Parteienschelte, kein
@@ -1038,6 +1045,16 @@ const LINKEDIN_THEMES = [
   'Heizungsgesetz und Energiepolitik für Eigentümer', 'Steuer- und Abgabenlast für Selbstständige und Mittelstand',
   'Standort Deutschland, Unternehmer wandern ab', 'Sparer, Inflation und Zinsen', 'Wegzugsbesteuerung und Kapitalverkehr in der EU',
   'Kommunale Zweckentfremdungsverbote und Ferienwohnungen',
+  'Immobilienbewertung, Beleihungswert und die Rolle der Banken',
+  'Fachkräftemangel und was er für Handwerk und Bau bedeutet',
+  'Schuldenbremse, Staatsverschuldung und die Folgen für Sparer',
+  'Grunderwerbsteuer der Länder im Vergleich',
+  'Enteignungsdebatte und Artikel 15 Grundgesetz',
+  'CO2-Preis, Sanierungspflicht und EU-Gebäuderichtlinie',
+  'Kapitalertragsteuer, Abgeltungsteuer und Reformpläne',
+  'Homeoffice, Büroleerstand und die Umnutzung von Gewerbe',
+  'Bargeldobergrenze und Meldepflichten im Zahlungsverkehr',
+  'Pflegekosten, Immobilie im Alter und Verrentung',
 ]
 
 // Reel-Text ohne Textdatei: aus dem Dateinamen (Titel) einen Posting-Text bauen.
@@ -2361,7 +2378,11 @@ Regeln:
             })
             const out = (((structured.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; source_url?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
             if (!out.caption || !out.image_prompt) throw new Error('LinkedIn-Text konnte nicht erstellt werden.')
-            if (!out.source_url && !/Quelle:\s*https?:\/\//.test(out.caption)) throw new Error('LinkedIn-Text ohne Quelle, wird neu erstellt.')
+            // Quelle ist Pflicht, steht aber bewusst NICHT mehr im Beitragstext,
+            // sondern geht beim Veroeffentlichen als erster Kommentar raus.
+            if (!/^https?:\/\//i.test((out.source_url ?? '').trim())) throw new Error('LinkedIn-Text ohne Quell-URL, wird neu erstellt.')
+            // Sicherheitsnetz: hat das Modell die Quelle doch in den Text gesetzt, raus damit.
+            out.caption = (out.caption ?? '').replace(/\n*\s*Quelle:\s*https?:\/\/\S+\s*/gi, '\n').trim()
             await sb.from('social_posts').update({ title: `💼 ${out.title ?? 'LinkedIn'}`.slice(0, 200), content: noDash(out.caption), news_source: out.source_url || null, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
             await generatePostImage(sb, postId, out.image_prompt)
             await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
@@ -2746,7 +2767,23 @@ Regeln:
               }),
             })
             if (!r.ok) throw new Error((await r.text()).slice(0, 200))
-            results.linkedin = { ok: true }
+            const liUrn = (await r.json().catch(() => ({})))?.id || r.headers.get('x-restli-id') || ''
+            results.linkedin = { ok: true, id: liUrn || undefined }
+
+            // Quelle als ERSTER KOMMENTAR, nicht im Beitragstext: ein Link im Text
+            // kostet auf LinkedIn Reichweite. Schlaegt der Kommentar fehl, bleibt der
+            // Post trotzdem veroeffentlicht, die Quelle fehlt dann nur.
+            const quelle = ((post as { news_source?: string | null } | null)?.news_source ?? '').trim()
+            if (liUrn && /^https?:\/\//i.test(quelle)) {
+              try {
+                const ck = await fetch(`https://api.linkedin.com/v2/socialActions/${encodeURIComponent(liUrn)}/comments`, {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+                  body: JSON.stringify({ actor: author, object: liUrn, message: { text: `Quelle: ${quelle}` } }),
+                })
+                if (!ck.ok) console.warn('[social-agent] LinkedIn-Quellkommentar:', (await ck.text()).slice(0, 160))
+              } catch (e) { console.warn('[social-agent] LinkedIn-Quellkommentar:', (e as Error).message) }
+            }
           } catch (e) { results.linkedin = { ok: false, error: (e as Error).message } }
         }
       }
