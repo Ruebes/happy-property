@@ -858,6 +858,79 @@ async function fetchPhoto(url: string): Promise<Uint8Array | null> {
   } catch { return null }
 }
 
+// ── Wochenbrief: Plan plus heisse Diskussionen in Svens Kalender ────────────
+// Sven will die Zahlen nicht ansehen, aber wissen, was diese Woche laeuft und wo
+// er sich einmischen soll. Auf LinkedIn bringt ein Kommentar unter einem stark
+// diskutierten fremden Beitrag oft mehr Sichtbarkeit als ein eigener Post.
+// Deshalb: ein Termin am Montagmorgen mit dem Wochenplan und zwei bis drei
+// aktuellen Aufhaengern. Geschrieben wird in den Kalender aus crm_settings
+// google_calendar_ids, ueber denselben Dienstkonto-Weg wie personal-booking.
+const CAL_TZ = 'Asia/Nicosia'
+
+function b64urlBytes(b: Uint8Array): string {
+  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function calendarToken(): Promise<string> {
+  const raw = Deno.env.get('GOOGLE_SERVICE_ACCOUNT_JSON')
+  if (!raw) throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON fehlt')
+  const sa = JSON.parse(raw) as { client_email: string; private_key: string }
+  const pem = sa.private_key.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, '').replace(/\\n/g, '').replace(/\s+/g, '')
+  const key = await crypto.subtle.importKey('pkcs8',
+    Uint8Array.from(atob(pem), c => c.charCodeAt(0)).buffer,
+    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign'])
+  const now = Math.floor(Date.now() / 1000)
+  const enc = (o: unknown) => b64urlBytes(new TextEncoder().encode(JSON.stringify(o)))
+  const unsigned = `${enc({ alg: 'RS256', typ: 'JWT' })}.${enc({
+    iss: sa.client_email, scope: 'https://www.googleapis.com/auth/calendar',
+    aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600 })}`
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, new TextEncoder().encode(unsigned))
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: `${unsigned}.${b64urlBytes(new Uint8Array(sig))}` }),
+  })
+  const d = await res.json() as { access_token?: string; error_description?: string }
+  if (!d.access_token) throw new Error(`Kalender-Token: ${d.error_description ?? 'fehlgeschlagen'}`)
+  return d.access_token
+}
+
+async function calendarId(sb: SupabaseClient): Promise<string> {
+  const { data } = await sb.from('crm_settings').select('value').eq('key', 'google_calendar_ids').maybeSingle()
+  const raw = ((data as { value?: string } | null)?.value ?? '').split(',')[0].trim()
+  if (!raw) throw new Error('Kein Kalender in crm_settings google_calendar_ids')
+  return raw
+}
+
+// Sucht zwei bis drei Themen, die in der Zielgruppe gerade wirklich diskutiert
+// werden. Quellenzwang: ohne URL wird nichts uebernommen, sonst stehen erfundene
+// Aufhaenger im Kalender.
+async function heisseThemen(anthropicKey: string): Promise<Array<{ thema: string; warum: string; url: string }>> {
+  const tool = {
+    name: 'set_themen', description: 'Aktuelle Diskussionsthemen.',
+    input_schema: { type: 'object', properties: { themen: { type: 'array', items: { type: 'object', properties: {
+      thema: { type: 'string', description: 'Worum es geht, ein Satz' },
+      warum: { type: 'string', description: 'Warum sich Sven einmischen sollte und mit welcher Haltung, ein bis zwei Saetze' },
+      url: { type: 'string', description: 'Quelle, Pflicht' },
+    }, required: ['thema', 'warum', 'url'] } } }, required: ['themen'] },
+  }
+  const r1 = await claude(anthropicKey, {
+    system: 'Du recherchierst fuer Sven Rüprich, deutscher Unternehmer auf Zypern, vermittelt Neubau-Kapitalanlagen an deutschsprachige Investoren. Seine Leser auf LinkedIn: Unternehmer, Selbstständige, Kapitalanleger, Vermieter. Suche, worüber diese Gruppe gerade wirklich streitet: neue Gesetze, Urteile, Beschlüsse, Zahlen aus den letzten 10 Tagen zu Mietrecht, Steuern, Grundsteuer, Wohnungsbau, Standort Deutschland, Rente, Abgaben. Kein Migrations-, Religions-, Kriegs- oder Genderthema. Nenne zu jedem Fund die Quelle mit URL.',
+    messages: [{ role: 'user', content: 'Was wird diese Woche in dieser Zielgruppe am haertesten diskutiert? Nenne die drei stärksten Aufhänger mit Quelle.' }],
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+    max_tokens: 3000,
+  })
+  const text = ((r1.content ?? []) as Array<{ type: string; text?: string }>).filter(b => b.type === 'text').map(b => b.text ?? '').join('\n').trim()
+  if (!text) return []
+  const r2 = await claude(anthropicKey, {
+    system: 'Du formst die Rechercheergebnisse in die Struktur. Nur Fundstücke MIT echter Quell-URL übernehmen, höchstens drei. Rufe GENAU EINMAL set_themen auf.',
+    messages: [{ role: 'user', content: text.slice(0, 6000) }],
+    tools: [tool], tool_choice: { type: 'tool', name: 'set_themen' }, max_tokens: 1500,
+  })
+  const out = (((r2.content ?? []) as Array<{ type: string; name?: string; input?: { themen?: Array<{ thema: string; warum: string; url: string }> } }>)
+    .find(b => b.type === 'tool_use' && b.name === 'set_themen')?.input?.themen ?? [])
+  return out.filter(t => /^https?:\/\//i.test(t.url ?? '')).slice(0, 3)
+}
+
 // ── News-Karussell: 7 bis 9 gestaltete Slides statt Einzelbild (Sven 26.9.2026) ──
 // Aufbau seit der Recherche 27.9.2026: Titel-Slide mit Hook auf echtem
 // Handyfoto-Look (Higgsfield, sonst Bestandsfoto), dann Einsatz-Slide als
@@ -1301,7 +1374,7 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const anthropicKey = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
   try {
-    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; hook?: string; new_image?: boolean; sync?: boolean; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
+    const body = await req.json().catch(() => ({})) as { action?: string; post_id?: string; message?: string; prompt?: string; hook?: string; new_image?: boolean; sync?: boolean; drop_event?: string; platform?: string; persona?: string; user_id?: string; video_id?: string; url?: string; id?: string }
     const denied = await authorize(sb, req, body.action ?? '')
     if (denied) return denied
 
@@ -1489,6 +1562,108 @@ Regeln:
     // die vor der Umstellung geplant wurden: der Text ist da, das Foto ist da,
     // es fehlen nur die gestalteten Slides. Braucht kein neues KI-Bild, das
     // vorhandene Foto des Posts wird das Titelbild.
+    // Wochenbrief: ein Kalendertermin am Montagmorgen mit dem Plan der Woche und
+    // zwei bis drei aktuellen Aufhaengern zum Mitdiskutieren. Laeuft per Cron,
+    // kann aber auch von Hand ausgeloest werden.
+    if (body.action === 'weekly_brief') {
+      // Aufraeumen: einen falsch oder doppelt angelegten Wochenbrief wieder entfernen.
+      if (typeof body.drop_event === 'string' && body.drop_event) {
+        const calId = await calendarId(sb)
+        const token = await calendarToken()
+        const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(body.drop_event)}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+        return json({ ok: r.ok || r.status === 410, status: r.status })
+      }
+      if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
+      let zuletzt = ''
+      const job = async () => {
+        try {
+          const cfg = await autopilotCfg(sb)
+          const heute = new Date()
+          const start = cyYmd(heute)
+          // Plan der naechsten 7 Tage aus denselben Slots, aus denen auch gepostet wird
+          const wanted = autopilotSlots(cfg, heute.getTime(), 7)
+          const nachTag = new Map<string, string[]>()
+          for (const w of wanted) {
+            const label = w.kind === 'reel' ? 'Reel' : w.kind === 'news' ? 'News' : w.kind === 'lotte' ? 'Lotte' : 'LinkedIn'
+            const liste = nachTag.get(w.ymd) ?? []
+            liste.push(label)
+            nachTag.set(w.ymd, liste)
+          }
+          const planZeilen = [...nachTag.entries()].sort().map(([ymd, arten]) => {
+            const d = new Date(`${ymd}T12:00:00Z`)
+            return `${WEEKDAY_DE[d.getUTCDay()]} ${ymd.slice(8)}.${ymd.slice(5, 7)}.: ${[...new Set(arten)].join(', ')}`
+          })
+
+          let themen: Array<{ thema: string; warum: string; url: string }> = []
+          try { themen = await heisseThemen(anthropicKey) } catch (e) { console.warn('[social-agent] Themen:', (e as Error).message) }
+
+          const teile = ['WAS DIESE WOCHE RAUSGEHT', ...planZeilen]
+          if (themen.length) {
+            teile.push('', 'WO DU DICH EINMISCHEN SOLLTEST',
+              'Ein Kommentar unter einem stark diskutierten Beitrag bringt auf LinkedIn oft mehr als ein eigener Post.')
+            themen.forEach((t, i) => teile.push('', `${i + 1}. ${t.thema}`, `   ${t.warum}`, `   ${t.url}`))
+          } else {
+            teile.push('', 'Diese Woche keine belastbaren Aufhaenger gefunden (ohne Quelle wird nichts uebernommen).')
+          }
+          const text = teile.join('\n')
+
+          // Montag der kommenden Woche, 08:00 Zypern-Zeit, 30 Minuten
+          const d = new Date(heute)
+          const bis = (8 - d.getUTCDay()) % 7 || 7
+          d.setUTCDate(d.getUTCDate() + bis)
+          const montag = cyYmd(d)
+          const von = cyAt(montag, '08:00')
+          const nach = new Date(von.getTime() + 30 * 60000)
+
+          const calId = await calendarId(sb)
+          const token = await calendarToken()
+          // Gibt es fuer denselben Montag schon einen Eintrag, wird er ueberschrieben.
+          // Sonst entstehen bei jedem Aufruf Dubletten in Svens Kalender.
+          const { data: vor } = await sb.from('crm_settings').select('value').eq('key', 'social_weekly_brief_last').maybeSingle()
+          let altesEvent = ''
+          try {
+            const v = JSON.parse(((vor as { value?: string } | null)?.value) ?? '{}') as { montag?: string; event?: string }
+            if (v.montag === montag && v.event) altesEvent = v.event
+          } catch { /* erster Lauf */ }
+
+          const koerper = {
+            summary: 'Social: Wochenplan und Diskussionen',
+            description: text,
+            start: { dateTime: von.toISOString(), timeZone: CAL_TZ },
+            end: { dateTime: nach.toISOString(), timeZone: CAL_TZ },
+            reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 10 }] },
+          }
+          const basis = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events`
+          let r = await fetch(altesEvent ? `${basis}/${encodeURIComponent(altesEvent)}` : basis, {
+            method: altesEvent ? 'PATCH' : 'POST',
+            headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(koerper),
+          })
+          // Termin von Hand geloescht: dann neu anlegen statt scheitern
+          if (altesEvent && !r.ok) {
+            r = await fetch(basis, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(koerper) })
+          }
+          const ev = await r.json() as { id?: string; error?: { message?: string } }
+          if (!ev.id) throw new Error(ev.error?.message ?? 'Kalendereintrag fehlgeschlagen')
+          await sb.from('crm_settings').upsert(
+            { key: 'social_weekly_brief_last', value: JSON.stringify({ at: new Date().toISOString(), event: ev.id, montag, themen: themen.length, start }) },
+            { onConflict: 'key' })
+          console.log(`[social-agent] Wochenbrief fuer ${montag}: ${planZeilen.length} Tage, ${themen.length} Themen`)
+          zuletzt = text
+        } catch (e) {
+          console.error('[social-agent] weekly_brief:', (e as Error).message)
+          await sb.from('crm_settings').upsert(
+            { key: 'social_weekly_brief_last', value: JSON.stringify({ at: new Date().toISOString(), error: (e as Error).message }) },
+            { onConflict: 'key' })
+        }
+      }
+      if (body.sync !== true && typeof EdgeRuntime !== 'undefined') { EdgeRuntime.waitUntil(job()); return json({ ok: true, pending: true }) }
+      await job()
+      const { data: st } = await sb.from('crm_settings').select('value').eq('key', 'social_weekly_brief_last').maybeSingle()
+      return json({ ok: true, pending: false, last: (st as { value?: string } | null)?.value ?? null, text: zuletzt || undefined })
+    }
+
     if (body.action === 'recarousel') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       if (!anthropicKey) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
