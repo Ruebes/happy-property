@@ -2555,8 +2555,17 @@ Regeln:
           if (p.platforms.includes('instagram') && !results.instagram) results.instagram = { ok: false, error: msg }
         }
       }
+      // Einzelbilder auf Facebook lohnen sich nicht. Gemessen am 27.9.2026:
+      // ein Reel erreicht dort binnen 24 h 323 Personen, ein Einzelbild 4. Die
+      // Seite hat 139 Follower, Meta spielt Video weit darueber hinaus aus,
+      // Fotos so gut wie gar nicht. Videos und Alben (Karussell) bleiben, nur
+      // das Einzelbild faellt weg; auf Instagram laeuft es unveraendert weiter.
+      const fbLohntSich = !!videoUrl || isCarousel
+      if (p.platforms.includes('facebook') && pageId && !results.facebook && !fbLohntSich) {
+        results.facebook = { ok: false, error: 'Einzelbild auf Facebook uebersprungen (erreicht dort im Schnitt 4 bis 16 Personen). Als Video oder Karussell posten.' }
+      }
       // Facebook: Karussell (mehrere Fotos), Einzelfoto oder Text-Post
-      if (p.platforms.includes('facebook') && pageId && !results.facebook) {
+      if (p.platforms.includes('facebook') && pageId && !results.facebook && fbLohntSich) {
         // Facebook-Text ohne Kommentar-Köder und mit max. 5 Hashtags (Instagram behält das Original)
         const fbText = fbCaption(p.content)
         try {
