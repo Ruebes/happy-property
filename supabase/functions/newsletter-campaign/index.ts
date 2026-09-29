@@ -24,7 +24,22 @@ import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
 // Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
 // send-email via htmlToText), WhatsApp-Version via htmlToWhatsapp. Personalisierung
 // über {{vorname}}. Fehlt ein Abmelde-Link, hängen wir aus DSGVO-Gründen einen an.
-const personalize = (s: string | null | undefined, first: string) => String(s ?? '').split('{{vorname}}').join(first)
+const personalize = (s: string | null | undefined, first: string) => {
+  const out = String(s ?? '').split('{{vorname}}').join(first)
+  return first ? out : aufraeumenOhneNamen(out)
+}
+// Ohne Vornamen bleiben sonst „Hallo ," oder ein Betreff, der mit einem Komma
+// anfängt. Vorher stand hier als Notnagel „zusammen" — im Betreff wurde daraus
+// „zusammen, Paphos holt auf …" (Sven 29.9.26). Lieber ganz ohne Anrede-Namen.
+function aufraeumenOhneNamen(text: string): string {
+  let out = text
+    .replace(/(Hallo|Hi|Hey|Guten Tag|Liebe[rs]?)\s+,/gi, '$1,')
+    .replace(/^[\s,]+/, '')
+    .replace(/[ \t]{2,}/g, ' ')
+  // Betreff begann mit „{{vorname}}, …" → erstes Wort wieder groß schreiben.
+  if (/^[a-zäöüß]/.test(out)) out = out.charAt(0).toUpperCase() + out.slice(1)
+  return out
+}
 // Tippgeber-Provision: Betrag und Textbausteine an EINER Stelle.
 const AFFILIATE_AMOUNT = '1.000 €'
 const AFFILIATE_FALLBACK = `${'https://portal.happy-property.com'}/termin?src=empfehlung`
@@ -146,7 +161,7 @@ function makePacer(base: number): (typ: string) => Date {
 }
 
 function firstNameOf(l: { first_name: string | null }): string {
-  return (l.first_name ?? '').trim() || 'zusammen'
+  return (l.first_name ?? '').trim()
 }
 
 function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;') }
@@ -316,7 +331,7 @@ function buildEmailHtml(c: {
   </td></tr>
   <tr><td class="px" style="padding:0 40px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="48"><tr><td width="48" height="2" bgcolor="${CI.coral}" style="width:48px;height:2px;font-size:1px;line-height:1px;">&nbsp;</td></tr></table></td></tr>
   <tr><td class="px" style="padding:24px 40px 8px 40px;"><h1 class="h1" style="margin:0;font-family:${SERIF};font-size:30px;line-height:1.15;font-weight:700;color:${CI.navy};">${esc(headline)}</h1></td></tr>
-  <tr><td class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo ${esc(firstName)},<br><br>${paras(c.intro_text)}</td></tr>
+  <tr><td class="px" style="padding:18px 40px 0 40px;font-family:${SANS};font-size:15px;line-height:1.7;color:${CI.ink};">Hallo${firstName ? ` ${esc(firstName)}` : ''},<br><br>${paras(c.intro_text)}</td></tr>
   ${cards}
   ${c.outro_text?.trim() ? `<tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">${paras(c.outro_text)}</td></tr>` : ''}
   <tr><td class="px" style="padding:28px 40px 0 40px;font-family:${SANS};font-size:14px;line-height:1.7;color:${CI.ink};">Wenn dich eines der Objekte anspricht, lass uns am besten kurz persönlich sprechen — unverbindlich und ohne Umwege. Such dir hier direkt einen Termin aus, der dir passt:</td></tr>
@@ -447,9 +462,10 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   try {
     const body = await req.json() as {
-      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'rebuild_pending'
+      action: 'draft_text' | 'test_mail' | 'launch' | 'status' | 'audience' | 'preview' | 'unsubscribe' | 'add_recipient' | 'add_subscribers' | 'rebuild_pending'
       lead_id?: string
       deck_token?: string
+      subscriber_ids?: string[]
       lead?: string; subscriber?: string
       campaign_id?: string; to?: string; start_at?: string
       list_mode?: string; list_ids?: string[]
@@ -687,10 +703,11 @@ Deno.serve(async (req: Request) => {
       for (const p of properties) {
         const master = masters[p.project_id]
         const token = randToken()
-        const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+        let contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+        if (!first) contentStr = contentStr.replace(/(Hallo|Hi|Hey|Guten Tag|Liebe[rs]?)\s+,/gi, '$1,')
         const { error: ie } = await sb.from('sales_decks').insert({
           token, lead_id: lead.id, project_id: master.project_id, angle: master.angle,
-          status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
+          status: 'ready', recipient_name: fullName || first || null, batch_id: camp.id,
           content: JSON.parse(contentStr),
           // Klon eines geprueften Master-Decks: das Quality-Gate laeuft am MASTER,
           // nicht je Empfaenger. 'skipped' unterscheidet das sichtbar von einem
@@ -704,7 +721,7 @@ Deno.serve(async (req: Request) => {
       const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
       const affiliateUrl = await affiliateUrlFor(sb, { lead_id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email })
       const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
-      const subject = String(camp.subject).split('{{vorname}}').join(first)
+      const subject = personalize(camp.subject, first)
       const { error: se } = await sb.from('scheduled_messages').insert({
         lead_id: lead.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
         status: 'pending', scheduled_at: clampToWindow(new Date()).toISOString(),
@@ -713,6 +730,92 @@ Deno.serve(async (req: Request) => {
       if (se) return json({ error: `Mail-Planung fehlgeschlagen: ${se.message}` }, 500)
       await sb.from('newsletter_campaigns').update({ recipients_total: (camp.recipients_total ?? 0) + 1, recipients_done: (camp.recipients_done ?? 0) + 1, updated_at: new Date().toISOString() }).eq('id', camp.id)
       return json({ ok: true, deck_tokens: deckTokens })
+    }
+
+    // Abonnenten einer Liste nachtraeglich in eine laufende Kampagne nehmen
+    // (add_recipient kann nur CRM-Leads). Sven 29.9.26: Rocket-Leads-Liste mit der
+    // Kampagnen-Zielgruppe abgleichen und die Fehlenden nachziehen. Dubletten,
+    // Abmeldungen und fehlende Adressen werden uebersprungen, der Versand laeuft
+    // im normalen Takt (makePacer) statt alles auf einmal.
+    if (body.action === 'add_subscribers') {
+      const ids = (body.subscriber_ids ?? []).map(x => String(x)).filter(Boolean)
+      if (!ids.length) return json({ error: 'subscriber_ids fehlt' }, 400)
+      const properties = (camp.properties ?? []) as CampaignProperty[]
+      if (!properties.length || properties.some(p => !p.master_deck_token)) return json({ error: 'Master-Decks fehlen' }, 400)
+
+      const masters: Record<string, { project_id: string; angle: string | null; content: unknown }> = {}
+      for (const p of properties) {
+        const { data: m } = await sb.from('sales_decks').select('project_id, angle, content').eq('token', p.master_deck_token!).maybeSingle()
+        if (!m) return json({ error: `Master-Deck nicht gefunden für ${p.project_name}` }, 400)
+        masters[p.project_id] = m as typeof masters[string]
+      }
+      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
+      const nextSlot = makePacer(Date.now() + 120e3)
+
+      let geplant = 0
+      const uebersprungen: Array<{ id: string; grund: string }> = []
+      for (const subId of ids) {
+        try {
+          const { data: subRow } = await sb.from('newsletter_subscribers')
+            .select('id, first_name, last_name, email, phone, optout_at').eq('id', subId).maybeSingle()
+          const sub = subRow as { id: string; first_name: string | null; last_name: string | null; email: string | null; phone: string | null; optout_at: string | null } | null
+          if (!sub) { uebersprungen.push({ id: subId, grund: 'unbekannt' }); continue }
+          if (sub.optout_at) { uebersprungen.push({ id: subId, grund: 'abgemeldet' }); continue }
+          const mail = (sub.email ?? '').trim()
+          if (!mail.includes('@')) { uebersprungen.push({ id: subId, grund: 'keine E-Mail' }); continue }
+          const { data: dup } = await sb.from('scheduled_messages').select('id')
+            .eq('subscriber_id', sub.id).eq('campaign_id', camp.id).limit(1)
+          if (dup && dup.length) { uebersprungen.push({ id: subId, grund: 'hat die Kampagne schon' }); continue }
+
+          const first = firstNameOf(sub)
+          const firstJsonSafe = JSON.stringify(first).slice(1, -1)
+          const fullName = `${sub.first_name ?? ''} ${sub.last_name ?? ''}`.trim()
+          const deckTokens: Record<string, string> = {}
+          for (const p of properties) {
+            const master = masters[p.project_id]
+            const token = randToken()
+            let contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+            if (!first) contentStr = contentStr.replace(/(Hallo|Hi|Hey|Guten Tag|Liebe[rs]?)\s+,/gi, '$1,')
+            const { error: ie } = await sb.from('sales_decks').insert({
+              // Abonnent ohne CRM-Lead: Deck bleibt ohne Lead-Bezug, der Link
+              // funktioniert ueber den Token.
+              token, lead_id: null, project_id: master.project_id, angle: master.angle,
+              status: 'ready', recipient_name: fullName || first || null, batch_id: camp.id,
+              content: JSON.parse(contentStr),
+              quality_status: 'skipped',
+              quality_report: { status: 'skipped', source: 'newsletter_clone', master_token: p.master_deck_token ?? null },
+            })
+            if (ie) { console.error(`[newsletter] Deck-Klon ${mail}:`, ie.message); continue }
+            deckTokens[p.project_id] = token
+          }
+          // Lieber auslassen als eine Mail ohne das versprochene Exposé schicken.
+          if (Object.keys(deckTokens).length !== properties.length) {
+            uebersprungen.push({ id: subId, grund: 'Deck-Klon unvollständig' })
+            continue
+          }
+
+          const affiliateUrl = await affiliateUrlFor(sb, { subscriber_id: sub.id, first_name: sub.first_name, last_name: sub.last_name, email: mail, phone: sub.phone })
+          const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
+          const { error: se } = await sb.from('scheduled_messages').insert({
+            subscriber_id: sub.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+            status: 'pending', scheduled_at: nextSlot('email').toISOString(),
+            email_subject: personalize(camp.subject, first), email_body: html,
+            recipient: 'client', appointment_condition: 'none',
+          })
+          if (se) { uebersprungen.push({ id: subId, grund: se.message }); continue }
+          geplant++
+        } catch (e) {
+          uebersprungen.push({ id: subId, grund: (e as Error).message })
+        }
+      }
+      if (geplant) {
+        await sb.from('newsletter_campaigns').update({
+          recipients_total: (camp.recipients_total ?? 0) + geplant,
+          recipients_done:  (camp.recipients_done ?? 0) + geplant,
+          updated_at: new Date().toISOString(),
+        }).eq('id', camp.id)
+      }
+      return json({ ok: true, geplant, uebersprungen })
     }
 
     if (body.action === 'test_mail') {
@@ -821,12 +924,13 @@ Deno.serve(async (req: Request) => {
               for (const p of properties) {
                 const master = masters[p.project_id]
                 const token = randToken()
-                const contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+                let contentStr = JSON.stringify(master.content).split('{{vorname}}').join(firstJsonSafe)
+                if (!first) contentStr = contentStr.replace(/(Hallo|Hi|Hey|Guten Tag|Liebe[rs]?)\s+,/gi, '$1,')
                 const { error: ie } = await sb.from('sales_decks').insert({
                   // Abonnenten aus einer Liste haben keinen Lead — Deck bleibt ohne
                   // Lead-Bezug, der Link funktioniert trotzdem ueber den Token.
                   token, lead_id: lead.lead_id, project_id: master.project_id, angle: master.angle,
-                  status: 'ready', recipient_name: fullName || first, batch_id: camp.id,
+                  status: 'ready', recipient_name: fullName || first || null, batch_id: camp.id,
                   content: JSON.parse(contentStr),
                   // Siehe oben: geprueft wird das Master-Deck, nicht jeder Klon.
                   quality_status: 'skipped',
@@ -844,7 +948,7 @@ Deno.serve(async (req: Request) => {
               }
               const affiliateUrl = await affiliateUrlFor(sb, lead)
               const html = buildEmailHtml(camp, first, deckTokens, { campaignId: String(camp.id), directBooking: true, projectImages, affiliateUrl })
-              const subject = String(camp.subject).split('{{vorname}}').join(first)
+              const subject = personalize(camp.subject, first)
               // Kanal nach dem, was der Empfänger hinterlassen hat: Mail, WhatsApp
               // oder beides. Leads haben hier keine Nummer und bleiben bei E-Mail.
               const hatMail = !!lead.email
