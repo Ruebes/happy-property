@@ -6,6 +6,7 @@ import { checkCalendarStatus, createGoogleEvent, updateGoogleEvent } from '../..
 import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
 import { DECK_LOGO, DECK_PHOTO } from '../../lib/deckTypes'
 import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BERLIN, APPT_TZ_NICOSIA, type ApptTz } from '../../lib/tz'
+import { fnErrorMessage, isPermanentMailRejection } from '../../lib/fnError'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -852,10 +853,16 @@ export default function AppointmentModal({
                 },
               },
             })
-            if (mailErr) throw new Error(mailErr.message)
+            if (mailErr) throw mailErr
           } catch (mailErr) {
-            console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', mailErr)
-            warnings.push(t('crm.appt.mailInviteFailedTo', 'E-Mail-Einladung an {{name}} konnte NICHT gesendet werden.', { name: tgt.firstName || tgt.email }))
+            // Grund aus dem Function-Body holen — die Generik von invoke() sagt nichts.
+            const reason = await fnErrorMessage(mailErr)
+            console.warn('[AppointmentModal] Einladungs-Mail fehlgeschlagen:', reason)
+            const who = tgt.firstName ? `${tgt.firstName} (${tgt.email})` : tgt.email
+            warnings.push(isPermanentMailRejection(reason)
+              // Dauerhafte Ablehnung: Adresse/Domain existiert nicht — Wiederholen sinnlos.
+              ? t('crm.appt.mailInviteBadAddress', 'E-Mail-Einladung an {{name}} abgelehnt — die Adresse existiert nicht. Bitte E-Mail im Kontakt korrigieren. ({{reason}})', { name: who, reason })
+              : t('crm.appt.mailInviteFailedReason', 'E-Mail-Einladung an {{name}} konnte NICHT gesendet werden: {{reason}}', { name: who, reason }))
           }
         }
       }
@@ -905,7 +912,7 @@ export default function AppointmentModal({
                 ...(tgt.leadId ? { lead_id: tgt.leadId } : {}),
               },
             })
-            if (waErr) throw new Error(waErr.message)
+            if (waErr) throw waErr
             // send-whatsapp antwortet auch bei abgelehntem Versand mit 200 —
             // Erfolg steht NUR in results[].ok (bekanntes 200+error-Feld-Gotcha).
             const waResults = (waData as { results?: Array<{ ok?: boolean }> } | null)?.results
@@ -913,8 +920,9 @@ export default function AppointmentModal({
               throw new Error('Versand vom WhatsApp-Dienst abgelehnt')
             }
           } catch (waErr) {
-            console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', waErr)
-            warnings.push(t('crm.appt.waInviteFailedTo', 'WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden.', { name: tgt.firstName || tgt.phone }))
+            const reason = await fnErrorMessage(waErr)
+            console.warn('[AppointmentModal] WhatsApp-Einladung fehlgeschlagen:', reason)
+            warnings.push(t('crm.appt.waInviteFailedReason', 'WhatsApp-Einladung an {{name}} konnte NICHT gesendet werden: {{reason}}', { name: tgt.firstName || tgt.phone, reason }))
           }
         }
       }
