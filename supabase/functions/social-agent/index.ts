@@ -1948,35 +1948,63 @@ Regeln:
     // texten und OHNE Freigabe für Montag einplanen (Meta 18:30 CY, LinkedIn
     // 08:30 CY). Idempotent über news_source = Video-URL.
     if (body.action === 'youtube_post') {
-      const CHANNEL = 'UC7SGGkCGeiY8XQZGvdyNr9A'
-      const feed = typeof body.video_id === 'string' && body.video_id ? '' : await (await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL}`)).text()
-      // Neuestes ECHTES Video suchen — Shorts aussortieren (Svens Vorgabe):
-      // /shorts/<id> antwortet für Shorts mit 200, echte Videos leiten auf /watch um.
+      // Quelle ist die YouTube-Data-API, nicht mehr der RSS-Feed: der antwortet
+      // seit Ende September 2026 mit 404 (geprueft am 29.9. fuer den richtigen,
+      // per API bestaetigten Kanal). Deshalb kam am 28.9. kein Montagspost.
+      // Die API liefert die Laufzeit gleich mit, damit entfaellt auch der alte
+      // Umweg ueber /shorts/<id> mit Consent-Cookie und Redirect-Raten.
       let vid = '', title = '', desc = ''
-      // Aus dem YouTube-Center: konkretes Video statt „neuestes im Feed".
       if (typeof body.video_id === 'string' && body.video_id) {
         vid = body.video_id
         title = String(body.title ?? '').trim()
         desc = String(body.description ?? '').trim().slice(0, 1500)
       }
-      for (const entry of vid ? [] : feed.split('<entry>').slice(1, 9)) {
-        const v = entry.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]
-        if (!v) continue
-        // GOTCHA: ohne Consent-Cookie leitet YouTube aus Rechenzentren ALLES auf die
-        // Consent-Seite um — der Redirect-Test wird dann wertlos. Cookie + doppelte
-        // Absicherung über die Videolänge (<4 Min = Short/Clip → überspringen).
-        const ytHdr = { Cookie: 'CONSENT=YES+cb; SOCS=CAI', 'User-Agent': 'Mozilla/5.0' }
-        const head = await fetch(`https://www.youtube.com/shorts/${v}`, { redirect: 'manual', headers: ytHdr })
-        if (head.status === 200) continue   // Short → überspringen
-        const watchHtml = await (await fetch(`https://www.youtube.com/watch?v=${v}`, { headers: ytHdr })).text()
-        const secs = Number(watchHtml.match(/"lengthSeconds":"(\d+)"/)?.[1] ?? 0)
-        if (secs > 0 && secs < 240) continue   // zu kurz → auch überspringen
-        vid = v
-        title = (entry.match(/<title>([^<]+)<\/title>/)?.[1] ?? '').trim()
-        desc = (entry.match(/<media:description>([\s\S]*?)<\/media:description>/)?.[1] ?? '').trim().slice(0, 1500)
-        break
+      if (!vid) {
+        const cs = async (k: string) => ((await sb.from('connector_secrets').select('value').eq('key', k).maybeSingle()).data as { value?: string } | null)?.value ?? Deno.env.get(k) ?? ''
+        const [ycid2, ycsec2, yrtok2] = [await cs('YOUTUBE_CLIENT_ID'), await cs('YOUTUBE_CLIENT_SECRET'), await cs('YOUTUBE_REFRESH_TOKEN')]
+        if (!ycid2 || !ycsec2 || !yrtok2) return json({ error: 'YouTube nicht verbunden.' }, 400)
+        const td = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ client_id: ycid2, client_secret: ycsec2, refresh_token: yrtok2, grant_type: 'refresh_token' }),
+        }).then(r => r.json()) as { access_token?: string }
+        if (!td.access_token) return json({ error: 'YouTube-OAuth fehlgeschlagen.' }, 502)
+        const yhdr = { Authorization: `Bearer ${td.access_token}` }
+
+        const ch = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', { headers: yhdr })
+          .then(r => r.json()) as { items?: Array<{ contentDetails?: { relatedPlaylists?: { uploads?: string } } }> }
+        const uploads = ch.items?.[0]?.contentDetails?.relatedPlaylists?.uploads
+        if (!uploads) return json({ error: 'Uploads-Playlist nicht gefunden.' }, 502)
+
+        const pl = await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${uploads}&maxResults=10`, { headers: yhdr })
+          .then(r => r.json()) as { items?: Array<{ snippet?: { title?: string; description?: string }; contentDetails?: { videoId?: string } }> }
+        const kandidaten = (pl.items ?? []).map(i => ({
+          id: i.contentDetails?.videoId ?? '',
+          title: (i.snippet?.title ?? '').trim(),
+          desc: (i.snippet?.description ?? '').trim().slice(0, 1500),
+        })).filter(k => k.id)
+        if (!kandidaten.length) return json({ error: 'Keine Videos im Kanal gefunden.' }, 502)
+
+        // Shorts aussortieren: alles unter 4 Minuten. Die Laufzeit steht als
+        // ISO-8601-Dauer in contentDetails, ein Aufruf fuer alle Kandidaten.
+        const det = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=contentDetails,status&id=${kandidaten.map(k => k.id).join(',')}`, { headers: yhdr })
+          .then(r => r.json()) as { items?: Array<{ id?: string; contentDetails?: { duration?: string }; status?: { privacyStatus?: string } }> }
+        const sekunden = new Map<string, number>()
+        const sichtbar = new Map<string, string>()
+        for (const it of det.items ?? []) {
+          const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(it.contentDetails?.duration ?? '')
+          if (it.id) {
+            sekunden.set(it.id, m ? (+(m[1] ?? 0) * 3600 + +(m[2] ?? 0) * 60 + +(m[3] ?? 0)) : 0)
+            sichtbar.set(it.id, it.status?.privacyStatus ?? 'public')
+          }
+        }
+        for (const k of kandidaten) {
+          if ((sekunden.get(k.id) ?? 0) < 240) continue          // Short oder Clip
+          if (sichtbar.get(k.id) === 'private') continue          // noch nicht veroeffentlicht
+          vid = k.id; title = k.title; desc = k.desc
+          break
+        }
       }
-      if (!vid) return json({ error: 'Kein echtes Video (ohne Shorts) im Feed gefunden' }, 502)
+      if (!vid) return json({ error: 'Kein Video ueber 4 Minuten im Kanal gefunden (Shorts werden uebersprungen).' }, 502)
       const videoUrl = `https://www.youtube.com/watch?v=${vid}`
       const { data: dup } = await sb.from('social_posts').select('id').eq('news_source', videoUrl).limit(1)
       if (dup && dup.length) return json({ success: true, skipped: 'Video bereits verarbeitet', video: videoUrl })
@@ -2548,10 +2576,25 @@ Regeln:
                 caption: { type: 'string', description: 'Der komplette Post-Text inkl. Quelle und 3 Hashtags' },
                 source_url: { type: 'string' },
                 image_prompt: { type: 'string', description: 'Englisch: eine ruhige, alltägliche Szene zum Thema, wie sie ein Fotograf der Lokalzeitung mit dem Handy aufnehmen würde (Ort, Blickwinkel, Tageszeit, echte Details). Keine Personen im Vordergrund, kein Text, keine Schilder, keine Flaggen, keine Wörter wie photorealistic/cinematic.' },
-              }, required: ['title', 'caption', 'image_prompt'] } }],
+                slides: {
+                  type: 'array',
+                  description: 'DREI Slides, die den Post visuell tragen. Auf LinkedIn erreichen Mehrbild-Posts mehr Menschen als ein Einzelbild. Reihenfolge fest: 1. cover mit der These, 2. fact mit der entscheidenden Zahl, 3. point mit der Einordnung. Keine Werbung, kein Aufruf, kein Link.',
+                  items: { type: 'object', properties: {
+                    type: { type: 'string', enum: ['cover', 'fact', 'point'] },
+                    kicker: { type: 'string', description: 'nur cover, max. 28 Zeichen, z. B. DEUTSCHLAND 2026' },
+                    title: { type: 'string', description: 'cover: die These, max. 38 Zeichen, hoechstens 6 Woerter. point: Ueberschrift, max. 44' },
+                    subtitle: { type: 'string', description: 'nur cover, max. 62 Zeichen' },
+                    value: { type: 'string', description: 'nur fact, max. 9 Zeichen, z. B. "6.375 €" oder "+12,9 %"' },
+                    label: { type: 'string', description: 'nur fact, max. 56 Zeichen, was die Zahl bedeutet' },
+                    text: { type: 'string', description: 'nur fact, max. 170 Zeichen, Einordnung' },
+                    source: { type: 'string', description: 'nur fact, Name der Quelle ohne URL' },
+                    body: { type: 'string', description: 'nur point, max. 300 Zeichen' },
+                  }, required: ['type'] },
+                },
+              }, required: ['title', 'caption', 'image_prompt', 'slides'] } }],
               tool_choice: { type: 'tool', name: 'set_linkedin' }, max_tokens: 3000,
             })
-            const out = (((structured.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; source_url?: string; image_prompt?: string } }>).find(b => b.type === 'tool_use')?.input ?? {})
+            const out = (((structured.content ?? []) as Array<{ type: string; input?: { title?: string; caption?: string; source_url?: string; image_prompt?: string; slides?: unknown[] } }>).find(b => b.type === 'tool_use')?.input ?? {})
             if (!out.caption || !out.image_prompt) throw new Error('LinkedIn-Text konnte nicht erstellt werden.')
             // Quelle ist Pflicht, steht aber bewusst NICHT mehr im Beitragstext,
             // sondern geht beim Veroeffentlichen als erster Kommentar raus.
@@ -2714,7 +2757,7 @@ Regeln:
     if (body.action === 'publish') {
       if (!body.post_id) return json({ error: 'post_id fehlt' }, 400)
       const { data: post } = await sb.from('social_posts').select('*').eq('id', body.post_id).maybeSingle()
-      const p0 = post as { content: string | null; image_url: string | null; image_urls: string[] | null; format: string | null; platforms: string[]; status: string } | null
+      const p0 = post as { content: string | null; image_url: string | null; image_urls: string[] | null; format: string | null; platforms: string[]; status: string; topic: string | null } | null
       // Bilderliste: image_urls (Mehrfach) mit image_url als Fallback; Karussell nur mit >= 2.
       const imgs = (Array.isArray(p0?.image_urls) ? p0!.image_urls! : []).filter(Boolean)
       if (p0 && !imgs.length && p0.image_url) imgs.push(p0.image_url)
@@ -2756,7 +2799,10 @@ Regeln:
       // Seite hat 139 Follower, Meta spielt Video weit darueber hinaus aus,
       // Fotos so gut wie gar nicht. Videos und Alben (Karussell) bleiben, nur
       // das Einzelbild faellt weg; auf Instagram laeuft es unveraendert weiter.
-      const fbLohntSich = !!videoUrl || isCarousel
+      // YouTube-Posts sind ausgenommen: sie tragen ein Videobild und verweisen auf
+      // den Kanal, das ist ihr Zweck. Sven ausdruecklich am 29.9.2026: bleibt wie
+      // frueher, jeden Montag auf Instagram, Facebook und LinkedIn.
+      const fbLohntSich = !!videoUrl || isCarousel || p0?.topic === 'youtube'
       if (p.platforms.includes('facebook') && pageId && !results.facebook && !fbLohntSich) {
         results.facebook = { ok: false, error: 'Einzelbild auf Facebook uebersprungen (erreicht dort im Schnitt 4 bis 16 Personen). Als Video oder Karussell posten.' }
       }
