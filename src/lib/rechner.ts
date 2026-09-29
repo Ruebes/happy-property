@@ -544,7 +544,7 @@ function computeCore(p: CalcParams): CalcResult {
     vatAmt = vsN.vat
     vatDetail = vsN
     costs = Math.round(pGross * 0.01)
-    bedrooms = p.bedrooms || 2
+    bedrooms = Number.isFinite(p.bedrooms) ? p.bedrooms : 2
   }
 
   const fin = p.fin
