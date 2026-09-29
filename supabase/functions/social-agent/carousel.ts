@@ -61,19 +61,21 @@ function swipe(col: string, size: number, bold = false): string {
     <path d="M ${xEnd - 26} ${y - 9} H ${xEnd - 2} M ${xEnd - 11} ${y - 18} L ${xEnd - 2} ${y - 9} L ${xEnd - 11} ${y}" stroke="${col}" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
 }
 
-function frame(i: number, n: number, dark: boolean): string {
+// swipe=false fuer LinkedIn-Mehrbild: dort gibt es kein Wischen wie im
+// Instagram-Karussell, die Bilder liegen einfach nebeneinander.
+function frame(i: number, n: number, dark: boolean, swipeHinweis = true): string {
   const col = dark ? CI.line : CI.mute
   return `<text ${F} x="${PAD}" y="130" font-size="24" fill="${CI.coral}" font-weight="700" letter-spacing="5">IMMOBILIEN AUF ZYPERN · EU</text>
     <text ${F} x="${PAD_R}" y="130" font-size="26" fill="${col}" text-anchor="end" font-weight="600">${i + 1}/${n}</text>
     <line x1="${PAD}" y1="1222" x2="${PAD_R}" y2="1222" stroke="${dark ? CI.navySoft : CI.line}" stroke-width="2"/>
     <text ${F} x="${PAD}" y="1272" font-size="26" fill="${col}" font-weight="600" letter-spacing="1">Happy Property Cyprus</text>
-    ${i < n - 1 ? swipe(col, 26) : `<text ${F} x="${PAD_R}" y="1272" font-size="26" fill="${col}" text-anchor="end">happy-property.de</text>`}`
+    ${swipeHinweis && i < n - 1 ? swipe(col, 26) : `<text ${F} x="${PAD_R}" y="1272" font-size="26" fill="${col}" text-anchor="end">happy-property.de</text>`}`
 }
 
 // Titel-Slide: nur das Overlay (Verlauf + Text) – das Foto kommt darunter.
 // Der Titel ist der Hook: kurz und groß, höchstens 3 Zeilen (ig-carousel:
 // „Das Cover ist 80 % des Ergebnisses. Sechs Wörter. Groß.").
-export function coverOverlaySvg(s: Extract<CarSlide, { type: 'cover' }>, n: number): string {
+export function coverOverlaySvg(s: Extract<CarSlide, { type: 'cover' }>, n: number, swipeHinweis = true): string {
   const title = wrap(s.title, 16, 3)
   const sub = wrap(s.subtitle ?? '', 37, 2)
   const titleLh = 104
@@ -98,13 +100,13 @@ export function coverOverlaySvg(s: Extract<CarSlide, { type: 'cover' }>, n: numb
     <rect x="${PAD}" y="${yTitle - 120}" width="90" height="8" rx="4" fill="${CI.coral}"/>
     <text ${FH} font-size="92" fill="${CI.cream}" font-weight="700">${tspans(title, PAD, yTitle, titleLh)}</text>
     ${s.subtitle ? `<text ${F} font-size="36" fill="${CI.line}">${tspans(sub, PAD, yTitle + title.length * titleLh + 30, subLh)}</text>` : ''}
-    ${swipe(CI.cream, 28, true)}
+    ${swipeHinweis ? swipe(CI.cream, 28, true) : ''}
   </svg>`
 }
 
 // Titel-Slide ohne Foto (Rückfall): Navy-Fläche.
-export function coverPlainSvg(s: Extract<CarSlide, { type: 'cover' }>, n: number): string {
-  return coverOverlaySvg(s, n).replace(svgOpen, `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.navy}"/>`)
+export function coverPlainSvg(s: Extract<CarSlide, { type: 'cover' }>, n: number, swipeHinweis = true): string {
+  return coverOverlaySvg(s, n, swipeHinweis).replace(svgOpen, `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.navy}"/>`)
 }
 
 // Punkte-Slides (list, recap) muessen in den Platz zwischen Titel und Fusszeile
@@ -128,8 +130,8 @@ function fitRows(items: string[], yStart: number): { step: typeof ROW_STEPS[numb
   return { step, rows: items.map(it => wrap(it, step.cw, 1)) }
 }
 
-export function slideSvg(s: CarSlide, i: number, n: number): string {
-  if (s.type === 'cover') return coverPlainSvg(s, n)
+export function slideSvg(s: CarSlide, i: number, n: number, swipeHinweis = true): string {
+  if (s.type === 'cover') return coverPlainSvg(s, n, swipeHinweis)
   // Einsatz-Slide: das zweite Cover. Im Raster sieht man auch diesen Slide, also
   // steht hier keine Hinführung, sondern der Satz, der die Sache scharf macht.
   if (s.type === 'stake') {
@@ -138,7 +140,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
     // Grundlinie der ERSTEN Zeile, deshalb die halbe Blockhöhe gegenrechnen.
     const yT = Math.round(723 - (text.length - 1) * 44)
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.navyDeep}"/>
-      ${frame(i, n, true)}
+      ${frame(i, n, true, swipeHinweis)}
       <rect x="${PAD}" y="${yT - 120}" width="90" height="8" rx="4" fill="${CI.coral}"/>
       <text ${FH} font-size="74" fill="${CI.cream}" font-weight="700">${tspans(text, PAD, yT, 88)}</text>
     </svg>`
@@ -152,7 +154,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
     const btnW = Math.min(840, Math.max(460, btn.length * 23 + 120))
     const yBtn = Math.max(yB + body.length * 50 + 60, 880)
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.navy}"/>
-      ${frame(i, n, true)}
+      ${frame(i, n, true, swipeHinweis)}
       <rect x="${PAD}" y="${yT - 110}" width="90" height="8" rx="4" fill="${CI.coral}"/>
       <text ${FH} font-size="78" fill="${CI.cream}" font-weight="700">${tspans(title, PAD, yT, 92)}</text>
       ${s.body ? `<text ${F} font-size="36" fill="${CI.line}">${tspans(body, PAD, yB, 50)}</text>` : ''}
@@ -168,7 +170,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
     const yL = yV + (val.length - 1) * 160 + 110
     const yX = yL + label.length * 58 + 60
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.cream}"/>
-      ${frame(i, n, false)}
+      ${frame(i, n, false, swipeHinweis)}
       <text ${FH} font-size="170" fill="${CI.navy}" font-weight="700">${tspans(val, PAD, yV, 160)}</text>
       <rect x="${PAD}" y="${yL - 62}" width="90" height="8" rx="4" fill="${CI.coral}"/>
       <text ${F} font-size="44" fill="${CI.navy}" font-weight="700">${tspans(label, PAD, yL, 58)}</text>
@@ -193,7 +195,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
       return out
     }).join('')
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.cream}"/>
-      ${frame(i, n, false)}
+      ${frame(i, n, false, swipeHinweis)}
       <rect x="${PAD}" y="210" width="90" height="8" rx="4" fill="${CI.coral}"/>
       <text ${FH} font-size="66" fill="${CI.navy}" font-weight="700">${tspans(title, PAD, 320, 76)}</text>
       ${body}
@@ -212,7 +214,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
       return out
     }).join('')
     return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.cream}"/>
-      ${frame(i, n, false)}
+      ${frame(i, n, false, swipeHinweis)}
       <text ${FH} font-size="66" fill="${CI.navy}" font-weight="700">${tspans(title, PAD, 320, 76)}</text>
       ${body}
     </svg>`
@@ -223,7 +225,7 @@ export function slideSvg(s: CarSlide, i: number, n: number): string {
   const yT = 380
   const yB = yT + title.length * 78 + 60
   return `${svgOpen}<rect width="${CAR_W}" height="${CAR_H}" fill="${CI.cream}"/>
-    ${frame(i, n, false)}
+    ${frame(i, n, false, swipeHinweis)}
     <rect x="${PAD}" y="${yT - 110}" width="90" height="8" rx="4" fill="${CI.coral}"/>
     <text ${FH} font-size="66" fill="${CI.navy}" font-weight="700">${tspans(title, PAD, yT, 78)}</text>
     <text ${F} font-size="36" fill="${CI.ink}">${tspans(body, PAD, yB, 52)}</text>

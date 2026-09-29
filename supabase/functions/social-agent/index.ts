@@ -31,7 +31,7 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { initWasm, Resvg } from 'https://esm.sh/@resvg/resvg-wasm@2.6.2'
 import { hfGenerateBytes as hfGen, hfUploadImage as hfUp, type HfStore } from '../_shared/higgsfield.ts'
 import { CI, CI_FONT, loadCiFonts } from '../_shared/brand.ts'
-import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg } from './carousel.ts'
+import { slideSvg, coverOverlaySvg, composeCover, normalizeSlides, hookOverlaySvg, type CarSlide } from './carousel.ts'
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
 
@@ -856,6 +856,64 @@ async function fetchPhoto(url: string): Promise<Uint8Array | null> {
     const b = new Uint8Array(await r.arrayBuffer())
     return b.byteLength > 5000 ? b : null
   } catch { return null }
+}
+
+// LinkedIn-Mehrbild: drei gestaltete Slides aus dem Post-Text. Nutzt dieselbe
+// Slide-Engine wie das News-Karussell (1080x1350, CI, PAD 120). Gibt true zurueck,
+// wenn mindestens zwei Slides gerendert wurden - darunter lohnt Mehrbild nicht.
+async function linkedinSlides(sb: SupabaseClient, anthropicKey: string, postId: string, roh: unknown): Promise<boolean> {
+  const liste = Array.isArray(roh) ? roh : []
+  if (liste.length < 2) return false
+  const str = (v: unknown) => noDash(String(v ?? '').trim())
+  const slides: CarSlide[] = []
+  for (const r of liste.slice(0, 4) as Array<Record<string, unknown>>) {
+    const t = str(r.type)
+    if (t === 'cover' && str(r.title)) slides.push({ type: 'cover', kicker: str(r.kicker) || undefined, title: str(r.title), subtitle: str(r.subtitle) || undefined })
+    else if (t === 'fact' && str(r.value) && str(r.label)) slides.push({ type: 'fact', value: str(r.value), label: str(r.label), text: str(r.text) || undefined, source: str(r.source) || undefined })
+    else if (t === 'point' && str(r.title) && str(r.body)) slides.push({ type: 'point', title: str(r.title), body: str(r.body) })
+  }
+  if (slides.length < 2) return false
+
+  // "Buero" oder "Koeln" gross auf einer Slide bricht Svens Umlaut-Regel. Einmal
+  // reparieren lassen, wie beim News-Karussell; bleibt es dabei, lieber das
+  // Einzelbild als eine falsch geschriebene Slide.
+  const TRANSLIT_LI = /\b(?:buero|koeln|duesseldorf|muenchen|foerder|zulaessig|hoehe|gebaeude|fuer|ueber|koennen|koennte|muessen|waehrend|haelt|zurueck|naechste|spaeter|heisst|groesser|groesste|laeuft|eigentuemer|kaeufer|waehrung|laender|haeufig|moeglich|natuerlich|wuerde|fuehrt|gegenueber|aendern|aenderung|loesung|oeffentlich|steuererklaerung|erhoehung|verhaeltnis|flaeche|jaehrlich|zusaetzlich|regulaer)[a-zäöüß]*\b/i
+  if (TRANSLIT_LI.test(JSON.stringify(slides))) {
+    let repariert: CarSlide[] | null = null
+    try {
+      const fix = await claude(anthropicKey, {
+        system: 'Du korrigierst deutsche Texte: ersetze ae/oe/ue/ss-Umschreibungen durch echte Umlaute und ß, wo das Wort sie verlangt (Buero→Büro, Koeln→Köln, Foerderung→Förderung, zulaessig→zulässig, heisst→heißt). Sonst nichts ändern, keine Zahlen anfassen. Gib das JSON-Array unverändert in der Struktur zurück, nur als JSON.',
+        messages: [{ role: 'user', content: JSON.stringify(slides) }], max_tokens: 2500,
+      })
+      const txt = (((fix.content ?? []) as Array<{ type: string; text?: string }>).find(b => b.type === 'text')?.text ?? '').trim().replace(/^```(json)?|```$/g, '').trim()
+      const geparst = JSON.parse(txt)
+      if (Array.isArray(geparst) && !TRANSLIT_LI.test(JSON.stringify(geparst))) repariert = geparst as CarSlide[]
+    } catch (e) { console.warn('[social-agent] LinkedIn-Umlaute:', (e as Error).message) }
+    if (!repariert) {
+      console.warn('[social-agent] LinkedIn-Slides ohne echte Umlaute, Einzelbild statt Mehrbild')
+      return false
+    }
+    slides.length = 0
+    slides.push(...repariert)
+  }
+
+  const base = Deno.env.get('SUPABASE_URL')
+  const ts = Date.now()
+  const urls: string[] = []
+  for (let i = 0; i < slides.length; i++) {
+    try {
+      const bytes = await svgToPng(slideSvg(slides[i], i, slides.length, false))
+      const path = `social/${postId}-li-${ts}-${i + 1}.png`
+      const { error } = await sb.storage.from('ad-creatives').upload(path, bytes, { contentType: 'image/png', upsert: true })
+      if (error) throw new Error(error.message)
+      urls.push(`${base}/storage/v1/object/public/ad-creatives/${path}`)
+    } catch (e) {
+      console.warn(`[social-agent] LinkedIn-Slide ${i + 1}:`, (e as Error).message)
+    }
+  }
+  if (urls.length < 2) return false
+  await sb.from('social_posts').update({ image_urls: urls, image_url: urls[0], updated_at: new Date().toISOString() }).eq('id', postId)
+  return true
 }
 
 // ── Wochenbrief: Plan plus heisse Diskussionen in Svens Kalender ────────────
@@ -2578,7 +2636,7 @@ Regeln:
                 image_prompt: { type: 'string', description: 'Englisch: eine ruhige, alltägliche Szene zum Thema, wie sie ein Fotograf der Lokalzeitung mit dem Handy aufnehmen würde (Ort, Blickwinkel, Tageszeit, echte Details). Keine Personen im Vordergrund, kein Text, keine Schilder, keine Flaggen, keine Wörter wie photorealistic/cinematic.' },
                 slides: {
                   type: 'array',
-                  description: 'DREI Slides, die den Post visuell tragen. Auf LinkedIn erreichen Mehrbild-Posts mehr Menschen als ein Einzelbild. Reihenfolge fest: 1. cover mit der These, 2. fact mit der entscheidenden Zahl, 3. point mit der Einordnung. Keine Werbung, kein Aufruf, kein Link.',
+                  description: 'DREI Slides, die den Post visuell tragen. Auf LinkedIn erreichen Mehrbild-Posts mehr Menschen als ein Einzelbild. Reihenfolge fest: 1. cover mit der These, 2. fact mit der entscheidenden Zahl, 3. point mit der Einordnung. Keine Werbung, kein Aufruf, kein Link. ECHTE UMLAUTE in jedem Feld: ä ö ü ß, niemals ae/oe/ue/ss. Also Büro, Köln, Düsseldorf, Förderung, zulässig, Höhe, Gebäude.',
                   items: { type: 'object', properties: {
                     type: { type: 'string', enum: ['cover', 'fact', 'point'] },
                     kicker: { type: 'string', description: 'nur cover, max. 28 Zeichen, z. B. DEUTSCHLAND 2026' },
@@ -2602,7 +2660,12 @@ Regeln:
             // Sicherheitsnetz: hat das Modell die Quelle doch in den Text gesetzt, raus damit.
             out.caption = (out.caption ?? '').replace(/\n*\s*Quelle:\s*https?:\/\/\S+\s*/gi, '\n').trim()
             await sb.from('social_posts').update({ title: `💼 ${out.title ?? 'LinkedIn'}`.slice(0, 200), content: noDash(out.caption), news_source: out.source_url || null, image_url: null, image_urls: [], updated_at: stamp() }).eq('id', postId)
-            await generatePostImage(sb, postId, out.image_prompt)
+            // Mehrbild statt Einzelbild: auf LinkedIn erreichen mehrteilige Posts
+            // mehr Menschen (6,45 % gegen Video 6,00 %). Die Slides bauen wir aus
+            // dem Text, das braucht kein Higgsfield und kostet nichts. Schlaegt es
+            // fehl, bleibt es beim einen KI-Foto wie bisher.
+            const liSlides = await linkedinSlides(sb, anthropicKey, postId, out.slides)
+            if (!liSlides) await generatePostImage(sb, postId, out.image_prompt)
             await sb.from('social_posts').update({ status: 'geplant', post_results: { autopilot: { state: 'ready', attempts } }, updated_at: stamp() }).eq('id', postId)
           } else {
             // News: frische, unbenutzte Idee (max. 4 Tage alt), sonst neu recherchieren
@@ -2962,31 +3025,48 @@ Regeln:
             const me = await fetch('https://api.linkedin.com/v2/userinfo', { headers: { Authorization: `Bearer ${liToken}` } }).then(x => x.json())
             const author = `urn:li:person:${me.sub}`
             // Bild mitgeben: Asset registrieren → Binärdaten hochladen → im Post referenzieren
-            let liMedia: { status: string; media: string } | null = null
-            if (p.image_url) {
+            // Mehrbild schlaegt Einzelbild auf LinkedIn (6,45 % gegen 6,00 % bei
+            // Video). Jedes Bild braucht eine eigene Registrierung und einen
+            // eigenen Upload. Klappt nur eines, wird daraus ein normaler
+            // Einzelbild-Post, das ist immer noch besser als gar kein Bild.
+            const liBilder = (p0?.image_urls ?? []).filter(Boolean).slice(0, 9)
+            const liQuellen = liBilder.length ? liBilder : (p.image_url ? [p.image_url] : [])
+            const liMedien: Array<{ status: string; media: string }> = []
+            for (const bildUrl of liQuellen) {
               try {
                 const reg = await fetch('https://api.linkedin.com/v2/assets?action=registerUpload', {
-                  method: 'POST', headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
                   body: JSON.stringify({ registerUploadRequest: { recipes: ['urn:li:digitalmediaRecipe:feedshare-image'], owner: author, serviceRelationships: [{ relationshipType: 'OWNER', identifier: 'urn:li:userGeneratedContent' }] } }),
                 }).then(x => x.json())
                 const upUrl = reg?.value?.uploadMechanism?.['com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest']?.uploadUrl
                 const asset = reg?.value?.asset
-                if (upUrl && asset) {
-                  const imgBytes = await (await fetch(p.image_url)).arrayBuffer()
-                  const pu = await fetch(upUrl, { method: 'PUT', headers: { Authorization: `Bearer ${liToken}` }, body: imgBytes })
-                  if (pu.ok) liMedia = { status: 'READY', media: asset }
-                }
-              } catch (e) { console.warn('[social-agent] LinkedIn-Bild:', e) }
+                if (!upUrl || !asset) continue
+                const imgBytes = await (await fetch(bildUrl)).arrayBuffer()
+                const pu = await fetch(upUrl, { method: 'PUT', headers: { Authorization: `Bearer ${liToken}` }, body: imgBytes })
+                if (pu.ok) liMedien.push({ status: 'READY', media: asset })
+              } catch (e) { console.warn('[social-agent] LinkedIn-Bild:', (e as Error).message) }
             }
-            const r = await fetch('https://api.linkedin.com/v2/ugcPosts', {
+            if (liQuellen.length > 1 && liMedien.length < liQuellen.length) {
+              console.warn(`[social-agent] LinkedIn: nur ${liMedien.length} von ${liQuellen.length} Bildern hochgeladen`)
+            }
+            const liPost = async (medien: Array<{ status: string; media: string }>) => fetch('https://api.linkedin.com/v2/ugcPosts', {
               method: 'POST',
               headers: { Authorization: `Bearer ${liToken}`, 'Content-Type': 'application/json', 'X-Restli-Protocol-Version': '2.0.0' },
               body: JSON.stringify({
                 author, lifecycleState: 'PUBLISHED',
-                specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: p.content }, shareMediaCategory: liMedia ? 'IMAGE' : 'NONE', ...(liMedia ? { media: [liMedia] } : {}) } },
+                specificContent: { 'com.linkedin.ugc.ShareContent': { shareCommentary: { text: p.content }, shareMediaCategory: medien.length ? 'IMAGE' : 'NONE', ...(medien.length ? { media: medien } : {}) } },
                 visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
               }),
             })
+            let r = await liPost(liMedien)
+            // Sollte diese Schnittstelle mehrere Bilder ablehnen, lieber ein Bild
+            // als gar keinen Post. Der Beitragstext bleibt derselbe.
+            if (!r.ok && liMedien.length > 1) {
+              const grund = (await r.clone().text()).slice(0, 160)
+              console.warn('[social-agent] LinkedIn-Mehrbild abgelehnt, versuche Einzelbild:', grund)
+              r = await liPost(liMedien.slice(0, 1))
+            }
             if (!r.ok) throw new Error((await r.text()).slice(0, 200))
             const liUrn = (await r.json().catch(() => ({})))?.id || r.headers.get('x-restli-id') || ''
             results.linkedin = { ok: true, id: liUrn || undefined }
