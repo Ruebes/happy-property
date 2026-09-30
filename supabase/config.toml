@@ -173,3 +173,7 @@ verify_jwt = true
 
 [functions.refine-deck]
 verify_jwt = true
+
+# true wie live. Cron hp-drive-sync braucht vor dem Guard-Deploy x-cron-secret.
+[functions.prepare-project-assets]
+verify_jwt = true

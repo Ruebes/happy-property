@@ -12,6 +12,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { geocodeProject } from '../_shared/geocodeProject.ts'
 import { applyFactOverrides } from '../_shared/deckFacts.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 // XLSX wird NUR im Spec-Zweig der docs-Aktion dynamisch geladen (memory-schwere
 // Library) — sonst belastet sie jede Invocation (auch categorize/brochure) und
 // trieb docs ins „Memory limit exceeded".
@@ -669,6 +670,13 @@ async function detectMapMarker(mapUrl: string): Promise<{ x: number; y: number }
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4): verify_jwt=true lässt auch den publishable
+  // Key und jedes Eigentümer-Login durch. Erlaubt: pg_cron hp-drive-sync mit
+  // x-cron-secret (connector_secrets CRON_SECRET; der Job schickt heute einen
+  // alten HS256-JWT, der hier NICHT zählt), Service-Key (scan-drive-projects,
+  // eigene nightly-Verkettung), Team-Rollen (Projekte: Aus Drive laden).
+  const denied = await gateCaller(req, 'prepare-project-assets', { cron: true, service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   try {
     const body = await req.json() as { project_id?: string; action?: string; folder_id?: string; sync?: boolean; force?: boolean; quiet?: boolean; file_id?: string; data_base64?: string; name?: string; mime?: string; pass?: number; max_bytes?: number; set_hero?: boolean; dry_run?: boolean; max_new?: number }
     const { project_id, action, folder_id, sync } = body
