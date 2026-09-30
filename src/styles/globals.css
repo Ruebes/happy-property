@@ -81,3 +81,49 @@ select option { color: #1a1a1a; }
     bottom: var(--hp-bottom-offset, 0px);
   }
 }
+
+/* UI-Bausteine (src/components/ui)
+   Gemeinsame Klassen für Eingabefelder, Knöpfe und Karten. Liegen in der
+   Komponenten-Ebene: eine Tailwind-Klasse am selben Element gewinnt immer
+   (z.B. "hp-btn hp-btn-primary w-full").
+   Korall bleibt Akzent: .hp-btn-accent hat Korall nur als Rand und Schrift,
+   nie als Fläche. */
+@layer components {
+  /* text-base auf dem Telefon: unter 16 px zoomt iOS beim Antippen ins Feld */
+  .hp-input {
+    @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base font-body text-hp-black
+      placeholder:text-gray-400
+      focus:border-hp-navy focus:outline-none focus:ring-2 focus:ring-hp-navy/20
+      disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500
+      sm:text-sm;
+  }
+
+  /* Grundform aller Knöpfe: 44 px Tippfläche auf dem Telefon, 40 px ab sm */
+  .hp-btn {
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-transparent
+      px-4 py-2 text-sm font-medium font-body transition-colors
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40 focus-visible:ring-offset-1
+      disabled:cursor-not-allowed disabled:opacity-50
+      sm:min-h-[40px];
+  }
+
+  .hp-btn-primary {
+    @apply bg-hp-navy text-white hover:bg-hp-navy/90;
+  }
+
+  .hp-btn-accent {
+    @apply border-hp-highlight bg-white text-hp-highlight hover:bg-hp-highlight/10;
+  }
+
+  .hp-btn-ghost {
+    @apply border-gray-200 bg-white text-hp-navy hover:border-gray-300 hover:bg-gray-50;
+  }
+
+  .hp-btn-danger {
+    @apply bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600/40;
+  }
+
+  .hp-card {
+    @apply rounded-2xl border border-gray-100 bg-white shadow-sm;
+  }
+}

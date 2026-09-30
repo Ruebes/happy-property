@@ -6729,5 +6729,38 @@
       "home": "Go to start page",
       "skip": "Skip to content"
     }
+  },
+  "ui": {
+    "modal": {
+      "close": "Close",
+      "dialog": "Dialog"
+    },
+    "confirm": {
+      "confirm": "Confirm",
+      "cancel": "Cancel"
+    },
+    "toast": {
+      "region": "Notifications",
+      "dismiss": "Dismiss notification",
+      "success": "Done",
+      "error": "Error",
+      "info": "Note"
+    },
+    "pageHeader": {
+      "back": "Back",
+      "more": "More actions"
+    },
+    "actionMenu": {
+      "open": "Open actions",
+      "title": "Actions"
+    },
+    "table": {
+      "empty": "No entries yet.",
+      "loading": "Loading entries",
+      "actions": "Actions"
+    },
+    "spinner": {
+      "loading": "Loading"
+    }
   }
 }

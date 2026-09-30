@@ -133,6 +133,7 @@ const FeriengastProfil    = lazy(() => import('./pages/feriengast/Profil'))
 // Importe fallen dort weg, aus src/dev landet nichts im Bundle.
 const DevShellPreview     = import.meta.env.DEV ? lazy(() => import('./dev/DevShellPreview')) : null
 const DevMockAuthProvider = import.meta.env.DEV ? lazy(() => import('./dev/DevMockAuthProvider')) : null
+const DevUiPreview        = import.meta.env.DEV ? lazy(() => import('./dev/DevUiPreview')) : null
 
 // ── Wrapper: erzwingt Re-Mount wenn :id in der URL wechselt ──────────────────
 // Ohne key würde React die Komponente beim Wechsel von z.B. Lead A → Lead B
@@ -360,6 +361,10 @@ export default function App() {
             {/* ── Nur im Dev-Server: Vorschau der neuen Navigation ohne Login ── */}
             {import.meta.env.DEV && DevShellPreview && (
               <Route path="/__dev/shell/:role" element={<DevShellPreview />} />
+            )}
+            {/* Nur im Dev-Server: Vorschau der UI-Bausteine (src/components/ui) */}
+            {import.meta.env.DEV && DevUiPreview && (
+              <Route path="/__dev/ui" element={<DevUiPreview />} />
             )}
 
             {/* ── Fallback: erst Cache-Recovery versuchen, dann Login ── */}

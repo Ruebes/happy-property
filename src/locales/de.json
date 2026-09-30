@@ -6611,5 +6611,38 @@
       "home": "Zur Startseite",
       "skip": "Zum Inhalt springen"
     }
+  },
+  "ui": {
+    "modal": {
+      "close": "Schließen",
+      "dialog": "Dialog"
+    },
+    "confirm": {
+      "confirm": "Bestätigen",
+      "cancel": "Abbrechen"
+    },
+    "toast": {
+      "region": "Hinweise",
+      "dismiss": "Hinweis schließen",
+      "success": "Erledigt",
+      "error": "Fehler",
+      "info": "Hinweis"
+    },
+    "pageHeader": {
+      "back": "Zurück",
+      "more": "Weitere Aktionen"
+    },
+    "actionMenu": {
+      "open": "Aktionen öffnen",
+      "title": "Aktionen"
+    },
+    "table": {
+      "empty": "Keine Einträge vorhanden.",
+      "loading": "Einträge werden geladen",
+      "actions": "Aktionen"
+    },
+    "spinner": {
+      "loading": "Wird geladen"
+    }
   }
 }
