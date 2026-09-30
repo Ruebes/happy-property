@@ -127,3 +127,6 @@ verify_jwt = false
 
 [functions.funnel-api]
 verify_jwt = false
+
+[functions.personalize-invite]
+verify_jwt = false

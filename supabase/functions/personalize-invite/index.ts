@@ -10,6 +10,15 @@
 //
 // Secrets: ANTHROPIC_API_KEY
 // Deployment: supabase functions deploy personalize-invite --no-verify-jwt
+//
+// Aufrufer (Befund E3-9): nur src/components/crm/AppointmentModal.tsx, eingebunden in
+// /admin/crm/calendar (Recht pipeline) und /admin/crm/leads/:id (pipeline ODER
+// contacts). supabase.functions.invoke schickt den Nutzer-JWT. Der Guard spiegelt
+// genau diese Routen. WICHTIG: AppointmentModal fällt bei jedem Fehler still auf
+// Svens Rohtext zurück, ein zu enger Guard würde also interne Stichpunkte an Kunden
+// schicken. Deshalb Mitarbeiter mit pipeline/contacts ausdrücklich erlaubt.
+
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -20,6 +29,9 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
+  // Vorher offen: jeder konnte den Anthropic-Key als Textgenerator nutzen (E3-9).
+  const denied = await gateCaller(req, 'personalize-invite', { roles: ['admin', 'verwalter'], perms: ['pipeline', 'contacts'] }, CORS)
+  if (denied) return denied
   try {
     const key = Deno.env.get('ANTHROPIC_API_KEY')
     if (!key) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
