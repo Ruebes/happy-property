@@ -40,6 +40,7 @@ interface Convo {
 
 type ChannelFilter = 'all' | 'whatsapp' | 'email'
 const ATTACH_BUCKET = 'crm-project-images'
+const INBOX_SELECT = 'id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)'
 
 
 export default function Inbox() {
@@ -75,10 +76,11 @@ export default function Inbox() {
       const PAGE = 1000
       const data: unknown[] = []
       const seen = new Set<string>()
+      let lastPageFull = false
       for (let from = 0; from < PAGE * 5; from += PAGE) {
         const { data: page, error } = await supabase
           .from('activities')
-          .select('id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)')
+          .select(INBOX_SELECT)
           .in('type', ['email', 'whatsapp'])
           .or('auto.eq.false,direction.eq.inbound')
           .not('lead_id', 'is', null)
@@ -92,8 +94,12 @@ export default function Inbox() {
           seen.add(row.id)
           data.push(row)
         }
+        lastPageFull = rows.length === PAGE
         if (rows.length < PAGE) break
       }
+      // Obergrenze erreicht: ältere Gespräche fehlen in der Liste. Ein Deep-Link
+      // lädt den Verlauf des Kontakts trotzdem nach (siehe unten).
+      if (lastPageFull) console.warn('[Inbox] 5000-row cap reached')
       const byLead = new Map<string, Convo>()
       // deno-lint-ignore no-explicit-any
       for (const r of data as any[]) {
@@ -146,8 +152,10 @@ export default function Inbox() {
   useEffect(() => { if (selected) void markRead(selected) }, [selected, markRead])
 
   // Deep-Link aus dem Kunden-Detail: direkt auf diesen Kontakt springen. Hat er schon
-  // Nachrichten, ist er in der Liste. Hat er noch keine, laden wir ihn als leere
-  // Konversation, damit man von hier aus die erste Nachricht schreiben kann.
+  // Nachrichten, ist er in der Liste. Fehlt er dort (z. B. weil die Obergrenze von
+  // 5000 Nachrichten erreicht ist), laden wir seinen Verlauf einzeln nach. Hat er
+  // wirklich noch keine, laden wir ihn als leere Konversation, damit man von hier
+  // aus die erste Nachricht schreiben kann.
   useEffect(() => {
     if (!leadParam || loading) return
     if (convos.some(c => c.lead_id === leadParam)) { setSelected(leadParam); return }
@@ -157,12 +165,35 @@ export default function Inbox() {
       const { data } = await supabase.from('leads').select('first_name, last_name, email, phone, whatsapp').eq('id', leadParam).maybeSingle()
       const l = data as { first_name: string | null; last_name: string | null; email: string | null; phone: string | null; whatsapp: string | null } | null
       if (!l) return
-      const empty: Convo = {
+      const convo: Convo = {
         lead_id: leadParam, name: `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || t('crm.inbox.unknown', 'Unbekannt'),
         email: l.email, phone: l.phone, whatsapp: l.whatsapp,
         msgs: [], lastAt: new Date().toISOString(), lastDir: 'outbound', channels: new Set(), unread: 0,
       }
-      setConvos(cs => cs.some(c => c.lead_id === leadParam) ? cs : [empty, ...cs])
+      const { data: rows, error } = await supabase
+        .from('activities')
+        .select(INBOX_SELECT)
+        .in('type', ['email', 'whatsapp'])
+        .or('auto.eq.false,direction.eq.inbound')
+        .eq('lead_id', leadParam)
+        .order('created_at', { ascending: false })
+        .limit(1000)
+      if (error) console.warn('[Inbox] Deep-Link-Verlauf:', error.message)
+      // Gleiche Aufbereitung wie in fetchAll: neueste zuerst, dann umdrehen.
+      // deno-lint-ignore no-explicit-any
+      for (const r of (rows ?? []) as any[]) {
+        const at = r.completed_at || r.created_at
+        const unread = r.direction === 'inbound' && !r.read_at
+        convo.msgs.push({ id: r.id, type: r.type, direction: r.direction, subject: r.subject, content: r.content, at, unread })
+        if (unread) convo.unread++
+        convo.channels.add(r.type)
+      }
+      if (convo.msgs.length) {
+        convo.lastAt = convo.msgs[0].at
+        convo.lastDir = convo.msgs[0].direction
+        convo.msgs.reverse()
+      }
+      setConvos(cs => cs.some(c => c.lead_id === leadParam) ? cs : [convo, ...cs])
       setSelected(leadParam)
     })()
   }, [leadParam, loading, convos, t])
