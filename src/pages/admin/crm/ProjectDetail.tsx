@@ -356,8 +356,9 @@ export default function ProjectDetail() {
   // ── Einheit löschen (Rechtsklick-Kontextmenü auf der Kachel) ─────────────────
   const deleteUnit = async (u: CrmProjectUnit) => {
     setUnitCtx(null)
-    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', u.id).maybeSingle()
-    if (linked) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
+    // limit(1) statt maybeSingle: bei 2+ Deals lieferte maybeSingle null und der Schutz griff nicht
+    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', u.id).limit(1)
+    if ((linked ?? []).length > 0) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
     if (!window.confirm(t('crm.pd.unitDeleteConfirm', 'Einheit {{n}} wirklich löschen?', { n: u.unit_number }))) return
     const { error } = await supabase.from('crm_project_units').delete().eq('id', u.id)
     if (error) { alert(t('projectDetail.deleteUnitError', 'Fehler: {{msg}}', { msg: error.message })); return }
@@ -396,6 +397,19 @@ export default function ProjectDetail() {
         .update({ property_id: linkPropId })
         .eq('id', editUnit.id)
       if (error) throw error
+      // Deals dieser Wohnung mitziehen, sonst zeigen sie weiter auf das alte Objekt
+      // (und „Trennen" in der Kundenakte träfe das falsche). Nur, wenn das Objekt
+      // dem Kunden des Deals gehört. Nicht-leerer Wert: der DB-Trigger feuert nicht.
+      const { data: unitDeals } = await supabase
+        .from('deals')
+        .select('id, lead_id')
+        .eq('unit_id', editUnit.id)
+        .neq('phase', 'deal_verloren')
+      for (const d of (unitDeals ?? []) as Array<{ id: string; lead_id: string | null }>) {
+        if (!d.lead_id || await isForeignOwnedProperty(linkPropId, await leadProfileIds(d.lead_id))) continue
+        const { error: dErr } = await supabase.from('deals').update({ property_id: linkPropId }).eq('id', d.id)
+        if (dErr) console.warn('[ProjectDetail] handleLinkProperty deal:', dErr.message)
+      }
       showToast(t('crm.pd.toastLinked'))
       setEditUnit(prev => prev ? { ...prev, property_id: linkPropId } : prev)
       setLinkPropId('')
@@ -870,8 +884,26 @@ export default function ProjectDetail() {
   async function handleDeleteUnit(id: string) {
     // Erst prüfen, ob die Einheit einem Deal zugeordnet ist — sonst würde ein
     // aktiver Deal verwaisen (gleicher Schutz wie im Rechtsklick-Löschpfad).
-    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', id).maybeSingle()
-    if (linked) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
+    // limit(1) statt maybeSingle: bei 2+ Deals lieferte maybeSingle null und der Schutz griff nicht.
+    const { data: linked } = await supabase.from('deals').select('id').eq('unit_id', id).limit(1)
+    if ((linked ?? []).length > 0) { alert(t('crm.pd.unitDealLinked', 'Diese Einheit ist einem Deal zugeordnet — erst dort entfernen, dann löschen.')); return }
+    // Portal-Objekt mit Daten des Eigentümers (Dokumente, Verträge, Einnahmen,
+    // Buchungen) nie mitlöschen; leere Objekte werden wie bisher mit aufgeräumt.
+    const { data: u0 } = await supabase
+      .from('crm_project_units').select('property_id').eq('id', id).maybeSingle()
+    const propId0 = (u0 as { property_id: string | null } | null)?.property_id ?? null
+    if (propId0) {
+      const counts = await Promise.all(
+        ['documents', 'contracts', 'income_entries', 'bookings', 'owner_documents'].map(tb =>
+          supabase.from(tb).select('*', { count: 'exact', head: true }).eq('property_id', propId0)),
+      )
+      if (counts.some(c => c.error)) { showToast(t('crm.pd.toastDeleteError')); return }
+      const total = counts.reduce((sum, c) => sum + (c.count ?? 0), 0)
+      if (total > 0) {
+        alert(t('crm.pd.unitPropertyHasData', 'Das Portal-Objekt dieser Wohnung enthält noch {{count}} Einträge (Dokumente, Verträge, Einnahmen, Buchungen). Bitte zuerst im Objekt „Vom Kunden trennen" verwenden.', { count: total }))
+        return
+      }
+    }
     if (!window.confirm(t('crm.pd.confirmDeleteUnit'))) return
     try {
       // Verknüpftes Portal-Objekt (properties) mit aufräumen, damit es nicht
@@ -883,7 +915,10 @@ export default function ProjectDetail() {
       const { error } = await supabase.from('crm_project_units').delete().eq('id', id)
       if (error) throw error
 
-      if (propId) { await supabase.from('properties').delete().eq('id', propId) }
+      if (propId) {
+        const { error: propErr } = await supabase.from('properties').delete().eq('id', propId)
+        if (propErr) throw propErr
+      }
 
       setShowModal(false)
       await fetchData()

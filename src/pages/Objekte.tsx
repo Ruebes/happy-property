@@ -9,6 +9,7 @@ import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
 import { CustomSelect } from '../components/CustomSelect'
 import { renderPortalAccessEmail } from '../lib/welcomeEmail'
+import { detachPropertyFromOwner, detachConfirmText } from '../lib/detachProperty'
 
 // ── Types ──────────────────────────────────────────────────────
 interface Property {
@@ -639,6 +640,27 @@ export default function Objekte() {
 
   // ── Delete ────────────────────────────────────────────────
   async function handleDelete(id: string) {
+    // Hängt das Objekt an einer CRM-Wohnung oder einem Deal, würde ein direktes
+    // Löschen per DB-Trigger sofort ein leeres Objekt neu anlegen. Dann über die
+    // zentrale Trennen-Routine (Wohnung frei, Deal-Zuordnung weg, Vermerk).
+    const [{ data: linkedUnits }, { data: linkedDeals }] = await Promise.all([
+      supabase.from('crm_project_units').select('id').eq('property_id', id).limit(1),
+      supabase.from('deals').select('id').eq('property_id', id).limit(1),
+    ])
+    if ((linkedUnits ?? []).length > 0 || (linkedDeals ?? []).length > 0) {
+      const p = properties.find(x => x.id === id)
+      const label = [p?.project_name, p?.unit_number ? `Nr. ${p.unit_number}` : null].filter(Boolean).join(' · ') || 'Wohnung'
+      if (!window.confirm(detachConfirmText(label))) return
+      try {
+        await detachPropertyFromOwner(id, { actorId: profile?.id ?? null })
+        setToast(t('success.deleted'))
+        fetchProperties()
+      } catch (err) {
+        console.error('[Objekte] handleDelete (detach):', err)
+        setToast(t('objekte.deleteError', 'Fehler: Objekt konnte nicht gelöscht werden'))
+      }
+      return
+    }
     if (!window.confirm(t('properties.deleteConfirm'))) return
     const { error } = await supabase.from('properties').delete().eq('id', id)
     if (error) {
