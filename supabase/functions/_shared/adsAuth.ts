@@ -46,19 +46,14 @@ export async function requireAdsAccess(req: Request): Promise<AdsCaller> {
   const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) throw new AdsAuthError('Nicht angemeldet', 401)
 
-  // System-Aufruf (pg_cron). Das Projekt nutzt die neuen sb_secret_-Keys, ältere
-  // Supabase-Projekte den Legacy-JWT mit role=service_role — beides akzeptieren,
-  // damit der Guard nicht am Key-Format hängt.
+  // System-Aufruf (pg_cron meta-ads-sync-daily schickt den sb_secret_-Key):
+  // NUR der exakte Service-Role-Key zählt. Früher galt auch jeder JWT, dessen
+  // Payload role=service_role enthielt, ohne Signaturprüfung, also von jedem
+  // fälschbar (Befund E3-12, 30.9.26). Dieser Zweig ist entfernt.
   // WICHTIG: der publishable/anon-Key zählt NICHT als System — der steckt im
   // öffentlichen Frontend-Bundle und wäre damit für jeden abgreifbar.
   if (serviceRoleKey && jwt === serviceRoleKey) {
     return { system: true, userId: null, role: 'service_role' }
-  }
-  if (jwt.startsWith('eyJ')) {
-    try {
-      const claims = JSON.parse(atob(jwt.split('.')[1] ?? ''))
-      if (claims?.role === 'service_role') return { system: true, userId: null, role: 'service_role' }
-    } catch { /* kein lesbarer JWT — dann eben normale Nutzerprüfung */ }
   }
 
   const { data: userData } = await createClient(supabaseUrl, anonKey).auth.getUser(jwt)
