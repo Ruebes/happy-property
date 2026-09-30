@@ -8,7 +8,7 @@ import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
 import { renderPortalAccessEmail } from '../../lib/welcomeEmail'
-import { detachPropertyFromOwner, detachConfirmText } from '../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, fetchUnitPropertyId } from '../../lib/detachProperty'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -375,15 +375,16 @@ export default function AdminUsers() {
   }
 
   // ── Wohnungseinheit für neuen User anlegen/verknüpfen ───────────────────────────────
-  async function performUnitAssignment(userId: string, userEmail: string) {
-    if (!assignProjectId || !assignUnitId) return
+  // Ergebnis 'ok' oder Grund; jeder Fehlschlag wird dem Admin gemeldet (vorher still).
+  async function performUnitAssignment(userId: string, userEmail: string): Promise<'ok' | 'failed' | 'unit_taken'> {
+    if (!assignProjectId || !assignUnitId) return 'failed'
     const project = crmProjects.find(p => p.id === assignProjectId)
-    if (!project) return
+    if (!project) return 'failed'
 
     let unit: CrmProjectUnit | null = null
 
     if (assignUnitId === 'new') {
-      if (!newUnitForm.unit_number.trim()) return
+      if (!newUnitForm.unit_number.trim()) return 'failed'
       const { data: newUnit, error } = await supabase
         .from('crm_project_units')
         .insert({
@@ -403,12 +404,16 @@ export default function AdminUsers() {
         })
         .select()
         .single()
-      if (error || !newUnit) return
+      if (error || !newUnit) return 'failed'
       unit = newUnit as CrmProjectUnit
     } else {
       unit = projectUnits.find(u => u.id === assignUnitId) ?? null
     }
-    if (!unit) return
+    if (!unit) return 'failed'
+
+    // Liste kann veraltet sein: hat die Wohnung inzwischen ein Portal-Objekt, gehört
+    // sie schon jemandem. Dann kein zweites Objekt anlegen.
+    if (await fetchUnitPropertyId(unit.id, unit.property_id)) return 'unit_taken'
 
     // Property anlegen
     const rentalType: 'longterm' | 'shortterm' =
@@ -433,24 +438,41 @@ export default function AdminUsers() {
       })
       .select('id')
       .single()
-    if (propErr || !newProp) return
+    if (propErr || !newProp) return 'failed'
     const newPropId = (newProp as { id: string }).id
 
     // Unit mit Property verknüpfen
-    await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
+    const { error: linkErr } = await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
+    if (linkErr) return 'failed'
 
-    // Lead-Deal aktualisieren falls vorhanden
-    const { data: leadRow } = await supabase
-      .from('leads').select('id').eq('email', userEmail).maybeSingle()
-    if (leadRow) {
-      const { data: dealRow } = await supabase
-        .from('deals').select('id').eq('lead_id', (leadRow as { id: string }).id)
-        .neq('phase', 'archiviert').maybeSingle()
-      if (dealRow) {
-        await supabase.from('deals').update({ unit_id: unit.id, property_id: newPropId })
-          .eq('id', (dealRow as { id: string }).id)
+    // Lead-Deal aktualisieren falls vorhanden. Lead per E-Mail (auch klein
+    // geschrieben), ältester zuerst; Deal: neuester nicht archivierter.
+    // maybeSingle scheiterte bei Doppel-Leads bzw. zwei offenen Deals still.
+    const { data: leadRows } = await supabase
+      .from('leads').select('id')
+      .in('email', Array.from(new Set([userEmail, userEmail.toLowerCase()])))
+      .order('created_at', { ascending: true })
+      .limit(1)
+    const leadId = ((leadRows ?? []) as Array<{ id: string }>)[0]?.id ?? null
+    if (leadId) {
+      const { data: dealRows } = await supabase
+        .from('deals').select('id').eq('lead_id', leadId)
+        .neq('phase', 'archiviert')
+        .order('created_at', { ascending: false })
+        .limit(1)
+      const dealId = ((dealRows ?? []) as Array<{ id: string }>)[0]?.id ?? null
+      if (dealId) {
+        const { error: dealErr } = await supabase.from('deals').update({ unit_id: unit.id, property_id: newPropId })
+          .eq('id', dealId)
+        if (dealErr) return 'failed'
       }
+      // Erst NACH der Zuweisung verknüpfen: der Lead-Trigger findet so keinen Deal
+      // ohne Objekt mehr und legt kein zweites an.
+      const { error: leadErr } = await supabase.from('leads').update({ profile_id: userId })
+        .eq('id', leadId).is('profile_id', null)
+      if (leadErr) return 'failed'
     }
+    return 'ok'
   }
 
   // ── Create user ──────────────────────────────────────────
@@ -488,7 +510,10 @@ export default function AdminUsers() {
       ;(async () => {
         // Wohnung zuweisen falls ausgewählt
         if (doUnitAssignment) {
-          await performUnitAssignment(result.userId, email)
+          const res = await performUnitAssignment(result.userId, email).catch(() => 'failed' as const)
+          if (res !== 'ok') {
+            setToast(t('users.toast.unitAssignFailed', 'Nutzer angelegt, aber die Wohnung konnte nicht zugewiesen werden. Bitte in der Kundenakte zuweisen.'))
+          }
         }
         // Willkommens-E-Mail mit Zugangsdaten automatisch senden
         const { subject: welcomeSubject, html: welcomeHtml } = await renderPortalAccessEmail(
@@ -626,6 +651,14 @@ export default function AdminUsers() {
   // ── Assign property to owner ─────────────────────────────
   async function handleAssignProperty() {
     if (!editUser || !assignPropId) return
+    // Jede Immobilie in der Liste gehört schon jemandem (owner_id ist Pflicht):
+    // Umhängen nur nach Rückfrage, die beide Eigentümer nennt.
+    const prop = allProps.find(p => p.id === assignPropId)
+    const label = prop ? `${prop.project_name}${prop.unit_number ? ` · ${prop.unit_number}` : ''}` : ''
+    const currentOwner = users.find(u => u.id === prop?.owner_id)?.full_name ?? '?'
+    if (!window.confirm(t('users.properties.confirmMove',
+      '„{{label}}" gehört bisher {{from}}. Wirklich auf {{to}} umhängen?\n\nDer bisherige Eigentümer verliert den Zugriff im Portal, eingeladene Mit-Eigentümer dieser Wohnung werden entfernt.',
+      { label, from: currentOwner, to: editUser.full_name }))) return
     setSaving(true)
     const { error } = await supabase
       .from('properties')
@@ -635,6 +668,9 @@ export default function AdminUsers() {
       setToast(t('users.properties.assigned'))
       setAssignPropId('')
       fetchProps()
+    } else {
+      console.error('[Users] handleAssignProperty:', error.message)
+      setToast(`❌ ${t('errors.saveFailed')}`)
     }
     setSaving(false)
   }
@@ -1314,10 +1350,14 @@ export default function AdminUsers() {
                       onChange={val => setAssignPropId(val)}
                       options={[
                         { value: '', label: t('users.properties.selectToAssign') },
-                        ...unassignedProps.map(p => ({
-                          value: p.id,
-                          label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`,
-                        })),
+                        ...unassignedProps.map(p => {
+                          const ownerName = users.find(u => u.id === p.owner_id)?.full_name
+                          return {
+                            value: p.id,
+                            label: `${p.project_name}${p.unit_number ? ` · ${p.unit_number}` : ''}`
+                              + (ownerName ? ` (${t('users.properties.currentOwner', 'aktuell: {{name}}', { name: ownerName })})` : ''),
+                          }
+                        }),
                       ]}
                       placeholder={t('users.properties.selectToAssign')}
                     />
