@@ -121,3 +121,6 @@ verify_jwt = false
 
 [functions.admin-user-ops]
 verify_jwt = false
+
+[functions.personal-booking]
+verify_jwt = false
