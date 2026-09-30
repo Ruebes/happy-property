@@ -23,7 +23,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
-import { detachPropertyFromOwner, detachConfirmText } from '../../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -610,7 +610,8 @@ export default function LeadDetail() {
         const unit = unitData as { property_id: string | null }
         // Nur verknüpfen, wenn die Unit bereits ein Portal-Objekt besitzt.
         // Bewusst KEIN Neu-Anlegen → gelöschte Objekte bleiben gelöscht.
-        if (unit.property_id) {
+        // Nie das Objekt eines anderen Kunden an diesen Deal hängen.
+        if (unit.property_id && id && !(await isForeignOwnedProperty(unit.property_id, await leadProfileIds(id)))) {
           await supabase.from('deals').update({ property_id: unit.property_id }).eq('id', deal.id)
           fetchAll(true)
         }
@@ -1528,16 +1529,24 @@ export default function LeadDetail() {
         ? `${deal.property.project_name}${deal.property.unit_number ? ` · Nr. ${deal.property.unit_number}` : ''}`
         : t('leadDetail.unitHeaderFallback', 'Wohnung')
     if (!window.confirm(detachConfirmText(label))) return
+    let keptForeignOwner = false
     try {
       if (deal.property_id) {
-        await detachPropertyFromOwner(deal.property_id, {
+        const res = await detachPropertyFromOwner(deal.property_id, {
           actorId: profile?.id ?? null,
           unitId:  deal.unit_id,
           leadId:  id,
+          dealId:  deal.id,
         })
+        keptForeignOwner = !!res.keptForeignOwner
       } else {
-        // Kein Portal-Objekt (noch nicht angelegt): nur Unit + Deal lösen
-        await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id!)
+        // Kein Portal-Objekt (noch nicht angelegt): nur Unit + Deal lösen.
+        // Hängt an der Wohnung das Objekt eines ANDEREN Kunden, bleibt dessen Link stehen.
+        const unitPropId = await fetchUnitPropertyId(deal.unit_id!, null)
+        const foreign = !!unitPropId && !!id && await isForeignOwnedProperty(unitPropId, await leadProfileIds(id))
+        if (!foreign) {
+          await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id!)
+        }
         await supabase.from('deals').update({ unit_id: null, property_id: null }).eq('id', deal.id)
         await supabase.from('activities').insert({
           lead_id:      id,
@@ -1552,7 +1561,9 @@ export default function LeadDetail() {
       }
       setPickedUnit(null)
       setActiveTab('overview')
-      showToast(t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
+      showToast(keptForeignOwner
+        ? t('leadDetail.toastUnitRemovedForeignKept', 'Zuordnung entfernt. Das Portal-Objekt gehört einem anderen Kunden und bleibt erhalten.')
+        : t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errRemoveFailed', 'Fehler beim Entfernen')}`)
