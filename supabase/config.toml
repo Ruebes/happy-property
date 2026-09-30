@@ -139,3 +139,6 @@ verify_jwt = true
 
 [functions.create-zoom-meeting]
 verify_jwt = true
+
+[functions.revolut-sync]
+verify_jwt = true
