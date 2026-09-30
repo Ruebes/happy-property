@@ -88,3 +88,6 @@ verify_jwt = true
 
 [functions.ai-draft-reply]
 verify_jwt = true
+
+[functions.imap-poll]
+verify_jwt = false

@@ -15,6 +15,7 @@
 // Secrets: IMAP_USER, IMAP_PASS, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 // Deploy: supabase functions deploy imap-poll --no-verify-jwt
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -217,6 +218,11 @@ async function findLead(supabase: any, rawAddr: string): Promise<string | null> 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  // Aufrufer-Schutz, VOR dem IMAP-Login (diagnose/backfill lieferten Absender und
+  // Betreffe an jeden). Erlaubt: pg_cron imap-poll-tasks mit x-cron-secret
+  // (connector_secrets CRON_SECRET), Service-Key, eingeloggter Admin.
+  const denied = await gateCaller(req, 'imap-poll', { cron: true, service: true, roles: ['admin'] }, CORS)
+  if (denied) return denied
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const imap = new Imap()
   const reqBody = await req.json().catch(() => ({} as Record<string, unknown>))
