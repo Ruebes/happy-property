@@ -130,3 +130,6 @@ verify_jwt = false
 
 [functions.personalize-invite]
 verify_jwt = false
+
+[functions.meta-leads-sync]
+verify_jwt = true

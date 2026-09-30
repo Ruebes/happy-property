@@ -26,9 +26,17 @@
 //   META_AD_ACCOUNT_ID = 4065490590399677 (Sveru Marketing LLC)
 //
 // ── Deployment ──
-//   supabase functions deploy meta-leads-sync --no-verify-jwt
+//   supabase functions deploy meta-leads-sync   (verify_jwt = true, so ist sie live)
+//
+// ── Aufrufer (Guard am Handler-Anfang, Befund E3-11) ──
+//   pg_cron meta-leads-sync-15min → x-cron-secret (connector_secrets CRON_SECRET);
+//     wegen verify_jwt=true schickt der Job weiterhin den publishable Key als
+//     Authorization, der allein zählt aber NICHT (steht im Frontend-Bundle)
+//   manuell (CSV-Import, Sofortfall) → Service-Role-Key oder Login admin/verwalter
+//   Kein Aufruf aus App oder anderen Functions.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -265,6 +273,10 @@ async function starteErstkontakt(admin: SupabaseClient, leadId: string): Promise
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Vorher reichte jeder gültige Gateway-Schlüssel: mit dem öffentlichen publishable
+  // Key konnte jeder per import_csv beliebige Nummern anschreiben lassen (als Sven).
+  const denied = await gateCaller(req, 'meta-leads-sync', { cron: true, service: true, roles: ['admin', 'verwalter'] }, CORS)
+  if (denied) return denied
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json().catch(() => ({})) as { action?: string; days?: number; csv?: string; form_name?: string; form_id?: string }
