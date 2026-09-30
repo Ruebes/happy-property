@@ -14,10 +14,20 @@
 // Deployment: supabase functions deploy booking-bot --no-verify-jwt
 // Secrets: GOOGLE_SERVICE_ACCOUNT_JSON, ANTHROPIC_API_KEY, TIMELINES_API_KEY,
 //          TIMELINES_WA_SENDER (+ Standard SUPABASE_*)
+//
+// Aufrufer (Guard am Handler-Anfang, Befund I3-1): NUR System-Aufrufe.
+//   pg_cron booking-bot-sweep  → Header x-cron-secret (connector_secrets CRON_SECRET)
+//   process-scheduled-messages, timelines-/evolution-webhook (_shared/waInbound)
+//                              → fetch mit Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+//   meta-leads-sync            → admin.functions.invoke, schickt den Service-Key nur
+//                                als apikey-Header (deckt gateCaller ab)
+// Kein Browser ruft den Bot auf. Manuelle Anstöße (engage force, book_now) brauchen
+// seitdem ebenfalls den Service-Key.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { nextApptTitle } from '../_shared/apptTitle.ts'
 import { notifyIfToday, cyTime } from '../_shared/notifyToday.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -105,6 +115,19 @@ async function getBusy(admin: SupabaseClient, fromUtc: Date, toUtc: Date): Promi
     for (const b of cal?.busy ?? []) busy.push({ start: new Date(b.start).getTime(), end: new Date(b.end).getTime() })
   } catch (e) { console.warn('[booking-bot] freeBusy nicht verfügbar (Kalender evtl. nicht freigegeben):', e) }
   return busy
+}
+
+// Ist ein früher vorgeschlagener Slot JETZT noch buchbar? (Befund I3-3)
+// Vorschläge bleiben bis zu 4 Tage (No-Show 16) offen; inzwischen kann der Slot
+// vorbei oder vergeben sein (anderer Lead mit demselben Vorschlag, Sven selbst,
+// Tagessperre, Google-Termin). Gleiche strikte Überlappung wie isFree in
+// computeSlots und KEIN Puffer, sonst würden angebotene Anschluss-Slots abgelehnt.
+// getBusy liefert bei Fehlern, was es hat (wie beim Vorschlagen, also fail-open).
+async function slotStillOk(admin: SupabaseClient, slot: Slot): Promise<'ok' | 'past' | 'taken'> {
+  const st = new Date(slot.startIso).getTime(), en = new Date(slot.endIso).getTime()
+  if (!(st > Date.now())) return 'past'
+  const busy = await getBusy(admin, new Date(st), new Date(en))
+  return busy.some(b => st < b.end && en > b.start) ? 'taken' : 'ok'
 }
 
 // Einen genannten Tag-Wunsch auf einen Wochentag abbilden (sonst kein Filter).
@@ -1088,13 +1111,25 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
     await setConv(admin, c.id, { attempts: n, rounds_no_progress: rnp }); return false
   }
 
+  // Gewählter Slot inzwischen vorbei oder vergeben (slotStillOk)? Dann NICHT buchen,
+  // sondern mit dem bestehenden Wortlaut aus proposeSlots neu anbieten; ist nichts
+  // frei, übernimmt Sven (handoff).
+  const slotGone = async (): Promise<Response> => {
+    const alt = await computeSlots(admin, 2)
+    if (alt.length >= 2) return await sendChoice(admin, c.id, phone, leadId, alt, 'Da hab ich leider nichts frei. Wie wäre stattdessen:')
+    await handoff(admin, c.id, phone, leadId, l.first_name)
+    return json({ ok: true, handled: 'slot_weg_uebergeben' })
+  }
+
   // ── Zustandsmaschine ──
   if (c.state === 'awaiting_choice') {
     if (it.intent === 'pick_slot' && it.pick_index != null && slots[it.pick_index]) {
+      if (await slotStillOk(admin, slots[it.pick_index]) !== 'ok') return await slotGone()
       await askType(admin, c.id, phone, leadId, l.first_name, slots[it.pick_index]); return await done()
     }
     if (it.intent === 'indifferent' && slots[0]) {
       // „Egal / such du aus" → ersten Vorschlag nehmen und weiter zur Terminart
+      if (await slotStillOk(admin, slots[0]) !== 'ok') return await slotGone()
       await askType(admin, c.id, phone, leadId, l.first_name, slots[0]); return await done()
     }
     if (it.intent === 'give_preference' || it.intent === 'reject_slots') {
@@ -1111,12 +1146,14 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
 
   if (c.state === 'awaiting_type') {
     if (it.intent === 'choose_type' && (it.meeting_type === 'zoom' || it.meeting_type === 'whatsapp') && c.chosen_slot) {
+      if (await slotStillOk(admin, c.chosen_slot) !== 'ok') return await slotGone()
       await book(admin, c, l, c.chosen_slot, it.meeting_type); return json({ ok: true, handled: 'booked' })
     }
     // Der Slot steht bereits — hier wird NIE aufgegeben (Raffi-Fall: „Egal" führte
     // zu handoff statt Buchung). Keine Präferenz oder zweite unklare Antwort →
     // unkompliziertester Standard: WhatsApp-Call.
     if (c.chosen_slot && (it.intent === 'indifferent' || (c.attempts ?? 0) >= 1)) {
+      if (await slotStillOk(admin, c.chosen_slot) !== 'ok') return await slotGone()
       const m = `Alles klar — dann machen wir es ganz unkompliziert per WhatsApp-Call. 🙂`
       if (!await say(m)) return json({ ok: true, handled: 'wiederholung_uebergeben' })
       await book(admin, c, l, c.chosen_slot, 'whatsapp'); return json({ ok: true, handled: 'booked_default' })
@@ -1137,6 +1174,7 @@ async function replyRunde(admin: SupabaseClient, c: ReplyConv, leadId: string, t
 
   if (c.state === 'awaiting_confirm') {
     if (it.intent === 'confirm_yes' && c.chosen_slot) {
+      if (await slotStillOk(admin, c.chosen_slot) !== 'ok') return await slotGone()
       await askType(admin, c.id, phone, leadId, l.first_name, c.chosen_slot); return await done()
     }
     if (it.intent === 'confirm_no' || it.intent === 'give_preference' || it.intent === 'reject_slots') {
@@ -1237,6 +1275,11 @@ async function handleEngage(admin: SupabaseClient, leadId: string, text: string,
 // ── Main ──────────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  // Nur System-Aufrufer (Befund I3-1): pg_cron mit x-cron-secret, andere Functions
+  // mit dem Service-Role-Key. Vorher konnte jeder mit einer lead_id WhatsApps mit
+  // eigenem Text auslösen, Termine erzwingen oder KI-Aufrufe verbrauchen.
+  const denied = await gateCaller(req, 'booking-bot', { cron: true, service: true }, CORS)
+  if (denied) return denied
   try {
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const body = await req.json() as { action?: string; lead_id?: string; deal_id?: string | null; source?: string; text?: string; stage?: number; intro?: string; state?: string; slots?: Slot[]; meeting_type?: string; force?: boolean }
@@ -1276,6 +1319,14 @@ Deno.serve(async (req) => {
           if (new Date(c.chosen_slot.startIso).getTime() < Date.now()) {
             await setConv(admin, c.id, { state: 'handoff', last_message: 'Terminart nie beantwortet, Slot inzwischen vorbei - bitte manuell klaeren.' })
             results.push({ lead_id: c.lead_id, error: 'slot_vergangen' })
+            continue
+          }
+          // Slot inzwischen anderweitig belegt (Befund I3-3)? Nicht doppelt buchen,
+          // sondern wie oben an Sven geben: ohne Kundennachricht, mit interner Notiz.
+          if (await slotStillOk(admin, c.chosen_slot) !== 'ok') {
+            await setConv(admin, c.id, { state: 'handoff', last_message: 'Terminart nie beantwortet, Slot inzwischen belegt - bitte manuell klaeren.' })
+            try { await admin.from('activities').insert({ lead_id: c.lead_id, type: 'note', direction: 'inbound', subject: '⚠️ Termin-Bot: Slot inzwischen belegt', content: `Der Kunde hatte ${c.chosen_slot.label} Uhr gewählt, die Terminart aber nicht beantwortet. Der Slot ist inzwischen belegt, der Bot hat NICHT gebucht. Bitte persönlich einen Termin finden.`, completed_at: new Date().toISOString() }) } catch { /* egal */ }
+            results.push({ lead_id: c.lead_id, error: 'slot_belegt' })
             continue
           }
           const { data: lead } = await admin.from('leads').select('first_name, whatsapp, phone, email').eq('id', c.lead_id).maybeSingle()
