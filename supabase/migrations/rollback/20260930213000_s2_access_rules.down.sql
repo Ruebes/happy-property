@@ -1,8 +1,11 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Rückweg zu 20260930200000_s2_access_rules.sql
+-- Rückweg zu 20260930213000_s2_access_rules.sql
 -- Stellt den Stand vom 30.9.2026 (vor S2) exakt wieder her. Quelle der Texte:
 -- pg_policies, pg_get_functiondef und proacl/relacl/reloptions, live gelesen am
 -- 30.9.2026 (nur lesend). Keine Datenänderung.
+-- Als Ganzes in EINER Transaktion ausführen (SQL-Editor oder psql --single-transaction -f),
+-- sonst ist „set local lock_timeout“ wirkungslos und ein Abbruch mittendrin hinterlässt
+-- eine Mischung aus alten und neuen Regeln.
 -- Achtung: Rückweg öffnet die in S2 geschlossenen Lücken wieder.
 -- Frontend: ShortLink.tsx fällt ohne get_short_link automatisch auf den alten
 -- Tabellen-Select zurück, muss also nicht mit zurückgerollt werden.
@@ -110,6 +113,14 @@ alter policy task_assignee_write on public.crm_task_assignees
 alter policy task_msg_insert on public.crm_task_messages
   with check ((sender_id = auth.uid()));
 
+-- Vorher relacl: {postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}, keine Spaltenrechte.
+revoke update (read_at, notified_at) on public.crm_task_messages from authenticated;
+grant  update on public.crm_task_messages to anon, authenticated;
+
+-- Vorher: nur trg_crm_tasks_touch auf crm_tasks.
+drop trigger if exists trg_crm_tasks_parent_lock on public.crm_tasks;
+drop function if exists public.hp_crm_tasks_parent_lock();
+
 -- ── S1-9 / S2-6 / I4-14 / E4-2 / S1-11 ─────────────────────────────────────
 -- Vorher je: {=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
 grant execute on function public.claim_workflow_runs(integer) to public, anon, authenticated;
@@ -124,6 +135,19 @@ grant execute on function public.fn_ensure_deal_property(uuid) to public, anon, 
 grant execute on function public.hp_seo_purge() to public, anon, authenticated;
 grant execute on function public.find_task_by_assignee_phone(text) to public, anon, authenticated;
 grant execute on function public.list_staff() to public, anon;
+
+-- list_staff wie vorher (E-Mail für jeden Aufrufer), pg_get_functiondef live 30.9.2026.
+CREATE OR REPLACE FUNCTION public.list_staff()
+ RETURNS TABLE(id uuid, full_name text, email text, role text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $fn$
+  select p.id, p.full_name, p.email, p.role
+  from profiles p
+  where p.role in ('admin','verwalter','mitarbeiter','funnel') and coalesce(p.is_active, true)
+  order by p.full_name
+$fn$;
 
 -- ── E5-18 / F8-12 / S1-12 ──────────────────────────────────────────────────
 -- Vorher: {postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}

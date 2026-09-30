@@ -3,7 +3,19 @@
 -- Keine Datenänderung, keine Tabelle gelöscht. Bestehende Policies werden per
 -- ALTER POLICY unter ihrem Namen geändert (kein Moment ohne Policy).
 -- Edge Functions und pg_cron laufen als Service-Role/postgres und sind nicht betroffen.
--- Rückweg: supabase/migrations/rollback/20260930200000_s2_access_rules.down.sql
+-- Rückweg: supabase/migrations/rollback/20260930213000_s2_access_rules.down.sql
+-- Version 20260930213000 (nicht 200000): origin/main hat schon 20260930200000_developer_contact_drive_access.sql.
+--
+-- REIHENFOLGE BEIM AUSROLLEN (sonst zeigen alle /s/-Kurzlinks aus WhatsApp „ungültig“):
+--   1. Frontend mit neuer ShortLink.tsx pushen und warten, bis Vercel sie ausliefert.
+--   2. Einen echten /s/<code> öffnen: er muss weiterleiten (läuft dann noch über den Tabellen-Fallback).
+--   3. Erst danach diese Migration einspielen. Umgekehrt (DB zuerst) liest die alte ShortLink.tsx als anon
+--      die Tabelle, bekommt 0 Zeilen ohne Fehler und meldet jeden Kurzlink als ungültig.
+-- Ausführen als Ganzes in einer Transaktion (SQL-Editor oder psql --single-transaction -f).
+-- Setzt das Live-Schema voraus: mehrere Policies/Objekte (acquisition.*, sp_all, st_all, spm_all, si_auth_all,
+-- eng_select_auth, prt_read, prv_read, all_read_verwaltungen, whe_admin, des_admin, auth_full_access,
+-- deck_assets_backup, find_task_by_assignee_phone) stehen in keiner Repo-Migration; auf einer frisch aus dem
+-- Repo gebauten DB (db reset/Branch) bricht die Datei ab und ändert nichts. Drift später separat schließen.
 --
 -- F10-1: social_posts/social_topics/social_post_messages/social_interactions nur noch Funnel-Berechtigte (Admin, Verwalter, Mitarbeiter mit Recht funnel, Rolle funnel) = Route Social Studio; Eigentümer raus.
 -- S1-4: dasselbe zusätzlich für social_ideas (si_auth_all); Social Studio (/admin/crm/social) behält vollen Zugriff.
@@ -12,9 +24,9 @@
 -- S1-5: sequence_enrollments bleibt nur lesbar, aber nur noch für Funnel-Berechtigte.
 -- I4-2: engagement_events Lesen per eng_select_auth nur noch Funnel-Berechtigte (Newsletter-Statistik); Pipeline-Berechtigte behalten Zugriff über engagement_events_staff_perm; Eigentümer raus.
 -- S1-7: partner_review_tokens/partner_reviews nur Admin; Partner-Links laufen weiter über die Edge Function partner-review (Service-Role).
--- F9-1: short_links nicht mehr für anon lesbar; neue Funktion get_short_link(p_code) löst genau einen Code auf (anon+authenticated); Lesen/Anlegen der Tabelle nur Admin/Verwalter/Mitarbeiter (Terminmodal).
+-- F9-1: short_links nicht mehr für anon lesbar; neue Funktion get_short_link(p_code) löst genau einen Code auf (anon+authenticated); Lesen/Anlegen der Tabelle nur Admin/Verwalter/Mitarbeiter (Terminmodal); ShortLink.tsx folgt nur https-Zielen auf portal.happy-property.com und calendar.google.com (alle 96 Bestandsziele geprüft).
 -- S1-8: Schema acquisition: alle 10 Tabellen nur noch Admin (Akquise-App loggt als Sven ein); Pipeline und Edge Functions nutzen die Service-Role.
--- F8-38: verwaltungen lesen nur Admin/Verwalter/Mitarbeiter und Eigentümer/Miteigentümer einer Immobilie mit genau dieser Verwaltung (Objektseite).
+-- F8-38: verwaltungen lesen nur Admin/Verwalter/Mitarbeiter und Eigentümer/Miteigentümer einer Immobilie mit genau dieser Verwaltung (Objektseite); der Eigentümer-Zweig weicht bewusst von „nur Team“ ab und wartet auf Svens OK (s. unten).
 -- S1-10: webhook_errors und drive_external_sources nur Admin; Alt-Tabellen deck_clients/decks/project_deck_images nur Mitarbeiter mit Recht decks (+Admin/Verwalter).
 -- I4-24: deck_assets_backup bekommt RLS ohne Policy (nur Service-Role/SQL-Editor), Tabelle und Zeile bleiben.
 -- S1-14: siehe I4-24 (gleiche Tabelle).
@@ -24,15 +36,24 @@
 -- S2-6: wie S1-9, zusätzlich find_task_by_assignee_phone nur Service-Role, list_staff nicht mehr für anon.
 -- I4-14: claim_deck_jobs, hp_reap_deck_jobs, hp_sync_deck_assets_catalog nur Service-Role (in S1-9 enthalten).
 -- E4-2: claim_deck_jobs, hp_reap_deck_jobs nur Service-Role (in S1-9 enthalten).
--- S1-11: list_staff nur eingeloggt (authenticated, Service-Role); find_task_by_assignee_phone nur Service-Role (WhatsApp-Eingang).
+-- S1-11: list_staff nur eingeloggt (authenticated, Service-Role) und E-Mail nur noch für Team-Rollen (Admin, Verwalter, Mitarbeiter, Funnel) bzw. Service-Role; Eigentümer/Fremdkonten bekommen id, Name, Rolle (Aufgaben-Hinweise brauchen nur id+Name); find_task_by_assignee_phone nur Service-Role (WhatsApp-Eingang).
 -- E5-18: claim_invoice_number nicht mehr für authenticated; generate-invoice (Service-Role) behält es.
 -- F8-12: siehe E5-18.
 -- S1-12: siehe E5-18.
--- I4-23: fester search_path = public für get_calculation_by_token, get_calculation_lang, get_deck_lang, get_contract_for_signing, sign_contract, claim_deck_jobs, claim_workflow_runs (Rückgabe unverändert).
+-- I4-23: fester search_path = public, pg_temp für get_calculation_by_token, get_calculation_lang, get_deck_lang, get_contract_for_signing, sign_contract, claim_deck_jobs, claim_workflow_runs (Rückgabe unverändert).
 -- S1-2: handle_new_user setzt die Rolle immer auf 'eigentuemer' (nie mehr aus Signup-Metadaten); admin-user-ops und create-eigentuemer-access setzen die echte Rolle danach per Service-Role-Upsert.
 -- F2b-4: Eigentümer dürfen in crm_unit_documents nur noch selbst hochgeladene Zeilen löschen (wie die Oberfläche); Admin/Verwalter/Pipeline-Mitarbeiter unverändert; Storage-Policy bleibt.
 -- F2a-7: siehe F2b-4.
--- S1-18: Aufgaben: sich selbst als Beteiligten eintragen nur, wenn man schon Beteiligter ist (Ersteller trägt weiter jeden ein); Chat-Nachrichten nur von Beteiligten.
+-- S1-18: Aufgaben: sich selbst als Beteiligten eintragen nur, wenn man schon Beteiligter ist (Ersteller trägt weiter jeden ein); Chat-Nachrichten nur von Beteiligten; an Nachrichten dürfen Eingeloggte nur noch read_at/notified_at ändern (keine verschobenen/gefälschten Nachrichten); parent_task_id lässt sich nach dem Anlegen nicht mehr auf eine andere Aufgabe umhängen (Service-Role/SQL-Editor ausgenommen, Lösen auf NULL erlaubt).
+--
+-- Bewusst NICHT in dieser Migration (Svens Entscheidung, siehe Übergabe):
+--   * F8-38: Eigentümer/Miteigentümer lesen die ganze Zeile ihrer Verwaltung (inkl. notes), weil die Objektseite
+--     (PropertyDetail) Adresse/Kontakt einbettet. Abweichung von „nur Team“, braucht Svens OK; heute keine Notizen gespeichert.
+--   * F2b-4/F2a-7: Storage-Policy unit_docs_eigentuemer_delete bleibt; Eigentümer können die Datei eines vom Admin
+--     hochgeladenen Einheiten-Dokuments weiter aus dem Bucket löschen (Zahlungsbelege pay-/inv- brauchen das).
+--   * S1-2: Selbstregistrierung ist noch an (disable_signup=false); nur im Supabase-Dashboard abschaltbar.
+--   * S1-8: Pipeline-Repo-Migrationen 0008/0014/0016 setzen app_authenticated_all bei erneutem Lauf wieder auf true.
+--   * S1-7/F9-1: bisher lesbare Tokens (Partner-Links, Termin-Manage-Tokens) bleiben gültig; neu ausstellen = Entscheidung.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 set local lock_timeout = '5s';
@@ -64,7 +85,7 @@ create or replace function public.get_short_link(p_code text)
  language sql
  stable
  security definer
- set search_path to 'public'
+ set search_path to 'public', 'pg_temp'
 as $fn$
   select s.target from public.short_links s where s.code = p_code limit 1
 $fn$;
@@ -251,6 +272,38 @@ alter policy task_msg_insert on public.crm_task_messages
     and public.is_task_participant(task_id)
   );
 
+-- task_msg_update (recipient_id = ich, ohne WITH CHECK) erlaubte, eine eigene Nachricht in eine fremde
+-- Aufgabe zu verschieben und Absender/Text zu fälschen. Die Oberfläche schreibt nur read_at (Tasks.tsx)
+-- und notified_at (TaskNotifications.tsx); alles andere schreiben Edge Functions mit Service-Role.
+revoke update on public.crm_task_messages from anon, authenticated;
+grant  update (read_at, notified_at) on public.crm_task_messages to authenticated;
+
+-- crm_tasks_update prüft parent_task_id nicht (nur crm_tasks_insert). Umhängen unter eine fremde Aufgabe
+-- öffnete über task_parent_context deren Titel, Beschreibung und letzte Nachrichten. Die Oberfläche setzt
+-- parent_task_id nur beim Anlegen. Lösen auf NULL bleibt erlaubt (harmlos); Service-Role/SQL-Editor
+-- (auth.uid() null) ausgenommen. Nicht in die Policy, weil Teilaufgaben-Bearbeiter sonst ihre Teilaufgabe
+-- nicht mehr ändern könnten.
+create or replace function public.hp_crm_tasks_parent_lock()
+ returns trigger
+ language plpgsql
+ set search_path to 'public', 'pg_temp'
+as $fn$
+begin
+  if new.parent_task_id is not null
+     and new.parent_task_id is distinct from old.parent_task_id
+     and (select auth.uid()) is not null then
+    raise exception 'parent_task_id kann nach dem Anlegen nicht geändert werden'
+      using errcode = '42501';
+  end if;
+  return new;
+end;
+$fn$;
+
+drop trigger if exists trg_crm_tasks_parent_lock on public.crm_tasks;
+create trigger trg_crm_tasks_parent_lock
+  before update of parent_task_id on public.crm_tasks
+  for each row execute function public.hp_crm_tasks_parent_lock();
+
 -- ── S1-9 / S2-6 / I4-14 / E4-2 / S1-11: Definer-Funktionen ohne anon ───────
 -- Nur Service-Role (Edge Functions) und der Eigentümer postgres (pg_cron, Trigger).
 revoke execute on function public.claim_workflow_runs(integer) from public, anon, authenticated;
@@ -290,15 +343,34 @@ grant  execute on function public.find_task_by_assignee_phone(text) to service_r
 revoke execute on function public.list_staff() from public, anon;
 grant  execute on function public.list_staff() to authenticated, service_role;
 
+-- E-Mail der Team-Konten nur noch für Team-Rollen (Tasks/StaffHome: Namens-Fallback) und Service-Role/postgres
+-- (auth.uid() null). Eigentümer und Fremdkonten (TaskNotifications nutzt nur id+full_name) bekommen NULL.
+-- Gleiche Signatur, ACL bleibt (CREATE OR REPLACE).
+create or replace function public.list_staff()
+ returns table(id uuid, full_name text, email text, role text)
+ language sql
+ stable security definer
+ set search_path to 'public'
+as $fn$
+  select p.id, p.full_name,
+         case when (select auth.uid()) is null
+                or (select public.current_user_role()) = any (array['admin'::text, 'verwalter'::text, 'mitarbeiter'::text, 'funnel'::text])
+              then p.email end,
+         p.role
+  from profiles p
+  where p.role in ('admin','verwalter','mitarbeiter','funnel') and coalesce(p.is_active, true)
+  order by p.full_name
+$fn$;
+
 -- ── E5-18 / F8-12 / S1-12: Rechnungsnummer nur noch über generate-invoice ──
 revoke execute on function public.claim_invoice_number() from public, anon, authenticated;
 grant  execute on function public.claim_invoice_number() to service_role;
 
 -- ── I4-23: fester search_path für Token- und Job-Funktionen ────────────────
-alter function public.get_calculation_by_token(text) set search_path to 'public';
-alter function public.get_calculation_lang(text) set search_path to 'public';
-alter function public.get_deck_lang(text) set search_path to 'public';
-alter function public.get_contract_for_signing(uuid) set search_path to 'public';
-alter function public.sign_contract(uuid) set search_path to 'public';
-alter function public.claim_deck_jobs(integer) set search_path to 'public';
-alter function public.claim_workflow_runs(integer) set search_path to 'public';
+alter function public.get_calculation_by_token(text) set search_path to 'public', 'pg_temp';
+alter function public.get_calculation_lang(text) set search_path to 'public', 'pg_temp';
+alter function public.get_deck_lang(text) set search_path to 'public', 'pg_temp';
+alter function public.get_contract_for_signing(uuid) set search_path to 'public', 'pg_temp';
+alter function public.sign_contract(uuid) set search_path to 'public', 'pg_temp';
+alter function public.claim_deck_jobs(integer) set search_path to 'public', 'pg_temp';
+alter function public.claim_workflow_runs(integer) set search_path to 'public', 'pg_temp';
