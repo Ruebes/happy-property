@@ -6,8 +6,9 @@
 //   3  perm/anyPerm eines Mitarbeiter-Eintrags entsprechen exakt dem Guard
 //   4  geschützte Routen (ohne Feriengast) liegen in der AppShell-Route, öffentliche nicht
 //   5  Ids eindeutig, Einträge mit gleichem Pfad haben getrennte Rollen
-//   6  jeder labelKey existiert in de.json und en.json; shell.* ohne Gedankenstrich,
-//      ohne Emoji, im Deutschen ohne ae/oe/ue-Ersatzschreibung
+//   6  jeder labelKey (und jeder shortLabelKey der Telefon-Leiste) existiert in
+//      de.json und en.json; shell.* ohne Gedankenstrich, ohne Emoji, im Deutschen
+//      ohne ae/oe/ue-Ersatzschreibung
 //   7  jedes Icon existiert in src/components/shell/iconPaths.ts
 //   8  Telefon-Leiste: höchstens 4 Einträge, nie ein Eintrag, den der Guard abweist
 //      (dasselbe gilt für das Menü); feste Reihenfolge je Rolle
@@ -291,6 +292,14 @@ for (const lang of ['de', 'en']) {
   for (const e of NAV_ENTRIES) {
     if (e.labelKey !== `shell.nav.${e.id}`) fail(6, `"${e.id}": labelKey muss shell.nav.${e.id} heißen (ist ${e.labelKey})`)
     if (typeof lookup(locales[lang], e.labelKey) !== 'string') fail(6, `${lang}.json: ${e.labelKey} fehlt`)
+    // Kurzform für die Telefon-Leiste: fester Schlüssel, vorhanden, kürzer als der volle Name
+    if (e.shortLabelKey !== undefined) {
+      const short = lookup(locales[lang], e.shortLabelKey)
+      const full = lookup(locales[lang], e.labelKey)
+      if (e.shortLabelKey !== `shell.navShort.${e.id}`) fail(6, `"${e.id}": shortLabelKey muss shell.navShort.${e.id} heißen (ist ${e.shortLabelKey})`)
+      if (typeof short !== 'string') fail(6, `${lang}.json: ${e.shortLabelKey} fehlt`)
+      else if (typeof full === 'string' && short.length >= full.length) fail(6, `${lang}.json: ${e.shortLabelKey} ("${short}") ist nicht kürzer als ${e.labelKey} ("${full}")`)
+    }
   }
   for (const g of NAV_GROUPS) {
     if (g.labelKey !== `shell.groups.${g.id}`) fail(6, `Gruppe "${g.id}": labelKey muss shell.groups.${g.id} heißen`)
@@ -310,6 +319,9 @@ if (locales.de.shell && locales.en.shell) {
   for (const k of enKeys) if (!deKeys.includes(k)) fail(6, `de.json: ${k} fehlt (in en.json vorhanden)`)
   for (const k of Object.keys(locales.de.shell.nav ?? {})) {
     if (!NAV_ENTRIES.some(e => e.id === k)) warn(`shell.nav.${k} hat keinen Registry-Eintrag (ungenutzter Text)`)
+  }
+  for (const k of Object.keys(locales.de.shell.navShort ?? {})) {
+    if (!NAV_ENTRIES.some(e => e.shortLabelKey === `shell.navShort.${k}`)) warn(`shell.navShort.${k} wird von keinem Registry-Eintrag genutzt (ungenutzter Text)`)
   }
 }
 mark(6, 'alle Texte in de.json und en.json vorhanden, ohne Gedankenstrich, Emoji, Ersatzschreibung')

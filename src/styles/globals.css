@@ -49,6 +49,20 @@ select option { color: #1a1a1a; }
   to   { opacity: 1; transform: scaleY(1)    translateY(0);    }
 }
 
+/* App-Shell: die obere Leiste bleibt beim Scrollen stehen (sticky, 56 px hoch,
+   z-30). Hinweise (Toasts) der Seiten oben rechts lägen sonst genau darüber
+   und verdeckten Suche und Profil-Menü. Im Shell-Inhalt rutschen sie um die
+   Höhe der Leiste nach unten. Erfasst sind genau die Kombinationen, die es in
+   src/pages gibt: "fixed top-4 right-4" (22 Seiten) und "fixed top-5 right-5"
+   (Verwaltungs-Dashboard). --hp-top-offset setzt der ShellFrame; in der alten
+   Navigation gibt es .hp-shell-content nicht, dort bleibt alles wie bisher. */
+.hp-shell-content .fixed.top-4.right-4 {
+  top: calc(var(--hp-top-offset, 56px) + 1rem);
+}
+.hp-shell-content .fixed.top-5.right-5 {
+  top: calc(var(--hp-top-offset, 56px) + 1.25rem);
+}
+
 /* App-Shell: unter md liegt die Telefon-Leiste am unteren Rand. Feste Hinweise
    (Toasts) der Seiten rutschen im Shell-Inhalt um die Höhe der Leiste nach oben,
    damit sie nicht verdeckt werden. --hp-bottom-offset setzt die AppShell. */

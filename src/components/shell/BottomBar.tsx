@@ -21,7 +21,13 @@ const ITEM_BASE =
   'text-[10px] font-medium font-body transition-colors ' +
   'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hp-navy/40'
 
-// Dünner Korall-Strich über dem aktiven Eintrag (Akzent, keine Fläche)
+// Aktiver Eintrag: Schrift in Navy (Korall auf Weiß wäre bei 10 px zu blass),
+// Korall bleibt als dünner Akzent am Icon und am Strich darüber.
+const ITEM_ACTIVE = 'text-hp-navy'
+const ITEM_IDLE = 'text-gray-500 hover:text-hp-navy'
+const ICON_ACTIVE = 'text-hp-highlight'
+
+// Dünner Korall-Strich (2 px) über dem aktiven Eintrag (Akzent, keine Fläche)
 function ActiveBar() {
   return <span aria-hidden="true" className="absolute inset-x-4 top-0 h-0.5 rounded-b-full bg-hp-highlight" />
 }
@@ -43,24 +49,28 @@ export default function BottomBar({ profile, badges, activeId, moreOpen, onMore 
         {entries.map(entry => {
           const active = !moreOpen && entry.id === activeId
           const label = t(entry.labelKey)
+          // Kurzform für die schmale Leiste (z.B. "Objekte" statt "Meine Objekte").
+          // Vorgelesen wird weiter der volle Name.
+          const shortLabel = entry.shortLabelKey ? t(entry.shortLabelKey) : label
           const count = badgeCount(entry, badges)
           const badgeText = entry.badge && count > 0 ? t(`shell.badges.${entry.badge}`, { count }) : ''
+          const spoken = badgeText ? `${label}, ${badgeText}` : shortLabel !== label ? label : undefined
           return (
             <li key={entry.id} className="flex min-w-0 flex-1">
               <Link
                 to={entry.path}
                 aria-current={active ? 'page' : undefined}
-                aria-label={badgeText ? `${label}, ${badgeText}` : undefined}
-                className={`${ITEM_BASE} ${active ? 'text-hp-highlight' : 'text-gray-500 hover:text-hp-navy'}`}
+                aria-label={spoken}
+                className={`${ITEM_BASE} ${active ? ITEM_ACTIVE : ITEM_IDLE}`}
               >
                 {active && <ActiveBar />}
-                <span className="relative">
+                <span className={`relative ${active ? ICON_ACTIVE : ''}`}>
                   <Icon name={entry.icon} size={22} />
                   {count > 0 && (
                     <span aria-hidden="true" className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-hp-navy ring-2 ring-white" />
                   )}
                 </span>
-                <span className="max-w-full truncate">{label}</span>
+                <span className="max-w-full truncate">{shortLabel}</span>
               </Link>
             </li>
           )
@@ -71,10 +81,12 @@ export default function BottomBar({ profile, badges, activeId, moreOpen, onMore 
             onClick={onMore}
             aria-haspopup="dialog"
             aria-expanded={moreOpen}
-            className={`${ITEM_BASE} ${moreActive ? 'text-hp-highlight' : 'text-gray-500 hover:text-hp-navy'}`}
+            className={`${ITEM_BASE} ${moreActive ? ITEM_ACTIVE : ITEM_IDLE}`}
           >
             {moreActive && <ActiveBar />}
-            <Icon name="more" size={22} />
+            <span className={moreActive ? ICON_ACTIVE : ''}>
+              <Icon name="more" size={22} />
+            </span>
             <span className="max-w-full truncate">{t('shell.more')}</span>
           </button>
         </li>

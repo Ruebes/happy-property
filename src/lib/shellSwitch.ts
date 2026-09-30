@@ -17,6 +17,16 @@ export function isShellRole(role: UserRole | null | undefined): boolean {
   return !!role && SHELL_ROLES.includes(role)
 }
 
+// Den Knopf "Alte Navigation" (Profil-Menü, Mehr-Blatt) sehen nur diese Rollen.
+// Verwalter, Funnel-Zugänge und Eigentümer bekommen ihn nicht angeboten: Für
+// sie ist die alte Navigation kein Arbeitsweg, nur ein Notausgang (der
+// Adress-Schalter unten bleibt für den Notfall).
+export const LEGACY_SWITCH_ROLES: readonly UserRole[] = ['admin', 'mitarbeiter']
+
+export function canSwitchToLegacyNav(role: UserRole | null | undefined): boolean {
+  return !!role && LEGACY_SWITCH_ROLES.includes(role)
+}
+
 // Schalter über die Adresse, falls kein Knopf erreichbar ist:
 //   ?hp_shell=off  alte Navigation (wie "Alte Navigation" im Profil-Menü)
 //   ?hp_shell=on   zurück zur neuen Navigation

@@ -34,6 +34,8 @@ type SidebarMode = 'rail' | 'full'
 //
 // --hp-bottom-offset: Höhe der Telefon-Leiste (56 px = BOTTOM_BAR_PX plus
 // Safe-Area), ab md 0. globals.css schiebt damit Toasts im Shell-Inhalt hoch.
+// --hp-top-offset: Höhe der oberen Leiste (56 px = TOP_BAR_PX, Tailwind h-14).
+// globals.css schiebt damit Toasts oben rechts unter die Leiste.
 export default function ShellFrame({ profile, badges, children }: ShellFrameProps) {
   const { t } = useTranslation()
   const location = useLocation()
@@ -88,7 +90,7 @@ export default function ShellFrame({ profile, badges, children }: ShellFrameProp
   }, [flyoutOpen])
 
   return (
-    <div className="min-h-screen bg-hp-cream font-body text-hp-black [--hp-bottom-offset:calc(56px+env(safe-area-inset-bottom,0px))] md:[--hp-bottom-offset:0px]">
+    <div className="min-h-screen bg-hp-cream font-body text-hp-black [--hp-top-offset:56px] [--hp-bottom-offset:calc(56px+env(safe-area-inset-bottom,0px))] md:[--hp-bottom-offset:0px]">
       {/* Sprungmarke für Tastatur und Screenreader. Ohne Hash in der Adresse,
           damit der Router keinen Seitenwechsel sieht. */}
       <a

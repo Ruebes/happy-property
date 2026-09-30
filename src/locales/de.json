@@ -6558,6 +6558,9 @@
       "whatsappTemplates": "WhatsApp-Vorlagen",
       "automationRules": "Automatik-Regeln"
     },
+    "navShort": {
+      "myProperties": "Objekte"
+    },
     "more": "Mehr",
     "search": {
       "placeholder": "Suchen: Kunde, Projekt, Seite",

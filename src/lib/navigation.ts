@@ -6,7 +6,8 @@
 // Regeln (siehe scripts/verify-nav.mjs):
 //   - roles ist immer eine TEILMENGE dessen, was der ProtectedRoute-Guard erlaubt
 //   - perm/anyPerm für Mitarbeiter entsprechen exakt dem Guard
-//   - jeder labelKey existiert in de.json UND en.json (shell.nav.*)
+//   - jeder labelKey existiert in de.json UND en.json (shell.nav.*), ebenso
+//     jeder shortLabelKey (shell.navShort.*)
 //   - jedes Icon existiert in src/components/shell/iconPaths.ts
 //   - hidden-Einträge erscheinen nie im Menü, dienen nur Hervorhebung und Suche
 
@@ -25,6 +26,10 @@ export interface NavEntry {
   id: string
   path: string
   labelKey: string
+  // Kurzform nur für die Telefon-Leiste, wenn der volle Name bei 375 px Breite
+  // abgeschnitten würde (shell.navShort.<id>). Menü, Suche und Seitentitel
+  // zeigen immer labelKey.
+  shortLabelKey?: string
   icon: IconId
   group: NavGroupId
   order: number
@@ -170,7 +175,7 @@ export const NAV_ENTRIES: NavEntry[] = [
 
   // ── Portal (Eigentümer) ────────────────────────────────────────────────────
   { id: 'myProperties', path: '/objekte',               labelKey: 'shell.nav.myProperties', icon: 'properties', group: 'portal', order: 0, roles: [E], module: 'm9',
-    mobileRank: { eigentuemer: 2 }, keywords: ['wohnung', 'immobilie'] },
+    shortLabelKey: 'shell.navShort.myProperties', mobileRank: { eigentuemer: 2 }, keywords: ['wohnung', 'immobilie'] },
   { id: 'myCalendar',   path: '/kalender',              labelKey: 'shell.nav.myCalendar',   icon: 'calendar',   group: 'portal', order: 1, roles: [E], module: 'm9',
     mobileRank: { eigentuemer: 3 }, keywords: ['belegung', 'termine'] },
   { id: 'myDocuments',  path: '/dokumente',             labelKey: 'shell.nav.myDocuments',  icon: 'documents',  group: 'portal', order: 2, roles: [E], module: 'm9',

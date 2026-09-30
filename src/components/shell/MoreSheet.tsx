@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { groupedNav, type NavEntry } from '../../lib/navigation'
 import type { Profile } from '../../lib/permissions'
 import { signOutAndReset } from '../../lib/session'
-import { switchToLegacyNav } from '../../lib/shellSwitch'
+import { canSwitchToLegacyNav, switchToLegacyNav } from '../../lib/shellSwitch'
 import LanguageSwitcher from '../LanguageSwitcher'
 import Icon from './Icon'
 import { readBuildId } from './ProfileMenu'
@@ -26,6 +26,9 @@ const ROW =
 const ROW_IDLE = 'text-gray-700 hover:bg-gray-50'
 const ROW_ACTIVE = 'bg-hp-navy/5 font-semibold text-hp-navy'
 
+// Ersatz-Auslöser für das Hereinschieben, falls der Browser keinen Frame liefert
+const ENTER_FALLBACK_MS = 60
+
 // "Mehr"-Blatt auf dem Telefon: schiebt sich von unten herein und zeigt ALLE
 // Seiten, die das Profil sehen darf, dazu Profil, Sprache und Abmelden.
 //
@@ -45,10 +48,18 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
 
   // Hereinschieben nach dem ersten Rendern; Fokus auf das Blatt (nicht auf das
   // Suchfeld, sonst springt auf dem Telefon sofort die Tastatur auf).
+  // requestAnimationFrame allein reicht nicht: In gedrosselten oder verdeckten
+  // Tabs kommt kein Frame, das Blatt bliebe unsichtbar unter dem Rand stehen.
+  // Der Timer zieht es dann spätestens nach ENTER_FALLBACK_MS herein.
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setShown(true))
+    const show = () => setShown(true)
+    const frame = requestAnimationFrame(show)
+    const timer = window.setTimeout(show, ENTER_FALLBACK_MS)
     panelRef.current?.focus({ preventScroll: true })
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
   }, [])
 
   const handleSignOut = () => {
@@ -161,7 +172,7 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
             ))
           )}
 
-          {/* Konto: Profil, Sprache, alte Navigation, Abmelden */}
+          {/* Konto: Profil, Sprache, alte Navigation (nur Admin und Mitarbeiter), Abmelden */}
           <div className="mt-3 space-y-0.5 border-t border-gray-100 pt-2">
             <Link to="/profile" onClick={onClose} className={`${ROW} ${activeId === 'profile' ? ROW_ACTIVE : ROW_IDLE}`}>
               <Icon name="user" size={20} className="shrink-0 text-gray-400" />
@@ -173,10 +184,12 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
               <span className="flex-1">{t('shell.profile.language')}</span>
               <LanguageSwitcher tone="shellTouch" />
             </div>
-            <button type="button" onClick={switchToLegacyNav} title={t('shell.profile.legacyNavHint')} className={`${ROW} ${ROW_IDLE}`}>
-              <Icon name="menu" size={20} className="shrink-0 text-gray-400" />
-              <span className="flex-1">{t('shell.profile.legacyNav')}</span>
-            </button>
+            {canSwitchToLegacyNav(profile.role) && (
+              <button type="button" onClick={switchToLegacyNav} title={t('shell.profile.legacyNavHint')} className={`${ROW} ${ROW_IDLE}`}>
+                <Icon name="menu" size={20} className="shrink-0 text-gray-400" />
+                <span className="flex-1">{t('shell.profile.legacyNav')}</span>
+              </button>
+            )}
             <button type="button" onClick={handleSignOut} disabled={loggingOut} className={`${ROW} ${ROW_IDLE} disabled:opacity-60`}>
               <Icon name="logout" size={20} className="shrink-0 text-gray-400" />
               <span className="flex-1">{loggingOut ? t('shell.profile.loggingOut') : t('shell.profile.logout')}</span>

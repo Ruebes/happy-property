@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ROLE_META, type Profile } from '../../lib/permissions'
 import { signOutAndReset } from '../../lib/session'
-import { switchToLegacyNav } from '../../lib/shellSwitch'
+import { canSwitchToLegacyNav, switchToLegacyNav } from '../../lib/shellSwitch'
 import Icon from './Icon'
 
 interface ProfileMenuProps {
@@ -111,10 +111,13 @@ export default function ProfileMenu({ profile }: ProfileMenuProps) {
             <Icon name="user" size={16} className="text-gray-400" />
             {t('shell.profile.profile')}
           </Link>
-          <button type="button" onClick={switchToLegacyNav} title={t('shell.profile.legacyNavHint')} className={ITEM}>
-            <Icon name="menu" size={16} className="text-gray-400" />
-            {t('shell.profile.legacyNav')}
-          </button>
+          {/* Rückweg zur alten Navigation: nur Admin und Mitarbeiter */}
+          {canSwitchToLegacyNav(profile.role) && (
+            <button type="button" onClick={switchToLegacyNav} title={t('shell.profile.legacyNavHint')} className={ITEM}>
+              <Icon name="menu" size={16} className="text-gray-400" />
+              {t('shell.profile.legacyNav')}
+            </button>
+          )}
           <button type="button" onClick={handleSignOut} disabled={loggingOut} className={`${ITEM} disabled:opacity-60`}>
             <Icon name="logout" size={16} className="text-gray-400" />
             {loggingOut ? t('shell.profile.loggingOut') : t('shell.profile.logout')}

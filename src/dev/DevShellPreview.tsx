@@ -54,78 +54,96 @@ export default function DevShellPreview() {
 
   return (
     <ShellFrame profile={profile} badges={SAMPLE_BADGES}>
-      <div className="hp-shell-content mx-auto w-full max-w-7xl space-y-5 px-4 py-6 sm:px-6 md:py-8">
-        <div className={CARD}>
-          <p className="text-xs font-semibold font-body uppercase tracking-wide text-gray-400">Nur im Dev-Server</p>
-          <h1 className="mt-1 text-2xl text-hp-navy">Shell-Vorschau: {profile.full_name}</h1>
-          <p className="mt-2 text-sm font-body text-gray-600">
-            Rahmen der neuen Navigation mit erfundenem Profil. {entryCount} Menüeinträge in {groups.length} Gruppen,
-            Telefon-Leiste: {bar.length} Einträge plus Mehr. Die Zähler an Aufgaben und Posteingang sind Beispielwerte.
-          </p>
-          {unknownRole && (
+      {/* Äußerer Rahmen wie der Durchreicher DashboardLayout in der Shell */}
+      <div className="hp-shell-content mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 md:py-8">
+        <div className="space-y-5">
+          <div className={CARD}>
+            <p className="text-xs font-semibold font-body uppercase tracking-wide text-gray-400">Nur im Dev-Server</p>
+            <h1 className="mt-1 text-2xl text-hp-navy">Shell-Vorschau: {profile.full_name}</h1>
             <p className="mt-2 text-sm font-body text-gray-600">
-              Die Rolle in der Adresse ist unbekannt, angezeigt wird Admin.
+              Rahmen der neuen Navigation mit erfundenem Profil. {entryCount} Menüeinträge in {groups.length} Gruppen,
+              Telefon-Leiste: {bar.length} Einträge plus Mehr. Die Zähler an Aufgaben und Posteingang sind Beispielwerte.
             </p>
-          )}
-          {role === 'mitarbeiter' && (
-            <p className="mt-2 text-sm font-body text-gray-600">
-              Rechte: {permList.length > 0 ? permList.join(', ') : 'keine'}
-            </p>
-          )}
-        </div>
-
-        <div className={CARD}>
-          <h2 className="text-lg text-hp-navy">Rolle wechseln</h2>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {MOCK_ROLES.map(item => (
-              <Link
-                key={item}
-                to={previewPath(item)}
-                className={`${CHIP} ${item === role && !isAltPerms ? CHIP_ACTIVE : CHIP_IDLE}`}
-              >
-                {item}
-                {item === 'mitarbeiter' && ` (${DEFAULT_STAFF_PERMS.join(', ')})`}
-              </Link>
-            ))}
-            <Link
-              to={previewPath('mitarbeiter', ALT_STAFF_PERMS)}
-              className={`${CHIP} ${role === 'mitarbeiter' && isAltPerms ? CHIP_ACTIVE : CHIP_IDLE}`}
-            >
-              mitarbeiter ({ALT_STAFF_PERMS.join(', ')})
-            </Link>
-          </div>
-        </div>
-
-        <div className={CARD}>
-          <h2 className="text-lg text-hp-navy">Echte Seiten ohne Login ansehen</h2>
-          <p className="mt-2 text-sm font-body text-gray-600">
-            Die Mock-Anmeldung setzt sessionStorage.hp_mock_role und öffnet die Startseite dieser Rolle mit der neuen
-            Navigation. Es gibt keine echte Sitzung: Daten bleiben leer oder melden Fehler. Abmelden im Profil-Menü
-            oder der Knopf unten beendet sie.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={openRealPages} className={`${CHIP} ${CHIP_IDLE}`}>
-              Als {role} öffnen: {landingFor(profile)}
-            </button>
-            {activeMock && (
-              <button type="button" onClick={endMock} className={`${CHIP} ${CHIP_IDLE}`}>
-                Mock-Anmeldung beenden (aktiv: {activeMock.role})
-              </button>
+            {unknownRole && (
+              <p className="mt-2 text-sm font-body text-gray-600">
+                Die Rolle in der Adresse ist unbekannt, angezeigt wird Admin.
+              </p>
+            )}
+            {role === 'mitarbeiter' && (
+              <p className="mt-2 text-sm font-body text-gray-600">
+                Rechte: {permList.length > 0 ? permList.join(', ') : 'keine'}
+              </p>
             )}
           </div>
+
+          <div className={CARD}>
+            <h2 className="text-lg text-hp-navy">Rolle wechseln</h2>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {MOCK_ROLES.map(item => (
+                <Link
+                  key={item}
+                  to={previewPath(item)}
+                  className={`${CHIP} ${item === role && !isAltPerms ? CHIP_ACTIVE : CHIP_IDLE}`}
+                >
+                  {item}
+                  {item === 'mitarbeiter' && ` (${DEFAULT_STAFF_PERMS.join(', ')})`}
+                </Link>
+              ))}
+              <Link
+                to={previewPath('mitarbeiter', ALT_STAFF_PERMS)}
+                className={`${CHIP} ${role === 'mitarbeiter' && isAltPerms ? CHIP_ACTIVE : CHIP_IDLE}`}
+              >
+                mitarbeiter ({ALT_STAFF_PERMS.join(', ')})
+              </Link>
+            </div>
+          </div>
+
+          <div className={CARD}>
+            <h2 className="text-lg text-hp-navy">Echte Seiten ohne Login ansehen</h2>
+            <p className="mt-2 text-sm font-body text-gray-600">
+              Die Mock-Anmeldung setzt sessionStorage.hp_mock_role und öffnet die Startseite dieser Rolle mit der neuen
+              Navigation. Es gibt keine echte Sitzung: Daten bleiben leer oder melden Fehler. Abmelden im Profil-Menü
+              oder der Knopf unten beendet sie.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button type="button" onClick={openRealPages} className={`${CHIP} ${CHIP_IDLE}`}>
+                Als {role} öffnen: {landingFor(profile)}
+              </button>
+              {activeMock && (
+                <button type="button" onClick={endMock} className={`${CHIP} ${CHIP_IDLE}`}>
+                  Mock-Anmeldung beenden (aktiv: {activeMock.role})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Füllmaterial: Scrollen des Dokuments, stehende Kopfzeile, Abstand zur Telefon-Leiste */}
+          {Array.from({ length: 8 }, (_, index) => (
+            <div key={index} className={`${CARD} h-40`}>
+              <p className="text-sm font-body text-gray-400">Platzhalter {index + 1}</p>
+            </div>
+          ))}
         </div>
 
-        {/* Füllmaterial: Scrollen des Dokuments, stehende Kopfzeile, Abstand zur Telefon-Leiste */}
-        {Array.from({ length: 8 }, (_, index) => (
-          <div key={index} className={`${CARD} h-40`}>
-            <p className="text-sm font-body text-gray-400">Platzhalter {index + 1}</p>
-          </div>
-        ))}
-
+        {/* Die Hinweise stehen wie auf den Seiten direkt im Rahmen, nicht im
+            space-y-Block (dessen margin-top würde sie zusätzlich verschieben). */}
         {/* Beispiel-Hinweis wie auf den Seiten: muss auf dem Telefon über der unteren Leiste stehen */}
-        <div className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-body text-white shadow-lg">
+        <div data-dev-toast="bottom" className="fixed bottom-6 right-6 z-50 rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-body text-white shadow-lg">
           Beispiel-Hinweis
         </div>
+
+        {/* Beispiel-Hinweise oben rechts, Klassen wie auf den Seiten (22 mal
+            "fixed top-4 right-4", einmal "fixed top-5 right-5"): müssen unter
+            der oberen Leiste stehen, nicht darauf. ?toast=5 zeigt die zweite Form. */}
+        {search.get('toast') === '5' ? (
+          <div data-dev-toast="top" className="fixed top-5 right-5 z-50 rounded-2xl bg-gray-800 px-5 py-3 text-sm font-body text-white shadow-xl">
+            Beispiel-Hinweis oben (top-5)
+          </div>
+        ) : (
+          <div data-dev-toast="top" className="fixed top-4 right-4 z-50 bg-gray-800 text-white px-4 py-2 rounded-xl text-sm shadow-lg">
+            Beispiel-Hinweis oben
+          </div>
+        )}
       </div>
     </ShellFrame>
   )

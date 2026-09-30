@@ -59,7 +59,8 @@ export function writeLocal(key: string, value: string): void {
 export const BOTTOM_BAR_PX = 56
 
 // Höhe der oberen Leiste (Tailwind h-14). Die AppShell setzt daraus
-// scroll-padding-top, damit Sprungziele nicht unter der Leiste landen.
+// scroll-padding-top, damit Sprungziele nicht unter der Leiste landen. Derselbe
+// Wert steht als --hp-top-offset im ShellFrame (Toasts oben rechts, globals.css).
 export const TOP_BAR_PX = 56
 
 // Ziel des Logos in der Shell. Für Admin fest die CRM-Übersicht: roleToPath
