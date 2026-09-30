@@ -85,3 +85,6 @@ verify_jwt = true
 
 [functions.learn-mail]
 verify_jwt = true
+
+[functions.ai-draft-reply]
+verify_jwt = true
