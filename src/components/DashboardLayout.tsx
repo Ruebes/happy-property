@@ -662,7 +662,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* ── Mobile Bottom Navigation: Funnel-Mitarbeiter (2 Seiten + Profil) ── */}
       {isFunnelUser && (
         <nav
-          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-30 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <div className="flex items-stretch justify-around">
@@ -698,7 +698,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* ── Mobile Bottom Navigation: Mitarbeiter (freigeschaltete Bereiche + Profil) ── */}
       {isStaff && (
         <nav
-          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-30 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <div className="flex items-stretch justify-around">
@@ -728,7 +728,7 @@ export default function DashboardLayout({ children, basePath }: Props) {
       {/* ── Mobile Bottom Navigation (nur für Nicht-Admin, nur auf kleinen Screens) ── */}
       {!isAdmin && !isFunnelUser && !isStaff && (
         <nav
-          className="fixed bottom-0 left-0 right-0 xl:hidden z-50 bg-white border-t border-gray-100"
+          className="fixed bottom-0 left-0 right-0 xl:hidden z-30 bg-white border-t border-gray-100"
           style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
         >
           <div className="flex items-stretch justify-around">
