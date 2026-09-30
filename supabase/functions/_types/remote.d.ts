@@ -17,6 +17,11 @@ declare module 'jsr:@supabase/supabase-js@2' {
     is(col: string, val: unknown): SupabaseQuery
     not(col: string, op: string, val: unknown): SupabaseQuery
     or(filter: string): SupabaseQuery
+    ilike(col: string, pattern: string): SupabaseQuery
+    like(col: string, pattern: string): SupabaseQuery
+    contains(col: string, val: unknown): SupabaseQuery
+    filter(col: string, op: string, val: unknown): SupabaseQuery
+    range(from: number, to: number): SupabaseQuery
     gt(col: string, val: unknown): SupabaseQuery
     gte(col: string, val: unknown): SupabaseQuery
     lt(col: string, val: unknown): SupabaseQuery
@@ -35,6 +40,14 @@ declare module 'jsr:@supabase/supabase-js@2' {
     auth: any
   }
   export function createClient(url: string, key: string, opts?: unknown): SupabaseClient
+}
+
+declare module 'https://deno.land/x/denomailer@1.6.0/mod.ts' {
+  export class SMTPClient {
+    constructor(opts: unknown)
+    send(msg: Record<string, unknown>): Promise<void>
+    close(): Promise<void>
+  }
 }
 
 declare module 'https://esm.sh/jsonrepair@3.8.0' {

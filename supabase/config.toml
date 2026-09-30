@@ -101,11 +101,11 @@ verify_jwt = false
 [functions.subscriber-optin]
 verify_jwt = false
 
-# MUSS true bleiben: isServiceViaGateway vertraut dem vom Gateway geprüften service_role-JWT.
+# true wie live. Der Guard liest keinen ungeprüften JWT-Payload mehr (Review S1).
 [functions.google-drive]
 verify_jwt = true
 
-# MUSS true bleiben (wie google-drive).
+# true wie live (wie google-drive).
 [functions.create-client-drive-folder]
 verify_jwt = true
 

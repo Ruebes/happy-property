@@ -1411,6 +1411,10 @@ async function authorize(sb: SupabaseClient, req: Request, action: string): Prom
     if (sameSecret(cronSecret, (data as { value?: string } | null)?.value ?? '')) return null
     return json({ error: 'Nicht angemeldet' }, 401)
   }
+  // Andere Functions per functions.invoke mit Service-Client (supabase-js >= 2.11x):
+  // der sb_secret-Key kommt nur im apikey-Header, ohne Authorization. Sonst bekäme
+  // yt-center (Social-Posts zum Video) 401 (Review S1).
+  if (sameSecret(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return null
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) return json({ error: 'Nicht angemeldet' }, 401)
   if (sameSecret(jwt, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return null

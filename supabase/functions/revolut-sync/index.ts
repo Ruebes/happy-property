@@ -29,7 +29,7 @@
 // true, Eintrag in config.toml). Der eigentliche Schutz ist der Guard im Handler.
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
-import { authorizeCaller } from '../_shared/callerAuth.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -250,8 +250,12 @@ Deno.serve(async (req: Request) => {
     }
 
     // ── Aufrufer prüfen: alles ab hier nur Cron, Service-Key oder admin/verwalter ──
-    const caller = await authorizeCaller(req, { cron: true, service: true, roles: ['admin', 'verwalter'] }, CORS)
-    if (caller instanceof Response) return caller
+    // gateCaller statt authorizeCaller (Review S1): erkennt den Service-Key auch im
+    // apikey-Header (imap-poll/affiliate-api per functions.invoke) und den vom
+    // Gateway signierten service_role-JWT (verify_jwt=true, Cron-Job 5); dazu der
+    // zeitlich begrenzte Beobachtungsmodus CALLER_GUARD_OBSERVE=revolut-sync@<Ende>.
+    const denied = await gateCaller(req, 'revolut-sync', { cron: true, service: true, roles: ['admin', 'verwalter'] }, CORS)
+    if (denied) return denied
 
     // ── KI-Kategorisierung offener Transaktionen ─────────────────────────────
     if (body.action === 'categorize_ai') {

@@ -50,6 +50,34 @@ const ilikeExact = (s: string) => s.replace(/([\\%_*])/g, '\\$1')
 const DOI_MIN_GAP_MS = 2 * 60_000
 const DOI_MAX_PER_DAY = 5
 const DOI_MAX_PER_HOUR = 60
+// Pro Absender-Anschluss (Review S1): sonst füllt ein einzelner Absender mit
+// Zufallsadressen das Stundenlimit und blockiert alle echten Anmeldungen.
+const DOI_MAX_PER_IP_HOUR = 5
+
+// Adress-Familie für die Drosselung: name+1@… und name+2@… landen im selben
+// Postfach, bei Gmail zählen auch Punkte im Namen nicht (Review S1).
+const familyKey = (e: string) => {
+  const at = e.lastIndexOf('@')
+  if (at < 1) return e
+  const dom = e.slice(at + 1)
+  let local = e.slice(0, at).split('+')[0]
+  if (dom === 'gmail.com') local = local.replace(/\./g, '')
+  return `${local}@${dom}`
+}
+
+// Absender-Anschluss nur gehasht (HMAC, keine Klar-IP in der Datenbank).
+// cf-connecting-ip (setzt Cloudflare selbst), sonst das erste x-forwarded-for-
+// Element wie in wa-track (IP-Sperrliste für interne Besucher). Ein
+// gefälschter x-forwarded-for-Wert kann das Limit nur umgehen, niemanden
+// aussperren. Private/leere Adressen: keine Anschluss-Bremse (nie alle sperren).
+async function clientIpHash(req: Request): Promise<string> {
+  const ip = (req.headers.get('cf-connecting-ip') ?? (req.headers.get('x-forwarded-for') ?? '').split(',')[0] ?? '').trim()
+  if (!ip || /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|f[cd][0-9a-f]{2}:)/i.test(ip)) return ''
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? 'subscriber-optin'),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(ip)))
+  return Array.from(mac.slice(0, 8), b => b.toString(16).padStart(2, '0')).join('')
+}
 
 // Wohin es nach dem Bestätigungsklick geht. Jede Anmeldestrecke kann ihre eigene
 // Danke-Seite mitgeben (`confirm_redirect`), sonst landet man hier.
@@ -276,14 +304,19 @@ Deno.serve(async (req) => {
     // Abonnent finden oder anlegen — per E-Mail, sonst per Telefonnummer.
     // Achtung: phone ist NICHT unique (Klaviyo-Import enthält Dubletten), deshalb
     // die älteste Übereinstimmung nehmen statt maybeSingle() über alle Treffer.
-    let ex: { id: string; properties: Record<string, unknown> | null; optout_at: string | null; klaviyo_id: string | null } | null = null
+    type SubRow = { id: string; properties: Record<string, unknown> | null; optout_at: string | null; klaviyo_id: string | null }
+    let ex: SubRow | null = null
     if (email) {
-      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id').ilike('email', ilikeExact(email)).maybeSingle()
-      ex = data as typeof ex
+      // Wie beim Telefon die älteste Übereinstimmung: email ist nicht unique, bei
+      // Dubletten lieferte maybeSingle() null, legte jedes Mal eine weitere Zeile
+      // an und die Drosselung (liegt je Zeile) griff nie (Review S1).
+      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id')
+        .ilike('email', ilikeExact(email)).order('created_at', { ascending: true }).limit(1)
+      ex = ((data as SubRow[] | null) ?? [])[0] ?? null
     } else {
       const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id')
         .eq('phone', phone).order('created_at', { ascending: true }).limit(1)
-      ex = ((data as Array<NonNullable<typeof ex>> | null) ?? [])[0] ?? null
+      ex = ((data as SubRow[] | null) ?? [])[0] ?? null
     }
     const alreadyConfirmed = !!(ex && (ex.properties?.doi_confirmed === true || ex.klaviyo_id))
 
@@ -304,6 +337,34 @@ Deno.serve(async (req) => {
       console.warn('[subscriber-optin] Bestätigung gedrosselt (Kontakt hat gerade/oft eine bekommen)')
       return json({ ok: true, pending: true, list: list.name, channel })
     }
+    // Bestätigungen der letzten 24 h (wenige Zeilen, höchstens DOI_MAX_PER_HOUR je
+    // Stunde) für die Drosselung je Adress-Familie und je Anschluss.
+    const ipHash = await clientIpHash(req)
+    const { data: recentRaw } = await sb.from('newsletter_subscribers')
+      .select('id, email, doi_ip:properties->>doi_ip, doi_sent_at:properties->>doi_sent_at, doi_sends:properties->doi_sends')
+      .gte('properties->>doi_sent_at', new Date(jetzt - 24 * 3600_000).toISOString()).limit(1000)
+    const recent = (recentRaw ?? []) as Array<{ id: string; email: string | null; doi_ip: string | null; doi_sent_at: string | null; doi_sends: unknown }>
+    if (email) {
+      // name+1@…, name+2@… (und bei Gmail Punkte) zählen zusammen mit der Adresse selbst.
+      const fam = familyKey(email)
+      const aliasSends = recent
+        .filter(r => r.id !== ex?.id && !!r.email && familyKey(normEmail(r.email)) === fam)
+        .flatMap(r => Array.isArray(r.doi_sends) ? r.doi_sends : [])
+        .map(x => Date.parse(String(x))).filter(t => Number.isFinite(t) && jetzt - t < 24 * 3600_000)
+      if (aliasSends.length && frueher.length + aliasSends.length >= DOI_MAX_PER_DAY) {
+        console.warn('[subscriber-optin] Bestätigung gedrosselt (Adress-Familie hat heute schon oft eine bekommen)')
+        return json({ ok: true, pending: true, list: list.name, channel })
+      }
+    }
+    if (ipHash) {
+      const vomAnschluss = recent.filter(r => r.doi_ip === ipHash && jetzt - Date.parse(r.doi_sent_at ?? '') < 3600_000).length
+      if (vomAnschluss >= DOI_MAX_PER_IP_HOUR) {
+        console.warn(`[subscriber-optin] Anschluss-Limit erreicht (${vomAnschluss} Bestätigungen in 60 Min) - Anmeldung abgewiesen`)
+        return json({ error: lang === 'en'
+          ? 'We are receiving a lot of sign-ups right now. Please try again in a few minutes.'
+          : 'Gerade kommen sehr viele Anmeldungen an. Bitte versuch es in ein paar Minuten noch einmal.' }, 429)
+      }
+    }
     const { count: letzteStunde } = await sb.from('newsletter_subscribers')
       .select('id', { count: 'exact', head: true })
       .gte('properties->>doi_sent_at', new Date(jetzt - 3600_000).toISOString())
@@ -318,13 +379,14 @@ Deno.serve(async (req) => {
 
     // Neu oder unbestätigt → DOI-Token setzen + Bestätigung auf dem gewählten Kanal
     const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '').slice(0, 8)
-    let subId = ex?.id
+    let subId: string | undefined = ex?.id
     const baseProps = {
       ...(ex?.properties ?? {}), lang, channel,
       doi_token: token, doi_pending_list: list.id, doi_confirmed: false,
       doi_redirect: erlaubtesZiel(body.confirm_redirect),
       // Vorab als verschickt markiert; schlägt der Versand fehl, wird es unten zurückgesetzt.
       doi_sent_at: jetztIso, doi_sends: [...frueherIso, jetztIso].slice(-DOI_MAX_PER_DAY),
+      doi_ip: ipHash || null,
     }
     if (ex) {
       await sb.from('newsletter_subscribers').update({

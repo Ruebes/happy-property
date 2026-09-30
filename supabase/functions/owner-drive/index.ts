@@ -28,6 +28,7 @@
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
 import { resolveLang, type Lang } from '../_shared/recipientLang.ts'
+import { safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -188,7 +189,7 @@ async function uploadFile(token: string, folderId: string, name: string, mime: s
 async function caller(req: Request, sb: Client): Promise<{ service: boolean; profile: Profile | null; authEmail: string }> {
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   if (!jwt) return { service: false, profile: null, authEmail: '' }
-  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return { service: true, profile: null, authEmail: '' }
+  if (safeEqual(jwt, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) return { service: true, profile: null, authEmail: '' }   // konstante Zeit (Review S1)
   const { data } = await createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!).auth.getUser(jwt)
   const uid = data?.user?.id
   if (!uid) return { service: false, profile: null, authEmail: '' }

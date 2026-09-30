@@ -89,9 +89,11 @@ Deno.serve(async (req) => {
 
   // Aufrufer-Schutz: verify_jwt=true lässt auch den öffentlichen publishable Key
   // durch. Erlaubt: andere Functions mit dem Service-Key (Authorization ODER
-  // apikey) und JEDER eingeloggte Nutzer - auch Eigentümer (/kalender ->
-  // BookingModal -> sendWhatsApp).
-  const denied = await gateCaller(req, 'send-whatsapp', { service: true, anyUser: true }, corsHeaders)
+  // apikey, oder der vom Gateway signierte service_role-JWT) und eingeloggte
+  // Nutzer mit Profil in einer der Rollen, deren Seiten hier senden: CRM
+  // (admin/verwalter/mitarbeiter) und Eigentümer (/kalender -> BookingModal ->
+  // sendWhatsApp). Feriengäste und Nutzer ohne Profil nicht (Review S1).
+  const denied = await gateCaller(req, 'send-whatsapp', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'eigentuemer'] }, corsHeaders)
   if (denied) return denied
 
   try {

@@ -2,12 +2,18 @@
 // Endpunkt für Calendly Webhooks (v2 Payload-Format).
 // In Calendly eintragen unter: Integrations → Webhooks → Endpoint URL = <supabase-url>/functions/v1/calendly-webhook
 //
-// Signaturprüfung (Befund E3-6): Ist ein Signing Key hinterlegt (Secret
-// CALENDLY_WEBHOOK_SIGNING_KEY oder connector_secrets 'CALENDLY_WEBHOOK_SIGNING_KEY'),
-// werden nur Anfragen mit gültigem Header Calendly-Webhook-Signature (t=…,v1=HMAC-SHA256
-// über "t.body") angenommen. Ohne Key bleibt das bisherige Verhalten (Stand 30.9.26:
-// das bestehende Abo wurde ohne signing_key angelegt, calendly-status übergibt keinen).
-// Einschalten: Abo in Calendly mit signing_key neu anlegen, denselben Key hier hinterlegen.
+// Signaturprüfung (Befund E3-6, Review S1): Nur Anfragen mit gültigem Header
+// Calendly-Webhook-Signature (t=…,v1=HMAC-SHA256 über "t.body") mit dem Signing Key
+// (Secret CALENDLY_WEBHOOK_SIGNING_KEY oder connector_secrets
+// 'CALENDLY_WEBHOOK_SIGNING_KEY') werden angenommen.
+// Ohne Key wird abgewiesen (401 "webhook disabled"): sonst konnte jeder Termine
+// absagen/anlegen und Deals verschieben. Stand 30.9.26: Calendly ist durch /termin
+// ersetzt, letzter Calendly-Lead 17.7., 0 Aufrufe in 7 Tagen. Soll Calendly doch
+// wieder laufen: Abo mit signing_key neu anlegen und den Key hier hinterlegen.
+// Notfall-Schalter ohne Neu-Deploy: Secret CALENDLY_ALLOW_UNSIGNED=true stellt das
+// alte Verhalten (ungeprüft, nur solange KEIN Key hinterlegt ist) wieder her.
+// Kann der Key nicht gelesen werden (DB-Fehler), antwortet die Function 503
+// (Calendly wiederholt), statt die Prüfung stillschweigend auszulassen.
 // Unabhängig davon wird eine vorhandene Telefonnummer nicht mehr überschrieben.
 
 import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
@@ -19,14 +25,14 @@ const corsHeaders = {
 
 const SIG_TOLERANCE_S = 5 * 60   // Calendly empfiehlt wenige Minuten gegen Wiedereinspielen
 
-/** Signing Key zur Laufzeit: Edge-Secret, sonst connector_secrets. Leer = Prüfung aus. */
+/** Signing Key zur Laufzeit: Edge-Secret, sonst connector_secrets. '' = keiner
+ *  hinterlegt. Wirft bei Lesefehler (supabase-js wirft dann nicht selbst). */
 async function signingKey(supabase: SupabaseClient): Promise<string> {
   const env = (Deno.env.get('CALENDLY_WEBHOOK_SIGNING_KEY') ?? '').trim()
   if (env) return env
-  try {
-    const { data } = await supabase.from('connector_secrets').select('value').eq('key', 'CALENDLY_WEBHOOK_SIGNING_KEY').maybeSingle()
-    return ((data as { value?: string | null } | null)?.value ?? '').trim()
-  } catch { return '' }
+  const { data, error } = await supabase.from('connector_secrets').select('value').eq('key', 'CALENDLY_WEBHOOK_SIGNING_KEY').maybeSingle()
+  if (error) throw new Error(`connector_secrets: ${error.message}`)
+  return ((data as { value?: string | null } | null)?.value ?? '').trim()
 }
 
 /** Calendly-Webhook-Signature prüfen: "t=<unix>,v1=<hex>" über `${t}.${rawBody}`. */
@@ -55,16 +61,25 @@ Deno.serve(async (req) => {
   let rawForErr: unknown = null
   try {
     const rawBody = await req.text()
-    // Signatur nur prüfen, wenn ein Key hinterlegt ist (sonst Verhalten wie bisher).
-    const key = await signingKey(supabase)
-    if (key && !(await validSignature(req.headers.get('calendly-webhook-signature') ?? '', rawBody, key))) {
-      console.warn('[calendly-webhook] Signatur fehlt oder ungültig, Anfrage abgewiesen')
-      return new Response(
-        JSON.stringify({ error: 'invalid signature' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    const deny = (status: number, error: string) => new Response(
+      JSON.stringify({ error }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    // Signatur immer prüfen. Key nicht lesbar -> 503 (Calendly wiederholt), statt
+    // die Prüfung auszulassen. Kein Key -> abweisen, außer Notfall-Schalter.
+    let key = ''
+    try { key = await signingKey(supabase) } catch (e) {
+      console.error('[calendly-webhook] Signing Key nicht lesbar:', e instanceof Error ? e.message : String(e))
+      return deny(503, 'signing key unavailable')
     }
-    if (!key) console.warn('[calendly-webhook] kein Signing Key hinterlegt, Signatur ungeprüft')
+    if (!key) {
+      if ((Deno.env.get('CALENDLY_ALLOW_UNSIGNED') ?? '').trim().toLowerCase() !== 'true') {
+        console.warn('[calendly-webhook] kein Signing Key hinterlegt, Anfrage abgewiesen (webhook disabled)')
+        return deny(401, 'webhook disabled')
+      }
+      console.warn('[calendly-webhook] kein Signing Key, CALENDLY_ALLOW_UNSIGNED=true: Signatur ungeprüft')
+    } else if (!(await validSignature(req.headers.get('calendly-webhook-signature') ?? '', rawBody, key))) {
+      console.warn('[calendly-webhook] Signatur fehlt oder ungültig, Anfrage abgewiesen')
+      return deny(401, 'invalid signature')
+    }
     const body = JSON.parse(rawBody)
     rawForErr = body
     const event = body.event as string

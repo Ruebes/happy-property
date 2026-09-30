@@ -106,6 +106,44 @@ async function sendAccessEmail(fullName: string, email: string, password: string
   }
 }
 
+type Admin = ReturnType<typeof createClient>
+
+// Auth-User per Login-Adresse über alle Seiten suchen (wie invite-co-owner).
+async function findAuthUserByEmail(admin: Admin, email: string): Promise<{ id: string } | null> {
+  const want = email.trim().toLowerCase()
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+    if (error) throw new Error(error.message)
+    const users = (data?.users ?? []) as Array<{ id: string; email?: string | null }>
+    const hit = users.find(u => (u.email ?? '').trim().toLowerCase() === want)
+    if (hit) return { id: hit.id }
+    if (users.length < 1000) break
+  }
+  return null
+}
+
+// Konto zur Adresse (Review S1, E2-5/E2-6): zuerst über die verifizierte Login-Adresse
+// (auth.users), das Profil dann per id. profiles.email konnte der Nutzer selbst ändern;
+// ein Profil, das die Adresse nur im Profil trägt, dessen Login aber anders lautet,
+// wird NICHT genommen (mismatch -> Aufrufer antwortet 409, nichts wird geändert).
+async function resolveAccount(admin: Admin, email: string, cols: string): Promise<{ profile: Record<string, unknown> | null; mismatch: boolean }> {
+  const au = await findAuthUserByEmail(admin, email)
+  if (au) {
+    const { data, error } = await admin.from('profiles').select(cols).eq('id', au.id).maybeSingle()
+    if (error) throw new Error(error.message)
+    return { profile: (data as unknown as Record<string, unknown> | null) ?? null, mismatch: false }
+  }
+  const { data: byMail, error } = await admin.from('profiles').select('id')
+    .ilike('email', email.trim().replace(/([\\%_*])/g, '\\$1')).limit(1)
+  if (error) throw new Error(error.message)
+  return { profile: null, mismatch: (byMail ?? []).length > 0 }
+}
+
+const mismatchResponse = (email: string) => ({
+  error: `Zu ${email} gibt es ein Profil, dessen Login-Adresse abweicht. Es wurde nichts geändert, bitte im Nutzer-Bereich prüfen.`,
+  code: 'ADRESSE_ABWEICHEND',
+})
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: CORS })
@@ -160,12 +198,11 @@ Deno.serve(async (req: Request) => {
 
       const password = generatePassword()
 
-      // Schnelle Prüfung per profiles-Tabelle statt listUsers
-      const { data: existingProfile } = await admin
-        .from('profiles')
-        .select('id, role')
-        .eq('email', email)
-        .maybeSingle()
+      // Bestehendes Konto über die Login-Adresse suchen, nicht über profiles.email
+      // (vom Nutzer selbst änderbar, sonst traf die Anlage ein fremdes Konto).
+      const acct = await resolveAccount(admin, email, 'id, role')
+      if (acct.mismatch) return json(mismatchResponse(email), 409)
+      const existingProfile = acct.profile
 
       let userId: string
 
@@ -320,12 +357,10 @@ Deno.serve(async (req: Request) => {
         return json({ error: 'email und full_name sind Pflichtfelder' }, 400)
       }
 
-      // Check if user already exists
-      const { data: existingProfile } = await admin
-        .from('profiles')
-        .select('id')
-        .eq('email', email.trim().toLowerCase())
-        .maybeSingle()
+      // Bestehendes Konto über die Login-Adresse (wie bei create, Review S1)
+      const acct = await resolveAccount(admin, email, 'id')
+      if (acct.mismatch) return json(mismatchResponse(email.trim().toLowerCase()), 409)
+      const existingProfile = acct.profile
 
       if (existingProfile) {
         return json({ success: true, userId: (existingProfile as { id: string }).id, existing: true })

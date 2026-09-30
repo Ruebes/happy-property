@@ -8,7 +8,9 @@
 // Erlaubte Aufrufer, je Function per CallerRule freigeschaltet:
 //   cron     x-cron-secret == connector_secrets[cronKey] (Standard 'CRON_SECRET')
 //   service  Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY> (Function-zu-Function,
-//            auch pg_cron-Jobs, die den sb_secret-Key inline schicken)
+//            auch pg_cron-Jobs, die den sb_secret-Key inline schicken), ODER ein
+//            vom Gateway daraus erzeugter service_role-JWT ("minted", nur bei
+//            verify_jwt=true), aber nur mit GEPRÜFTER Signatur (isSignedServiceJwt)
 //   roles    eingeloggter Nutzer mit einer dieser Rollen (explizit aufzählen,
 //            admin/verwalter sind NICHT automatisch dabei)
 //   perms    Rolle mitarbeiter mit mindestens einem dieser Rechte (spiegelt
@@ -22,7 +24,7 @@
 //   const caller = await authorizeCaller(req, { cron: true, service: true, roles: ['admin'] }, CORS)
 //   if (caller instanceof Response) return caller
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 
 export type Caller =
   | { kind: 'cron' }
@@ -59,6 +61,42 @@ export function safeEqual(a: string, b: string): boolean {
   const n = Math.max(ea.length, eb.length)
   for (let i = 0; i < n; i++) diff |= (ea[i] ?? 0) ^ (eb[i] ?? 0)
   return diff === 0
+}
+
+function decodeJwtPart(part: string): Record<string, unknown> | null {
+  try {
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/')
+    const v = JSON.parse(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)))
+    return v && typeof v === 'object' ? v as Record<string, unknown> : null
+  } catch { return null }
+}
+
+/**
+ * Vom Gateway ausgestellter service_role-JWT. Bei verify_jwt=true kann das
+ * Gateway einen sb_secret-Key durch einen selbst erzeugten JWT ersetzen (Log:
+ * sb_api_key_compatibility=minted). Der zählt nur mit GEPRÜFTER Signatur:
+ * asymmetrisch (ES256/RS256 mit kid, Projekt nutzt ES256), verifiziert über
+ * auth.getClaims gegen /auth/v1/.well-known/jwks.json, nicht abgelaufen,
+ * role=service_role. Nie nur den Payload lesen (das war die Lücke in adsAuth,
+ * E3-12). Dadurch unabhängig davon, ob verify_jwt an ist. HS256-Tokens werden
+ * nicht angenommen (getClaims würde getUser fragen, das für service_role scheitert).
+ */
+export async function isSignedServiceJwt(sb: SupabaseClient, jwt: string): Promise<boolean> {
+  const parts = jwt.split('.')
+  if (parts.length !== 3) return false
+  const header = decodeJwtPart(parts[0])
+  const payload = decodeJwtPart(parts[1])
+  // Vorprüfung ohne Netz: alles andere geht gar nicht erst zur JWKS-Prüfung.
+  if (payload?.role !== 'service_role') return false
+  if (typeof header?.kid !== 'string' || !['ES256', 'RS256'].includes(String(header?.alg))) return false
+  try {
+    const auth = sb.auth as unknown as {
+      getClaims?: (t: string) => Promise<{ data: { claims?: { role?: unknown } } | null; error: unknown }>
+    }
+    if (typeof auth.getClaims !== 'function') return false
+    const { data, error } = await auth.getClaims(jwt)
+    return !error && data?.claims?.role === 'service_role'
+  } catch { return false }
 }
 
 const AD_SEGMENTS = ['meta', 'youtube', 'google']
@@ -107,8 +145,10 @@ export async function authorizeCaller(
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) return deny(401, cors)
 
-  // 2) System-Aufruf mit dem Service-Role-Key (exakter Vergleich, kein Payload-Lesen).
+  // 2) System-Aufruf mit dem Service-Role-Key (exakter Vergleich, kein Payload-Lesen),
+  //    oder der daraus vom Gateway erzeugte service_role-JWT mit geprüfter Signatur.
   if (rule.service && safeEqual(jwt, serviceKey)) return { kind: 'service' }
+  if (rule.service && await isSignedServiceJwt(sb, jwt)) return { kind: 'service' }
 
   // 3) Eingeloggter Nutzer. Der publishable Key besteht getUser nicht.
   const roles = rule.roles ?? []

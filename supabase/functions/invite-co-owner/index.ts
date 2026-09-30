@@ -48,7 +48,9 @@ async function profilesByEmail(admin: Admin, email: string): Promise<Profil[]> {
 // Auth-User per E-Mail über ALLE Seiten suchen (wie create-eigentuemer-access).
 async function findAuthUserByEmail(admin: Admin, email: string): Promise<{ id: string } | null> {
   for (let page = 1; page <= 20; page++) {
-    const { data } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+    // Fehler nicht als "kein Login" deuten (sonst falsche Zuordnung/409), abbrechen.
+    if (error) throw new Error(error.message)
     const users = (data?.users ?? []) as Array<{ id: string; email?: string | null }>
     const hit = users.find(u => (u.email ?? '').trim().toLowerCase() === email)
     if (hit) return { id: hit.id }
@@ -107,27 +109,30 @@ Deno.serve(async (req: Request) => {
     const wohnung = [prop.project_name, prop.unit_number].filter(Boolean).join(' · ') || 'deine Wohnung'
 
     // ── Konto der eingeladenen Person ────────────────────────────────────────
-    const treffer = await profilesByEmail(admin, email)
-    if (treffer.length > 1) {
-      // Mehrdeutig: NICHTS anfassen (sonst träfe die Anlage unten ein fremdes Konto).
-      return json({ error: `Zu ${email} gibt es mehrere Konten. Bitte Happy Property kontaktieren.`, code: 'MEHRDEUTIG' }, 409)
-    }
-    let profil: Profil | null = treffer[0] ?? null
-
-    let status: 'neu' | 'bestand' = 'bestand'
-
-    if (!profil) {
-      // Kein Profil unter dieser Adresse. Gibt es trotzdem schon einen Login mit
-      // genau dieser Adresse (Profil-Adresse wurde geändert), dessen Profil nehmen:
-      // create-eigentuemer-access würde dort Passwort und Rolle überschreiben.
-      const authUser = await findAuthUserByEmail(admin, email)
-      if (authUser) {
-        const { data: byId } = await admin.from('profiles')
-          .select('id, email, full_name, role, language').eq('id', authUser.id).maybeSingle()
-        const p = byId as Profil | null
-        if (p) profil = { ...p, email }   // Einladung geht an die eingegebene (Login-)Adresse
+    // Zuerst über die verifizierte Login-Adresse (auth.users), das Profil dann per id
+    // (Review S1, E2-5/E2-6). profiles.email konnte der Nutzer selbst ändern: wer sich
+    // dort eine fremde Adresse eintrug, wäre sonst als Mit-Eigentümer der fremden
+    // Wohnung eingetragen worden.
+    let profil: Profil | null = null
+    const authUser = await findAuthUserByEmail(admin, email)
+    if (authUser) {
+      const { data: byId } = await admin.from('profiles')
+        .select('id, email, full_name, role, language').eq('id', authUser.id).maybeSingle()
+      const p = byId as Profil | null
+      if (p) profil = { ...p, email }   // Einladung geht an die eingegebene (Login-)Adresse
+    } else {
+      // Kein Login mit dieser Adresse. Trägt trotzdem ein Profil sie, gehört es zu
+      // einem Login mit ANDERER Adresse: nicht raten, nichts anfassen.
+      const treffer = await profilesByEmail(admin, email)
+      if (treffer.length > 1) {
+        return json({ error: `Zu ${email} gibt es mehrere Konten. Bitte Happy Property kontaktieren.`, code: 'MEHRDEUTIG' }, 409)
+      }
+      if (treffer.length === 1) {
+        return json({ error: `Zu ${email} gibt es ein Konto mit abweichender Login-Adresse. Bitte Happy Property kontaktieren.`, code: 'ADRESSE_ABWEICHEND' }, 409)
       }
     }
+
+    let status: 'neu' | 'bestand' = 'bestand'
 
     if (!profil) {
       // Kein Konto vorhanden → Portal-Zugang über die bestehende Function anlegen

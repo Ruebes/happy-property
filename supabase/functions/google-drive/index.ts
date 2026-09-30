@@ -11,7 +11,8 @@
 // (einziger Aufrufer: task-notify über _shared/lotte.ts → import_images) oder ein
 // eingeloggter Admin. Vorher lief jede Aktion ohne Prüfung, und verify_jwt=true
 // lässt den öffentlichen Publishable Key durch.
-// Deploy OHNE --no-verify-jwt (verify_jwt=true muss bleiben, siehe isServiceViaGateway).
+// Deploy ohne --no-verify-jwt (verify_jwt=true wie live, Eintrag in config.toml).
+// Der Guard hängt nicht mehr davon ab (kein ungeprüfter JWT-Payload).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
@@ -21,22 +22,13 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// System-Aufruf mit dem Service-Key, auch wenn das Gateway ihn umgeschrieben hat.
-// Diese Function läuft mit verify_jwt=true: das Gateway hat die Signatur eines
-// Bearer-JWT bereits geprüft und kann einen sb_secret-Key durch einen selbst
-// ausgestellten service_role-JWT ersetzen ("minted"). Deshalb zählt hier auch ein
-// JWT mit role=service_role. ACHTUNG: dieser Zweig ist NUR sicher, solange
-// verify_jwt=true bleibt; mit --no-verify-jwt wäre der Payload fälschbar.
+// System-Aufruf mit dem Service-Key im apikey-Header (supabase-js functions.invoke
+// schickt einen sb_secret-Key nur dort mit). Bearer <Service-Key> und einen vom
+// Gateway erzeugten service_role-JWT prüft authorizeCaller selbst, beim JWT mit
+// Signaturprüfung über JWKS (Review S1: vorher wurde hier nur der Payload gelesen,
+// das wäre mit --no-verify-jwt fälschbar gewesen).
 function isServiceViaGateway(req: Request): boolean {
-  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-  if (safeEqual(req.headers.get('apikey') ?? '', key)) return true
-  const parts = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim().split('.')
-  if (parts.length !== 3 || !parts[1]) return false
-  try {
-    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
-    const payload = JSON.parse(atob(b64 + '='.repeat((4 - b64.length % 4) % 4))) as { role?: unknown }
-    return payload.role === 'service_role'
-  } catch { return false }
+  return safeEqual(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
 }
 
 // ── OAuth: Access Token via Refresh Token holen ───────────────────────────────

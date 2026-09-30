@@ -217,10 +217,21 @@ Deno.serve(async (req) => {
       const hourAgo = new Date(Date.now() - 3600e3).toISOString(), dayAgo = new Date(Date.now() - 864e5).toISOString()
       const { count: nHour } = await admin.from('crm_appointments').select('id', { count: 'exact', head: true }).eq('source', 'sven360').gte('created_at', hourAgo)
       if ((nHour ?? 0) >= BOOK_CAP_HOUR) return json({ error: 'Gerade gehen sehr viele Buchungen ein. Bitte versuche es später noch einmal.' }, 429)
-      for (const who of [email?.trim() ? { email: email.trim() } : null, phone?.trim() ? { phone: phone.trim() } : null]) {
-        if (!who) continue
-        const { count: nContact } = await admin.from('crm_appointments').select('id', { count: 'exact', head: true }).eq('source', 'sven360').gte('created_at', dayAgo).contains('attendees', JSON.stringify([who]))
-        if ((nContact ?? 0) >= BOOK_CAP_CONTACT_DAY) return json({ error: 'Für diesen Kontakt sind heute schon mehrere Termine gebucht. Bitte melde dich direkt bei Sven.' }, 429)
+      // Pro Kontakt normalisiert vergleichen (Review S1): gespeichert wird die Eingabe
+      // roh, ein exakter jsonb-Vergleich ließ sich mit Groß/Klein, Leerzeichen oder
+      // anderem Nummernformat (+49 170…, 0049170…) umgehen. Wenige Zeilen (max.
+      // BOOK_CAP_HOUR pro Stunde), daher in JS. Bei DB-Fehler wie bisher durchlassen.
+      const normMail = (v: unknown) => typeof v === 'string' ? v.trim().toLowerCase() : ''
+      const normTel = (v: unknown) => typeof v === 'string' ? v.replace(/\D/g, '').replace(/^00/, '') : ''
+      const emailN = normMail(email), phoneN = normTel(phone)
+      if (emailN || phoneN) {
+        const { data: recent } = await admin.from('crm_appointments').select('attendees').eq('source', 'sven360').gte('created_at', dayAgo).limit(500)
+        let nContact = 0
+        for (const r of (recent ?? []) as Array<{ attendees?: unknown }>) {
+          const list = (Array.isArray(r.attendees) ? r.attendees : []) as Array<{ email?: unknown; phone?: unknown } | null>
+          if (list.some(a => !!a && ((!!emailN && normMail(a.email) === emailN) || (!!phoneN && normTel(a.phone) === phoneN)))) nContact++
+        }
+        if (nContact >= BOOK_CAP_CONTACT_DAY) return json({ error: 'Für diesen Kontakt sind heute schon mehrere Termine gebucht. Bitte melde dich direkt bei Sven.' }, 429)
       }
       // Slot noch frei? (Doppelbuchung vermeiden)
       const busy = await getBusy(admin, new Date(start.getTime() - 60000), new Date(end.getTime() + 60000))

@@ -76,10 +76,12 @@ Deno.serve(async (req: Request) => {
   }
 
   // Aufrufer-Schutz (bisher offenes Mail-Relay): andere Functions mit dem
-  // Service-Key (Authorization ODER apikey) und JEDER eingeloggte Nutzer - auch
-  // Eigentümer (Upload-Meldung PropertyDetail, Zugangsmail Objekte). Anonyme
-  // Aufrufe und der öffentliche publishable Key werden abgewiesen.
-  const denied = await gateCaller(req, 'send-email', { service: true, anyUser: true }, CORS)
+  // Service-Key (Authorization ODER apikey) und eingeloggte Nutzer mit Profil in
+  // einer der Rollen, deren Seiten hier senden: CRM (admin/verwalter/mitarbeiter)
+  // und Eigentümer (Upload-Meldung PropertyDetail, Zugangsmail Objekte).
+  // Feriengäste, Nutzer ohne Profil, anonyme Aufrufe und der öffentliche
+  // publishable Key werden abgewiesen (Review S1: vorher jeder gültige JWT).
+  const denied = await gateCaller(req, 'send-email', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'eigentuemer'] }, CORS)
   if (denied) return denied
 
   try {

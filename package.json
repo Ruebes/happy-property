@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "verify:vat": "node scripts/verify-deck-vat.mjs",
     "verify:deck": "npm run check:functions && node scripts/verify-deck-vat.mjs && node scripts/verify-deck-blocks.mjs && node scripts/verify-deck-gate.mjs",
-    "check:functions": "tsc -p supabase/functions/tsconfig.shared.json",
+    "check:functions": "tsc -p supabase/functions/tsconfig.shared.json && tsc -p supabase/functions/tsconfig.guards.json",
     "verify:gate": "node scripts/verify-deck-gate.mjs"
   },
   "dependencies": {
