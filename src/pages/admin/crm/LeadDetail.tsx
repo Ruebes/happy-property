@@ -2038,12 +2038,36 @@ export default function LeadDetail() {
     openUnitEdit((freshUnit as CrmProjectUnit | null) ?? unit)
   }
 
+  // ── Hat der Kunde schon einen Portalzugang? ──────────────────────
+  // Die Automatik schreibt portal_invited_at (nicht portal_access_sent_at) und
+  // create-eigentuemer-access verknüpft profile_id. Jede dieser Markierungen heißt:
+  // Zugang besteht, also nur über „Zugang erneut" mit Rückfrage vor dem Passwort-Reset.
+  const portalInvitedAt = (lead as (Lead & { portal_invited_at?: string | null }) | null)?.portal_invited_at ?? null
+  const hasPortal = !!(lead?.profile_id || lead?.portal_access_sent_at || portalInvitedAt)
+  const portalSentAt = lead?.portal_access_sent_at ?? portalInvitedAt
+
+  // Mail mit Zugangsdaten nicht zugestellt: Passwort anzeigen statt Erfolg melden
+  function showPortalPasswordFallback(password: string | undefined) {
+    if (!password || !lead?.email) return false
+    setNewOwnerPassword(password)
+    setNewOwnerPasswordEmail(lead.email)
+    setNewOwnerPwCopied(false)
+    setShowNewOwnerPwModal(true)
+    showToast(t('leadDetail.portalMailNotSent', 'Die E-Mail mit den Zugangsdaten wurde nicht zugestellt. Das Passwort steht im Fenster.'))
+    return true
+  }
+
   // ── Portal access send ───────────────────────────────────────────
   // Portalzugang direkt senden (KEIN Dialog): Eigentümer-Account anlegen und die
   // gestaltete HTML-Vorlage „Portalzugang" per E-Mail an den Kunden. Ohne
   // custom_message nutzt create-eigentuemer-access die DB-Vorlage (mit Sicherheitsnetz).
   async function openPortal() {
     if (!lead?.email) { showToast(`❌ ${t('leadDetail.noEmailOnLead', 'Keine E-Mail am Lead hinterlegt')}`); return }
+    // Gibt es zu dieser E-Mail schon ein Konto, setzt create-eigentuemer-access dessen
+    // Passwort neu: dann gleiche Rückfrage wie bei „Zugang erneut". Neue Kunden: ohne Dialog.
+    if (id && (await leadProfileIds(id)).length > 0 && !window.confirm(
+      t('leadDetail.confirmResendPortalAccess', 'Neues Passwort erstellen und per E-Mail an {{email}} senden?\n\nDas bisherige Passwort des Kunden wird dabei ungültig.', { email: lead.email })
+    )) return
     setResendingPortal(true)
     try {
       const fullName = `${lead.first_name} ${lead.last_name}`.trim()
@@ -2062,7 +2086,9 @@ export default function LeadDetail() {
         completed_at: new Date().toISOString(),
       })
       if (id) await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
-      showToast(t('leadDetail.toastPortalAccessSent', '✅ Portalzugang an den Kunden gesendet'))
+      if (!(data?.emailed === false && showPortalPasswordFallback(data?.password))) {
+        showToast(t('leadDetail.toastPortalAccessSent', '✅ Portalzugang an den Kunden gesendet'))
+      }
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errSendFailed', 'Fehler beim Senden')}`)
@@ -2074,7 +2100,7 @@ export default function LeadDetail() {
   // ── Portal-Zugang nochmal verschicken (neues Passwort + E-Mail an Kunden) ─────
   async function resendPortalAccess() {
     if (!lead) return
-    if (!lead.profile_id) { openPortal(); return }
+    if (!hasPortal) { openPortal(); return }
     if (!window.confirm(
       t('leadDetail.confirmResendPortalAccess', 'Neues Passwort erstellen und per E-Mail an {{email}} senden?\n\nDas bisherige Passwort des Kunden wird dabei ungültig.', { email: lead.email })
     )) return
@@ -2102,7 +2128,9 @@ export default function LeadDetail() {
       if (id) {
         await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
       }
-      showToast(t('leadDetail.toastNewAccessSent', '✅ Neuer Zugang per E-Mail an den Kunden gesendet'))
+      if (!(data?.emailed === false && showPortalPasswordFallback(data?.password))) {
+        showToast(t('leadDetail.toastNewAccessSent', '✅ Neuer Zugang per E-Mail an den Kunden gesendet'))
+      }
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errResendFailed', 'Fehler beim erneuten Senden')}`)
@@ -2303,11 +2331,11 @@ export default function LeadDetail() {
                 </button>
               )}
               {/* Portalzugang */}
-              <button onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal} disabled={resendingPortal}
+              <button onClick={hasPortal ? resendPortalAccess : openPortal} disabled={resendingPortal}
                 className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors text-white disabled:opacity-60"
-                style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}>
+                style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}>
                 <span className="text-2xl leading-none">{resendingPortal ? '⏳' : '🔑'}</span>
-                <span className="text-center leading-tight">{lead?.portal_access_sent_at ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
+                <span className="text-center leading-tight">{hasPortal ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
               </button>
               {/* Deal löschen (z.B. versehentlich mehrfach angelegt) — Kontakt bleibt erhalten */}
               {deal && (
@@ -2672,14 +2700,14 @@ export default function LeadDetail() {
 
                       {/* Portal access button */}
                       <button
-                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        onClick={hasPortal ? resendPortalAccess : openPortal}
                         disabled={resendingPortal}
                         className="w-full py-2 text-xs font-medium text-white rounded-lg disabled:opacity-60 transition-colors"
-                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
+                        style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}
                       >
                         {resendingPortal
                           ? t('crm.portalBtn.resetting')
-                          : lead?.portal_access_sent_at
+                          : hasPortal
                             ? t('crm.portalBtn.sentResend')
                             : t('crm.portalBtn.createSend')}
                       </button>
@@ -2758,14 +2786,14 @@ export default function LeadDetail() {
                         📱 {t('crm.commissionWhatsapp', 'Provision via WhatsApp')}
                       </button>
                       <button
-                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        onClick={hasPortal ? resendPortalAccess : openPortal}
                         disabled={resendingPortal}
                         className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60 transition-colors"
-                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
+                        style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}
                       >
                         {resendingPortal
                           ? '⏳ …'
-                          : lead?.portal_access_sent_at
+                          : hasPortal
                             ? t('crm.portalBtn.sentResend')
                             : `🔑 ${t('crm.sendPortalAccess', 'Portalzugang senden')}`}
                       </button>
@@ -4327,11 +4355,11 @@ export default function LeadDetail() {
                         </span>
                       )}
                     </div>
-                    {lead?.portal_access_sent_at ? (
+                    {portalSentAt ? (
                       <p className="text-gray-600 text-xs">
                         {t('leadDetail.accessSentOn', 'Zugang verschickt am')}{' '}
                         <span className="font-medium">
-                          {new Date(lead.portal_access_sent_at).toLocaleString('de-DE', {
+                          {new Date(portalSentAt).toLocaleString('de-DE', {
                             day: '2-digit', month: '2-digit', year: 'numeric',
                             hour: '2-digit', minute: '2-digit',
                           })}
