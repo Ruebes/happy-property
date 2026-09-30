@@ -86,6 +86,12 @@ export default function LeadDetail() {
     }
   }
   const [deal, setDeal] = useState<Deal | null>(null)
+  // Nur Anzeige: gewonnene Käufe, deren Deal archiviert ist (kein aktiver Deal mehr).
+  // Bewusst getrennt von `deal`, damit keine Schreibwege auf den archivierten Deal wirken.
+  const [archivedWonDeals, setArchivedWonDeals] = useState<Array<{
+    id: string
+    property: { id: string; project_name: string; unit_number: string | null } | null
+  }>>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
   const [bizContacts, setBizContacts] = useState<BizContactRow[]>([])
@@ -505,6 +511,7 @@ export default function LeadDetail() {
         { data: loginData },
         { data: docsData },
         { data: unitImgData },
+        { data: wonData },
       ] = await Promise.all([
         // deal_projects
         dealResult?.id
@@ -545,6 +552,16 @@ export default function LeadDetail() {
               .eq('id', dealResult.unit_id)
               .maybeSingle()
           : Promise.resolve({ data: null }),
+        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
+        dealResult
+          ? Promise.resolve({ data: [] })
+          : supabase.from('deals')
+              .select('id, property:properties(id, project_name, unit_number)')
+              .eq('lead_id', id)
+              .eq('phase', 'archiviert')
+              .eq('archived_from_phase', 'provision_erhalten')
+              .not('unit_id', 'is', null)
+              .order('created_at', { ascending: false }),
       ])
 
       const dp = (dpData ?? []) as unknown as DealProject[]
@@ -555,6 +572,7 @@ export default function LeadDetail() {
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
       setUnitDocs((docsData ?? []) as CrmUnitDocument[])
       setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
+      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
@@ -3175,6 +3193,32 @@ export default function LeadDetail() {
                           </div>
                         )}
                       </dl>
+                    </div>
+                  )}
+
+                  {/* Gewonnene, archivierte Käufe: nur Anzeige mit Link zum Objekt */}
+                  {!deal && archivedWonDeals.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                        {t('leadDetail.archivedPurchasesTitle', 'Abgeschlossene Käufe (archiviert)')}
+                      </h3>
+                      <ul className="space-y-2 text-sm">
+                        {archivedWonDeals.map(d => (
+                          <li key={d.id} className="min-w-0 truncate">
+                            {d.property ? (
+                              <Link to={`/admin/properties/${d.property.id}`} className="text-orange-500 hover:underline">
+                                {d.property.project_name}
+                                {d.property.unit_number ? ` · ${d.property.unit_number}` : ''}
+                              </Link>
+                            ) : (
+                              <span className="text-gray-900">{t('leadDetail.unitHeaderFallback', 'Wohnung')}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <Link to="/admin/crm/archived" className="inline-block mt-2 text-xs text-gray-500 hover:underline">
+                        → {t('crm.nav.archived', 'Archiviert')}
+                      </Link>
                     </div>
                   )}
 
