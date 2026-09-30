@@ -22,6 +22,7 @@
 //   { status: 'running'|'done'|'error', url?, verified?, issues?, note?, at }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { hfUploadImage, hfGenerateBytes, type HfStore } from '../_shared/higgsfield.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -176,6 +177,13 @@ async function setStatus(sb: SB, projectId: string, unitKey: string, patch: Reco
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-3): läuft mit verify_jwt=false und hatte keinen
+  // Guard, jeder konnte ohne Login Grundrisse künftiger Decks ersetzen und
+  // Claude-/Higgsfield-Läufe auslösen. Erlaubt: Service-Key, Team-Rollen
+  // (HpFloorplanPanel in Projekte und Projekt-Detail). Kein Cron, keine andere
+  // Function ruft sie auf.
+  const denied = await gateCaller(req, 'hp-floorplan', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
   try {
     const body = await req.json() as { project_id?: string; unit_number?: string; source_url?: string; floor_hint?: string; sync?: boolean; force?: boolean }

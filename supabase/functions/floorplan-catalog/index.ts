@@ -24,6 +24,7 @@ import { Image } from '../_vendor/imagescript/ImageScript.js'
 import { callAnthropic, toolInput } from '../_shared/anthropic.ts'
 import { loadCiFonts } from '../_shared/brand.ts'
 import { unitKey } from '../_shared/deckVat.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -117,6 +118,12 @@ Finde JEDEN Wohnungsgrundriss auf diesem Blatt. Ein Wohnungsgrundriss ist die Li
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4): verify_jwt=true lässt auch den publishable
+  // Key durch (bezahlte Claude-Analyse, Schreiben in deck_assets_catalog).
+  // Erlaubt: Service-Key (eigene Verkettung weiter(), Authorization + apikey),
+  // Team-Rollen (Projekte/Projekt-Detail: Aus Drive laden, AssetReviewPanel).
+  const denied = await gateCaller(req, 'floorplan-catalog', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
   try {
     const body = await req.json() as { project_id?: string; asset_id?: string; force?: boolean; sync?: boolean; chained?: boolean }

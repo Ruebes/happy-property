@@ -187,3 +187,10 @@ verify_jwt = true
 
 [functions.parse-spec-xlsx]
 verify_jwt = true
+
+[functions.floorplan-catalog]
+verify_jwt = true
+
+# false wie live (Befund E4-3), Schutz per gateCaller im Code.
+[functions.hp-floorplan]
+verify_jwt = false
