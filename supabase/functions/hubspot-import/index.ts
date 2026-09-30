@@ -5,8 +5,14 @@
 //
 // Secret: HUBSPOT_TOKEN (Private App, Scope crm.objects.contacts.read)
 // Body: { after?: string, dry_run?: boolean }
+//
+// Aufrufer: keiner mehr in App, Functions oder Cron (Stand 30.9.26). Nur noch
+// manuell: Service-Role-Key oder Admin-Login (Befund E3-11). Der frühere
+// debug-Zweig (gab Präfix und Länge des HubSpot-Tokens zurück) ist entfernt.
+// Deployment: supabase functions deploy hubspot-import   (verify_jwt = true)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -18,12 +24,14 @@ const clean = (v: unknown): string | null => (typeof v === 'string' && v.trim() 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Vorher reichte jeder gültige Gateway-Schlüssel (auch der öffentliche publishable Key).
+  const denied = await gateCaller(req, 'hubspot-import', { service: true, roles: ['admin'] }, CORS)
+  if (denied) return denied
   try {
     const rawTok = Deno.env.get('HUBSPOT_TOKEN') ?? Deno.env.get('Hubspot_Token') ?? Deno.env.get('hubspot_token')
     const token = rawTok ? rawTok.trim().replace(/^["']+|["']+$/g, '') : null
     if (!token) return json({ error: 'HUBSPOT_TOKEN nicht gesetzt (Supabase-Secret anlegen).' }, 503)
-    const { after, dry_run, debug } = await req.json().catch(() => ({})) as { after?: string; dry_run?: boolean; debug?: boolean }
-    if (debug) return json({ ok: true, prefix: token.slice(0, 4), len: token.length, looksPrivateApp: token.startsWith('pat-') })
+    const { after, dry_run } = await req.json().catch(() => ({})) as { after?: string; dry_run?: boolean }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
     // 1) Eine HubSpot-Seite holen

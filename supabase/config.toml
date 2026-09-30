@@ -133,3 +133,6 @@ verify_jwt = false
 
 [functions.meta-leads-sync]
 verify_jwt = true
+
+[functions.hubspot-import]
+verify_jwt = true
