@@ -6,7 +6,7 @@ import AdStudio from '../../../components/crm/AdStudio'
 import TargetingEditor from '../../../components/crm/TargetingEditor'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { supabase } from '../../../lib/supabase'
-import { useAuth, hasAdSegment, AD_SEGMENTS, type AdSegment } from '../../../lib/auth'
+import { useAuth, hasAdSegment, hasPerm, AD_SEGMENTS, type AdSegment } from '../../../lib/auth'
 
 // ── Werbemanager (/admin/crm/ads) ─────────────────────────────────────────────
 // Auswertung der Werbe-Plattformen (Stufe 1: META live, YouTube/Google folgen).
@@ -314,6 +314,10 @@ export default function AdsManager() {
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
   const segments = AD_SEGMENTS.filter(s => hasAdSegment(profile, s))
+  // Leads, Termine und Deals liest die Seite mit dem normalen Client. Deren RLS
+  // lässt nur Admin/Verwalter oder das Pipeline-Recht durch; ohne es kommen
+  // leere Listen ohne Fehler zurück. Dann ehrlich sagen, woran es liegt.
+  const canSeeCrm = hasPerm(profile, 'pipeline')
   const [segment, setSegment] = useState<AdSegment>('meta')
   const [view, setView] = useState<'stats' | 'studio'>('stats')
   const [days, setDays] = useState<7 | 30 | 90>(30)
@@ -909,7 +913,7 @@ export default function AdsManager() {
       // Leads, die Meta zählt, ohne dass jemals eine Seite geladen wurde: das
       // sind Sofortformulare, die direkt bei Meta ausgefüllt werden. Ohne
       // Anbindung landen sie NICHT im CRM und ruft niemand an.
-      if (a.platformLeads >= 3 && a.crmLeads === 0 && a.landingPageViews < a.platformLeads) {
+      if (canSeeCrm && a.platformLeads >= 3 && a.crmLeads === 0 && a.landingPageViews < a.platformLeads) {
         hints.push({
           ad: c, kind: 'orphan_leads', spend: a.spendEur,
           reason: t('crm.ads.recReasonOrphan', '{{leads}} Leads bei Meta, aber keiner im CRM — sie kommen aus einem Sofortformular', { leads: int(a.platformLeads) }),
@@ -922,7 +926,7 @@ export default function AdsManager() {
             ...hints.sort((x, y) => y.spend - x.spend).slice(0, 3)]
     // eur/pct sind stabile Formatter — bewusst nicht in den Deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog, byAd, pendingByAd, settings, t, locale])
+  }, [catalog, byAd, pendingByAd, settings, t, locale, canSeeCrm])
 
   const campaignName = useCallback((cid: string) => catalog.find(c => c.campaign_id === cid)?.campaign_name || cid, [catalog])
   const campaignColor = useMemo(() => {
@@ -1167,7 +1171,12 @@ export default function AdsManager() {
 
             {view === 'stats' && (<div>
             {/* Hinweis solange die CRM-Zuordnung noch nicht greift */}
-            {total.crmLeads === 0 && (
+            {!canSeeCrm && (
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {t('crm.ads.noCrmAccess', 'CRM-Zahlen (Leads, Termine, Qualität, Sales) siehst du nur mit dem Pipeline-Recht. Die Lead-Zahl hier ist die von Meta.')}
+              </div>
+            )}
+            {canSeeCrm && total.crmLeads === 0 && (
               <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {t('crm.ads.noAttribution', 'Noch keine CRM-Zuordnung: Sobald die Anzeigen die URL-Parameter tragen (Aufgabe liegt bei Giona), laufen Leads, Termine, Qualität und Sales hier automatisch pro Anzeige ein. Bis dahin zählt die Lead-Zahl von Meta.')}
               </div>

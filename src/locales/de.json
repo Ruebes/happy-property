@@ -3620,6 +3620,7 @@
       "basisCrm": "CRM-zugeordnet",
       "basisMeta": "laut Meta",
       "noAttribution": "Noch keine CRM-Zuordnung: Sobald die Anzeigen die URL-Parameter tragen (Aufgabe liegt bei Giona), laufen Leads, Termine, Qualität und Sales hier automatisch pro Anzeige ein. Bis dahin zählt die Lead-Zahl von Meta.",
+      "noCrmAccess": "CRM-Zahlen (Leads, Termine, Qualität, Sales) siehst du nur mit dem Pipeline-Recht. Die Lead-Zahl hier ist die von Meta.",
       "chartLeads": "Leads je Kampagne",
       "chartSpend": "Budget-Verteilung",
       "chartTrend": "Ausgaben pro Tag",
