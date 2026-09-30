@@ -16,7 +16,7 @@ interface Property {
   id: string
   project_name: string
   unit_number: string | null
-  type: 'villa' | 'apartment' | 'studio'
+  type: 'villa' | 'apartment' | 'studio' | 'townhouse'
   bedrooms: number
   size_sqm: number | null
   street: string | null
@@ -50,7 +50,7 @@ type Step = 1 | 2 | 3
 interface FormData {
   project_name: string
   unit_number: string
-  type: 'villa' | 'apartment' | 'studio'
+  type: 'villa' | 'apartment' | 'studio' | 'townhouse'
   bedrooms: string
   size_sqm: string
   terrace_sqm: string
@@ -870,8 +870,9 @@ export default function Objekte() {
             className={inputCls} style={focusRing()}
             value={form.type}
             onChange={val => setField('type', val as FormData['type'])}
-            options={(['villa', 'apartment', 'studio'] as const).map(v => ({
-              value: v, label: t(`properties.types.${v}`),
+            options={(['villa', 'apartment', 'studio', 'townhouse'] as const).map(v => ({
+              value: v,
+              label: v === 'townhouse' ? t('properties.types.townhouse', 'Townhouse') : t(`properties.types.${v}`),
             }))}
           />
         </div>
@@ -1415,7 +1416,7 @@ export default function Objekte() {
                       </div>
                     </td>
                     <td className="px-5 py-3.5 text-gray-600">
-                      {t(`properties.types.${p.type}`)}
+                      {p.type === 'townhouse' ? t('properties.types.townhouse', 'Townhouse') : t(`properties.types.${p.type}`)}
                     </td>
                     <td className="px-5 py-3.5 text-gray-600 max-w-[180px] truncate">
                       {locationStr(p)}
