@@ -670,7 +670,7 @@ export default function AdminUsers() {
       fetchProps()
     } else {
       console.error('[Users] handleAssignProperty:', error.message)
-      setToast(`❌ ${t('errors.saveFailed')}`)
+      setToast(t('errors.saveFailed'))
     }
     setSaving(false)
   }

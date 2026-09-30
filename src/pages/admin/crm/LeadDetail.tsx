@@ -4595,7 +4595,7 @@ export default function LeadDetail() {
                       }
                     } catch (err) {
                       console.error('[LeadDetail] unitTakenByOtherCustomer:', err)
-                      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
+                      showToast(t('leadDetail.genericError', 'Fehler'))
                       return
                     }
                     setShowUnitSelect(false)
