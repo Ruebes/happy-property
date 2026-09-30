@@ -230,7 +230,7 @@ export default function VerwalterBookings() {
   }
 
   return (
-    <DashboardLayout basePath="/verwaltung/dashboard">
+    <DashboardLayout basePath="/verwalter/dashboard">
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 px-5 py-3 bg-hp-black text-white text-sm
                         font-body rounded-2xl shadow-xl flex items-center gap-2">

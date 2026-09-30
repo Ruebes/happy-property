@@ -6,6 +6,7 @@
   --color-bg: #fffcf6;
   --color-black: #000000;
   --color-highlight: #ff795d;
+  --color-navy: #1a2332;
   --font-heading: 'Playfair Display', serif;
   --font-body: 'Montserrat', sans-serif;
 }
@@ -46,4 +47,15 @@ select option { color: #1a1a1a; }
 @keyframes dropdownOpen {
   from { opacity: 0; transform: scaleY(0.92) translateY(-4px); }
   to   { opacity: 1; transform: scaleY(1)    translateY(0);    }
+}
+
+/* App-Shell: unter md liegt die Telefon-Leiste am unteren Rand. Feste Hinweise
+   (Toasts) der Seiten rutschen im Shell-Inhalt um die Höhe der Leiste nach oben,
+   damit sie nicht verdeckt werden. --hp-bottom-offset setzt die AppShell. */
+@media (max-width: 767.98px) {
+  .hp-shell-content .fixed.bottom-4,
+  .hp-shell-content .fixed.bottom-5,
+  .hp-shell-content .fixed.bottom-6 {
+    bottom: calc(var(--hp-bottom-offset, 0px) + 1.5rem);
+  }
 }

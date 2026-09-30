@@ -8,6 +8,8 @@ export default {
         'hp-black': '#000000',
         'hp-highlight': '#ff795d',
         'hp-slate': '#2d3748',
+        'hp-navy': '#1a2332',
+        'hp-cream': '#fffcf6',
       },
       fontFamily: {
         heading: ['"Playfair Display"', 'serif'],

@@ -288,9 +288,13 @@ export default function App() {
               <Route path="/eigentuemer/properties/:id" element={<PropertyDetailRoute />} />
             </Route>
 
+            {/* ── Profil (alle eingeloggten Rollen außer Feriengast) ── */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'eigentuemer', 'mitarbeiter', 'funnel']} />}>
+              <Route path="/profile"    element={<Profile />} />
+            </Route>
+
             {/* ── Admin + Verwalter + Eigentümer (gemeinsame Seiten) ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'eigentuemer']} />}>
-              <Route path="/profile"    element={<Profile />} />
               <Route path="/objekte"    element={<Objekte />} />
               <Route path="/dokumente"  element={<Dokumente />} />
               <Route path="/kalender"   element={<Kalender />} />
