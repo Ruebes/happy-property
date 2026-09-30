@@ -6710,6 +6710,12 @@
     "sheet": {
       "title": "All sections"
     },
+    "loading": "Loading page",
+    "error": {
+      "title": "This page could not be displayed",
+      "body": "An error occurred while displaying this page. The navigation still works. Reloading the page usually helps.",
+      "reload": "Reload"
+    },
     "a11y": {
       "mainNav": "Main navigation",
       "bottomNav": "Quick navigation",

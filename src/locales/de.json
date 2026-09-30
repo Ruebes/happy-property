@@ -6592,6 +6592,12 @@
     "sheet": {
       "title": "Alle Bereiche"
     },
+    "loading": "Seite wird geladen",
+    "error": {
+      "title": "Diese Seite konnte nicht angezeigt werden",
+      "body": "Beim Anzeigen ist ein Fehler aufgetreten. Die Navigation funktioniert weiter. Meist hilft es, die Seite neu zu laden.",
+      "reload": "Neu laden"
+    },
     "a11y": {
       "mainNav": "Hauptnavigation",
       "bottomNav": "Schnellnavigation",

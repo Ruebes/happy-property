@@ -22,8 +22,8 @@ export function initialsOf(profile: Profile): string {
   return fromName || profile.email?.[0]?.toUpperCase() || '?'
 }
 
-// Bau-Kennung aus <meta name="hp-build"> (setzt vite.config.ts beim Build).
-// Fehlt das Meta-Tag (z.B. im Dev-Server), wird nichts angezeigt.
+// Bau-Kennung aus <meta name="hp-build"> (setzt vite.config.ts, im Dev-Server
+// ist es die Startzeit des Servers). Fehlt das Meta-Tag, wird nichts angezeigt.
 export function readBuildId(): string {
   try {
     return document.querySelector('meta[name="hp-build"]')?.getAttribute('content') ?? ''

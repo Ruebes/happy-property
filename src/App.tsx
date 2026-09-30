@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import { lazyWithReload as lazy, recoverUnknownRoute } from './lib/lazyWithReload'
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom'
 
@@ -120,6 +120,18 @@ const Buchung             = lazy(() => import('./pages/feriengast/Buchung'))
 const Nachrichten         = lazy(() => import('./pages/feriengast/Nachrichten'))
 const FeriengastProfil    = lazy(() => import('./pages/feriengast/Profil'))
 
+// ── Neue Navigation (Shell) ──────────────────────────────────────────────────
+// Routen-Element um alle angemeldeten Bereiche. Entscheidet selbst, ob die neue
+// Navigation erscheint (Rolle, Notschalter hp_shell) oder ob nur die Seite mit
+// der alten Navigation durchgereicht wird.
+const AppShell = lazy(() => import('./components/shell/AppShell'))
+
+// ── Nur im Dev-Server ────────────────────────────────────────────────────────
+// import.meta.env.DEV ist im Produktions-Build fest false: Die dynamischen
+// Importe fallen dort weg, aus src/dev landet nichts im Bundle.
+const DevShellPreview     = import.meta.env.DEV ? lazy(() => import('./dev/DevShellPreview')) : null
+const DevMockAuthProvider = import.meta.env.DEV ? lazy(() => import('./dev/DevMockAuthProvider')) : null
+
 // ── Wrapper: erzwingt Re-Mount wenn :id in der URL wechselt ──────────────────
 // Ohne key würde React die Komponente beim Wechsel von z.B. Lead A → Lead B
 // NICHT unmounten – alter State bleibt bis zum Fetch-Ende sichtbar (Stale UI).
@@ -138,10 +150,28 @@ function PageLoader() {
   )
 }
 
+// ── Dev-Mock-Anmeldung (nur Dev-Server) ───────────────────────────────────────
+// Ist im Dev-Server sessionStorage.hp_mock_role gesetzt (Knopf in der Vorschau
+// /__dev/shell/:role), liefert ein Mock den AuthContext, damit echte Seiten ohne
+// Login in der neuen Navigation erscheinen. Im Produktions-Build ist AuthRoot
+// immer der echte AuthProvider.
+function devMockRole(): string | null {
+  try { return sessionStorage.getItem('hp_mock_role') } catch { return null }
+}
+function DevMockAuth({ children }: { children: ReactNode }) {
+  if (!DevMockAuthProvider) return <AuthProvider>{children}</AuthProvider>
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <DevMockAuthProvider>{children}</DevMockAuthProvider>
+    </Suspense>
+  )
+}
+const AuthRoot = import.meta.env.DEV && devMockRole() ? DevMockAuth : AuthProvider
+
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
+      <AuthRoot>
         <Suspense fallback={<PageLoader />}>
           <Routes>
 
@@ -183,6 +213,17 @@ export default function App() {
             <Route path="/buchen/:slug" element={<BookingPage />} />
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
             <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
+
+            {/* ── Angemeldete Bereiche: äußerer Guard + AppShell ──
+                Der äußere Guard lässt nur angemeldete Rollen außer Feriengast
+                durch, die inneren Guards je Bereich gelten unverändert weiter.
+                AppShell zeigt die neue Navigation (Rolle + Notschalter) oder
+                reicht die Seite mit der alten Navigation durch. Öffentliche
+                Seiten, /login und der Feriengast-Bereich liegen außerhalb.
+                Die inneren Gruppen sind bewusst nicht neu eingerückt, damit
+                die Änderung an dieser Datei klein bleibt. */}
+            <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter', 'funnel', 'eigentuemer']} />}>
+            <Route element={<AppShell />}>
 
             {/* ── Admin only ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
@@ -300,6 +341,10 @@ export default function App() {
               <Route path="/kalender"   element={<Kalender />} />
             </Route>
 
+            </Route>
+            </Route>
+            {/* ── Ende der angemeldeten Bereiche (äußerer Guard + AppShell) ── */}
+
             {/* ── Feriengast ── */}
             <Route element={<ProtectedRoute allowedRoles={['feriengast']} />}>
               <Route path="/feriengast/dashboard"  element={<FeriengastDashboard />} />
@@ -310,12 +355,17 @@ export default function App() {
               <Route path="/feriengast/profil"     element={<FeriengastProfil />} />
             </Route>
 
+            {/* ── Nur im Dev-Server: Vorschau der neuen Navigation ohne Login ── */}
+            {import.meta.env.DEV && DevShellPreview && (
+              <Route path="/__dev/shell/:role" element={<DevShellPreview />} />
+            )}
+
             {/* ── Fallback: erst Cache-Recovery versuchen, dann Login ── */}
             <Route path="*" element={<UnknownRoute />} />
 
           </Routes>
         </Suspense>
-      </AuthProvider>
+      </AuthRoot>
     </BrowserRouter>
   )
 }

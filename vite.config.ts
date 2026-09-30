@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
@@ -7,12 +7,25 @@ import { VitePWA } from 'vite-plugin-pwa'
 // Tab schliessen und neu oeffnen. Vorher war das nur zu erraten.
 const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
 
+// Dieselbe Bau-Kennung zusätzlich als <meta name="hp-build"> in der index.html:
+// Die neue Navigation liest sie von dort (ProfileMenu), statt sie in einen
+// JS-Chunk einzubacken. Das define unten bleibt für die alte Navigation.
+function hpBuildMeta(): Plugin {
+  return {
+    name: 'hp-build-meta',
+    transformIndexHtml() {
+      return [{ tag: 'meta', attrs: { name: 'hp-build', content: BUILD_ID }, injectTo: 'head' }]
+    },
+  }
+}
+
 export default defineConfig({
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
   plugins: [
     react(),
+    hpBuildMeta(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['logo.jpg', 'favicon.png', 'apple-touch-icon.png', 'pwa-192.png', 'pwa-512.png'],
