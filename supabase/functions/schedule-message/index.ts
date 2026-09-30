@@ -138,6 +138,9 @@ Deno.serve(async (req: Request) => {
       dealData = data as typeof dealData
     }
     let unitNumber = '', objektName = '', kaufpreis = '', kaufpreisBrutto = '', mwst = '', mwstSatz = '', unitDevEmail = '', unitDevPhone = '', unitDevName = '', unitDevOrg = ''
+    // Drive-Freigabe: alle Bauträger-Kontakte mit Haken drive_access (Sven klickt das je
+    // Kontakt an, 30.9.). Ist niemand angehakt, bleibt es beim Hauptkontakt (unitDevEmail).
+    let unitDevEmails: string[] = []
     if (dealData?.unit_id) {
       const { data: unit } = await supabase.from('crm_project_units')
         .select('unit_number, price_net, price_gross, vat_rate, project_id, crm_projects(name, developer)').eq('id', dealData.unit_id).maybeSingle()
@@ -165,6 +168,9 @@ Deno.serve(async (req: Request) => {
             unitDevPhone = (cc?.whatsapp || cc?.phone) ?? ''
             unitDevName  = cc?.name ?? ''
             unitDevOrg   = devName
+            const { data: withDrive } = await supabase.from('crm_developer_contacts')
+              .select('email').eq('developer_id', devId).eq('drive_access', true)
+            unitDevEmails = ((withDrive ?? []) as { email?: string | null }[]).map(x => (x.email ?? '').trim()).filter(Boolean)
           }
         }
       }
@@ -277,7 +283,7 @@ Deno.serve(async (req: Request) => {
       for (const tk of tokens ?? []) {
         if (!tk) continue
         if (tk === 'client') { if (lead.email) out.push(lead.email) }
-        else if (tk === 'unit_developer') { if (unitDevEmail) out.push(unitDevEmail) }
+        else if (tk === 'unit_developer') { if (unitDevEmails.length) out.push(...unitDevEmails); else if (unitDevEmail) out.push(unitDevEmail) }
         else if (tk.startsWith('vw:')) {
           const { data } = await supabase.from('verwaltungen').select('email, ansprechpartner_email').eq('id', tk.slice(3)).maybeSingle()
           const v = data as { email?: string | null; ansprechpartner_email?: string | null } | null

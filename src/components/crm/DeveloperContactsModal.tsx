@@ -15,12 +15,13 @@ interface FormState {
   phone:      string
   whatsapp:   string
   is_primary: boolean
+  drive_access: boolean
   notes:      string
   language:   'de' | 'en'
 }
 
 const EMPTY_FORM: FormState = {
-  name: '', role: '', email: '', phone: '', whatsapp: '', is_primary: false, notes: '', language: 'de',
+  name: '', role: '', email: '', phone: '', whatsapp: '', is_primary: false, drive_access: false, notes: '', language: 'de',
 }
 
 // wa.me erwartet die Nummer ohne +, Leerzeichen oder Sonderzeichen.
@@ -69,7 +70,7 @@ export default function DeveloperContactsModal({
     setForm({
       name: c.name, role: c.role ?? '', email: c.email ?? '',
       phone: c.phone ?? '', whatsapp: c.whatsapp ?? '',
-      is_primary: c.is_primary, notes: c.notes ?? '',
+      is_primary: c.is_primary, drive_access: !!c.drive_access, notes: c.notes ?? '',
       language: (c.language as 'de' | 'en') ?? 'de',
     })
     setEditingId(c.id); setError(''); setShowForm(true)
@@ -88,6 +89,7 @@ export default function DeveloperContactsModal({
         phone:      form.phone.trim()    || null,
         whatsapp:   form.whatsapp.trim() || null,
         is_primary: form.is_primary,
+        drive_access: form.drive_access,
         notes:      form.notes.trim()    || null,
         language:   form.language,
       }
@@ -157,6 +159,11 @@ export default function DeveloperContactsModal({
                       {c.is_primary && (
                         <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-orange-100 text-orange-700">
                           {t('crm.devContacts.primary', 'Hauptkontakt')}
+                        </span>
+                      )}
+                      {c.drive_access && (
+                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700">
+                          {t('crm.devContacts.driveBadge', 'Drive-Zugang')}
                         </span>
                       )}
                       {c.language === 'en' && (
@@ -269,6 +276,19 @@ export default function DeveloperContactsModal({
                       onChange={e => setForm(f => ({ ...f, is_primary: e.target.checked }))}
                       className="rounded border-gray-300 text-orange-500 focus:ring-orange-400" />
                     {t('crm.devContacts.isPrimary', 'Hauptkontakt')}
+                  </label>
+                </div>
+                <div className="col-span-2">
+                  <label className="flex items-start gap-2 text-xs font-medium text-gray-600 cursor-pointer">
+                    <input type="checkbox" checked={form.drive_access}
+                      onChange={e => setForm(f => ({ ...f, drive_access: e.target.checked }))}
+                      className="mt-0.5 rounded border-gray-300 text-orange-500 focus:ring-orange-400" />
+                    <span>
+                      {t('crm.devContacts.driveAccess', 'Drive-Zugang nach Reservierung')}
+                      <span className="block font-normal text-[11px] text-gray-400">
+                        {t('crm.devContacts.driveAccessHint', 'Bekommt automatisch Zugang zum Drive-Ordner des Kunden, sobald er reserviert. Braucht eine E-Mail-Adresse (Google-Konto). Ist niemand angehakt, bekommt ihn der Hauptkontakt.')}
+                      </span>
+                    </span>
                   </label>
                 </div>
                 <div className="col-span-2">

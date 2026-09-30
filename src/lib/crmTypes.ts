@@ -561,6 +561,7 @@ export interface DeveloperContact {
   whatsapp:     string | null
   role:         string | null
   is_primary:   boolean
+  drive_access: boolean        // bekommt nach der Reservierung Zugang zum Drive-Kundenordner
   notes:        string | null
   language:     'de' | 'en'    // Kontaktsprache: Mails/WhatsApp kommen hierin an
   created_at:   string
