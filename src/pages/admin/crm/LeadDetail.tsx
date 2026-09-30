@@ -23,7 +23,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
-import { detachPropertyFromOwner, detachConfirmText, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -1673,11 +1673,13 @@ export default function LeadDetail() {
             purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
           }
 
+          // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
+          existingPropertyId = await fetchUnitPropertyId(savedUnitId, existingPropertyId)
           if (existingPropertyId) {
             // Bestehenden properties-Eintrag aktualisieren
             await supabase.from('properties').update(propData).eq('id', existingPropertyId)
-          } else {
-            // Neuen properties-Eintrag anlegen + verknüpfen
+          } else if (dealInPortal(deal)) {
+            // Neuen properties-Eintrag anlegen + verknüpfen (erst ab Reservierung, Entscheidung Sven 29.9.2026)
             const { data: newProp } = await supabase
               .from('properties')
               .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
@@ -1738,9 +1740,10 @@ export default function LeadDetail() {
                 purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
                 property_status:      unitEditForm.status === 'under_construction' ? 'under_construction' : 'active',
               }
+              existingPropertyId = await fetchUnitPropertyId(savedUnitId, existingPropertyId)
               if (existingPropertyId) {
                 await supabase.from('properties').update(propData).eq('id', existingPropertyId)
-              } else {
+              } else if (dealInPortal(deal)) {
                 const { data: newProp } = await supabase
                   .from('properties')
                   .insert({ ...propData, owner_id: data.userId, created_by: profile.id, images: [] })
@@ -1980,9 +1983,12 @@ export default function LeadDetail() {
           purchase_price_gross: unitGross(unit),
           property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
         }
-        if (unit.property_id) {
-          await supabase.from('properties').update(propData).eq('id', unit.property_id)
-        } else {
+        // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
+        const existingPropId = await fetchUnitPropertyId(unit.id, unit.property_id)
+        if (existingPropId) {
+          await supabase.from('properties').update(propData).eq('id', existingPropId)
+        } else if (dealInPortal(deal)) {
+          // Neues Portal-Objekt erst ab Reservierung (Entscheidung Sven 29.9.2026)
           const { data: newProp } = await supabase
             .from('properties')
             .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
@@ -2001,8 +2007,14 @@ export default function LeadDetail() {
       console.error('[LeadDetail] handleUnitAssign:', err)
     }
 
-    // 5. Unit-Edit öffnen (Portal-Check läuft darin automatisch)
-    openUnitEdit(unit)
+    // 5. Unit-Edit öffnen (Portal-Check läuft darin automatisch). Wohnung frisch
+    //    lesen, sonst legt „Speichern" mit veralteter property_id ein zweites Objekt an.
+    const { data: freshUnit } = await supabase
+      .from('crm_project_units')
+      .select('*')
+      .eq('id', unit.id)
+      .maybeSingle()
+    openUnitEdit((freshUnit as CrmProjectUnit | null) ?? unit)
   }
 
   // ── Portal access send ───────────────────────────────────────────

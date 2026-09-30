@@ -5,6 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
+import { dealInPortal, fetchUnitPropertyId } from '../../../lib/detachProperty'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
   UnitType, UnitStatus,
@@ -543,10 +544,18 @@ export default function ProjectDetail() {
             city:            project?.location ?? null,
             property_status: unitBuildStatus,
           }
-          if (unit.property_id) {
-            const { error: upErr } = await supabase.from('properties').update(propData).eq('id', unit.property_id)
+          // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
+          const existingPropId = await fetchUnitPropertyId(unit.id, unit.property_id)
+          // Neues Portal-Objekt erst ab Reservierung (Entscheidung Sven 29.9.2026)
+          let dealPhase: { phase: string; archived_from_phase: string | null } | null = null
+          if (dealId) {
+            const { data: dp } = await supabase.from('deals').select('phase, archived_from_phase').eq('id', dealId).maybeSingle()
+            dealPhase = dp as typeof dealPhase
+          }
+          if (existingPropId) {
+            const { error: upErr } = await supabase.from('properties').update(propData).eq('id', existingPropId)
             if (upErr) throw upErr
-          } else {
+          } else if (dealInPortal(dealPhase)) {
             const { data: newProp, error: insErr } = await supabase
               .from('properties')
               .insert({ ...propData, owner_id: (ownerProfile as { id: string }).id, created_by: profile.id, images: [] })
