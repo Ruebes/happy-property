@@ -6762,5 +6762,122 @@
     "spinner": {
       "loading": "Loading"
     }
+  },
+  "links": {
+    "kind": {
+      "lead": "Customer",
+      "deal": "Deal",
+      "project": "Project",
+      "unit": "Unit",
+      "property": "Property",
+      "owner": "Owner",
+      "task": "Task",
+      "appointment": "Appointment",
+      "invoice": "Invoice",
+      "deck": "Sales deck",
+      "calculation": "Yield calculation",
+      "strategy": "Strategy",
+      "review": "Review",
+      "affiliate": "Referrer",
+      "newsletter": "Newsletter",
+      "document": "Document",
+      "booking": "Booking",
+      "inbox": "Inbox"
+    }
+  },
+  "related": {
+    "title": "Related",
+    "empty": "Nothing linked yet",
+    "loading": "Loading related items",
+    "error": "Related items could not be loaded.",
+    "retry": "Try again",
+    "loadHint": "Expand to load the related items.",
+    "showAll": "show all {{count}}",
+    "showLess": "show less",
+    "moreNotShown": "and {{count}} more",
+    "groups": {
+      "deals": "Deals",
+      "units": "Units",
+      "properties": "Managed properties",
+      "tasks": "Tasks",
+      "appointments": "Appointments",
+      "decks": "Sales decks",
+      "calculations": "Yield calculations",
+      "strategy": "Strategy",
+      "invoices": "Invoices",
+      "registrations": "Registrations",
+      "documents": "Documents",
+      "payments": "Payments",
+      "newsletter": "Newsletter",
+      "portal": "Portal access",
+      "reviews": "Reviews",
+      "affiliate": "Referrer",
+      "drive": "Drive folder"
+    },
+    "deal": {
+      "archived": "Archived ({{phase}})",
+      "archivedPlain": "Archived",
+      "unknownPhase": "Deal"
+    },
+    "via": {
+      "owner": "Owned",
+      "co_owner": "Co-owned"
+    },
+    "unit": {
+      "unnamed": "Unit without number"
+    },
+    "property": {
+      "unnamed": "Unnamed property"
+    },
+    "task": {
+      "untitled": "Untitled task",
+      "due": "due {{date}}",
+      "done": "done"
+    },
+    "appointment": {
+      "internal": "internal",
+      "untitled": "Appointment"
+    },
+    "registration": {
+      "unnamed": "Unknown developer"
+    },
+    "newsletter": {
+      "subscribed": "Subscribed",
+      "optout": "Unsubscribed on {{date}}"
+    },
+    "portal": {
+      "active": "Access active",
+      "sent": "Access sent on {{date}}",
+      "lastLogin": "last login on {{date}}",
+      "neverLoggedIn": "never logged in"
+    },
+    "documents": {
+      "summary_one": "{{count}} document",
+      "summary_other": "{{count}} documents"
+    },
+    "payments": {
+      "summary_one": "{{count}} payment",
+      "summary_other": "{{count}} payments",
+      "open": "{{count}} open"
+    },
+    "reviews": {
+      "summary_one": "{{count}} review request",
+      "summary_other": "{{count}} review requests",
+      "status": {
+        "sent": "sent",
+        "submitted": "answered"
+      }
+    },
+    "affiliate": {
+      "isAffiliate": "Is a referrer",
+      "referred_one": "{{count}} referred customer",
+      "referred_other": "{{count}} referred customers",
+      "payouts_one": "{{count}} payout",
+      "payouts_other": "{{count}} payouts"
+    },
+    "drive": {
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files"
+    }
   }
 }

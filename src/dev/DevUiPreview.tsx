@@ -16,6 +16,7 @@ import { ToastProvider, useToast } from '../components/ui/Toast'
 import { mockProfile } from './devMock'
 import { SAMPLE_TABS } from './devUiSamples'
 import { ConfirmToastSection, MenuSection, ModalSection, PartsSection, SECTION, TableSection } from './DevUiSections'
+import RelatedSection from './DevRelatedSection'
 
 const SAMPLE_BADGES = { tasksOpen: 3, inboxUnread: 12 }
 const TAB_IDS = SAMPLE_TABS.filter(tab => !tab.hidden).map(tab => tab.id)
@@ -93,6 +94,7 @@ function PreviewBody() {
         <ConfirmToastSection />
         <MenuSection />
         <PartsSection />
+        <RelatedSection />
         <p className="text-sm font-body text-gray-500">
           Weitere Vorschau: <Link to="/__dev/shell/admin" className="text-hp-navy underline underline-offset-4">Shell je Rolle</Link>
         </p>

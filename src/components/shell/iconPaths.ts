@@ -394,6 +394,27 @@ export const ICON_PATHS = {
     'M10 10.5V16.5',
     'M14 10.5V16.5',
   ],
+  // Querverweise (EntityLink): Sales-Deck, Rendite-Rechnung, Strategie
+  deck: [
+    'M3.5 4.5H20.5',
+    'M5 4.5V14A1.5 1.5 0 0 0 6.5 15.5H17.5A1.5 1.5 0 0 0 19 14V4.5',
+    'M12 15.5V18.5',
+    'M9 20.5L12 18.5L15 20.5',
+  ],
+  calculator: [
+    'M7 3.5H17A1.5 1.5 0 0 1 18.5 5V19A1.5 1.5 0 0 1 17 20.5H7A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5Z',
+    'M8.5 7H15.5V10H8.5Z',
+    'M9 13.5h0.01',
+    'M12 13.5h0.01',
+    'M15 13.5h0.01',
+    'M9 17h0.01',
+    'M12 17h0.01',
+    'M15 17h0.01',
+  ],
+  strategy: [
+    'M5.5 20.5V3.5',
+    'M5.5 4.5H17.5L15 8.25L17.5 12H5.5',
+  ],
 } as const
 
 export type IconId = keyof typeof ICON_PATHS

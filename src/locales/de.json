@@ -6644,5 +6644,122 @@
     "spinner": {
       "loading": "Wird geladen"
     }
+  },
+  "links": {
+    "kind": {
+      "lead": "Kunde",
+      "deal": "Deal",
+      "project": "Projekt",
+      "unit": "Wohnung",
+      "property": "Objekt",
+      "owner": "Eigentümer",
+      "task": "Aufgabe",
+      "appointment": "Termin",
+      "invoice": "Rechnung",
+      "deck": "Sales-Deck",
+      "calculation": "Rendite-Rechnung",
+      "strategy": "Strategie",
+      "review": "Bewertung",
+      "affiliate": "Tippgeber",
+      "newsletter": "Newsletter",
+      "document": "Dokument",
+      "booking": "Buchung",
+      "inbox": "Posteingang"
+    }
+  },
+  "related": {
+    "title": "Gehört dazu",
+    "empty": "Noch nichts verknüpft",
+    "loading": "Verknüpfungen werden geladen",
+    "error": "Verknüpfungen konnten nicht geladen werden.",
+    "retry": "Erneut versuchen",
+    "loadHint": "Aufklappen, um die Verknüpfungen zu laden.",
+    "showAll": "alle {{count}} anzeigen",
+    "showLess": "weniger anzeigen",
+    "moreNotShown": "und {{count}} weitere",
+    "groups": {
+      "deals": "Deals",
+      "units": "Wohnungen",
+      "properties": "Objekte in der Verwaltung",
+      "tasks": "Aufgaben",
+      "appointments": "Termine",
+      "decks": "Sales-Decks",
+      "calculations": "Rendite-Rechnungen",
+      "strategy": "Strategie",
+      "invoices": "Rechnungen",
+      "registrations": "Registrierungen",
+      "documents": "Dokumente",
+      "payments": "Zahlungen",
+      "newsletter": "Newsletter",
+      "portal": "Portal-Zugang",
+      "reviews": "Bewertungen",
+      "affiliate": "Tippgeber",
+      "drive": "Drive-Ordner"
+    },
+    "deal": {
+      "archived": "Archiviert ({{phase}})",
+      "archivedPlain": "Archiviert",
+      "unknownPhase": "Deal"
+    },
+    "via": {
+      "owner": "Eigentum",
+      "co_owner": "Miteigentum"
+    },
+    "unit": {
+      "unnamed": "Wohnung ohne Nummer"
+    },
+    "property": {
+      "unnamed": "Objekt ohne Namen"
+    },
+    "task": {
+      "untitled": "Aufgabe ohne Titel",
+      "due": "bis {{date}}",
+      "done": "erledigt"
+    },
+    "appointment": {
+      "internal": "intern",
+      "untitled": "Termin"
+    },
+    "registration": {
+      "unnamed": "Bauträger unbekannt"
+    },
+    "newsletter": {
+      "subscribed": "Abonniert",
+      "optout": "Abgemeldet am {{date}}"
+    },
+    "portal": {
+      "active": "Zugang aktiv",
+      "sent": "Zugang verschickt am {{date}}",
+      "lastLogin": "zuletzt angemeldet am {{date}}",
+      "neverLoggedIn": "noch nie angemeldet"
+    },
+    "documents": {
+      "summary_one": "{{count}} Dokument",
+      "summary_other": "{{count}} Dokumente"
+    },
+    "payments": {
+      "summary_one": "{{count}} Zahlung",
+      "summary_other": "{{count}} Zahlungen",
+      "open": "{{count}} offen"
+    },
+    "reviews": {
+      "summary_one": "{{count}} Bewertungsanfrage",
+      "summary_other": "{{count}} Bewertungsanfragen",
+      "status": {
+        "sent": "verschickt",
+        "submitted": "beantwortet"
+      }
+    },
+    "affiliate": {
+      "isAffiliate": "Ist Tippgeber",
+      "referred_one": "{{count}} empfohlener Kunde",
+      "referred_other": "{{count}} empfohlene Kunden",
+      "payouts_one": "{{count}} Auszahlung",
+      "payouts_other": "{{count}} Auszahlungen"
+    },
+    "drive": {
+      "files_one": "{{count}} Datei",
+      "files_other": "{{count}} Dateien"
+    }
   }
 }
