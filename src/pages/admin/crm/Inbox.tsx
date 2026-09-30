@@ -67,18 +67,36 @@ export default function Inbox() {
   const fetchAll = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('activities')
-        .select('id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)')
-        .in('type', ['email', 'whatsapp'])
-        .or('auto.eq.false,direction.eq.inbound')
-        .not('lead_id', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(1000)
-      if (error) throw error
+      // PostgREST liefert höchstens 1000 Zeilen je Abfrage. Mit einem einzigen
+      // .limit(1000) fielen ältere Gespräche lautlos aus dem Posteingang
+      // (Audit 9/2026: 37 Kontakte fehlten ganz, 18 waren abgeschnitten).
+      // Deshalb seitenweise laden, stabil sortiert (created_at + id), bis eine
+      // Seite nicht mehr voll ist. Obergrenze 5 Seiten = 5000 Nachrichten.
+      const PAGE = 1000
+      const data: unknown[] = []
+      const seen = new Set<string>()
+      for (let from = 0; from < PAGE * 5; from += PAGE) {
+        const { data: page, error } = await supabase
+          .from('activities')
+          .select('id, lead_id, type, direction, subject, content, created_at, completed_at, auto, read_at, lead:leads!inner(first_name, last_name, email, phone, whatsapp)')
+          .in('type', ['email', 'whatsapp'])
+          .or('auto.eq.false,direction.eq.inbound')
+          .not('lead_id', 'is', null)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
+          .range(from, from + PAGE - 1)
+        if (error) throw error
+        const rows = (page ?? []) as { id: string }[]
+        for (const row of rows) {
+          if (seen.has(row.id)) continue
+          seen.add(row.id)
+          data.push(row)
+        }
+        if (rows.length < PAGE) break
+      }
       const byLead = new Map<string, Convo>()
       // deno-lint-ignore no-explicit-any
-      for (const r of (data ?? []) as any[]) {
+      for (const r of data as any[]) {
         const lead = r.lead
         if (!lead) continue
         const at = r.completed_at || r.created_at
