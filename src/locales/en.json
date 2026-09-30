@@ -6677,7 +6677,10 @@
       "automationRules": "Automation rules"
     },
     "navShort": {
-      "myProperties": "Properties"
+      "myProperties": "Properties",
+      "portalProperties": "Properties",
+      "occupancy": "Occupancy",
+      "funnel": "Funnel"
     },
     "more": "More",
     "search": {

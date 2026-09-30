@@ -81,7 +81,7 @@ function PreviewBody() {
 
       {/* Reiter mit Zählern; der aktive Reiter steht als ?tab= in der Adresse */}
       <Tabs tabs={SAMPLE_TABS} value={tab} onChange={setTab} urlParam ariaLabel="Bereiche des Kunden" idBase="devui" />
-      <div {...tabPanelProps('devui', tab)} className={`${SECTION} mt-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40`}>
+      <div {...tabPanelProps('devui', tab)} className={`${SECTION} mt-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70`}>
         <p className="text-sm font-body text-gray-600">
           Aktiver Reiter: <strong className="text-hp-navy">{activeTab?.label ?? tab}</strong>. Pfeiltasten wechseln den Reiter,
           Neuladen behält ihn. Auf dem Telefon scrollt die Leiste waagerecht.
@@ -94,7 +94,7 @@ function PreviewBody() {
         <ConfirmToastSection />
         <MenuSection />
         <PartsSection />
-        <RelatedSection />
+        <RelatedSection onPageTab={setTab} />
         <p className="text-sm font-body text-gray-500">
           Weitere Vorschau: <Link to="/__dev/shell/admin" className="text-hp-navy underline underline-offset-4">Shell je Rolle</Link>
         </p>

@@ -50,7 +50,7 @@ function hasInAppHistory(): boolean {
 
 const BACK =
   '-ml-1 mb-1 inline-flex min-h-[44px] items-center gap-0.5 rounded-lg pr-2 text-sm font-medium font-body text-gray-500 ' +
-  'transition-colors hover:text-hp-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40 sm:min-h-[32px]'
+  'transition-colors hover:text-hp-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70 sm:min-h-[32px]'
 
 // Kopf einer Seite: Zurück, Titel, Untertitel, Badges, Aktionen.
 //
@@ -102,8 +102,12 @@ export default function PageHeader({ title, subtitle, back, actions, overflowAct
   return (
     <header className={`mb-5 ${className}`}>
       {backElement}
+      {/* Ab sm nebeneinander. Die Knöpfe nehmen höchstens 65 % der Breite und
+          brechen darin um; der Titel füllt den Rest, mindestens 12rem (sonst
+          würde er bei vielen Knöpfen auf null gedrückt und die Seite scrollte
+          seitlich). */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-2">
+        <div className="flex min-w-0 items-start gap-2 sm:min-w-[12rem] sm:flex-1">
           <div className="min-w-0 flex-1">
             <h1 className="break-words font-heading text-xl text-hp-navy sm:text-2xl">{title}</h1>
             {subtitle && <p className="mt-1 text-sm font-body text-gray-500">{subtitle}</p>}
@@ -114,7 +118,7 @@ export default function PageHeader({ title, subtitle, back, actions, overflowAct
           <ActionMenu items={menuItems} label={moreLabel} className="-mr-2 -mt-2 sm:hidden" />
         </div>
         {(hasActions || menuItems.length > 0) && (
-          <div className={`flex-wrap items-center gap-2 sm:flex sm:shrink-0 sm:justify-end ${hasActions ? 'flex' : 'hidden'}`}>
+          <div className={`flex-wrap items-center gap-2 sm:flex sm:min-w-0 sm:max-w-[65%] sm:justify-end ${hasActions ? 'flex' : 'hidden'}`}>
             {actions}
             <ActionMenu items={menuItems} label={moreLabel} className="hidden sm:inline-flex" />
           </div>

@@ -1,4 +1,4 @@
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, ReactNode } from 'react'
+import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMediaQuery } from '../shell/useMediaQuery'
 import ActionMenu, { type ActionItem } from './ActionMenu'
@@ -13,7 +13,10 @@ export interface DataTableColumn<T> {
   // Spalte erst ab dieser Breite zeigen. Tabelle (ab md): nur 'lg' blendet aus.
   // Karten (unter md): 'md' und 'lg' fehlen ganz, 'sm' erscheint ab sm.
   hideBelow?: 'sm' | 'md' | 'lg'
-  // Wird in der Kartenansicht zum Titel der Karte (sonst die erste Spalte)
+  // Wird in der Kartenansicht zum Titel der Karte (sonst die erste Spalte).
+  // Mit onRowClick wird der Inhalt dieser Spalte zum Knopf, der die Zeile
+  // öffnet (Tastatur und Screenreader): darum dort nur Text, keine Links oder
+  // Knöpfe.
   primary?: boolean
   align?: 'left' | 'right' | 'center'
 }
@@ -27,13 +30,16 @@ interface DataTableProps<T> {
   empty?: ReactNode
   loading?: boolean
   rowActions?: (row: T) => ActionItem[]
-  // Name der Aktionen einer Zeile für Screenreader
+  // Name der Aktionen einer Zeile (Knopf für Screenreader, auf dem Telefon
+  // zugleich Titel des Blatts, z.B. "Aktionen für Anna Muster")
   rowActionsLabel?: (row: T) => string
   className?: string
 }
 
 const ALIGN = { left: 'text-left', right: 'text-right', center: 'text-center' } as const
 const SKELETON_ROWS = 4
+// Knopf in der Titel-Spalte, der die Zeile öffnet
+const OPEN_BUTTON = 'max-w-full rounded-sm text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70'
 
 // Klick auf ein Bedienelement in der Zeile (Link, Knopf, Feld) oder aus einem
 // Menü/Dialog, der in React unter der Zeile hängt, ist kein Zeilen-Klick
@@ -55,21 +61,22 @@ export default function DataTable<T>({
   const isTable = useMediaQuery('(min-width: 768px)')
 
   const clickable = onRowClick !== undefined
+  // Klick irgendwo in die Zeile öffnet sie (Maus, Finger). Für Tastatur und
+  // Screenreader steht in der Titel-Spalte ein echter Knopf: die Zeile selbst
+  // ist kein Tab-Halt und verliert so nicht ihre Rolle als Zeile bzw. Eintrag.
   const onClick = (row: T) => (e: ReactMouseEvent<HTMLElement>) => {
     if (onRowClick && isRowEvent(e.target, e.currentTarget)) onRowClick(row)
   }
-  const onKeyDown = (row: T) => (e: ReactKeyboardEvent<HTMLElement>) => {
-    if (!onRowClick || e.target !== e.currentTarget) return
-    if (e.key !== 'Enter' && e.key !== ' ') return
-    e.preventDefault()
-    onRowClick(row)
+  const titleColumn = columns.find(column => column.primary) ?? columns[0]
+  const titleCell = (column: DataTableColumn<T>, row: T): ReactNode => {
+    if (!onRowClick) return column.cell(row)
+    return <button type="button" onClick={() => onRowClick(row)} className={OPEN_BUTTON}>{column.cell(row)}</button>
   }
 
   const emptyContent = empty ?? <EmptyState compact title={t('ui.table.empty')} />
   const isEmpty = !loading && rows.length === 0
 
   if (!isTable) {
-    const titleColumn = columns.find(column => column.primary) ?? columns[0]
     const detailColumns = columns.filter(column => column !== titleColumn && column.hideBelow !== 'md' && column.hideBelow !== 'lg')
     return (
       <div className={className} aria-busy={loading || undefined}>
@@ -93,16 +100,14 @@ export default function DataTable<T>({
                 <li
                   key={rowKey(row)}
                   onClick={clickable ? onClick(row) : undefined}
-                  onKeyDown={clickable ? onKeyDown(row) : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  className={`hp-card p-4 ${clickable ? 'cursor-pointer transition-colors hover:border-hp-navy/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40' : ''}`}
+                  className={`hp-card p-4 ${clickable ? 'cursor-pointer transition-colors hover:border-hp-navy/20' : ''}`}
                 >
                   <div className="flex items-start gap-2">
                     <div className="min-w-0 flex-1 pt-0.5 text-base font-semibold font-body text-hp-navy">
-                      {titleColumn ? titleColumn.cell(row) : null}
+                      {titleColumn ? titleCell(titleColumn, row) : null}
                     </div>
                     {/* Mehr-Knopf oben rechts; der negative Rand gleicht die 44 px Tippfläche aus */}
-                    <ActionMenu items={actions} label={rowActionsLabel?.(row)} className="-mr-2 -mt-2" />
+                    <ActionMenu items={actions} label={rowActionsLabel?.(row)} title={rowActionsLabel?.(row)} className="-mr-2 -mt-2" />
                   </div>
                   {detailColumns.length > 0 && (
                     <dl className="mt-2 space-y-1.5">
@@ -165,21 +170,19 @@ export default function DataTable<T>({
                 <tr
                   key={rowKey(row)}
                   onClick={clickable ? onClick(row) : undefined}
-                  onKeyDown={clickable ? onKeyDown(row) : undefined}
-                  tabIndex={clickable ? 0 : undefined}
-                  className={clickable ? 'cursor-pointer transition-colors hover:bg-hp-cream/70 focus:outline-none focus-visible:bg-hp-cream focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hp-navy/40' : undefined}
+                  className={clickable ? 'cursor-pointer transition-colors hover:bg-hp-cream/70 focus-within:bg-hp-cream/70' : undefined}
                 >
                   {columns.map(column => (
                     <td
                       key={column.id}
                       className={`px-4 py-3 align-middle ${column.primary ? 'font-semibold text-hp-navy' : 'text-gray-800'} ${columnClass(column)} ${column.className ?? ''}`}
                     >
-                      {column.cell(row)}
+                      {column === titleColumn ? titleCell(column, row) : column.cell(row)}
                     </td>
                   ))}
                   {hasActions && (
                     <td className="px-2 py-1 text-right align-middle">
-                      <ActionMenu items={actions} label={rowActionsLabel?.(row)} />
+                      <ActionMenu items={actions} label={rowActionsLabel?.(row)} title={rowActionsLabel?.(row)} />
                     </td>
                   )}
                 </tr>

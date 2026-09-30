@@ -24,8 +24,27 @@
 --   Der Test lief mit Dienstrechten (ohne RLS); das Verhalten je Rolle folgt aus
 --   den Policies (siehe ABWEICHUNGEN), nicht aus dem Test.
 --   Nicht prüfbar ohne Einspielen: der plpgsql-Rahmen (declare, if, into).
---   newsletter_subscribers hat einen Index auf lower(email), nicht auf
---   lower(btrim(email)); bei rund 5.400 Zeilen ist der Scan unerheblich.
+--   newsletter_subscribers hat Indizes auf email und lower(email), nicht auf
+--   lower(btrim(email)): der Newsletter-Block liest bei JEDEM Aufruf die ganze
+--   Tabelle (rund 5.400 Zeilen, aber etwa 12 MB Heap). Das ist NICHT
+--   unerheblich (Micro-Instanz, Karte lädt bei jedem Kundenaufruf, 60 s Cache).
+--
+-- NACHZIEHEN MIT ETAPPE 5 (eigene Migrationen, nicht in dieser Datei):
+--   a) außerhalb einer Transaktion (concurrently geht nicht in einer):
+--        create index concurrently if not exists newsletter_subscribers_email_norm_idx
+--          on public.newsletter_subscribers (lower(btrim(email)));
+--      Die Gleichheit lower(btrim(...)) in der Funktion bleibt unverändert.
+--   b) heute klein (7 bis 601 Zeilen), wachsen aber mit jedem Kunden:
+--        create index if not exists deals_lead_id_idx on public.deals (lead_id);
+--        create index if not exists crm_task_leads_lead_id_idx on public.crm_task_leads (lead_id);
+--        create index if not exists crm_project_units_property_id_idx
+--          on public.crm_project_units (property_id) where property_id is not null;
+--        create index if not exists sales_decks_lead_id_idx
+--          on public.sales_decks (lead_id) where lead_id is not null;
+--        create index if not exists property_calculations_lead_id_idx
+--          on public.property_calculations (lead_id) where lead_id is not null;
+--        create index if not exists crm_invoices_lead_id_idx
+--          on public.crm_invoices (lead_id) where lead_id is not null;
 --
 -- ABWEICHUNGEN vom Vertrag (UI-LINKS-SPEC Teil B 3), bedingt durch das Schema:
 --   deals            hat keine Spalte "archived": archiviert = phase 'archiviert'

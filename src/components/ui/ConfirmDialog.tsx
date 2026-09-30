@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import Modal from './Modal'
 
@@ -22,6 +22,12 @@ interface ConfirmDialogProps extends ConfirmOptions {
 // Knöpfe: auf dem Telefon mindestens 44 px hoch (steckt in .hp-btn)
 const CANCEL = 'hp-btn hp-btn-ghost'
 
+// Bestätigungen in den ersten Millisekunden nach dem Öffnen zählen nicht:
+// Stehen mehrere Rückfragen an, erscheint die nächste genau an derselben
+// Stelle. Der zweite Klick eines Doppelklicks (oder ein gehaltenes Enter)
+// bestätigte sie sonst, ohne dass jemand sie gelesen hat.
+const CONFIRM_GUARD_MS = 350
+
 // Rückfrage vor einer Aktion. Gesteuerte Komponente; im Alltag nimmt man
 // useConfirm() (unten), das ersetzt window.confirm.
 // Fokus beim Öffnen: bei tone 'danger' auf "Abbrechen" (Enter löscht nicht aus
@@ -32,7 +38,16 @@ export function ConfirmDialog({
   const { t } = useTranslation()
   const confirmRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const messageId = useId()
   const danger = tone === 'danger'
+
+  // Zeitpunkt, seit dem der Dialog offen ist (für CONFIRM_GUARD_MS)
+  const openedAt = useRef(0)
+  useEffect(() => { if (open) openedAt.current = Date.now() }, [open])
+  const onConfirmClick = (e: MouseEvent<HTMLButtonElement>) => {
+    if (e.detail > 1 || Date.now() - openedAt.current < CONFIRM_GUARD_MS) return
+    onConfirm()
+  }
 
   return (
     <Modal
@@ -40,6 +55,10 @@ export function ConfirmDialog({
       onClose={onCancel}
       title={title}
       size="sm"
+      // alertdialog + Beschreibung: Screenreader lesen die Folgen (message) mit
+      // vor, nicht nur Titel und Knopf
+      role="alertdialog"
+      describedBy={message ? messageId : undefined}
       bodyClassName={message ? undefined : 'p-0'}
       initialFocusRef={danger ? cancelRef : confirmRef}
       footer={
@@ -50,7 +69,7 @@ export function ConfirmDialog({
           <button
             ref={confirmRef}
             type="button"
-            onClick={onConfirm}
+            onClick={onConfirmClick}
             className={`hp-btn ${danger ? 'hp-btn-danger' : 'hp-btn-primary'}`}
           >
             {confirmLabel ?? t('ui.confirm.confirm')}
@@ -58,7 +77,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      {message ? <div className="whitespace-pre-line text-sm font-body text-gray-600">{message}</div> : null}
+      {message ? <div id={messageId} className="whitespace-pre-line text-sm font-body text-gray-600">{message}</div> : null}
     </Modal>
   )
 }

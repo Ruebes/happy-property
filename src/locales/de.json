@@ -6559,7 +6559,10 @@
       "automationRules": "Automatik-Regeln"
     },
     "navShort": {
-      "myProperties": "Objekte"
+      "myProperties": "Objekte",
+      "portalProperties": "Objekte",
+      "occupancy": "Belegung",
+      "funnel": "Funnel"
     },
     "more": "Mehr",
     "search": {

@@ -86,13 +86,14 @@ select option { color: #1a1a1a; }
    Gemeinsame Klassen für Eingabefelder, Knöpfe und Karten. Liegen in der
    Komponenten-Ebene: eine Tailwind-Klasse am selben Element gewinnt immer
    (z.B. "hp-btn hp-btn-primary w-full").
-   Korall bleibt Akzent: .hp-btn-accent hat Korall nur als Rand und Schrift,
-   nie als Fläche. */
+   Korall bleibt Akzent: .hp-btn-accent hat Korall nur als Rand (und am Icon),
+   die Schrift ist Navy (Korall auf Weiß hätte nur 2,6:1 Kontrast), nie als
+   Fläche. Fokus-Ring Navy 70 %: mit 40 % läge er unter 3:1 auf Weiß. */
 @layer components {
   /* text-base auf dem Telefon: unter 16 px zoomt iOS beim Antippen ins Feld */
   .hp-input {
     @apply w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-base font-body text-hp-black
-      placeholder:text-gray-400
+      placeholder:text-gray-500
       focus:border-hp-navy focus:outline-none focus:ring-2 focus:ring-hp-navy/20
       disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500
       sm:text-sm;
@@ -102,7 +103,7 @@ select option { color: #1a1a1a; }
   .hp-btn {
     @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border border-transparent
       px-4 py-2 text-sm font-medium font-body transition-colors
-      focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40 focus-visible:ring-offset-1
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70 focus-visible:ring-offset-1
       disabled:cursor-not-allowed disabled:opacity-50
       sm:min-h-[40px];
   }
@@ -112,7 +113,7 @@ select option { color: #1a1a1a; }
   }
 
   .hp-btn-accent {
-    @apply border-hp-highlight bg-white text-hp-highlight hover:bg-hp-highlight/10;
+    @apply border-hp-highlight bg-white text-hp-navy hover:bg-hp-highlight/10 [&>svg]:text-hp-highlight;
   }
 
   .hp-btn-ghost {
@@ -120,7 +121,7 @@ select option { color: #1a1a1a; }
   }
 
   .hp-btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600/40;
+    @apply bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-600/70;
   }
 
   .hp-card {

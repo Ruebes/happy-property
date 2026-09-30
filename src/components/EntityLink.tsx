@@ -41,12 +41,30 @@ interface EntityLinkProps {
   className?: string
 }
 
-// Gleiche Schrift für Link und reinen Text, damit nichts springt, wenn ein
-// Betrachter das Ziel nicht öffnen darf.
-const CHIP_BASE = 'inline-flex min-h-[36px] max-w-full items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1 text-sm font-body text-hp-navy'
-const CHIP_LINK = 'transition-colors hover:border-hp-navy/30 hover:bg-hp-cream focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40'
+// Gleiche Größe für Link und reinen Text, damit nichts springt, wenn ein
+// Betrachter das Ziel nicht öffnen darf. Der Chip als Link hat einen Rahmen
+// auf Weiß, der reine Text-Chip keinen Rahmen und grauen Grund: so sieht auch
+// auf dem Telefon (ohne Hover) niemand einen Knopf, der nichts tut.
+const CHIP_SHAPE = 'inline-flex min-h-[36px] max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-body'
+const CHIP_LINK = 'border-gray-200 bg-white text-hp-navy transition-colors hover:border-hp-navy/30 hover:bg-hp-cream focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70'
+const CHIP_TEXT = 'cursor-default border-transparent bg-gray-50 text-gray-700'
 const INLINE_BASE = 'font-body text-hp-navy'
-const INLINE_LINK = 'rounded-sm underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40'
+const INLINE_LINK = 'rounded-sm underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70'
+
+// Führt das Ziel auf die Seite, auf der man gerade steht (z.B. ein aktiver
+// Vorgang, der auf der Kundenseite lebt)? Dann kein Link: ein Klick legte nur
+// einen doppelten Verlaufseintrag an, sichtbar passierte nichts. Parameter der
+// aktuellen Adresse, die das Ziel nicht nennt (?tab=), zählen nicht.
+function isCurrentPage(to: string, pathname: string, search: string): boolean {
+  const cut = to.indexOf('?')
+  const path = cut < 0 ? to : to.slice(0, cut)
+  if (path !== pathname) return false
+  const have = new URLSearchParams(search)
+  for (const [key, value] of new URLSearchParams(cut < 0 ? '' : to.slice(cut + 1))) {
+    if (have.get(key) !== value) return false
+  }
+  return true
+}
 
 // Verweis auf einen Datensatz. Lädt nie selbst Daten: Art, Id und Text kommen
 // vom Aufrufer, das Ziel aus entityPath (Rolle und Rechte des Betrachters).
@@ -56,22 +74,23 @@ export default function EntityLink({
 }: EntityLinkProps) {
   const location = useLocation()
   const pathFor = useEntityPath()
-  const target = id ? pathFor(kind, id, opts) : null
+  const found = id ? pathFor(kind, id, opts) : null
+  const target = found && !found.external && !newTab && isCurrentPage(found.to, location.pathname, location.search) ? null : found
   const chip = variant === 'chip'
 
   const content = chip ? (
     <>
-      <Icon name={icon ?? ENTITY_ICONS[kind]} size={15} className="shrink-0 text-hp-navy/60" />
+      <Icon name={icon ?? ENTITY_ICONS[kind]} size={15} className={`shrink-0 ${target ? 'text-hp-navy/60' : 'text-gray-500'}`} />
       <span className="truncate" title={typeof label === 'string' ? label : undefined}>{label}</span>
       {target?.external && <Icon name="externalLink" size={13} className="shrink-0 text-hp-navy/40" />}
     </>
   ) : label
 
   if (!target) {
-    return <span className={`${chip ? CHIP_BASE : INLINE_BASE} ${className}`}>{content}</span>
+    return <span className={`${chip ? `${CHIP_SHAPE} ${CHIP_TEXT}` : INLINE_BASE} ${className}`}>{content}</span>
   }
 
-  const classes = `${chip ? `${CHIP_BASE} ${CHIP_LINK}` : `${INLINE_BASE} ${INLINE_LINK}`} ${className}`
+  const classes = `${chip ? `${CHIP_SHAPE} ${CHIP_LINK}` : `${INLINE_BASE} ${INLINE_LINK}`} ${className}`
   const onClick = stopPropagation ? (e: MouseEvent<HTMLAnchorElement>) => { e.stopPropagation() } : undefined
 
   if (target.external) {

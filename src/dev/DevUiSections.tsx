@@ -291,7 +291,7 @@ export function MenuSection() {
       <div
         {...single.handlers}
         tabIndex={0}
-        className="mt-4 select-none rounded-xl border border-dashed border-gray-300 bg-hp-cream px-4 py-8 text-center text-sm font-body text-gray-600 [-webkit-touch-callout:none] focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+        className="mt-4 select-none rounded-xl border border-dashed border-gray-300 bg-hp-cream px-4 py-8 text-center text-sm font-body text-gray-600 [-webkit-touch-callout:none] focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
       >
         Hier rechts klicken oder den Finger 500 ms gedrückt halten
         {single.isOpen && <span className="ml-2 font-semibold text-hp-navy">(Menü offen)</span>}

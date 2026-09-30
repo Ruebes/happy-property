@@ -60,10 +60,14 @@ export function CustomSelect({
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
-  // Schließen bei Escape
+  // Schließen bei Escape. Ist die Liste offen, schließt Escape nur die Liste
+  // und geht nicht weiter (sonst schlösse ein Dialog darum gleich mit).
   const onKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') setOpen(false)
-  }, [])
+    if (e.key === 'Escape' && open) {
+      e.stopPropagation()
+      setOpen(false)
+    }
+  }, [open])
 
   // Gewählte Option in Sicht scrollen
   useEffect(() => {
@@ -83,6 +87,7 @@ export function CustomSelect({
         type="button"
         disabled={disabled}
         onClick={() => !disabled && setOpen(o => !o)}
+        aria-expanded={open}
         style={style}
         className={`
           w-full flex items-center justify-between gap-2

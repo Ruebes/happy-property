@@ -1,10 +1,11 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore,
   type CSSProperties, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import Icon, { type IconId } from '../shell/Icon'
+import { hasOpenLayer, subscribeLayers } from '../shell/overlayStack'
 import { useEnterPhase } from './useEntered'
 
 export type ToastKind = 'success' | 'error' | 'info'
@@ -103,6 +104,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const style = bottomOffset ? ({ '--hp-bottom-offset': bottomOffset } as CSSProperties) : undefined
 
+  // Telefon: Ist ein Dialog, Blatt oder Menü offen, liegen unten dessen Knöpfe
+  // (Speichern, Bestätigen). Die Hinweise wandern dann nach oben, damit sie
+  // nach einem Fehler beim Speichern nicht genau den Speichern-Knopf verdecken.
+  const overlayOpen = useSyncExternalStore(subscribeLayers, hasOpenLayer, () => false)
+  const phonePosition = overlayOpen
+    ? 'top-[calc(env(safe-area-inset-top)+0.75rem)]'
+    : 'bottom-[calc(var(--hp-bottom-offset,0px)+1rem)]'
+
   return (
     <ToastContext.Provider value={api}>
       {children}
@@ -112,7 +121,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           aria-live="polite"
           aria-label={t('ui.toast.region')}
           style={style}
-          className="pointer-events-none fixed inset-x-0 bottom-[calc(var(--hp-bottom-offset,0px)+1rem)] z-[110] flex flex-col items-center gap-2 px-4 md:inset-x-auto md:bottom-auto md:right-4 md:top-[72px] md:w-96 md:max-w-[calc(100vw-2rem)] md:flex-col-reverse md:items-end md:px-0"
+          className={`pointer-events-none fixed inset-x-0 ${phonePosition} z-[110] flex flex-col items-center gap-2 px-4 md:inset-x-auto md:bottom-auto md:right-4 md:top-[72px] md:w-96 md:max-w-[calc(100vw-2rem)] md:flex-col-reverse md:items-end md:px-0`}
         >
           {items.map(item => <ToastCard key={item.id} item={item} onDismiss={dismiss} />)}
         </div>,
@@ -163,7 +172,7 @@ function ToastCard({ item, onDismiss }: ToastCardProps) {
           <button
             type="button"
             onClick={runAction}
-            className="mt-1 inline-flex min-h-[44px] items-center text-sm font-semibold font-body text-hp-navy underline underline-offset-4 hover:text-hp-navy/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40 md:min-h-[32px]"
+            className="mt-1 inline-flex min-h-[44px] items-center text-sm font-semibold font-body text-hp-navy underline underline-offset-4 hover:text-hp-navy/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70 md:min-h-[32px]"
           >
             {item.action.label}
           </button>
@@ -173,7 +182,7 @@ function ToastCard({ item, onDismiss }: ToastCardProps) {
         type="button"
         onClick={() => onDismiss(item.id)}
         aria-label={t('ui.toast.dismiss')}
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
       >
         <Icon name="close" size={18} />
       </button>

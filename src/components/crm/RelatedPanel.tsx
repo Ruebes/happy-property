@@ -122,7 +122,7 @@ function RelatedGroup({ section, expanded, onShowAll, onShowLess }: GroupProps) 
     <section aria-labelledby={headingId} className="min-w-0">
       <h3 id={headingId} className="flex items-center gap-2 text-xs font-semibold font-body uppercase tracking-wide text-gray-500">
         <span className="truncate">{t(`related.groups.${section.key}`)}</span>
-        {section.listed && <span className="font-medium text-gray-400">{section.count}</span>}
+        {section.listed && <span className="font-medium text-gray-500">{section.count}</span>}
       </h3>
       <ul className="mt-2 flex flex-wrap gap-2">
         {visible.map(chip => (
@@ -137,7 +137,7 @@ function RelatedGroup({ section, expanded, onShowAll, onShowLess }: GroupProps) 
             <button
               type="button"
               onClick={onShowAll}
-              className="inline-flex min-h-[36px] items-center rounded-sm text-sm font-body text-hp-navy underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+              className="inline-flex min-h-[36px] items-center rounded-sm text-sm font-body text-hp-navy underline-offset-4 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
             >
               {t('related.showAll', { count: section.count })}
             </button>
@@ -149,7 +149,7 @@ function RelatedGroup({ section, expanded, onShowAll, onShowLess }: GroupProps) 
             <button
               type="button"
               onClick={onShowLess}
-              className="inline-flex min-h-[36px] items-center rounded-sm text-sm font-body text-gray-500 underline-offset-4 hover:text-hp-navy hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+              className="inline-flex min-h-[36px] items-center rounded-sm text-sm font-body text-gray-500 underline-offset-4 hover:text-hp-navy hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
             >
               {t('related.showLess')}
             </button>
@@ -255,7 +255,7 @@ export default function RelatedPanel({
         <button
           type="button"
           onClick={reload}
-          className="inline-flex min-h-[36px] items-center rounded-sm font-medium text-hp-navy underline underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+          className="inline-flex min-h-[36px] items-center rounded-sm font-medium text-hp-navy underline underline-offset-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
         >
           {t('related.retry')}
         </button>
@@ -278,13 +278,13 @@ export default function RelatedPanel({
           onClick={toggle}
           aria-expanded={open}
           aria-controls={bodyId}
-          className="flex min-h-[44px] w-full items-center gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+          className="flex min-h-[44px] w-full items-center gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
         >
           <Icon name="link" size={18} className="shrink-0 text-hp-navy/60" />
           <span className="font-heading text-lg text-hp-navy">{t('related.title')}</span>
           {data && total > 0 && <Badge tone="info">{total}</Badge>}
           {!open && !data && loadMode === 'click' && (
-            <span className="hidden min-w-0 truncate text-xs font-body text-gray-400 sm:inline">{t('related.loadHint')}</span>
+            <span className="hidden min-w-0 truncate text-xs font-body text-gray-500 sm:inline">{t('related.loadHint')}</span>
           )}
           <Icon
             name="chevronDown"

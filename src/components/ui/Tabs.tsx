@@ -1,5 +1,5 @@
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useLocation, useSearchParams } from 'react-router-dom'
 import Icon, { type IconId } from '../shell/Icon'
 
 export interface TabItem {
@@ -43,9 +43,12 @@ export function tabPanelProps(idBase: string, id: string) {
   return { role: 'tabpanel' as const, id: `${idBase}-panel-${id}`, 'aria-labelledby': `${idBase}-tab-${id}`, tabIndex: 0 }
 }
 
+// Ohne -mb-px: die Grundlinie der Leiste ist ein Schatten nach innen (siehe
+// unten), die 2 px Korall-Linie des aktiven Reiters liegt darüber und wird
+// nicht vom Scroll-Rahmen der Leiste abgeschnitten.
 const TAB =
-  'relative -mb-px inline-flex min-h-[44px] shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-sm font-body ' +
-  'transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hp-navy/40 sm:px-4'
+  'relative inline-flex min-h-[44px] shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 text-sm font-body ' +
+  'transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-hp-navy/70 sm:px-4'
 const TAB_ACTIVE = 'border-hp-highlight font-semibold text-hp-navy'
 const TAB_IDLE = 'border-transparent font-medium text-gray-500 hover:border-gray-200 hover:text-hp-navy'
 
@@ -54,6 +57,7 @@ const TAB_IDLE = 'border-transparent font-medium text-gray-500 hover:border-gray
 // Pfeiltasten wechseln den Reiter, Pos1 und Ende springen an die Ränder.
 export default function Tabs({ tabs, value, onChange, urlParam, ariaLabel, idBase, className = '' }: TabsProps) {
   const [search, setSearch] = useSearchParams()
+  const location = useLocation()
   const listRef = useRef<HTMLDivElement>(null)
   const param = urlParam === true ? DEFAULT_TAB_PARAM : urlParam || null
   const shown = tabs.filter(tab => !tab.hidden)
@@ -79,6 +83,31 @@ export default function Tabs({ tabs, value, onChange, urlParam, ariaLabel, idBas
     if (urlTab !== null && urlTab !== valueRef.current) changeRef.current(urlTab)
   }, [urlTab])
 
+  // Den Reiter in die Adresse schreiben (replace). Baut auf der aktuellen
+  // Adresse auf, nicht auf dem Stand beim Zeichnen (sonst setzte ein zweiter
+  // Schreiber im selben Durchgang einen gerade entfernten Parameter zurück),
+  // und behält location.state (z.B. "from" aus EntityLink für den Zurück-Weg).
+  const writeUrl = (id: string) => {
+    if (!param) return
+    const next = new URLSearchParams(window.location.search)
+    if (next.get(param) === id) return
+    next.set(param, id)
+    setSearch(next, { replace: true, state: location.state })
+  }
+
+  // Wechselt der Aufrufer den Reiter selbst (z.B. "alle N anzeigen" in der
+  // Karte "Gehört dazu"), zieht die Adresse nach. Sonst bliebe dort der alte
+  // Reiter stehen, er bliebe markiert und käme nach dem Neuladen zurück.
+  // Kommt die Änderung aus der Adresse (Effekt oben), steht sie dort schon:
+  // dann wird nichts geschrieben, es entsteht kein Hin und Her.
+  const lastValue = useRef(value)
+  useEffect(() => {
+    if (value === lastValue.current) return
+    lastValue.current = value
+    if (param && search.get(param) !== value && shown.some(tab => tab.id === value)) writeUrl(value)
+    // Nur bei einem neuen value; Adresse und Reiterliste gelten wie gezeichnet
+  }, [value])
+
   // Aktiven Reiter in die Mitte der Leiste holen. Nur die Leiste scrollt
   // (scrollIntoView würde auch die Seite bewegen), und ohne weiches Scrollen:
   // das hinge in gedrosselten Tabs auf halbem Weg fest.
@@ -90,13 +119,7 @@ export default function Tabs({ tabs, value, onChange, urlParam, ariaLabel, idBas
   }, [active])
 
   const select = (id: string) => {
-    if (param) {
-      setSearch(prev => {
-        const next = new URLSearchParams(prev)
-        next.set(param, id)
-        return next
-      }, { replace: true })
-    }
+    writeUrl(id)
     if (id !== value) onChange(id)
   }
 
@@ -115,13 +138,17 @@ export default function Tabs({ tabs, value, onChange, urlParam, ariaLabel, idBas
     buttons?.[next]?.focus()
   }
 
+  // Grundlinie als Schatten nach innen statt border-b: nichts ragt über den
+  // Rahmen hinaus, die Leiste scrollt nicht senkrecht. Bildlaufleiste auf dem
+  // Telefon versteckt (Wischen), ab md schmal sichtbar: mit der Maus sind
+  // überzählige Reiter sonst nicht erreichbar.
   return (
     <div
       ref={listRef}
       role="tablist"
       aria-label={ariaLabel}
       onKeyDown={onKeyDown}
-      className={`relative flex overflow-x-auto border-b border-gray-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
+      className={`relative flex overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_#e5e7eb] max-md:[scrollbar-width:none] max-md:[&::-webkit-scrollbar]:hidden md:[scrollbar-width:thin] ${className}`}
     >
       {shown.map(tab => {
         const isActive = tab.id === active

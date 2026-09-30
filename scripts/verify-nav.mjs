@@ -11,7 +11,9 @@
 //      ohne ae/oe/ue-Ersatzschreibung
 //   7  jedes Icon existiert in src/components/shell/iconPaths.ts
 //   8  Telefon-Leiste: höchstens 4 Einträge, nie ein Eintrag, den der Guard abweist
-//      (dasselbe gilt für das Menü); feste Reihenfolge je Rolle
+//      (dasselbe gilt für das Menü); feste Reihenfolge je Rolle; bei 4 Einträgen
+//      (5 Felder mit "Mehr", je rund 67 px bei 375 px Breite) höchstens 11
+//      Zeichen je Beschriftung in de und en (Kurzform, sonst voller Name)
 //   9  App.tsx holt lazy ausschließlich aus lib/lazyWithReload
 //  10  jedes wörtliche basePath="..." in src/pages ist ein echter Routen-Pfad
 //
@@ -239,6 +241,9 @@ const EXPECTED_BAR = {
   'mitarbeiter {pipeline}': ['startStaff', 'tasks', 'pipeline', 'customers'],
   'mitarbeiter {}': ['startStaff', 'tasks'],
 }
+// Längste Beschriftung, die bei voller Leiste (4 Einträge plus "Mehr") in
+// 10 px Montserrat noch ungekürzt in ein Feld von rund 67 px passt
+const BAR_LABEL_MAX = 11
 // Bildet ProtectedRoute nach: Rolle muss erlaubt sein, Rechte zählen nur für Mitarbeiter
 const guardAllows = (profile, path) => guardAllowsRoute(routeByPath.get(path), profile, hasPerm)
 for (const { name, profile } of CASES) {
@@ -256,6 +261,17 @@ for (const { name, profile } of CASES) {
   }
   if (profile.role === 'mitarbeiter' && (got[0] !== 'startStaff' || got[1] !== 'tasks')) {
     fail(8, `Telefon-Leiste ${name}: muss mit Start und Aufgaben beginnen, ist [${got.join(', ')}]`)
+  }
+  // Volle Leiste: jede Beschriftung muss in ihr Feld passen (sonst abgeschnitten)
+  if (bar.length === 4) {
+    for (const e of bar) {
+      for (const lang of ['de', 'en']) {
+        const text = lookup(locales[lang], e.shortLabelKey ?? e.labelKey)
+        if (typeof text === 'string' && text.length > BAR_LABEL_MAX) {
+          fail(8, `Telefon-Leiste ${name}: "${e.id}" zeigt in ${lang} "${text}" (${text.length} Zeichen, höchstens ${BAR_LABEL_MAX}); shortLabelKey ergänzen`)
+        }
+      }
+    }
   }
   for (const { entries } of groupedNav(profile)) {
     for (const e of entries) {
@@ -277,7 +293,7 @@ for (const e of NAV_ENTRIES) {
   const want = e.hidden && e.parent ? e.parent : e.id
   if (!hit || hit.id !== want) fail(8, `matchEntry(${sample}) für ${e.roles[0]}: erwartet "${want}", ist "${hit?.id ?? 'null'}"`)
 }
-mark(8, `Telefon-Leiste und Menü für ${CASES.length} Profile: höchstens 4, nur Erreichbares, Reihenfolge wie vorgegeben`)
+mark(8, `Telefon-Leiste und Menü für ${CASES.length} Profile: höchstens 4, nur Erreichbares, Reihenfolge wie vorgegeben, Beschriftungen passen`)
 
 // ── 9: lazy nur aus lazyWithReload ──────────────────────────────────────────
 for (const stmt of sf.statements) {

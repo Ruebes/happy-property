@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import Icon, { type IconId } from '../shell/Icon'
 import { useMediaQuery } from '../shell/useMediaQuery'
 import Modal from './Modal'
-import { pushLayer, removeLayer } from './overlayStack'
+import { isTopLayer, pushLayer, removeLayer } from '../shell/overlayStack'
 
 export interface ActionItem {
   id: string
@@ -90,7 +90,7 @@ export function MenuSurface({ items, anchor, align = 'end', title, onClose, rest
                 role="menuitem"
                 disabled={item.disabled}
                 onClick={() => run(item)}
-                className={`${ITEM} min-h-[48px] rounded-lg px-3 text-base focus-visible:ring-2 focus-visible:ring-hp-navy/40 ${item.tone === 'danger' ? ITEM_DANGER : ITEM_DEFAULT}`}
+                className={`${ITEM} min-h-[48px] rounded-lg px-3 text-base focus-visible:ring-2 focus-visible:ring-hp-navy/70 ${item.tone === 'danger' ? ITEM_DANGER : ITEM_DEFAULT}`}
               >
                 {item.icon && <Icon name={item.icon} size={20} className={`shrink-0 ${item.tone === 'danger' ? '' : 'text-gray-400'}`} />}
                 <span className="min-w-0 flex-1 break-words">{item.label}</span>
@@ -173,7 +173,8 @@ function MenuPopover({ items, anchor, align, label, onClose, onRun, restoreFocus
     const onOpener = (target: EventTarget | null) => target instanceof Node && restoreFocus?.contains(target) === true
     const onPointerDown = (e: PointerEvent) => { if (!inside(e.target) && !onOpener(e.target)) closeRef.current() }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      // Liegt etwas darüber (z.B. die Suche per Strg K), schließt das zuerst
+      if (e.key !== 'Escape' || !isTopLayer(layerId)) return
       e.stopPropagation()
       closeRef.current()
     }
@@ -190,7 +191,7 @@ function MenuPopover({ items, anchor, align, label, onClose, onRun, restoreFocus
       window.removeEventListener('resize', onResize)
       if (opener && document.contains(opener)) opener.focus({ preventScroll: true })
     }
-  }, [restoreFocus])
+  }, [restoreFocus, layerId])
 
   const onMenuKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Tab') { closeRef.current(); return }
@@ -274,7 +275,7 @@ export default function ActionMenu({ items, label, title, className = '' }: Acti
         aria-expanded={anchor !== null}
         aria-label={name}
         title={name}
-        className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-hp-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40 sm:h-9 sm:w-9"
+        className="flex h-11 w-11 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-hp-navy focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70 sm:h-9 sm:w-9"
       >
         <Icon name="more" size={20} />
       </button>
@@ -341,17 +342,21 @@ export function useContextMenu(items: MenuItemsInput = [], options?: { title?: s
 
   const close = useCallback(() => setState(null), [])
 
-  const openAt = useCallback((x: number, y: number, input: MenuItemsInput) => {
-    const list = resolveItems(input)
-    if (visibleItems(list).length === 0) return
+  const openAt = useCallback((x: number, y: number, list: ActionItem[]) => {
     setState({ anchor: { left: x, top: y, right: x, bottom: y }, items: list })
   }, [])
 
+  // Einträge zuerst auswerten: gibt es keinen sichtbaren (z.B. Rolle ohne
+  // Aktionen), bleibt alles wie ohne Menü. Das Browser-Menü (Kopieren, Link in
+  // neuem Tab) erscheint dann weiter, und das Antippen öffnet die Zeile.
   const bind = useCallback((input: MenuItemsInput): ContextMenuHandlers => ({
     onContextMenu: e => {
+      // Android meldet den langen Druck zusätzlich als contextmenu: das eigene
+      // Menü ist dann schon offen, das des Browsers bleibt weg
+      if (fired.current) { e.preventDefault(); return }
+      const list = resolveItems(input)
+      if (visibleItems(list).length === 0) return
       e.preventDefault()
-      // Android meldet den langen Druck zusätzlich als contextmenu
-      if (fired.current) return
       clearTimer()
       let x = e.clientX
       let y = e.clientY
@@ -361,7 +366,7 @@ export function useContextMenu(items: MenuItemsInput = [], options?: { title?: s
         x = rect.left + rect.width / 2
         y = rect.top + rect.height / 2
       }
-      openAt(x, y, input)
+      openAt(x, y, list)
     },
     onTouchStart: e => {
       clearTimer()
@@ -372,8 +377,10 @@ export function useContextMenu(items: MenuItemsInput = [], options?: { title?: s
       start.current = { x, y }
       timer.current = window.setTimeout(() => {
         timer.current = null
+        const list = resolveItems(input)
+        if (visibleItems(list).length === 0) return
         fired.current = true
-        openAt(x, y, input)
+        openAt(x, y, list)
       }, LONG_PRESS_MS)
     },
     onTouchMove: e => {

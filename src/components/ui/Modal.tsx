@@ -1,9 +1,8 @@
-import { useEffect, useId, useMemo, useRef, type FocusEvent, type ReactNode, type RefObject } from 'react'
+import { useEffect, useId, useRef, type FocusEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 import Icon from '../shell/Icon'
 import { useOverlay } from '../shell/useOverlay'
-import { isTopLayer, pushLayer, removeLayer } from './overlayStack'
 import { useEnterPhase } from './useEntered'
 
 export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | 'full'
@@ -24,6 +23,10 @@ export interface ModalProps {
   labelledBy?: string
   // Name für Screenreader, wenn es weder title noch labelledBy gibt
   ariaLabel?: string
+  // 'alertdialog' für Rückfragen, die eine Antwort verlangen (ConfirmDialog)
+  role?: 'dialog' | 'alertdialog'
+  // Id des Textes, der den Dialog beschreibt (wird mit dem Titel vorgelesen)
+  describedBy?: string
   // Telefon: 'full' nutzt immer die volle Höhe (Formulare springen dann nicht,
   // wenn die Tastatur aufgeht), 'auto' ist so hoch wie der Inhalt (Bestätigung,
   // Aktionsmenü). Standard: 'auto' bei size 'sm', sonst 'full'.
@@ -62,11 +65,10 @@ export default function Modal(props: ModalProps) {
 
 function ModalPanel({
   onClose, title, size = 'md', footer, children, closeOnBackdrop = true,
-  initialFocusRef, labelledBy, ariaLabel, sheet, bodyClassName,
+  initialFocusRef, labelledBy, ariaLabel, role = 'dialog', describedBy, sheet, bodyClassName,
 }: ModalProps) {
   const { t } = useTranslation()
   const panelRef = useRef<HTMLDivElement>(null)
-  const layerId = useId()
   const titleId = useId()
   const phase = useEnterPhase()
   const entered = phase !== 'before'
@@ -74,17 +76,12 @@ function ModalPanel({
   // an der Animations-Uhr (siehe useEnterPhase)
   const settled = phase === 'done'
 
-  // Liegen mehrere Dialoge übereinander, reagiert nur der oberste: die Ref für
-  // die Fokus-Falle ist für alle darunter leer, Escape wird dort verworfen.
-  const trapRef = useMemo<RefObject<HTMLElement>>(() => ({
-    get current() { return isTopLayer(layerId) ? panelRef.current : null },
-  }), [layerId])
-  useOverlay(trapRef, () => { if (isTopLayer(layerId)) onClose() })
-
-  useEffect(() => {
-    pushLayer(layerId)
-    return () => removeLayer(layerId)
-  }, [layerId])
+  // Liegen mehrere Overlays übereinander (Bestätigung über einem Dialog, Suche
+  // über einem Dialog), reagiert nur das oberste: das regelt useOverlay über
+  // den gemeinsamen Stapel. Escape erst in der Bubble-Phase: eine offene
+  // Auswahlliste im Dialog schließt mit Escape zuerst sich selbst, erst das
+  // nächste Escape schließt den Dialog (sonst wären die Eingaben weg).
+  useOverlay(panelRef, onClose, { escapeCapture: false })
 
   // Fokus in den Dialog. Steht NACH useOverlay: der Hook merkt sich vorher,
   // welches Element den Dialog geöffnet hat.
@@ -135,9 +132,10 @@ function ModalPanel({
 
       <div
         ref={panelRef}
-        role="dialog"
+        role={role}
         aria-modal="true"
         aria-labelledby={label}
+        aria-describedby={describedBy}
         aria-label={label ? undefined : ariaLabel ?? t('ui.modal.dialog')}
         tabIndex={-1}
         className={`relative flex w-full flex-col rounded-t-2xl bg-white shadow-2xl ${settled ? 'transition-none' : 'transition duration-200 ease-out motion-reduce:transition-none'} focus:outline-none sm:max-h-[90vh] sm:rounded-2xl ${SHEET_MAX} ${sheetMode === 'full' ? SHEET_FULL : ''} ${WIDTHS[size]} ${
@@ -156,7 +154,7 @@ function ModalPanel({
             type="button"
             onClick={onClose}
             aria-label={t('ui.modal.close')}
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/40"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-navy/70"
           >
             <Icon name="close" size={22} />
           </button>

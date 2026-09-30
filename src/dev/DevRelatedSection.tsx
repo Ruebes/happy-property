@@ -48,7 +48,13 @@ function mockAuth(viewer: Viewer): AuthContextValue {
   }
 }
 
-export default function RelatedSection() {
+// Reiter der Vorschau-Kopfzeile, zu dem "alle N anzeigen" springt (wie auf
+// einer echten Kundenseite); fehlt einer, bleibt es beim Hinweis
+const PAGE_TAB: Partial<Record<RelatedGroupKey, string>> = {
+  units: 'units', tasks: 'tasks', appointments: 'appointments', invoices: 'invoices', documents: 'documents',
+}
+
+export default function RelatedSection({ onPageTab }: { onPageTab?: (id: string) => void }) {
   const toast = useToast()
   const [viewerId, setViewerId] = useState('admin')
   const [empty, setEmpty] = useState(false)
@@ -59,6 +65,12 @@ export default function RelatedSection() {
   // Wie eine Kundenseite mit Reitern: "alle N anzeigen" wechselt dann den Reiter
   const openTab = (kind: RelatedGroupKey): boolean => {
     if (!tabsOnPage) return false
+    const pageTab = PAGE_TAB[kind]
+    if (pageTab && onPageTab) {
+      onPageTab(pageTab)
+      window.scrollTo({ top: 0 })
+      return true
+    }
     toast.info(`Seite wechselt zum Reiter "${kind}" (nur Beispiel)`)
     return true
   }
