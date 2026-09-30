@@ -14,9 +14,16 @@ export default function ShortLink() {
     ran.current = true
     void (async () => {
       try {
-        const { data, error } = await supabase.from('short_links').select('target').eq('code', code ?? '').maybeSingle()
-        const target = (data as { target?: string } | null)?.target
-        if (error || !target) { setInvalid(true); return }
+        // Genau einen Code auflösen (Definer-Funktion, Tabelle ist für anon gesperrt).
+        const { data, error } = await supabase.rpc('get_short_link', { p_code: code ?? '' })
+        let target = typeof data === 'string' ? data : null
+        if (error) {
+          // Übergang, solange get_short_link noch nicht in der DB ist: alter Weg.
+          const old = await supabase.from('short_links').select('target').eq('code', code ?? '').maybeSingle()
+          target = (old.data as { target?: string } | null)?.target ?? null
+        }
+        // Nur echte https-Ziele (Zusage-/Kalenderlinks), nie javascript: o. ä.
+        if (!target || !/^https:\/\//i.test(target)) { setInvalid(true); return }
         window.location.replace(target)
       } catch {
         setInvalid(true)
