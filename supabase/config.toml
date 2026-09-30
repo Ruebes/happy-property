@@ -181,3 +181,9 @@ verify_jwt = true
 # true wie live. Cron scan-drive-projects-nightly braucht vor dem Guard-Deploy x-cron-secret.
 [functions.scan-drive-projects]
 verify_jwt = true
+
+[functions.parse-pricelist]
+verify_jwt = true
+
+[functions.parse-spec-xlsx]
+verify_jwt = true

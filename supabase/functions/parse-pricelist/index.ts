@@ -9,6 +9,7 @@
 // Antwort: { ok, units, created? }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -89,6 +90,12 @@ const int = (v: unknown): number | null => { const n = num(v); return n === null
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4): verify_jwt=true lässt auch den publishable
+  // Key und jedes Eigentümer-Login durch, damit ließen sich freie Wohnungen
+  // löschen oder Preise umschreiben. Erlaubt: Service-Key (prepare-project-assets
+  // nightly, scan-drive-projects), Team-Rollen (Projekte: Preisliste einlesen).
+  const denied = await gateCaller(req, 'parse-pricelist', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
 
   try {

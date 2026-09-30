@@ -9,6 +9,7 @@
 // Body: { project_id }
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -18,6 +19,10 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4): verify_jwt=true lässt auch den publishable
+  // Key durch. Erlaubt: Service-Key, Team-Rollen (Projekte: Aus Drive laden).
+  const denied = await gateCaller(req, 'parse-spec-xlsx', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   try {
     const { project_id } = await req.json() as { project_id?: string }
     if (!project_id) return json({ error: 'project_id fehlt' }, 400)
