@@ -5,6 +5,8 @@
 // Body: { docs: [{ url, label }], project_name? }
 // Antwort: { ok, facts }
 
+import { gateCaller } from '../_shared/callerGate.ts'
+
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -30,6 +32,12 @@ APARTMENT-SICHERHEIT: Wenn es um eine Apartment-Wohnanlage geht und eine Spezifi
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-10): läuft mit verify_jwt=false und war ein
+  // offener Claude-Proxy (bis 8 fremde PDF-URLs, 12000 Tokens). Einziger
+  // Aufrufer: prepare-project-assets (action facts) mit dem Service-Key
+  // (Authorization + apikey). Team-Rollen wie bei den übrigen Deck-Functions.
+  const denied = await gateCaller(req, 'extract-project-facts', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
 
   try {

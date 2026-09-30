@@ -194,3 +194,11 @@ verify_jwt = true
 # false wie live (Befund E4-3), Schutz per gateCaller im Code.
 [functions.hp-floorplan]
 verify_jwt = false
+
+# false wie live (Befund E4-10), Schutz per gateCaller im Code. Die Aufrufer
+# schicken den sb_secret-Key, der kein JWT ist: nicht auf true stellen.
+[functions.extract-project-facts]
+verify_jwt = false
+
+[functions.compose-deck-mail]
+verify_jwt = false

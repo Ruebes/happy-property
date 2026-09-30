@@ -14,6 +14,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { bookingUrl } from '../_shared/bookingLink.ts'
 import { uspBoxHtml } from '../_shared/socialFooter.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 // Terminlink kommt vom Aufrufer (persönlicher Link des Leads, ohne Fragebogen).
@@ -272,6 +273,13 @@ async function verifyClaims(lines: Array<{ kicker?: string; text?: string }>, it
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-10/I4-12): läuft mit verify_jwt=false und hatte
+  // keinen Guard (zwei Claude-Aufrufe je Anfrage, HP-Mail-HTML mit beliebigem
+  // Text). Erlaubt: Service-Key (process-scheduled-messages Deck-Netz),
+  // Team-Rollen admin, verwalter, mitarbeiter (DeckWizard in Pipeline und
+  // LeadDetail), wie guardOk in process-scheduled-messages.
+  const denied = await gateCaller(req, 'compose-deck-mail', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   try {
     const body = await req.json() as { recipient_name?: string; first_name?: string; briefing?: string; angle?: string; items?: MailItem[]; calc_link?: string; calc_label?: string; booking_url?: string }
     const items = (body.items ?? []).filter(it => it && it.link)
