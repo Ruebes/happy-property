@@ -259,9 +259,13 @@ export default function RechnerWizard({ lead, onClose, onDone, editCalc }: { lea
 
         // 3) Ab zwei Objekten IMMER zusätzlich der Vergleich - Sven 18.8.: bei
         //    mehreren Objekten soll der Immobilienvergleich Standard in der Mail sein.
+        // Nur wenn wirklich Objekte dazukamen: bei reiner Werte-Korrektur ist die
+        // bearbeitete Berechnung selbst schon der Vergleich (gleicher Link, neue
+        // Werte). Sonst entstand je Speichern ein doppelter Vergleich, und der
+        // neue Mail-Entwurf ersetzte den offenen Entwurf.
         const allItems = [...kept, ...added]
         let cmpToken: string | null = null
-        if (allItems.length > 1) {
+        if (allItems.length > 1 && added.length > 0) {
           const { data, error } = await supabase.from('property_calculations').insert({
             lead_id: lead.id, recipient_name: recipient, title: 'Immobilienvergleich', with_calc: true,
             content: { with_calc: true, recipient_name: recipient, items: allItems },
