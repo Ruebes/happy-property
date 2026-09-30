@@ -202,3 +202,8 @@ verify_jwt = false
 
 [functions.compose-deck-mail]
 verify_jwt = false
+
+# Stillgelegt (Befund D3-1): antwortet 410 Gone. false wie live;
+# [functions.typeform-webhook] steht oben (ebenfalls false wie live).
+[functions.calendly-status]
+verify_jwt = false

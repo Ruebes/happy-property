@@ -16,6 +16,8 @@
     "meta-ads-sync/index.ts",
     "meta-ads-tools/index.ts",
     "scan-drive-projects/index.ts",
-    "extract-project-facts/index.ts"
+    "extract-project-facts/index.ts",
+    "typeform-webhook/index.ts",
+    "calendly-status/index.ts"
   ]
 }

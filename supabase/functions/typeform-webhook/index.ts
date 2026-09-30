@@ -1,6 +1,15 @@
 // Supabase Edge Function: typeform-webhook
 // Endpunkt für Typeform Webhooks.
 // In Typeform eintragen unter: Connect → Webhooks → Endpoint URL = <supabase-url>/functions/v1/typeform-webhook
+//
+// STILLGELEGT 30.9.26 (Befund D3-1/E3-7): Der Endpunkt nahm ungeprüfte Anfragen an,
+// legte Leads und Deals an und startete die Erstkontakt-Automatik (Mail/WhatsApp
+// an jede angegebene Adresse/Nummer). /termin (funnel-api) ersetzt Typeform; kein
+// Cron, keine Function, kein Frontend ruft ihn auf, 0 Aufrufe in 7 Tagen, letzte
+// Typeform-Aktivität 18.7.26. Jede Anfrage außer OPTIONS bekommt 410 Gone, ohne
+// DB-Zugriff. Die Function bleibt deployt (nicht gelöscht), der alte Code unten
+// bleibt unverändert. Wieder einschalten nur mit Prüfung der Typeform-Signatur
+// (Header Typeform-Signature, HMAC-SHA256 über den Rohtext mit dem Webhook-Secret).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
@@ -9,9 +18,19 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const STILLGELEGT: boolean = true
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
+  }
+  if (STILLGELEGT) {
+    // Nur der Anfang des User-Agents, nie Header-Werte oder Body (personenbezogen).
+    console.warn('[typeform-webhook] stillgelegt, Anfrage mit 410 beantwortet', JSON.stringify({ method: req.method, ua: (req.headers.get('user-agent') ?? '').slice(0, 40) }))
+    return new Response(
+      JSON.stringify({ error: 'gone', note: 'typeform-webhook ist stillgelegt, Anfragen laufen über /termin' }),
+      { status: 410, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
   }
 
   const supabase = createClient(
