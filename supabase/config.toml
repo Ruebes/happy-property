@@ -136,3 +136,6 @@ verify_jwt = true
 
 [functions.hubspot-import]
 verify_jwt = true
+
+[functions.create-zoom-meeting]
+verify_jwt = true
