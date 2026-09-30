@@ -108,3 +108,6 @@ verify_jwt = true
 # MUSS true bleiben (wie google-drive).
 [functions.create-client-drive-folder]
 verify_jwt = true
+
+[functions.construction-update]
+verify_jwt = false
