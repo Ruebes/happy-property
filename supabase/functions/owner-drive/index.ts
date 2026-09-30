@@ -183,28 +183,42 @@ async function uploadFile(token: string, folderId: string, name: string, mime: s
 }
 
 // ── Aufrufer + Kunde ──────────────────────────────────────────────────────────
-async function caller(req: Request, sb: Client): Promise<{ service: boolean; profile: Profile | null }> {
+// authEmail = die im Login-Token bestätigte Adresse (auth.users). profiles.email
+// kann der Nutzer selbst ändern und taugt deshalb NICHT zur Kunden-Zuordnung.
+async function caller(req: Request, sb: Client): Promise<{ service: boolean; profile: Profile | null; authEmail: string }> {
   const jwt = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
-  if (!jwt) return { service: false, profile: null }
-  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return { service: true, profile: null }
+  if (!jwt) return { service: false, profile: null, authEmail: '' }
+  if (jwt === Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')) return { service: true, profile: null, authEmail: '' }
   const { data } = await createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!).auth.getUser(jwt)
   const uid = data?.user?.id
-  if (!uid) return { service: false, profile: null }
+  if (!uid) return { service: false, profile: null, authEmail: '' }
   const { data: prof } = await sb.from('profiles').select('id, role, full_name, email, phone, language').eq('id', uid).maybeSingle()
-  return { service: false, profile: (prof as Profile | null) }
+  return { service: false, profile: (prof as Profile | null), authEmail: lower(data?.user?.email) }
 }
 const isStaff = (p: Profile | null) => ['admin', 'verwalter', 'mitarbeiter'].includes(p?.role ?? '')
 const LEAD_COLS = 'id, first_name, last_name, email, alt_emails, phone, whatsapp, drive_folder_id, drive_folder_url'
 
-/** Lead des eingeloggten Eigentümers: zuerst über profile_id, sonst über die E-Mail. */
-async function leadForProfile(sb: Client, p: Profile): Promise<LeadRow | null> {
+/** Lead des eingeloggten Eigentümers: zuerst über profile_id, sonst über die
+ *  im Login bestätigte E-Mail (authEmail, NICHT profiles.email). */
+async function leadForProfile(sb: Client, p: Profile, authEmail: string): Promise<LeadRow | null> {
   const pick = (rows: LeadRow[]) => rows.find(r => r.drive_folder_id) ?? rows[0] ?? null
   const { data: byId } = await sb.from('leads').select(LEAD_COLS).eq('profile_id', p.id).order('created_at', { ascending: true })
   if (byId?.length) return pick(byId as LeadRow[])
-  const em = lower(p.email)
+  const em = lower(authEmail)
   if (!em) return null
-  const { data: byMail } = await sb.from('leads').select(LEAD_COLS).or(`email.ilike.${em},alt_emails.cs.{"${em}"}`).order('created_at', { ascending: true })
-  return pick((byMail ?? []) as LeadRow[])
+  // Keine Platzhalter/Filter-Syntax in der Adresse zulassen ('%' traf sonst jeden
+  // Lead, ',' hängte eigene Filter an). '_' ist in ILIKE ein Platzhalter → maskieren.
+  if (/[%*,()"{}\\\s]/.test(em)) return null
+  // Zwei getrennte, parametrisierte Abfragen statt eines zusammengesetzten .or()-Strings;
+  // Ergebnis wie bisher nach created_at (ältester zuerst).
+  type Row = LeadRow & { created_at?: string | null }
+  const { data: byMain } = await sb.from('leads').select(`${LEAD_COLS}, created_at`).ilike('email', em.replace(/_/g, '\\_'))
+  const { data: byAlt } = await sb.from('leads').select(`${LEAD_COLS}, created_at`).contains('alt_emails', [em])
+  const seen = new Set<string>()
+  const rows = [...((byMain ?? []) as Row[]), ...((byAlt ?? []) as Row[])]
+    .filter(r => { if (seen.has(r.id)) return false; seen.add(r.id); return true })
+    .sort((a, b) => String(a.created_at ?? '').localeCompare(String(b.created_at ?? '')))
+  return pick(rows)
 }
 /** Kundenordner sicherstellen (legt ihn über create-client-drive-folder an, teilt mit Kunde + Sven). */
 async function ensureFolder(sb: Client, lead: LeadRow): Promise<LeadRow> {
@@ -439,7 +453,7 @@ Deno.serve(async (req) => {
       const { data } = await sb.from('leads').select(LEAD_COLS).eq('id', body.lead_id).maybeSingle()
       lead = data as LeadRow | null
     } else if (p.role === 'eigentuemer') {
-      lead = await leadForProfile(sb, p)
+      lead = await leadForProfile(sb, p, who.authEmail)
     } else return json({ error: 'Keine Berechtigung.' }, 403)
     if (!lead) return json({ ok: true, folder: null, reason: 'no_lead', files: [], can_upload: false })
 
