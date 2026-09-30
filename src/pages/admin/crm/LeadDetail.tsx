@@ -924,12 +924,19 @@ export default function LeadDetail() {
 
       // Zuständige/n als assignee-Zeile (Team intern ODER Geschäftskontakt extern)
       const a = taskForm.assigned_to
+      // channel muss 'mail' heißen (CHECK: system/mail/whatsapp/both), sonst scheitert
+      // das Insert still und niemand wird benachrichtigt.
+      let assigneeOk = true
+      const noteAssigneeErr = (err: { message: string } | null) => {
+        if (err) { console.warn('[LeadDetail] Zuständige/r:', err.message); assigneeOk = false }
+      }
       if (a === 'new' && newPerson.name.trim() && (newPerson.phone.trim() || newPerson.email.trim())) {
         const nm = newPerson.name.trim(), ph = newPerson.phone.trim(), em = newPerson.email.trim()
-        await supabase.from('crm_task_assignees').insert({
+        const { error: aErr } = await supabase.from('crm_task_assignees').insert({
           task_id: taskId, ext_name: nm, ext_email: em || null, ext_phone: ph || null,
-          channel: ph ? 'whatsapp' : 'email', ext_lang: 'de',
+          channel: ph ? 'whatsapp' : 'mail', ext_lang: 'de',
         })
+        noteAssigneeErr(aErr)
         // Person behalten, damit sie beim naechsten Mal in der Auswahl steht.
         const [first, ...rest] = nm.split(' ')
         const { error: cErr } = await supabase.from('crm_business_contacts').insert({
@@ -938,14 +945,16 @@ export default function LeadDetail() {
         })
         if (cErr) console.warn('[LeadDetail] Kontakt merken:', cErr.message)
       } else if (a.startsWith('staff:')) {
-        await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
+        const { error: aErr } = await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
+        noteAssigneeErr(aErr)
       } else if (a.startsWith('biz:')) {
         const b = bizContacts.find(x => x.id === a.slice(4))
         if (b) {
-          await supabase.from('crm_task_assignees').insert({
+          const { error: aErr } = await supabase.from('crm_task_assignees').insert({
             task_id: taskId, ext_name: b.name, ext_email: b.email || null, ext_phone: b.phone || null,
-            channel: b.phone ? 'whatsapp' : 'email', ext_lang: b.lang,
+            channel: b.phone ? 'whatsapp' : 'mail', ext_lang: b.lang,
           })
+          noteAssigneeErr(aErr)
         }
       }
       // Mit diesem Lead verknüpfen (erscheint dann in seinem Aufgaben-Tab)
@@ -956,7 +965,7 @@ export default function LeadDetail() {
       setTaskForm({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
       setNewPerson({ name: '', phone: '', email: '' })
       await loadLeadTasks()
-      showToast(a ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
+      showToast(a && assigneeOk ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveTask:', err)
       showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
