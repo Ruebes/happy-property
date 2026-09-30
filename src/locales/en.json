@@ -6680,7 +6680,13 @@
     "search": {
       "placeholder": "Search: customer, project, page",
       "noResults": "No results",
-      "pages": "Pages"
+      "pages": "Pages",
+      "open": "Open search",
+      "title": "Search",
+      "hint": "Arrow keys select, Enter opens, Esc closes",
+      "shortcutCtrl": "Ctrl K",
+      "filterPages": "Find a page",
+      "loading": "Searching"
     },
     "sidebar": {
       "collapse": "Collapse sidebar",
@@ -6691,13 +6697,26 @@
       "language": "Language",
       "logout": "Sign out",
       "buildId": "Version",
-      "legacyNav": "Old navigation"
+      "legacyNav": "Old navigation",
+      "legacyNavHint": "Switch back to the previous navigation",
+      "loggingOut": "Signing out"
     },
     "badges": {
       "tasksOpen": "{{count}} open tasks",
       "tasksOpen_one": "{{count}} open task",
       "inboxUnread": "{{count}} unread messages",
       "inboxUnread_one": "{{count}} unread message"
+    },
+    "sheet": {
+      "title": "All sections"
+    },
+    "a11y": {
+      "mainNav": "Main navigation",
+      "bottomNav": "Quick navigation",
+      "profileMenu": "Profile menu",
+      "close": "Close",
+      "home": "Go to start page",
+      "skip": "Skip to content"
     }
   }
 }

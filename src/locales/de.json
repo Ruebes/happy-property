@@ -6562,7 +6562,13 @@
     "search": {
       "placeholder": "Suchen: Kunde, Projekt, Seite",
       "noResults": "Keine Treffer",
-      "pages": "Seiten"
+      "pages": "Seiten",
+      "open": "Suche öffnen",
+      "title": "Suche",
+      "hint": "Pfeiltasten wählen, Enter öffnet, Esc schließt",
+      "shortcutCtrl": "Strg K",
+      "filterPages": "Seite suchen",
+      "loading": "Suche läuft"
     },
     "sidebar": {
       "collapse": "Seitenleiste einklappen",
@@ -6573,13 +6579,26 @@
       "language": "Sprache",
       "logout": "Abmelden",
       "buildId": "Version",
-      "legacyNav": "Alte Navigation"
+      "legacyNav": "Alte Navigation",
+      "legacyNavHint": "Zurück zur bisherigen Navigation wechseln",
+      "loggingOut": "Wird abgemeldet"
     },
     "badges": {
       "tasksOpen": "{{count}} offene Aufgaben",
       "tasksOpen_one": "{{count}} offene Aufgabe",
       "inboxUnread": "{{count}} ungelesene Nachrichten",
       "inboxUnread_one": "{{count}} ungelesene Nachricht"
+    },
+    "sheet": {
+      "title": "Alle Bereiche"
+    },
+    "a11y": {
+      "mainNav": "Hauptnavigation",
+      "bottomNav": "Schnellnavigation",
+      "profileMenu": "Profilmenü",
+      "close": "Schließen",
+      "home": "Zur Startseite",
+      "skip": "Zum Inhalt springen"
     }
   }
 }
