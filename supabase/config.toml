@@ -111,3 +111,7 @@ verify_jwt = true
 
 [functions.construction-update]
 verify_jwt = false
+
+# MUSS false bleiben: der Cron schickt keinen JWT, sondern x-cron-secret.
+[functions.nightly-health]
+verify_jwt = false
