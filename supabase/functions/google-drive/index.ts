@@ -6,12 +6,37 @@
 //   create_folder  → Ordner anlegen (optional: unter parent_folder_id)
 //   share_folder   → Ordner mit E-Mail teilen
 //   ensure_root    → Root-Ordner "Happy Property – Deals" sicherstellen (einmalig)
+//
+// Zugriff (Sicherheits-Audit 30.9.2026): NUR System-Aufrufe mit dem Service-Key
+// (einziger Aufrufer: task-notify über _shared/lotte.ts → import_images) oder ein
+// eingeloggter Admin. Vorher lief jede Aktion ohne Prüfung, und verify_jwt=true
+// lässt den öffentlichen Publishable Key durch.
+// Deploy OHNE --no-verify-jwt (verify_jwt=true muss bleiben, siehe isServiceViaGateway).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+// System-Aufruf mit dem Service-Key, auch wenn das Gateway ihn umgeschrieben hat.
+// Diese Function läuft mit verify_jwt=true: das Gateway hat die Signatur eines
+// Bearer-JWT bereits geprüft und kann einen sb_secret-Key durch einen selbst
+// ausgestellten service_role-JWT ersetzen ("minted"). Deshalb zählt hier auch ein
+// JWT mit role=service_role. ACHTUNG: dieser Zweig ist NUR sicher, solange
+// verify_jwt=true bleibt; mit --no-verify-jwt wäre der Payload fälschbar.
+function isServiceViaGateway(req: Request): boolean {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  if (safeEqual(req.headers.get('apikey') ?? '', key)) return true
+  const parts = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim().split('.')
+  if (parts.length !== 3 || !parts[1]) return false
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(b64 + '='.repeat((4 - b64.length % 4) % 4))) as { role?: unknown }
+    return payload.role === 'service_role'
+  } catch { return false }
 }
 
 // ── OAuth: Access Token via Refresh Token holen ───────────────────────────────
@@ -257,6 +282,12 @@ async function ensureRootFolder(token: string, supabase: ReturnType<typeof creat
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
+  }
+
+  // ── Aufrufer prüfen (vor allem anderen, auch vor sa_email) ──────────────────
+  if (!isServiceViaGateway(req)) {
+    const caller = await authorizeCaller(req, { service: true, roles: ['admin'] }, corsHeaders)
+    if (caller instanceof Response) return caller
   }
 
   try {

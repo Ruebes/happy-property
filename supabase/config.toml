@@ -100,3 +100,7 @@ verify_jwt = false
 
 [functions.subscriber-optin]
 verify_jwt = false
+
+# MUSS true bleiben: isServiceViaGateway vertraut dem vom Gateway geprüften service_role-JWT.
+[functions.google-drive]
+verify_jwt = true
