@@ -33,6 +33,30 @@ const json = (b: unknown, s = 200) =>
 const APP_URL = Deno.env.get('APP_URL') ?? 'https://portal.happy-property.com'
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+type Profil = { id: string; email: string; full_name: string | null; role: string; language: string | null }
+type Admin = ReturnType<typeof createClient>
+
+// Profil zur Adresse suchen (Groß/Klein egal). '_' ist in ILIKE ein Platzhalter
+// und wird maskiert; bei ZWEI Treffern ist die Zuordnung mehrdeutig (profiles.email
+// kann der Nutzer selbst ändern) → der Aufrufer bricht ab statt zu raten.
+async function profilesByEmail(admin: Admin, email: string): Promise<Profil[]> {
+  const { data } = await admin.from('profiles')
+    .select('id, email, full_name, role, language').ilike('email', email.replace(/_/g, '\\_')).limit(2)
+  return (data ?? []) as Profil[]
+}
+
+// Auth-User per E-Mail über ALLE Seiten suchen (wie create-eigentuemer-access).
+async function findAuthUserByEmail(admin: Admin, email: string): Promise<{ id: string } | null> {
+  for (let page = 1; page <= 20; page++) {
+    const { data } = await admin.auth.admin.listUsers({ page, perPage: 1000 })
+    const users = (data?.users ?? []) as Array<{ id: string; email?: string | null }>
+    const hit = users.find(u => (u.email ?? '').trim().toLowerCase() === email)
+    if (hit) return { id: hit.id }
+    if (users.length < 1000) break
+  }
+  return null
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
 
@@ -41,6 +65,11 @@ Deno.serve(async (req: Request) => {
       { property_id?: string; email?: string; full_name?: string }
     const email = (rawEmail ?? '').trim().toLowerCase()
     if (!property_id || !email) return json({ error: 'property_id und email sind Pflichtfelder' }, 400)
+    // Keine Platzhalter/Filter-Zeichen: '%' oder '*' hätten in der Konto-Suche
+    // beliebige fremde Konten getroffen.
+    if (/[%*,()"{}\\\s]/.test(email) || !/^[^@]+@[^@]+\.[^@]+$/.test(email)) {
+      return json({ error: 'Bitte eine gültige E-Mail-Adresse angeben' }, 400)
+    }
 
     const url     = Deno.env.get('SUPABASE_URL')!
     const service = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -78,11 +107,27 @@ Deno.serve(async (req: Request) => {
     const wohnung = [prop.project_name, prop.unit_number].filter(Boolean).join(' · ') || 'deine Wohnung'
 
     // ── Konto der eingeladenen Person ────────────────────────────────────────
-    const { data: profRow } = await admin.from('profiles')
-      .select('id, email, full_name, role, language').ilike('email', email).maybeSingle()
-    let profil = profRow as { id: string; email: string; full_name: string | null; role: string; language: string | null } | null
+    const treffer = await profilesByEmail(admin, email)
+    if (treffer.length > 1) {
+      // Mehrdeutig: NICHTS anfassen (sonst träfe die Anlage unten ein fremdes Konto).
+      return json({ error: `Zu ${email} gibt es mehrere Konten. Bitte Happy Property kontaktieren.`, code: 'MEHRDEUTIG' }, 409)
+    }
+    let profil: Profil | null = treffer[0] ?? null
 
     let status: 'neu' | 'bestand' = 'bestand'
+
+    if (!profil) {
+      // Kein Profil unter dieser Adresse. Gibt es trotzdem schon einen Login mit
+      // genau dieser Adresse (Profil-Adresse wurde geändert), dessen Profil nehmen:
+      // create-eigentuemer-access würde dort Passwort und Rolle überschreiben.
+      const authUser = await findAuthUserByEmail(admin, email)
+      if (authUser) {
+        const { data: byId } = await admin.from('profiles')
+          .select('id, email, full_name, role, language').eq('id', authUser.id).maybeSingle()
+        const p = byId as Profil | null
+        if (p) profil = { ...p, email }   // Einladung geht an die eingegebene (Login-)Adresse
+      }
+    }
 
     if (!profil) {
       // Kein Konto vorhanden → Portal-Zugang über die bestehende Function anlegen
@@ -92,11 +137,12 @@ Deno.serve(async (req: Request) => {
         headers: { Authorization: `Bearer ${service}`, apikey: service, 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, full_name: (full_name ?? '').trim() || email }),
       })
-      const out = await res.json().catch(() => ({})) as { error?: string }
+      const out = await res.json().catch(() => ({})) as { error?: string; userId?: string }
       if (!res.ok) return json({ error: `Zugang konnte nicht angelegt werden: ${out.error ?? res.status}` }, 502)
-      const { data: neu } = await admin.from('profiles')
-        .select('id, email, full_name, role, language').ilike('email', email).maybeSingle()
-      profil = neu as typeof profil
+      const { data: neu } = out.userId
+        ? await admin.from('profiles').select('id, email, full_name, role, language').eq('id', out.userId).maybeSingle()
+        : { data: (await profilesByEmail(admin, email))[0] ?? null }
+      profil = neu as Profil | null
       if (!profil) return json({ error: 'Konto wurde angelegt, konnte aber nicht gefunden werden' }, 500)
       status = 'neu'
     } else if (profil.role !== 'eigentuemer') {

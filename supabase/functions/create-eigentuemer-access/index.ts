@@ -237,7 +237,8 @@ Deno.serve(async (req: Request) => {
         const caller = jwt
           ? (await createClient(guardUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '').auth.getUser(jwt)).data.user
           : null
-        if (!caller) { console.warn(`[create-eigentuemer-access] Guard: kein Caller — jwt=${jwt.slice(0, 16)}… len=${jwt.length}, svc=${(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '').slice(0, 16)}…`); return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: respHdr }) }
+        // Keine Token-/Key-Teile loggen (landeten vorher im Klartext in den Function-Logs).
+        if (!caller) { console.warn('[create-eigentuemer-access] Guard: kein gültiger Aufrufer'); return new Response(JSON.stringify({ error: 'Nicht autorisiert' }), { status: 401, headers: respHdr }) }
         const guardAdmin = createClient(guardUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
         const { data: cProf } = await guardAdmin.from('profiles').select('role').eq('id', caller.id).maybeSingle()
         if ((cProf as { role?: string } | null)?.role !== 'admin') {
@@ -263,6 +264,30 @@ Deno.serve(async (req: Request) => {
 
     // Prüfen ob User bereits existiert (paginiert — findet auch Nutzer > Seite 1)
     const existingUser = await findAuthUserByEmail(adminClient, email)
+
+    // Bestehendes Konto mit ANDERER Rolle (admin, verwalter, mitarbeiter, funnel,
+    // feriengast) niemals anfassen: sonst würden Passwort und Rolle überschrieben
+    // und die Person (im schlimmsten Fall der einzige Admin) wäre ausgesperrt.
+    // Prüfung VOR updateUserById, damit auch das Passwort unberührt bleibt.
+    // Bestehende Eigentümer (erneuter Versand) und Logins ohne Profil laufen wie bisher.
+    if (existingUser) {
+      const { data: exProf, error: exErr } = await adminClient.from('profiles').select('role').eq('id', existingUser.id).maybeSingle()
+      if (exErr) {
+        return new Response(JSON.stringify({ error: `Bestehendes Konto konnte nicht geprüft werden: ${exErr.message}` }),
+          { status: 503, headers: { ...CORS, 'Content-Type': 'application/json' } })
+      }
+      const exRole = (exProf as { role?: string | null } | null)?.role ?? null
+      if (exRole && exRole !== 'eigentuemer') {
+        console.warn(`[create-eigentuemer-access] Abgebrochen: bestehendes Konto mit Rolle ${exRole}`)
+        return new Response(
+          JSON.stringify({
+            error: `Für ${email} existiert bereits ein Konto mit der Rolle ${exRole}. Passwort und Rolle wurden nicht geändert. Bitte eine andere Adresse verwenden.`,
+            code: 'ROLLE_BELEGT',
+          }),
+          { status: 409, headers: { ...CORS, 'Content-Type': 'application/json' } }
+        )
+      }
+    }
 
     if (existingUser) {
       // Passwort aktualisieren + needs_password_setup setzen
