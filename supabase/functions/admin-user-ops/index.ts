@@ -163,20 +163,31 @@ Deno.serve(async (req: Request) => {
       // Schnelle Prüfung per profiles-Tabelle statt listUsers
       const { data: existingProfile } = await admin
         .from('profiles')
-        .select('id')
+        .select('id, role')
         .eq('email', email)
         .maybeSingle()
 
       let userId: string
 
       if (existingProfile) {
-        // User existiert → Passwort aktualisieren
+        const ex = existingProfile as { id: string; role?: string | null }
+        // Bestehendes Konto mit ANDERER Rolle: nichts anfassen (kein neues Passwort,
+        // keine Rolle, keine Daten). Sonst wurde z.B. ein Eigentümer zum Mitarbeiter,
+        // verlor IBAN/Adresse, oder der Admin war ausgesperrt. Prüfung VOR dem Passwort.
+        if ((ex.role ?? '') !== role) {
+          return json({
+            error: `Für ${email} gibt es bereits einen Zugang mit der Rolle ${ex.role ?? 'unbekannt'}. Passwort, Rolle und Daten wurden nicht geändert.`,
+            code: 'ROLLE_BELEGT',
+          }, 409)
+        }
+        // Gleiche Rolle = erneute Einladung: neues Passwort wie bisher (die Aufrufer
+        // verschicken genau dieses Passwort in der Zugangs-Mail).
         const { error } = await admin.auth.admin.updateUserById(
-          (existingProfile as { id: string }).id,
+          ex.id,
           { password, user_metadata: { full_name, needs_password_setup: true } },
         )
         if (error) throw error
-        userId = (existingProfile as { id: string }).id
+        userId = ex.id
       } else {
         // Neuen User anlegen
         const { data: created, error } = await admin.auth.admin.createUser({
@@ -189,7 +200,29 @@ Deno.serve(async (req: Request) => {
         userId = created.user.id
       }
 
-      // Profil anlegen / aktualisieren
+      // Bestehendes Profil (erneute Einladung, gleiche Rolle): nur übergebene, nicht
+      // leere Werte schreiben, nie die Rolle, nie null. Vorher löschte eine erneute
+      // Einladung ohne diese Felder Telefon, Adresse und Bankdaten, und ein leeres
+      // Rechte-Objekt ({} = nichts angehakt) setzte alle Rechte zurück.
+      if (existingProfile) {
+        const patch: Record<string, unknown> = { full_name, is_active: true }
+        const optional: Record<string, unknown> = {
+          phone, address_street, address_zip, address_city, address_country, iban, bic, bank_account_holder,
+        }
+        for (const [k, v] of Object.entries(optional)) {
+          if (typeof v === 'string' && v.trim()) patch[k] = v
+        }
+        if (typeof body.language === 'string' && body.language) patch.language = body.language
+        if (permissions && typeof permissions === 'object' && Object.keys(permissions).length > 0) patch.permissions = permissions
+        const { error: patchErr } = await admin.from('profiles').update(patch).eq('id', userId)
+        if (patchErr) throw new Error(patchErr.message)
+
+        let emailedEx = false
+        if (send_access_email) emailedEx = await sendAccessEmail(full_name, email, password)
+        return json({ success: true, userId, password, emailed: emailedEx })
+      }
+
+      // Neues Konto: Profil anlegen (unverändert)
       const { error: profileErr } = await admin.from('profiles').upsert({
         id:                  userId,
         email,
