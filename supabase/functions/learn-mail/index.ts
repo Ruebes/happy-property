@@ -8,6 +8,7 @@
 // Antwort: { ok, rules: [string] }  (gespeichert, wenn save !== false und etwas Generalisierbares da war)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -36,6 +37,10 @@ Gib 0 bis 3 Regeln aus. Wenn die Änderung KEINE verallgemeinerbare Vorliebe zei
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz: schreibt globale Stilregeln (deck_ai_rules) und kostet KI.
+  // Einziger Aufrufer ist der Postausgang (Route: Admin/Verwalter, Mitarbeiter mit pipeline).
+  const denied = await gateCaller(req, 'learn-mail', { service: true, roles: ['admin', 'verwalter'], perms: ['pipeline'] }, CORS)
+  if (denied) return denied
   try {
     const body = await req.json() as { before?: string; after?: string; save?: boolean }
     const before = stripHtml(body.before ?? '').slice(0, 6000)
