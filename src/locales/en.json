@@ -439,7 +439,8 @@
     "types": {
       "villa": "Villa",
       "apartment": "Apartment",
-      "studio": "Studio"
+      "studio": "Studio",
+      "townhouse": "Townhouse"
     },
     "bedrooms": "Bedrooms",
     "bedroomsStudio": "Studio (0)",
@@ -1278,7 +1279,9 @@
       "detach": "Detach",
       "detachTitle": "Detach property from customer (deletes portal object, unit becomes available again)",
       "detached": "✅ Property detached from customer",
-      "detachFailed": "Detach failed"
+      "detachFailed": "Detach failed",
+      "confirmMove": "“{{label}}” currently belongs to {{from}}. Really move it to {{to}}?\n\nThe previous owner loses portal access; invited co-owners of this unit are removed.",
+      "currentOwner": "current: {{name}}"
     },
     "invite": {
       "emailSent": "Invitation email will be sent automatically",
@@ -1312,7 +1315,8 @@
       "resetFailed": "Reset failed"
     },
     "toast": {
-      "createdCredentialsSent": "User created – login credentials sent to {{email}}."
+      "createdCredentialsSent": "User created – login credentials sent to {{email}}.",
+      "unitAssignFailed": "User created, but the unit could not be assigned. Please assign it in the customer file."
     },
     "confirm": {
       "quickResetPassword": "Generate a new password for {{name}} and email it to them?"
@@ -3304,7 +3308,9 @@
       "unitDeleteConfirm": "Really delete unit {{n}}?",
       "confirmDeletePayment": "Really delete this payment?",
       "unitDelete": "Delete unit",
-      "plot": "plot"
+      "plot": "plot",
+      "unitOwnedByOther": "This unit already belongs to another customer in the owner portal. Please detach it there first.",
+      "unitPropertyHasData": "The portal property of this unit still holds {{count}} entries (documents, contracts, income, bookings). Please use “Detach from customer” on the property first."
     },
     "prep": {
       "startingSoon": "Appointment starting soon",
@@ -5217,7 +5223,11 @@
     "uploadMailSubject": "New file in your Happy Property portal",
     "uploadingImages": "⏳ Uploading…",
     "errNoProjectSelected": "No project selected",
-    "detachShort": "Detach"
+    "detachShort": "Detach",
+    "toastUnitRemovedForeignKept": "Assignment removed. The portal property belongs to another customer and was kept.",
+    "unitTakenByOther": "This unit is already assigned to another customer and cannot be taken over here.",
+    "portalMailNotSent": "The email with the login details was not delivered. The password is shown in the window.",
+    "archivedPurchasesTitle": "Completed purchases (archived)"
   },
   "rechnung": {
     "notFound": "This calculation could not be found.",
