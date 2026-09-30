@@ -100,10 +100,6 @@ alter table public.deck_assets_backup disable row level security;
 -- ── S1-13 (vorher: reloptions leer) ────────────────────────────────────────
 alter view public.deck_facts_resolved reset (security_invoker);
 
--- ── F2b-4 / F2a-7 ──────────────────────────────────────────────────────────
-alter policy crm_unit_docs_eigentuemer_delete on public.crm_unit_documents
-  using ((unit_id IN ( SELECT hp_owner_unit_ids() AS hp_owner_unit_ids)));
-
 -- ── S1-18 ──────────────────────────────────────────────────────────────────
 alter policy task_assignee_write on public.crm_task_assignees
   with check (((EXISTS ( SELECT 1

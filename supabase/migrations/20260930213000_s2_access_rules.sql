@@ -42,15 +42,13 @@
 -- S1-12: siehe E5-18.
 -- I4-23: fester search_path = public, pg_temp für get_calculation_by_token, get_calculation_lang, get_deck_lang, get_contract_for_signing, sign_contract, claim_deck_jobs, claim_workflow_runs (Rückgabe unverändert).
 -- S1-2: handle_new_user setzt die Rolle immer auf 'eigentuemer' (nie mehr aus Signup-Metadaten); admin-user-ops und create-eigentuemer-access setzen die echte Rolle danach per Service-Role-Upsert.
--- F2b-4: Eigentümer dürfen in crm_unit_documents nur noch selbst hochgeladene Zeilen löschen (wie die Oberfläche); Admin/Verwalter/Pipeline-Mitarbeiter unverändert; Storage-Policy bleibt.
--- F2a-7: siehe F2b-4.
 -- S1-18: Aufgaben: sich selbst als Beteiligten eintragen nur, wenn man schon Beteiligter ist (Ersteller trägt weiter jeden ein); Chat-Nachrichten nur von Beteiligten; an Nachrichten dürfen Eingeloggte nur noch read_at/notified_at ändern (keine verschobenen/gefälschten Nachrichten); parent_task_id lässt sich nach dem Anlegen nicht mehr auf eine andere Aufgabe umhängen (Service-Role/SQL-Editor ausgenommen, Lösen auf NULL erlaubt).
 --
 -- Bewusst NICHT in dieser Migration (Svens Entscheidung, siehe Übergabe):
 --   * F8-38: Eigentümer/Miteigentümer lesen die ganze Zeile ihrer Verwaltung (inkl. notes), weil die Objektseite
 --     (PropertyDetail) Adresse/Kontakt einbettet. Abweichung von „nur Team“, braucht Svens OK; heute keine Notizen gespeichert.
---   * F2b-4/F2a-7: Storage-Policy unit_docs_eigentuemer_delete bleibt; Eigentümer können die Datei eines vom Admin
---     hochgeladenen Einheiten-Dokuments weiter aus dem Bucket löschen (Zahlungsbelege pay-/inv- brauchen das).
+--   * F2b-4/F2a-7: Eigentümer dürfen weiter jedes Dokument ihrer eigenen Wohnung löschen (Tabelle und Datei).
+--     Das ist Svens Entscheidung vom 22.8.2026 (Commit 4219cda) und bleibt unverändert.
 --   * S1-2: Selbstregistrierung ist noch an (disable_signup=false); nur im Supabase-Dashboard abschaltbar.
 --   * S1-8: Pipeline-Repo-Migrationen 0008/0014/0016 setzen app_authenticated_all bei erneutem Lauf wieder auf true.
 --   * S1-7/F9-1: bisher lesbare Tokens (Partner-Links, Termin-Manage-Tokens) bleiben gültig; neu ausstellen = Entscheidung.
@@ -243,13 +241,6 @@ alter table public.deck_assets_backup enable row level security;
 
 -- ── S1-13: View mit den Rechten des Aufrufers ──────────────────────────────
 alter view public.deck_facts_resolved set (security_invoker = true);
-
--- ── F2b-4 / F2a-7: Eigentümer löschen nur eigene Uploads ───────────────────
-alter policy crm_unit_docs_eigentuemer_delete on public.crm_unit_documents
-  using (
-    uploaded_by = (select auth.uid())
-    and unit_id in (select public.hp_owner_unit_ids())
-  );
 
 -- ── S1-18: Aufgaben-Beteiligung nicht selbst erschleichen ──────────────────
 -- USING bleibt: Annehmen (accepted_at), eigene Zeile entfernen, Ersteller-Pflege.
