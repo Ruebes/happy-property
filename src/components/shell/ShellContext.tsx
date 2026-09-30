@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { Profile } from '../../lib/permissions'
+import { landingFor, type Profile } from '../../lib/permissions'
 
 // Zähler an Menüeinträgen (NavEntry.badge). Eine Quelle für Sidebar,
 // Telefon-Leiste und Mehr-Blatt: der Hook useNavBadges, verteilt über den
@@ -42,7 +42,9 @@ export const PaletteBridgeContext = createContext<PaletteBridge | null>(null)
 // das Abmelden überleben.
 export const LS_SIDEBAR = 'hp_sidebar'      // 'rail' | 'full'
 export const LS_NAVGROUPS = 'hp_navgroups'  // JSON-Liste eingeklappter Gruppen
-export const LS_SHELL = 'hp_shell'          // 'off' = alte Navigation
+// Der Notschalter hp_shell ('off' = alte Navigation) steht in
+// src/lib/shellSwitch.ts, damit die Weiche (ShellGate) und die alte Navigation
+// ihn ohne Shell-Code kennen.
 
 export function readLocal(key: string): string | null {
   try { return localStorage.getItem(key) } catch { return null }
@@ -55,6 +57,18 @@ export function writeLocal(key: string, value: string): void {
 // Höhe der Telefon-Leiste ohne Safe-Area (Tailwind h-14). ShellFrame setzt
 // daraus --hp-bottom-offset, globals.css schiebt Toasts um diesen Wert hoch.
 export const BOTTOM_BAR_PX = 56
+
+// Höhe der oberen Leiste (Tailwind h-14). Die AppShell setzt daraus
+// scroll-padding-top, damit Sprungziele nicht unter der Leiste landen.
+export const TOP_BAR_PX = 56
+
+// Ziel des Logos in der Shell. Für Admin fest die CRM-Übersicht: roleToPath
+// liest noch 'admin_view' (Umschalter CRM | Verwaltung der alten Navigation),
+// den es in der Shell nicht mehr gibt. Ein alter Wert würde das Logo sonst
+// dauerhaft auf die Portal-Übersicht legen.
+export function shellHome(profile: Profile): string {
+  return profile.role === 'admin' ? '/admin/crm' : landingFor(profile)
+}
 
 // Zähler eines Menüeintrags (0, wenn der Eintrag kein Badge trägt)
 export function badgeCount(entry: { badge?: keyof NavBadges }, badges: NavBadges): number {

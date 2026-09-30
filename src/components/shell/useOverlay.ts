@@ -50,7 +50,12 @@ export function useOverlay(panelRef: RefObject<HTMLElement>, onClose: () => void
       const first = items[0]
       const last = items[items.length - 1]
       const active = document.activeElement
-      if (!panel.contains(active)) {
+      if (active === panel) {
+        // Fokus liegt auf dem Overlay selbst (Mehr-Blatt direkt nach dem Öffnen):
+        // ohne diese Zeile liefe Umschalt+Tab aus dem Overlay heraus.
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      } else if (!panel.contains(active)) {
         e.preventDefault()
         first.focus()
       } else if (e.shiftKey && active === first) {

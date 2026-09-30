@@ -26,6 +26,8 @@ const REQUIRED = [
   'drive', 'key', 'rules', 'confirmation', 'chat', 'user', 'search', 'more', 'menu', 'close',
   'chevronDown', 'chevronRight', 'chevronLeft', 'sidebarCollapse', 'sidebarExpand', 'logout', 'globe',
   'externalLink', 'unit', 'clock', 'check', 'enter',
+  // nach dem Vertrag ergänzt: Upload-Knopf in der oberen Leiste (Telefon, Admin)
+  'upload',
 ]
 
 const ARGS = { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 }

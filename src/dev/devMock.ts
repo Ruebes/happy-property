@@ -7,7 +7,7 @@
 // an Supabase laufen ohne Anmeldung und liefern leer oder einen Fehler.
 import { PERMISSION_AREAS, type PermissionArea, type Profile, type UserRole } from '../lib/permissions'
 
-// sessionStorage-Schlüssel der Mock-Anmeldung. App.tsx und AppShell.tsx fragen
+// sessionStorage-Schlüssel der Mock-Anmeldung. App.tsx und ShellGate.tsx fragen
 // hp_mock_role direkt ab (hinter import.meta.env.DEV), weil sie diesen Ordner
 // nicht statisch importieren dürfen.
 export const MOCK_ROLE_KEY = 'hp_mock_role'

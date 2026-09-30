@@ -3,8 +3,8 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ROLE_META, type Profile } from '../../lib/permissions'
 import { signOutAndReset } from '../../lib/session'
+import { switchToLegacyNav } from '../../lib/shellSwitch'
 import Icon from './Icon'
-import { LS_SHELL, writeLocal } from './ShellContext'
 
 interface ProfileMenuProps {
   profile: Profile
@@ -28,12 +28,6 @@ export function readBuildId(): string {
   try {
     return document.querySelector('meta[name="hp-build"]')?.getAttribute('content') ?? ''
   } catch { return '' }
-}
-
-// Notschalter: zurück zur alten Navigation. Setzt hp_shell = 'off' und lädt neu.
-export function switchToLegacyNav(): void {
-  writeLocal(LS_SHELL, 'off')
-  window.location.reload()
 }
 
 const ITEM =
@@ -128,7 +122,7 @@ export default function ProfileMenu({ profile }: ProfileMenuProps) {
 
           {buildId && (
             <p
-              className="border-t border-gray-100 px-4 pb-1.5 pt-2 text-[10px] font-body tabular-nums text-gray-400 select-all"
+              className="border-t border-gray-100 px-4 pb-1.5 pt-2 text-[10px] font-body tabular-nums text-gray-500 select-all"
               title={t('nav.buildIdTitle')}
             >
               {t('shell.profile.buildId')} {buildId}

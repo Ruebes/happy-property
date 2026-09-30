@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { groupedNav, type NavEntry, type NavGroupId } from '../../lib/navigation'
-import { landingFor, type Profile } from '../../lib/permissions'
+import type { Profile } from '../../lib/permissions'
 import Icon from './Icon'
 import {
-  LS_NAVGROUPS, badgeCount, formatBadge, readLocal, writeLocal, type NavBadges,
+  LS_NAVGROUPS, badgeCount, formatBadge, readLocal, shellHome, writeLocal, type NavBadges,
 } from './ShellContext'
 
 interface SidebarProps {
@@ -15,9 +15,12 @@ interface SidebarProps {
   activeId: string | null
   // true = volle Breite mit Beschriftung, false = schmale Icon-Leiste
   expanded: boolean
-  // Umschalter nur zeigen, wo die volle Breite möglich ist (ab xl)
-  canToggle: boolean
+  // true = ausgeklappt ÜBER dem Inhalt (md bis xl, vorübergehend). Die Leiste
+  // liegt dann eine Ebene höher, ShellFrame legt einen Hintergrund darunter.
+  overlay: boolean
   onToggle: () => void
+  // Klick auf einen Eintrag oder das Logo (schließt die übergelegte Leiste)
+  onNavigate: () => void
 }
 
 // Gruppen mit mehr Einträgen als diesem Wert lassen sich einklappen
@@ -32,10 +35,11 @@ function readCollapsedGroups(): NavGroupId[] {
 
 const FOCUS_RING = 'focus:outline-none focus-visible:ring-2 focus-visible:ring-hp-cream/70'
 
-// Seitenleiste ab md: Navy-Fläche, cremefarbene Schrift. Aktiver Eintrag =
-// leicht aufgehellte Fläche plus 3 px Korall-Balken links und Korall-Icon.
-// Korall bleibt damit reiner Akzent, nie Fläche.
-export default function Sidebar({ profile, badges, activeId, expanded, canToggle, onToggle }: SidebarProps) {
+// Seitenleiste ab md: Navy-Fläche, cremefarbene Schrift. Links kommt die
+// Safe-Area dazu (iPhone quer: die Leiste rutscht nicht unter die Notch).
+// Aktiver Eintrag = leicht aufgehellte Fläche plus 3 px Korall-Balken links und
+// Korall-Icon. Korall bleibt damit reiner Akzent, nie Fläche.
+export default function Sidebar({ profile, badges, activeId, expanded, overlay, onToggle, onNavigate }: SidebarProps) {
   const { t } = useTranslation()
   const [collapsed, setCollapsed] = useState<NavGroupId[]>(readCollapsedGroups)
   const navRef = useRef<HTMLElement>(null)
@@ -72,6 +76,7 @@ export default function Sidebar({ profile, badges, activeId, expanded, canToggle
         <li key={entry.id}>
           <Link
             to={entry.path}
+            onClick={onNavigate}
             title={badgeText ? `${label} (${badgeText})` : label}
             aria-label={badgeText ? `${label}, ${badgeText}` : label}
             aria-current={active ? 'page' : undefined}
@@ -91,6 +96,7 @@ export default function Sidebar({ profile, badges, activeId, expanded, canToggle
       <li key={entry.id}>
         <Link
           to={entry.path}
+          onClick={onNavigate}
           aria-current={active ? 'page' : undefined}
           className={`relative mx-2 flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium font-body transition-colors ${FOCUS_RING} ${
             active ? 'bg-hp-cream/10 text-hp-cream' : 'text-hp-cream/80 hover:bg-hp-cream/[0.06] hover:text-hp-cream'
@@ -115,14 +121,15 @@ export default function Sidebar({ profile, badges, activeId, expanded, canToggle
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-30 hidden flex-col bg-hp-navy text-hp-cream transition-[width] duration-200 md:flex ${
-        expanded ? 'w-64' : 'w-16'
-      }`}
+      className={`fixed inset-y-0 left-0 hidden flex-col bg-hp-navy pl-[env(safe-area-inset-left)] text-hp-cream transition-[width] duration-200 md:flex ${
+        expanded ? 'w-[calc(16rem+env(safe-area-inset-left))]' : 'w-[calc(4rem+env(safe-area-inset-left))]'
+      } ${overlay ? 'z-40 shadow-2xl' : 'z-30'}`}
     >
       {/* Logo */}
       <div className={`flex h-14 shrink-0 items-center border-b border-hp-cream/10 ${expanded ? 'px-4' : 'justify-center'}`}>
         <Link
-          to={landingFor(profile)}
+          to={shellHome(profile)}
+          onClick={onNavigate}
           aria-label={t('shell.a11y.home')}
           title={expanded ? undefined : t('app.name')}
           className={`flex min-w-0 items-center gap-3 rounded-lg ${FOCUS_RING}`}
@@ -136,7 +143,7 @@ export default function Sidebar({ profile, badges, activeId, expanded, canToggle
       <nav
         ref={navRef}
         aria-label={t('shell.a11y.mainNav')}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-2 [scrollbar-color:rgba(255,252,246,0.25)_transparent] [scrollbar-width:thin]"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain py-2 [scrollbar-color:theme(colors.hp-cream/25%)_transparent] [scrollbar-width:thin]"
       >
         {groups.map(({ group, entries }, index) => {
           const groupLabel = t(group.labelKey)
@@ -174,23 +181,25 @@ export default function Sidebar({ profile, badges, activeId, expanded, canToggle
         })}
       </nav>
 
-      {/* Ein- und Ausklappen (nur ab xl, darunter ist die Leiste immer schmal) */}
-      {canToggle && (
-        <div className="shrink-0 border-t border-hp-cream/10 p-2">
-          <button
-            type="button"
-            onClick={onToggle}
-            aria-label={t(expanded ? 'shell.sidebar.collapse' : 'shell.sidebar.expand')}
-            title={expanded ? undefined : t('shell.sidebar.expand')}
-            className={`flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium font-body text-hp-cream/70 transition-colors hover:bg-hp-cream/[0.06] hover:text-hp-cream ${FOCUS_RING} ${
-              expanded ? 'w-full px-3' : 'mx-auto w-10 justify-center'
-            }`}
-          >
-            <Icon name={expanded ? 'sidebarCollapse' : 'sidebarExpand'} size={18} className="shrink-0" />
-            {expanded && <span className="truncate">{t('shell.sidebar.collapse')}</span>}
-          </button>
-        </div>
-      )}
+      {/* Ein- und Ausklappen. Ab xl schiebt die volle Leiste den Inhalt zur Seite
+          (gemerkt in hp_sidebar). Von md bis xl klappt sie vorübergehend über
+          den Inhalt: So sind die Beschriftungen auch auf Tablets erreichbar,
+          wo es kein Überfahren mit der Maus gibt. */}
+      <div className="shrink-0 border-t border-hp-cream/10 p-2">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={t(expanded ? 'shell.sidebar.collapse' : 'shell.sidebar.expand')}
+          title={expanded ? undefined : t('shell.sidebar.expand')}
+          className={`flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium font-body text-hp-cream/70 transition-colors hover:bg-hp-cream/[0.06] hover:text-hp-cream ${FOCUS_RING} ${
+            expanded ? 'w-full px-3' : 'mx-auto w-10 justify-center'
+          }`}
+        >
+          <Icon name={expanded ? 'sidebarCollapse' : 'sidebarExpand'} size={18} className="shrink-0" />
+          {expanded && <span className="truncate">{t('shell.sidebar.collapse')}</span>}
+        </button>
+      </div>
     </aside>
   )
 }

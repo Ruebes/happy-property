@@ -4,9 +4,10 @@ import { useTranslation } from 'react-i18next'
 import { groupedNav, type NavEntry } from '../../lib/navigation'
 import type { Profile } from '../../lib/permissions'
 import { signOutAndReset } from '../../lib/session'
+import { switchToLegacyNav } from '../../lib/shellSwitch'
 import LanguageSwitcher from '../LanguageSwitcher'
 import Icon from './Icon'
-import { readBuildId, switchToLegacyNav } from './ProfileMenu'
+import { readBuildId } from './ProfileMenu'
 import { badgeCount, formatBadge, type NavBadges } from './ShellContext'
 import { searchPages } from './navSearch'
 import { useOverlay } from './useOverlay'
@@ -71,7 +72,7 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
           {active && <span aria-hidden="true" className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r-full bg-hp-highlight" />}
           <Icon name={entry.icon} size={20} className={`shrink-0 ${active ? 'text-hp-highlight' : 'text-gray-400'}`} />
           <span className="min-w-0 flex-1 truncate">{label}</span>
-          {sublabel && <span className="shrink-0 text-xs font-normal text-gray-400">{sublabel}</span>}
+          {sublabel && <span className="shrink-0 text-xs font-normal text-gray-500">{sublabel}</span>}
           {count > 0 && (
             <span
               title={badgeText}
@@ -134,7 +135,7 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
               placeholder={t('shell.search.filterPages')}
               aria-label={t('shell.search.filterPages')}
               autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent text-base font-body text-hp-black placeholder:text-gray-400 focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-base font-body text-hp-black placeholder:text-gray-500 focus:outline-none"
             />
           </label>
         </div>
@@ -151,7 +152,7 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
             groups.map(({ group, entries }) => (
               <section key={group.id} aria-label={t(group.labelKey)}>
                 {group.id !== 'start' && (
-                  <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+                  <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-500">
                     {t(group.labelKey)}
                   </p>
                 )}
@@ -165,12 +166,12 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
             <Link to="/profile" onClick={onClose} className={`${ROW} ${activeId === 'profile' ? ROW_ACTIVE : ROW_IDLE}`}>
               <Icon name="user" size={20} className="shrink-0 text-gray-400" />
               <span className="min-w-0 flex-1 truncate">{t('shell.profile.profile')}</span>
-              <span className="min-w-0 max-w-[50%] truncate text-xs font-normal text-gray-400">{profile.full_name || profile.email}</span>
+              <span className="min-w-0 max-w-[50%] truncate text-xs font-normal text-gray-500">{profile.full_name || profile.email}</span>
             </Link>
             <div className="flex min-h-[44px] items-center gap-3 px-3 text-sm font-body text-gray-700">
               <Icon name="globe" size={20} className="shrink-0 text-gray-400" />
               <span className="flex-1">{t('shell.profile.language')}</span>
-              <LanguageSwitcher />
+              <LanguageSwitcher tone="shellTouch" />
             </div>
             <button type="button" onClick={switchToLegacyNav} title={t('shell.profile.legacyNavHint')} className={`${ROW} ${ROW_IDLE}`}>
               <Icon name="menu" size={20} className="shrink-0 text-gray-400" />
@@ -181,7 +182,7 @@ export default function MoreSheet({ profile, badges, activeId, onClose }: MoreSh
               <span className="flex-1">{loggingOut ? t('shell.profile.loggingOut') : t('shell.profile.logout')}</span>
             </button>
             {buildId && (
-              <p className="px-3 pt-2 text-[10px] font-body tabular-nums text-gray-400 select-all" title={t('nav.buildIdTitle')}>
+              <p className="px-3 pt-2 text-[10px] font-body tabular-nums text-gray-500 select-all" title={t('nav.buildIdTitle')}>
                 {t('shell.profile.buildId')} {buildId}
               </p>
             )}

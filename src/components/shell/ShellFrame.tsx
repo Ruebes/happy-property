@@ -22,11 +22,15 @@ type SidebarMode = 'rail' | 'full'
 
 // Rahmen der neuen Navigation, reine Darstellung:
 //   unter md:  obere Leiste + Inhalt + Telefon-Leiste unten (mit "Mehr"-Blatt)
-//   md bis xl: schmale Icon-Leiste links + obere Leiste + Inhalt
+//   md bis xl: schmale Icon-Leiste links + obere Leiste + Inhalt. Die Leiste
+//              lässt sich vorübergehend ÜBER den Inhalt ausklappen (nicht
+//              gemerkt; schließt bei Seitenwechsel, Escape, Klick daneben).
 //   ab xl:     volle Seitenleiste links (einklappbar, gemerkt in hp_sidebar)
 // Seitenleiste (fixed), obere Leiste (sticky) und Telefon-Leiste (fixed) liegen
-// auf z-30. Das Dokument scrollt als Ganzes, der Inhalt hat KEINEN eigenen
-// Scroll-Container (Anker, scrollTo und fixierte Seiten-Elemente bleiben wie bisher).
+// auf z-30, die übergelegte Leiste samt Hintergrund auf z-40 (wie das
+// Mehr-Blatt: Seiten-Dialoge sind dann nie gleichzeitig offen). Das Dokument
+// scrollt als Ganzes, der Inhalt hat KEINEN eigenen Scroll-Container (Anker,
+// scrollTo und fixierte Seiten-Elemente bleiben wie bisher).
 //
 // --hp-bottom-offset: Höhe der Telefon-Leiste (56 px = BOTTOM_BAR_PX plus
 // Safe-Area), ab md 0. globals.css schiebt damit Toasts im Shell-Inhalt hoch.
@@ -40,25 +44,48 @@ export default function ShellFrame({ profile, badges, children }: ShellFrameProp
   const isMd = useMediaQuery('(min-width: 768px)')
   const [mode, setMode] = useState<SidebarMode>(() => (readLocal(LS_SIDEBAR) === 'rail' ? 'rail' : 'full'))
   const [moreOpen, setMoreOpen] = useState(false)
-  const expanded = isXl && mode === 'full'
+  // md bis xl: Leiste vorübergehend über dem Inhalt ausgeklappt
+  const [flyout, setFlyout] = useState(false)
+  // Ab xl steht die volle Leiste neben dem Inhalt
+  const docked = isXl && mode === 'full'
+  const flyoutOpen = isMd && !isXl && flyout
+  const expanded = docked || flyoutOpen
 
   const activeEntry = matchEntry(location.pathname, profile)
   const activeId = activeEntry?.id ?? null
 
   const toggleSidebar = useCallback(() => {
+    if (!isXl) {
+      setFlyout(prev => !prev)
+      return
+    }
     setMode(prev => {
       const next: SidebarMode = prev === 'full' ? 'rail' : 'full'
       writeLocal(LS_SIDEBAR, next)
       return next
     })
-  }, [])
+  }, [isXl])
+  const closeFlyout = useCallback(() => setFlyout(false), [])
 
   const openMore = useCallback(() => setMoreOpen(prev => !prev), [])
   const closeMore = useCallback(() => setMoreOpen(false), [])
 
-  // Jede Navigation schließt das Blatt; ab md gibt es das Blatt nicht
-  useEffect(() => { setMoreOpen(false) }, [location.pathname])
+  // Jede Navigation schließt das Blatt und die übergelegte Leiste; ab md gibt
+  // es das Blatt nicht, die übergelegte Leiste nur von md bis xl
+  useEffect(() => {
+    setMoreOpen(false)
+    setFlyout(false)
+  }, [location.pathname])
   useEffect(() => { if (isMd) setMoreOpen(false) }, [isMd])
+  useEffect(() => { if (isXl || !isMd) setFlyout(false) }, [isXl, isMd])
+
+  // Escape schließt die übergelegte Leiste
+  useEffect(() => {
+    if (!flyoutOpen) return
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setFlyout(false) }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [flyoutOpen])
 
   return (
     <div className="min-h-screen bg-hp-cream font-body text-hp-black [--hp-bottom-offset:calc(56px+env(safe-area-inset-bottom,0px))] md:[--hp-bottom-offset:0px]">
@@ -75,16 +102,26 @@ export default function ShellFrame({ profile, badges, children }: ShellFrameProp
         {t('shell.a11y.skip')}
       </a>
 
+      {/* Hintergrund der übergelegten Leiste: Klick daneben schließt. Steht vor
+          der Leiste im Dokument, beide auf z-40, die Leiste liegt also oben. */}
+      {flyoutOpen && <div aria-hidden="true" onClick={closeFlyout} className="fixed inset-0 z-40 bg-hp-navy/40" />}
+
       <Sidebar
         profile={profile}
         badges={navBadges}
         activeId={activeId}
         expanded={expanded}
-        canToggle={isXl}
+        overlay={flyoutOpen}
         onToggle={toggleSidebar}
+        onNavigate={closeFlyout}
       />
 
-      <div className={`transition-[padding] duration-200 ${expanded ? 'md:pl-64' : 'md:pl-16'}`}>
+      {/* Abstand links = Breite der Leiste neben dem Inhalt plus Safe-Area */}
+      <div
+        className={`transition-[padding] duration-200 ${
+          docked ? 'md:pl-[calc(16rem+env(safe-area-inset-left))]' : 'md:pl-[calc(4rem+env(safe-area-inset-left))]'
+        }`}
+      >
         <TopBar profile={profile} activeEntry={activeEntry} />
         <main id="hp-shell-main" tabIndex={-1} className="pb-[var(--hp-bottom-offset)] focus:outline-none">
           {children}

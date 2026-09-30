@@ -1,51 +1,14 @@
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../../lib/auth'
-import type { UserRole } from '../../lib/permissions'
 import AppointmentPrepPopup from '../crm/AppointmentPrepPopup'
 import TaskNotifications from '../crm/TaskNotifications'
 import ContentErrorBoundary from './ContentErrorBoundary'
 import ShellFrame from './ShellFrame'
-import { BOTTOM_BAR_PX, LS_SHELL, ShellContext, readLocal, type ShellContextValue } from './ShellContext'
+import { BOTTOM_BAR_PX, ShellContext, TOP_BAR_PX, type ShellContextValue } from './ShellContext'
 import { useMediaQuery } from './useMediaQuery'
 import { useNavBadges } from './useNavBadges'
-
-// ── Notschalter ──────────────────────────────────────────────────────────────
-// Die neue Navigation gilt nur für diese Rollen. Alle anderen sehen unverändert
-// die alte Navigation (LegacyDashboardLayout). Weitere Rollen kommen erst dazu,
-// wenn sie geprüft sind.
-const SHELL_ROLES: UserRole[] = ['admin']
-
-// Nur im Dev-Server mit Mock-Anmeldung (src/dev/DevMockAuthProvider): jede Rolle
-// bekommt die Shell, damit sich echte Seiten vor der Freischaltung ansehen
-// lassen. Im Produktions-Build ist der Ausdruck fest false und fällt weg.
-function devMockActive(): boolean {
-  try { return sessionStorage.getItem('hp_mock_role') !== null } catch { return false }
-}
-const DEV_MOCK_ANY_ROLE = import.meta.env.DEV && devMockActive()
-
-// Schalter über die Adresse, falls das Profil-Menü nicht erreichbar ist:
-//   ?hp_shell=off  alte Navigation (wie "Alte Navigation" im Profil-Menü)
-//   ?hp_shell=on   zurück zur neuen Navigation
-// Der Parameter wird übernommen und gleich wieder aus der Adresse entfernt,
-// damit ein späteres Neuladen die Wahl nicht überschreibt.
-function applyUrlSwitch(): void {
-  try {
-    const url = new URL(window.location.href)
-    const value = url.searchParams.get(LS_SHELL)
-    if (value !== 'on' && value !== 'off') return
-    if (value === 'off') localStorage.setItem(LS_SHELL, 'off')
-    else localStorage.removeItem(LS_SHELL)
-    url.searchParams.delete(LS_SHELL)
-    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash)
-  } catch { /* ohne Speicherzugriff bleibt es beim Standard */ }
-}
-
-function readShellOff(): boolean {
-  applyUrlSwitch()
-  return readLocal(LS_SHELL) === 'off'
-}
 
 // Ladeanzeige im Inhaltsbereich: Navigation und Kopfzeile bleiben stehen,
 // während der Code der Seite nachgeladen wird.
@@ -58,19 +21,19 @@ function ContentLoader() {
   )
 }
 
-// Routen-Element um alle angemeldeten Bereiche (siehe src/App.tsx).
-//   Shell aktiv:  ShellContext + ShellFrame (Seitenleiste, Kopfzeile,
-//                 Telefon-Leiste), die Seite erscheint im Inhaltsbereich.
-//   Shell aus:    nur <Outlet/> mit Context null. DashboardLayout zeigt dann
-//                 die alte Navigation, alles verhält sich wie bisher.
-// Shell aus gilt bei hp_shell = 'off', bei Rollen außerhalb von SHELL_ROLES und
-// solange das Profil noch lädt (dann ist die Rolle unbekannt).
+// Die neue Navigation. Wird von der Weiche src/components/ShellGate.tsx nur
+// gerendert, wenn die Shell wirklich gilt (Rolle freigeschaltet, Notschalter
+// hp_shell nicht 'off', Profil geladen). Die Entscheidung selbst steht dort,
+// damit dieser Chunk für alle anderen gar nicht erst geladen wird.
+//   ShellContext + ShellFrame (Seitenleiste, Kopfzeile, Telefon-Leiste), die
+//   Seite erscheint im Inhaltsbereich.
 export default function AppShell() {
   const { profile } = useAuth()
   const { pathname } = useLocation()
-  const [shellOff] = useState(readShellOff)
 
-  const active = !shellOff && !!profile && (DEV_MOCK_ANY_ROLE || SHELL_ROLES.includes(profile.role))
+  // Die Weiche rendert die Shell nur mit Profil. Fällt es weg (Abmelden), bleibt
+  // bis zum Abbau nur die durchgereichte Seite.
+  const active = !!profile
 
   // Zähler nur laden, wenn die Shell sie auch zeigt
   const { badges, refresh } = useNavBadges(active ? profile : null)
@@ -84,9 +47,24 @@ export default function AppShell() {
     if (active) window.scrollTo(0, 0)
   }, [active, pathname])
 
+  // Zähler bei jedem Seitenwechsel auffrischen (nicht beim ersten Rendern, das
+  // macht der Hook selbst). So verschwindet z.B. der Punkt am Posteingang beim
+  // Verlassen der Seite und nicht erst mit dem nächsten 60-s-Takt.
+  const lastPathRef = useRef(pathname)
+  useEffect(() => {
+    if (lastPathRef.current === pathname) return
+    lastPathRef.current = pathname
+    refresh()
+  }, [pathname, refresh])
+
   // --hp-bottom-offset: Höhe der Telefon-Leiste, ab md 0. ShellFrame setzt den
   // Wert für seinen eigenen Bereich. Hier zusätzlich am Dokument, damit auch
   // Elemente außerhalb des Rahmens (Portale am body) ihn lesen können.
+  //
+  // scroll-padding: Die obere Leiste bleibt beim Scrollen stehen (die alte
+  // Kopfzeile tat das nicht). Seiten, die per scrollIntoView an eine Stelle
+  // springen (z.B. Reiter im Kunden-Detail), und der Tastatur-Fokus landen
+  // damit unter der Leiste statt dahinter, auf dem Telefon über der unteren.
   const isMd = useMediaQuery('(min-width: 768px)')
   useEffect(() => {
     if (!active) return
@@ -95,7 +73,13 @@ export default function AppShell() {
       '--hp-bottom-offset',
       isMd ? '0px' : `calc(${BOTTOM_BAR_PX}px + env(safe-area-inset-bottom, 0px))`,
     )
-    return () => { root.style.removeProperty('--hp-bottom-offset') }
+    root.style.setProperty('scroll-padding-top', `${TOP_BAR_PX}px`)
+    root.style.setProperty('scroll-padding-bottom', 'var(--hp-bottom-offset, 0px)')
+    return () => {
+      root.style.removeProperty('--hp-bottom-offset')
+      root.style.removeProperty('scroll-padding-top')
+      root.style.removeProperty('scroll-padding-bottom')
+    }
   }, [active, isMd])
 
   const legacy = (
@@ -104,7 +88,7 @@ export default function AppShell() {
     </ShellContext.Provider>
   )
 
-  if (!active || !profile) return legacy
+  if (!profile) return legacy
 
   return (
     <ShellContext.Provider value={context}>

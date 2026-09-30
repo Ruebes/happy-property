@@ -58,4 +58,12 @@ select option { color: #1a1a1a; }
   .hp-shell-content .fixed.bottom-6 {
     bottom: calc(var(--hp-bottom-offset, 0px) + 1.5rem);
   }
+
+  /* Am unteren Rand klebende Leisten im Seitenfluss (Eingabezeile im
+     Thumbnail-Studio) halten über der Telefon-Leiste statt dahinter.
+     Ausgenommen sind klebende Fußzeilen in Dialogen (Vorfahre mit .fixed):
+     die kleben am Dialog, nicht am Bildschirmrand. */
+  .hp-shell-content .sticky.bottom-0:not(.fixed .sticky) {
+    bottom: var(--hp-bottom-offset, 0px);
+  }
 }

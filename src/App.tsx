@@ -18,6 +18,7 @@ function UnknownRoute() {
 }
 import { AuthProvider } from './lib/auth'
 import ProtectedRoute from './components/ProtectedRoute'
+import ShellGate from './components/ShellGate'
 
 // ── Öffentliche Seiten (eager — immer gebraucht, klein) ──────────────────────
 import Login       from './pages/Login'
@@ -121,10 +122,11 @@ const Nachrichten         = lazy(() => import('./pages/feriengast/Nachrichten'))
 const FeriengastProfil    = lazy(() => import('./pages/feriengast/Profil'))
 
 // ── Neue Navigation (Shell) ──────────────────────────────────────────────────
-// Routen-Element um alle angemeldeten Bereiche. Entscheidet selbst, ob die neue
-// Navigation erscheint (Rolle, Notschalter hp_shell) oder ob nur die Seite mit
-// der alten Navigation durchgereicht wird.
-const AppShell = lazy(() => import('./components/shell/AppShell'))
+// ShellGate (fest im Hauptbündel, klein) ist das Routen-Element um alle
+// angemeldeten Bereiche. Es entscheidet, ob die neue Navigation erscheint
+// (Rolle, Notschalter hp_shell), und lädt die AppShell nur dann als eigenen
+// Chunk über lazyWithReload. Sonst reicht es die Seite mit der alten Navigation
+// durch, ohne Shell-Code zu laden.
 
 // ── Nur im Dev-Server ────────────────────────────────────────────────────────
 // import.meta.env.DEV ist im Produktions-Build fest false: Die dynamischen
@@ -214,16 +216,16 @@ export default function App() {
             {/* Alte Eigentümer-Profil-URL → universelle Seite */}
             <Route path="/eigentuemer/profile" element={<Navigate to="/profile" replace />} />
 
-            {/* ── Angemeldete Bereiche: äußerer Guard + AppShell ──
+            {/* ── Angemeldete Bereiche: äußerer Guard + ShellGate ──
                 Der äußere Guard lässt nur angemeldete Rollen außer Feriengast
                 durch, die inneren Guards je Bereich gelten unverändert weiter.
-                AppShell zeigt die neue Navigation (Rolle + Notschalter) oder
+                ShellGate zeigt die neue Navigation (Rolle + Notschalter) oder
                 reicht die Seite mit der alten Navigation durch. Öffentliche
                 Seiten, /login und der Feriengast-Bereich liegen außerhalb.
                 Die inneren Gruppen sind bewusst nicht neu eingerückt, damit
                 die Änderung an dieser Datei klein bleibt. */}
             <Route element={<ProtectedRoute allowedRoles={['admin', 'verwalter', 'mitarbeiter', 'funnel', 'eigentuemer']} />}>
-            <Route element={<AppShell />}>
+            <Route element={<ShellGate />}>
 
             {/* ── Admin only ── */}
             <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
@@ -343,7 +345,7 @@ export default function App() {
 
             </Route>
             </Route>
-            {/* ── Ende der angemeldeten Bereiche (äußerer Guard + AppShell) ── */}
+            {/* ── Ende der angemeldeten Bereiche (äußerer Guard + ShellGate) ── */}
 
             {/* ── Feriengast ── */}
             <Route element={<ProtectedRoute allowedRoles={['feriengast']} />}>

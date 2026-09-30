@@ -7,6 +7,7 @@ import Icon from './Icon'
 import type { IconId } from './iconPaths'
 import { PaletteBridgeContext } from './ShellContext'
 import { searchPages } from './navSearch'
+import { useMediaQuery } from './useMediaQuery'
 import { useOverlay } from './useOverlay'
 
 // ── ERWEITERUNGSPUNKT: Datenquellen der Suche ────────────────────────────────
@@ -37,6 +38,28 @@ export const searchProviders: SearchProvider[] = []
 const PROVIDER_MIN_CHARS = 2
 const PROVIDER_DELAY_MS = 200
 const LIST_ID = 'hp-palette-list'
+// Abstand des Dialogs zum oberen und unteren Rand auf dem Telefon (2 x 12 px)
+const PHONE_MARGIN_PX = 24
+const PHONE_MIN_HEIGHT_PX = 160
+
+// Höhe des sichtbaren Bereichs. Auf dem iPhone verkleinert die Bildschirm-
+// Tastatur nur den sichtbaren Ausschnitt (visualViewport), nicht das Layout:
+// Ohne diesen Wert läge der untere Teil der Trefferliste hinter der Tastatur.
+function useVisibleHeight(): number | null {
+  const read = () => {
+    try { return window.visualViewport?.height ?? null } catch { return null }
+  }
+  const [height, setHeight] = useState<number | null>(read)
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const onResize = () => setHeight(viewport.height)
+    onResize()
+    viewport.addEventListener('resize', onResize)
+    return () => viewport.removeEventListener('resize', onResize)
+  }, [])
+  return height
+}
 
 interface Section {
   id: string
@@ -63,6 +86,14 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
   useOverlay(panelRef, onClose)
 
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Telefon: Dialog so hoch wie der sichtbare Bereich über der Tastatur. Ab md
+  // bleibt es bei max-h-[70vh] aus der Klasse.
+  const isMd = useMediaQuery('(min-width: 768px)')
+  const visibleHeight = useVisibleHeight()
+  const phoneMaxHeight = !isMd && visibleHeight !== null
+    ? Math.max(PHONE_MIN_HEIGHT_PX, Math.round(visibleHeight - PHONE_MARGIN_PX))
+    : null
 
   // Seiten: synchron aus der Registry
   const pageSection = useMemo<Section>(() => ({
@@ -153,6 +184,7 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
         role="dialog"
         aria-modal="true"
         aria-label={t('shell.search.title')}
+        style={phoneMaxHeight !== null ? { maxHeight: phoneMaxHeight } : undefined}
         className="relative flex max-h-[70vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-gray-100 pl-4 pr-1.5">
@@ -172,7 +204,7 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
             placeholder={t('shell.search.placeholder')}
             autoComplete="off"
             spellCheck={false}
-            className="h-14 min-w-0 flex-1 bg-transparent text-base font-body text-hp-black placeholder:text-gray-400 focus:outline-none"
+            className="h-14 min-w-0 flex-1 bg-transparent text-base font-body text-hp-black placeholder:text-gray-500 focus:outline-none"
           />
           <button
             type="button"
@@ -192,7 +224,7 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
         >
           {sections.map(section => (
             <div key={section.id} role="group" aria-label={section.title}>
-              <p aria-hidden="true" className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400">
+              <p aria-hidden="true" className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-500">
                 {section.title}
               </p>
               {section.rows.map(row => {
@@ -212,7 +244,7 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
                     {active && <span aria-hidden="true" className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r-full bg-hp-highlight" />}
                     <Icon name={row.icon} size={18} className={`shrink-0 ${active ? 'text-hp-highlight' : 'text-gray-400'}`} />
                     <span className="min-w-0 flex-1 truncate">{row.label}</span>
-                    {row.sublabel && <span className="shrink-0 text-xs text-gray-400">{row.sublabel}</span>}
+                    {row.sublabel && <span className="shrink-0 text-xs text-gray-500">{row.sublabel}</span>}
                     {active && <Icon name="enter" size={14} className="hidden shrink-0 text-gray-400 md:block" />}
                   </div>
                 )
@@ -224,11 +256,11 @@ function PaletteDialog({ profile, onClose }: PaletteDialogProps) {
             <p className="px-3 py-8 text-center text-sm font-body text-gray-500">{t('shell.search.noResults')}</p>
           )}
           {loading && (
-            <p role="status" className="px-3 py-2 text-xs font-body text-gray-400">{t('shell.search.loading')}</p>
+            <p role="status" className="px-3 py-2 text-xs font-body text-gray-500">{t('shell.search.loading')}</p>
           )}
         </div>
 
-        <p className="hidden shrink-0 border-t border-gray-100 px-4 py-2 text-[11px] font-body text-gray-400 md:block">
+        <p className="hidden shrink-0 border-t border-gray-100 px-4 py-2 text-[11px] font-body text-gray-500 md:block">
           {t('shell.search.hint')}
         </p>
       </div>

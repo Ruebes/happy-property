@@ -119,7 +119,8 @@ function enterRoute(opening, ctx, line) {
     const anyPermission = el.attrs.has('anyPermission') ? literalStringArray(el.attrs.get('anyPermission')) : undefined
     if (el.attrs.has('anyPermission') && !anyPermission) fail(3, `App.tsx Zeile ${line}: anyPermission ist kein wörtliches String-Array`)
     next = { ...ctx, guards: [...ctx.guards, { allowedRoles, permission: permission ?? undefined, anyPermission: anyPermission ?? undefined, line }] }
-  } else if (el?.tag === 'AppShell') {
+  } else if (el?.tag === 'ShellGate' || el?.tag === 'AppShell') {
+    // ShellGate ist die Weiche vor der AppShell (src/components/ShellGate.tsx)
     shellRouteCount++
     next = { ...ctx, inShell: true }
   }

@@ -6580,14 +6580,16 @@
       "logout": "Abmelden",
       "buildId": "Version",
       "legacyNav": "Alte Navigation",
-      "legacyNavHint": "Zurück zur bisherigen Navigation wechseln",
-      "loggingOut": "Wird abgemeldet"
+      "legacyNavHint": "Zur bisherigen Navigation wechseln. Zurück geht es dort über den Knopf Neue Navigation ganz oben.",
+      "loggingOut": "Wird abgemeldet",
+      "legacyActive": "Alte Navigation aktiv",
+      "newNav": "Neue Navigation"
     },
     "badges": {
       "tasksOpen": "{{count}} offene Aufgaben",
       "tasksOpen_one": "{{count}} offene Aufgabe",
-      "inboxUnread": "{{count}} ungelesene Nachrichten",
-      "inboxUnread_one": "{{count}} ungelesene Nachricht"
+      "inboxUnread": "{{count}} Konversationen mit ungelesenen Nachrichten",
+      "inboxUnread_one": "{{count}} Konversation mit ungelesenen Nachrichten"
     },
     "sheet": {
       "title": "Alle Bereiche"

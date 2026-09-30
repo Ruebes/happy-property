@@ -6698,14 +6698,16 @@
       "logout": "Sign out",
       "buildId": "Version",
       "legacyNav": "Old navigation",
-      "legacyNavHint": "Switch back to the previous navigation",
-      "loggingOut": "Signing out"
+      "legacyNavHint": "Switch to the previous navigation. To return, use the New navigation button at the very top.",
+      "loggingOut": "Signing out",
+      "legacyActive": "Old navigation active",
+      "newNav": "New navigation"
     },
     "badges": {
       "tasksOpen": "{{count}} open tasks",
       "tasksOpen_one": "{{count}} open task",
-      "inboxUnread": "{{count}} unread messages",
-      "inboxUnread_one": "{{count}} unread message"
+      "inboxUnread": "{{count}} conversations with unread messages",
+      "inboxUnread_one": "{{count}} conversation with unread messages"
     },
     "sheet": {
       "title": "All sections"
