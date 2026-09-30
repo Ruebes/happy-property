@@ -203,12 +203,14 @@ export default function Inbox() {
             file_url = supabase.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl
             file_name = f.name
           }
-          // Folge-Dateien OHNE Text: send-whatsapp setzt den Dateinamen als
-          // Bildunterschrift. Ein Leerzeichen als Text lehnt TimelinesAI mit
-          // HTTP 400 ab ("can not be empty string") - genau daran scheiterte
-          // jeder Versand einer zweiten Datei.
+          // Datei OHNE Text (reine Datei oder Folge-Datei): ein Leerzeichen als
+          // Text. send-whatsapp macht aus leerem/Whitespace-Text + Anhang den
+          // Dateinamen als Bildunterschrift (captionFromName), TimelinesAI sieht
+          // das Leerzeichen also nie. Ein LEERER String wäre falsch: den wertet
+          // send-whatsapp als "kein override_text", lädt die aktive Vorlage zu
+          // event_type 'no_show' und schickt deren Nachfass-Text an den Kunden.
           const { data, error } = await supabase.functions.invoke('send-whatsapp', { body: {
-            event_type: 'no_show', override_text: i === 0 ? text : '',
+            event_type: 'no_show', override_text: (i === 0 && text) ? text : ' ',
             lead_data: { lead_name: current.name, lead_phone: phone },
             ...(file_url ? { file_url, file_name } : {}),
             ...(i > 0 ? { allow_duplicate: true } : {}),   // Folge-Dateien nicht deduppen
