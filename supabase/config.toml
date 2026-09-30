@@ -145,3 +145,6 @@ verify_jwt = true
 
 [functions.generate-invoice]
 verify_jwt = false
+
+[functions.wa-weekly-report]
+verify_jwt = false
