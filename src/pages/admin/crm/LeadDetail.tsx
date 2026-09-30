@@ -1928,6 +1928,27 @@ export default function LeadDetail() {
     })
   }
 
+  // ── Gehört die Wohnung schon einem anderen Kunden? ───────────────
+  // Portal-Objekt eines anderen Profils oder aktiver Deal eines anderen Leads.
+  // Gleiche Regel wie im UnitPickerModal; Status (reserviert/verkauft) allein
+  // sperrt bewusst nicht, weil der Käufer oft erst danach aktiviert wird.
+  async function unitTakenByOtherCustomer(unit: CrmProjectUnit): Promise<boolean> {
+    if (!id) return false
+    const propId = await fetchUnitPropertyId(unit.id, unit.property_id)
+    if (propId && await isForeignOwnedProperty(propId, await leadProfileIds(id))) return true
+    const { data: holders, error } = await supabase
+      .from('deals')
+      .select('id')
+      .eq('unit_id', unit.id)
+      .neq('lead_id', id)
+      .is('archived_from_phase', null)
+      .neq('phase', 'deal_verloren')
+      .neq('phase', 'archiviert')
+      .limit(1)
+    if (error) throw error
+    return (holders ?? []).length > 0
+  }
+
   // ── Unit assignment ──────────────────────────────────────────────
   async function handleUnitAssign(unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location'>) {
     setShowUnitPicker(false)
@@ -4483,7 +4504,19 @@ export default function LeadDetail() {
               {unitSelectUnits.map(unit => (
                 <button
                   key={unit.id}
-                  onClick={() => {
+                  onClick={async () => {
+                    // Wohnung eines anderen Kunden nie übernehmen (sonst hängt der Deal am
+                    // fremden Portal-Objekt und „Trennen" träfe den echten Eigentümer)
+                    try {
+                      if (await unitTakenByOtherCustomer(unit)) {
+                        showToast(t('leadDetail.unitTakenByOther', 'Diese Wohnung ist bereits einem anderen Kunden zugeordnet und kann hier nicht übernommen werden.'))
+                        return
+                      }
+                    } catch (err) {
+                      console.error('[LeadDetail] unitTakenByOtherCustomer:', err)
+                      showToast(`❌ ${t('leadDetail.genericError', 'Fehler')}`)
+                      return
+                    }
                     setShowUnitSelect(false)
                     // unitSelectProject wird beim Öffnen gesetzt — kein Nachschlagen nötig
                     const proj = unitSelectProject ?? dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project

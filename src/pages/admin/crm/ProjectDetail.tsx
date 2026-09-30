@@ -5,7 +5,7 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
-import { dealInPortal, fetchUnitPropertyId } from '../../../lib/detachProperty'
+import { dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
 import type {
   CrmProject, CrmProjectUnit, CrmUnitDocument, CrmUnitPayment,
   UnitType, UnitStatus,
@@ -476,6 +476,12 @@ export default function ProjectDetail() {
     if (!assigningUnit) return
     setAssignLeadSaving(true)
     try {
+      // Portal-Objekt eines anderen Kunden nie an diesen Kunden hängen
+      const currentPropId = await fetchUnitPropertyId(assigningUnit.id, assigningUnit.property_id)
+      if (currentPropId && await isForeignOwnedProperty(currentPropId, await leadProfileIds(leadId))) {
+        showToast(t('crm.pd.unitOwnedByOther', 'Diese Wohnung gehört im Eigentümer-Portal bereits einem anderen Kunden. Bitte dort zuerst trennen.'))
+        return
+      }
       if (dealId) {
         const dealUpdate: Record<string, unknown> = { unit_id: assigningUnit.id }
         if (assigningUnit.property_id) dealUpdate.property_id = assigningUnit.property_id
