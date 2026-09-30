@@ -1724,6 +1724,7 @@ export default function LeadDetail() {
               }
             }
           }
+          await linkLeadToOwnerProfile(ownerProfile.id)
         }
       }
       // ──────────────────────────────────────────────────────────────
@@ -1832,6 +1833,20 @@ export default function LeadDetail() {
       .eq('role', 'eigentuemer')
       .maybeSingle()
     return data as { id: string } | null
+  }
+
+  // ── Lead mit dem per E-Mail gefundenen Eigentümer-Profil verknüpfen ──
+  // Erst NACH den Wohnungs- und Objekt-Schreibvorgängen aufrufen (Reihenfolge wie
+  // Users.tsx). Sonst legt der DB-Trigger beim Wechsel auf Reservierung nie ein
+  // Objekt an, weil er leads.profile_id braucht. Eine bestehende Verknüpfung bleibt.
+  async function linkLeadToOwnerProfile(ownerProfileId: string) {
+    if (!id || lead?.profile_id) return
+    const { error } = await supabase
+      .from('leads')
+      .update({ profile_id: ownerProfileId })
+      .eq('id', id)
+      .is('profile_id', null)
+    if (error) console.error('[LeadDetail] linkLeadToOwnerProfile:', error)
   }
 
   // ── Portal-Zugangs-Check ─────────────────────────────────────────
@@ -2048,6 +2063,7 @@ export default function LeadDetail() {
             if (deal) await supabase.from('deals').update({ property_id: newPropId }).eq('id', deal.id)
           }
         }
+        await linkLeadToOwnerProfile(ownerProfile.id)
       }
 
       await fetchAll(true)

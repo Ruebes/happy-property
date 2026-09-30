@@ -6,7 +6,7 @@
 -- Deal-Phase Reservierung: reservierung, kaufvertrag, anzahlung, provision_erhalten;
 -- archiviert nur, wenn archived_from_phase = 'provision_erhalten'.
 -- Bestehende Portal-Objekte bleiben unangetastet: diese Migration ändert und löscht
--- keine Datenzeile, sie ersetzt nur Funktionen und den Trigger.
+-- keine Datenzeile, sie ersetzt nur Funktionen und den Trigger und legt einen Index an.
 --
 -- Bisher (Live-Stand 30.9.2026, wortgleich in der Rücknahme-Datei):
 --   fn_ensure_deal_property legte das Objekt in JEDER Phase an (auch Immobilien-
@@ -30,6 +30,11 @@
 --      das Objekt entsteht, sobald der Deal auf Reservierung geht. Die Pipeline
 --      speichert die Wohnung vor dem Phasenwechsel; ohne diese Spalte käme das
 --      Objekt sonst nie.
+--   5. Eindeutiger Index crm_project_units(property_id) (Plan Schritt 2): zwei
+--      Wohnungen können nie mehr auf dasselbe Portal-Objekt zeigen, auch nicht über
+--      die Client-Wege (Objekte-Formular, Projekt-, Kunden-, Nutzer-Seite). Legt nur
+--      einen Index an, ändert keine Zeile. Scheitert, falls es doch Doppelte gibt
+--      (dann bricht die ganze Migration ab); deshalb Prüfung 1b direkt vorher.
 --   fn_trg_deal_property bleibt unverändert.
 --
 -- Nicht Teil dieser Migration (anderes Paket): create-eigentuemer-access legt das
@@ -181,3 +186,9 @@ create trigger trg_deal_sync_property
   for each row
   when (new.unit_id is not null and new.property_id is null)
   execute function public.fn_trg_deal_property();
+
+-- 5. Höchstens eine Wohnung je Portal-Objekt ------------------------------------
+-- Vorher Prüfung 1b (oben) nur lesend: muss 0 sein (Stand 30.9.2026: 0).
+create unique index if not exists crm_project_units_property_id_uniq
+  on public.crm_project_units (property_id)
+  where property_id is not null;

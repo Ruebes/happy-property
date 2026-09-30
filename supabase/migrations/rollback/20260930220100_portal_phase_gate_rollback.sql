@@ -3,6 +3,9 @@
 -- (pg_get_functiondef / pg_get_triggerdef, gelesen am 30.9.2026 vor der Migration).
 -- Datenzeilen werden nicht angefasst.
 
+-- Index der Migration entfernen (live gab es ihn am 30.9.2026 nicht)
+drop index if exists public.crm_project_units_property_id_uniq;
+
 -- Trigger wie live: ohne Spalte phase
 drop trigger if exists trg_deal_sync_property on public.deals;
 CREATE TRIGGER trg_deal_sync_property AFTER INSERT OR UPDATE OF unit_id, lead_id, property_id ON public.deals FOR EACH ROW WHEN (((new.unit_id IS NOT NULL) AND (new.property_id IS NULL))) EXECUTE FUNCTION fn_trg_deal_property();

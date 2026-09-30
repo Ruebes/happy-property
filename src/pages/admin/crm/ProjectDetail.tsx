@@ -529,7 +529,7 @@ export default function ProjectDetail() {
       // Portal-Eintrag synchronisieren (wenn Eigentümer-Profil bereits vorhanden)
       const { data: leadData } = await supabase
         .from('leads')
-        .select('email')
+        .select('email, profile_id')
         .eq('id', leadId)
         .maybeSingle()
       if (leadData?.email && profile?.id) {
@@ -568,7 +568,8 @@ export default function ProjectDetail() {
           }
           // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
           const existingPropId = await fetchUnitPropertyId(unit.id, unit.property_id)
-          // Neues Portal-Objekt erst ab Reservierung (Entscheidung Sven 29.9.2026)
+          // Neues Portal-Objekt erst ab Reservierung (Entscheidung Sven 29.9.2026).
+          // Ohne aktiven Deal gibt es keine Phase: dann wie bisher sofort anlegen.
           let dealPhase: { phase: string; archived_from_phase: string | null } | null = null
           if (dealId) {
             const { data: dp } = await supabase.from('deals').select('phase, archived_from_phase').eq('id', dealId).maybeSingle()
@@ -577,7 +578,7 @@ export default function ProjectDetail() {
           if (existingPropId) {
             const { error: upErr } = await supabase.from('properties').update(propData).eq('id', existingPropId)
             if (upErr) throw upErr
-          } else if (dealInPortal(dealPhase)) {
+          } else if (!dealId || dealInPortal(dealPhase)) {
             const { data: newProp, error: insErr } = await supabase
               .from('properties')
               .insert({ ...propData, owner_id: (ownerProfile as { id: string }).id, created_by: profile.id, images: [] })
@@ -589,6 +590,16 @@ export default function ProjectDetail() {
               await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
               if (dealId) await supabase.from('deals').update({ property_id: newPropId }).eq('id', dealId)
             }
+          }
+          // Eigentümer nur per E-Mail erkannt: Lead erst NACH den Wohnungs- und Objekt-
+          // Schreibvorgängen verknüpfen (Reihenfolge wie Users.tsx). Sonst legt der DB-Trigger
+          // beim Wechsel auf Reservierung nie ein Objekt an (er braucht leads.profile_id).
+          if (!leadData.profile_id) {
+            const { error: linkErr } = await supabase.from('leads')
+              .update({ profile_id: (ownerProfile as { id: string }).id })
+              .eq('id', leadId)
+              .is('profile_id', null)
+            if (linkErr) console.error('[ProjectDetail] Lead mit Eigentümer verknüpfen:', linkErr)
           }
         }
       }

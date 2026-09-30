@@ -8,7 +8,7 @@ import { useAuth } from '../../lib/auth'
 import type { CrmProject, CrmProjectUnit } from '../../lib/crmTypes'
 import { CustomSelect } from '../../components/CustomSelect'
 import { renderPortalAccessEmail } from '../../lib/welcomeEmail'
-import { detachPropertyFromOwner, detachConfirmText, fetchUnitPropertyId } from '../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId } from '../../lib/detachProperty'
 
 // Hilfsfunktion: alle Admin-Operationen laufen als Edge Function (kein Service-Key im Browser)
 async function adminUserOp<T = unknown>(body: Record<string, unknown>): Promise<T> {
@@ -415,6 +415,43 @@ export default function AdminUsers() {
     // sie schon jemandem. Dann kein zweites Objekt anlegen.
     if (await fetchUnitPropertyId(unit.id, unit.property_id)) return 'unit_taken'
 
+    // Lead per E-Mail (auch klein geschrieben), ältester zuerst; Deal: neuester nicht
+    // archivierter. maybeSingle scheiterte bei Doppel-Leads bzw. zwei offenen Deals still.
+    const { data: leadRows } = await supabase
+      .from('leads').select('id')
+      .in('email', Array.from(new Set([userEmail, userEmail.toLowerCase()])))
+      .order('created_at', { ascending: true })
+      .limit(1)
+    const leadId = ((leadRows ?? []) as Array<{ id: string }>)[0]?.id ?? null
+    let deal: { id: string; phase: string; archived_from_phase: string | null } | null = null
+    if (leadId) {
+      const { data: dealRows } = await supabase
+        .from('deals').select('id, phase, archived_from_phase').eq('lead_id', leadId)
+        .neq('phase', 'archiviert')
+        .order('created_at', { ascending: false })
+        .limit(1)
+      deal = ((dealRows ?? []) as Array<{ id: string; phase: string; archived_from_phase: string | null }>)[0] ?? null
+    }
+
+    // Erst NACH der Zuweisung verknüpfen: der Lead-Trigger findet so keinen Deal
+    // ohne Objekt mehr und legt kein zweites an (vor Reservierung wegen des
+    // Phasen-Filters gar keins).
+    const linkLead = async (): Promise<'ok' | 'failed'> => {
+      if (!leadId) return 'ok'
+      const { error: leadErr } = await supabase.from('leads').update({ profile_id: userId })
+        .eq('id', leadId).is('profile_id', null)
+      return leadErr ? 'failed' : 'ok'
+    }
+
+    // Offener Deal vor Reservierung: nur die Wohnung am Deal speichern, kein Portal-Objekt
+    // (Entscheidung Sven 29.9.2026). Der DB-Trigger legt es an, sobald der Deal auf
+    // Reservierung geht; dafür wird der Lead danach verknüpft.
+    if (deal && !dealInPortal(deal)) {
+      const { error: dealErr } = await supabase.from('deals').update({ unit_id: unit.id }).eq('id', deal.id)
+      if (dealErr) return 'failed'
+      return linkLead()
+    }
+
     // Property anlegen
     const rentalType: 'longterm' | 'shortterm' =
       unit.rental_type === 'short' ? 'shortterm' : 'longterm'
@@ -445,34 +482,13 @@ export default function AdminUsers() {
     const { error: linkErr } = await supabase.from('crm_project_units').update({ property_id: newPropId }).eq('id', unit.id)
     if (linkErr) return 'failed'
 
-    // Lead-Deal aktualisieren falls vorhanden. Lead per E-Mail (auch klein
-    // geschrieben), ältester zuerst; Deal: neuester nicht archivierter.
-    // maybeSingle scheiterte bei Doppel-Leads bzw. zwei offenen Deals still.
-    const { data: leadRows } = await supabase
-      .from('leads').select('id')
-      .in('email', Array.from(new Set([userEmail, userEmail.toLowerCase()])))
-      .order('created_at', { ascending: true })
-      .limit(1)
-    const leadId = ((leadRows ?? []) as Array<{ id: string }>)[0]?.id ?? null
-    if (leadId) {
-      const { data: dealRows } = await supabase
-        .from('deals').select('id').eq('lead_id', leadId)
-        .neq('phase', 'archiviert')
-        .order('created_at', { ascending: false })
-        .limit(1)
-      const dealId = ((dealRows ?? []) as Array<{ id: string }>)[0]?.id ?? null
-      if (dealId) {
-        const { error: dealErr } = await supabase.from('deals').update({ unit_id: unit.id, property_id: newPropId })
-          .eq('id', dealId)
-        if (dealErr) return 'failed'
-      }
-      // Erst NACH der Zuweisung verknüpfen: der Lead-Trigger findet so keinen Deal
-      // ohne Objekt mehr und legt kein zweites an.
-      const { error: leadErr } = await supabase.from('leads').update({ profile_id: userId })
-        .eq('id', leadId).is('profile_id', null)
-      if (leadErr) return 'failed'
+    // Lead-Deal aktualisieren falls vorhanden
+    if (deal) {
+      const { error: dealErr } = await supabase.from('deals').update({ unit_id: unit.id, property_id: newPropId })
+        .eq('id', deal.id)
+      if (dealErr) return 'failed'
     }
-    return 'ok'
+    return linkLead()
   }
 
   // ── Create user ──────────────────────────────────────────
