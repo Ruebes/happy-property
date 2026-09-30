@@ -104,3 +104,7 @@ verify_jwt = false
 # MUSS true bleiben: isServiceViaGateway vertraut dem vom Gateway geprüften service_role-JWT.
 [functions.google-drive]
 verify_jwt = true
+
+# MUSS true bleiben (wie google-drive).
+[functions.create-client-drive-folder]
+verify_jwt = true

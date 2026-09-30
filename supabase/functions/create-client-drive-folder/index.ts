@@ -9,14 +9,39 @@
 //
 // Body:   { lead_id, extra_emails?: string[] }
 // Antwort:{ ok, folder_id, folder_url, existing }
+//
+// Zugriff (Sicherheits-Audit 30.9.2026): System-Aufrufe mit dem Service-Key
+// (schedule-message, owner-drive) oder eingeloggte Admins/Verwalter/Mitarbeiter
+// (Drive-Knopf in LeadDetail). Vorher reichte der öffentliche Publishable Key,
+// um sich selbst Schreibrechte auf einen Kundenordner zu geben.
+// Deploy OHNE --no-verify-jwt (verify_jwt=true muss bleiben, siehe isServiceViaGateway).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
+// System-Aufruf mit dem Service-Key, auch wenn das Gateway ihn umgeschrieben hat.
+// Diese Function läuft mit verify_jwt=true: das Gateway hat die Signatur eines
+// Bearer-JWT bereits geprüft und kann einen sb_secret-Key durch einen selbst
+// ausgestellten service_role-JWT ersetzen ("minted"). Deshalb zählt hier auch ein
+// JWT mit role=service_role. ACHTUNG: dieser Zweig ist NUR sicher, solange
+// verify_jwt=true bleibt; mit --no-verify-jwt wäre der Payload fälschbar.
+function isServiceViaGateway(req: Request): boolean {
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+  if (safeEqual(req.headers.get('apikey') ?? '', key)) return true
+  const parts = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim().split('.')
+  if (parts.length !== 3 || !parts[1]) return false
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(b64 + '='.repeat((4 - b64.length % 4) % 4))) as { role?: unknown }
+    return payload.role === 'service_role'
+  } catch { return false }
+}
 
 // Svens GOOGLE-Konto (nicht die CRM-Mail sven@happy-property.com — die ist kein
 // Google-Konto, Teilen darauf schlägt fehl). Per Secret überschreibbar.
@@ -61,6 +86,11 @@ async function getWriteToken(): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // ── Aufrufer prüfen ──────────────────────────────────────────────────────────
+  if (!isServiceViaGateway(req)) {
+    const caller = await authorizeCaller(req, { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+    if (caller instanceof Response) return caller
+  }
   try {
     const { lead_id, extra_emails } = await req.json() as { lead_id?: string; extra_emails?: string[] }
     if (!lead_id) return json({ error: 'lead_id fehlt' }, 400)
