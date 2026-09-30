@@ -97,3 +97,6 @@ verify_jwt = false
 
 [functions.simulate-automations]
 verify_jwt = false
+
+[functions.subscriber-optin]
+verify_jwt = false

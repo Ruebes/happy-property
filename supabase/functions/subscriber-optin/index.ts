@@ -30,6 +30,27 @@ const CORS = {
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 const normEmail = (e: string) => e.trim().toLowerCase().replace('googlemail.com', 'gmail.com')
 
+// ── Missbrauchsschutz (öffentliche Funktion) ─────────────────────────────────
+// Freitext aus dem Formular landet in WhatsApp-Text und Mail-HTML. Gespeichert
+// wird er ohne Tags/Steuerzeichen und gekürzt; in die Bestätigung kommt der
+// Vorname nur, wenn er nicht nach Link/Adresse aussieht (sonst Anrede ohne Namen).
+const cleanText = (s: unknown, max: number) =>
+  String(s ?? '').replace(/[<>\u0000-\u001f\u007f]/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max)
+const greetName = (s: unknown) => {
+  const n = cleanText(s, 40)
+  return /https?:|www\.|@|[\w-]\.[a-z]{2,}/i.test(n) ? '' : n
+}
+const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+// ilike ohne Platzhalter: _, % und * (PostgREST-Joker) in Adresse/Listenname
+// wären sonst Joker und träfen fremde Einträge.
+const ilikeExact = (s: string) => s.replace(/([\\%_*])/g, '\\$1')
+// Bestätigungen drosseln: je Kontakt frühestens nach 2 Min erneut und höchstens
+// 5 pro 24 h (nur ERFOLGREICH verschickte zählen), insgesamt höchstens
+// DOI_MAX_PER_HOUR pro Stunde (Schutz der WhatsApp-Nummer und des Mail-Kontingents).
+const DOI_MIN_GAP_MS = 2 * 60_000
+const DOI_MAX_PER_DAY = 5
+const DOI_MAX_PER_HOUR = 60
+
 // Wohin es nach dem Bestätigungsklick geht. Jede Anmeldestrecke kann ihre eigene
 // Danke-Seite mitgeben (`confirm_redirect`), sonst landet man hier.
 const DEFAULT_REDIRECT = 'https://steuervorteil-zypern-immobilien.com/danke-fuer-deine-anmeldung/'
@@ -65,11 +86,11 @@ const looksLikePhone = (s: string) => /^\+\d{8,15}$/.test(normPhone(s))
 
 // Liste per Name finden oder anlegen (Sven kann ein Formular auf jeden Listennamen zeigen).
 async function resolveList(sb: SupabaseClient, name: string): Promise<{ id: string; name: string } | null> {
-  const clean = name.trim()
+  const clean = name.trim().slice(0, 80)
   if (!clean) return null
   // Robust gegen doppelte Namen: älteste passende Liste nehmen (maybeSingle würde
   // bei Mehrdeutigkeit fehlschlagen und fälschlich eine neue Liste anlegen).
-  const { data: matches } = await sb.from('newsletter_lists').select('id, name').ilike('name', clean).order('created_at', { ascending: true }).limit(1)
+  const { data: matches } = await sb.from('newsletter_lists').select('id, name').ilike('name', ilikeExact(clean)).order('created_at', { ascending: true }).limit(1)
   const found = (matches as { id: string; name: string }[] | null)?.[0]
   if (found) return found
   // source ist per CHECK-Constraint auf 'manual' | 'klaviyo' beschränkt → 'manual'.
@@ -257,7 +278,7 @@ Deno.serve(async (req) => {
     // die älteste Übereinstimmung nehmen statt maybeSingle() über alle Treffer.
     let ex: { id: string; properties: Record<string, unknown> | null; optout_at: string | null; klaviyo_id: string | null } | null = null
     if (email) {
-      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id').ilike('email', email).maybeSingle()
+      const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id').ilike('email', ilikeExact(email)).maybeSingle()
       ex = data as typeof ex
     } else {
       const { data } = await sb.from('newsletter_subscribers').select('id, properties, optout_at, klaviyo_id')
@@ -273,6 +294,28 @@ Deno.serve(async (req) => {
       return json({ ok: true, already_confirmed: true, added: true, channel })
     }
 
+    // ── Drosselung (DOI_*): gerade erst oder schon oft bestätigt → gleiche Antwort
+    // wie sonst, aber keine weitere Nachricht. Zu viele Anmeldungen pro Stunde → 429.
+    const exProps = ((ex as { properties?: Record<string, unknown> | null } | null)?.properties ?? {}) as Record<string, unknown>
+    const jetzt = Date.now()
+    const frueher = (Array.isArray(exProps.doi_sends) ? exProps.doi_sends : [])
+      .map(x => Date.parse(String(x))).filter(t => Number.isFinite(t) && jetzt - t < 24 * 3600_000)
+    if (frueher.length && (jetzt - Math.max(...frueher) < DOI_MIN_GAP_MS || frueher.length >= DOI_MAX_PER_DAY)) {
+      console.warn('[subscriber-optin] Bestätigung gedrosselt (Kontakt hat gerade/oft eine bekommen)')
+      return json({ ok: true, pending: true, list: list.name, channel })
+    }
+    const { count: letzteStunde } = await sb.from('newsletter_subscribers')
+      .select('id', { count: 'exact', head: true })
+      .gte('properties->>doi_sent_at', new Date(jetzt - 3600_000).toISOString())
+    if ((letzteStunde ?? 0) >= DOI_MAX_PER_HOUR) {
+      console.error(`[subscriber-optin] Stundenlimit erreicht (${letzteStunde} Bestätigungen in 60 Min) - Anmeldung abgewiesen`)
+      return json({ error: lang === 'en'
+        ? 'We are receiving a lot of sign-ups right now. Please try again in a few minutes.'
+        : 'Gerade kommen sehr viele Anmeldungen an. Bitte versuch es in ein paar Minuten noch einmal.' }, 429)
+    }
+    const jetztIso = new Date(jetzt).toISOString()
+    const frueherIso = frueher.map(t => new Date(t).toISOString())
+
     // Neu oder unbestätigt → DOI-Token setzen + Bestätigung auf dem gewählten Kanal
     const token = crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '').slice(0, 8)
     let subId = ex?.id
@@ -280,16 +323,18 @@ Deno.serve(async (req) => {
       ...(ex?.properties ?? {}), lang, channel,
       doi_token: token, doi_pending_list: list.id, doi_confirmed: false,
       doi_redirect: erlaubtesZiel(body.confirm_redirect),
+      // Vorab als verschickt markiert; schlägt der Versand fehl, wird es unten zurückgesetzt.
+      doi_sent_at: jetztIso, doi_sends: [...frueherIso, jetztIso].slice(-DOI_MAX_PER_DAY),
     }
     if (ex) {
       await sb.from('newsletter_subscribers').update({
-        first_name: body.first_name?.trim() || undefined, last_name: body.last_name?.trim() || undefined,
+        first_name: cleanText(body.first_name, 80) || undefined, last_name: cleanText(body.last_name, 80) || undefined,
         phone: phone || undefined, properties: baseProps,
       }).eq('id', ex.id)
     } else {
       const { data: created, error: insErr } = await sb.from('newsletter_subscribers').insert({
-        email: email || null, first_name: body.first_name?.trim() || null, last_name: body.last_name?.trim() || null,
-        phone: phone || null, source: body.source?.trim() || 'signup',
+        email: email || null, first_name: cleanText(body.first_name, 80) || null, last_name: cleanText(body.last_name, 80) || null,
+        phone: phone || null, source: cleanText(body.source, 120) || 'signup',
         properties: baseProps,
       }).select('id').single()
       if (insErr) console.error('[subscriber-optin] insert:', insErr.message)
@@ -298,19 +343,33 @@ Deno.serve(async (req) => {
     if (!subId) return json({ error: 'Abonnent konnte nicht angelegt werden' }, 500)
 
     const confirmUrl = `${base}/functions/v1/subscriber-optin?confirm=${token}`
-    const first = (body.first_name ?? '').trim()
+    const first = greetName(body.first_name)
+
+    // Versand gescheitert: Markierung zurücknehmen (sonst greift die Drosselung beim
+    // erneuten Versuch) und ehrlich einen Fehler melden statt "bitte bestätigen".
+    const versandFehler = async (kanal: string, grund: string) => {
+      console.error(`[subscriber-optin] DOI-${kanal} fehlgeschlagen:`, grund)
+      await sb.from('newsletter_subscribers').update({
+        properties: { ...baseProps, doi_sent_at: (exProps.doi_sent_at as string | undefined) ?? null, doi_sends: frueherIso },
+      }).eq('id', subId)
+      return json({ error: lang === 'en'
+        ? 'We could not send the confirmation just now. Please try again in a moment.'
+        : 'Die Bestätigung konnte gerade nicht verschickt werden. Bitte versuch es gleich noch einmal.' }, 502)
+    }
 
     // ── Kanal WhatsApp: Bestätigung als Nachricht statt als Mail ──────────────
     if (channel === 'whatsapp') {
       const waText = lang === 'en'
         ? `${first ? `Hi ${first}! ` : 'Hi! '}Thanks for signing up for the Happy Property newsletter 🇨🇾\n\nOne last step — please confirm here:\n${confirmUrl}\n\nDidn't request this? Just ignore this message.`
         : `${first ? `Hallo ${first}! ` : 'Hallo! '}Danke für deine Anmeldung zum Happy-Property-Newsletter 🇨🇾\n\nEin letzter Schritt — bitte bestätige hier:\n${confirmUrl}\n\nDu warst das nicht? Dann ignoriere diese Nachricht einfach.`
-      const { error: waErr } = await sb.functions.invoke('send-whatsapp', { body: {
+      const { data: waData, error: waErr } = await sb.functions.invoke('send-whatsapp', { body: {
         event_type: 'scheduled', override_text: waText, auto: true,
         lead_data: { lead_name: first || 'Newsletter-Abonnent', lead_phone: phone },
         persona_image: lotteBild(),
       } })
-      if (waErr) console.warn('[subscriber-optin] DOI-WhatsApp:', waErr)
+      // send-whatsapp meldet "nichts rausgegangen" auch als 200 mit success:false.
+      const waRes = waData as { success?: boolean; error?: string } | null
+      if (waErr || waRes?.success === false) return await versandFehler('WhatsApp', waErr?.message ?? waRes?.error ?? 'success=false')
       return json({ ok: true, pending: true, list: list.name, channel })
     }
 
@@ -324,15 +383,22 @@ Deno.serve(async (req) => {
         <img src="${lotteBild()}" alt="Lotte" width="80" height="80" style="width:80px;height:80px;border-radius:50%;object-fit:cover;" />
         <p style="font-size:12px;color:#6b7280;margin:6px 0 0;">${lang === 'en' ? "Lotte · Sven's personal assistant 🐾" : 'Lotte · persönliche Assistentin von Sven 🐾'}</p>
       </div>
-      <p>${T.greet}</p><p>${T.intro}</p>
+      <p>${escHtml(T.greet)}</p><p>${T.intro}</p>
       <p style="text-align:center;margin:24px 0;">
         <a href="${confirmUrl}" style="background:#ff795d;color:#fff;text-decoration:none;padding:13px 26px;border-radius:10px;font-weight:600;display:inline-block;">${T.btn}</a>
       </p>
       <p style="font-size:12px;color:#9ca3af;">${T.foot}</p>
     </div>`
-    await sb.functions.invoke('send-email', { body: {
-      to: email, subject: T.subj, html: mailHtml, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, auto: true,
-    } }).catch((e: unknown) => console.warn('[subscriber-optin] DOI-Mail:', e))
+    // invoke wirft bei non-2xx nicht, sondern liefert { error } - das .catch allein
+    // hat Fehlschläge nie gesehen (Antwort war trotzdem "bitte bestätigen").
+    let mailFehler: string | null = null
+    try {
+      const { data: mData, error: mErr } = await sb.functions.invoke('send-email', { body: {
+        to: email, subject: T.subj, html: mailHtml, from_name: lang === 'en' ? "Lotte · Sven's personal assistant" : 'Lotte · Assistentin von Sven', lang, auto: true,
+      } })
+      mailFehler = mErr ? (mErr.message ?? 'invoke error') : ((mData as { error?: string } | null)?.error ?? null)
+    } catch (e) { mailFehler = e instanceof Error ? e.message : String(e) }
+    if (mailFehler) return await versandFehler('Mail', mailFehler)
 
     return json({ ok: true, pending: true, list: list.name, channel })
   } catch (err) {
