@@ -6,6 +6,7 @@
 //
 // Body: { dry_run?: boolean, ingest?: boolean }
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -99,6 +100,14 @@ async function ingestProject(supabase: ReturnType<typeof createClient>, projectI
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4): verify_jwt=true lässt auch den publishable
+  // Key durch, damit konnte jeder alle Projekt-IDs auslesen (dry_run) und die
+  // bezahlte Ingest-Kette starten. Erlaubt: pg_cron scan-drive-projects-nightly
+  // mit x-cron-secret (connector_secrets CRON_SECRET; der Job schickt heute nur
+  // den publishable Key, der hier NICHT zählt), Service-Key, Team-Rollen
+  // (Projekte: Drive scannen).
+  const denied = await gateCaller(req, 'scan-drive-projects', { cron: true, service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+  if (denied) return denied
   try {
     const { dry_run, ingest } = await req.json().catch(() => ({})) as { dry_run?: boolean; ingest?: boolean }
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
