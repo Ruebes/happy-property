@@ -508,10 +508,12 @@ export default function ProjectDetail() {
       // Bau-Status folgt dem Projekt (Quelle der Wahrheit) — eine Kundenzuweisung
       // ändert NICHT den Bau-Status. "Verkauft" ergibt sich aus der Zuordnung
       // (deal.unit_id / owner_id), nicht aus unit.status.
+      // Verkaufsstatus (reserviert/verkauft) bleibt stehen, nur Vorschlag/Bau-Status folgt dem Projekt.
       const unitBuildStatus = project?.status === 'under_construction' ? 'under_construction' : 'active'
       await supabase.from('crm_project_units')
         .update({ status: unitBuildStatus })
         .eq('id', assigningUnit.id)
+        .not('status', 'in', '(sold,reserved)')
       // Log activity
       await supabase.from('activities').insert({
         lead_id:      leadId,
