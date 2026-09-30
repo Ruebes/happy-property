@@ -94,3 +94,6 @@ verify_jwt = false
 
 [functions.newsletter-campaign]
 verify_jwt = false
+
+[functions.simulate-automations]
+verify_jwt = false
