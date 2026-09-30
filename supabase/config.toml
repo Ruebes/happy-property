@@ -165,3 +165,11 @@ verify_jwt = false
 
 [functions.ad-studio]
 verify_jwt = false
+
+# Deck-/Projekt-Functions (Sicherheitspaket S3, Befund E4-4): Guard per
+# gateCaller im Code, verify_jwt wie live.
+[functions.generate-deck]
+verify_jwt = true
+
+[functions.refine-deck]
+verify_jwt = true
