@@ -68,3 +68,11 @@ verify_jwt = false
 # YouTube-Center: In-Code-Guard (User-JWT gegen profiles/permissions, Service-Role erlaubt)
 [functions.yt-center]
 verify_jwt = false
+
+# ── Sicherheits-Audit 30.9.2026 ──
+# verify_jwt hier so festgeschrieben, wie die Functions heute live laufen, damit
+# ein Deploy ohne Flag nichts umstellt. verify_jwt=true ist KEIN Schutz (der
+# publishable Key besteht das Gateway), geschützt wird im Code (callerAuth/callerGate).
+
+[functions.send-email]
+verify_jwt = false
