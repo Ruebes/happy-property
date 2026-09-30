@@ -152,3 +152,16 @@ verify_jwt = false
 # Befund E5-3: Cron schickt keinen JWT, eigener Guard authorize(). Erst NACH dem Social-RLS-Fix deployen (live noch true).
 [functions.social-agent]
 verify_jwt = false
+
+# adsAuth-Functions (Commit a8d07c7): Guard requireAdsAccess im Code, live false.
+[functions.meta-ads-sync]
+verify_jwt = false
+
+[functions.meta-ads-tools]
+verify_jwt = false
+
+[functions.studio]
+verify_jwt = false
+
+[functions.ad-studio]
+verify_jwt = false
