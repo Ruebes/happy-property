@@ -11,9 +11,15 @@
 // MwSt-Behandlungen: standard_19 | reduced_9 | reduced_5 | reduced_3 | zero |
 //                    reverse_charge_eu | third_country | exempt
 
+//
+// Aufrufer: Rechnungen-Seite (Recht 'invoices') und Anzahlungs-Modal der
+// Pipeline (Recht 'pipeline'), beide per supabase.functions.invoke mit User-JWT.
+// Deploy mit --no-verify-jwt (wie live); der Guard im Handler schützt.
+
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage } from 'npm:pdf-lib@1.17.1'
 import fontkit from 'npm:@pdf-lib/fontkit@1.1.1'
+import { authorizeCaller } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -88,6 +94,11 @@ async function loadFonts(): Promise<{ mont?: Uint8Array; montSemi?: Uint8Array; 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
+
+  // Nur Service-Key oder admin/verwalter bzw. mitarbeiter mit 'invoices' oder 'pipeline'
+  // (spiegelt die Routen /admin/crm/invoices und /admin/crm/pipeline).
+  const caller = await authorizeCaller(req, { service: true, roles: ['admin', 'verwalter'], perms: ['invoices', 'pipeline'] }, CORS)
+  if (caller instanceof Response) return caller
 
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE)
   try {

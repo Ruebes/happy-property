@@ -142,3 +142,6 @@ verify_jwt = true
 
 [functions.revolut-sync]
 verify_jwt = true
+
+[functions.generate-invoice]
+verify_jwt = false
