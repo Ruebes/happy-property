@@ -312,7 +312,7 @@ function TargetingView({ targeting }: { targeting: Record<string, unknown> | nul
 // ── Seite ─────────────────────────────────────────────────────────────────────
 export default function AdsManager() {
   const { t, i18n } = useTranslation()
-  const { profile } = useAuth()
+  const { profile, loading: authLoading } = useAuth()
   const basePath = '/admin/crm'
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
@@ -482,7 +482,12 @@ export default function AdsManager() {
     }
   }, [segment, days, canSeeCrm])
 
-  useEffect(() => { void fetchAll() }, [fetchAll])
+  // Erst laden, wenn das Profil da ist (oder die Anmeldung ohne Profil fertig
+  // ist): Beim Kaltstart ohne Profil-Cache war canSeeCrm sonst kurz false, auch
+  // der Admin rief dann die Funktion auf und lud danach ein zweites Mal direkt.
+  // Mit Profil-Cache (Normalfall) ist profileReady sofort true, nichts ändert sich.
+  const profileReady = !!profile || !authLoading
+  useEffect(() => { if (profileReady) void fetchAll() }, [fetchAll, profileReady])
 
   // ── Aggregation ────────────────────────────────────────────────────────────
   const { byAd, campaignsSorted, total, trend } = useMemo(() => {

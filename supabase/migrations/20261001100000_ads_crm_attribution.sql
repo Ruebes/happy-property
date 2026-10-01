@@ -21,8 +21,12 @@
 -- p_campaign_ids zählt nur, wenn die ID wirklich in ad_catalog steht (das
 -- Frontend übergibt ohnehin nur Katalog-IDs, das Ergebnis ist also gleich).
 --
--- Zugriff: Admin/Verwalter oder Mitarbeiter mit 'werbung' oder einem
--- 'werbung_<kanal>'-Recht, sonst Fehler 42501. EXECUTE nur für authenticated.
+-- Zugriff: Admin/Verwalter oder Mitarbeiter mit 'werbung' oder 'werbung_meta',
+-- also genau der Kreis, den die RLS für Meta-Daten (ad_catalog,
+-- ad_insights_daily, ad_settings) durchlässt, ausgewertet über
+-- current_user_has_perm wie dort. Sonst Fehler 42501. Nur-YouTube- oder
+-- Nur-Google-Mitarbeiter sehen auf der Seite keine Meta-Statistik und bekommen
+-- die Zuordnung deshalb auch hier nicht. EXECUTE nur für authenticated.
 --
 -- Das Frontend ruft die Funktion NUR ohne Pipeline-Recht auf. Admin, Verwalter
 -- und Pipeline-Mitarbeiter lesen weiter direkt, ihre Zahlen ändern sich nicht.
@@ -42,31 +46,14 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  v_allowed boolean;
   v_result  jsonb;
 begin
-  select exists (
-    select 1
-    from public.profiles p
-    where p.id = auth.uid()
-      and (
-        p.role in ('admin', 'verwalter')
-        or (
-          p.role = 'mitarbeiter'
-          and exists (
-            select 1
-            from jsonb_each(
-              case when jsonb_typeof(p.permissions) = 'object'
-                   then p.permissions else '{}'::jsonb end
-            ) e
-            where (e.key = 'werbung' or starts_with(e.key, 'werbung_'))
-              and e.value in ('true'::jsonb, '"true"'::jsonb)
-          )
-        )
-      )
-  ) into v_allowed;
-
-  if not coalesce(v_allowed, false) then
+  -- Gleicher Kreis und gleiche Auswertung wie die RLS für Meta-Daten
+  -- (ad_settings_read, ad_catalog/ad_insights_daily bei platform = 'meta'):
+  -- current_user_has_perm deckt Admin/Verwalter ab und wertet die Rechte
+  -- genauso aus wie die übrigen Policies.
+  if not (public.current_user_has_perm('werbung')
+          or public.current_user_has_perm('werbung_meta')) then
     raise exception 'Kein Zugriff auf die Werbe-Auswertung'
       using errcode = '42501';
   end if;
