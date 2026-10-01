@@ -382,17 +382,13 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
         if (res.error) throw new Error(res.error.message)
 
         // Status-Kaskade: Wenn Projektstatus sich geändert hat →
-        // alle CRM-Einheiten + verlinkten Portal-Einträge aktualisieren
+        // verlinkte Portal-Einträge aktualisieren
         if (project.status !== form.status) {
-          const newUnitStatus = form.status === 'under_construction' ? 'under_construction' : 'active'
-          const newPropStatus = newUnitStatus
+          const newPropStatus = form.status === 'under_construction' ? 'under_construction' : 'active'
 
-          // 1. Alle CRM-Einheiten dieses Projekts updaten
-          const { error: unitStatusErr } = await supabase
-            .from('crm_project_units')
-            .update({ status: newUnitStatus })
-            .eq('project_id', project.id)
-          if (unitStatusErr) throw new Error(unitStatusErr.message)
+          // 1. CRM-Einheiten: macht der DB-Trigger hp_cascade_project_status beim
+          //    Projekt-Update, und zwar nur für Einheiten im Bau-Status. Ein
+          //    Client-Update ohne Filter hat reserviert/verkauft/Vorschlag überschrieben.
 
           // 2. Verknüpfte Portal-Einträge (property_status) ebenfalls updaten
           const { data: units } = await supabase

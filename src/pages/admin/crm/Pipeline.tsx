@@ -588,7 +588,7 @@ export default function Pipeline() {
       const { data, error } = await supabase
         .from('deals')
         .select(`
-          id, lead_id, property_id, phase, source, developer, created_at, updated_at,
+          id, lead_id, property_id, unit_id, phase, source, developer, created_at, updated_at,
           registration_notes, finanzierung_de_notes, finanzierung_cy_notes,
           immobilien_notes, kaufvertrag_notes, provision_notes,
           lead:leads(id, first_name, last_name, email, phone, whatsapp, source, assigned_to,
@@ -1191,6 +1191,8 @@ export default function Pipeline() {
               .update({ unit_id: unit.id, developer: project.developer ?? null })
               .eq('id', deal.id)
             if (dErr) { console.error('[Pipeline] Unit-Zuweisung:', dErr.message); showToastMsg(t('crm.pipeline.unitAssignError', 'Wohnung konnte nicht zugewiesen werden.')); return }
+            // Verknüpfung auch lokal merken, sonst öffnet der nächste Wechsel die Auswahl erneut
+            setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, unit_id: unit.id, developer: project.developer ?? null } : d)))
             await supabase.from('activities').insert({
               lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
               content: `🏠 Wohnung verknüpft: ${project.name} · ${unit.unit_number} (${target === 'reservierung' ? 'reserviert' : 'verkauft'})`,

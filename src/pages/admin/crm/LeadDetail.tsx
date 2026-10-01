@@ -23,7 +23,7 @@ import { sendWhatsApp } from '../../../lib/whatsapp'
 import LeadQuickSend from '../../../components/crm/LeadQuickSend'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
-import { detachPropertyFromOwner, detachConfirmText } from '../../../lib/detachProperty'
+import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -86,6 +86,12 @@ export default function LeadDetail() {
     }
   }
   const [deal, setDeal] = useState<Deal | null>(null)
+  // Nur Anzeige: gewonnene Käufe, deren Deal archiviert ist (kein aktiver Deal mehr).
+  // Bewusst getrennt von `deal`, damit keine Schreibwege auf den archivierten Deal wirken.
+  const [archivedWonDeals, setArchivedWonDeals] = useState<Array<{
+    id: string
+    property: { id: string; project_name: string; unit_number: string | null } | null
+  }>>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
   const [bizContacts, setBizContacts] = useState<BizContactRow[]>([])
@@ -505,6 +511,7 @@ export default function LeadDetail() {
         { data: loginData },
         { data: docsData },
         { data: unitImgData },
+        { data: wonData },
       ] = await Promise.all([
         // deal_projects
         dealResult?.id
@@ -545,6 +552,16 @@ export default function LeadDetail() {
               .eq('id', dealResult.unit_id)
               .maybeSingle()
           : Promise.resolve({ data: null }),
+        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
+        dealResult
+          ? Promise.resolve({ data: [] })
+          : supabase.from('deals')
+              .select('id, property:properties(id, project_name, unit_number)')
+              .eq('lead_id', id)
+              .eq('phase', 'archiviert')
+              .eq('archived_from_phase', 'provision_erhalten')
+              .not('unit_id', 'is', null)
+              .order('created_at', { ascending: false }),
       ])
 
       const dp = (dpData ?? []) as unknown as DealProject[]
@@ -555,6 +572,7 @@ export default function LeadDetail() {
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
       setUnitDocs((docsData ?? []) as CrmUnitDocument[])
       setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
+      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
@@ -610,7 +628,8 @@ export default function LeadDetail() {
         const unit = unitData as { property_id: string | null }
         // Nur verknüpfen, wenn die Unit bereits ein Portal-Objekt besitzt.
         // Bewusst KEIN Neu-Anlegen → gelöschte Objekte bleiben gelöscht.
-        if (unit.property_id) {
+        // Nie das Objekt eines anderen Kunden an diesen Deal hängen.
+        if (unit.property_id && id && !(await isForeignOwnedProperty(unit.property_id, await leadProfileIds(id)))) {
           await supabase.from('deals').update({ property_id: unit.property_id }).eq('id', deal.id)
           fetchAll(true)
         }
@@ -923,12 +942,19 @@ export default function LeadDetail() {
 
       // Zuständige/n als assignee-Zeile (Team intern ODER Geschäftskontakt extern)
       const a = taskForm.assigned_to
+      // channel muss 'mail' heißen (CHECK: system/mail/whatsapp/both), sonst scheitert
+      // das Insert still und niemand wird benachrichtigt.
+      let assigneeOk = true
+      const noteAssigneeErr = (err: { message: string } | null) => {
+        if (err) { console.warn('[LeadDetail] Zuständige/r:', err.message); assigneeOk = false }
+      }
       if (a === 'new' && newPerson.name.trim() && (newPerson.phone.trim() || newPerson.email.trim())) {
         const nm = newPerson.name.trim(), ph = newPerson.phone.trim(), em = newPerson.email.trim()
-        await supabase.from('crm_task_assignees').insert({
+        const { error: aErr } = await supabase.from('crm_task_assignees').insert({
           task_id: taskId, ext_name: nm, ext_email: em || null, ext_phone: ph || null,
-          channel: ph ? 'whatsapp' : 'email', ext_lang: 'de',
+          channel: ph ? 'whatsapp' : 'mail', ext_lang: 'de',
         })
+        noteAssigneeErr(aErr)
         // Person behalten, damit sie beim naechsten Mal in der Auswahl steht.
         const [first, ...rest] = nm.split(' ')
         const { error: cErr } = await supabase.from('crm_business_contacts').insert({
@@ -937,14 +963,16 @@ export default function LeadDetail() {
         })
         if (cErr) console.warn('[LeadDetail] Kontakt merken:', cErr.message)
       } else if (a.startsWith('staff:')) {
-        await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
+        const { error: aErr } = await supabase.from('crm_task_assignees').insert({ task_id: taskId, profile_id: a.slice(6), channel: 'system' })
+        noteAssigneeErr(aErr)
       } else if (a.startsWith('biz:')) {
         const b = bizContacts.find(x => x.id === a.slice(4))
         if (b) {
-          await supabase.from('crm_task_assignees').insert({
+          const { error: aErr } = await supabase.from('crm_task_assignees').insert({
             task_id: taskId, ext_name: b.name, ext_email: b.email || null, ext_phone: b.phone || null,
-            channel: b.phone ? 'whatsapp' : 'email', ext_lang: b.lang,
+            channel: b.phone ? 'whatsapp' : 'mail', ext_lang: b.lang,
           })
+          noteAssigneeErr(aErr)
         }
       }
       // Mit diesem Lead verknüpfen (erscheint dann in seinem Aufgaben-Tab)
@@ -955,7 +983,7 @@ export default function LeadDetail() {
       setTaskForm({ subject: '', content: '', scheduled_at: '', assigned_to: '' })
       setNewPerson({ name: '', phone: '', email: '' })
       await loadLeadTasks()
-      showToast(a ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
+      showToast(a && assigneeOk ? t('crm.taskSavedNotified', 'Aufgabe erstellt & Lotte benachrichtigt') : t('crm.taskSaved', 'Aufgabe gespeichert'))
     } catch (err) {
       console.error('[LeadDetail] saveTask:', err)
       showToast(`❌ ${t('leadDetail.errSaveFailed', 'Fehler beim Speichern')}`)
@@ -1528,16 +1556,24 @@ export default function LeadDetail() {
         ? `${deal.property.project_name}${deal.property.unit_number ? ` · Nr. ${deal.property.unit_number}` : ''}`
         : t('leadDetail.unitHeaderFallback', 'Wohnung')
     if (!window.confirm(detachConfirmText(label))) return
+    let keptForeignOwner = false
     try {
       if (deal.property_id) {
-        await detachPropertyFromOwner(deal.property_id, {
+        const res = await detachPropertyFromOwner(deal.property_id, {
           actorId: profile?.id ?? null,
           unitId:  deal.unit_id,
           leadId:  id,
+          dealId:  deal.id,
         })
+        keptForeignOwner = !!res.keptForeignOwner
       } else {
-        // Kein Portal-Objekt (noch nicht angelegt): nur Unit + Deal lösen
-        await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id!)
+        // Kein Portal-Objekt (noch nicht angelegt): nur Unit + Deal lösen.
+        // Hängt an der Wohnung das Objekt eines ANDEREN Kunden, bleibt dessen Link stehen.
+        const unitPropId = await fetchUnitPropertyId(deal.unit_id!, null)
+        const foreign = !!unitPropId && !!id && await isForeignOwnedProperty(unitPropId, await leadProfileIds(id))
+        if (!foreign) {
+          await supabase.from('crm_project_units').update({ property_id: null }).eq('id', deal.unit_id!)
+        }
         await supabase.from('deals').update({ unit_id: null, property_id: null }).eq('id', deal.id)
         await supabase.from('activities').insert({
           lead_id:      id,
@@ -1552,7 +1588,9 @@ export default function LeadDetail() {
       }
       setPickedUnit(null)
       setActiveTab('overview')
-      showToast(t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
+      showToast(keptForeignOwner
+        ? t('leadDetail.toastUnitRemovedForeignKept', 'Zuordnung entfernt. Das Portal-Objekt gehört einem anderen Kunden und bleibt erhalten.')
+        : t('leadDetail.toastUnitRemoved', '✅ Wohnung entfernt'))
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errRemoveFailed', 'Fehler beim Entfernen')}`)
@@ -1662,11 +1700,13 @@ export default function LeadDetail() {
             purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
           }
 
+          // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
+          existingPropertyId = await fetchUnitPropertyId(savedUnitId, existingPropertyId)
           if (existingPropertyId) {
             // Bestehenden properties-Eintrag aktualisieren
             await supabase.from('properties').update(propData).eq('id', existingPropertyId)
-          } else {
-            // Neuen properties-Eintrag anlegen + verknüpfen
+          } else if (dealInPortal(deal)) {
+            // Neuen properties-Eintrag anlegen + verknüpfen (erst ab Reservierung, Entscheidung Sven 29.9.2026)
             const { data: newProp } = await supabase
               .from('properties')
               .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
@@ -1684,6 +1724,7 @@ export default function LeadDetail() {
               }
             }
           }
+          await linkLeadToOwnerProfile(ownerProfile.id)
         }
       }
       // ──────────────────────────────────────────────────────────────
@@ -1727,9 +1768,10 @@ export default function LeadDetail() {
                 purchase_price_gross: unitEditForm.price_gross ? parseFloat(unitEditForm.price_gross) : null,
                 property_status:      unitEditForm.status === 'under_construction' ? 'under_construction' : 'active',
               }
+              existingPropertyId = await fetchUnitPropertyId(savedUnitId, existingPropertyId)
               if (existingPropertyId) {
                 await supabase.from('properties').update(propData).eq('id', existingPropertyId)
-              } else {
+              } else if (dealInPortal(deal)) {
                 const { data: newProp } = await supabase
                   .from('properties')
                   .insert({ ...propData, owner_id: data.userId, created_by: profile.id, images: [] })
@@ -1791,6 +1833,20 @@ export default function LeadDetail() {
       .eq('role', 'eigentuemer')
       .maybeSingle()
     return data as { id: string } | null
+  }
+
+  // ── Lead mit dem per E-Mail gefundenen Eigentümer-Profil verknüpfen ──
+  // Erst NACH den Wohnungs- und Objekt-Schreibvorgängen aufrufen (Reihenfolge wie
+  // Users.tsx). Sonst legt der DB-Trigger beim Wechsel auf Reservierung nie ein
+  // Objekt an, weil er leads.profile_id braucht. Eine bestehende Verknüpfung bleibt.
+  async function linkLeadToOwnerProfile(ownerProfileId: string) {
+    if (!id || lead?.profile_id) return
+    const { error } = await supabase
+      .from('leads')
+      .update({ profile_id: ownerProfileId })
+      .eq('id', id)
+      .is('profile_id', null)
+    if (error) console.error('[LeadDetail] linkLeadToOwnerProfile:', error)
   }
 
   // ── Portal-Zugangs-Check ─────────────────────────────────────────
@@ -1914,6 +1970,27 @@ export default function LeadDetail() {
     })
   }
 
+  // ── Gehört die Wohnung schon einem anderen Kunden? ───────────────
+  // Portal-Objekt eines anderen Profils oder aktiver Deal eines anderen Leads.
+  // Gleiche Regel wie im UnitPickerModal; Status (reserviert/verkauft) allein
+  // sperrt bewusst nicht, weil der Käufer oft erst danach aktiviert wird.
+  async function unitTakenByOtherCustomer(unit: CrmProjectUnit): Promise<boolean> {
+    if (!id) return false
+    const propId = await fetchUnitPropertyId(unit.id, unit.property_id)
+    if (propId && await isForeignOwnedProperty(propId, await leadProfileIds(id))) return true
+    const { data: holders, error } = await supabase
+      .from('deals')
+      .select('id')
+      .eq('unit_id', unit.id)
+      .neq('lead_id', id)
+      .is('archived_from_phase', null)
+      .neq('phase', 'deal_verloren')
+      .neq('phase', 'archiviert')
+      .limit(1)
+    if (error) throw error
+    return (holders ?? []).length > 0
+  }
+
   // ── Unit assignment ──────────────────────────────────────────────
   async function handleUnitAssign(unit: CrmProjectUnit, project: Pick<CrmProject, 'id' | 'name' | 'location'>) {
     setShowUnitPicker(false)
@@ -1969,9 +2046,12 @@ export default function LeadDetail() {
           purchase_price_gross: unitGross(unit),
           property_status:      unit.status === 'under_construction' ? 'under_construction' : 'active',
         }
-        if (unit.property_id) {
-          await supabase.from('properties').update(propData).eq('id', unit.property_id)
-        } else {
+        // Frisch lesen: der DB-Trigger kann beim Deal-Update schon ein Objekt angelegt haben
+        const existingPropId = await fetchUnitPropertyId(unit.id, unit.property_id)
+        if (existingPropId) {
+          await supabase.from('properties').update(propData).eq('id', existingPropId)
+        } else if (dealInPortal(deal)) {
+          // Neues Portal-Objekt erst ab Reservierung (Entscheidung Sven 29.9.2026)
           const { data: newProp } = await supabase
             .from('properties')
             .insert({ ...propData, owner_id: ownerProfile.id, created_by: profile.id, images: [] })
@@ -1983,6 +2063,7 @@ export default function LeadDetail() {
             if (deal) await supabase.from('deals').update({ property_id: newPropId }).eq('id', deal.id)
           }
         }
+        await linkLeadToOwnerProfile(ownerProfile.id)
       }
 
       await fetchAll(true)
@@ -1990,8 +2071,33 @@ export default function LeadDetail() {
       console.error('[LeadDetail] handleUnitAssign:', err)
     }
 
-    // 5. Unit-Edit öffnen (Portal-Check läuft darin automatisch)
-    openUnitEdit(unit)
+    // 5. Unit-Edit öffnen (Portal-Check läuft darin automatisch). Wohnung frisch
+    //    lesen, sonst legt „Speichern" mit veralteter property_id ein zweites Objekt an.
+    const { data: freshUnit } = await supabase
+      .from('crm_project_units')
+      .select('*')
+      .eq('id', unit.id)
+      .maybeSingle()
+    openUnitEdit((freshUnit as CrmProjectUnit | null) ?? unit)
+  }
+
+  // ── Hat der Kunde schon einen Portalzugang? ──────────────────────
+  // Die Automatik schreibt portal_invited_at (nicht portal_access_sent_at) und
+  // create-eigentuemer-access verknüpft profile_id. Jede dieser Markierungen heißt:
+  // Zugang besteht, also nur über „Zugang erneut" mit Rückfrage vor dem Passwort-Reset.
+  const portalInvitedAt = (lead as (Lead & { portal_invited_at?: string | null }) | null)?.portal_invited_at ?? null
+  const hasPortal = !!(lead?.profile_id || lead?.portal_access_sent_at || portalInvitedAt)
+  const portalSentAt = lead?.portal_access_sent_at ?? portalInvitedAt
+
+  // Mail mit Zugangsdaten nicht zugestellt: Passwort anzeigen statt Erfolg melden
+  function showPortalPasswordFallback(password: string | undefined) {
+    if (!password || !lead?.email) return false
+    setNewOwnerPassword(password)
+    setNewOwnerPasswordEmail(lead.email)
+    setNewOwnerPwCopied(false)
+    setShowNewOwnerPwModal(true)
+    showToast(t('leadDetail.portalMailNotSent', 'Die E-Mail mit den Zugangsdaten wurde nicht zugestellt. Das Passwort steht im Fenster.'))
+    return true
   }
 
   // ── Portal access send ───────────────────────────────────────────
@@ -2000,6 +2106,11 @@ export default function LeadDetail() {
   // custom_message nutzt create-eigentuemer-access die DB-Vorlage (mit Sicherheitsnetz).
   async function openPortal() {
     if (!lead?.email) { showToast(`❌ ${t('leadDetail.noEmailOnLead', 'Keine E-Mail am Lead hinterlegt')}`); return }
+    // Gibt es zu dieser E-Mail schon ein Konto, setzt create-eigentuemer-access dessen
+    // Passwort neu: dann gleiche Rückfrage wie bei „Zugang erneut". Neue Kunden: ohne Dialog.
+    if (id && (await leadProfileIds(id)).length > 0 && !window.confirm(
+      t('leadDetail.confirmResendPortalAccess', 'Neues Passwort erstellen und per E-Mail an {{email}} senden?\n\nDas bisherige Passwort des Kunden wird dabei ungültig.', { email: lead.email })
+    )) return
     setResendingPortal(true)
     try {
       const fullName = `${lead.first_name} ${lead.last_name}`.trim()
@@ -2018,7 +2129,9 @@ export default function LeadDetail() {
         completed_at: new Date().toISOString(),
       })
       if (id) await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
-      showToast(t('leadDetail.toastPortalAccessSent', '✅ Portalzugang an den Kunden gesendet'))
+      if (!(data?.emailed === false && showPortalPasswordFallback(data?.password))) {
+        showToast(t('leadDetail.toastPortalAccessSent', '✅ Portalzugang an den Kunden gesendet'))
+      }
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errSendFailed', 'Fehler beim Senden')}`)
@@ -2030,7 +2143,7 @@ export default function LeadDetail() {
   // ── Portal-Zugang nochmal verschicken (neues Passwort + E-Mail an Kunden) ─────
   async function resendPortalAccess() {
     if (!lead) return
-    if (!lead.profile_id) { openPortal(); return }
+    if (!hasPortal) { openPortal(); return }
     if (!window.confirm(
       t('leadDetail.confirmResendPortalAccess', 'Neues Passwort erstellen und per E-Mail an {{email}} senden?\n\nDas bisherige Passwort des Kunden wird dabei ungültig.', { email: lead.email })
     )) return
@@ -2058,7 +2171,9 @@ export default function LeadDetail() {
       if (id) {
         await supabase.from('leads').update({ portal_access_sent_at: new Date().toISOString() }).eq('id', id)
       }
-      showToast(t('leadDetail.toastNewAccessSent', '✅ Neuer Zugang per E-Mail an den Kunden gesendet'))
+      if (!(data?.emailed === false && showPortalPasswordFallback(data?.password))) {
+        showToast(t('leadDetail.toastNewAccessSent', '✅ Neuer Zugang per E-Mail an den Kunden gesendet'))
+      }
       await fetchAll(true)
     } catch (err) {
       showToast(`❌ ${err instanceof Error ? err.message : t('leadDetail.errResendFailed', 'Fehler beim erneuten Senden')}`)
@@ -2259,11 +2374,11 @@ export default function LeadDetail() {
                 </button>
               )}
               {/* Portalzugang */}
-              <button onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal} disabled={resendingPortal}
+              <button onClick={hasPortal ? resendPortalAccess : openPortal} disabled={resendingPortal}
                 className="flex flex-col items-center justify-center gap-1.5 py-4 px-2 rounded-xl font-medium text-sm transition-colors text-white disabled:opacity-60"
-                style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}>
+                style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}>
                 <span className="text-2xl leading-none">{resendingPortal ? '⏳' : '🔑'}</span>
-                <span className="text-center leading-tight">{lead?.portal_access_sent_at ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
+                <span className="text-center leading-tight">{hasPortal ? t('crm.action.portalResend', 'Zugang erneut') : t('crm.action.portal', 'Portalzugang')}</span>
               </button>
               {/* Deal löschen (z.B. versehentlich mehrfach angelegt) — Kontakt bleibt erhalten */}
               {deal && (
@@ -2628,14 +2743,14 @@ export default function LeadDetail() {
 
                       {/* Portal access button */}
                       <button
-                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        onClick={hasPortal ? resendPortalAccess : openPortal}
                         disabled={resendingPortal}
                         className="w-full py-2 text-xs font-medium text-white rounded-lg disabled:opacity-60 transition-colors"
-                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
+                        style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}
                       >
                         {resendingPortal
                           ? t('crm.portalBtn.resetting')
-                          : lead?.portal_access_sent_at
+                          : hasPortal
                             ? t('crm.portalBtn.sentResend')
                             : t('crm.portalBtn.createSend')}
                       </button>
@@ -2714,14 +2829,14 @@ export default function LeadDetail() {
                         📱 {t('crm.commissionWhatsapp', 'Provision via WhatsApp')}
                       </button>
                       <button
-                        onClick={lead?.portal_access_sent_at ? resendPortalAccess : openPortal}
+                        onClick={hasPortal ? resendPortalAccess : openPortal}
                         disabled={resendingPortal}
                         className="px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60 transition-colors"
-                        style={{ backgroundColor: lead?.portal_access_sent_at ? '#16a34a' : '#ff795d' }}
+                        style={{ backgroundColor: hasPortal ? '#16a34a' : '#ff795d' }}
                       >
                         {resendingPortal
                           ? '⏳ …'
-                          : lead?.portal_access_sent_at
+                          : hasPortal
                             ? t('crm.portalBtn.sentResend')
                             : `🔑 ${t('crm.sendPortalAccess', 'Portalzugang senden')}`}
                       </button>
@@ -3094,6 +3209,32 @@ export default function LeadDetail() {
                           </div>
                         )}
                       </dl>
+                    </div>
+                  )}
+
+                  {/* Gewonnene, archivierte Käufe: nur Anzeige mit Link zum Objekt */}
+                  {!deal && archivedWonDeals.length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                        {t('leadDetail.archivedPurchasesTitle', 'Abgeschlossene Käufe (archiviert)')}
+                      </h3>
+                      <ul className="space-y-2 text-sm">
+                        {archivedWonDeals.map(d => (
+                          <li key={d.id} className="min-w-0 truncate">
+                            {d.property ? (
+                              <Link to={`/admin/properties/${d.property.id}`} className="text-orange-500 hover:underline">
+                                {d.property.project_name}
+                                {d.property.unit_number ? ` · ${d.property.unit_number}` : ''}
+                              </Link>
+                            ) : (
+                              <span className="text-gray-900">{t('leadDetail.unitHeaderFallback', 'Wohnung')}</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      <Link to="/admin/crm/archived" className="inline-block mt-2 text-xs text-gray-500 hover:underline">
+                        → {t('crm.nav.archived', 'Archiviert')}
+                      </Link>
                     </div>
                   )}
 
@@ -4283,11 +4424,11 @@ export default function LeadDetail() {
                         </span>
                       )}
                     </div>
-                    {lead?.portal_access_sent_at ? (
+                    {portalSentAt ? (
                       <p className="text-gray-600 text-xs">
                         {t('leadDetail.accessSentOn', 'Zugang verschickt am')}{' '}
                         <span className="font-medium">
-                          {new Date(lead.portal_access_sent_at).toLocaleString('de-DE', {
+                          {new Date(portalSentAt).toLocaleString('de-DE', {
                             day: '2-digit', month: '2-digit', year: 'numeric',
                             hour: '2-digit', minute: '2-digit',
                           })}
@@ -4460,7 +4601,19 @@ export default function LeadDetail() {
               {unitSelectUnits.map(unit => (
                 <button
                   key={unit.id}
-                  onClick={() => {
+                  onClick={async () => {
+                    // Wohnung eines anderen Kunden nie übernehmen (sonst hängt der Deal am
+                    // fremden Portal-Objekt und „Trennen" träfe den echten Eigentümer)
+                    try {
+                      if (await unitTakenByOtherCustomer(unit)) {
+                        showToast(t('leadDetail.unitTakenByOther', 'Diese Wohnung ist bereits einem anderen Kunden zugeordnet und kann hier nicht übernommen werden.'))
+                        return
+                      }
+                    } catch (err) {
+                      console.error('[LeadDetail] unitTakenByOtherCustomer:', err)
+                      showToast(t('leadDetail.genericError', 'Fehler'))
+                      return
+                    }
                     setShowUnitSelect(false)
                     // unitSelectProject wird beim Öffnen gesetzt — kein Nachschlagen nötig
                     const proj = unitSelectProject ?? dealProjects.find(dp => dp.project_id === unitSelectProjectId)?.project

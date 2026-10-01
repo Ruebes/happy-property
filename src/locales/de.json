@@ -439,7 +439,8 @@
     "types": {
       "villa": "Villa",
       "apartment": "Wohnung",
-      "studio": "Studio"
+      "studio": "Studio",
+      "townhouse": "Townhouse"
     },
     "bedrooms": "Schlafzimmer",
     "bedroomsStudio": "Studio (0)",
@@ -1278,7 +1279,9 @@
       "detach": "Trennen",
       "detachTitle": "Immobilie vom Kunden trennen (Portal-Objekt löschen, Wohnung wieder frei)",
       "detached": "✅ Immobilie vom Kunden getrennt",
-      "detachFailed": "Trennen fehlgeschlagen"
+      "detachFailed": "Trennen fehlgeschlagen",
+      "confirmMove": "„{{label}}“ gehört bisher {{from}}. Wirklich auf {{to}} umhängen?\n\nDer bisherige Eigentümer verliert den Zugriff im Portal, eingeladene Mit-Eigentümer dieser Wohnung werden entfernt.",
+      "currentOwner": "aktuell: {{name}}"
     },
     "invite": {
       "emailSent": "Einladungs-E-Mail wird automatisch versendet",
@@ -1312,7 +1315,8 @@
       "resetFailed": "Fehler beim Zurücksetzen"
     },
     "toast": {
-      "createdCredentialsSent": "Nutzer angelegt – Zugangsdaten wurden an {{email}} gesendet."
+      "createdCredentialsSent": "Nutzer angelegt – Zugangsdaten wurden an {{email}} gesendet.",
+      "unitAssignFailed": "Nutzer angelegt, aber die Wohnung konnte nicht zugewiesen werden. Bitte in der Kundenakte zuweisen."
     },
     "confirm": {
       "quickResetPassword": "Neues Passwort für {{name}} generieren und dem Nutzer per E-Mail senden?"
@@ -3304,7 +3308,9 @@
       "unitDeleteConfirm": "Einheit {{n}} wirklich löschen?",
       "confirmDeletePayment": "Diese Zahlung wirklich löschen?",
       "unitDelete": "Einheit löschen",
-      "plot": "Grundstück"
+      "plot": "Grundstück",
+      "unitOwnedByOther": "Diese Wohnung gehört im Eigentümer-Portal bereits einem anderen Kunden. Bitte dort zuerst trennen.",
+      "unitPropertyHasData": "Das Portal-Objekt dieser Wohnung enthält noch {{count}} Einträge (Dokumente, Verträge, Einnahmen, Buchungen). Bitte zuerst im Objekt „Vom Kunden trennen“ verwenden."
     },
     "prep": {
       "startingSoon": "Termin in Kürze",
@@ -5100,7 +5106,11 @@
     "uploadMailSubject": "Neue Datei in Ihrem Happy Property Portal",
     "uploadingImages": "⏳ Wird hochgeladen…",
     "errNoProjectSelected": "Kein Projekt ausgewählt",
-    "detachShort": "Trennen"
+    "detachShort": "Trennen",
+    "toastUnitRemovedForeignKept": "Zuordnung entfernt. Das Portal-Objekt gehört einem anderen Kunden und bleibt erhalten.",
+    "unitTakenByOther": "Diese Wohnung ist bereits einem anderen Kunden zugeordnet und kann hier nicht übernommen werden.",
+    "portalMailNotSent": "Die E-Mail mit den Zugangsdaten wurde nicht zugestellt. Das Passwort steht im Fenster.",
+    "archivedPurchasesTitle": "Abgeschlossene Käufe (archiviert)"
   },
   "rechnung": {
     "notFound": "Diese Rechnung wurde nicht gefunden.",
