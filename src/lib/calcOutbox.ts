@@ -21,9 +21,12 @@ export async function createCalcOutboxDraft(opts: {
   if (!opts.calcs.length) return
   if (opts.replacesTokens?.length) {
     const { data: olds } = await supabase.from('deck_outbox')
-      .select('id, body').eq('lead_id', opts.leadId).eq('status', 'draft')
-    const stale = ((olds ?? []) as Array<{ id: string; body: string | null }>)
-      .filter(o => opts.replacesTokens!.some(tk => (o.body ?? '').includes(`/rechnung/${tk}`)))
+      .select('id, body, deck_tokens').eq('lead_id', opts.leadId).eq('status', 'draft')
+    // Deck-Entwürfe (deck_tokens gesetzt) nie löschen: die KI-Deck-Mail enthält
+    // denselben /rechnung/-Link, ersetzt wird nur ein reiner Rechnungs-Entwurf.
+    const stale = ((olds ?? []) as Array<{ id: string; body: string | null; deck_tokens: string[] | null }>)
+      .filter(o => !(o.deck_tokens ?? []).length
+        && opts.replacesTokens!.some(tk => (o.body ?? '').includes(`/rechnung/${tk}`)))
       .map(o => o.id)
     if (stale.length) {
       const { error } = await supabase.from('deck_outbox').delete().in('id', stale)
@@ -106,15 +109,21 @@ export async function createStrategyOutboxDraft(opts: {
     .order('created_at', { ascending: false })
   const drafts = (openRows ?? []) as Array<{ id: string; body: string | null; deck_tokens: string[] | null }>
 
-  const stale = drafts.filter(d => /\/strategie\/[a-f0-9]+/.test(d.body ?? ''))
+  // Träger = Entwurf mit Deck- oder Rechnungslinks. Er wird nie als alter
+  // Fahrplan gelöscht, auch wenn Regel 1 den Fahrplan-Link früher schon in ihn
+  // gehängt hat; sonst verschwand beim zweiten Aufruf die offene Deck-Mail.
+  const isCarrier = (d: { body: string | null; deck_tokens: string[] | null }) =>
+    (d.deck_tokens ?? []).length > 0 || (d.body ?? '').includes('/rechnung/')
+  const stale = drafts.filter(d => !isCarrier(d) && /\/strategie\/[a-f0-9]+/.test(d.body ?? ''))
   if (stale.length) {
     const { error } = await supabase.from('deck_outbox').delete().in('id', stale.map(d => d.id))
     if (error) console.warn('[strategyOutbox] alten Entwurf ersetzen:', error.message)
   }
 
   if (opts.mergeIntoOpenDraft !== false) {
-    const host = drafts.find(d =>
-      !stale.includes(d) && ((d.deck_tokens ?? []).length > 0 || (d.body ?? '').includes('/rechnung/')))
+    const host = drafts.find(isCarrier)
+    // Steht genau dieser Fahrplan schon im neuesten Träger, nichts doppelt anhängen.
+    if (host && (host.body ?? '').includes(`/strategie/${opts.token}`)) return { merged: true }
     if (host) {
       const block = `<div style="margin:20px 0 8px 0;padding-top:14px;border-top:1px solid #e5e5e5">`
         + `<p style="margin:0 0 8px;font-size:14px;color:#666">Und der Fahrplan, der zeigt, wie alles zusammenspielt:</p>`

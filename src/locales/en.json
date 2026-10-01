@@ -3620,6 +3620,7 @@
       "basisCrm": "CRM-attributed",
       "basisMeta": "per Meta",
       "noAttribution": "No CRM attribution yet: once the ads carry the URL parameters (task assigned to Giona), leads, appointments, quality and sales will flow in here automatically per ad. Until then the Meta lead count is used.",
+      "noCrmAccess": "CRM figures (leads, appointments, quality, sales) are only visible with the Pipeline permission. The lead count shown here is the one reported by Meta.",
       "chartLeads": "Leads per campaign",
       "chartSpend": "Budget split",
       "chartTrend": "Spend per day",

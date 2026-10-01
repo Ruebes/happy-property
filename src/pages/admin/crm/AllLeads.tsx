@@ -102,11 +102,30 @@ export default function AllLeads() {
   const fetchLeads = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
-      const { data, error } = await supabase
-        .from('leads')
-        .select('*, assignee:profiles!leads_assigned_to_fkey(full_name, email)')
-        .order('created_at', { ascending: false })
-        .limit(500)
+      // Seitenweise laden: vorher .limit(500), und PostgREST deckelt ohnehin bei
+      // 1000 Zeilen. Ab dem 501. Kontakt wären die ältesten lautlos aus Liste
+      // und Suche verschwunden. Stabil sortiert (created_at + id), bis eine
+      // Seite nicht mehr voll ist.
+      const PAGE = 1000
+      const data: unknown[] = []
+      const seen = new Set<string>()
+      let error: unknown = null
+      for (let from = 0; from < PAGE * 50; from += PAGE) {
+        const res = await supabase
+          .from('leads')
+          .select('*, assignee:profiles!leads_assigned_to_fkey(full_name, email)')
+          .order('created_at', { ascending: false })
+          .order('id')
+          .range(from, from + PAGE - 1)
+        if (res.error) { error = res.error; break }
+        const rows = (res.data ?? []) as { id: string }[]
+        for (const row of rows) {
+          if (seen.has(row.id)) continue   // neuer Lead zwischen zwei Seiten
+          seen.add(row.id)
+          data.push(row)
+        }
+        if (rows.length < PAGE) break
+      }
       if (error) throw error
       setLeads((data ?? []) as unknown as Lead[])
       // Vergangene Kundentermine — daraus ergibt sich, wer ueberhaupt bewertbar ist.

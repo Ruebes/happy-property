@@ -207,7 +207,11 @@ function StepModal({ stage, stageLabel, rule, rules, emailTpls, waTpls, onClose,
       }
 
       // ── Regel anlegen / aktualisieren ───────────────────────────────────────
-      const safeRecipient = (recipient === 'client' || recipient.startsWith('bc:') || recipient.startsWith('dc:'))
+      // Alle Empfänger, die der RecipientPicker anbietet und process-scheduled-
+      // messages auflöst. Fehlten 'unit_developer' und 'vw:', wurde ein
+      // Developer-Schritt beim Speichern still zu 'client' (Kunde bekam die
+      // interne Reservierungsanfrage).
+      const safeRecipient = (recipient === 'client' || recipient === 'unit_developer' || /^(bc|dc|vw):/.test(recipient))
         ? recipient : 'client'
       const rulePayload = {
         name:                name.trim() || `${stageLabel} – ${t('crm.stageEditor.step', 'Schritt')}`,

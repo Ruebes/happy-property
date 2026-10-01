@@ -359,7 +359,10 @@ function VideoEditor({ row, upload, playlists, settings, isAdmin, onClose, onCha
   const persist = async (): Promise<boolean> => {
     const patch = {
       title: title.slice(0, 100), description: desc.slice(0, 5000), tags, category_id: category, language,
-      privacy: !isAdmin && privacy === 'public' ? 'private' : privacy,
+      // Mitarbeiter dürfen nicht veröffentlichen. Ein schon öffentliches Video
+      // bleibt aber öffentlich: sonst setzte jedes Speichern (Titel, Tags) es
+      // auf privat und nahm es vom Kanal.
+      privacy: !isAdmin && privacy === 'public' && row.privacy !== 'public' ? 'private' : privacy,
       publish_at: publishAt ? new Date(publishAt).toISOString() : null,
       playlist_id: playlist || null, playlist_title: playlists.find(p => p.id === playlist)?.title ?? null,
       notify_subscribers: notify, made_for_kids: kids, brief: brief || null, updated_at: new Date().toISOString(),

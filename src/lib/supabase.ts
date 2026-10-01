@@ -17,13 +17,23 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 // holt den Refresh später → keine Zwangs-Abmeldung.
 const DATA_TIMEOUT_MS = 20_000
 const AUTH_TIMEOUT_MS = 15_000   // gesunder Refresh <3s → 15s fängt nur echte Hänger ab
+// Ausnahme für die wenigen Edge Functions, die im Browser synchron laufen und
+// nachweislich länger als 20 s brauchen (Edge-Log 9/2026): compose-deck-mail
+// 23-27 s (zwei Claude-Aufrufe), generate-deck ohne background 80-128 s
+// (Newsletter-Master-Deck). Mit 20 s brach der Browser ab und die KI-Begleitmail
+// kam nie an. Für sie gilt das Gateway-Limit von 150 s; alle übrigen Functions,
+// REST, Storage und Auth behalten ihre Limits.
+const LONG_FUNCTION_TIMEOUT_MS = 150_000
+const LONG_FUNCTION_URL = /\/functions\/v1\/(compose-deck-mail|generate-deck)(?:[/?]|$)/
 
 function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = typeof input === 'string' ? input
     : input instanceof URL ? input.href
     : (input as Request).url ?? ''
 
-  const timeout = url.includes('/auth/v1/') ? AUTH_TIMEOUT_MS : DATA_TIMEOUT_MS
+  const timeout = url.includes('/auth/v1/') ? AUTH_TIMEOUT_MS
+    : LONG_FUNCTION_URL.test(url) ? LONG_FUNCTION_TIMEOUT_MS
+    : DATA_TIMEOUT_MS
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
