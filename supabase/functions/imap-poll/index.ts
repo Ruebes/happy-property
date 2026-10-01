@@ -16,6 +16,7 @@
 // Deploy: supabase functions deploy imap-poll --no-verify-jwt
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { gateCaller } from '../_shared/callerGate.ts'
+import { wantsNewsletterOptout } from './optout.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -399,6 +400,25 @@ Deno.serve(async (req) => {
         // Frische KI-Zusammenfassung erzwingen und Nachfass-Automatik stoppen —
         // eine echte Antwort ist wie bei WhatsApp ein „Kunde hat geantwortet".
         try { await supabase.from('lead_ai_summaries').delete().eq('lead_id', leadId) } catch { /* egal */ }
+        // Abmeldung per Antwort-Mail („bitte aus dem Verteiler nehmen") → wie der
+        // Abmelde-Link: Newsletter-Opt-out + offene Newsletter-Mails stornieren.
+        // Still: nur eine Notiz im Lead-Verlauf, keine Meldung an Sven (sein Wunsch 1.10.).
+        if (wantsNewsletterOptout(bodyText)) {
+          const { data: optedOut } = await supabase.from('leads')
+            .update({ newsletter_optout_at: new Date().toISOString() })
+            .eq('id', leadId).is('newsletter_optout_at', null).select('id')
+          await supabase.from('scheduled_messages').update({ status: 'cancelled' })
+            .eq('lead_id', leadId).eq('event_type', 'newsletter').eq('status', 'pending')
+          if (optedOut?.length) {
+            await supabase.from('activities').insert({
+              lead_id: leadId, type: 'note', direction: 'inbound',
+              subject: 'Newsletter abbestellt',
+              content: 'Der Kontakt hat per Antwort-Mail um Austragung gebeten und wurde automatisch vom Newsletter abgemeldet.',
+              completed_at: new Date().toISOString(),
+            })
+            ;(result as unknown as { optouts?: number }).optouts = ((result as unknown as { optouts?: number }).optouts ?? 0) + 1
+          }
+        }
         result.leads++
       } catch (e) { result.errors.push(e instanceof Error ? e.message : String(e)) }
     }
