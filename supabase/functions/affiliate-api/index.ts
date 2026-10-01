@@ -3,8 +3,11 @@
 //   POST { action:'list' }                    → Tippgeber + geworbene Kunden + Auszahlungen (nur eingeloggt)
 //   POST { action:'ensure', lead_id }         → eindeutigen Empfehlungs-Link fuer einen Lead anlegen/holen
 //   POST { action:'set_active', affiliate_id, active } → Link aktiv/inaktiv schalten
-//   POST { action:'commission_scan', secret } → Cron (alle 30 Min): Deals geworbener Kunden in
+//   POST { action:'commission_scan' }         → Cron (alle 30 Min): Deals geworbener Kunden in
 //        Phase provision_erhalten → Auszahlung anlegen + Abrechnungs-PDF + Mail an den Tippgeber
+//        Auth: Header x-cron-secret = connector_secrets CRON_SECRET (zur Laufzeit gelesen)
+//        oder eingeloggter admin/verwalter. Übergang: der alte Body-Wert `secret`
+//        (steht öffentlich im Repo) gilt noch, bis hp-affiliate-scan umgestellt ist.
 //   POST { action:'payout_link', payout_id }  → Revolut-Payout-Link erzeugen und dem
 //        Tippgeber per Mail/WhatsApp schicken (nur eingeloggt — Sven klickt bewusst)
 //   POST { action:'mark_paid', payout_id }    → Auszahlung als bezahlt markieren (nur eingeloggt)
@@ -18,6 +21,7 @@
 // Deploy:  supabase functions deploy affiliate-api --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { PDFDocument, StandardFonts, rgb } from 'npm:pdf-lib@1.17.1'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -29,7 +33,9 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const PORTAL = 'https://portal.happy-property.com'
-const CRON_SECRET = 'hp-affiliate-cron-2026'
+// ÜBERGANG, danach entfernen: alter Cron-Wert im Body (öffentlich in
+// migrations/20260827_affiliates.sql). Neu ist x-cron-secret aus connector_secrets.
+const LEGACY_CRON_SECRET = 'hp-affiliate-cron-2026'
 const BUCKET = 'invoice-documents'
 const AMOUNT = 1000
 
@@ -238,7 +244,11 @@ Deno.serve(async (req) => {
 
     // ── Cron: Provisions-Scan ────────────────────────────────────────────────
     if (action === 'commission_scan') {
-      if (body.secret !== CRON_SECRET && !(await callerAllowed(sb, req))) return json({ error: 'Nicht berechtigt.' }, 403)
+      const legacyCron = typeof body.secret === 'string' && safeEqual(body.secret, LEGACY_CRON_SECRET)
+      if (!legacyCron) {
+        const caller = await authorizeCaller(req, { cron: true, roles: ['admin', 'verwalter'] }, CORS)
+        if (caller instanceof Response) return caller
+      }
       // Geworbene Leads, deren Deal in provision_erhalten steht und fuer die
       // noch keine Auszahlung existiert.
       const { data: leads } = await sb.from('leads')
@@ -369,13 +379,15 @@ Deno.serve(async (req) => {
       const aff = affRow as Affiliate | null
       if (!aff) return json({ error: 'Tippgeber nicht gefunden.' }, 404)
 
+      // Service-Key explizit (wie imap-poll): revolut-sync lässt payout_link nur für
+      // Service-Key oder admin/verwalter zu.
       const { data: rv, error: rvErr } = await sb.functions.invoke('revolut-sync', { body: {
         action: 'payout_link',
         amount: Number(payout.amount) || AMOUNT,
         counterparty_name: aff.name,
         request_id: payout.id,
         reference: (payout.doc_no ? `Tippgeber-Provision ${payout.doc_no}` : 'Tippgeber-Provision').slice(0, 100),
-      } })
+      }, headers: { Authorization: `Bearer ${SERVICE_ROLE}` } })
       const d = rv as { success?: boolean; url?: string | null; error?: string } | null
       if (rvErr || !d?.success || !d.url) return json({ error: d?.error ?? String(rvErr ?? 'Payout-Link fehlgeschlagen') }, 502)
       await sb.from('affiliate_payouts').update({ payout_link: d.url }).eq('id', payout.id)

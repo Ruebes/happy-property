@@ -4,6 +4,7 @@ import { getWaProvider, evoSendText, evoSendMedia, evoSendContact, evoErrorText,
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { Image } from '../_vendor/imagescript/ImageScript.js'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
@@ -85,6 +86,15 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
+
+  // Aufrufer-Schutz: verify_jwt=true lässt auch den öffentlichen publishable Key
+  // durch. Erlaubt: andere Functions mit dem Service-Key (Authorization ODER
+  // apikey, oder der vom Gateway signierte service_role-JWT) und eingeloggte
+  // Nutzer mit Profil in einer der Rollen, deren Seiten hier senden: CRM
+  // (admin/verwalter/mitarbeiter) und Eigentümer (/kalender -> BookingModal ->
+  // sendWhatsApp). Feriengäste und Nutzer ohne Profil nicht (Review S1).
+  const denied = await gateCaller(req, 'send-whatsapp', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'eigentuemer'] }, corsHeaders)
+  if (denied) return denied
 
   try {
     const {

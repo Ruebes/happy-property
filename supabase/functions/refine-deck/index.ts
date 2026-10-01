@@ -15,6 +15,7 @@ import { applyDeterministic } from '../_shared/deckNormalize.ts'
 import { runDeckGate, claimIssuesToFindings, type Finding } from '../_shared/deckGate.ts'
 import { auditBlockImages, checkClaims, checkImageTypes, checkMapSource, translateGermanRemnants, type GalleryImage } from '../_shared/deckQuality.ts'
 import { assetsFromGallery, loadCatalogAssets } from '../_shared/deckAssets.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 // deno-lint-ignore no-explicit-any
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void } | undefined
@@ -59,6 +60,13 @@ const BLOCK_ITEM = refineBlockSchema()
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4/I4-13): vorher reichte jedes Login (auch
+  // Eigentümer) oder der publishable Key, um Kunden-Decks umzuschreiben und mit
+  // learn:true dauerhafte KI-Regeln anzulegen. Erlaubt: Service-Key (Skripte),
+  // Team-Rollen (DeckChat in LeadDetail, Projekte, Postausgang) und die Rolle
+  // funnel wie die Newsletter-Route. Kein Rechte-Filter auf 'decks'.
+  const denied = await gateCaller(req, 'refine-deck', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'funnel'] }, CORS)
+  if (denied) return denied
   try {
     const { token, instruction, learn, action, background } = await req.json() as { token?: string; instruction?: string; learn?: boolean; action?: string; background?: boolean }
     if (!token) return json({ error: 'token fehlt' }, 400)

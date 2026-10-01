@@ -19,6 +19,7 @@
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { htmlToWhatsapp } from '../_shared/htmlToWhatsapp.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 // ── Eigenes-HTML-Modus (content_mode='html') ─────────────────────────────────
 // Sven fügt fertiges HTML ein → wird als HTML verschickt (Text-Fallback macht
@@ -471,6 +472,15 @@ Deno.serve(async (req: Request) => {
       list_mode?: string; list_ids?: string[]
       project_name?: string; bullets?: string
       units?: Array<{ unit_number?: string; price_net?: number; extras?: string }>
+    }
+    // Aufrufer-Schutz: 'unsubscribe' bleibt öffentlich (Abmelde-Link /abmelden in
+    // jeder Mail). Alles andere nur für die Newsletter-Seite (Route permission
+    // funnel: Admin, Verwalter, Rolle funnel, Mitarbeiter mit funnel) und für
+    // System-/Handaufrufe mit dem Service-Key (add_recipient, add_subscribers,
+    // rebuild_pending).
+    if (body.action !== 'unsubscribe') {
+      const denied = await gateCaller(req, 'newsletter-campaign', { service: true, roles: ['admin', 'verwalter', 'funnel'], perms: ['funnel'] }, CORS)
+      if (denied) return denied
     }
     const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 

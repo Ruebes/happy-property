@@ -7,6 +7,7 @@
 // Body: { lead_id?: string }  — optional ein echter Lead für realistische Daten.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { bookingUrl } from '../_shared/bookingLink.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -28,6 +29,10 @@ type Contact = { first_name?: string; last_name?: string; company?: string; emai
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz: liefert Partner-Kontakte, Vorlagen und Lead-Daten. Einziger
+  // Aufrufer ist der Trockenlauf in den Automatik-Regeln (Route: Admin/Verwalter).
+  const denied = await gateCaller(req, 'simulate-automations', { service: true, roles: ['admin', 'verwalter'] }, CORS)
+  if (denied) return denied
   try {
     const { lead_id } = await req.json().catch(() => ({})) as { lead_id?: string }
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)

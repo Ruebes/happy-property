@@ -1,0 +1,23 @@
+{
+  "//": "Typecheck der Aufrufer-Guards (Sicherheitspaket S1). tsconfig.shared.json deckt nur die Deck-Module ab; die Guards schützen fast alle schreibenden Functions und liefen sonst ungeprüft. Aufgenommen sind die gemeinsamen Guard-Dateien und die Guard-Functions, die mit den groben Stubs aus _types/remote.d.ts fehlerfrei durchlaufen. Läuft mit npm run check:functions.",
+  "extends": "./tsconfig.shared.json",
+  "files": [
+    "_types/remote.d.ts",
+    "_shared/callerAuth.ts",
+    "_shared/callerGate.ts",
+    "_shared/adsAuth.ts",
+    "google-drive/index.ts",
+    "create-client-drive-folder/index.ts",
+    "subscriber-optin/index.ts",
+    "invite-co-owner/index.ts",
+    "admin-user-ops/index.ts",
+    "send-email/index.ts",
+    "masterclass-register/index.ts",
+    "meta-ads-sync/index.ts",
+    "meta-ads-tools/index.ts",
+    "scan-drive-projects/index.ts",
+    "extract-project-facts/index.ts",
+    "typeform-webhook/index.ts",
+    "calendly-status/index.ts"
+  ]
+}

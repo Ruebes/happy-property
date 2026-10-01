@@ -17,6 +17,7 @@ import { buildMimeContent } from '../_shared/mimeBody.ts'
 import { translateOutbound } from '../_shared/translate.ts'
 import { resolveLang } from '../_shared/recipientLang.ts'
 import { withSocialFooter } from '../_shared/socialFooter.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -73,6 +74,15 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 200, headers: CORS })
   }
+
+  // Aufrufer-Schutz (bisher offenes Mail-Relay): andere Functions mit dem
+  // Service-Key (Authorization ODER apikey) und eingeloggte Nutzer mit Profil in
+  // einer der Rollen, deren Seiten hier senden: CRM (admin/verwalter/mitarbeiter)
+  // und Eigentümer (Upload-Meldung PropertyDetail, Zugangsmail Objekte).
+  // Feriengäste, Nutzer ohne Profil, anonyme Aufrufe und der öffentliche
+  // publishable Key werden abgewiesen (Review S1: vorher jeder gültige JWT).
+  const denied = await gateCaller(req, 'send-email', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'eigentuemer'] }, CORS)
+  if (denied) return denied
 
   try {
     const body = await req.json() as {

@@ -17,10 +17,16 @@
 // keine Doppelsendung); Opt-out (leads.newsletter_optout_at) respektiert; Dedup
 // je Kontakt (Eigentümer, der auch Lead ist, bekommt es nur einmal).
 //
+// Zugriff (Sicherheits-Audit 30.9.2026): eingeloggte Admins/Verwalter/Mitarbeiter
+// (Upload in ConstructionPhotos) oder System-/Reparatur-Aufrufe mit dem
+// Service-Key (exakt der sb_secret-Key der Edge-Umgebung). Vorher konnte jeder
+// ohne Login Mails + WhatsApps an alle Kunden eines Projekts auslösen.
+//
 // Secrets: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GOOGLE_SERVICE_ACCOUNT_JSON
 // Deploy:  supabase functions deploy construction-update --no-verify-jwt
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 import { lotteBild } from '../_shared/lotte.ts'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -85,6 +91,13 @@ async function ensureLottePhoto(sb: SupabaseClient): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
+  // Aufrufer prüfen, bevor irgendetwas gelesen oder gesendet wird (auch test:true).
+  // apikey == Service-Key zählt als System-Aufruf: supabase-js schickt einen
+  // sb_secret-Key bei functions.invoke nur noch als apikey, nicht als Bearer.
+  if (!safeEqual(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) {
+    const caller = await authorizeCaller(req, { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+    if (caller instanceof Response) return caller
+  }
   const sb = createClient(SUPA, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   try {
     const body = await req.json().catch(() => ({})) as { project_id?: string; test?: boolean; force?: boolean; buyers_only?: boolean; all_photos?: boolean; photo_ids?: string[]; only_contacts?: string[]; channels?: string[] }

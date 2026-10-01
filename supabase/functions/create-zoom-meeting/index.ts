@@ -1,3 +1,19 @@
+// Edge Function: create-zoom-meeting: legt Zoom-Meetings an (oder löscht sie per
+// delete_id, oder prüft mit check:true nur die Zugangsdaten).
+//
+// Deployment: supabase functions deploy create-zoom-meeting   (verify_jwt = true wie heute)
+//
+// Aufrufer (Guard am Handler-Anfang, Befund E3-11):
+//   Browser  AppointmentModal (/admin/crm/calendar Recht pipeline, /admin/crm/leads/:id
+//            pipeline ODER contacts) und Settings (/admin/crm/settings, admin/verwalter),
+//            jeweils supabase.functions.invoke mit Nutzer-JWT
+//   Server   booking-bot, funnel-api, personal-booking über admin.functions.invoke mit
+//            dem Service-Role-Client: der Key kommt dabei nur als apikey-Header an
+//            (deckt gateCaller ab). Fehler dort werden still geschluckt, der Termin
+//            entstünde ohne Zoom-Link, deshalb muss dieser Weg sicher durchgehen.
+
+import { gateCaller } from '../_shared/callerGate.ts'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -28,6 +44,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
+
+  // Vorher reichte jeder gültige Gateway-Schlüssel, auch der öffentliche
+  // publishable Key oder ein Eigentümer-Login (E3-11).
+  const denied = await gateCaller(req, 'create-zoom-meeting', { service: true, roles: ['admin', 'verwalter'], perms: ['pipeline', 'contacts'] }, corsHeaders)
+  if (denied) return denied
 
   const accountId    = Deno.env.get('ZOOM_ACCOUNT_ID')
   const clientId     = Deno.env.get('ZOOM_CLIENT_ID')

@@ -1,12 +1,52 @@
 // Supabase Edge Function: calendly-webhook
 // Endpunkt für Calendly Webhooks (v2 Payload-Format).
 // In Calendly eintragen unter: Integrations → Webhooks → Endpoint URL = <supabase-url>/functions/v1/calendly-webhook
+//
+// Signaturprüfung (Befund E3-6, Review S1): Nur Anfragen mit gültigem Header
+// Calendly-Webhook-Signature (t=…,v1=HMAC-SHA256 über "t.body") mit dem Signing Key
+// (Secret CALENDLY_WEBHOOK_SIGNING_KEY oder connector_secrets
+// 'CALENDLY_WEBHOOK_SIGNING_KEY') werden angenommen.
+// Ohne Key wird abgewiesen (401 "webhook disabled"): sonst konnte jeder Termine
+// absagen/anlegen und Deals verschieben. Stand 30.9.26: Calendly ist durch /termin
+// ersetzt, letzter Calendly-Lead 17.7., 0 Aufrufe in 7 Tagen. Soll Calendly doch
+// wieder laufen: Abo mit signing_key neu anlegen und den Key hier hinterlegen.
+// Notfall-Schalter ohne Neu-Deploy: Secret CALENDLY_ALLOW_UNSIGNED=true stellt das
+// alte Verhalten (ungeprüft, nur solange KEIN Key hinterlegt ist) wieder her.
+// Kann der Key nicht gelesen werden (DB-Fehler), antwortet die Function 503
+// (Calendly wiederholt), statt die Prüfung stillschweigend auszulassen.
+// Unabhängig davon wird eine vorhandene Telefonnummer nicht mehr überschrieben.
 
-import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'jsr:@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+const SIG_TOLERANCE_S = 5 * 60   // Calendly empfiehlt wenige Minuten gegen Wiedereinspielen
+
+/** Signing Key zur Laufzeit: Edge-Secret, sonst connector_secrets. '' = keiner
+ *  hinterlegt. Wirft bei Lesefehler (supabase-js wirft dann nicht selbst). */
+async function signingKey(supabase: SupabaseClient): Promise<string> {
+  const env = (Deno.env.get('CALENDLY_WEBHOOK_SIGNING_KEY') ?? '').trim()
+  if (env) return env
+  const { data, error } = await supabase.from('connector_secrets').select('value').eq('key', 'CALENDLY_WEBHOOK_SIGNING_KEY').maybeSingle()
+  if (error) throw new Error(`connector_secrets: ${error.message}`)
+  return ((data as { value?: string | null } | null)?.value ?? '').trim()
+}
+
+/** Calendly-Webhook-Signature prüfen: "t=<unix>,v1=<hex>" über `${t}.${rawBody}`. */
+async function validSignature(header: string, rawBody: string, key: string): Promise<boolean> {
+  const parts = Object.fromEntries(header.split(',').map(p => { const i = p.indexOf('='); return [p.slice(0, i).trim(), p.slice(i + 1).trim()] }))
+  const t = parts.t ?? '', v1 = (parts.v1 ?? '').toLowerCase()
+  if (!/^\d+$/.test(t) || !/^[0-9a-f]{64}$/.test(v1)) return false
+  if (Math.abs(Date.now() / 1000 - Number(t)) > SIG_TOLERANCE_S) return false
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(`${t}.${rawBody}`)))
+  const hex = Array.from(mac, b => b.toString(16).padStart(2, '0')).join('')
+  let diff = 0
+  for (let i = 0; i < 64; i++) diff |= hex.charCodeAt(i) ^ v1.charCodeAt(i)
+  return diff === 0
 }
 
 Deno.serve(async (req) => {
@@ -20,7 +60,27 @@ Deno.serve(async (req) => {
   )
   let rawForErr: unknown = null
   try {
-    const body = await req.json()
+    const rawBody = await req.text()
+    const deny = (status: number, error: string) => new Response(
+      JSON.stringify({ error }), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    // Signatur immer prüfen. Key nicht lesbar -> 503 (Calendly wiederholt), statt
+    // die Prüfung auszulassen. Kein Key -> abweisen, außer Notfall-Schalter.
+    let key = ''
+    try { key = await signingKey(supabase) } catch (e) {
+      console.error('[calendly-webhook] Signing Key nicht lesbar:', e instanceof Error ? e.message : String(e))
+      return deny(503, 'signing key unavailable')
+    }
+    if (!key) {
+      if ((Deno.env.get('CALENDLY_ALLOW_UNSIGNED') ?? '').trim().toLowerCase() !== 'true') {
+        console.warn('[calendly-webhook] kein Signing Key hinterlegt, Anfrage abgewiesen (webhook disabled)')
+        return deny(401, 'webhook disabled')
+      }
+      console.warn('[calendly-webhook] kein Signing Key, CALENDLY_ALLOW_UNSIGNED=true: Signatur ungeprüft')
+    } else if (!(await validSignature(req.headers.get('calendly-webhook-signature') ?? '', rawBody, key))) {
+      console.warn('[calendly-webhook] Signatur fehlt oder ungültig, Anfrage abgewiesen')
+      return deny(401, 'invalid signature')
+    }
+    const body = JSON.parse(rawBody)
     rawForErr = body
     const event = body.event as string
 
@@ -69,7 +129,7 @@ Deno.serve(async (req) => {
     const eventName   = (eventInfo.name as string) ?? 'Calendly Termin'
     const joinUrl     = (eventInfo.location?.join_url as string) ?? null
 
-    console.log('[calendly-webhook] Event:', event, '| Email:', email, '| Start:', startTime)
+    console.log('[calendly-webhook] Event:', event, '| Start:', startTime)
 
     if (!email) {
       console.error('[calendly-webhook] Kein E-Mail im Payload:', JSON.stringify(p).slice(0, 200))
@@ -126,7 +186,7 @@ Deno.serve(async (req) => {
 
     const { data: existingLead } = await supabase
       .from('leads')
-      .select('id')
+      .select('id, phone')
       .eq('email', email)
       .maybeSingle()
 
@@ -134,7 +194,9 @@ Deno.serve(async (req) => {
       leadId = existingLead.id
       await supabase.from('leads').update({
         calendly_event_id: calendlyId,
-        ...(phone ? { phone } : {}),
+        // Nur eine FEHLENDE Nummer ergänzen, nie eine vorhandene ersetzen (E3-6):
+        // sonst liefen spätere WhatsApp-Automatiken an eine untergeschobene Nummer.
+        ...(phone && !(existingLead as { phone?: string | null }).phone ? { phone } : {}),
         // UTM nur setzen wenn vorhanden — bestehende Werte nicht mit null überschreiben
         ...(utmSource   ? { utm_source: utmSource }     : {}),
         ...(utmMedium   ? { utm_medium: utmMedium }     : {}),

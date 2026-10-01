@@ -11,6 +11,7 @@
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { unitGross, unitNet, DEFAULT_VAT_RATE } from '../_shared/price.ts'
 import { bookingUrl } from '../_shared/bookingLink.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -49,6 +50,13 @@ async function finDocs(supabase: ReturnType<typeof createClient>): Promise<{ doc
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
+
+  // Aufrufer-Schutz (verify_jwt=true lässt auch den publishable Key durch), VOR
+  // probe_docs: andere Functions mit dem Service-Key (Authorization ODER apikey),
+  // Admin/Verwalter, Mitarbeiter mit Recht pipeline oder contacts - wie die
+  // Routen von LeadDetail, Pipeline, Postausgang und Kalender.
+  const denied = await gateCaller(req, 'schedule-message', { service: true, roles: ['admin', 'verwalter'], perms: ['pipeline', 'contacts'] }, CORS)
+  if (denied) return denied
 
   try {
     // only_timing='before_appointment': nur Vor-Termin-Regeln (neu) planen — für die

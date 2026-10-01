@@ -68,3 +68,142 @@ verify_jwt = false
 # YouTube-Center: In-Code-Guard (User-JWT gegen profiles/permissions, Service-Role erlaubt)
 [functions.yt-center]
 verify_jwt = false
+
+# ── Sicherheits-Audit 30.9.2026 ──
+# verify_jwt hier so festgeschrieben, wie die Functions heute live laufen, damit
+# ein Deploy ohne Flag nichts umstellt. verify_jwt=true ist KEIN Schutz (der
+# publishable Key besteht das Gateway), geschützt wird im Code (callerAuth/callerGate).
+
+[functions.send-email]
+verify_jwt = false
+
+[functions.send-whatsapp]
+verify_jwt = true
+
+[functions.schedule-message]
+verify_jwt = true
+
+[functions.learn-mail]
+verify_jwt = true
+
+[functions.ai-draft-reply]
+verify_jwt = true
+
+[functions.imap-poll]
+verify_jwt = false
+
+[functions.newsletter-campaign]
+verify_jwt = false
+
+[functions.simulate-automations]
+verify_jwt = false
+
+[functions.subscriber-optin]
+verify_jwt = false
+
+# true wie live. Der Guard liest keinen ungeprüften JWT-Payload mehr (Review S1).
+[functions.google-drive]
+verify_jwt = true
+
+# true wie live (wie google-drive).
+[functions.create-client-drive-folder]
+verify_jwt = true
+
+[functions.construction-update]
+verify_jwt = false
+
+# MUSS false bleiben: der Cron schickt keinen JWT, sondern x-cron-secret.
+[functions.nightly-health]
+verify_jwt = false
+
+[functions.invite-co-owner]
+verify_jwt = false
+
+[functions.admin-user-ops]
+verify_jwt = false
+
+[functions.personal-booking]
+verify_jwt = false
+
+[functions.funnel-api]
+verify_jwt = false
+
+[functions.personalize-invite]
+verify_jwt = false
+
+[functions.meta-leads-sync]
+verify_jwt = true
+
+[functions.hubspot-import]
+verify_jwt = true
+
+[functions.create-zoom-meeting]
+verify_jwt = true
+
+[functions.revolut-sync]
+verify_jwt = true
+
+[functions.generate-invoice]
+verify_jwt = false
+
+[functions.wa-weekly-report]
+verify_jwt = false
+
+# Befund E5-3: Cron schickt keinen JWT, eigener Guard authorize(). Erst NACH dem Social-RLS-Fix deployen (live noch true).
+[functions.social-agent]
+verify_jwt = false
+
+# adsAuth-Functions (Commit a8d07c7): Guard requireAdsAccess im Code, live false.
+[functions.meta-ads-sync]
+verify_jwt = false
+
+[functions.meta-ads-tools]
+verify_jwt = false
+
+[functions.studio]
+verify_jwt = false
+
+[functions.ad-studio]
+verify_jwt = false
+
+# Deck-/Projekt-Functions (Sicherheitspaket S3, Befund E4-4): Guard per
+# gateCaller im Code, verify_jwt wie live.
+[functions.generate-deck]
+verify_jwt = true
+
+[functions.refine-deck]
+verify_jwt = true
+
+# true wie live. Cron hp-drive-sync braucht vor dem Guard-Deploy x-cron-secret.
+[functions.prepare-project-assets]
+verify_jwt = true
+
+# true wie live. Cron scan-drive-projects-nightly braucht vor dem Guard-Deploy x-cron-secret.
+[functions.scan-drive-projects]
+verify_jwt = true
+
+[functions.parse-pricelist]
+verify_jwt = true
+
+[functions.parse-spec-xlsx]
+verify_jwt = true
+
+[functions.floorplan-catalog]
+verify_jwt = true
+
+# false wie live (Befund E4-3), Schutz per gateCaller im Code.
+[functions.hp-floorplan]
+verify_jwt = false
+
+# false wie live (Befund E4-10), Schutz per gateCaller im Code. Die Aufrufer
+# schicken den sb_secret-Key, der kein JWT ist: nicht auf true stellen.
+[functions.extract-project-facts]
+verify_jwt = false
+
+[functions.compose-deck-mail]
+verify_jwt = false
+
+# Stillgelegt (Befund D3-1): antwortet 410 Gone. false wie live;
+# [functions.typeform-webhook] steht oben (ebenfalls false wie live).
+[functions.calendly-status]
+verify_jwt = false

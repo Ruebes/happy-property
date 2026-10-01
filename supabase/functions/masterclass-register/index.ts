@@ -241,7 +241,9 @@ Deno.serve(async (req) => {
   const leadId = await upsertLead(sb, { first, last, email, phone, utm, ev, key })
 
   // ── 3. Sofort-Bestätigung ──────────────────────────────────────────────────
-  const auth = { 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'Content-Type': 'application/json' }
+  // apikey zusätzlich (Review S1): send-whatsapp läuft mit verify_jwt=true, dort erkennt
+  // der Aufrufer-Guard den Service-Key sicher im apikey-Header.
+  const auth = { 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'apikey': Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', 'Content-Type': 'application/json' }
   const base = `${Deno.env.get('SUPABASE_URL')}/functions/v1`
   const conf = confirmMail(first, key, ev)
   const mailRes = await fetch(`${base}/send-email`, { method: 'POST', headers: auth, body: JSON.stringify({

@@ -2,12 +2,26 @@
 //  { }                 → listet die Abos (read-only)
 //  { action:'repair' } → loescht (deaktivierte) Abos auf unseren Endpunkt und legt
 //                        EIN frisches, AKTIVES Abo an (Calendly hat kein 'enable').
+//
+// STILLGELEGT 30.9.26 (Befund D3-1/E3-3): lief mit verify_jwt=false ohne Guard,
+// jeder konnte die Calendly-Abos auflisten und mit action 'repair' löschen und neu
+// anlegen (mit dem gespeicherten CALENDLY_WEBHOOK_TOKEN). Calendly ist durch
+// /termin ersetzt; kein Cron, keine Function, kein Frontend ruft sie auf, 0 Aufrufe
+// in 7 Tagen. Jede Anfrage außer OPTIONS bekommt 410 Gone, das Token wird nicht
+// mehr gelesen. Die Function bleibt deployt (nicht gelöscht), der alte Code unten
+// bleibt unverändert. Wieder einschalten nur mit Admin-Guard (gateCaller, roles
+// ['admin'], service) vor dem Lesen des Tokens.
+const STILLGELEGT: boolean = true
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
 const CALLBACK = 'https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/calendly-webhook'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  if (STILLGELEGT) {
+    console.warn('[calendly-status] stillgelegt, Anfrage mit 410 beantwortet', JSON.stringify({ method: req.method, ua: (req.headers.get('user-agent') ?? '').slice(0, 40) }))
+    return json({ error: 'gone', note: 'calendly-status ist stillgelegt (Calendly durch /termin ersetzt)' }, 410)
+  }
   try {
     const action = (await req.json().catch(() => ({})) as { action?: string }).action
     const token = Deno.env.get('CALENDLY_WEBHOOK_TOKEN') ?? ''

@@ -21,6 +21,7 @@ import { assetsFromGallery, loadCatalogAssets, selectImages, type CatalogAsset }
 import type { GalleryImage } from '../_shared/deckGate.ts'
 import { geocodeProject, mapQueryFallback } from '../_shared/geocodeProject.ts'
 import { applyFactOverrides, paymentScheduleFacts } from '../_shared/deckFacts.ts'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 const CORS = {
@@ -485,6 +486,13 @@ function assignMapAndFloorplan(blocks: Array<Record<string, unknown>>, images?: 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // Aufrufer-Schutz (Befund E4-4/I4-13): verify_jwt=true lässt auch den
+  // publishable Key und jedes Eigentümer-Login durch. Erlaubt: Service-Key
+  // (scan-drive-projects, Skripte), Team-Rollen wie die Routen von Pipeline,
+  // LeadDetail, Projekte (Deck-Wizard, allgemeines Projekt-Deck) und die Rolle
+  // funnel wie die Newsletter-Route. Kein Rechte-Filter auf 'decks'.
+  const denied = await gateCaller(req, 'generate-deck', { service: true, roles: ['admin', 'verwalter', 'mitarbeiter', 'funnel'] }, CORS)
+  if (denied) return denied
   if (!ANTHROPIC_API_KEY) return json({ error: 'ANTHROPIC_API_KEY fehlt' }, 500)
 
   try {

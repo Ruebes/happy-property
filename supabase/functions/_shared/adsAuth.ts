@@ -17,6 +17,7 @@
 // (pg_cron / interne Function-zu-Function-Aufrufe) und ist immer erlaubt.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { safeEqual } from './callerAuth.ts'
 
 export interface AdsCaller {
   /** true wenn der Aufruf vom System kommt (pg_cron / Service-Role) */
@@ -46,19 +47,15 @@ export async function requireAdsAccess(req: Request): Promise<AdsCaller> {
   const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!jwt) throw new AdsAuthError('Nicht angemeldet', 401)
 
-  // System-Aufruf (pg_cron). Das Projekt nutzt die neuen sb_secret_-Keys, ältere
-  // Supabase-Projekte den Legacy-JWT mit role=service_role — beides akzeptieren,
-  // damit der Guard nicht am Key-Format hängt.
+  // System-Aufruf (pg_cron meta-ads-sync-daily schickt den sb_secret_-Key):
+  // NUR der exakte Service-Role-Key zählt. Früher galt auch jeder JWT, dessen
+  // Payload role=service_role enthielt, ohne Signaturprüfung, also von jedem
+  // fälschbar (Befund E3-12, 30.9.26). Dieser Zweig ist entfernt.
   // WICHTIG: der publishable/anon-Key zählt NICHT als System — der steckt im
   // öffentlichen Frontend-Bundle und wäre damit für jeden abgreifbar.
-  if (serviceRoleKey && jwt === serviceRoleKey) {
+  // Vergleich in konstanter Zeit (Review S1).
+  if (serviceRoleKey && safeEqual(jwt, serviceRoleKey)) {
     return { system: true, userId: null, role: 'service_role' }
-  }
-  if (jwt.startsWith('eyJ')) {
-    try {
-      const claims = JSON.parse(atob(jwt.split('.')[1] ?? ''))
-      if (claims?.role === 'service_role') return { system: true, userId: null, role: 'service_role' }
-    } catch { /* kein lesbarer JWT — dann eben normale Nutzerprüfung */ }
   }
 
   const { data: userData } = await createClient(supabaseUrl, anonKey).auth.getUser(jwt)
@@ -67,8 +64,11 @@ export async function requireAdsAccess(req: Request): Promise<AdsCaller> {
 
   const admin = createClient(supabaseUrl, serviceRoleKey)
   const { data: prof } = await admin
-    .from('profiles').select('role, permissions').eq('id', user.id).maybeSingle()
-  const p = prof as { role?: string; permissions?: Record<string, boolean> | null } | null
+    .from('profiles').select('role, permissions, is_active').eq('id', user.id).maybeSingle()
+  const p = prof as { role?: string; permissions?: Record<string, boolean> | null; is_active?: boolean | null } | null
+  // Deaktivierte Nutzer nie (wie callerAuth; Review S1). Sonst konnte ein
+  // deaktivierter Mitarbeiter mit noch gültigem Token Kampagnen/Budgets ändern.
+  if (p?.is_active === false) throw new AdsAuthError('Zugang deaktiviert', 403)
   const role = p?.role ?? ''
   const perms = p?.permissions ?? {}
 

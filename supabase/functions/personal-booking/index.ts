@@ -107,6 +107,13 @@ function buildIcs(o: { uid: string; title: string; startIso: string; endIso: str
     'ORGANIZER;CN=Sven Rüprich:mailto:sven@happy-property.com', 'STATUS:CONFIRMED', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
 }
 const overlaps = (s: number, e: number, busy: Busy[]) => busy.some(b => s < b.end && e > b.start)
+// HTML-Maskierung NUR für den Mail-HTML-String (Befund E3-5). WhatsApp-Text, Betreff,
+// Kalender, ICS und DB bekommen die Rohwerte, sonst stünde dort '&amp;'.
+const escHtml = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+// Missbrauchsbremse für den öffentlichen Link (Befund E3-5): Buchungen je Stunde
+// insgesamt und je Kontakt (Mail bzw. Telefon) in 24 h. Großzügig gewählt, echte
+// Buchungen über /buchen kommen nur vereinzelt.
+const BOOK_CAP_HOUR = 10, BOOK_CAP_CONTACT_DAY = 5
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -180,12 +187,52 @@ Deno.serve(async (req) => {
 
     // ── Buchen ─────────────────────────────────────────────────────────────
     if (action === 'book') {
-      const { startIso, subject, type, address, name, email, phone } = body as { startIso?: string; subject?: string; type?: string; address?: string; name?: string; email?: string; phone?: string }
+      const raw = body as { startIso?: string; subject?: string; type?: string; address?: string; name?: string; email?: string; phone?: string }
+      const { type, email, phone } = raw
+      // Längen kappen statt ablehnen (Befund E3-5); normale Eingaben bleiben unverändert.
+      const subject = typeof raw.subject === 'string' ? raw.subject.trim().slice(0, 150) : ''
+      const name = typeof raw.name === 'string' ? raw.name.trim().slice(0, 100) : ''
+      const address = typeof raw.address === 'string' ? raw.address.trim().slice(0, 250) : undefined
       const dur = Math.max(15, Math.min(360, Number(body.duration) || 30))
-      if (!startIso || !subject?.trim() || !name?.trim() || !['onsite', 'whatsapp', 'zoom'].includes(type ?? '')) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
+      if (!raw.startIso || !subject || !name || !['onsite', 'whatsapp', 'zoom'].includes(type ?? '')) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
       if (!email?.trim() && !phone?.trim()) return json({ error: 'Bitte E-Mail oder Telefon angeben.' }, 400)
-      const start = new Date(startIso), end = new Date(start.getTime() + dur * 60000)
+      // Nachsichtige Formatprüfung: EINE Adresse (kein Leerzeichen, Komma, Semikolon,
+      // spitze Klammern, keine LIKE-Platzhalter) bzw. eine Nummer mit 6-18 Ziffern.
+      // Sonderzeichen in Nummern (Leerzeichen, Bidi-Zeichen) bleiben erlaubt.
+      if (email?.trim() && !/^[^\s,;<>@%*\\]+@[^\s,;<>@%*\\]+$/.test(email.trim())) return json({ error: 'Bitte E-Mail oder Telefon angeben.' }, 400)
+      if (phone?.trim()) { const digits = phone.replace(/\D/g, '').length; if (digits < 6 || digits > 18 || phone.length > 40) return json({ error: 'Bitte E-Mail oder Telefon angeben.' }, 400) }
+      const start = new Date(raw.startIso), end = new Date(start.getTime() + dur * 60000)
+      if (isNaN(start.getTime())) return json({ error: 'Bitte alle Pflichtfelder ausfüllen.' }, 400)
       if (start.getTime() < Date.now() + MIN_LEAD_MIN * 60000) return json({ error: 'Zeitpunkt liegt zu kurzfristig.' }, 400)
+      // Nur Zeitpunkte, die `slots` auch anbietet: innerhalb DAYS_AHEAD (+1 Tag Luft für
+      // eine länger offene Seite) und auf dem 30-Minuten-Raster (Berlin-Versatz ist eine
+      // volle Stunde, also gilt das Raster auch in UTC).
+      if (start.getTime() > Date.now() + (DAYS_AHEAD + 1) * 864e5
+        || start.getUTCMinutes() % STEP !== 0 || start.getUTCSeconds() !== 0 || start.getUTCMilliseconds() !== 0) {
+        return json({ error: 'Der Zeitpunkt ist nicht buchbar. Bitte wähle einen anderen.' }, 400)
+      }
+      // Kanonische Form (identisch zu dem, was `slots` liefert) für alle weiteren Verwendungen.
+      const startIso = start.toISOString()
+      // Missbrauchsbremse: zu viele Buchungen in der letzten Stunde bzw. für denselben Kontakt.
+      const hourAgo = new Date(Date.now() - 3600e3).toISOString(), dayAgo = new Date(Date.now() - 864e5).toISOString()
+      const { count: nHour } = await admin.from('crm_appointments').select('id', { count: 'exact', head: true }).eq('source', 'sven360').gte('created_at', hourAgo)
+      if ((nHour ?? 0) >= BOOK_CAP_HOUR) return json({ error: 'Gerade gehen sehr viele Buchungen ein. Bitte versuche es später noch einmal.' }, 429)
+      // Pro Kontakt normalisiert vergleichen (Review S1): gespeichert wird die Eingabe
+      // roh, ein exakter jsonb-Vergleich ließ sich mit Groß/Klein, Leerzeichen oder
+      // anderem Nummernformat (+49 170…, 0049170…) umgehen. Wenige Zeilen (max.
+      // BOOK_CAP_HOUR pro Stunde), daher in JS. Bei DB-Fehler wie bisher durchlassen.
+      const normMail = (v: unknown) => typeof v === 'string' ? v.trim().toLowerCase() : ''
+      const normTel = (v: unknown) => typeof v === 'string' ? v.replace(/\D/g, '').replace(/^00/, '') : ''
+      const emailN = normMail(email), phoneN = normTel(phone)
+      if (emailN || phoneN) {
+        const { data: recent } = await admin.from('crm_appointments').select('attendees').eq('source', 'sven360').gte('created_at', dayAgo).limit(500)
+        let nContact = 0
+        for (const r of (recent ?? []) as Array<{ attendees?: unknown }>) {
+          const list = (Array.isArray(r.attendees) ? r.attendees : []) as Array<{ email?: unknown; phone?: unknown } | null>
+          if (list.some(a => !!a && ((!!emailN && normMail(a.email) === emailN) || (!!phoneN && normTel(a.phone) === phoneN)))) nContact++
+        }
+        if (nContact >= BOOK_CAP_CONTACT_DAY) return json({ error: 'Für diesen Kontakt sind heute schon mehrere Termine gebucht. Bitte melde dich direkt bei Sven.' }, 429)
+      }
       // Slot noch frei? (Doppelbuchung vermeiden)
       const busy = await getBusy(admin, new Date(start.getTime() - 60000), new Date(end.getTime() + 60000))
       if (overlaps(start.getTime(), end.getTime(), busy)) return json({ error: 'Der Zeitpunkt ist gerade belegt worden — bitte einen anderen wählen.' }, 409)
@@ -228,7 +275,8 @@ Deno.serve(async (req) => {
       const isInternal = await isInternalContact(admin, { email, phone, inviteInternal: inv?.internal === true })
       // an bestehenden Lead per E-Mail haengen (nur bei echten Kundenterminen)
       let leadId: string | null = null
-      if (email && !isInternal) { const { data: l } = await admin.from('leads').select('id').ilike('email', email.trim()).limit(1).maybeSingle(); leadId = (l as { id?: string } | null)?.id ?? null }
+      // '_' maskieren (Platzhalter in ILIKE); '%', '*' und '\' lässt die Formatprüfung oben gar nicht durch (E3-4).
+      if (email && !isInternal) { const { data: l } = await admin.from('leads').select('id').ilike('email', email.trim().replace(/_/g, '\\_')).limit(1).maybeSingle(); leadId = (l as { id?: string } | null)?.id ?? null }
 
       const { data: appt } = await admin.from('crm_appointments').insert({
         lead_id: leadId, title: subject, type: apptType, start_time: startIso, end_time: end.toISOString(),
@@ -250,11 +298,11 @@ Deno.serve(async (req) => {
             <img src="${lotteTerminBild(lang)}" alt="${lang === 'en' ? 'Appointment booked' : 'Termin vereinbart'}" style="width:100%;max-width:520px;border-radius:14px;display:block;margin:0 auto;" />
             <p style="font-size:12px;color:#6b7280;margin:8px 0 0;">${lang === 'en' ? "Lotte · Sven's personal assistant 🐾" : 'Lotte · persönliche Assistentin von Sven 🐾'}</p>
           </div>
-          <p>${T.greet(first)}</p><p>${T.confirmed}</p>
+          <p>${T.greet(escHtml(first))}</p><p>${T.confirmed}</p>
           <div style="background:#faf7f4;border-radius:14px;padding:16px 18px;margin:14px 0;">
-            <p style="font-size:16px;font-weight:600;margin:0 0 6px;color:#111827;">${subject}</p>
+            <p style="font-size:16px;font-weight:600;margin:0 0 6px;color:#111827;">${escHtml(subject)}</p>
             <p style="margin:0;color:#374151;">📅 ${dateStr}</p>
-            <p style="margin:6px 0 0;color:#374151;">📍 ${typeLabel}</p>
+            <p style="margin:6px 0 0;color:#374151;">📍 ${escHtml(typeLabel)}</p>
             ${zoomLink ? `<p style="margin:6px 0 0;"><a href="${zoomLink}" style="color:#ff795d;">${T.zoomLinkLbl}</a></p>` : ''}
           </div>
           <p style="text-align:center;margin:20px 0;"><a href="${gcal}" style="background:#ff795d;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block;">${T.gcalBtn}</a></p>

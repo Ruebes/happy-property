@@ -9,14 +9,31 @@
 //
 // Body:   { lead_id, extra_emails?: string[] }
 // Antwort:{ ok, folder_id, folder_url, existing }
+//
+// Zugriff (Sicherheits-Audit 30.9.2026): System-Aufrufe mit dem Service-Key
+// (schedule-message, owner-drive) oder eingeloggte Admins/Verwalter/Mitarbeiter
+// (Drive-Knopf in LeadDetail). Vorher reichte der öffentliche Publishable Key,
+// um sich selbst Schreibrechte auf einen Kundenordner zu geben.
+// Deploy ohne --no-verify-jwt (verify_jwt=true wie live, Eintrag in config.toml).
+// Der Guard hängt nicht mehr davon ab (kein ungeprüfter JWT-Payload).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
+// System-Aufruf mit dem Service-Key im apikey-Header (supabase-js functions.invoke
+// schickt einen sb_secret-Key nur dort mit). Bearer <Service-Key> und einen vom
+// Gateway erzeugten service_role-JWT prüft authorizeCaller selbst, beim JWT mit
+// Signaturprüfung über JWKS (Review S1: vorher wurde hier nur der Payload gelesen,
+// das wäre mit --no-verify-jwt fälschbar gewesen).
+function isServiceViaGateway(req: Request): boolean {
+  return safeEqual(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
+}
 
 // Svens GOOGLE-Konto (nicht die CRM-Mail sven@happy-property.com — die ist kein
 // Google-Konto, Teilen darauf schlägt fehl). Per Secret überschreibbar.
@@ -61,6 +78,11 @@ async function getWriteToken(): Promise<string> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS })
+  // ── Aufrufer prüfen ──────────────────────────────────────────────────────────
+  if (!isServiceViaGateway(req)) {
+    const caller = await authorizeCaller(req, { service: true, roles: ['admin', 'verwalter', 'mitarbeiter'] }, CORS)
+    if (caller instanceof Response) return caller
+  }
   try {
     const { lead_id, extra_emails } = await req.json() as { lead_id?: string; extra_emails?: string[] }
     if (!lead_id) return json({ error: 'lead_id fehlt' }, 400)

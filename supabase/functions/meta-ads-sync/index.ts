@@ -116,17 +116,23 @@ async function buildCapiEvent(c: CapiCandidate): Promise<Record<string, unknown>
   // zusammenführen, auch wenn Mail oder Nummer sich später ändern.
   if (c.lead_id) user_data.external_id = [await sha256(c.lead_id)]
 
+  // Website-Ereignis nur MIT Browserkennung: Meta verlangt client_user_agent bei
+  // action_source 'website' und lehnt sonst den ganzen Sammel-POST ab (dann gingen
+  // auch Held/QualifiedLead/Purchase nicht mehr raus, bei jedem Lauf erneut).
+  // Nur /termin-Leads haben client_user_agent; Termine aus Bot, /buchen oder CRM
+  // bleiben system_generated wie vor dem 18.08. (Review S1).
+  const web = c.from_website === true && !!c.user_agent
   const ev: Record<string, unknown> = {
     event_name: c.event_name,
     event_time: c.event_time,
     event_id: c.event_id,
-    action_source: c.from_website ? 'website' : 'system_generated',
+    action_source: web ? 'website' : 'system_generated',
     user_data,
   }
   // Browserkennung und Quell-URL akzeptiert Meta nur bei Website-Ereignissen;
   // bei system_generated führen sie zu einer Warnung im Events Manager.
-  if (c.from_website) {
-    if (c.user_agent) user_data.client_user_agent = c.user_agent
+  if (web) {
+    user_data.client_user_agent = c.user_agent
     ev.event_source_url = FUNNEL_URL
   }
   if (c.value && c.value > 0) ev.custom_data = { currency: 'EUR', value: c.value }

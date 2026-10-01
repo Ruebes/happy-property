@@ -81,6 +81,24 @@ export default function Connectors() {
   }
   const waActive = (key: string) => conns.find(c => c.key === key)?.detail.startsWith('AKTIV')
 
+  // ── Google verbinden (YouTube / Drive): yt-oauth gibt die Zustimmungs-URL nur
+  // eingeloggten Admins/Verwaltern heraus (signierter state). Den Tab im Klick
+  // öffnen, sonst blockt Safari ihn nach dem await als Popup.
+  const connectGoogle = async (target: 'youtube' | 'drive') => {
+    const win = window.open('about:blank', '_blank')
+    if (win) win.opener = null
+    try {
+      const { data, error } = await supabase.functions.invoke('yt-oauth', { body: { action: 'start', target } })
+      const d = (data ?? {}) as { ok?: boolean; error?: string; url?: string }
+      if (error || d.error || !d.ok || !d.url) throw new Error(d.error || error?.message || 'Fehler')
+      if (win) win.location.href = d.url
+      else window.location.href = d.url
+    } catch (e) {
+      win?.close()
+      showToast(`❌ ${e instanceof Error ? e.message : 'Fehler'}`)
+    }
+  }
+
   const [ytOpen, setYtOpen] = useState(false)
   const ytConns = conns.filter(c => c.key.startsWith('YOUTUBE_'))
   const restConns = conns.filter(c => !c.key.startsWith('YOUTUBE_'))
@@ -96,10 +114,10 @@ export default function Connectors() {
                     <p className={`text-xs mt-0.5 ${c.ok ? 'text-gray-500' : 'text-red-600'}`}>{c.detail}</p>
                   </div>
                   {c.key === 'GOOGLE_DRIVE_UPLOAD' && (
-                    <a href="https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/yt-oauth?target=drive" target="_blank" rel="noreferrer"
+                    <button type="button" onClick={() => void connectGoogle('drive')}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
                       🔗 {t('crm.conn.driveConnect', 'Verbinden')}
-                    </a>
+                    </button>
                   )}
                   {(c.key === 'TIMELINES' || c.key === 'EVOLUTION') && !waActive(c.key) && (
                     <button onClick={() => void switchProvider(c.key === 'EVOLUTION' ? 'evolution' : 'timelines')} disabled={busy === 'WA_SWITCH'}
@@ -173,7 +191,7 @@ export default function Connectors() {
                       {ytOk ? t('crm.conn.ytOk', 'Verbunden - Upload & Kommentare aktiv.') : t('crm.conn.ytMissing', 'Noch nicht vollständig verbunden - aufklappen oder „Verbinden" klicken.')}
                     </p>
                   </div>
-                  <a href="https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/yt-oauth" target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                  <a href="#" role="button" onClick={e => { e.preventDefault(); e.stopPropagation(); void connectGoogle('youtube') }}
                     className="px-3 py-1.5 rounded-lg text-xs font-medium border border-gray-200 hover:bg-gray-50 shrink-0">
                     🔗 {t('crm.conn.ytConnect', 'Verbinden')}
                   </a>

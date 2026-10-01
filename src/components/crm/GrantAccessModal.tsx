@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
 import { PERMISSION_AREAS, type PermissionArea } from '../../lib/auth'
+import { fnErrorMessage } from '../../lib/fnError'
 
 // ── Systemzugang für einen Geschäftskontakt erteilen ────────────────────────────
 // Legt den Kontakt als Mitarbeiter an (admin-user-ops create, role='mitarbeiter'),
@@ -44,7 +45,10 @@ export default function GrantAccessModal({ contact, onClose, onGranted }: {
         },
       })
       const res = data as { error?: string; userId?: string; emailed?: boolean } | null
-      if (error || res?.error) throw new Error(res?.error || error?.message)
+      // 409 = E-Mail gehört schon einem Konto mit anderer Rolle: den Grund aus dem
+      // Antwort-Body zeigen (sonst stünde nur die englische non-2xx-Meldung da).
+      if (error) throw new Error(await fnErrorMessage(error))
+      if (res?.error) throw new Error(res.error)
       onGranted(res?.emailed
         ? t('crm.grant.doneMailed', '✓ Zugang erteilt — Zugangs-Mail an {{name}} versendet', { name: name || contact.email })
         : t('crm.grant.doneNoMail', '✓ Zugang erteilt für {{name}} (Zugangs-Mail konnte nicht versendet werden — Passwort ggf. manuell zurücksetzen)', { name: name || contact.email }))

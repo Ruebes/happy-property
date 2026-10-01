@@ -15,12 +15,18 @@
 //   ANTHROPIC_API_KEY       (wie ai-draft-reply)
 //   WA_REPORT_RECIPIENTS    optional, Komma-Liste; Default Sven + Giona
 //
+// ── Aufrufer ──
+//   GET ?t=  öffentlich (Token), unverändert
+//   POST     nur pg_cron wa-weekly-report-4/-5 mit x-cron-secret
+//            (connector_secrets CRON_SECRET), Service-Key oder eingeloggter admin
+//
 // ── Deployment ──
 //   supabase functions deploy wa-weekly-report --no-verify-jwt
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
 import { CI } from '../_shared/brand.ts'
+import { authorizeCaller } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -439,6 +445,9 @@ Deno.serve(async (req) => {
     }
 
     if (req.method !== 'POST') return json({ error: 'Method Not Allowed' }, 405)
+    // Report erzeugen kostet KI-Aufrufe und verschickt Mails: nur Cron/System/Admin.
+    const caller = await authorizeCaller(req, { cron: true, service: true, roles: ['admin'] }, CORS)
+    if (caller instanceof Response) return caller
     const body = await req.json().catch(() => ({})) as { action?: string; force?: boolean; cron?: boolean; skipMail?: boolean }
     if (body.action !== 'run') return json({ error: 'unknown action' }, 400)
 

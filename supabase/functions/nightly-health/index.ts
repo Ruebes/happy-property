@@ -10,6 +10,13 @@
 //
 // Cron: täglich 03:00 UTC (pg_cron → net.http_post)
 //
+// ── Zugriff (Sicherheits-Audit 30.9.2026) ──
+//   pg_cron mit Header x-cron-secret (Wert zur LAUFZEIT per Subquery aus
+//   connector_secrets, key CRON_SECRET), System-Aufrufe mit dem Service-Key oder
+//   ein eingeloggter Admin. Vorher konnte jeder ohne Login dry_run:false setzen.
+//   Reihenfolge beim Umstellen: erst den Cron-Job um x-cron-secret ergänzen,
+//   dann diese Version deployen.
+//
 // ── Deployment ──
 //   supabase functions deploy nightly-health --no-verify-jwt
 //
@@ -19,10 +26,11 @@
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { getWaProvider, evoConnectionState } from '../_shared/waProvider.ts'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
@@ -761,6 +769,14 @@ function buildReport(fixed: Finding[], open: Finding[], datum: string, dryRun: b
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers: CORS })
   const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
+  // Aufrufer prüfen, bevor health_runs geschrieben oder etwas repariert wird.
+  // apikey == Service-Key zählt als System-Aufruf: supabase-js schickt einen
+  // sb_secret-Key bei functions.invoke nur noch als apikey, nicht als Bearer.
+  if (!safeEqual(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')) {
+    const caller = await authorizeCaller(req, { cron: true, service: true, roles: ['admin'] }, CORS)
+    if (caller instanceof Response) return caller
+  }
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const body = await req.json().catch(() => ({})) as { dry_run?: boolean; notify?: boolean }

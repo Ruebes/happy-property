@@ -231,9 +231,15 @@ Deno.serve(async (req) => {
       if (!c.first_name || !c.email || !c.phone) return json({ error: 'Pflichtfelder fehlen' }, 400)
       const phone = (c.phone ?? '').replace(/[^\d+]/g, '')
       const email = (c.email ?? '').trim().toLowerCase()
+      // Befund E3-4: die Mail war ein ILIKE-Muster. Mit '%' (oder '*', das PostgREST
+      // zu '%' macht) traf die Anfrage einen beliebigen Bestandskunden und bekam dessen
+      // lead_id zurück. Jetzt: genau eine Adresse ohne Platzhalterzeichen, und '_'
+      // wird maskiert. So bleibt es ein Vergleich ohne Groß-/Kleinschreibung (4 Leads
+      // haben gemischte Schreibweise), aber exakt auf diese eine Adresse.
+      if (!/^[^\s@%*\\]+@[^\s@%*\\]+\.[^\s@%*\\]+$/.test(email)) return json({ error: 'Pflichtfelder fehlen' }, 400)
 
       let leadId: string | null = null
-      const { data: byMail } = await admin.from('leads').select('id').ilike('email', email).limit(1)
+      const { data: byMail } = await admin.from('leads').select('id').ilike('email', email.replace(/_/g, '\\_')).limit(1)
       if (byMail?.length) leadId = (byMail[0] as { id: string }).id
       if (!leadId) {
         // Zweit-Adressen (alt_emails) mitprüfen — verhindert Dubletten bei Kunden mit mehreren Mails

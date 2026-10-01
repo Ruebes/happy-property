@@ -8,6 +8,7 @@
 // Secret:  ANTHROPIC_API_KEY (bereits gesetzt, von analyze-invoice genutzt)
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
 
@@ -31,6 +32,10 @@ interface ReqBody {
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  // Aufrufer-Schutz: liest Lead-Name + Verlauf und kostet KI. Einziger Aufrufer
+  // ist LeadDetail (Route: Admin/Verwalter, Mitarbeiter mit pipeline oder contacts).
+  const denied = await gateCaller(req, 'ai-draft-reply', { service: true, roles: ['admin', 'verwalter'], perms: ['pipeline', 'contacts'] }, corsHeaders)
+  if (denied) return denied
   if (req.method !== 'POST')    return new Response('Method not allowed', { status: 405, headers: corsHeaders })
   if (!ANTHROPIC_API_KEY)       return json({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
 

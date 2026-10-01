@@ -6,12 +6,29 @@
 //   create_folder  → Ordner anlegen (optional: unter parent_folder_id)
 //   share_folder   → Ordner mit E-Mail teilen
 //   ensure_root    → Root-Ordner "Happy Property – Deals" sicherstellen (einmalig)
+//
+// Zugriff (Sicherheits-Audit 30.9.2026): NUR System-Aufrufe mit dem Service-Key
+// (einziger Aufrufer: task-notify über _shared/lotte.ts → import_images) oder ein
+// eingeloggter Admin. Vorher lief jede Aktion ohne Prüfung, und verify_jwt=true
+// lässt den öffentlichen Publishable Key durch.
+// Deploy ohne --no-verify-jwt (verify_jwt=true wie live, Eintrag in config.toml).
+// Der Guard hängt nicht mehr davon ab (kein ungeprüfter JWT-Payload).
 
 import { createClient } from 'jsr:@supabase/supabase-js@2'
+import { authorizeCaller, safeEqual } from '../_shared/callerAuth.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin':  '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+// System-Aufruf mit dem Service-Key im apikey-Header (supabase-js functions.invoke
+// schickt einen sb_secret-Key nur dort mit). Bearer <Service-Key> und einen vom
+// Gateway erzeugten service_role-JWT prüft authorizeCaller selbst, beim JWT mit
+// Signaturprüfung über JWKS (Review S1: vorher wurde hier nur der Payload gelesen,
+// das wäre mit --no-verify-jwt fälschbar gewesen).
+function isServiceViaGateway(req: Request): boolean {
+  return safeEqual(req.headers.get('apikey') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '')
 }
 
 // ── OAuth: Access Token via Refresh Token holen ───────────────────────────────
@@ -257,6 +274,12 @@ async function ensureRootFolder(token: string, supabase: ReturnType<typeof creat
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
+  }
+
+  // ── Aufrufer prüfen (vor allem anderen, auch vor sa_email) ──────────────────
+  if (!isServiceViaGateway(req)) {
+    const caller = await authorizeCaller(req, { service: true, roles: ['admin'] }, corsHeaders)
+    if (caller instanceof Response) return caller
   }
 
   try {

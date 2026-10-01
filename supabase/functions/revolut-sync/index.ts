@@ -19,9 +19,17 @@
 //          REVOLUT_REFRESH_TOKEN (aus exchange_code)
 //          SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (Standard)
 //
-// Deployment: supabase functions deploy revolut-sync --no-verify-jwt
+// Aufrufer (Guard nach exchange_code): pg_cron revolut-sync-daily (x-cron-secret
+// bzw. Service-Key), imap-poll + affiliate-api (Service-Key), Finanzen-Seite
+// (User-JWT, nur admin/verwalter wie Route und fin_*-RLS). exchange_code bleibt
+// offen: die öffentliche Seite /revolut ruft es evtl. ohne Login auf, und es
+// braucht einen echten Revolut-Consent-Code für Svens Client.
+//
+// Deployment: supabase functions deploy revolut-sync (verify_jwt bleibt wie live
+// true, Eintrag in config.toml). Der eigentliche Schutz ist der Guard im Handler.
 
 import { createClient, SupabaseClient } from 'jsr:@supabase/supabase-js@2'
+import { gateCaller } from '../_shared/callerGate.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',
@@ -240,6 +248,14 @@ Deno.serve(async (req: Request) => {
       console.log('[revolut-sync] Code getauscht, refresh_token gespeichert')
       return json({ success: true })
     }
+
+    // ── Aufrufer prüfen: alles ab hier nur Cron, Service-Key oder admin/verwalter ──
+    // gateCaller statt authorizeCaller (Review S1): erkennt den Service-Key auch im
+    // apikey-Header (imap-poll/affiliate-api per functions.invoke) und den vom
+    // Gateway signierten service_role-JWT (verify_jwt=true, Cron-Job 5); dazu der
+    // zeitlich begrenzte Beobachtungsmodus CALLER_GUARD_OBSERVE=revolut-sync@<Ende>.
+    const denied = await gateCaller(req, 'revolut-sync', { cron: true, service: true, roles: ['admin', 'verwalter'] }, CORS)
+    if (denied) return denied
 
     // ── KI-Kategorisierung offener Transaktionen ─────────────────────────────
     if (body.action === 'categorize_ai') {
