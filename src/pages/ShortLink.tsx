@@ -3,6 +3,9 @@ import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { DECK_LOGO } from '../lib/deckTypes'
 
+// Erlaubte Zielhosts: Zusage-Seite (AppointmentModal rsvpHref) und Google-Kalender (buildGcalHref).
+const SHORT_LINK_HOSTS = new Set(['portal.happy-property.com', 'calendar.google.com'])
+
 // ── Kurzlink-Weiterleitung (/s/:code) — für lange Kalender-/Zusage-URLs ──────
 export default function ShortLink() {
   const { code } = useParams()
@@ -14,10 +17,20 @@ export default function ShortLink() {
     ran.current = true
     void (async () => {
       try {
-        const { data, error } = await supabase.from('short_links').select('target').eq('code', code ?? '').maybeSingle()
-        const target = (data as { target?: string } | null)?.target
-        if (error || !target) { setInvalid(true); return }
-        window.location.replace(target)
+        // Genau einen Code auflösen (Definer-Funktion, Tabelle ist für anon gesperrt).
+        const { data, error } = await supabase.rpc('get_short_link', { p_code: code ?? '' })
+        let target = typeof data === 'string' ? data : null
+        if (error) {
+          // Übergang, solange get_short_link noch nicht in der DB ist: alter Weg.
+          const old = await supabase.from('short_links').select('target').eq('code', code ?? '').maybeSingle()
+          target = (old.data as { target?: string } | null)?.target ?? null
+        }
+        // Nur die Ziele, die das Terminmodal anlegt (Zusage-/Kalenderlinks): https auf
+        // bekannten Hosts, sonst kein offener Redirect über portal.../s/<code>.
+        let url: URL | null = null
+        try { url = target ? new URL(target) : null } catch { url = null }
+        if (!url || url.protocol !== 'https:' || !SHORT_LINK_HOSTS.has(url.hostname)) { setInvalid(true); return }
+        window.location.replace(url.href)
       } catch {
         setInvalid(true)
       }
