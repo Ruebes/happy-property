@@ -15,6 +15,7 @@ import { useAuth, hasAdSegment, hasPerm, AD_SEGMENTS, type AdSegment } from '../
 //   leads (utm_campaign={{campaign.id}}, utm_content={{ad.id}})  — CRM-Zuordnung
 //   crm_appointments.outcome + leads.quality_rating              — Termine & Qualität
 //   deals (phase, commission_amount)                             — Sales & Umsatz
+//   (ohne Pipeline-Recht: dieselben drei Listen über RPC ads_crm_attribution)
 // CRM-Kennzahlen je Ad greifen erst, wenn die Anzeigen die URL-Parameter tragen
 // (Meta-Anzeigen-URL-Setup) — bis dahin zählt die Plattform-Lead-Zahl.
 
@@ -103,6 +104,8 @@ interface Agg {
 const emptyAgg = (): Agg => ({ spendEur: 0, impressions: 0, reach: 0, clicks: 0, outboundClicks: 0, landingPageViews: 0, platformLeads: 0, video3s: 0, crmLeads: 0, termine: 0, stattgefunden: 0, noShows: 0, gut: 0, schlecht: 0, sales: 0, revenue: 0 })
 
 const SALE_PHASES = new Set(['anzahlung', 'provision_erhalten'])
+// Gleiche Liste steht in der SQL-Funktion ads_crm_attribution (Migration
+// 20261001100000): bei Änderung beide anpassen, sonst sehen Mitarbeiter andere Zahlen.
 const META_SOURCES = new Set(['meta', 'facebook', 'fb', 'instagram', 'ig'])
 
 // Kategorische Chart-Farben — feste Reihenfolge, validiert (Kontrast + Farbfehlsicht)
@@ -316,8 +319,13 @@ export default function AdsManager() {
   const segments = AD_SEGMENTS.filter(s => hasAdSegment(profile, s))
   // Leads, Termine und Deals liest die Seite mit dem normalen Client. Deren RLS
   // lässt nur Admin/Verwalter oder das Pipeline-Recht durch; ohne es kommen
-  // leere Listen ohne Fehler zurück. Dann ehrlich sagen, woran es liegt.
+  // leere Listen ohne Fehler zurück. Werbe-Mitarbeiter ohne Pipeline-Recht
+  // holen dieselben Zeilen deshalb über die Funktion ads_crm_attribution (nur
+  // Zuordnungsfelder, keine Personendaten). Fehlt die Funktion noch, bleibt es
+  // beim leeren Ergebnis, und die Seite sagt ehrlich, woran es liegt.
   const canSeeCrm = hasPerm(profile, 'pipeline')
+  const [crmViaRpc, setCrmViaRpc] = useState(false)
+  const crmVisible = canSeeCrm || crmViaRpc
   const [segment, setSegment] = useState<AdSegment>('meta')
   const [view, setView] = useState<'stats' | 'studio'>('stats')
   const [days, setDays] = useState<7 | 30 | 90>(30)
@@ -419,6 +427,29 @@ export default function AdsManager() {
 
       // CRM-Zuordnung: Leads über utm_campaign/{{campaign.id}} bzw. Meta-Quellen
       const campaignIds = [...new Set(catRows.map(c => c.campaign_id))]
+
+      // Ohne Pipeline-Recht: dieselben Zeilen (gleicher Filter wie unten) über
+      // die SECURITY-DEFINER-Funktion. Admin, Verwalter und Pipeline-Recht
+      // lesen weiter direkt, für sie ändert sich nichts.
+      if (!canSeeCrm) {
+        const { data: crm, error: eRpc } = await supabase.rpc('ads_crm_attribution', {
+          p_since: `${since}T00:00:00Z`,
+          p_campaign_ids: campaignIds,
+        })
+        if (!eRpc && crm) {
+          const rows = crm as { leads?: AdLead[]; appts?: AdAppt[]; deals?: AdDeal[] }
+          setLeads(rows.leads ?? [])
+          setAppts(rows.appts ?? [])
+          setDeals(rows.deals ?? [])
+          setCrmViaRpc(true)
+          return
+        }
+        // Funktion noch nicht eingespielt: weiter wie bisher (RLS liefert leere
+        // Listen), die Seite zeigt den Hinweis zum Pipeline-Recht.
+        console.warn('[AdsManager] ads_crm_attribution nicht verfügbar:', eRpc)
+        setCrmViaRpc(false)
+      }
+
       const orParts = [`utm_source.in.(${[...META_SOURCES].join(',')})`]
       if (campaignIds.length) orParts.push(`utm_campaign.in.(${campaignIds.join(',')})`)
       const { data: ld, error: e3 } = await supabase
@@ -449,7 +480,7 @@ export default function AdsManager() {
     } finally {
       setLoading(false)
     }
-  }, [segment, days])
+  }, [segment, days, canSeeCrm])
 
   useEffect(() => { void fetchAll() }, [fetchAll])
 
@@ -913,7 +944,7 @@ export default function AdsManager() {
       // Leads, die Meta zählt, ohne dass jemals eine Seite geladen wurde: das
       // sind Sofortformulare, die direkt bei Meta ausgefüllt werden. Ohne
       // Anbindung landen sie NICHT im CRM und ruft niemand an.
-      if (canSeeCrm && a.platformLeads >= 3 && a.crmLeads === 0 && a.landingPageViews < a.platformLeads) {
+      if (crmVisible && a.platformLeads >= 3 && a.crmLeads === 0 && a.landingPageViews < a.platformLeads) {
         hints.push({
           ad: c, kind: 'orphan_leads', spend: a.spendEur,
           reason: t('crm.ads.recReasonOrphan', '{{leads}} Leads bei Meta, aber keiner im CRM — sie kommen aus einem Sofortformular', { leads: int(a.platformLeads) }),
@@ -926,7 +957,7 @@ export default function AdsManager() {
             ...hints.sort((x, y) => y.spend - x.spend).slice(0, 3)]
     // eur/pct sind stabile Formatter — bewusst nicht in den Deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalog, byAd, pendingByAd, settings, t, locale, canSeeCrm])
+  }, [catalog, byAd, pendingByAd, settings, t, locale, crmVisible])
 
   const campaignName = useCallback((cid: string) => catalog.find(c => c.campaign_id === cid)?.campaign_name || cid, [catalog])
   const campaignColor = useMemo(() => {
@@ -1171,12 +1202,12 @@ export default function AdsManager() {
 
             {view === 'stats' && (<div>
             {/* Hinweis solange die CRM-Zuordnung noch nicht greift */}
-            {!canSeeCrm && (
+            {!crmVisible && (
               <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {t('crm.ads.noCrmAccess', 'CRM-Zahlen (Leads, Termine, Qualität, Sales) siehst du nur mit dem Pipeline-Recht. Die Lead-Zahl hier ist die von Meta.')}
               </div>
             )}
-            {canSeeCrm && total.crmLeads === 0 && (
+            {crmVisible && total.crmLeads === 0 && (
               <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 {t('crm.ads.noAttribution', 'Noch keine CRM-Zuordnung: Sobald die Anzeigen die URL-Parameter tragen (Aufgabe liegt bei Giona), laufen Leads, Termine, Qualität und Sales hier automatisch pro Anzeige ein. Bis dahin zählt die Lead-Zahl von Meta.')}
               </div>
