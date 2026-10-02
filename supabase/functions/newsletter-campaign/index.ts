@@ -47,7 +47,53 @@ const AFFILIATE_FALLBACK = `${'https://portal.happy-property.com'}/termin?src=em
 // unsubUrl = Ein-Klick-Abmeldelink des Empfängers (/abmelden?l=<lead> bzw. ?s=<sub>).
 // {{abmelden}} im HTML wird dadurch ersetzt; fehlt ein Abmelde-Link ganz, hängen
 // wir aus DSGVO-Gründen einen an.
-function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string, terminUrl?: string): string {
+
+// ── Klick- und Oeffnungs-Tracking je Empfaenger (Sven 2.10.26) ──────────────
+// Sven will wissen, WAS geklickt wird, nicht nur dass geoeffnet wurde: Guide
+// oder Tippgeber, spaeter Immobilie oder Berechnung. Dafuer bekommt jeder Link
+// ein Label und laeuft ueber track-engagement, und ans Ende kommt ein Pixel.
+const TRACK = `${Deno.env.get('SUPABASE_URL')}/functions/v1/track-engagement`
+const TRACK_HOSTS = [
+  'happy-property.com', 'happy-property.de', 'portal.happy-property.com',
+  'steuervorteil-zypern-immobilien.com', 'vjlwgajmtqlwjjreowbu.supabase.co', 'wa.me',
+]
+// Aus der Ziel-Adresse ableiten, worum es geht. So muss niemand im HTML etwas
+// auszeichnen, auch kuenftige Newsletter werden automatisch richtig einsortiert.
+function linkLabel(url: string): string {
+  const u = url.toLowerCase()
+  if (u.includes('abmelden') || u.includes('unsubscribe')) return ''
+  if (u.includes('immobilienguide') || u.includes('web-reports/immobilienguide')) return 'guide'
+  if (u.includes('tippgeber') || u.includes('src=empfehlung') || u.includes('wa.me')) return 'affiliate'
+  if (u.includes('/deck/')) return 'immobilie'
+  if (u.includes('/rechnung/') || u.includes('rechner')) return 'berechnung'
+  if (u.includes('/termin') || u.includes('/buchen')) return 'termin'
+  if (u.includes('instagram.com')) return 'instagram'
+  if (u.includes('facebook.com')) return 'facebook'
+  if (u.includes('linkedin.com')) return 'linkedin'
+  try { return new URL(url).hostname.replace(/^www\./, '').slice(0, 40) } catch { return 'link' }
+}
+function trackbar(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:') return false
+    return TRACK_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h))
+  } catch { return false }
+}
+function withTracking(html: string, campaignId: string, ref: string): string {
+  if (!campaignId || !ref) return html
+  const out = html.replace(/href="(https:\/\/[^"]+)"/g, (ganz, url: string) => {
+    const label = linkLabel(url)
+    // Abmeldelink und fremde Hosts bleiben unberuehrt: der eine muss mit einem
+    // Klick funktionieren, die anderen waeren ein offener Redirect.
+    if (!label || !trackbar(url)) return ganz
+    const ziel = `${TRACK}?type=nl_click&c=${encodeURIComponent(campaignId)}&r=${encodeURIComponent(ref)}&l=${encodeURIComponent(label)}&u=${encodeURIComponent(url)}`
+    return `href="${ziel}"`
+  })
+  const px = `<img src="${TRACK}?type=nl_open&c=${encodeURIComponent(campaignId)}&r=${encodeURIComponent(ref)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;">`
+  return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, `${px}</body>`) : `${out}${px}`
+}
+
+function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affiliateUrl?: string, terminUrl?: string, campaignId?: string, ref?: string): string {
   // {{tippgeber_link}} = persoenlicher Empfehlungs-Link des Empfaengers; fehlt er
   // (Vorschau/Test), zeigt der Platzhalter auf die allgemeine Termin-Seite.
   // {{termin_link}} = Buchungslink; bei Leads mit Direkteinstieg (?b=booking_token):
@@ -64,7 +110,9 @@ function customEmailHtml(rawHtml: string, first: string, unsubUrl: string, affil
     const footer = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.6;color:#9a9aa3;text-align:center;padding:22px 20px;">Du möchtest keine E-Mails mehr von uns erhalten? <a href="${unsubUrl}" style="color:#9a9aa3;text-decoration:underline;">Hier abmelden</a>.</div>`
     html = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, `${footer}</body>`) : `${html}${footer}`
   }
-  return html
+  // Tracking NUR bei echten Empfaengern. Vorschau und Testmail bleiben sauber,
+  // sonst verfaelschen Svens eigene Klicks die Auswertung.
+  return campaignId && ref ? withTracking(html, campaignId, ref) : html
 }
 // WhatsApp-Fassung im HTML-Modus: eigener Text (whatsapp_body), falls gepflegt,
 // sonst automatisch aus dem HTML abgeleitet. Aufwendige Mail-Layouts (Tabellen,
@@ -172,7 +220,18 @@ function esc(s: string): string { return s.replace(/&/g, '&amp;').replace(/</g, 
 // Link (/termin?src=empfehlung&ref=<code>). Der Button gibt den Link per
 // WhatsApp weiter - das ist der Weg, den Empfehlungen real nehmen.
 function affiliateShareText(url: string): string {
-  return `Ich kaufe/schaue gerade bei Happy Property auf Zypern - schau dir das mal an, die machen das richtig gut: ${url}`
+  // Sven 2.10.26: ausfuehrlicher als vorher. Der Text soll erklaeren, WARUM man
+  // Happy Property empfiehlt, sonst klickt am anderen Ende niemand.
+  return [
+    'Du hast doch mal gesagt, dass dich eine Immobilie im Süden reizt.',
+    '',
+    'Ich bin bei Happy Property gelandet, die vermitteln Wohnungen und Villen auf Zypern, also innerhalb der EU. Was mich überzeugt hat: die reden deutsch, die ganze Abwicklung läuft auf Deutsch, und sie sagen dir vorher, was dagegen spricht, statt dir nur die Sonnenseite zu zeigen.',
+    '',
+    'Sie haben gut 200 Objekte im Portfolio, vom Studio bis zur Villa, und sie rechnen dir eine konkrete Wohnung mit deinen Zahlen durch, mit Steuer, Zinsen und allen Nebenkosten. Das Erstgespräch kostet nichts.',
+    '',
+    'Schau es dir an, hier kannst du direkt einen Termin aussuchen:',
+    url,
+  ].join('\n')
 }
 
 function affiliateCardHtml(url: string): string {
@@ -654,7 +713,7 @@ Deno.serve(async (req: Request) => {
           const first = firstNameOf(r)
           const affiliateUrl = await affiliateUrlFor(sb, { lead_id: m.lead_id, subscriber_id: m.subscriber_id, ...r })
           const upd: Record<string, string> = {}
-          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, await terminUrlFor(sb, m, String(camp.id)))
+          if (m.email_body) upd.email_body = customEmailHtml(raw, first, unsubUrlFor(m), affiliateUrl, await terminUrlFor(sb, m, String(camp.id)), String(camp.id), m.lead_id ? `l:${m.lead_id}` : (m.subscriber_id ? `s:${m.subscriber_id}` : ''))
           if (m.whatsapp_text) upd.whatsapp_text = `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
           const { error: ue } = await sb.from('scheduled_messages').update(upd).eq('id', m.id).eq('status', 'pending')
           if (ue) skipped++; else rebuilt++
@@ -750,17 +809,26 @@ Deno.serve(async (req: Request) => {
     if (body.action === 'add_subscribers') {
       const ids = (body.subscriber_ids ?? []).map(x => String(x)).filter(Boolean)
       if (!ids.length) return json({ error: 'subscriber_ids fehlt' }, 400)
+      // Beide Kampagnen-Arten: eigenes HTML (content_mode 'html') oder Objekt-Deck.
+      const istHtml = camp.content_mode === 'html'
+      const rawHtml = String(camp.html_body ?? '')
+      if (istHtml && !rawHtml.trim()) return json({ error: 'Es ist kein HTML eingegeben.' }, 400)
       const properties = (camp.properties ?? []) as CampaignProperty[]
-      if (!properties.length || properties.some(p => !p.master_deck_token)) return json({ error: 'Master-Decks fehlen' }, 400)
+      if (!istHtml && (!properties.length || properties.some(p => !p.master_deck_token))) return json({ error: 'Master-Decks fehlen' }, 400)
 
       const masters: Record<string, { project_id: string; angle: string | null; content: unknown }> = {}
-      for (const p of properties) {
-        const { data: m } = await sb.from('sales_decks').select('project_id, angle, content').eq('token', p.master_deck_token!).maybeSingle()
-        if (!m) return json({ error: `Master-Deck nicht gefunden für ${p.project_name}` }, 400)
-        masters[p.project_id] = m as typeof masters[string]
+      if (!istHtml) {
+        for (const p of properties) {
+          const { data: m } = await sb.from('sales_decks').select('project_id, angle, content').eq('token', p.master_deck_token!).maybeSingle()
+          if (!m) return json({ error: `Master-Deck nicht gefunden für ${p.project_name}` }, 400)
+          masters[p.project_id] = m as typeof masters[string]
+        }
       }
-      const projectImages = await loadProjectImages(sb, properties.map(p => p.project_id))
-      const nextSlot = makePacer(Date.now() + 120e3)
+      const projectImages = istHtml ? {} : await loadProjectImages(sb, properties.map(p => p.project_id))
+      // start_at: Nachzuegler-Charge spaeter starten lassen (z.B. zweite Kampagne
+      // an dieselben Empfaenger erst Tage nach der ersten).
+      const startAt = body.start_at ? new Date(body.start_at).getTime() : 0
+      const nextSlot = makePacer(startAt > Date.now() ? startAt : Date.now() + 120e3)
 
       let geplant = 0
       const uebersprungen: Array<{ id: string; grund: string }> = []
@@ -780,6 +848,25 @@ Deno.serve(async (req: Request) => {
           const first = firstNameOf(sub)
           const firstJsonSafe = JSON.stringify(first).slice(1, -1)
           const fullName = `${sub.first_name ?? ''} ${sub.last_name ?? ''}`.trim()
+
+          // Eigenes-HTML-Modus: keine Deck-Klone, HTML direkt planen. Bewusst nur
+          // E-Mail (kein WhatsApp): das sind nachgezogene Listen-Adressen, die den
+          // Newsletter noch nie bekommen haben.
+          if (istHtml) {
+            const empf = { subscriber_id: sub.id, first_name: sub.first_name, last_name: sub.last_name, email: mail, phone: sub.phone }
+            const affiliateUrl = await affiliateUrlFor(sb, empf)
+            const { error: se } = await sb.from('scheduled_messages').insert({
+              subscriber_id: sub.id, type: 'email', event_type: 'newsletter', campaign_id: camp.id,
+              status: 'pending', scheduled_at: nextSlot('email').toISOString(),
+              email_subject: personalize(camp.subject, first),
+              email_body: customEmailHtml(rawHtml, first, unsubUrlFor(empf), affiliateUrl, await terminUrlFor(sb, empf, String(camp.id)), String(camp.id), `s:${sub.id}`),
+              recipient: 'client', appointment_condition: 'none',
+            })
+            if (se) { uebersprungen.push({ id: subId, grund: se.message }); continue }
+            geplant++
+            continue
+          }
+
           const deckTokens: Record<string, string> = {}
           for (const p of properties) {
             const master = masters[p.project_id]
@@ -877,7 +964,7 @@ Deno.serve(async (req: Request) => {
                   type: typ, event_type: 'newsletter', campaign_id: camp.id,
                   status: 'pending', scheduled_at: slot.toISOString(),
                   email_subject: hatMail ? personalize(camp.subject, first) : null,
-                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id))) : null,
+                  email_body: hatMail ? customEmailHtml(raw, first, unsubUrlFor(lead), affiliateUrl, await terminUrlFor(sb, lead, String(camp.id)), String(camp.id), lead.lead_id ? `l:${lead.lead_id}` : `s:${lead.subscriber_id}`) : null,
                   whatsapp_text: hatTel
                     ? `${waFrom(camp, raw, first)}${affiliateUrl ? `\n\n${affiliateWhatsappBlock(affiliateUrl)}` : ''}`
                     : null,

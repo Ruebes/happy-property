@@ -324,6 +324,11 @@ export default function Newsletter() {
   interface EngData { recipients: number; mail_openers: number; openers: number; rows: EngRow[]; calc_views?: Array<{ project: string; views: number; last_view: string | null }> }
   const [archiveOpen, setArchiveOpen] = useState<string | null>(null)
   const [archiveData, setArchiveData] = useState<Record<string, EngData>>({})
+  // Newsletter-eigenes Tracking (Sven 2.10.26): Oeffnungen und Klicks je Link-Art.
+  // Die RPC oben kennt nur Deck-Klone; Newsletter im Eigenes-HTML-Modus haben keine,
+  // deshalb kamen dort immer Nullen heraus.
+  interface NlTrack { opens: number; clicks: Array<{ label: string; count: number }> }
+  const [nlTrack, setNlTrack] = useState<Record<string, NlTrack>>({})
   const toggleArchive = async (id: string) => {
     if (archiveOpen === id) { setArchiveOpen(null); return }
     setArchiveOpen(id)
@@ -333,6 +338,23 @@ export default function Newsletter() {
       const { data, error } = await supabase.rpc('newsletter_engagement', { p_campaign: id })
       if (error) throw error
       setArchiveData(prev => ({ ...prev, [id]: data as EngData }))
+      // Oeffnungen und Klicks aus dem Newsletter-Tracking dazuholen.
+      const { data: ev } = await supabase.from('engagement_events')
+        .select('type, label, lead_id, subscriber_id')
+        .eq('token', id).in('type', ['newsletter_open', 'newsletter_click'])
+      const rows = (ev ?? []) as Array<{ type: string; label: string | null; lead_id: string | null; subscriber_id: string | null }>
+      const wer = (r: typeof rows[number]) => r.lead_id ?? r.subscriber_id ?? '?'
+      const opener = new Set(rows.filter(r => r.type === 'newsletter_open').map(wer))
+      const proLabel = new Map<string, Set<string>>()
+      for (const r of rows.filter(r => r.type === 'newsletter_click')) {
+        const l = r.label || 'Link'
+        if (!proLabel.has(l)) proLabel.set(l, new Set())
+        proLabel.get(l)!.add(wer(r))
+      }
+      setNlTrack(prev => ({ ...prev, [id]: {
+        opens: opener.size,
+        clicks: [...proLabel.entries()].map(([label, set]) => ({ label, count: set.size })).sort((a, b) => b.count - a.count),
+      } }))
     } catch (err) {
       console.error('[Newsletter] engagement:', err)
       showToastMsg(`❌ ${t('crm.newsletter.engError', 'Öffnungen konnten nicht geladen werden')}`)
@@ -719,9 +741,25 @@ export default function Newsletter() {
                   <div className={`flex flex-wrap items-center gap-2 px-3 py-2 text-sm ${c.status !== 'draft' ? 'cursor-pointer hover:bg-gray-50 rounded-xl' : ''}`}
                     onClick={() => { if (c.status !== 'draft') void toggleArchive(c.id) }}>
                     <span className="font-medium text-gray-800">{c.title}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${c.status === 'draft' ? 'bg-gray-100 text-gray-600' : 'bg-orange-50 text-orange-700'}`}>
-                      {c.status === 'draft' ? t('crm.newsletter.stDraft', 'Entwurf') : t('crm.newsletter.stSent', 'versendet')}
-                    </span>
+                    {(() => {
+                      // Der Status der Kampagne steht direkt nach dem Start auf 'sending',
+                      // auch wenn noch keine einzige Mail raus ist. Das sah aus wie
+                      // "versendet", obwohl der Versand erst morgen laeuft (Sven 2.10.26).
+                      // Deshalb entscheidet der echte Fortschritt ueber das Etikett.
+                      const pr = progress[c.id]
+                      const geplant = !!pr && pr.sent === 0 && pr.pending > 0
+                      const laeuft = !!pr && pr.sent > 0 && pr.pending > 0
+                      const label = c.status === 'draft'
+                        ? t('crm.newsletter.stDraft', 'Entwurf')
+                        : geplant ? t('crm.newsletter.stPlanned', 'geplant')
+                        : laeuft ? t('crm.newsletter.stRunning', 'läuft')
+                        : t('crm.newsletter.stSent', 'versendet')
+                      const farbe = c.status === 'draft' ? 'bg-gray-100 text-gray-600'
+                        : geplant ? 'bg-blue-50 text-blue-700'
+                        : laeuft ? 'bg-amber-50 text-amber-700'
+                        : 'bg-orange-50 text-orange-700'
+                      return <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${farbe}`}>{label}</span>
+                    })()}
                     <span className="text-xs text-gray-400">
                       {new Date(c.created_at).toLocaleDateString('de-DE')}
                       {c.status !== 'draft' && (() => {
@@ -767,7 +805,7 @@ export default function Newsletter() {
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2.5">
                             <p className="text-[10px] uppercase tracking-wide text-gray-400">📧 {t('crm.newsletter.stOpens', 'Mail geöffnet')}</p>
-                            <p className="text-lg font-bold text-gray-900">{ad.mail_openers ?? 0} <span className="text-xs font-semibold" style={{ color: '#ff795d' }}>({pct(ad.mail_openers ?? 0)})</span></p>
+                            <p className="text-lg font-bold text-gray-900">{Math.max(ad.mail_openers ?? 0, nlTrack[c.id]?.opens ?? 0)} <span className="text-xs font-semibold" style={{ color: '#ff795d' }}>({pct(Math.max(ad.mail_openers ?? 0, nlTrack[c.id]?.opens ?? 0))})</span></p>
                           </div>
                           <div className="bg-gray-50 rounded-lg p-2.5">
                             <p className="text-[10px] uppercase tracking-wide text-gray-400">📖 {t('crm.newsletter.stDecks', 'Deck angesehen')}</p>
@@ -778,6 +816,20 @@ export default function Newsletter() {
                             <p className="text-lg font-bold text-gray-900">{totalCalcViews} <span className="text-xs font-semibold text-gray-400">{t('crm.newsletter.stCalcViews', 'Aufrufe')} (≈{pct(totalCalcViews)})</span></p>
                           </div>
                         </div>
+                        {(nlTrack[c.id]?.clicks.length ?? 0) > 0 && (
+                          <div className="mb-3">
+                            <p className="text-[10px] uppercase tracking-wide text-gray-400 mb-1.5">🖱 {t('crm.newsletter.stClicks', 'Geklickt')}</p>
+                            <div className="flex flex-wrap gap-2">
+                              {nlTrack[c.id]!.clicks.map(k => (
+                                <span key={k.label} className="inline-flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-1 text-xs">
+                                  <span className="font-medium text-gray-700 capitalize">{k.label}</span>
+                                  <strong className="text-gray-900">{k.count}</strong>
+                                  <span className="text-gray-400">({pct(k.count)})</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {(ad.calc_views?.length ?? 0) > 0 && totalCalcViews > 0 && (
                           <p className="text-[11px] text-gray-400 mb-2">
                             📊 {(ad.calc_views ?? []).map(cv => `${cv.project}: ${cv.views}×`).join(' · ')} — {t('crm.newsletter.calcHint', 'die Rechnung ist für alle Empfänger identisch, Aufrufe sind daher nicht einzelnen Kunden zuordenbar')}

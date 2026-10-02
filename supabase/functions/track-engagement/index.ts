@@ -95,6 +95,52 @@ async function scheduleDeckFollowup(
   }
 }
 
+
+// ── Newsletter-Tracking (Sven 2.10.26) ──────────────────────────────────────
+// Der Newsletter laeuft im Eigenes-HTML-Modus ohne Deck-Klone, deshalb gab es
+// bisher weder Oeffnungen noch Klicks. Jetzt traegt jede Kampagnen-Mail:
+//   GET ?type=nl_open&c=<campaign>&r=<l|s>:<id>            → 1x1-Pixel
+//   GET ?type=nl_click&c=<campaign>&r=<...>&l=<label>&u=<ziel>  → 302 aufs Ziel
+// Gespeichert wird in engagement_events mit token = Kampagnen-ID und label =
+// Name des Links (guide, affiliate, termin, immo, berechnung ...), damit sich
+// auswerten laesst, WAS geklickt wurde, nicht nur DASS geklickt wurde.
+const NL_HOSTS = [
+  'happy-property.com', 'happy-property.de', 'portal.happy-property.com',
+  'steuervorteil-zypern-immobilien.com', 'vjlwgajmtqlwjjreowbu.supabase.co', 'wa.me',
+]
+// Offener Redirect waere ein Phishing-Werkzeug: nur eigene Ziele weiterleiten.
+export function nlZielErlaubt(raw: string): string | null {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:') return null
+    const ok = NL_HOSTS.some(h => u.hostname === h || u.hostname.endsWith('.' + h))
+    return ok ? u.toString() : null
+  } catch { return null }
+}
+async function logNewsletter(
+  type: 'newsletter_open' | 'newsletter_click',
+  campaign: string | null, ref: string | null, label: string | null,
+): Promise<void> {
+  if (!campaign || !ref) return
+  const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const [art, id] = ref.split(':')
+  if (!id) return
+  const row: Record<string, unknown> = {
+    type, token: campaign, label: (label ?? '').slice(0, 60) || null,
+    lead_id: art === 'l' ? id : null, subscriber_id: art === 's' ? id : null,
+  }
+  // Entprellen: dieselbe Kombination innerhalb von 2 h nur einmal. Mail-Clients
+  // laden den Pixel beim Scrollen mehrfach, das waere sonst eine Phantomzahl.
+  const seit = new Date(Date.now() - 2 * 3600e3).toISOString()
+  let q = sb.from('engagement_events').select('id')
+    .eq('type', type).eq('token', campaign).gte('occurred_at', seit).limit(1)
+  q = art === 'l' ? q.eq('lead_id', id) : q.eq('subscriber_id', id)
+  if (label) q = q.eq('label', label)
+  const { data: da } = await q
+  if (da && da.length) return
+  await sb.from('engagement_events').insert(row)
+}
+
 async function logEvent(type: string, token: string | null) {
   if (!type || !token) return
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -211,6 +257,20 @@ Deno.serve(async (req) => {
       const u = new URL(req.url)
       const type = u.searchParams.get('type') || 'email_open'
       const token = u.searchParams.get('token')
+
+      // Newsletter-Oeffnung: Pixel, Logging best-effort.
+      if (type === 'nl_open') {
+        try { await logNewsletter('newsletter_open', u.searchParams.get('c'), u.searchParams.get('r'), null) } catch { /* egal */ }
+        return pixelResponse()
+      }
+      // Newsletter-Klick: loggen, dann auf das echte Ziel weiterleiten. Faellt das
+      // Logging aus, geht der Klick trotzdem durch - der Kunde darf nie haengen.
+      if (type === 'nl_click') {
+        const ziel = nlZielErlaubt(u.searchParams.get('u') ?? '')
+        try { await logNewsletter('newsletter_click', u.searchParams.get('c'), u.searchParams.get('r'), u.searchParams.get('l')) } catch { /* egal */ }
+        return new Response(null, { status: 302, headers: { ...CORS, Location: ziel ?? 'https://happy-property.com', 'Cache-Control': 'no-store' } })
+      }
+
       // Pixel: NIE blockieren, immer das gif zurückgeben (Logging best-effort).
       try { await logEvent(type, token) } catch { /* egal */ }
       return pixelResponse()
