@@ -1313,6 +1313,10 @@ export default function SocialStudio() {
   // nicht: nur beim ersten Laden holen, nicht bei jedem Neuladen der Posts.
   // Kam dabei ein Fehler, versucht es das nächste Neuladen noch einmal.
   const staticLoaded = useRef(false)
+  // Nach dem Schließen des Editors lädt die Seite ruhig neu. Bis die frischen
+  // Posts da sind, keinen Post öffnen: sonst startet der Editor mit dem alten
+  // Stand und schreibt ihn beim nächsten Speichern zurück.
+  const [refreshing, setRefreshing] = useState(false)
 
   const fetchAll = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -1382,6 +1386,7 @@ export default function SocialStudio() {
   // Wochenplan-Chip → nächster Termin dieser Art an diesem Wochentag: fertiger Post
   // in die Vorschau, sonst Platzhalter-Info.
   const openSlot = (kind: string, dow: number, li?: boolean) => {
+    if (refreshing) return
     const next = (ap?.upcoming ?? []).find(u => u.kind === kind && apDow(u.ymd) === dow)
     if (!next) { showToast(t('crm.social.apNoNext', 'Kein kommender Termin gefunden.')); return }
     const post = kind === 'youtube'
@@ -1538,7 +1543,7 @@ export default function SocialStudio() {
           <InteractionsSection />
 
           <PlanCalendar posts={livePosts} newsletters={newsletters} topics={topics} apPaused={!!ap && !ap.enabled}
-            onOpenPost={p => setPreviewPost(p)} onCreateForDay={d => void createForDay(d)}
+            onOpenPost={p => { if (!refreshing) setPreviewPost(p) }} onCreateForDay={d => void createForDay(d)}
             placeholders={placeholders} onOpenPlaceholder={ph => setPlaceholder(ph)} />
         </>)}
 
@@ -1564,7 +1569,7 @@ export default function SocialStudio() {
               const st = STATUS_BADGE[p.status] ?? STATUS_BADGE.entwurf
               const nImgs = (Array.isArray(p.image_urls) && p.image_urls.length) || (p.image_url ? 1 : 0)
               return (
-                <div key={p.id} onClick={() => setOpenPost(p)}
+                <div key={p.id} onClick={() => { if (!refreshing) setOpenPost(p) }}
                   className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:border-orange-200 transition-colors">
                   <div className="flex items-start gap-3">
                     {p.image_url
@@ -1602,7 +1607,7 @@ export default function SocialStudio() {
           <PostPreview content={pp.content ?? ''} images={imgs} video={pp.video_url} format={pp.format} platforms={pp.platforms}
             heading={heading} onClose={() => setPreviewPost(null)}
             onDelete={pp.status !== 'gepostet' ? () => { setPreviewPost(null); void deletePost(pp) } : undefined}
-            onEdit={() => { setPreviewPost(null); setOpenPost(pp) }} />
+            onEdit={() => { if (refreshing) return; setPreviewPost(null); setOpenPost(pp) }} />
         )
       })()}
       {placeholder && <PlaceholderModal ph={placeholder} st={ap} onClose={() => setPlaceholder(null)}
@@ -1610,7 +1615,7 @@ export default function SocialStudio() {
           setPlaceholder(null); showToast(msg)
           for (const ms of [20000, 60000, 120000, 200000]) setTimeout(() => void fetchAll(true), ms)
         }} />}
-      {openPost && <PostEditor post={openPost} allPosts={livePosts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll(true) }} />}
+      {openPost && <PostEditor post={openPost} allPosts={livePosts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); setRefreshing(true); void fetchAll(true).finally(() => setRefreshing(false)) }} />}
     </DashboardLayout>
   )
 }
