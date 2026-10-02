@@ -8,6 +8,3 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
-
-/** Bau-Kennung (Datum + Uhrzeit des Builds), gesetzt in vite.config.ts. */
-declare const __BUILD_ID__: string
