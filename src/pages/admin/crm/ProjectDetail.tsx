@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { thumb, thumbFallback, retryWithOriginal } from '../../../lib/img'
 import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import { dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
@@ -119,7 +120,8 @@ function UnitCard({
       {/* Unit image thumbnail (if available) */}
       {unit.images?.length > 0 ? (
         <div className="h-28 overflow-hidden">
-          <img src={unit.images[0]} alt={unit.unit_number} className="w-full h-full object-cover" />
+          <img src={thumb(unit.images[0], { width: 800 })} alt={unit.unit_number} className="w-full h-full object-cover"
+               loading="lazy" decoding="async" onError={thumbFallback(unit.images[0])} />
         </div>
       ) : (
         /* Status colour bar */
@@ -1228,11 +1230,13 @@ export default function ProjectDetail() {
             {(project.images ?? []).map((url, idx) => (
               <div key={url} className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50">
                 <img
-                  src={url}
+                  src={thumb(url, { width: 800 })}
                   alt={t('crm.pd.projectImageAlt', { n: idx + 1 })}
                   className="w-full h-32 object-cover cursor-pointer"
+                  loading="lazy"
+                  decoding="async"
                   onClick={() => window.open(url, '_blank')}
-                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  onError={e => { if (!retryWithOriginal(e.currentTarget, url)) (e.target as HTMLImageElement).style.display = 'none' }}
                 />
                 <button
                   onClick={() => handleDeleteProjectImage(url)}
@@ -1607,7 +1611,8 @@ export default function ProjectDetail() {
                     <div className="grid grid-cols-3 gap-3">
                       {unitImages.map((url, idx) => (
                         <div key={url} className="relative group rounded-xl overflow-hidden aspect-video bg-gray-100">
-                          <img src={url} alt={t('crm.pd.imageAlt', { n: idx + 1 })} className="w-full h-full object-cover" />
+                          <img src={thumb(url, { width: 800 })} alt={t('crm.pd.imageAlt', { n: idx + 1 })} className="w-full h-full object-cover"
+                               loading="lazy" decoding="async" onError={thumbFallback(url)} />
                           <button
                             onClick={() => handleDeleteUnitImage(url)}
                             className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs

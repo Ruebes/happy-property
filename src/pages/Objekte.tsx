@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
+import { thumb, thumbFallback } from '../lib/img'
 import type { CrmProjectUnit } from '../lib/crmTypes'
 
 import { useAuth } from '../lib/auth'
@@ -1085,7 +1086,8 @@ export default function Objekte() {
             {/* Existing (saved) images */}
             {existingImages.map((url, idx) => (
               <div key={`ex-${idx}`} className="relative group aspect-square rounded-xl overflow-hidden bg-gray-100">
-                <img src={url} alt="" className="w-full h-full object-cover" />
+                <img src={thumb(url, { width: 800 })} alt="" className="w-full h-full object-cover"
+                     loading="lazy" decoding="async" onError={thumbFallback(url)} />
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all" />
                 <button
                   type="button"
@@ -1392,7 +1394,8 @@ export default function Objekte() {
                       <div className="flex items-center gap-3">
                         {/* Thumbnail */}
                         {p.images?.[0] ? (
-                          <img src={p.images[0]} alt=""
+                          <img src={thumb(p.images[0], { width: 400 })} alt=""
+                            loading="lazy" decoding="async" onError={thumbFallback(p.images[0])}
                             className="w-10 h-10 rounded-lg object-cover shrink-0 bg-gray-100" />
                         ) : (
                           <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center shrink-0 text-lg">

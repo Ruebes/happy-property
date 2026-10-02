@@ -5,6 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import ImageLightbox from '../components/ImageLightbox'
 import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
+import { thumb, thumbFallback } from '../lib/img'
 import { unitGross, unitNet, unitVatAmount, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -3437,7 +3438,8 @@ export default function PropertyDetail() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {images.map((url, i) => (
             <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
-              <img src={url} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
+              <img src={thumb(url, { width: 1600 })} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
+                   loading="lazy" decoding="async" onError={thumbFallback(url)}
                    onClick={() => setLightbox({ images, index: i })} />
             </div>
           ))}
@@ -3488,6 +3490,8 @@ export default function PropertyDetail() {
                       <img
                         src={mediaUrl}
                         alt={photo.file_name}
+                        loading="lazy"
+                        decoding="async"
                         className={`w-full aspect-square object-cover ${mediaUrl ? 'cursor-pointer transition-transform hover:scale-105' : ''}`}
                         onClick={() => {
                           // Ohne gültige URL (Signatur fehlgeschlagen) nicht die
@@ -3603,7 +3607,8 @@ export default function PropertyDetail() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {ownImages.map((url, i) => (
                 <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
-                  <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                  <img src={thumb(url, { width: 1600 })} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                       loading="lazy" decoding="async" onError={thumbFallback(url)} />
                   <button
                     onClick={() => setDeleteImgUrl(url)}
                     className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors
