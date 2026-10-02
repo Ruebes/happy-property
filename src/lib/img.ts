@@ -28,7 +28,8 @@ const RENDER_PATH = '/storage/v1/render/image/public/'
 const IMAGE_EXT   = /\.(jpe?g|png|webp)$/i
 
 export function thumb(url: string, { width }: { width: ThumbWidth }): string {
-  if (!ENABLED || !SUPA_URL || !url.startsWith(SUPA_URL + PUBLIC_PATH)) return url
+  // typeof-Schutz: ein NULL-Eintrag in images[] darf die Seite nicht abstürzen lassen.
+  if (!ENABLED || typeof url !== 'string' || !SUPA_URL || !url.startsWith(SUPA_URL + PUBLIC_PATH)) return url
   if (url.includes('?') || url.includes('#') || !IMAGE_EXT.test(url)) return url
   const objectPath = url.slice(SUPA_URL.length + PUBLIC_PATH.length)
   return `${SUPA_URL}${RENDER_PATH}${objectPath}?width=${width}&quality=70&resize=contain`
@@ -36,9 +37,11 @@ export function thumb(url: string, { width }: { width: ThumbWidth }): string {
 
 /** Lädt die verkleinerte Fassung nicht (z. B. Datei über den Grenzen der
  *  Umwandlung), einmal auf das Original umschalten. true = umgeschaltet.
- *  Ein zweiter Fehler (Original kaputt) liefert false, also keine Schleife. */
+ *  Ein zweiter Fehler (Original kaputt) liefert false, also keine Schleife.
+ *  Ist schon das Original eine render-Adresse, zeigt das Bild bereits das
+ *  Original: kein Umschalten, sonst lädt dieselbe Adresse endlos neu. */
 export function retryWithOriginal(img: HTMLImageElement, original: string): boolean {
-  if (!img.src.includes(RENDER_PATH)) return false
+  if (!img.src.includes(RENDER_PATH) || typeof original !== 'string' || original.includes(RENDER_PATH)) return false
   img.src = original
   return true
 }
