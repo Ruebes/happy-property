@@ -69,23 +69,24 @@ export default function AiAgent() {
   const fetchSetting = useCallback(async () => {
     setLoading(true)
     try {
-      const { data } = await supabase
-        .from('crm_settings')
-        .select('value')
-        .eq('key', AUTOPILOT_KEY)
-        .maybeSingle()
-      setEnabled((data as { value?: string } | null)?.value === 'true')
-      // Deck-Follow-up-Regel laden
-      const { data: rule } = await supabase.from('automation_rules')
-        .select('id, is_active').eq('event_type', 'deck_viewed_followup').maybeSingle()
+      // Drei Schalter aus crm_settings in einer Abfrage, gleichzeitig mit der
+      // Deck-Follow-up-Regel. Fehlender Schlüssel oder Lesefehler = aus.
+      const [{ data: settingRows }, { data: rule }] = await Promise.all([
+        supabase.from('crm_settings').select('key, value')
+          .in('key', [AUTOPILOT_KEY, 'booking_bot_enabled', 'booking_bot_auto_engage']),
+        supabase.from('automation_rules')
+          .select('id, is_active').eq('event_type', 'deck_viewed_followup').maybeSingle(),
+      ])
+      const valueByKey = new Map(
+        ((settingRows ?? []) as { key: string; value?: string | null }[]).map(r => [r.key, r.value]))
+      setEnabled(valueByKey.get(AUTOPILOT_KEY) === 'true')
+      // Deck-Follow-up-Regel
       const rr = rule as { id?: string; is_active?: boolean } | null
       setDfRuleId(rr?.id ?? null)
       setDfActive(rr?.is_active === true)
-      // Termin-Bot-Schalter laden
-      const { data: b } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_enabled').maybeSingle()
-      setBotActive((b as { value?: string } | null)?.value === 'true')
-      const { data: ae } = await supabase.from('crm_settings').select('value').eq('key', 'booking_bot_auto_engage').maybeSingle()
-      setAutoEngage((ae as { value?: string } | null)?.value === 'true')
+      // Termin-Bot-Schalter
+      setBotActive(valueByKey.get('booking_bot_enabled') === 'true')
+      setAutoEngage(valueByKey.get('booking_bot_auto_engage') === 'true')
     } catch (err) {
       console.error('[AiAgent] fetch:', err)
     } finally {
