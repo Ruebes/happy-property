@@ -3215,6 +3215,7 @@
       "descriptionOptional": "Description (optional)",
       "uploadMedia": "📷 Upload media",
       "noConstructionMedia": "No construction media uploaded yet.",
+      "reloadMedia": "Reload",
       "tabBasics": "Basics",
       "tabImages": "Images",
       "tabPayments": "Payments",

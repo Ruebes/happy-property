@@ -3215,6 +3215,7 @@
       "descriptionOptional": "Beschreibung (optional)",
       "uploadMedia": "📷 Medien hochladen",
       "noConstructionMedia": "Noch keine Baustellenmedien hochgeladen.",
+      "reloadMedia": "Erneut laden",
       "tabBasics": "Grunddaten",
       "tabImages": "Bilder",
       "tabPayments": "Zahlungen",
