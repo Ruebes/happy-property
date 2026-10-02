@@ -1,5 +1,5 @@
 // Edge Function: create-zoom-meeting: legt Zoom-Meetings an (oder löscht sie per
-// delete_id, oder prüft mit check:true nur die Zugangsdaten).
+// delete_id, verschiebt sie per update_id, oder prüft mit check:true nur die Zugangsdaten).
 //
 // Deployment: supabase functions deploy create-zoom-meeting   (verify_jwt = true wie heute)
 //
@@ -72,6 +72,7 @@ Deno.serve(async (req) => {
       // (alle stumm beim Eintritt, Bildschirm nur für den Host).
       kind?:             'meeting' | 'webinar'
       delete_id?:        string   // Meeting löschen (Aufräumen nach Tests / Absage)
+      update_id?:        string   // Meeting verschieben: start_time/duration_minutes/title ändern, Link bleibt gleich; ohne Felder nur lesen
     }
 
     // ── Check-only: verify credentials without creating a meeting ────────────
@@ -88,6 +89,46 @@ Deno.serve(async (req) => {
       const tok = await getZoomToken(accountId, clientId, clientSecret)
       const del = await fetch(`https://api.zoom.us/v2/meetings/${encodeURIComponent(body.delete_id)}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${tok}` } })
       return new Response(JSON.stringify({ success: del.ok || del.status === 404, status: del.status }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+
+    // ── Update meeting (Termin verschoben) ───────────────────────────────────
+    // Gleiche Meeting-ID, gleicher Link und Kenncode: bereits verschickte Einladungen
+    // bleiben gültig. Ohne Felder liefert der Aufruf nur den aktuellen Stand.
+    if (body.update_id) {
+      const tok = await getZoomToken(accountId, clientId, clientSecret)
+      const url = `https://api.zoom.us/v2/meetings/${encodeURIComponent(body.update_id)}`
+      // Zoom ignoriert ein unlesbares start_time stillschweigend (antwortet trotzdem 204),
+      // deshalb hier streng prüfen: deutsche Ortszeit „JJJJ-MM-TTTHH:MM:SS“ oder UTC mit Z.
+      if (body.start_time && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?$/.test(body.start_time)) {
+        return new Response(
+          JSON.stringify({ error: 'start_time muss JJJJ-MM-TTTHH:MM:SS (deutsche Zeit) oder mit Z (UTC) sein.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+      const patch: Record<string, unknown> = {}
+      if (body.start_time) { patch.start_time = body.start_time; patch.timezone = 'Europe/Berlin' }
+      if (body.duration_minutes) patch.duration = body.duration_minutes
+      if (body.title) patch.topic = body.title
+      let updated: number | null = null
+      if (Object.keys(patch).length) {
+        const up = await fetch(url, { method: 'PATCH', headers: { 'Authorization': `Bearer ${tok}`, 'Content-Type': 'application/json' }, body: JSON.stringify(patch) })
+        if (!up.ok) {
+          return new Response(
+            JSON.stringify({ error: `Zoom Update Fehler (${up.status}): ${(await up.text()).slice(0, 200)}` }),
+            { status: up.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          )
+        }
+        updated = up.status
+      }
+      // Nachlesen braucht den Scope meeting:read:meeting in der Zoom-App. Fehlt er,
+      // gilt das Update trotzdem (Zoom hat es mit 2xx bestätigt), nur ohne Rückmeldung.
+      const cur = await fetch(url, { headers: { 'Authorization': `Bearer ${tok}` } })
+      const m = await cur.json() as { id?: number; topic?: string; start_time?: string; timezone?: string; duration?: number; join_url?: string; message?: string }
+      return new Response(
+        JSON.stringify({ success: updated !== null || cur.ok, updated_status: updated, meeting_id: String(m.id ?? body.update_id),
+          ...(cur.ok ? { topic: m.topic, start_time: m.start_time, timezone: m.timezone, duration: m.duration, join_url: m.join_url } : { read_error: m.message }) }),
+        { status: updated !== null || cur.ok ? 200 : cur.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
     }
 
     // ── Create meeting ────────────────────────────────────────────────────────
