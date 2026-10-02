@@ -57,14 +57,13 @@ src/
   pages/               # Seiten (Routen)
     admin/crm/         # CRM-Kern: AllLeads, LeadDetail, Pipeline,
                        #   Projects, ProjectDetail, CrmDashboard,
-                       #   Templates, Settings, Statistics, Calendar, Archived
+                       #   Settings, Statistics, Calendar, Archived
     admin/             # Admin-Bereich (sonstige)
-    investor/ feriengast/ eigentuemer/ verwalter/ verwaltung/
-    Dashboard.tsx Login.tsx SetPassword.tsx Sign.tsx Profile.tsx
+    feriengast/ eigentuemer/ verwalter/ verwaltung/
+    Login.tsx SetPassword.tsx Sign.tsx Profile.tsx
     Objekte.tsx PropertyDetail.tsx Kalender.tsx Dokumente.tsx
   lib/
     supabase.ts          # NORMALER Supabase-Client (anon key) — Default
-    supabaseAdmin.ts     # ADMIN-Client (service role) — NUR Server/Edge, NIE im Browser-Render-Pfad
     auth.tsx             # Auth-Context / Session-Handling
     crmTypes.ts          # Zentrale CRM-TypeScript-Typen
     date.ts              # Datums-Helper
@@ -89,9 +88,9 @@ supabase/functions/    # 14 Edge Functions (siehe unten)
 
 1. **Supabase-Client-Trennung:**
    Im Frontend/Browser **immer** aus `src/lib/supabase.ts` importieren.
-   `src/lib/supabaseAdmin.ts` (service role) darf **niemals** in einen
-   Browser-gerenderten Pfad importiert werden — nur in Edge Functions /
-   serverseitigem Code. Ein zweiter Client-Instanz im Frontend ist eine
+   Im Frontend gibt es **keinen** Admin-Client. Der service-role-Key gehört
+   nur in Edge Functions (`Deno.env`), nie in eine `VITE_`-Variable und nie
+   in den Browser. Ein zweiter Client-Instanz im Frontend ist eine
    häufige Ursache für Auth-/Session-Bugs.
 
 2. **Kein doppelter Supabase-Client:** Nie `createClient(...)` neu aufrufen.
