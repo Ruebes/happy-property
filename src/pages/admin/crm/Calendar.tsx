@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Link } from 'react-router-dom'
@@ -241,9 +241,17 @@ export default function CrmCalendar() {
   const [editAppt, setEditAppt]               = useState<CrmAppointment | null>(null)
   const [editGoogleEvt, setEditGoogleEvt]     = useState<GoogleCalendarEvent | null>(null)
 
+  // Google-Termine des Startbereichs, schon parallel zum Status-Check geladen.
+  // Verwendet nur, wenn der Check "verbunden" meldet und der Bereich noch passt.
+  const googlePrefetch = useRef<{ key: string; promise: ReturnType<typeof listGoogleEvents> } | null>(null)
+
   // ── Google-Status: einmaliger Server-Check (Service-Account, läuft nie ab) ──
   useEffect(() => {
     let cancelled = false
+    const { start, end } = getRange()
+    const promise = listGoogleEvents(start.toISOString(), end.toISOString())
+    promise.catch(() => { /* Fehler zeigt fetchGoogleEvents, wenn es das Ergebnis abholt */ })
+    googlePrefetch.current = { key: `${start.toISOString()}|${end.toISOString()}`, promise }
     checkCalendarStatus()
       .then(s => {
         if (cancelled) return
@@ -290,8 +298,11 @@ export default function CrmCalendar() {
   // ── Fetch Google events (server-seitig, Fehler sichtbar statt still leer) ──
   const fetchGoogleEvents = useCallback(async (rangeStart: Date, rangeEnd: Date) => {
     if (!googleConnected) return
+    const key = `${rangeStart.toISOString()}|${rangeEnd.toISOString()}`
+    const pre = googlePrefetch.current
+    googlePrefetch.current = null
     try {
-      const { events, errors } = await listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString())
+      const { events, errors } = await (pre && pre.key === key ? pre.promise : listGoogleEvents(rangeStart.toISOString(), rangeEnd.toISOString()))
       setGoogleEvents(events)
       // Teil-Fehler (einzelner Kalender nicht ladbar) sichtbar machen; sonst Fehler zurücksetzen
       if (errors.length > 0) {
@@ -484,6 +495,7 @@ export default function CrmCalendar() {
 
   // ── Reload callback ───────────────────────────────────────────
   function reloadAll() {
+    googlePrefetch.current = null   // nach einer Änderung nie den alten Vorab-Stand zeigen
     const { start, end } = getRange()
     void fetchAppointments(start, end)
     void fetchGoogleEvents(start, end)

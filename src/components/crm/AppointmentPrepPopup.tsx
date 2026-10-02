@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
@@ -23,17 +23,26 @@ function addShown(id: string): void {
   if (!s.includes(id)) { s.push(id); localStorage.setItem(SHOWN_KEY, JSON.stringify(s.slice(-300))) }
 }
 
-export default function AppointmentPrepPopup() {
-  const { t, i18n } = useTranslation()
-  const [appt, setAppt]   = useState<CrmAppointment | null>(null)
-  const [note, setNote]   = useState('')
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [rating, setRating] = useState<'gut' | 'schlecht' | 'no_show' | null>(null)
-  const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
+// Stand außerhalb der Komponente: Die alte Navigation baut sie auf jeder Seite
+// neu auf. Das offene Popup bleibt so über einen Seitenwechsel stehen, bis es
+// geschlossen wird (gezeigt-Markierung ist beim Anzeigen schon gesetzt), und
+// ein Seitenwechsel löst keine neue Abfrage aus, wenn die letzte jünger als
+// 30 s ist. Die Prüfung läuft bewusst auch im Hintergrund-Tab weiter: Das
+// Zeitfenster ist nur 2 Minuten breit, ein verpasster Termin käme sonst bei
+// der Rückkehr nicht mehr.
+let current: CrmAppointment | null = null
+let lastCheckAt = 0
+let checking = false
+const listeners = new Set<() => void>()
+const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
+const getCurrent = () => current
+function setCurrent(next: CrmAppointment | null): void { current = next; listeners.forEach(l => l()) }
 
-  const check = useCallback(async () => {
-    if (appt) return   // ein Popup reicht — nicht überlagern
+async function checkUpcoming(): Promise<void> {
+  if (current || checking) return   // ein Popup reicht — nicht überlagern
+  checking = true
+  lastCheckAt = Date.now()
+  try {
     const now = new Date()
     const until = new Date(now.getTime() + LEAD_WINDOW_MIN * 60_000)
     const { data, error } = await supabase
@@ -46,11 +55,29 @@ export default function AppointmentPrepPopup() {
       .gt('start_time', now.toISOString())
       .lte('start_time', until.toISOString())
       .order('start_time', { ascending: true })
-    if (error) return
+    if (error || current) return
     const shown = getShown()
     const next = ((data ?? []) as CrmAppointment[]).find(a => !shown.includes(a.id))
-    if (next) { setAppt(next); setNote(''); setSaved(false); setRating(null); addShown(next.id) }
-  }, [appt])
+    if (next) { addShown(next.id); setCurrent(next) }
+  } finally { checking = false }
+}
+
+export default function AppointmentPrepPopup() {
+  const { t, i18n } = useTranslation()
+  const appt = useSyncExternalStore(subscribe, getCurrent)
+  const [note, setNote]   = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [rating, setRating] = useState<'gut' | 'schlecht' | 'no_show' | null>(null)
+  const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
+
+  // Schließen: Felder für das nächste Popup leeren und gleich weiter prüfen
+  // (wie bisher, als das Schließen eine neue Prüfung auslöste).
+  const close = useCallback(() => {
+    setNote(''); setSaved(false); setRating(null)
+    setCurrent(null)
+    void checkUpcoming()
+  }, [])
 
   // Lead-Bewertung (gut/schlecht) + Termin-Ausgang — fließt in den Werbemanager
   // (Qualitätsquote, Preis pro gutem Lead, No-Show-Quote je Anzeige).
@@ -89,10 +116,23 @@ export default function AppointmentPrepPopup() {
   }, [appt, rating, t])
 
   useEffect(() => {
-    void check()
-    const iv = setInterval(() => { void check() }, POLL_MS)
-    return () => clearInterval(iv)
-  }, [check])
+    let timer: ReturnType<typeof setTimeout> | null = null
+    // Prüft, sobald die letzte Prüfung 30 s alt ist; sonst Termin für später.
+    const tick = () => {
+      if (timer) clearTimeout(timer)
+      const age = Date.now() - lastCheckAt
+      if (age >= POLL_MS) { void checkUpcoming(); timer = setTimeout(tick, POLL_MS) }
+      else timer = setTimeout(tick, POLL_MS - age)
+    }
+    // Hat der Browser die Uhr im Hintergrund gebremst: überfällige Prüfung bei Rückkehr nachholen.
+    const onVisibility = () => { if (!document.hidden) tick() }
+    tick()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   if (!appt) return null
 
@@ -237,12 +277,12 @@ export default function AppointmentPrepPopup() {
         {/* Fuß */}
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between">
           {lead
-            ? <Link to={`/admin/crm/leads/${lead.id}`} onClick={() => setAppt(null)}
+            ? <Link to={`/admin/crm/leads/${lead.id}`} onClick={close}
                 className="text-sm font-medium text-[#ff795d] hover:underline">
                 {t('crm.prep.openLead', 'Zum Kunden →')}
               </Link>
             : <span />}
-          <button type="button" onClick={() => setAppt(null)}
+          <button type="button" onClick={close}
             className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
             {t('common.close', 'Schließen')}
           </button>

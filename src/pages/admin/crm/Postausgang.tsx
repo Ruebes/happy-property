@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
@@ -42,6 +42,9 @@ const DECK_BASE = '#111827'
 const DECK_CYCLE = ['#7c3aed', '#0ea5e9', '#e11d48', '#d97706', '#0d9488', '#9333ea']
 const deckColor = (rev: number, approved: boolean) =>
   approved ? '#16a34a' : rev <= 0 ? DECK_BASE : DECK_CYCLE[(rev - 1) % DECK_CYCLE.length]
+// Status-Abfrage laufender Deck-Bearbeitungen: Abstände und Höchstdauer.
+const DECK_POLL_STEPS_MS = [4000, 8000, 15000]
+const DECK_POLL_MAX_MS = 10 * 60_000
 
 export default function Postausgang() {
   const { t } = useTranslation()
@@ -61,8 +64,6 @@ export default function Postausgang() {
   const [editCalc, setEditCalc] = useState<{ token: string; content: { items: CalcItem[]; recipient_name?: string }; lead: { id: string; first_name: string; last_name: string } } | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const origin = window.location.origin
-
-  const allTokens = useMemo(() => Array.from(new Set(rows.flatMap(r => r.deck_tokens ?? []))), [rows])
 
   const fetchDeckMeta = useCallback(async (tokens: string[]) => {
     if (!tokens.length) return
@@ -132,12 +133,48 @@ export default function Postausgang() {
   useEffect(() => { void load() }, [load])
 
   // Polling, solange ein Deck im Hintergrund bearbeitet wird → Farbe/Status aktualisieren.
-  const anyRefining = Object.values(deckMeta).some(m => m?.refining)
+  // Gefragt wird nur nach den laufenden Decks und nur nach token+refining; ist eines
+  // fertig, wird es einmal komplett nachgeladen (refine-deck schreibt quality_report
+  // im selben Update, das refining beendet). Abstand 4 s, 8 s, dann 15 s; Pause im
+  // Hintergrund-Tab, sofortige Prüfung bei Rückkehr; nach 10 Minuten Schluss.
+  const refiningKey = Object.keys(deckMeta).filter(tok => deckMeta[tok]?.refining).sort().join(',')
+  const pollRefining = useCallback(async (tokens: string[]) => {
+    try {
+      const { data } = await supabase.from('sales_decks').select('token, refining').in('token', tokens)
+      const done = ((data ?? []) as Array<{ token: string; refining: boolean | null }>).filter(r => !r.refining).map(r => r.token)
+      if (done.length) await fetchDeckMeta(done)
+    } catch (e) { console.warn('[Postausgang] Deck-Status:', e) }   // nächster Takt versucht es wieder
+  }, [fetchDeckMeta])
   useEffect(() => {
-    if (!anyRefining) return
-    const id = setInterval(() => { void fetchDeckMeta(allTokens) }, 4000)
-    return () => clearInterval(id)
-  }, [anyRefining, allTokens, fetchDeckMeta])
+    if (!refiningKey) return
+    const tokens = refiningKey.split(',')
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let step = 0
+    let since = Date.now()
+    const schedule = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      if (!alive || document.hidden || Date.now() - since >= DECK_POLL_MAX_MS) return
+      timer = setTimeout(() => {
+        timer = null
+        if (document.hidden) return
+        void pollRefining(tokens).then(() => { step++; schedule() })
+      }, DECK_POLL_STEPS_MS[Math.min(step, DECK_POLL_STEPS_MS.length - 1)])
+    }
+    const onVisibility = () => {
+      if (document.hidden) { if (timer) clearTimeout(timer); timer = null; return }
+      if (Date.now() - since >= DECK_POLL_MAX_MS) { since = Date.now(); step = 0 }
+      void pollRefining(tokens).then(schedule)
+    }
+    schedule()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refiningKey, pollRefining])
 
   const onRefineStarted = (token: string) => {
     setDeckMeta(prev => ({ ...prev, [token]: { quality_status: prev[token]?.quality_status ?? null, quality_findings: prev[token]?.quality_findings ?? 0, revision: prev[token]?.revision ?? 0, refine_error: null, approved_at: prev[token]?.approved_at ?? null, refining: true } }))

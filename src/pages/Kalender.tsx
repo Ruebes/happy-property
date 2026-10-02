@@ -343,23 +343,40 @@ export default function Kalender() {
   const gridEnd   = grid[grid.length - 1][6]
 
   // ── Properties ──────────────────────────────────────────────
+  // propsLoaded: Eigentümer laden Buchungen erst, wenn ihre Wohnungen bekannt
+  // sind (vorher lief die Abfrage leer und danach ein zweites Mal).
+  const [propsLoaded, setPropsLoaded] = useState(false)
   useEffect(() => {
     if (!profile) return
     ;(async () => {
-      let q = supabase
-        .from('properties')
-        .select('id, project_name, unit_number, rental_type, owner_id')
-        .order('project_name')
-      // Kein Filter auf owner_id: die Datenbank-Regel gibt dem Eigentuemer seine
-      // Wohnungen und die, in die er eingeladen wurde; Admin/Verwalter sehen alle.
-      const { data } = await q
-      setProperties((data ?? []) as ModalProperty[])
+      try {
+        let q = supabase
+          .from('properties')
+          .select('id, project_name, unit_number, rental_type, owner_id')
+          .order('project_name')
+        // Kein Filter auf owner_id: die Datenbank-Regel gibt dem Eigentuemer seine
+        // Wohnungen und die, in die er eingeladen wurde; Admin/Verwalter sehen alle.
+        const { data } = await q
+        setProperties((data ?? []) as ModalProperty[])
+      } finally {
+        setPropsLoaded(true)
+      }
     })()
   }, [profile, isOwner])
+
+  // Nur Eigentümer filtern Buchungen nach ihren Wohnungen. Für Admin/Verwalter
+  // bleibt der Schlüssel leer, das Eintreffen der Wohnungsliste löst dort also
+  // keinen zweiten Abruf aller Buchungen mehr aus.
+  const ownerPropKey = useMemo(
+    () => (isOwner ? properties.map(p => p.id).join(',') : ''),
+    [isOwner, properties],
+  )
 
   // ── Bookings ─────────────────────────────────────────────────
   const fetchBookings = useCallback(async () => {
     if (!profile) return
+    if (isOwner && !propsLoaded) return   // Wohnungen kommen noch; Spinner bleibt
+    const ownerPropIds = ownerPropKey ? ownerPropKey.split(',') : []
     setLoading(true)
     try {
       const startStr = ds(gridStart)
@@ -382,7 +399,7 @@ export default function Kalender() {
       if (propFilter !== 'all') q = (q as typeof q).eq('property_id', propFilter)
 
       if (isOwner) {
-        const ids = properties.map(p => p.id)
+        const ids = ownerPropIds
         if (ids.length === 0) { setBookings([]); return }
         q = (q as typeof q).in('property_id', ids)
       }
@@ -419,7 +436,7 @@ export default function Kalender() {
         .gte('check_in', yearStart)
         .lt('check_in', yearEnd)
       if (isOwner) {
-        const ids = properties.map(p => p.id)
+        const ids = ownerPropIds
         if (ids.length > 0) ownerQ = (ownerQ as typeof ownerQ).in('property_id', ids)
       }
       const { data: ownerData } = await ownerQ
@@ -436,7 +453,7 @@ export default function Kalender() {
     } finally {
       setLoading(false)
     }
-  }, [profile, gridStart, gridEnd, propFilter, isOwner, properties])
+  }, [profile, gridStart, gridEnd, propFilter, isOwner, propsLoaded, ownerPropKey])
 
   useEffect(() => { fetchBookings() }, [fetchBookings])
 
@@ -561,10 +578,11 @@ export default function Kalender() {
           const assigned = assignLanes(wBookings, wStart, wEnd)
           const maxLane  = assigned.reduce((m, a) => Math.max(m, a.lane), -1)
 
-          // Overflow count per column
+          // Overflow count per column (+ die verdeckten Buchungen für den Tooltip)
           const overflow = Array(7).fill(0)
-          assigned.filter(a => a.lane >= MAX_VIS).forEach(({ col, span }) => {
-            for (let c = col; c < Math.min(col + span, 7); c++) overflow[c]++
+          const hiddenByCol: CalBook[][] = Array.from({ length: 7 }, () => [])
+          assigned.filter(a => a.lane >= MAX_VIS).forEach(({ booking, col, span }) => {
+            for (let c = col; c < Math.min(col + span, 7); c++) { overflow[c]++; hiddenByCol[c].push(booking) }
           })
 
           const hasOverflow = overflow.some(n => n > 0)
@@ -647,12 +665,17 @@ export default function Kalender() {
                 )
               })}
 
-              {/* Overflow indicators */}
+              {/* Overflow indicators: kein Klickziel (es gibt keine Tagesansicht),
+                  der Tooltip nennt die verdeckten Buchungen */}
               {overflow.map((count, colIdx) => count > 0 ? (
                 <div
                   key={colIdx}
-                  className="absolute text-xs text-gray-400 font-body cursor-pointer
-                             hover:text-hp-highlight transition-colors flex items-center"
+                  title={hiddenByCol[colIdx].map(b => {
+                    const fmt = (d: string) => new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: 'short' })
+                    const name = b.guest?.full_name ?? b.property?.project_name ?? ''
+                    return `${name} (${fmt(b.check_in)} - ${fmt(b.check_out)})`.trim()
+                  }).join('\n')}
+                  className="absolute text-xs text-gray-400 font-body cursor-default flex items-center"
                   style={{
                     top:         DAY_H + MAX_VIS * LANE_H + 2,
                     left:        `calc(${colIdx / 7 * 100}% + 4px)`,
@@ -660,7 +683,7 @@ export default function Kalender() {
                     height:      LANE_H - 4,
                     fontSize:    10,
                   }}
-                  onClick={e => { e.stopPropagation(); /* could open day view */ }}>
+                  onClick={e => { e.stopPropagation() }}>
                   +{count}
                 </div>
               ) : null)}
