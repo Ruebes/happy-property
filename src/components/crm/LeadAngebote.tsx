@@ -111,9 +111,11 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   // Rückkehr; nach 10 Minuten Schluss.
   const refiningKey = Object.keys(deckMeta).filter(tok => deckMeta[tok]?.refining).sort().join(',')
   const pollRefining = useCallback(async (tokens: string[]) => {
-    const { data } = await supabase.from('sales_decks').select('token, refining').in('token', tokens)
-    const done = ((data ?? []) as Array<{ token: string; refining: boolean | null }>).filter(r => !r.refining).map(r => r.token)
-    if (done.length) await fetchDeckMeta(done)
+    try {
+      const { data } = await supabase.from('sales_decks').select('token, refining').in('token', tokens)
+      const done = ((data ?? []) as Array<{ token: string; refining: boolean | null }>).filter(r => !r.refining).map(r => r.token)
+      if (done.length) await fetchDeckMeta(done)
+    } catch (e) { console.warn('[LeadAngebote] Deck-Status:', e) }   // nächster Takt versucht es wieder
   }, [fetchDeckMeta])
   useEffect(() => {
     if (!refiningKey) return
