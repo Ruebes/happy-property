@@ -56,18 +56,22 @@ export default function Rechnung() {
   const [meta, setMeta] = useState<{ recipient_name?: string; title?: string; with_calc?: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  // Sprache geklärt (und ggf. ihre Datei nachgeladen): erst dann die Berechnung
+  // zeigen, sonst stünden die festen Beschriftungen kurz auf Deutsch.
+  const [langReady, setLangReady] = useState(false)
   const isMobile = useIsMobile()
 
   // Empfängersprache: Die Berechnung liegt hinter einem Token, es gibt keinen
   // Login - die Sprache kommt deshalb serverseitig aus dem Lead (Sven 26.8.:
   // englischsprachige Kunden bekommen alles auf Englisch).
   useEffect(() => { void (async () => {
-    if (!token) return
     try {
+      if (!token) return
       const { data } = await supabase.rpc('get_calculation_lang', { p_token: token })
       const lang = typeof data === 'string' ? data : 'de'
       if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
     } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
+    finally { setLangReady(true) }
   })() }, [token, i18n])
 
   useEffect(() => { void (async () => {
@@ -100,7 +104,7 @@ export default function Rechnung() {
     }))
   }, [content])
 
-  if (loading) return <Centered>{t('rechnung.loading', 'Lädt…')}</Centered>
+  if (loading || !langReady) return <Centered>{t('rechnung.loading', 'Lädt…')}</Centered>
   if (err || !content) return <Centered>{err || t('rechnung.genericNotFound', 'Nicht gefunden.')}</Centered>
 
   const name = meta?.recipient_name || content.recipient_name || ''

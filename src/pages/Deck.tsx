@@ -933,18 +933,22 @@ export default function Deck() {
   const [content, setContent] = useState<DeckContent | null>(null)
   const [loading, setLoading] = useState(true)
   const [err,     setErr]     = useState(false)
+  // Sprache geklärt (und ggf. ihre Datei nachgeladen): erst dann das Deck zeigen,
+  // sonst stünden die festen Beschriftungen kurz auf Deutsch.
+  const [langReady, setLangReady] = useState(false)
 
   // Empfängersprache: Das Deck liegt hinter einem Token, es gibt keinen Login -
   // die Sprache kommt serverseitig aus dem Lead. Ohne das blieben alle festen
   // Bausteine (Folge-mir-Block, Beschriftungen, Kontaktkarte) deutsch, obwohl der
   // Deck-Text englisch war (Sven 27.8.).
   useEffect(() => { void (async () => {
-    if (!token) return
     try {
+      if (!token) return
       const { data } = await supabase.rpc('get_deck_lang', { p_token: token })
       const lang = typeof data === 'string' ? data : 'de'
       if (lang === 'en' && i18n.language !== 'en') await i18n.changeLanguage('en')
     } catch { /* im Zweifel in der eingestellten Sprache anzeigen */ }
+    finally { setLangReady(true) }
   })() }, [token, i18n])
 
   useEffect(() => {
@@ -981,7 +985,7 @@ export default function Deck() {
     })()
   }, [token])
 
-  if (loading) {
+  if (loading || !langReady) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: CREAM }}>
         <div className="w-8 h-8 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin" />
