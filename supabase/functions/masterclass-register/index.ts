@@ -45,14 +45,15 @@ type Ev = {
   list: string; thanksUrl: string; landingUrl: string
 }
 const EVENTS: Record<string, Ev> = {
+  // Schlüssel bleibt 'aerzte-2026-10-11' (Formular + verschickte .ics-Links nutzen ihn); Termin am 2.10. auf 18.10. verschoben.
   'aerzte-2026-10-11': {
     title: 'Masterclass für Ärzte & Apotheker: Immobilien auf Zypern & Steuern zurückholen',
     short: 'Masterclass für Ärzte & Apotheker',
-    startIso: '2026-10-11T09:00:00Z', endIso: '2026-10-11T10:00:00Z',
-    dateLabel: 'Sonntag, 11. Oktober 2026', timeLabel: '11:00 Uhr (deutsche Zeit)',
+    startIso: '2026-10-18T09:00:00Z', endIso: '2026-10-18T10:00:00Z',
+    dateLabel: 'Sonntag, 18. Oktober 2026', timeLabel: '11:00 Uhr (deutsche Zeit)',
     zoomUrl: 'https://us06web.zoom.us/j/84711642809?pwd=uvj0nmrfjlt37KlWv2LBwyfpqa6E8P.1',
     zoomId: '847 1164 2809', zoomPw: '590189',
-    list: 'Masterclass Ärzte 11.10.2026',
+    list: 'Masterclass Ärzte 18.10.2026',
     thanksUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-danke/',
     landingUrl: 'https://steuervorteil-zypern-immobilien.com/masterclass-fuer-aerzte-apotheker-anmeldung/',
   },
@@ -139,6 +140,38 @@ function reminderMails(first: string, key: string, ev: Ev) {
     wa: `Wir starten in 15 Minuten. 🚀 Hier geht es rein: ${ev.zoomUrl}\nKenncode: ${ev.zoomPw}\n\nBis gleich, Sven`,
   }
   return { day, hour, quarter }
+}
+
+// ── Texte aus dem Listen-Workflow (CRM → Workflows → Listen-Workflows) ───────
+// Hängt an der Event-Liste ein aktiver Workflow, liefern seine Nachrichten die
+// Texte, in dieser Reihenfolge: 1. Bestätigung (sofort), 2. Vortag (24 h vorher),
+// 3. eine Stunde vorher, 4. 15 Minuten vorher. Die Versandzeiten bleiben fest am
+// Termin, Wartezeiten im Workflow zählen hier nicht. Leeres Feld oder fehlender
+// Schritt → eingebauter Text oben. Platzhalter: {{vorname}}, {{datum}}, {{uhrzeit}},
+// {{zoom_link}}, {{meeting_id}}, {{kenncode}}, {{kalender_google}}, {{kalender_ics}},
+// {{kalender_outlook}}, {{kalender_yahoo}}. So wirkt eine Terminänderung nur über EVENTS.
+type Txt = { subject?: string; html?: string; wa?: string }
+async function workflowTexts(sb: SupabaseClient, listId: string | null): Promise<{ seqId: string | null; steps: Txt[] }> {
+  if (!listId) return { seqId: null, steps: [] }
+  const { data: seqs } = await sb.from('list_sequences').select('id').eq('list_id', listId).eq('active', true).order('created_at', { ascending: true }).limit(1)
+  const seqId = (seqs as { id: string }[] | null)?.[0]?.id ?? null
+  if (!seqId) return { seqId: null, steps: [] }
+  const { data: st } = await sb.from('sequence_steps').select('step_type, email_subject, email_body, whatsapp_text')
+    .eq('sequence_id', seqId).eq('active', true).is('parent_split_id', null).order('step_order', { ascending: true })
+  const steps = ((st as Array<Record<string, string | null>> | null) ?? [])
+    .filter(r => ['email', 'whatsapp', 'both'].includes(String(r.step_type)))
+    .map(r => ({ subject: r.email_subject?.trim() || undefined, html: r.email_body?.trim() || undefined, wa: r.whatsapp_text?.trim() || undefined }))
+  return { seqId, steps }
+}
+function fillTxt(s: string | undefined, html: boolean, first: string, key: string, ev: Ev): string | undefined {
+  if (!s) return undefined
+  const c = calLinks(key, ev)
+  const v: Record<string, string> = {
+    vorname: html ? esc(first) : first, datum: ev.dateLabel, uhrzeit: ev.timeLabel,
+    zoom_link: ev.zoomUrl, meeting_id: ev.zoomId, kenncode: ev.zoomPw,
+    kalender_google: c.google, kalender_ics: c.ics, kalender_outlook: c.outlook, kalender_yahoo: c.yahoo,
+  }
+  return s.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (m, k: string) => v[k.toLowerCase()] ?? m)
 }
 
 // ── Lead im CRM anlegen/finden (ohne Deal) ───────────────────────────────────
@@ -240,12 +273,21 @@ Deno.serve(async (req) => {
   // ── 2. CRM-Lead ────────────────────────────────────────────────────────────
   const leadId = await upsertLead(sb, { first, last, email, phone, utm, ev, key })
 
+  // Texte aus dem Listen-Workflow der Event-Liste (falls angelegt), sonst eingebaut.
+  // Die Einschreibung macht die Anmeldung im Workflow-Zähler des CRM sichtbar.
+  const wf = await workflowTexts(sb, listId)
+  if (wf.seqId && subId) await sb.from('sequence_enrollments').upsert({ sequence_id: wf.seqId, subscriber_id: subId }, { onConflict: 'sequence_id,subscriber_id', ignoreDuplicates: true })
+  const pick = (i: number, b: Txt): Txt => {
+    const w = wf.steps[i] ?? {}
+    return { subject: fillTxt(w.subject, false, first, key, ev) ?? b.subject, html: fillTxt(w.html, true, first, key, ev) ?? b.html, wa: fillTxt(w.wa, false, first, key, ev) ?? b.wa }
+  }
+
   // ── 3. Sofort-Bestätigung ──────────────────────────────────────────────────
   // apikey zusätzlich (Review S1): send-whatsapp läuft mit verify_jwt=true, dort erkennt
   // der Aufrufer-Guard den Service-Key sicher im apikey-Header.
   const auth = { 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`, 'apikey': Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', 'Content-Type': 'application/json' }
   const base = `${Deno.env.get('SUPABASE_URL')}/functions/v1`
-  const conf = confirmMail(first, key, ev)
+  const conf = pick(0, confirmMail(first, key, ev))
   const mailRes = await fetch(`${base}/send-email`, { method: 'POST', headers: auth, body: JSON.stringify({
     to: email, subject: conf.subject, html: conf.html, lead_id: leadId, auto: true, lang: 'de', already_translated: true,
     from_name: 'Sven Rüprich · Happy Property',
@@ -265,6 +307,7 @@ Deno.serve(async (req) => {
     const start = new Date(ev.startIso).getTime()
     const at = (minBefore: number) => new Date(start - minBefore * 60_000).toISOString()
     const r = reminderMails(first, key, ev)
+    const day = pick(1, r.day), hour = pick(2, r.hour), quarter = pick(3, r.quarter)
     const wantWa = !!phone
     const rows: Record<string, unknown>[] = []
     const now = Date.now()
@@ -273,9 +316,15 @@ Deno.serve(async (req) => {
       if (start - minBefore * 60_000 < now + 5 * 60_000) return
       rows.push({ subscriber_id: subId, event_type: 'newsletter', status: 'pending', scheduled_at: at(minBefore), ...row })
     }
-    push(24 * 60, { type: wantWa ? 'both' : 'email', email_subject: r.day.subject, email_body: r.day.html, whatsapp_text: wantWa ? r.day.wa : null })
-    push(60,      { type: wantWa ? 'both' : 'email', email_subject: r.hour.subject, email_body: r.hour.html, whatsapp_text: wantWa ? r.hour.wa : null })
-    if (wantWa) push(15, { type: 'whatsapp', whatsapp_text: r.quarter.wa })
+    const plan = (minBefore: number, m: Txt) => {
+      const mail = !!(m.subject && m.html), wa = wantWa && !!m.wa
+      if (!mail && !wa) return
+      push(minBefore, { type: mail && wa ? 'both' : mail ? 'email' : 'whatsapp',
+        email_subject: mail ? m.subject : null, email_body: mail ? m.html : null, whatsapp_text: wa ? m.wa : null })
+    }
+    plan(24 * 60, day)
+    plan(60, hour)
+    plan(15, quarter)
     if (rows.length) {
       // Doppelte Anmeldung: alte offene Erinnerungen dieses Abonnenten für das Event ersetzen.
       await sb.from('scheduled_messages').delete().eq('subscriber_id', subId).eq('status', 'pending').eq('event_type', 'newsletter')
