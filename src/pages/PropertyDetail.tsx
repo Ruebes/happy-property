@@ -5,6 +5,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import ImageLightbox from '../components/ImageLightbox'
 import { CustomSelect } from '../components/CustomSelect'
 import { supabase } from '../lib/supabase'
+import { thumb, thumbFallback } from '../lib/img'
 import { unitGross, unitNet, unitVatAmount, withVat } from '../lib/price'
 import { useAuth } from '../lib/auth'
 import { useDateFormat } from '../lib/date'
@@ -150,7 +151,6 @@ function Badge({ children, color = 'gray' }: { children: React.ReactNode; color?
     orange: 'bg-orange-50 text-orange-700',
     green:  'bg-green-50 text-green-700',
     purple: 'bg-purple-50 text-purple-700',
-    amber:  'bg-amber-50 text-amber-700',
   }
   return (
     <span className={`inline-block text-xs font-semibold font-body px-2.5 py-1 rounded-full ${cls[color] ?? cls.gray}`}>
@@ -1012,8 +1012,8 @@ export default function PropertyDetail() {
   //    Ausgaben aus den Rechnungen (documents.type='rechnung'). Nur lesend.
   interface IncomeBooking {
     id: string; source: string | null; check_in: string; check_out: string
-    total_price_net: number | null; total_price_gross: number | null; total_price: number | null
-    is_owner_stay: boolean | null; status: string | null; booking_number: string | null
+    total_price_net: number | null; total_price: number | null
+    is_owner_stay: boolean | null; status: string | null
   }
   const [incomeBookings,  setIncomeBookings]  = useState<IncomeBooking[]>([])
   const [incomeContracts, setIncomeContracts] = useState<ContractRecord[]>([])
@@ -1025,7 +1025,7 @@ export default function PropertyDetail() {
     try {
       const [bk, ct] = await Promise.all([
         supabase.from('bookings')
-          .select('id, source, check_in, check_out, total_price_net, total_price_gross, total_price, is_owner_stay, status, booking_number')
+          .select('id, source, check_in, check_out, total_price_net, total_price, is_owner_stay, status')
           .eq('property_id', id).order('check_in', { ascending: false }),
         supabase.from('contracts')
           .select('id, tenant_name, tenant_email, start_date, end_date, monthly_rent, status, signature_token, signed_at')
@@ -1089,6 +1089,28 @@ export default function PropertyDetail() {
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
       setLinkedUnit(unitData as unknown as CrmProjectUnit)
 
+      // Zahlungen, Projekt und Baustellenfotos brauchen die Teil-Wohnungen nicht:
+      // sofort starten, damit sie parallel zur Teil-Wohnungs-Abfrage laufen.
+      // Promise.resolve ruft .then auf, erst das startet die PostgREST-Abfrage.
+      // Sie lösen nie mit Fehler aus (Fehler stehen in .error), gewartet wird
+      // unten im selben Promise.all wie bisher.
+      const paysP = Promise.resolve(supabase
+        .from('crm_unit_payments')
+        .select('*')
+        .eq('unit_id', unitData.id)
+        .order('due_date', { ascending: true, nullsFirst: true }))
+      const projP = Promise.resolve(supabase
+        .from('crm_projects')
+        .select('images, latitude, longitude, name, location')
+        .eq('id', (unitData as { project_id: string }).project_id)
+        .maybeSingle())
+      const constPhotosP = Promise.resolve(supabase
+        .from('construction_photos')
+        .select('*')
+        .eq('project_id', (unitData as { project_id: string }).project_id)
+        .order('photo_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }))
+
       // Doppelapartment: Teil-Wohnungen der Einheit (A2a/A2b). Gekauft und bezahlt
       // wird die Einheit als Ganzes — die Teile dienen der Untergliederung von
       // Flaechen und Ausgaben innerhalb dieser Wohnung.
@@ -1108,11 +1130,7 @@ export default function PropertyDetail() {
       const subIds = ((subs ?? []) as Array<{ id: string }>).map(s => s.id)
 
       const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
-        supabase
-          .from('crm_unit_payments')
-          .select('*')
-          .eq('unit_id', unitData.id)
-          .order('due_date', { ascending: true, nullsFirst: true }),
+        paysP,
         // Unterlagen der Wohnung UND ihrer Teil-Wohnungen (z.B. Grundriss A2a):
         // im Client wird nach unit_id getrennt.
         supabase
@@ -1127,17 +1145,8 @@ export default function PropertyDetail() {
           .in('unit_id', [unitData.id, ...subIds])
           .neq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
-        supabase
-          .from('crm_projects')
-          .select('images, latitude, longitude, name, location')
-          .eq('id', (unitData as { project_id: string }).project_id)
-          .maybeSingle(),
-        supabase
-          .from('construction_photos')
-          .select('*')
-          .eq('project_id', (unitData as { project_id: string }).project_id)
-          .order('photo_date', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false }),
+        projP,
+        constPhotosP,
       ])
       // Teil-Fehler nicht als "leer" darstellen: fehlerhafte Ergebnisse loggen und
       // den jeweils vorhandenen State behalten, nur fehlerfreie Ergebnisse setzen.
@@ -3337,7 +3346,7 @@ export default function PropertyDetail() {
   }
 
   // ── Eigentümer per E-Mail benachrichtigen ─────────────
-  async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
+  async function notifyOwner(fileName: string, kind: 'Dokument' | 'Baustellenfoto') {
     // Empfaenger: der Eigentuemer UND alle eingeladenen Mit-Eigentuemer. Wer
     // selbst hochgeladen hat, bekommt keine Mail ueber die eigene Aktion.
     const owner = property?.owner
@@ -3360,7 +3369,7 @@ export default function PropertyDetail() {
             lang:    en ? 'en' : 'de',
             html: en
               ? `<p>Hello ${esc(firstName)},</p>
-<p>a new <strong>${kind === 'Dokument' ? 'document' : kind === 'Bild' ? 'image' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
+<p>a new <strong>${kind === 'Dokument' ? 'document' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
 <p>You can view it in your personal portal at any time.</p>
 <p>Best regards<br>Your Happy Property team</p>`
               : `<p>Hallo ${esc(firstName)},</p>
@@ -3437,7 +3446,8 @@ export default function PropertyDetail() {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
           {images.map((url, i) => (
             <div key={i} className="relative aspect-square rounded-xl overflow-hidden bg-gray-100">
-              <img src={url} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
+              <img src={thumb(url, { width: 1600 })} alt="" className="w-full h-full object-cover transition-transform hover:scale-105 cursor-pointer"
+                   loading="lazy" decoding="async" onError={thumbFallback(url)}
                    onClick={() => setLightbox({ images, index: i })} />
             </div>
           ))}
@@ -3488,6 +3498,8 @@ export default function PropertyDetail() {
                       <img
                         src={mediaUrl}
                         alt={photo.file_name}
+                        loading="lazy"
+                        decoding="async"
                         className={`w-full aspect-square object-cover ${mediaUrl ? 'cursor-pointer transition-transform hover:scale-105' : ''}`}
                         onClick={() => {
                           // Ohne gültige URL (Signatur fehlgeschlagen) nicht die
@@ -3603,7 +3615,8 @@ export default function PropertyDetail() {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
               {ownImages.map((url, i) => (
                 <div key={i} className="relative aspect-square rounded-xl overflow-hidden group bg-gray-100">
-                  <img src={url} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                  <img src={thumb(url, { width: 1600 })} alt="" className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                       loading="lazy" decoding="async" onError={thumbFallback(url)} />
                   <button
                     onClick={() => setDeleteImgUrl(url)}
                     className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
+import { thumb, thumbFallback } from '../../../lib/img'
 import { unitNet } from '../../../lib/price'
 import type { CrmProject, ProjectStatus, DeckAssetsCache } from '../../../lib/crmTypes'
 import { PROJECT_STATUS_COLORS } from '../../../lib/crmTypes'
@@ -695,7 +696,8 @@ function ProjectModal({ project, onClose, onSaved }: ProjectModalProps) {
                   <div className="grid grid-cols-3 gap-2">
                     {images.map((url, idx) => (
                       <div key={idx} className="relative group aspect-video rounded-lg overflow-hidden border border-gray-100">
-                        <img src={url} alt="" className="w-full h-full object-cover" />
+                        <img src={thumb(url, { width: 800 })} alt="" className="w-full h-full object-cover"
+                             loading="lazy" decoding="async" onError={thumbFallback(url)} />
                         <button
                           onClick={() => handleDeleteImage(url)}
                           className="absolute top-1 right-1 w-6 h-6 bg-red-500 text-white rounded-full text-xs
@@ -1146,7 +1148,8 @@ export default function Projects() {
                   {/* Image */}
                   <div className="h-44 bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
                     {mainImage
-                      ? <img src={mainImage} alt={p.name} className="w-full h-full object-cover" />
+                      ? <img src={thumb(mainImage, { width: 800 })} alt={p.name} className="w-full h-full object-cover"
+                             loading="lazy" decoding="async" onError={thumbFallback(mainImage)} />
                       : <div className="w-full h-full flex items-center justify-center text-5xl">🏗</div>
                     }
                   </div>

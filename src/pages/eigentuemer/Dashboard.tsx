@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
+import { thumb, thumbFallback } from '../../lib/img'
 import { useAuth } from '../../lib/auth'
 
 // ── Types ──────────────────────────────────────────────────────
@@ -402,7 +403,8 @@ export default function EigentuemerDashboard() {
                     {/* Bild */}
                     <div className="relative h-44 bg-gray-100 overflow-hidden">
                       {imgSrc ? (
-                        <img src={imgSrc} alt={p.project_name}
+                        <img src={thumb(imgSrc, { width: 1600 })} alt={p.project_name}
+                             loading="lazy" decoding="async" onError={thumbFallback(imgSrc)}
                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
