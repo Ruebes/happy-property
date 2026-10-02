@@ -7,9 +7,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 // Tab schliessen und neu oeffnen. Vorher war das nur zu erraten.
 const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
 
-// Dieselbe Bau-Kennung zusätzlich als <meta name="hp-build"> in der index.html:
-// Die neue Navigation liest sie von dort (ProfileMenu), statt sie in einen
-// JS-Chunk einzubacken. Das define unten bleibt für die alte Navigation.
+// Die Bau-Kennung steht nur als <meta name="hp-build"> in der index.html. Beide
+// Navigationen lesen sie von dort (ProfileMenu, LegacyDashboardLayout). Früher
+// stand sie per define in einem JS-Chunk: dann bekam bei jedem Build fast jeder
+// Chunk einen neuen Namen und jeder Browser lud die ganze App neu.
 function hpBuildMeta(): Plugin {
   return {
     name: 'hp-build-meta',
@@ -19,9 +20,31 @@ function hpBuildMeta(): Plugin {
   }
 }
 
+// Feste Vendor-Chunks: nur Bibliotheken, die ohnehin schon im Einstiegs-Chunk
+// stecken und auf jeder Seite gebraucht werden. Ihre Dateinamen ändern sich nur,
+// wenn sich die Bibliothek ändert, also lädt der Browser sie nach einem Deploy
+// nicht neu. Bewusst NICHT hier: App-Code, Übersetzungen (locales) und große
+// Bibliotheken einzelner Seiten (@xyflow, rrweb), die sonst jede Seite laden würde.
+const VENDOR_CHUNKS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['vendor-react', /[\\/]node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom|@remix-run[\\/]router)[\\/]/],
+  ['vendor-supabase', /[\\/]node_modules[\\/]@supabase[\\/]/],
+  ['vendor-i18n', /[\\/]node_modules[\\/](i18next|react-i18next|i18next-browser-languagedetector)[\\/]/],
+]
+
+function vendorChunk(id: string): string | undefined {
+  for (const [name, pattern] of VENDOR_CHUNKS) {
+    if (pattern.test(id)) return name
+  }
+  return undefined
+}
+
 export default defineConfig({
-  define: {
-    __BUILD_ID__: JSON.stringify(BUILD_ID),
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: vendorChunk,
+      },
+    },
   },
   plugins: [
     react(),
@@ -64,6 +87,9 @@ export default defineConfig({
         // dürfen niemals aus dem Cache kommen (würde Login-Loops und veraltete
         // Daten verursachen).
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff2}'],
+        // Statische Einzelseiten unter public/ (seo/, guide/) gehören nicht zur
+        // App und werden nicht vorab in jeden Browser geladen.
+        globIgnores: ['seo/**', 'guide/**'],
         // Supabase explizit ausschließen — und ALLE öffentlichen Kunden-/Token-
         // Seiten: die dürfen nie aus dem Service-Worker-Cache kommen, sonst
         // sehen Kunden nach einem Deploy die alte Version, bis der SW irgendwann
@@ -75,6 +101,9 @@ export default defineConfig({
           // Vercel-Rewrites auf Edge Functions (Zypern-Report-PDF, Kalender-Feed):
           // der SW darf hier nie index.html ausliefern.
           /^\/(zypern-report|cal)(\/|$)/,
+          // Statische Seiten aus public/seo und public/guide (nicht mehr im
+          // Precache): direkt vom Netz holen, nie index.html dafür ausliefern.
+          /^\/(seo|guide)\//,
         ],
         runtimeCaching: [
           {

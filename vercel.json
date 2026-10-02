@@ -9,7 +9,7 @@
       "destination": "https://vjlwgajmtqlwjjreowbu.supabase.co/functions/v1/zypern-report"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/).*)",
       "destination": "/index.html"
     }
   ],

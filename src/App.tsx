@@ -21,9 +21,13 @@ import ProtectedRoute from './components/ProtectedRoute'
 import ShellGate from './components/ShellGate'
 
 // ── Öffentliche Seiten (eager — immer gebraucht, klein) ──────────────────────
+// SetPassword bleibt eager: liegt auf dem Einladungs- und Passwort-Weg der
+// Eigentümer, dort soll kein zusätzlicher Chunk-Abruf dazwischenkommen.
 import Login       from './pages/Login'
-import Sign        from './pages/Sign'
 import SetPassword from './pages/SetPassword'
+
+// Vertrags-Unterschrift (/sign/:token): selten aufgerufen, daher lazy.
+const Sign = lazy(() => import('./pages/Sign'))
 
 // ── Alle anderen Seiten: lazy (werden erst bei Bedarf geladen) ───────────────
 // → Reduziert das Initial-Bundle erheblich; CRM-Code wird z.B. für Feriengäste

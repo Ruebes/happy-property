@@ -15,6 +15,15 @@ interface Props {
 
 type AdminView = 'crm' | 'verwaltung'
 
+// Bau-Kennung aus <meta name="hp-build"> (setzt vite.config.ts). Steht bewusst
+// nicht mehr als Konstante im JS: sonst ändert sich der Name dieses Chunks und
+// aller Seiten, die ihn importieren, bei jedem Build.
+const BUILD_ID = (() => {
+  try {
+    return document.querySelector('meta[name="hp-build"]')?.getAttribute('content') ?? ''
+  } catch { return '' }
+})()
+
 export default function LegacyDashboardLayout({ children, basePath }: Props) {
   const { t }              = useTranslation()
   const { user, profile }  = useAuth()
@@ -566,7 +575,7 @@ export default function LegacyDashboardLayout({ children, basePath }: Props) {
                 Service-Worker-Cache, steht hier ein altes Datum. */}
             <span className="hidden lg:inline text-[10px] text-gray-300 font-body tabular-nums select-all"
                   title={t('nav.buildIdTitle', 'Stand dieser Oberflaeche. Zeigt sie ein altes Datum, Tab schliessen und neu oeffnen.')}>
-              {__BUILD_ID__}
+              {BUILD_ID}
             </span>
 
             <button
