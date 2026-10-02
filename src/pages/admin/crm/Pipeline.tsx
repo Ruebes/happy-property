@@ -28,6 +28,9 @@ const loadRegistrationModal   = () => import('../../../components/crm/Registrati
 const loadDepositInvoiceModal = () => import('../../../components/crm/DepositInvoiceModal')
 const loadUnitPickerModal     = () => import('../../../components/crm/UnitPickerModal')
 const PRELOAD_MS = 1500
+// Einmal pro Seitenladen. Der Timer läuft auch weiter, wenn die Pipeline vorher
+// verlassen wird, sonst fehlten die Chunks nach einem kurzen Besuch.
+let modalPreloadStarted = false
 
 // lazyWithReload nimmt nur Komponenten ohne Pflicht-Props; hier bekommt der
 // Rückgabetyp die echten Props des Dialogs zurück.
@@ -664,15 +667,17 @@ export default function Pipeline() {
     fetchAppointments()
   }, [fetchDeals, fetchStaff, fetchAppointments])
 
-  // Dialog-Chunks im Hintergrund vorladen (siehe PRELOAD_MS). Ein Fehler hier
-  // bleibt still: beim Öffnen lädt lazyWithReload den Chunk ohnehin erneut.
+  // Dialog-Chunks im Hintergrund vorladen (siehe PRELOAD_MS). Fehlt ein Chunk
+  // nach einem Deploy, lädt der globale vite:preloadError-Handler aus
+  // lazyWithReload die Seite einmal neu, wie heute bei einer Route.
   useEffect(() => {
-    const id = window.setTimeout(() => {
+    if (modalPreloadStarted) return
+    modalPreloadStarted = true
+    window.setTimeout(() => {
       for (const load of [loadDeckWizard, loadRegistrationModal, loadDepositInvoiceModal, loadUnitPickerModal]) {
-        load().catch(() => { /* beim Öffnen neuer Versuch */ })
+        load().catch(() => { /* beim Öffnen neuer Versuch über lazyWithReload */ })
       }
     }, PRELOAD_MS)
-    return () => window.clearTimeout(id)
   }, [])
 
   // Re-Fetch bei Tab-Fokus (behebt veraltete Daten nach Token-Refresh im
