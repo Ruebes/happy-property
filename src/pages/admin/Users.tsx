@@ -68,19 +68,10 @@ interface FormState {
   address_zip: string
   address_city: string
   address_country: string
-  tempPassword: string
-  showPassword: boolean
   verwaltung_id: string
 }
 
 // ── Helpers ────────────────────────────────────────────────────
-function generatePassword(): string {
-  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$'
-  return Array.from(crypto.getRandomValues(new Uint8Array(14)))
-    .map(b => chars[b % chars.length])
-    .join('')
-}
-
 function emptyForm(): FormState {
   return {
     firstName:           '',
@@ -96,8 +87,6 @@ function emptyForm(): FormState {
     iban:                '',
     bic:                 '',
     bank_account_holder: '',
-    tempPassword:        generatePassword(),
-    showPassword:        false,
     verwaltung_id:       '',
   }
 }
@@ -349,8 +338,6 @@ export default function AdminUsers() {
       iban:                u.iban ?? '',
       bic:                 u.bic ?? '',
       bank_account_holder: u.bank_account_holder ?? '',
-      tempPassword:        generatePassword(),
-      showPassword:        false,
       verwaltung_id:       (u as UserProfile & { verwaltung_id?: string }).verwaltung_id ?? '',
     })
     setFormError('')
