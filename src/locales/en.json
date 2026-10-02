@@ -2168,6 +2168,8 @@
       "noEngagement": "No customer activity recorded yet.",
       "manageWidgets": "Customize widgets",
       "manageHint": "Show/hide and reorder widgets — saved per browser.",
+      "tile": "Tile",
+      "tileEmpty": "empty",
       "quick": {
         "pipeline": "Pipeline",
         "leads": "Contacts",

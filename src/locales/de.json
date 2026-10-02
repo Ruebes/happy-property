@@ -2168,6 +2168,8 @@
       "noEngagement": "Noch keine Kunden-Aktivität erfasst.",
       "manageWidgets": "Widgets anpassen",
       "manageHint": "Widgets ein-/ausblenden und sortieren — wird pro Browser gespeichert.",
+      "tile": "Kachel",
+      "tileEmpty": "leer",
       "quick": {
         "pipeline": "Pipeline",
         "leads": "Kontakte",
