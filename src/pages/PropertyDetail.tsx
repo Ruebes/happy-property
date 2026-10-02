@@ -1090,6 +1090,28 @@ export default function PropertyDetail() {
       setCrmUnitImages((unitData as { images?: string[] }).images ?? [])
       setLinkedUnit(unitData as unknown as CrmProjectUnit)
 
+      // Zahlungen, Projekt und Baustellenfotos brauchen die Teil-Wohnungen nicht:
+      // sofort starten, damit sie parallel zur Teil-Wohnungs-Abfrage laufen.
+      // Promise.resolve ruft .then auf, erst das startet die PostgREST-Abfrage.
+      // Sie lösen nie mit Fehler aus (Fehler stehen in .error), gewartet wird
+      // unten im selben Promise.all wie bisher.
+      const paysP = Promise.resolve(supabase
+        .from('crm_unit_payments')
+        .select('*')
+        .eq('unit_id', unitData.id)
+        .order('due_date', { ascending: true, nullsFirst: true }))
+      const projP = Promise.resolve(supabase
+        .from('crm_projects')
+        .select('images, latitude, longitude, name, location')
+        .eq('id', (unitData as { project_id: string }).project_id)
+        .maybeSingle())
+      const constPhotosP = Promise.resolve(supabase
+        .from('construction_photos')
+        .select('*')
+        .eq('project_id', (unitData as { project_id: string }).project_id)
+        .order('photo_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false }))
+
       // Doppelapartment: Teil-Wohnungen der Einheit (A2a/A2b). Gekauft und bezahlt
       // wird die Einheit als Ganzes — die Teile dienen der Untergliederung von
       // Flaechen und Ausgaben innerhalb dieser Wohnung.
@@ -1109,11 +1131,7 @@ export default function PropertyDetail() {
       const subIds = ((subs ?? []) as Array<{ id: string }>).map(s => s.id)
 
       const [paysRes, docsRes, ownDocsRes, projRes, constPhotosRes] = await Promise.all([
-        supabase
-          .from('crm_unit_payments')
-          .select('*')
-          .eq('unit_id', unitData.id)
-          .order('due_date', { ascending: true, nullsFirst: true }),
+        paysP,
         // Unterlagen der Wohnung UND ihrer Teil-Wohnungen (z.B. Grundriss A2a):
         // im Client wird nach unit_id getrennt.
         supabase
@@ -1128,17 +1146,8 @@ export default function PropertyDetail() {
           .in('unit_id', [unitData.id, ...subIds])
           .neq('doc_type', 'kaufvertrag')
           .order('created_at', { ascending: false }),
-        supabase
-          .from('crm_projects')
-          .select('images, latitude, longitude, name, location')
-          .eq('id', (unitData as { project_id: string }).project_id)
-          .maybeSingle(),
-        supabase
-          .from('construction_photos')
-          .select('*')
-          .eq('project_id', (unitData as { project_id: string }).project_id)
-          .order('photo_date', { ascending: false, nullsFirst: false })
-          .order('created_at', { ascending: false }),
+        projP,
+        constPhotosP,
       ])
       // Teil-Fehler nicht als "leer" darstellen: fehlerhafte Ergebnisse loggen und
       // den jeweils vorhandenen State behalten, nur fehlerfreie Ergebnisse setzen.
