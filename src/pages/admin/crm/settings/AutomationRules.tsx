@@ -374,7 +374,8 @@ export default function AutomationRules() {
     try {
       let query = supabase
         .from('scheduled_messages')
-        .select('*, lead:leads(first_name, last_name, email)')
+        // Nur die Spalten, die die Liste zeigt (ohne Mail-HTML und WhatsApp-Text)
+        .select('id, lead_id, type, event_type, status, scheduled_at, sent_at, email_subject, error_message, lead:leads(first_name, last_name, email)')
         .order('scheduled_at', { ascending: true })
         .limit(100)
 
