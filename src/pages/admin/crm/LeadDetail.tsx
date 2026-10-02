@@ -50,6 +50,11 @@ const AI_STATUS_CLS: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
 }
 
+// Provision und Projektpreis im gleichen Format wie die übrigen Preise der Seite
+// (1.234.567 €). Bis zu zwei Nachkommastellen bleiben sichtbar, damit Cent-Beträge
+// nicht still gerundet werden.
+const EUR_AMOUNT = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 2 })
+
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -3196,7 +3201,7 @@ export default function LeadDetail() {
                         {deal.commission_amount != null && (
                           <div className="flex gap-2">
                             <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.commission', 'Provision')}</dt>
-                            <dd className="text-gray-900 font-medium">€ {deal.commission_amount.toLocaleString('de-AT')}</dd>
+                            <dd className="text-gray-900 font-medium">{EUR_AMOUNT.format(deal.commission_amount)}</dd>
                           </div>
                         )}
                         {deal.registration_sent_at && (
@@ -3298,7 +3303,7 @@ export default function LeadDetail() {
                                 {dp.price_net != null && (
                                   <div className="flex gap-2">
                                     <dt className="text-gray-400 w-16">{t('leadDetail.priceLabel', 'Preis')}</dt>
-                                    <dd className="font-medium">€ {dp.price_net.toLocaleString('de-AT')}</dd>
+                                    <dd className="font-medium">{EUR_AMOUNT.format(dp.price_net)}</dd>
                                   </div>
                                 )}
                                 {dp.notes && (
