@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Suspense, useState, useEffect, useCallback, useRef, type ComponentType, type LazyExoticComponent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
@@ -7,23 +7,50 @@ import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel } from '../../../lib/crmTypes'
-import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
-import UnitPickerModal from '../../../components/crm/UnitPickerModal'
-import RegistrationModal from '../../../components/crm/RegistrationModal'
 import { deleteGoogleEvent } from '../../../lib/googleCalendar'
-import AppointmentModal from '../../../components/crm/AppointmentModal'
-import DeckWizard from '../../../components/crm/DeckWizard'
 import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
-import RechnerWizard from '../../../components/crm/RechnerWizard'
-import StrategySimulator from '../../../components/crm/StrategySimulator'
-import PartnerShareModal from '../../../components/crm/PartnerShareModal'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
 import { sendWhatsApp } from '../../../lib/whatsapp'
-import LeadQuickSend from '../../../components/crm/LeadQuickSend'
+import { lazyWithReload } from '../../../lib/lazyWithReload'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
+
+// ── Fenster, die erst auf Klick aufgehen ─────────────────────────────────────
+// Sie liegen in eigenen Chunks statt im Seiten-Chunk, damit die Kundenakte
+// schneller steht. lazyWithReload nimmt nur Komponenten ohne Pflicht-Props an;
+// lazyModal reicht die echten Prop-Typen an die Aufrufstellen durch.
+function lazyModal<P extends object>(load: () => Promise<{ default: ComponentType<P> }>): LazyExoticComponent<ComponentType<P>> {
+  return lazyWithReload(load as unknown as () => Promise<{ default: ComponentType<object> }>) as unknown as LazyExoticComponent<ComponentType<P>>
+}
+const loadProjectSelectionModal = () => import('../../../components/crm/ProjectSelectionModal')
+const loadUnitPickerModal       = () => import('../../../components/crm/UnitPickerModal')
+const loadRegistrationModal     = () => import('../../../components/crm/RegistrationModal')
+const loadAppointmentModal      = () => import('../../../components/crm/AppointmentModal')
+const loadDeckWizard            = () => import('../../../components/crm/DeckWizard')
+const loadRechnerWizard         = () => import('../../../components/crm/RechnerWizard')
+const loadStrategySimulator     = () => import('../../../components/crm/StrategySimulator')
+const loadPartnerShareModal     = () => import('../../../components/crm/PartnerShareModal')
+const loadLeadQuickSend         = () => import('../../../components/crm/LeadQuickSend')
+const ProjectSelectionModal = lazyModal(loadProjectSelectionModal)
+const UnitPickerModal       = lazyModal(loadUnitPickerModal)
+const RegistrationModal     = lazyModal(loadRegistrationModal)
+const AppointmentModal      = lazyModal(loadAppointmentModal)
+const DeckWizard            = lazyModal(loadDeckWizard)
+const RechnerWizard         = lazyModal(loadRechnerWizard)
+const StrategySimulator     = lazyModal(loadStrategySimulator)
+const PartnerShareModal     = lazyModal(loadPartnerShareModal)
+const LeadQuickSend         = lazyModal(loadLeadQuickSend)
+// Kurz nach dem Öffnen der Kundenakte werden alle Fenster-Chunks im Hintergrund
+// geholt (wie die Suche in der TopBar). Ein Klick öffnet dann ohne Wartezeit, und
+// in einem lange offenen Tab kann ein nach einem Deploy fehlender Chunk keinen
+// Neu-Ladevorgang mehr auslösen, der ungespeicherte Eingaben verwerfen würde.
+const MODAL_LOADERS = [
+  loadProjectSelectionModal, loadUnitPickerModal, loadRegistrationModal, loadAppointmentModal,
+  loadDeckWizard, loadRechnerWizard, loadStrategySimulator, loadPartnerShareModal, loadLeadQuickSend,
+]
+const MODAL_PRELOAD_MS = 1500
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -63,6 +90,14 @@ export default function LeadDetail() {
 
   // Core data
   const [lead, setLead] = useState<Lead | null>(null)
+
+  // Fenster-Chunks im Hintergrund vorladen (siehe MODAL_LOADERS)
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const load of MODAL_LOADERS) void load().catch(() => { /* beim Öffnen lädt lazyWithReload erneut */ })
+    }, MODAL_PRELOAD_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
   const [showWizard, setShowWizard] = useState(false)
@@ -4496,87 +4531,105 @@ export default function LeadDetail() {
 
       {/* Projekt-Auswahl Modal */}
       {showProjectModal && deal && lead && (
-        <ProjectSelectionModal
-          dealId={deal.id}
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          onClose={() => setShowProjectModal(false)}
-          onSaved={() => { setShowProjectModal(false); fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <ProjectSelectionModal
+            dealId={deal.id}
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            onClose={() => setShowProjectModal(false)}
+            onSaved={() => { setShowProjectModal(false); fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {showRegistrationModal && lead && (
-        <RegistrationModal
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          saving={savingReg}
-          onConfirm={handleRegistrationConfirm}
-          onCancel={() => setShowRegistrationModal(false)}
-        />
+        <Suspense fallback={null}>
+          <RegistrationModal
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            saving={savingReg}
+            onConfirm={handleRegistrationConfirm}
+            onCancel={() => setShowRegistrationModal(false)}
+          />
+        </Suspense>
       )}
 
       {showApptModal && lead && (
-        <AppointmentModal
-          leadId={lead.id}
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          leadPhone={lead.phone}
-          onClose={() => setShowApptModal(false)}
-          onCreated={() => { setShowApptModal(false); fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <AppointmentModal
+            leadId={lead.id}
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            leadPhone={lead.phone}
+            onClose={() => setShowApptModal(false)}
+            onCreated={() => { setShowApptModal(false); fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Wohnungs-Picker ─────────────────────────────────────────── */}
       {showUnitPicker && lead && (
-        <UnitPickerModal
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          currentLeadId={lead.id}
-          preselectedProjectId={null}
-          onClose={() => setShowUnitPicker(false)}
-          onSelect={handleUnitAssign}
-        />
+        <Suspense fallback={null}>
+          <UnitPickerModal
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            currentLeadId={lead.id}
+            preselectedProjectId={null}
+            onClose={() => setShowUnitPicker(false)}
+            onSelect={handleUnitAssign}
+          />
+        </Suspense>
       )}
 
       {/* ── Sales-Deck-Wizard ────────────────────────────────────────── */}
       {showWizard && lead && (
-        <DeckWizard
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, language: lead.language }}
-          onClose={() => setShowWizard(false)}
-          onDone={(msg) => { setShowWizard(false); showToast(msg) }}
-        />
+        <Suspense fallback={null}>
+          <DeckWizard
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, language: lead.language }}
+            onClose={() => setShowWizard(false)}
+            onDone={(msg) => { setShowWizard(false); showToast(msg) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Partner-Akte (z.B. Burkhard) ─────────────────────────────── */}
       {showPartnerShare && lead && (
-        <PartnerShareModal
-          leadId={lead.id}
-          leadName={`${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || lead.email || ''}
-          onClose={() => setShowPartnerShare(false)}
-        />
+        <Suspense fallback={null}>
+          <PartnerShareModal
+            leadId={lead.id}
+            leadName={`${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || lead.email || ''}
+            onClose={() => setShowPartnerShare(false)}
+          />
+        </Suspense>
       )}
 
       {/* ── Investitions-Fahrplan (Strategie) ─────────────────────────── */}
       {showStrategy && lead && (
-        <StrategySimulator
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
-          initialUnits={[]}
-          onClose={() => setShowStrategy(false)}
-        />
+        <Suspense fallback={null}>
+          <StrategySimulator
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+            initialUnits={[]}
+            onClose={() => setShowStrategy(false)}
+          />
+        </Suspense>
       )}
 
       {/* ── Rechner-/Vergleichs-Wizard ───────────────────────────────── */}
       {showRechner && lead && (
-        <RechnerWizard
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
-          onClose={() => setShowRechner(false)}
-          onDone={(msg) => { setShowRechner(false); showToast(msg) }}
-        />
+        <Suspense fallback={null}>
+          <RechnerWizard
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+            onClose={() => setShowRechner(false)}
+            onDone={(msg) => { setShowRechner(false); showToast(msg) }}
+          />
+        </Suspense>
       )}
 
       {showForward && lead && (
-        <LeadQuickSend
-          lead={lead}
-          mode="forward"
-          onClose={() => setShowForward(false)}
-          onSent={(msg) => { setShowForward(false); showToast(msg); void fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <LeadQuickSend
+            lead={lead}
+            mode="forward"
+            onClose={() => setShowForward(false)}
+            onSent={(msg) => { setShowForward(false); showToast(msg); void fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Portal-Zugang Dialog ─────────────────────────────────────── */}
