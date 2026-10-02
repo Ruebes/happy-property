@@ -57,7 +57,7 @@ src/
   pages/               # Seiten (Routen)
     admin/crm/         # CRM-Kern: AllLeads, LeadDetail, Pipeline,
                        #   Projects, ProjectDetail, CrmDashboard,
-                       #   Templates, Settings, Statistics, Calendar, Archived
+                       #   Settings, Statistics, Calendar, Archived
     admin/             # Admin-Bereich (sonstige)
     investor/ feriengast/ eigentuemer/ verwalter/ verwaltung/
     Dashboard.tsx Login.tsx SetPassword.tsx Sign.tsx Profile.tsx
