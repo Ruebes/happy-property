@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense, type ComponentType, type LazyExoticComponent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
+import { lazyWithReload } from '../../../lib/lazyWithReload'
 import { useLeadSources, buildSourceOptions, ADD_SOURCE_VALUE } from '../../../lib/leadSources'
 import type { Deal, DealPhase } from '../../../lib/crmTypes'
 import {
@@ -13,14 +14,33 @@ import {
   channelBadgeFor,
   PHASE_WEBHOOK_EVENTS,
 } from '../../../lib/crmTypes'
-import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
-import DeckWizard from '../../../components/crm/DeckWizard'
-import RegistrationModal from '../../../components/crm/RegistrationModal'
-import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
-import UnitPickerModal from '../../../components/crm/UnitPickerModal'
 import PhaseRunToast from '../../../components/crm/PhaseRunToast'
 import { sendWhatsApp } from '../../../lib/whatsapp'
 import { CustomSelect } from '../../../components/CustomSelect'
+
+// ── Dialoge, die erst ein Klick oder Phasenwechsel öffnet ────────────────────
+// Liegen in eigenen Chunks, damit das Board nicht auf ihren Code wartet. Kurz
+// nach dem Start der Seite werden sie im Hintergrund vorgeladen (PRELOAD_MS):
+// ein Phasenwechsel wartet dann nie aufs Netz und läuft nach einem Deploy
+// nicht in einen fehlenden Chunk (lazyWithReload würde die Seite neu laden).
+const loadDeckWizard          = () => import('../../../components/crm/DeckWizard')
+const loadRegistrationModal   = () => import('../../../components/crm/RegistrationModal')
+const loadDepositInvoiceModal = () => import('../../../components/crm/DepositInvoiceModal')
+const loadUnitPickerModal     = () => import('../../../components/crm/UnitPickerModal')
+const PRELOAD_MS = 1500
+// Einmal pro Seitenladen. Der Timer läuft auch weiter, wenn die Pipeline vorher
+// verlassen wird, sonst fehlten die Chunks nach einem kurzen Besuch.
+let modalPreloadStarted = false
+
+// lazyWithReload nimmt nur Komponenten ohne Pflicht-Props; hier bekommt der
+// Rückgabetyp die echten Props des Dialogs zurück.
+function lazyModal<P extends object>(load: () => Promise<{ default: ComponentType<P> }>): LazyExoticComponent<ComponentType<P>> {
+  return lazyWithReload(load as () => Promise<{ default: ComponentType<object> }>) as LazyExoticComponent<ComponentType<P>>
+}
+const DeckWizard          = lazyModal(loadDeckWizard)
+const RegistrationModal   = lazyModal(loadRegistrationModal)
+const DepositInvoiceModal = lazyModal(loadDepositInvoiceModal)
+const UnitPickerModal     = lazyModal(loadUnitPickerModal)
 
 // ── LeadModal ───────────────────────────────────────────────────────────────
 
@@ -543,7 +563,6 @@ export default function Pipeline() {
   const [showLeadModal, setShowLeadModal] = useState(false)
   const [showDealModal, setShowDealModal] = useState(false)
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
-  const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
   const [deckDeal, setDeckDeal] = useState<Deal | null>(null)   // Angebot-Wizard (Deck + optional Berechnung + Mail)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
   // Wohnungs-Auswahl beim Zug auf Reservierung/Kaufvertrag (wenn keine Unit verknüpft)
@@ -647,6 +666,19 @@ export default function Pipeline() {
     fetchStaff()
     fetchAppointments()
   }, [fetchDeals, fetchStaff, fetchAppointments])
+
+  // Dialog-Chunks im Hintergrund vorladen (siehe PRELOAD_MS). Fehlt ein Chunk
+  // nach einem Deploy, lädt der globale vite:preloadError-Handler aus
+  // lazyWithReload die Seite einmal neu, wie heute bei einer Route.
+  useEffect(() => {
+    if (modalPreloadStarted) return
+    modalPreloadStarted = true
+    window.setTimeout(() => {
+      for (const load of [loadDeckWizard, loadRegistrationModal, loadDepositInvoiceModal, loadUnitPickerModal]) {
+        load().catch(() => { /* beim Öffnen neuer Versuch über lazyWithReload */ })
+      }
+    }, PRELOAD_MS)
+  }, [])
 
   // Re-Fetch bei Tab-Fokus (behebt veraltete Daten nach Token-Refresh im
   // Hintergrund) — STILL, ohne Vollbild-Spinner.
@@ -1141,68 +1173,62 @@ export default function Pipeline() {
         />
       )}
 
-      {/* Projekt-Auswahl Modal (öffnet automatisch bei immobilienauswahl) */}
-      {projectModalDeal && (
-        <ProjectSelectionModal
-          dealId={projectModalDeal.id}
-          leadName={projectModalDeal.lead
-            ? `${projectModalDeal.lead.first_name} ${projectModalDeal.lead.last_name}`
-            : t('pipeline.fallbackCustomerName', 'Kunde')}
-          onClose={() => setProjectModalDeal(null)}
-          onSaved={() => { setProjectModalDeal(null); fetchDeals() }}
-        />
-      )}
-
       {/* Angebot-Wizard: Deck + optional Berechnung/Vergleich + Mail → Postausgang */}
       {deckDeal && deckDeal.lead && (
-        <DeckWizard
-          lead={{ id: deckDeal.lead_id, first_name: deckDeal.lead.first_name, last_name: deckDeal.lead.last_name, email: deckDeal.lead.email ?? null }}
-          onClose={() => setDeckDeal(null)}
-          onDone={(msg) => { setDeckDeal(null); showToastMsg(msg) }}
-        />
+        <Suspense fallback={null}>
+          <DeckWizard
+            lead={{ id: deckDeal.lead_id, first_name: deckDeal.lead.first_name, last_name: deckDeal.lead.last_name, email: deckDeal.lead.email ?? null }}
+            onClose={() => setDeckDeal(null)}
+            onDone={(msg) => { setDeckDeal(null); showToastMsg(msg) }}
+          />
+        </Suspense>
       )}
 
       {/* Registrierung Modal */}
       {depositDeal && (
-        <DepositInvoiceModal
-          deal={depositDeal}
-          onClose={() => setDepositDeal(null)}
-          onDone={(msg) => { setDepositDeal(null); showToastMsg(msg); void fetchDeals(true) }}
-        />
+        <Suspense fallback={null}>
+          <DepositInvoiceModal
+            deal={depositDeal}
+            onClose={() => setDepositDeal(null)}
+            onDone={(msg) => { setDepositDeal(null); showToastMsg(msg); void fetchDeals(true) }}
+          />
+        </Suspense>
       )}
 
       {/* Wohnungs-Auswahl bei Reservierung/Kaufvertrag ohne verknüpfte Unit */}
       {unitPickState && (
-        <UnitPickerModal
-          leadName={unitPickState.deal.lead ? `${unitPickState.deal.lead.first_name} ${unitPickState.deal.lead.last_name}` : ''}
-          currentLeadId={unitPickState.deal.lead_id}
-          confirmLabel={unitPickState.target === 'reservierung'
-            ? t('unitPickerModal.confirmReserve', 'Reservieren')
-            : t('unitPickerModal.confirmSell', 'Als verkauft übernehmen')}
-          onClose={() => setUnitPickState(null)}
-          onSelect={async (unit, project) => {
-            const { deal, target } = unitPickState
-            setUnitPickState(null)
-            const newStatus = target === 'reservierung' ? 'reserved' : 'sold'
-            const { error: uErr } = await supabase.from('crm_project_units')
-              .update({ status: newStatus }).eq('id', unit.id).neq('status', 'sold')
-            if (uErr) { console.error('[Pipeline] Unit-Status:', uErr.message); showToastMsg(t('crm.pipeline.unitStatusError', 'Wohnungs-Status konnte nicht gesetzt werden — Phase nicht geändert.')); return }
-            const { error: dErr } = await supabase.from('deals')
-              .update({ unit_id: unit.id, developer: project.developer ?? null })
-              .eq('id', deal.id)
-            if (dErr) { console.error('[Pipeline] Unit-Zuweisung:', dErr.message); showToastMsg(t('crm.pipeline.unitAssignError', 'Wohnung konnte nicht zugewiesen werden.')); return }
-            // Verknüpfung auch lokal merken, sonst öffnet der nächste Wechsel die Auswahl erneut
-            setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, unit_id: unit.id, developer: project.developer ?? null } : d)))
-            await supabase.from('activities').insert({
-              lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
-              content: `🏠 Wohnung verknüpft: ${project.name} · ${unit.unit_number} (${target === 'reservierung' ? 'reserviert' : 'verkauft'})`,
-              created_by: profile?.id ?? null,
-            }).then(({ error: aErr }) => { if (aErr) console.warn('[Pipeline] Aktivität:', aErr.message) })
-            // Phasenwechsel mit verknüpfter Unit fortsetzen (Automation bekommt jetzt
-            // Projekt/Unit/Preis + den richtigen Developer-Empfänger)
-            void changePhase({ ...deal, unit_id: unit.id, developer: project.developer ?? null }, target)
-          }}
-        />
+        <Suspense fallback={null}>
+          <UnitPickerModal
+            leadName={unitPickState.deal.lead ? `${unitPickState.deal.lead.first_name} ${unitPickState.deal.lead.last_name}` : ''}
+            currentLeadId={unitPickState.deal.lead_id}
+            confirmLabel={unitPickState.target === 'reservierung'
+              ? t('unitPickerModal.confirmReserve', 'Reservieren')
+              : t('unitPickerModal.confirmSell', 'Als verkauft übernehmen')}
+            onClose={() => setUnitPickState(null)}
+            onSelect={async (unit, project) => {
+              const { deal, target } = unitPickState
+              setUnitPickState(null)
+              const newStatus = target === 'reservierung' ? 'reserved' : 'sold'
+              const { error: uErr } = await supabase.from('crm_project_units')
+                .update({ status: newStatus }).eq('id', unit.id).neq('status', 'sold')
+              if (uErr) { console.error('[Pipeline] Unit-Status:', uErr.message); showToastMsg(t('crm.pipeline.unitStatusError', 'Wohnungs-Status konnte nicht gesetzt werden — Phase nicht geändert.')); return }
+              const { error: dErr } = await supabase.from('deals')
+                .update({ unit_id: unit.id, developer: project.developer ?? null })
+                .eq('id', deal.id)
+              if (dErr) { console.error('[Pipeline] Unit-Zuweisung:', dErr.message); showToastMsg(t('crm.pipeline.unitAssignError', 'Wohnung konnte nicht zugewiesen werden.')); return }
+              // Verknüpfung auch lokal merken, sonst öffnet der nächste Wechsel die Auswahl erneut
+              setDeals(prev => prev.map(d => (d.id === deal.id ? { ...d, unit_id: unit.id, developer: project.developer ?? null } : d)))
+              await supabase.from('activities').insert({
+                lead_id: deal.lead_id, deal_id: deal.id, type: 'note', direction: 'outbound',
+                content: `🏠 Wohnung verknüpft: ${project.name} · ${unit.unit_number} (${target === 'reservierung' ? 'reserviert' : 'verkauft'})`,
+                created_by: profile?.id ?? null,
+              }).then(({ error: aErr }) => { if (aErr) console.warn('[Pipeline] Aktivität:', aErr.message) })
+              // Phasenwechsel mit verknüpfter Unit fortsetzen (Automation bekommt jetzt
+              // Projekt/Unit/Preis + den richtigen Developer-Empfänger)
+              void changePhase({ ...deal, unit_id: unit.id, developer: project.developer ?? null }, target)
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Grüne Live-Meldung: zeigt nach Phasenwechsel jeden automatischen Schritt */}
@@ -1216,14 +1242,16 @@ export default function Pipeline() {
       )}
 
       {registrationDeal && (
-        <RegistrationModal
-          leadName={registrationDeal.lead
-            ? `${registrationDeal.lead.first_name} ${registrationDeal.lead.last_name}`
-            : t('pipeline.fallbackCustomerName', 'Kunde')}
-          saving={savingReg}
-          onConfirm={handleRegistrationConfirm}
-          onCancel={() => setRegistrationDeal(null)}
-        />
+        <Suspense fallback={null}>
+          <RegistrationModal
+            leadName={registrationDeal.lead
+              ? `${registrationDeal.lead.first_name} ${registrationDeal.lead.last_name}`
+              : t('pipeline.fallbackCustomerName', 'Kunde')}
+            saving={savingReg}
+            onConfirm={handleRegistrationConfirm}
+            onCancel={() => setRegistrationDeal(null)}
+          />
+        </Suspense>
       )}
 
       {holdDeal && (

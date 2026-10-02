@@ -19,9 +19,11 @@ import { bookingUrl } from '../../lib/bookingLink'
 // Postausgang (Freigabe durch Sven).
 
 interface LeadLite { id: string; first_name: string; last_name: string; email: string | null; language?: string | null }
-interface ProjectRow { id: string; name: string; developer: string | null; deck_assets: DeckAssetsCache | null; furniture_cost: number | null; furniture_included: boolean | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null; latitude: number | null; longitude: number | null; completion_date: string | null }
+interface ProjectRow { id: string; name: string; developer: string | null; furniture_cost: number | null; furniture_included: boolean | null; calc_defaults: { furniture_by_bedrooms?: Record<string, number> } | null; latitude: number | null; longitude: number | null; completion_date: string | null }
 interface UnitRow { id: string; unit_number: string; bedrooms: number | null; size_sqm: number | null; terrace_sqm: number | null; plot_sqm: number | null; price_net: number | null; price_net_furnished: number | null; price_gross: number | null; vat_rate: number | null; floor: number | null }
-interface BasketItem { projectId: string; projectName: string; assets: DeckAssetsCache | null; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; furnitureByBedrooms: Record<string, number> | null; lat: number | null; lng: number | null }
+interface BasketItem { projectId: string; projectName: string; unit: UnitRow; furnitureCost: number | null; furnitureIncluded: boolean | null; furnitureByBedrooms: Record<string, number> | null; lat: number | null; lng: number | null }
+// Paket-Eintrag beim Erstellen: deck_assets des Projekts kommen erst in generateAll dazu
+type DeckItem = BasketItem & { assets: DeckAssetsCache | null }
 
 const eur = (n: number | null | undefined) => n != null ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n) : ''
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -167,8 +169,10 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     return token
   }
 
+  // Projektliste ohne deck_assets (Fakten, Bilder, Grundrisse aller Projekte
+  // wären über 600 KB); die holt generateAll nur für die Projekte im Paket.
   useEffect(() => { void (async () => {
-    const { data } = await supabase.from('crm_projects').select('id, name, developer, deck_assets, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date').order('name')
+    const { data } = await supabase.from('crm_projects').select('id, name, developer, furniture_cost, furniture_included, calc_defaults, latitude, longitude, completion_date').order('name')
     setProjects((data ?? []) as ProjectRow[])
   })() }, [])
 
@@ -211,7 +215,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
   const addToBasket = () => {
     if (!project) return
     const adds = units.filter(u => sel.has(u.id) && !basket.some(b => b.unit.id === u.id))
-      .map(u => ({ projectId: project.id, projectName: project.name, assets: project.deck_assets, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included, furnitureByBedrooms: project.calc_defaults?.furniture_by_bedrooms ?? null, lat: project.latitude, lng: project.longitude }))
+      .map(u => ({ projectId: project.id, projectName: project.name, unit: u, furnitureCost: project.furniture_cost, furnitureIncluded: project.furniture_included, furnitureByBedrooms: project.calc_defaults?.furniture_by_bedrooms ?? null, lat: project.latitude, lng: project.longitude }))
     setBasket(b => [...b, ...adds])
     setSel(new Set())
   }
@@ -244,7 +248,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
 
   // EIN Deck pro PROJEKT erzeugen — mit allen gewählten Wohnungen des Projekts (je
   // eigener unit-Block + Preis). Hintergrund + auf neues Token pollen (per Projekt).
-  const genProject = async (items: BasketItem[]): Promise<{ token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null } | null> => {
+  const genProject = async (items: DeckItem[]): Promise<{ token: string; label: string; items: DeckItem[]; quality: 'green' | 'red' | null } | null> => {
     const first = items[0]
     const a = first.assets
     if (!a?.facts) throw new Error(`${first.projectName}: ${t('crm.wizard.noFacts', 'keine Projekt-Fakten — erst „Aus Drive laden" im Projekt')}`)
@@ -320,8 +324,18 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
     try {
       // Korb nach PROJEKT gruppieren → pro Projekt EIN Deck + EINE Berechnung (mit allen
       // gewählten Wohnungen des Projekts). Reihenfolge = erste Auswahl-Reihenfolge.
-      const groupsMap = new Map<string, BasketItem[]>()
-      for (const b of basket) { const g = groupsMap.get(b.projectId); if (g) g.push(b); else groupsMap.set(b.projectId, [b]) }
+      // deck_assets erst hier und nur für die Projekte im Paket laden (frisch,
+      // unabhängig davon, wann die Wohnung ins Paket kam). Die reine Berechnung
+      // braucht sie nicht.
+      const assetsById = new Map<string, DeckAssetsCache | null>()
+      if (!calcOnly) {
+        const ids = [...new Set(basket.map(b => b.projectId))]
+        const { data: assetRows, error: aErr } = await supabase.from('crm_projects').select('id, deck_assets').in('id', ids)
+        if (aErr) throw new Error(aErr.message)
+        for (const r of (assetRows ?? []) as { id: string; deck_assets: DeckAssetsCache | null }[]) assetsById.set(r.id, r.deck_assets)
+      }
+      const groupsMap = new Map<string, DeckItem[]>()
+      for (const b of basket.map(x => ({ ...x, assets: assetsById.get(x.projectId) ?? null }))) { const g = groupsMap.get(b.projectId); if (g) g.push(b); else groupsMap.set(b.projectId, [b]) }
       const groups = [...groupsMap.values()]
       // Möbel-Default-Kette: manuelle Eingabe je Wohnung → Projekt-Standard → globaler Wizard-Wert.
       const buildCalcItem = (it: BasketItem): CalcItem => {
@@ -444,7 +458,7 @@ export default function DeckWizard({ lead, onClose, onDone }: { lead: LeadLite; 
           if (tok) compareLink = `${window.location.origin}/rechnung/${tok}`
         }
       }
-      const links: { token: string; label: string; items: BasketItem[]; quality: 'green' | 'red' | null }[] = []
+      const links: { token: string; label: string; items: DeckItem[]; quality: 'green' | 'red' | null }[] = []
       // Scheitert ein Projekt, laufen die anderen trotzdem durch; die Ausfaelle
       // stehen am Ende in der Meldung statt den ganzen Lauf zu kippen.
       const gescheitert: string[] = []
