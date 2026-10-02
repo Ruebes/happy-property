@@ -3,13 +3,11 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { useAuth } from '../../../lib/auth'
 import type { Deal } from '../../../lib/crmTypes'
 import { PHASE_ICONS } from '../../../lib/crmTypes'
 
 export default function Archived() {
   const { t } = useTranslation()
-  useAuth()
 
   const [deals, setDeals] = useState<Deal[]>([])
   const [loading, setLoading] = useState(true)

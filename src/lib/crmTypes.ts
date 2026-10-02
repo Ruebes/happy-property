@@ -145,13 +145,6 @@ export const PHASE_ICONS: Record<DealPhase, string> = {
   archiviert:         '📦',
 }
 
-export const SOURCE_COLORS: Record<LeadSource, string> = {
-  meta:       'bg-blue-100 text-blue-700',
-  google:     'bg-orange-100 text-orange-700',
-  empfehlung: 'bg-green-100 text-green-700',
-  sonstiges:  'bg-gray-100 text-gray-700',
-}
-
 // Werbekanal aus utm_source ableiten. Meta-Anzeigen liefern via {{site_source_name}}
 // z.B. fb/ig/an/msg; eigene UTM-Setups eher "facebook"/"instagram"/"google".
 // Gibt ein menschenlesbares Label zurück (oder den Rohwert), null wenn leer.
