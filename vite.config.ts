@@ -87,6 +87,9 @@ export default defineConfig({
         // dürfen niemals aus dem Cache kommen (würde Login-Loops und veraltete
         // Daten verursachen).
         globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,woff2}'],
+        // Statische Einzelseiten unter public/ (seo/, guide/) gehören nicht zur
+        // App und werden nicht vorab in jeden Browser geladen.
+        globIgnores: ['seo/**', 'guide/**'],
         // Supabase explizit ausschließen — und ALLE öffentlichen Kunden-/Token-
         // Seiten: die dürfen nie aus dem Service-Worker-Cache kommen, sonst
         // sehen Kunden nach einem Deploy die alte Version, bis der SW irgendwann
@@ -98,6 +101,9 @@ export default defineConfig({
           // Vercel-Rewrites auf Edge Functions (Zypern-Report-PDF, Kalender-Feed):
           // der SW darf hier nie index.html ausliefern.
           /^\/(zypern-report|cal)(\/|$)/,
+          // Statische Seiten aus public/seo und public/guide (nicht mehr im
+          // Precache): direkt vom Netz holen, nie index.html dafür ausliefern.
+          /^\/(seo|guide)\//,
         ],
         runtimeCaching: [
           {
