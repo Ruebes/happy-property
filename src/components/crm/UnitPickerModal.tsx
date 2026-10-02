@@ -68,9 +68,12 @@ export default function UnitPickerModal({ leadName, preselectedProjectId, curren
     setLoading(true)
     try {
       const [{ data }, { data: dealRows, error: dealErr }] = await Promise.all([
+        // Vom Projekt nur, was Modal und Aufrufer lesen (Pipeline: developer,
+        // LeadDetail: name/location, Newsletter: id/name). deck_assets & Co.
+        // waren der Großteil der Datenmenge. Die Wohnungen bleiben vollständig.
         supabase
           .from('crm_projects')
-          .select('*, units:crm_project_units(*, verwalter:verwalter_id(id,full_name))')
+          .select('id, name, location, developer, units:crm_project_units(*, verwalter:verwalter_id(id,full_name))')
           .order('name'),
         // Aktive Deals mit verknüpfter Einheit → "vergeben an"
         supabase
