@@ -385,7 +385,7 @@ export default function CrmDashboard() {
                   return (
                     <div key={phase} className="flex items-center gap-3">
                       <span className="text-lg w-6 text-center">{PHASE_ICONS[phase]}</span>
-                      <span className="text-sm text-gray-600 w-36 truncate capitalize">{phase.replace(/_/g, ' ')}</span>
+                      <span className="text-sm text-gray-600 w-36 truncate">{t(`crm.phases.${phase}`, phase)}</span>
                       <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden"><div className="h-4 rounded-full transition-all" style={{ width: `${widthPct}%`, backgroundColor: '#ff795d' }} /></div>
                       <span className="text-sm font-semibold text-gray-700 w-6 text-right">{count}</span>
                     </div>)
