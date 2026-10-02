@@ -134,6 +134,8 @@ export default function LeadDetail() {
   }>>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
+  // Erste Aufgaben-Ladung fertig? Bis dahin Spinner statt „Keine offenen Aufgaben".
+  const [tasksLoaded, setTasksLoaded] = useState(false)
   const [bizContacts, setBizContacts] = useState<BizContactRow[]>([])
   const [templates, setTemplates] = useState<EmailTemplate[]>([])
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
@@ -189,6 +191,9 @@ export default function LeadDetail() {
     setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
   }
   const [loading, setLoading] = useState(true)
+  // Zweite Ladewelle (Termine, Geplant, Portal-Logins, Wohnungs-Dateien): blockiert
+  // die Seite nicht, ihre Reiter zeigen bis dahin einen Spinner statt leerer Listen.
+  const [secondaryLoading, setSecondaryLoading] = useState(true)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -487,7 +492,7 @@ export default function LeadDetail() {
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!id) return
-    if (!silent) setLoading(true)
+    if (!silent) { setLoading(true); setSecondaryLoading(true) }
     try {
       const [
         { data: leadData },
@@ -528,7 +533,7 @@ export default function LeadDetail() {
       const dealResult = dealData as unknown as Deal | null
       setDeal(dealResult)
       setActivities((actData ?? []) as unknown as Activity[])
-      void loadLeadTasks()
+      void loadLeadTasks().finally(() => setTasksLoaded(true))
       setTemplates((tplData ?? []) as unknown as EmailTemplate[])
       setStaff((staffData ?? []) as { id: string; full_name: string }[])
 
@@ -544,15 +549,13 @@ export default function LeadDetail() {
       }
 
       // ── Batch 2: alle sekundären Queries parallel ─────────────────────────────
-      const [
-        { data: dpData },
-        { data: apptData },
-        { data: schedData },
-        { data: loginData },
-        { data: docsData },
-        { data: unitImgData },
-        { data: wonData },
-      ] = await Promise.all([
+      // Alle Abfragen starten wie bisher gleichzeitig. Der Seiten-Spinner wartet
+      // aber nur noch auf das, was Kopf und erster Reiter brauchen: die Projekte
+      // des Deals (Übersicht, Provisions-Nachricht, Platzhalter, Portal-Abgleich
+      // beim Speichern der Wohnung) bzw. ohne Deal die archivierten Käufe.
+      // Termine, Geplant, Portal-Logins und Wohnungs-Dateien kommen danach; ihre
+      // Reiter zeigen so lange einen eigenen Spinner (secondaryLoading).
+      const coreReq = Promise.all([
         // deal_projects
         dealResult?.id
           ? supabase.from('deal_projects')
@@ -560,6 +563,18 @@ export default function LeadDetail() {
               .eq('deal_id', dealResult.id)
               .order('created_at')
           : Promise.resolve({ data: [] }),
+        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
+        dealResult
+          ? Promise.resolve({ data: [] })
+          : supabase.from('deals')
+              .select('id, property:properties(id, project_name, unit_number)')
+              .eq('lead_id', id)
+              .eq('phase', 'archiviert')
+              .eq('archived_from_phase', 'provision_erhalten')
+              .not('unit_id', 'is', null)
+              .order('created_at', { ascending: false }),
+      ])
+      const restReq = Promise.all([
         // appointments
         supabase.from('crm_appointments')
           .select('*')
@@ -592,31 +607,32 @@ export default function LeadDetail() {
               .eq('id', dealResult.unit_id)
               .maybeSingle()
           : Promise.resolve({ data: null }),
-        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
-        dealResult
-          ? Promise.resolve({ data: [] })
-          : supabase.from('deals')
-              .select('id, property:properties(id, project_name, unit_number)')
-              .eq('lead_id', id)
-              .eq('phase', 'archiviert')
-              .eq('archived_from_phase', 'provision_erhalten')
-              .not('unit_id', 'is', null)
-              .order('created_at', { ascending: false }),
       ])
 
+      const [{ data: dpData }, { data: wonData }] = await coreReq
       const dp = (dpData ?? []) as unknown as DealProject[]
       dealProjectsRef.current = dp
       setDealProjects(dp)
+      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
+      setLoading(false)   // Kern ist da: Seite zeigen, der Rest lädt weiter
+
+      const [
+        { data: apptData },
+        { data: schedData },
+        { data: loginData },
+        { data: docsData },
+        { data: unitImgData },
+      ] = await restReq
       setAppointments((apptData ?? []) as unknown as CrmAppointment[])
       setScheduledMessages((schedData ?? []) as unknown as ScheduledMessage[])
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
       setUnitDocs((docsData ?? []) as CrmUnitDocument[])
       setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
-      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
       setLoading(false)
+      setSecondaryLoading(false)
     }
   }, [id])
 
@@ -2952,6 +2968,16 @@ export default function LeadDetail() {
               ))}
             </div>
 
+            {/* Zweite Ladewelle läuft noch: Termine, Geplant, Portal und Wohnung zeigen bis
+                dahin einen Spinner statt leerer Listen. Sonst lädt z.B. „Manuell auslösen"
+                zu doppelten Nachrichten ein, oder ein Bild-Upload überschreibt die noch
+                nicht geladene Bilderliste der Wohnung. */}
+            {secondaryLoading && (activeTab === 'appointments' || activeTab === 'scheduled' || activeTab === 'portal' || (activeTab === 'wohnung' && !!deal?.unit_id)) && (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-6 h-6 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+
             {/* ── Tab: Overview ─────────────────────────────────── */}
             {activeTab === 'overview' && (
               <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -3893,8 +3919,12 @@ export default function LeadDetail() {
             {/* ── Tab: Aufgaben ─────────────────────────────────── */}
             {activeTab === 'tasks' && (
               <div className="p-6">
-                {/* Task list (echte crm_tasks) */}
-                {leadTasks.length === 0 ? (
+                {/* Task list (echte crm_tasks); bis zur ersten Ladung ein Spinner statt „Keine offenen Aufgaben" */}
+                {!tasksLoaded ? (
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-6 h-6 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : leadTasks.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-6">
                     {t('crm.noTasks', 'Keine offenen Aufgaben')}
                   </p>
@@ -4008,7 +4038,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Termine ──────────────────────────────────── */}
-            {activeTab === 'appointments' && (
+            {activeTab === 'appointments' && !secondaryLoading && (
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-gray-900">
@@ -4167,7 +4197,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Geplante Nachrichten ─────────────────────────────── */}
-            {activeTab === 'scheduled' && (
+            {activeTab === 'scheduled' && !secondaryLoading && (
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -4274,7 +4304,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Wohnung (Dokumente & Bilder) ───────────────────────── */}
-            {activeTab === 'wohnung' && deal?.unit_id && (
+            {activeTab === 'wohnung' && deal?.unit_id && !secondaryLoading && (
               <div className="p-6 space-y-8">
 
                 {/* ── Wohnung-Kopf + Entfernen ── */}
@@ -4449,7 +4479,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Portal ──────────────────────────────────────────────── */}
-            {activeTab === 'portal' && (
+            {activeTab === 'portal' && !secondaryLoading && (
               <div className="p-6 space-y-6">
                 {/* Status-Karte */}
                 <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
