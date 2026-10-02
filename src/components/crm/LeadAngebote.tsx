@@ -27,6 +27,9 @@ const DECK_BASE = '#111827'
 const DECK_CYCLE = ['#7c3aed', '#0ea5e9', '#e11d48', '#d97706', '#0d9488', '#9333ea']
 const deckColor = (rev: number, approved: boolean) =>
   approved ? '#16a34a' : rev <= 0 ? DECK_BASE : DECK_CYCLE[(rev - 1) % DECK_CYCLE.length]
+// Status-Abfrage laufender Deck-Bearbeitungen: Abstände und Höchstdauer.
+const DECK_POLL_STEPS_MS = [4000, 8000, 15000]
+const DECK_POLL_MAX_MS = 10 * 60_000
 
 export default function LeadAngebote({ leadId }: { leadId: string }) {
   const { t } = useTranslation()
@@ -100,14 +103,48 @@ export default function LeadAngebote({ leadId }: { leadId: string }) {
   // Deck-Status laden, sobald die Tokens bekannt sind.
   useEffect(() => { if (allTokens.length) void fetchDeckMeta(allTokens) }, [allTokens, fetchDeckMeta])
 
-  // Solange irgendein Deck im Hintergrund bearbeitet wird: alle 4s nachfragen,
-  // bis refining=false (dann ist die neue revision/Farbe da).
-  const anyRefining = Object.values(deckMeta).some(m => m?.refining)
+  // Solange irgendein Deck im Hintergrund bearbeitet wird: nachfragen, bis
+  // refining=false (dann ist die neue revision/Farbe da). Gefragt wird nur nach
+  // den laufenden Decks und nur nach token+refining; ist eines fertig, wird es
+  // einmal komplett nachgeladen (quality_report kommt im selben Update). Abstand
+  // 4 s, 8 s, dann 15 s; Pause im Hintergrund-Tab, sofortige Prüfung bei
+  // Rückkehr; nach 10 Minuten Schluss.
+  const refiningKey = Object.keys(deckMeta).filter(tok => deckMeta[tok]?.refining).sort().join(',')
+  const pollRefining = useCallback(async (tokens: string[]) => {
+    const { data } = await supabase.from('sales_decks').select('token, refining').in('token', tokens)
+    const done = ((data ?? []) as Array<{ token: string; refining: boolean | null }>).filter(r => !r.refining).map(r => r.token)
+    if (done.length) await fetchDeckMeta(done)
+  }, [fetchDeckMeta])
   useEffect(() => {
-    if (!anyRefining) return
-    const id = setInterval(() => { void fetchDeckMeta(allTokens) }, 4000)
-    return () => clearInterval(id)
-  }, [anyRefining, allTokens, fetchDeckMeta])
+    if (!refiningKey) return
+    const tokens = refiningKey.split(',')
+    let alive = true
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let step = 0
+    let since = Date.now()
+    const schedule = () => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      if (!alive || document.hidden || Date.now() - since >= DECK_POLL_MAX_MS) return
+      timer = setTimeout(() => {
+        timer = null
+        if (document.hidden) return
+        void pollRefining(tokens).then(() => { step++; schedule() })
+      }, DECK_POLL_STEPS_MS[Math.min(step, DECK_POLL_STEPS_MS.length - 1)])
+    }
+    const onVisibility = () => {
+      if (document.hidden) { if (timer) clearTimeout(timer); timer = null; return }
+      if (Date.now() - since >= DECK_POLL_MAX_MS) { since = Date.now(); step = 0 }
+      void pollRefining(tokens).then(schedule)
+    }
+    schedule()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      alive = false
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [refiningKey, pollRefining])
 
   // Vom Deck-Chat: Hintergrund-Bearbeitung gestartet → sofort als „läuft" markieren.
   const onRefineStarted = (token: string) => {
