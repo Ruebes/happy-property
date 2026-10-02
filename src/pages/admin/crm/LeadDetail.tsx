@@ -2308,7 +2308,7 @@ export default function LeadDetail() {
                   {/* Phase badge */}
                   {deal && (
                     <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-                      {PHASE_ICONS[deal.phase]} {deal.phase}
+                      {PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}
                     </span>
                   )}
                   {/* Assignee */}
@@ -2397,10 +2397,13 @@ export default function LeadDetail() {
           {deal && (
             <div className="bg-white rounded-2xl shadow p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                {t('crm.phaseActions', 'Phasen-Aktionen')} — {PHASE_ICONS[deal.phase]} {deal.phase}
+                {t('crm.phaseActions', 'Phasen-Aktionen')} — {PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}
               </h2>
 
-              {/* Pipeline phase selector */}
+              {/* Pipeline phase selector. Bewusst nicht DEAL_PHASES: Reservierung, Hold und
+                  Kontakt übergeben brauchen die Dialoge der Pipeline (Wohnungsstatus,
+                  hold_contact, Übergabe-Notiz und Partner-Nachricht), ein einfacher
+                  Phasenwechsel von hier würde diese Schritte überspringen. */}
               <div className="flex flex-wrap gap-2 mb-4">
                 {(['erstkontakt','termin_gebucht','no_show','finanzierung_de','finanzierung_cy','registrierung','immobilienauswahl','kaufvertrag','anzahlung','provision_erhalten','deal_verloren'] as DealPhase[]).map((p) => (
                   <button
@@ -2413,7 +2416,7 @@ export default function LeadDetail() {
                         : 'border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500'
                     }`}
                   >
-                    {PHASE_ICONS[p]} {p}
+                    {PHASE_ICONS[p]} {t(`crm.phases.${p}`, p)}
                   </button>
                 ))}
               </div>
@@ -3168,7 +3171,7 @@ export default function LeadDetail() {
                       <dl className="space-y-2 text-sm">
                         <div className="flex gap-2">
                           <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.phase', 'Phase')}</dt>
-                          <dd className="text-gray-900">{PHASE_ICONS[deal.phase]} {deal.phase}</dd>
+                          <dd className="text-gray-900">{PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}</dd>
                         </div>
                         {deal.property && (
                           <div className="flex gap-2">
