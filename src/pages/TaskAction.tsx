@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
+import { loadLanguage } from '../lib/i18n'
 
 // ── Öffentliche Aufgaben-Seite (per Token, kein Login) ───────────────────────
 // Aufgerufen über den Link aus Erinnerungs-Mail/WhatsApp. Der/die Zuständige kann
@@ -34,7 +35,9 @@ export default function TaskAction() {
       const { data, error } = await supabase.functions.invoke('task-action', { body: { token, action: 'info' } })
       if (error || !data || data.error) { setErr(tHook('taskAction.invalidLink', 'Dieser Link ist ungültig oder abgelaufen.')); return }
       const d = data as Info
-      setLang(d.lang === 'en' ? 'en' : 'de')
+      const l = d.lang === 'en' ? 'en' : 'de'
+      await loadLanguage(l)   // eigener Chunk: erst laden, sonst liefert getFixedT den deutschen Fallback
+      setLang(l)
       setInfo(d)
     } catch { setErr(tHook('taskAction.somethingWrong', 'Etwas ist schiefgelaufen.')) } finally { setLoading(false) }
   }, [token, tHook])

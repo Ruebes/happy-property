@@ -7,6 +7,13 @@ import type { CrmAppointment, AppointmentType } from '../../lib/crmTypes'
 import { DECK_LOGO, DECK_PHOTO } from '../../lib/deckTypes'
 import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BERLIN, APPT_TZ_NICOSIA, type ApptTz } from '../../lib/tz'
 import { fnErrorMessage, isPermanentMailRejection } from '../../lib/fnError'
+import { fixedT, loadLanguage } from '../../lib/i18n'
+
+// Englisch ist ein eigener Chunk: schon mit diesem Modul laden (also zusammen mit
+// LeadDetail/Kalender), nicht erst beim Öffnen. Sonst könnte ein Deploy zwischen
+// Seitenaufruf und Klick auf „Termin anlegen" den alten Chunk löschen, und der
+// Klick würde die ganze Seite neu laden statt das Fenster zu öffnen.
+void loadLanguage('en')
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -236,7 +243,7 @@ export default function AppointmentModal({
   onClose,
   onCreated,
 }: Props) {
-  const { t, i18n }  = useTranslation()
+  const { t }  = useTranslation()
   const { profile }  = useAuth()
   const isEdit       = !!appointment
 
@@ -872,7 +879,7 @@ export default function AppointmentModal({
           try {
             // WhatsApp-Text in der SPRACHE DES EMPFÄNGERS bauen (nicht in Svens
             // App-Sprache). getFixedT liefert die Übersetzung fix zur Empfängersprache.
-            const tt = i18n.getFixedT(tgt.lang)
+            const tt = await fixedT(tgt.lang)
             const localeL = tgt.lang === 'en' ? 'en-GB' : 'de-DE'
             const dateStrL = new Date(start_time).toLocaleDateString(localeL, { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', timeZone: dispTz })
             const tzHintL = apptType === 'inperson' && tz === APPT_TZ_NICOSIA ? '' : ' ' + (tz === APPT_TZ_NICOSIA ? tt('crm.appt.cyprusTimeParen', '(Zypern-Zeit)') : tt('crm.appt.germanTimeParen', '(deutsche Zeit)'))
