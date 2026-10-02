@@ -32,7 +32,7 @@ import type { Deal, DealPhase } from '../../../lib/crmTypes'
 ```
 
 Relativ-Pfade beachten: Seiten in `src/pages/admin/crm/` → `../../../`.
-Nie aus `lib/supabaseAdmin` importieren (service role, nur Edge).
+Im Frontend gibt es keinen Admin-Client (service role nur in Edge Functions).
 
 ## Struktur einer Seite
 
@@ -69,7 +69,7 @@ useEffect(() => { fetchX() }, [fetchX])
 
 ## Harte Regeln (aus dem bestehenden Code abgeleitet)
 
-1. **Nur `supabase` aus `lib/supabase.ts`.** Niemals `supabaseAdmin`,
+1. **Nur `supabase` aus `lib/supabase.ts`.** Kein service-role-Key,
    niemals `createClient` in einer Seite/Komponente.
 2. **i18n Pflicht:** Jeder sichtbare String über
    `t('namespace.key', 'Deutscher Fallback')`. Keine hartkodierten

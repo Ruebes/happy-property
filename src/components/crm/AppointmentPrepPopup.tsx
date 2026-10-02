@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { useAuth } from '../../lib/auth'
 import type { CrmAppointment } from '../../lib/crmTypes'
 
 // ── AppointmentPrepPopup ──────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ function addShown(id: string): void {
 // Zeitfenster ist nur 2 Minuten breit, ein verpasster Termin käme sonst bei
 // der Rückkehr nicht mehr.
 let current: CrmAppointment | null = null
+let ownerId = ''          // Profil, für das `current` gilt (Abmelden/Benutzerwechsel leert es)
 let lastCheckAt = 0
 let checking = false
 const listeners = new Set<() => void>()
@@ -64,8 +66,20 @@ async function checkUpcoming(): Promise<void> {
 
 export default function AppointmentPrepPopup() {
   const { t, i18n } = useTranslation()
+  const { profile } = useAuth()
   const appt = useSyncExternalStore(subscribe, getCurrent)
   const [note, setNote]   = useState('')
+
+  // Stand gehört zum angemeldeten Profil: nach Abmelden oder Benutzerwechsel
+  // im selben Tab kein Popup des vorherigen Nutzers zeigen.
+  useEffect(() => {
+    const id = profile?.id ?? ''
+    if (id !== ownerId) {
+      ownerId = id
+      lastCheckAt = 0
+      if (current) setCurrent(null)
+    }
+  }, [profile?.id])
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [rating, setRating] = useState<'gut' | 'schlecht' | 'no_show' | null>(null)

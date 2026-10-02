@@ -9,8 +9,9 @@ import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BER
 import { fnErrorMessage, isPermanentMailRejection } from '../../lib/fnError'
 import { fixedT, loadLanguage } from '../../lib/i18n'
 
-// Englisch ist ein eigener Chunk: schon mit diesem Modul laden (also zusammen mit
-// LeadDetail/Kalender), nicht erst beim Öffnen. Sonst könnte ein Deploy zwischen
+// Englisch ist ein eigener Chunk: schon mit diesem Modul laden (beim Vorladen der
+// Fenster kurz nach dem Öffnen von Kundenakte/Pipeline bzw. mit dem Kalender),
+// nicht erst beim Öffnen des Fensters. Sonst könnte ein Deploy zwischen
 // Seitenaufruf und Klick auf „Termin anlegen" den alten Chunk löschen, und der
 // Klick würde die ganze Seite neu laden statt das Fenster zu öffnen.
 void loadLanguage('en')

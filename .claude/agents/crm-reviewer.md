@@ -4,8 +4,8 @@ description: >
   Reviewt Codeänderungen im Happy Property CRM mit Fokus auf die zwei
   historischen Bruchstellen: (1) Auth/Session-Handling in src/lib/auth.tsx,
   insbesondere onAuthStateChange-Logik, und (2) Verwechslung von
-  src/lib/supabase.ts (anon, Browser) mit src/lib/supabaseAdmin.ts
-  (service role, nur Server/Edge). Nach jeder größeren Codeänderung
+  src/lib/supabase.ts (anon, Browser) mit dem service-role-Key
+  (nur Edge Functions, im Frontend gibt es keinen Admin-Client). Nach jeder größeren Codeänderung
   automatisch aufrufen (mehrere geänderte Dateien, neue Komponente,
   Änderungen an auth/Supabase-Imports/Edge Functions). Gibt eine kurze,
   priorisierte Befundliste zurück, kein Fließtext.
@@ -30,12 +30,12 @@ bekannte Muster zusätzlich zu den festen Regeln an.
 ## Feste Prüfregeln
 
 ### A — Supabase-Client-Trennung (höchste Priorität)
-- `src/lib/supabaseAdmin.ts` (service role) darf **niemals** in einer
-  Datei importiert werden, die im Browser gerendert wird (alles unter
-  `src/` außer reinem Server-/Edge-Code). Treffer = CRITICAL.
+- Im Frontend gibt es keinen Admin-Client: kein service-role-Key in
+  `src/` und in keiner `VITE_`-Variable (wird ins Browser-Bundle
+  eingebettet). Treffer = CRITICAL.
 - Frontend-Code importiert den Client **ausschließlich** aus
   `src/lib/supabase.ts`. Kein `createClient(` außerhalb von
-  `supabase.ts` / `supabaseAdmin.ts`. Treffer = CRITICAL.
+  `supabase.ts`. Treffer = CRITICAL.
 - Service-Role-Key / `SUPABASE_SERVICE_ROLE` darf nicht in
   Frontend-Code referenziert werden. Treffer = CRITICAL.
 

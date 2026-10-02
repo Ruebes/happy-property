@@ -51,6 +51,9 @@ const MODAL_LOADERS = [
   loadDeckWizard, loadRechnerWizard, loadStrategySimulator, loadPartnerShareModal, loadLeadQuickSend,
 ]
 const MODAL_PRELOAD_MS = 1500
+// Einmal je Seitenaufruf, auch wenn die Akte schneller wieder verlassen wird
+// (gleiches Muster wie in Pipeline.tsx).
+let modalPreloadStarted = false
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -93,10 +96,11 @@ export default function LeadDetail() {
 
   // Fenster-Chunks im Hintergrund vorladen (siehe MODAL_LOADERS)
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    if (modalPreloadStarted) return
+    modalPreloadStarted = true
+    window.setTimeout(() => {
       for (const load of MODAL_LOADERS) void load().catch(() => { /* beim Öffnen lädt lazyWithReload erneut */ })
     }, MODAL_PRELOAD_MS)
-    return () => window.clearTimeout(timer)
   }, [])
 
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────

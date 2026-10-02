@@ -20,7 +20,7 @@ Ohne diesen Teil läuft nichts. Wird nicht separat verkauft.
   `Pipeline`, `AllLeads`, `LeadDetail`, `Archived`, `Tasks`, `Calendar`,
   `Postausgang`, `Statistics`, `StaffHome`, `admin/Users`,
   `Settings` inkl. `settings/StageMessages`, `settings/AutomationRules`,
-  `settings/AdhocMessages`, `settings/WhatsappTemplates`, `settings/AiAgent`,
+  `settings/WhatsappTemplates`, `settings/AiAgent`,
   `settings/Connectors`, `settings/Documents`, `settings/Contacts`
 - Komponenten: `DashboardLayout`, `ProtectedRoute`, `AppointmentModal`,
   `AppointmentPrepPopup`, `TaskNotifications`, `RecipientPicker`, `LeadQuickSend`,
