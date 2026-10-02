@@ -9,6 +9,12 @@ import { apptTzOf, defaultApptTz, zonedToIso, isoToZoned, fmtTimeIn, APPT_TZ_BER
 import { fnErrorMessage, isPermanentMailRejection } from '../../lib/fnError'
 import { fixedT, loadLanguage } from '../../lib/i18n'
 
+// Englisch ist ein eigener Chunk: schon mit diesem Modul laden (also zusammen mit
+// LeadDetail/Kalender), nicht erst beim Öffnen. Sonst könnte ein Deploy zwischen
+// Seitenaufruf und Klick auf „Termin anlegen" den alten Chunk löschen, und der
+// Klick würde die ganze Seite neu laden statt das Fenster zu öffnen.
+void loadLanguage('en')
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -238,9 +244,6 @@ export default function AppointmentModal({
   onCreated,
 }: Props) {
   const { t }  = useTranslation()
-  // Englisch ist ein eigener Chunk: schon beim Öffnen laden, damit die
-  // WhatsApp-Einladung beim Speichern nicht erst nachladen muss.
-  useEffect(() => { void loadLanguage('en') }, [])
   const { profile }  = useAuth()
   const isEdit       = !!appointment
 
