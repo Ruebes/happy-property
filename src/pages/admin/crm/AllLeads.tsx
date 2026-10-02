@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { useAuth } from '../../../lib/auth'
 import type { Lead } from '../../../lib/crmTypes'
 import { SOURCE_BADGE_STYLE, adChannelLabel } from '../../../lib/crmTypes'
 import { useLeadSources, buildSourceOptions, sourceDisplayLabel, ADD_SOURCE_VALUE } from '../../../lib/leadSources'
@@ -60,7 +59,6 @@ const getStatusLabel = (t: TFunction, status: string): string => {
 export default function AllLeads() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  useAuth()
 
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(true)

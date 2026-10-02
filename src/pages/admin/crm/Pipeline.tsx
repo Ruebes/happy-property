@@ -13,7 +13,6 @@ import {
   channelBadgeFor,
   PHASE_WEBHOOK_EVENTS,
 } from '../../../lib/crmTypes'
-import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
 import DeckWizard from '../../../components/crm/DeckWizard'
 import RegistrationModal from '../../../components/crm/RegistrationModal'
 import DepositInvoiceModal from '../../../components/crm/DepositInvoiceModal'
@@ -543,7 +542,6 @@ export default function Pipeline() {
   const [showLeadModal, setShowLeadModal] = useState(false)
   const [showDealModal, setShowDealModal] = useState(false)
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
-  const [projectModalDeal, setProjectModalDeal] = useState<Deal | null>(null)
   const [deckDeal, setDeckDeal] = useState<Deal | null>(null)   // Angebot-Wizard (Deck + optional Berechnung + Mail)
   const [registrationDeal, setRegistrationDeal] = useState<Deal | null>(null)
   // Wohnungs-Auswahl beim Zug auf Reservierung/Kaufvertrag (wenn keine Unit verknüpft)
@@ -1138,18 +1136,6 @@ export default function Pipeline() {
         <DealModal
           onClose={() => setShowDealModal(false)}
           onSaved={fetchDeals}
-        />
-      )}
-
-      {/* Projekt-Auswahl Modal (öffnet automatisch bei immobilienauswahl) */}
-      {projectModalDeal && (
-        <ProjectSelectionModal
-          dealId={projectModalDeal.id}
-          leadName={projectModalDeal.lead
-            ? `${projectModalDeal.lead.first_name} ${projectModalDeal.lead.last_name}`
-            : t('pipeline.fallbackCustomerName', 'Kunde')}
-          onClose={() => setProjectModalDeal(null)}
-          onSaved={() => { setProjectModalDeal(null); fetchDeals() }}
         />
       )}
 
