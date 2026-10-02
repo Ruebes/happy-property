@@ -1309,25 +1309,40 @@ export default function SocialStudio() {
   const [newTopicIcon, setNewTopicIcon] = useState('✨')
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 6000) }
 
+  // Projekte (Bildergalerie im Editor) und Newsletter-Termine ändert diese Seite
+  // nicht: nur beim ersten Laden holen, nicht bei jedem Neuladen der Posts.
+  // Kam dabei ein Fehler, versucht es das nächste Neuladen noch einmal.
+  const staticLoaded = useRef(false)
+  // Nach dem Schließen des Editors lädt die Seite ruhig neu. Bis die frischen
+  // Posts da sind, keinen Post öffnen: sonst startet der Editor mit dem alten
+  // Stand und schreibt ihn beim nächsten Speichern zurück.
+  const [refreshing, setRefreshing] = useState(false)
+
   const fetchAll = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
     try {
-      const [{ data: ps }, { data: ts }, { data: prs }] = await Promise.all([
+      const withStatic = !staticLoaded.current
+      const [{ data: ps }, { data: ts }, prsRes] = await Promise.all([
         supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(300),
         supabase.from('social_topics').select('*').order('sort'),
-        supabase.from('crm_projects').select('id, name, deck_assets').order('name'),
+        // Vom Bilder-Blob deck_assets braucht der Editor nur renders und gallery
+        withStatic ? supabase.from('crm_projects').select('id, name, renders:deck_assets->renders, gallery:deck_assets->gallery').order('name') : null,
       ])
       setPosts((ps as unknown as SocialPost[]) ?? [])
       const tps = (ts as unknown as Topic[]) ?? []
       setTopics(tps)
       setNewTopic(cur => cur || tps[0]?.key || '')
-      setProjects((prs as unknown as ProjectOpt[]) ?? [])
+      if (!prsRes) return
+      const prs = (prsRes.data as unknown as Array<{ id: string; name: string; renders: string[] | null; gallery: string[] | null }> | null) ?? []
+      setProjects(prs.map(p => ({ id: p.id, name: p.name, deck_assets: { renders: p.renders ?? undefined, gallery: p.gallery ?? undefined } })))
       // Newsletter für den Redaktionsplan: Datum = frühester (geplanter) Versand.
-      const { data: camps } = await supabase.from('newsletter_campaigns').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(20)
+      const { data: camps, error: campsErr } = await supabase.from('newsletter_campaigns').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(20)
       const cs = (camps as unknown as Array<{ id: string; title: string; status: string; created_at: string }>) ?? []
       let nl: NlEntry[] = cs.map(c => ({ id: c.id, title: c.title, status: c.status, date: c.status === 'draft' ? null : c.created_at }))
+      let smFailed = false
       if (cs.length) {
-        const { data: sm } = await supabase.from('scheduled_messages').select('campaign_id, scheduled_at').in('campaign_id', cs.map(c => c.id)).order('scheduled_at', { ascending: true }).limit(1000)
+        const { data: sm, error: smErr } = await supabase.from('scheduled_messages').select('campaign_id, scheduled_at').in('campaign_id', cs.map(c => c.id)).order('scheduled_at', { ascending: true }).limit(1000)
+        smFailed = !!smErr
         const firstByCamp = new Map<string, string>()
         for (const m of (sm as Array<{ campaign_id: string; scheduled_at: string }> | null) ?? []) {
           if (m.campaign_id && !firstByCamp.has(m.campaign_id)) firstByCamp.set(m.campaign_id, m.scheduled_at)
@@ -1335,6 +1350,7 @@ export default function SocialStudio() {
         nl = nl.map(n => ({ ...n, date: firstByCamp.get(n.id) ?? n.date }))
       }
       setNewsletters(nl.filter(n => n.date))
+      if (!prsRes.error && !campsErr && !smFailed) staticLoaded.current = true
     } catch (err) {
       console.error('[SocialStudio] fetchAll:', err)
     } finally { setLoading(false) }
@@ -1370,6 +1386,7 @@ export default function SocialStudio() {
   // Wochenplan-Chip → nächster Termin dieser Art an diesem Wochentag: fertiger Post
   // in die Vorschau, sonst Platzhalter-Info.
   const openSlot = (kind: string, dow: number, li?: boolean) => {
+    if (refreshing) return
     const next = (ap?.upcoming ?? []).find(u => u.kind === kind && apDow(u.ymd) === dow)
     if (!next) { showToast(t('crm.social.apNoNext', 'Kein kommender Termin gefunden.')); return }
     const post = kind === 'youtube'
@@ -1526,7 +1543,7 @@ export default function SocialStudio() {
           <InteractionsSection />
 
           <PlanCalendar posts={livePosts} newsletters={newsletters} topics={topics} apPaused={!!ap && !ap.enabled}
-            onOpenPost={p => setPreviewPost(p)} onCreateForDay={d => void createForDay(d)}
+            onOpenPost={p => { if (!refreshing) setPreviewPost(p) }} onCreateForDay={d => void createForDay(d)}
             placeholders={placeholders} onOpenPlaceholder={ph => setPlaceholder(ph)} />
         </>)}
 
@@ -1552,7 +1569,7 @@ export default function SocialStudio() {
               const st = STATUS_BADGE[p.status] ?? STATUS_BADGE.entwurf
               const nImgs = (Array.isArray(p.image_urls) && p.image_urls.length) || (p.image_url ? 1 : 0)
               return (
-                <div key={p.id} onClick={() => setOpenPost(p)}
+                <div key={p.id} onClick={() => { if (!refreshing) setOpenPost(p) }}
                   className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 cursor-pointer hover:border-orange-200 transition-colors">
                   <div className="flex items-start gap-3">
                     {p.image_url
@@ -1590,7 +1607,7 @@ export default function SocialStudio() {
           <PostPreview content={pp.content ?? ''} images={imgs} video={pp.video_url} format={pp.format} platforms={pp.platforms}
             heading={heading} onClose={() => setPreviewPost(null)}
             onDelete={pp.status !== 'gepostet' ? () => { setPreviewPost(null); void deletePost(pp) } : undefined}
-            onEdit={() => { setPreviewPost(null); setOpenPost(pp) }} />
+            onEdit={() => { if (refreshing) return; setPreviewPost(null); setOpenPost(pp) }} />
         )
       })()}
       {placeholder && <PlaceholderModal ph={placeholder} st={ap} onClose={() => setPlaceholder(null)}
@@ -1598,7 +1615,7 @@ export default function SocialStudio() {
           setPlaceholder(null); showToast(msg)
           for (const ms of [20000, 60000, 120000, 200000]) setTimeout(() => void fetchAll(true), ms)
         }} />}
-      {openPost && <PostEditor post={openPost} allPosts={livePosts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); void fetchAll() }} />}
+      {openPost && <PostEditor post={openPost} allPosts={livePosts} topics={topics} projects={projects} onClose={() => { setOpenPost(null); setRefreshing(true); void fetchAll(true).finally(() => setRefreshing(false)) }} />}
     </DashboardLayout>
   )
 }

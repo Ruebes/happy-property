@@ -377,16 +377,34 @@ export default function AdsManager() {
     setLoading(true)
     try {
       const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10)
-      const [{ data: cat, error: e1 }, { data: ins, error: e2 }] = await Promise.all([
+      // Die fünf Abfragen hängen nicht voneinander ab und laufen gleichzeitig.
+      // Ausgewertet wird danach in derselben Reihenfolge und mit derselben
+      // Fehlerbehandlung wie vorher (prep/settings still, ad_actions wirft).
+      const [
+        { data: cat, error: e1 }, { data: ins, error: e2 },
+        { data: prep }, { data: st }, { data: act, error: eAct },
+      ] = await Promise.all([
         supabase.from('ad_catalog').select('ad_id, campaign_id, campaign_name, adset_id, adset_name, ad_name, status, thumbnail_url').eq('platform', segment),
         supabase.from('ad_insights_daily').select('day, ad_id, spend_eur, impressions, reach, link_clicks, outbound_clicks, landing_page_views, platform_leads, video_3s').eq('platform', segment).gte('day', since),
+        // Vorbereitete (nicht freigegebene) Anzeigen
+        supabase.from('studio_prepared_ads')
+          .select('ad_id, ad_name, created_at').is('released_at', null),
+        // Leitplanken (Ziel-Leadpreis, Tageslimit)
+        supabase.from('ad_settings')
+          .select('target_cpl, max_account_daily_budget, system_campaign_daily_budget')
+          .eq('id', 'default').maybeSingle(),
+        // Aktions-Queue: offene + die letzten 14 Tage erledigte/fehlgeschlagene
+        supabase
+          .from('ad_actions')
+          .select('id, ad_id, ad_name, campaign_name, action, reason, status, created_at, executed_at, result')
+          .eq('platform', segment)
+          .or(`status.eq.bestätigt,created_at.gte.${new Date(Date.now() - 14 * 86_400_000).toISOString()}`)
+          .order('created_at', { ascending: false }),
       ])
       if (e1) throw e1
       if (e2) throw e2
       const catRowsAll = (cat as unknown as AdCatalogRow[]) ?? []
       // Vorbereitete (nicht freigegebene) Anzeigen aus der Übersicht heraushalten
-      const { data: prep } = await supabase.from('studio_prepared_ads')
-        .select('ad_id, ad_name, created_at').is('released_at', null)
       const prepRows = (prep as Array<{ ad_id: string; ad_name: string | null; created_at: string }> | null) ?? []
       const prepIds = new Set(prepRows.map(p => p.ad_id))
       setPrepared(prepRows.map(p => {
@@ -401,9 +419,6 @@ export default function AdsManager() {
       setInsights((ins as unknown as InsightRow[]) ?? [])
 
       // Leitplanken (Ziel-Leadpreis, Tageslimit) — von Sven gepflegt
-      const { data: st } = await supabase.from('ad_settings')
-        .select('target_cpl, max_account_daily_budget, system_campaign_daily_budget')
-        .eq('id', 'default').maybeSingle()
       if (st) {
         const s = st as unknown as { target_cpl: string | number; max_account_daily_budget: string | number; system_campaign_daily_budget: string | number }
         const parsed = {
@@ -416,12 +431,6 @@ export default function AdsManager() {
       }
 
       // Aktions-Queue: offene + die letzten 14 Tage erledigte/fehlgeschlagene
-      const { data: act, error: eAct } = await supabase
-        .from('ad_actions')
-        .select('id, ad_id, ad_name, campaign_name, action, reason, status, created_at, executed_at, result')
-        .eq('platform', segment)
-        .or(`status.eq.bestätigt,created_at.gte.${new Date(Date.now() - 14 * 86_400_000).toISOString()}`)
-        .order('created_at', { ascending: false })
       if (eAct) throw eAct
       setActions((act as unknown as AdAction[]) ?? [])
 

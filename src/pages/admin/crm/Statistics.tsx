@@ -113,6 +113,8 @@ export default function Statistics() {
   const [tab,        setTab]        = useState<'sales' | 'cashflow'>('sales')
   const [devFilter,  setDevFilter]  = useState('')   // '' = alle Bauträger
   const [fin,        setFin]        = useState<FinTransaction[]>([])
+  const [finState,   setFinState]   = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [finError,   setFinError]   = useState<string | null>(null)
   const [expanded,   setExpanded]   = useState<string | null>(null)
 
   // ── Laden ────────────────────────────────────────────────────
@@ -120,11 +122,29 @@ export default function Statistics() {
     setLoading(true)
     setLoadError(null)
     try {
+      // Wohnungen, Deals und Rechnungen hängen nicht voneinander ab und laufen
+      // gleichzeitig. Nur die Portal-Objekte (2.) brauchen die Wohnungen.
+      // Fehler werden in derselben Reihenfolge geworfen wie vorher.
+      const [
+        { data: unitData, error: unitErr },
+        { data: dealData, error: dealErr },
+        { data: invData, error: invErr },
+      ] = await Promise.all([
+        supabase
+          .from('crm_project_units')
+          .select('id, unit_number, price_net, price_gross, property_id, project:crm_projects(id, name, developer)')
+          .not('property_id', 'is', null),
+        supabase
+          .from('deals')
+          .select('id, unit_id, commission_amount, commission_paid_at, phase, archived_from_phase, phase_changed_at, lead:leads(first_name, last_name)'),
+        supabase
+          .from('crm_invoices')
+          .select('invoice_number, issue_date, subtotal_net, status, paid_at, deal_id')
+          .not('deal_id', 'is', null)
+          .neq('status', 'canceled'),
+      ])
+
       // 1. Alle Wohnungen, die im Kundenportal materialisiert sind
-      const { data: unitData, error: unitErr } = await supabase
-        .from('crm_project_units')
-        .select('id, unit_number, price_net, price_gross, property_id, project:crm_projects(id, name, developer)')
-        .not('property_id', 'is', null)
       if (unitErr) throw unitErr
       const units = (unitData ?? []) as unknown as UnitRow[]
 
@@ -137,9 +157,6 @@ export default function Statistics() {
       const propById = new Map((propData ?? []).map(p => [(p as PropRow).id, p as PropRow]))
 
       // 3. Deals (Provision + Datum + Kundenname)
-      const { data: dealData, error: dealErr } = await supabase
-        .from('deals')
-        .select('id, unit_id, commission_amount, commission_paid_at, phase, archived_from_phase, phase_changed_at, lead:leads(first_name, last_name)')
       if (dealErr) throw dealErr
       const deals = (dealData ?? []) as unknown as DealRow[]
 
@@ -158,11 +175,6 @@ export default function Statistics() {
       setOrphanDeals(deals.filter(d => !d.unit_id && (d.commission_amount ?? 0) > 0).length)
 
       // 4. Provisionsrechnungen — Rechnungsdatum ist das Verkaufsdatum
-      const { data: invData, error: invErr } = await supabase
-        .from('crm_invoices')
-        .select('invoice_number, issue_date, subtotal_net, status, paid_at, deal_id')
-        .not('deal_id', 'is', null)
-        .neq('status', 'canceled')
       if (invErr) throw invErr
       // Bei mehreren Rechnungen je Deal zaehlt die aelteste (die den Verkauf ausloest);
       // Betraege werden addiert, damit Teilrechnungen nicht verlorengehen.
@@ -203,16 +215,6 @@ export default function Statistics() {
         })
       }
       setSales(rows)
-
-      // 5. Kontobewegungen für den Reiter „Ein- und Ausgaben"
-      const { data: finData, error: finErr } = await supabase
-        .from('fin_transactions')
-        .select('id, booked_at, amount, currency, counterparty, reference, category')
-        .eq('currency', 'EUR')          // Fremdwährung läuft immer über eine Umbuchung
-        .neq('amount', 0)               // Kartenreservierungen ohne Betrag
-        .order('booked_at', { ascending: false })
-      if (finErr) throw finErr
-      setFin((finData ?? []) as FinTransaction[])
     } catch (err) {
       console.error('[Statistics] fetchSales:', err)
       setLoadError(err instanceof Error ? err.message : String(err))
@@ -223,6 +225,32 @@ export default function Statistics() {
   }, [t])
 
   useEffect(() => { void fetchSales() }, [fetchSales])
+
+  // 5. Kontobewegungen für den Reiter „Ein- und Ausgaben". Erst laden, wenn der
+  // Reiter zum ersten Mal geöffnet wird; die Verkäufe brauchen sie nicht.
+  const fetchFin = useCallback(async () => {
+    setFinState('loading')
+    setFinError(null)
+    try {
+      const { data: finData, error: finErr } = await supabase
+        .from('fin_transactions')
+        .select('id, booked_at, amount, currency, counterparty, reference, category')
+        .eq('currency', 'EUR')          // Fremdwährung läuft immer über eine Umbuchung
+        .neq('amount', 0)               // Kartenreservierungen ohne Betrag
+        .order('booked_at', { ascending: false })
+      if (finErr) throw finErr
+      setFin((finData ?? []) as FinTransaction[])
+      setFinState('ready')
+    } catch (err) {
+      console.error('[Statistics] fetchFin:', err)
+      setFinError(err instanceof Error ? err.message : String(err))
+      setFinState('error')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (tab === 'cashflow' && finState === 'idle') void fetchFin()
+  }, [tab, finState, fetchFin])
 
   // ── Zeitraum-Filter ──────────────────────────────────────────
   const inPeriod = useMemo(() => {
@@ -361,6 +389,22 @@ export default function Statistics() {
   ]
 
   const maxUnits = byDeveloper[0]?.units ?? 0
+
+  // ── Ladeanzeige und Ladefehler (Verkäufe und Ein- und Ausgaben) ──
+  const renderSpinner = () => (
+    <div className="flex justify-center py-16">
+      <div className="w-8 h-8 border-4 border-gray-200 border-t-hp-highlight rounded-full animate-spin" />
+    </div>
+  )
+  const renderLoadError = (message: string, onRetry: () => void) => (
+    <div className="bg-white rounded-2xl border border-gray-100 p-6">
+      <p className="text-sm text-red-600 font-body">{t('stats.loadError', 'Daten konnten nicht geladen werden.')} {message}</p>
+      <button onClick={onRetry}
+        className="mt-3 px-3 py-1.5 rounded-lg text-sm font-body border border-gray-200 hover:border-gray-300">
+        {t('stats.retry', 'Erneut versuchen')}
+      </button>
+    </div>
+  )
 
   // ── Ansicht: Ein- und Ausgaben ───────────────────────────────
   function renderCashflow() {
@@ -527,19 +571,13 @@ export default function Statistics() {
         )}
 
         {loading ? (
-          <div className="flex justify-center py-16">
-            <div className="w-8 h-8 border-4 border-gray-200 border-t-hp-highlight rounded-full animate-spin" />
-          </div>
+          renderSpinner()
         ) : loadError ? (
-          <div className="bg-white rounded-2xl border border-gray-100 p-6">
-            <p className="text-sm text-red-600 font-body">{t('stats.loadError', 'Daten konnten nicht geladen werden.')} {loadError}</p>
-            <button onClick={() => void fetchSales()}
-              className="mt-3 px-3 py-1.5 rounded-lg text-sm font-body border border-gray-200 hover:border-gray-300">
-              {t('stats.retry', 'Erneut versuchen')}
-            </button>
-          </div>
+          renderLoadError(loadError, () => void fetchSales())
         ) : tab === 'cashflow' ? (
-          renderCashflow()
+          finState === 'ready' ? renderCashflow()
+            : finState === 'error' ? renderLoadError(finError ?? '', () => void fetchFin())
+            : renderSpinner()
         ) : (
           <>
             {/* Kennzahlen */}
