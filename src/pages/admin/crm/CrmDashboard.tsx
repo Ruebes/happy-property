@@ -3,34 +3,44 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
-import { useAuth } from '../../../lib/auth'
+import { useAuth, type Profile } from '../../../lib/auth'
+import { NAV_ENTRIES, canSee } from '../../../lib/navigation'
 import type { DealPhase } from '../../../lib/crmTypes'
 import { DEAL_PHASES, PHASE_ICONS } from '../../../lib/crmTypes'
 
 
 // ── Schnellzugriff: 8 frei belegbare Kacheln (4 × 2), Auswahl je Kachel ──────
-const QUICK_OPTS: Array<{ to: string; emoji: string; label: string }> = [
-  { to: '/admin/crm/pipeline', emoji: '📊', label: 'Pipeline' },
-  { to: '/admin/crm/leads', emoji: '👥', label: 'Kontakte' },
-  { to: '/admin/crm/inbox', emoji: '📥', label: 'Posteingang' },
-  { to: '/admin/crm/postausgang', emoji: '📤', label: 'Postausgang' },
-  { to: '/admin/crm/calendar', emoji: '📅', label: 'Kalender' },
-  { to: '/admin/crm/tasks', emoji: '✅', label: 'Aufgaben' },
-  { to: '/admin/crm/projects', emoji: '🏗️', label: 'Projekte' },
-  { to: '/admin/crm/invoices', emoji: '🧾', label: 'Rechnungen' },
-  { to: '/admin/crm/finance', emoji: '📒', label: 'Buchhaltung' },
-  { to: '/admin/crm/ads', emoji: '📣', label: 'Werbemanager' },
-  { to: '/admin/crm/statistics', emoji: '📈', label: 'Statistiken' },
-  { to: '/admin/crm/funnel', emoji: '🎯', label: 'Termin-Funnel' },
-  { to: '/admin/crm/funnel-editor', emoji: '🛠️', label: 'Funnel-Editor' },
-  { to: '/admin/crm/workflows', emoji: '🔀', label: 'Workflows' },
-  { to: '/admin/crm/newsletter', emoji: '📰', label: 'Newsletter' },
-  { to: '/admin/crm/settings/lists', emoji: '📋', label: 'Empfängerlisten' },
-  { to: '/admin/crm/social', emoji: '📱', label: 'Social Media' },
-  { to: '/admin/crm/owner-content', emoji: '📢', label: 'Eigentümer-Inhalte' },
-  { to: '/admin/crm/settings/booking-links', emoji: '🔗', label: 'Buchungslinks' },
-  { to: '/admin/crm/settings/contacts', emoji: '🏢', label: 'Geschäftskontakte' },
+// key → Beschriftung crm.dashboard.quick.<key>; label bleibt als Rückfall.
+const QUICK_OPTS: Array<{ to: string; emoji: string; label: string; key: string }> = [
+  { to: '/admin/crm/pipeline', emoji: '📊', label: 'Pipeline', key: 'pipeline' },
+  { to: '/admin/crm/leads', emoji: '👥', label: 'Kontakte', key: 'leads' },
+  { to: '/admin/crm/inbox', emoji: '📥', label: 'Posteingang', key: 'inbox' },
+  { to: '/admin/crm/postausgang', emoji: '📤', label: 'Postausgang', key: 'outbox' },
+  { to: '/admin/crm/calendar', emoji: '📅', label: 'Kalender', key: 'calendar' },
+  { to: '/admin/crm/tasks', emoji: '✅', label: 'Aufgaben', key: 'tasks' },
+  { to: '/admin/crm/projects', emoji: '🏗️', label: 'Projekte', key: 'projects' },
+  { to: '/admin/crm/invoices', emoji: '🧾', label: 'Rechnungen', key: 'invoices' },
+  { to: '/admin/crm/finance', emoji: '📒', label: 'Buchhaltung', key: 'finance' },
+  { to: '/admin/crm/ads', emoji: '📣', label: 'Werbemanager', key: 'ads' },
+  { to: '/admin/crm/statistics', emoji: '📈', label: 'Statistiken', key: 'statistics' },
+  { to: '/admin/crm/funnel', emoji: '🎯', label: 'Termin-Funnel', key: 'funnel' },
+  { to: '/admin/crm/funnel-editor', emoji: '🛠️', label: 'Funnel-Editor', key: 'funnelEditor' },
+  { to: '/admin/crm/workflows', emoji: '🔀', label: 'Workflows', key: 'workflows' },
+  { to: '/admin/crm/newsletter', emoji: '📰', label: 'Newsletter', key: 'newsletter' },
+  { to: '/admin/crm/settings/lists', emoji: '📋', label: 'Empfängerlisten', key: 'lists' },
+  { to: '/admin/crm/social', emoji: '📱', label: 'Social Media', key: 'social' },
+  { to: '/admin/crm/owner-content', emoji: '📢', label: 'Eigentümer-Inhalte', key: 'ownerContent' },
+  { to: '/admin/crm/settings/booking-links', emoji: '🔗', label: 'Buchungslinks', key: 'bookingLinks' },
+  { to: '/admin/crm/settings/contacts', emoji: '🏢', label: 'Geschäftskontakte', key: 'contacts' },
 ]
+// Kachel nur anbieten, wenn die Zielseite für dieses Profil offen ist: gleiche
+// Regeln wie Menü und Routen-Guard (Registry, geprüft von verify-nav). Admin
+// und ein noch ladendes Profil sehen wie bisher alle Kacheln.
+const quickAllowed = (profile: Profile | null | undefined, to: string): boolean => {
+  if (!profile || profile.role === 'admin') return true
+  const entry = NAV_ENTRIES.find(e => e.path === to)
+  return !entry || canSee(profile, entry)
+}
 const QUICK_DEFAULT = ['/admin/crm/pipeline', '/admin/crm/inbox', '/admin/crm/tasks', '/admin/crm/calendar', '/admin/crm/finance', '/admin/crm/invoices', '/admin/crm/social', '/admin/crm/workflows']
 const QUICK_LS = 'hp_quick_tiles_v1'
 
@@ -80,7 +90,7 @@ interface DashboardState {
 
 export default function CrmDashboard() {
   const { t, i18n } = useTranslation()
-  useAuth()
+  const { profile } = useAuth()
   const locale = i18n.language?.startsWith('en') ? 'en-US' : 'de-DE'
 
   const [state, setState] = useState<DashboardState>({
@@ -426,7 +436,7 @@ export default function CrmDashboard() {
         {/* ── Schnellzugriff: 4 × 2 frei belegbare Kacheln ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {quick.map((route, i) => {
-            const opt = QUICK_OPTS.find(o => o.to === route) ?? null
+            const opt = QUICK_OPTS.find(o => o.to === route && quickAllowed(profile, o.to)) ?? null
             if (managing) {
               return (
                 <div key={i} className="bg-white rounded-2xl border-2 border-dashed border-orange-200 p-3">
@@ -434,7 +444,7 @@ export default function CrmDashboard() {
                   <select value={route ?? ''} onChange={e => setQuickAt(i, e.target.value || null)}
                     className="w-full text-sm bg-gray-50 rounded-lg px-2 py-2 border border-gray-200 outline-none cursor-pointer">
                     <option value="">{t('crm.dashboard.tileEmpty', '— leer —')}</option>
-                    {QUICK_OPTS.map(o => <option key={o.to} value={o.to}>{o.emoji} {o.label}</option>)}
+                    {QUICK_OPTS.filter(o => quickAllowed(profile, o.to)).map(o => <option key={o.to} value={o.to}>{o.emoji} {t(`crm.dashboard.quick.${o.key}`, o.label)}</option>)}
                   </select>
                 </div>
               )
@@ -444,7 +454,7 @@ export default function CrmDashboard() {
               <Link key={i} to={opt.to}
                 className="bg-white rounded-2xl border border-gray-100 shadow-sm px-4 py-3.5 flex items-center gap-3 hover:border-orange-300 hover:shadow transition-all">
                 <span className="text-2xl leading-none">{opt.emoji}</span>
-                <span className="text-sm font-semibold text-gray-800 truncate">{opt.label}</span>
+                <span className="text-sm font-semibold text-gray-800 truncate">{t(`crm.dashboard.quick.${opt.key}`, opt.label)}</span>
               </Link>
             )
           })}

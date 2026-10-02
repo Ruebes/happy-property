@@ -2167,7 +2167,29 @@
       "engagementHint": "Wer sich Decks/Berechnungen angesehen oder Mails geöffnet hat",
       "noEngagement": "Noch keine Kunden-Aktivität erfasst.",
       "manageWidgets": "Widgets anpassen",
-      "manageHint": "Widgets ein-/ausblenden und sortieren — wird pro Browser gespeichert."
+      "manageHint": "Widgets ein-/ausblenden und sortieren — wird pro Browser gespeichert.",
+      "quick": {
+        "pipeline": "Pipeline",
+        "leads": "Kontakte",
+        "inbox": "Posteingang",
+        "outbox": "Postausgang",
+        "calendar": "Kalender",
+        "tasks": "Aufgaben",
+        "projects": "Projekte",
+        "invoices": "Rechnungen",
+        "finance": "Buchhaltung",
+        "ads": "Werbemanager",
+        "statistics": "Statistiken",
+        "funnel": "Termin-Funnel",
+        "funnelEditor": "Funnel-Editor",
+        "workflows": "Workflows",
+        "newsletter": "Newsletter",
+        "lists": "Empfängerlisten",
+        "social": "Social Media",
+        "ownerContent": "Eigentümer-Inhalte",
+        "bookingLinks": "Buchungslinks",
+        "contacts": "Geschäftskontakte"
+      }
     },
     "filter": {
       "assignee": "Mitarbeiter",
