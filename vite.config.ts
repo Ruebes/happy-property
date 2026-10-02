@@ -7,9 +7,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 // Tab schliessen und neu oeffnen. Vorher war das nur zu erraten.
 const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
 
-// Dieselbe Bau-Kennung zusätzlich als <meta name="hp-build"> in der index.html:
-// Die neue Navigation liest sie von dort (ProfileMenu), statt sie in einen
-// JS-Chunk einzubacken. Das define unten bleibt für die alte Navigation.
+// Die Bau-Kennung steht nur als <meta name="hp-build"> in der index.html. Beide
+// Navigationen lesen sie von dort (ProfileMenu, LegacyDashboardLayout). Früher
+// stand sie per define in einem JS-Chunk: dann bekam bei jedem Build fast jeder
+// Chunk einen neuen Namen und jeder Browser lud die ganze App neu.
 function hpBuildMeta(): Plugin {
   return {
     name: 'hp-build-meta',
@@ -20,9 +21,6 @@ function hpBuildMeta(): Plugin {
 }
 
 export default defineConfig({
-  define: {
-    __BUILD_ID__: JSON.stringify(BUILD_ID),
-  },
   plugins: [
     react(),
     hpBuildMeta(),
