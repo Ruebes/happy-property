@@ -4,6 +4,7 @@ import DashboardLayout from '../components/DashboardLayout'
 import { supabase } from '../lib/supabase'
 import { useAuth, roleToPath, ROLE_META } from '../lib/auth'
 import { CustomSelect } from '../components/CustomSelect'
+import { switchLanguage } from '../lib/i18n'
 
 // ── IBAN maskieren ────────────────────────────────────────────
 function maskIban(iban: string): string {
@@ -188,7 +189,7 @@ export default function Profile() {
       if (error || !upd?.length) throw new Error(error?.message ?? t('errors.saveFailed'))
 
       // Sprachwechsel sofort wirksam machen (nicht erst nach Reload)
-      if (language !== i18n.language) void i18n.changeLanguage(language)
+      if (language !== i18n.language) void switchLanguage(language)
 
       setToast({ msg: t('profile.saved') })
       fetchProfile()

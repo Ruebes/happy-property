@@ -8,7 +8,7 @@ import {
 } from 'react'
 import type { User, Session } from '@supabase/supabase-js'
 import { supabase } from './supabase'
-import i18n from './i18n'
+import i18n, { switchLanguage } from './i18n'
 import { landingFor, type Profile, type UserRole } from './permissions'
 
 // ── Profil-Cache ──────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Browsersprache. Das Profil ist damit die einzige Wahrheit (Login-Mails,
       // WhatsApp und UI ziehen alle daran). Kein Supabase-Call → im async-Kontext
       // von fetchProfile unkritisch (nicht im synchronen Auth-Callback).
-      if ((p.language === 'en' || p.language === 'de') && i18n.language !== p.language) void i18n.changeLanguage(p.language)
+      if ((p.language === 'en' || p.language === 'de') && i18n.language !== p.language) void switchLanguage(p.language)
       return { ...p, permissions: p.permissions ?? {} }
     } catch {
       // fetch timed out (AbortError) oder Netzwerkfehler → einmal retry

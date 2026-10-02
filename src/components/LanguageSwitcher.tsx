@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/auth'
+import { switchLanguage } from '../lib/i18n'
 
 interface Props {
   // 'default': Aussehen wie bisher (Login, Unterschrift, Gäste-Layout, alte
@@ -19,7 +20,7 @@ export default function LanguageSwitcher({ tone = 'default' }: Props) {
   const current = i18n.language?.startsWith('de') ? 'de' : 'en'
 
   const toggle = (lang: 'de' | 'en') => {
-    i18n.changeLanguage(lang)
+    void switchLanguage(lang)
     // Eingeloggt? Wahl im Profil speichern — damit sie geräteübergreifend gilt,
     // zu den Sprach-Mails/WhatsApp passt und vom nächsten Login nicht zurück-
     // gesetzt wird (auth.fetchProfile zieht die UI-Sprache aus dem Profil).
