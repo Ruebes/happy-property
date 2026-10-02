@@ -392,13 +392,16 @@ export default function LeadDetail() {
   // (z.B. Stella Demetriou von Paphosfinder) standen in KEINER Aufgaben-Auswahl,
   // obwohl sie laengst im System sind - Sven 17.8.: "auch diesen Partnern moechte
   // ich eine Aufgabe erstellen koennen".
+  // Die Geschäftskontakte werden nur hier geladen (alle Spalten): dieselbe Antwort
+  // füllt die Aufgaben-Auswahl (bizContacts) und die Empfänger im Nachrichten-
+  // Composer (businessContacts), damit beide Listen nie auseinanderlaufen.
   const loadBizContacts = useCallback(async () => {
     const [{ data }, { data: vw }] = await Promise.all([
-      supabase.from('crm_business_contacts')
-        .select('id, first_name, last_name, company, email, phone, whatsapp, language').order('first_name'),
+      supabase.from('crm_business_contacts').select('*').order('first_name'),
       supabase.from('verwaltungen')
         .select('id, name, ansprechpartner, ansprechpartner_phone, ansprechpartner_email, phone, email, language').order('name'),
     ])
+    if (data) setBusinessContacts(data as BusinessContact[])
     const rows = (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null }>
     const list: BizContactRow[] = rows.map(b => ({
       id: b.id,
@@ -644,19 +647,18 @@ export default function LeadDetail() {
   }, [lead?.profile_id, deal?.unit_id, deal?.property_id])
 
   // ── Empfänger-Kontakte laden (einmalig) ──────────────────────────────────────
-  // Geschäftskontakte + Developer-Ansprechpartner als wählbare Empfänger im
-  // Nachrichten-Composer. Robust ohne FK-Embed: Developer-Namen separat mappen.
+  // Developer-Ansprechpartner als wählbare Empfänger im Nachrichten-Composer
+  // (die Geschäftskontakte lädt loadBizContacts mit). Robust ohne FK-Embed:
+  // Developer-Namen separat mappen.
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const [bcRes, dcRes, devRes] = await Promise.all([
-          supabase.from('crm_business_contacts').select('*').order('first_name'),
+        const [dcRes, devRes] = await Promise.all([
           supabase.from('crm_developer_contacts').select('*').order('name'),
           supabase.from('crm_developers').select('id, name'),
         ])
         if (cancelled) return
-        if (bcRes.data) setBusinessContacts(bcRes.data as BusinessContact[])
         if (dcRes.data) {
           const devMap = new Map(((devRes.data ?? []) as { id: string; name: string }[]).map(d => [d.id, d.name]))
           setDevContacts((dcRes.data as DeveloperContact[]).map(c => ({
