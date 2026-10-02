@@ -2856,7 +2856,6 @@
       "googleCalendar": "Google Kalender",
       "googleConnected": "Verbunden",
       "googleNotConnected": "Nicht verbunden",
-      "googleNotConfigured": "VITE_GOOGLE_CLIENT_ID nicht gesetzt",
       "connectGoogle": "Verbinden",
       "disconnectGoogle": "Trennen",
       "googleConnectedToast": "✅ Google Kalender verbunden",
