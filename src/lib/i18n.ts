@@ -81,4 +81,15 @@ export async function fixedT(lng: string): Promise<TFunction> {
   return i18n.getFixedT(lng)
 }
 
+// Sprachwechsel durch den Nutzer: erst laden, dann nur wechseln, wenn in der
+// Zwischenzeit kein anderer Wechsel angefordert wurde. i18n.changeLanguage
+// allein übernimmt bei zwei schnellen Klicks (EN, dann DE) die Sprache, deren
+// Datei zuletzt ankommt, nicht die zuletzt gewählte.
+let wantedLanguage = ''
+export async function switchLanguage(lng: string): Promise<void> {
+  wantedLanguage = lng
+  await loadLanguage(lng)
+  if (wantedLanguage === lng) await i18n.changeLanguage(lng)
+}
+
 export default i18n
