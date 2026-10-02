@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useSyncExternalStore } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { supabase } from '../../lib/supabase'
@@ -18,63 +18,110 @@ import { acceptTask } from '../../lib/crmTasks'
 //    (notified_at), reine Info.
 interface AcceptPopup { id: string; task_id: string; title: string; from: string; creator: string }
 interface MsgPopup { id: string; task_id: string; body: string; from: string; title: string }
+interface AssigneeRow { id: string; task: { id: string; title: string; created_by: string; archived: boolean | null; status: string } | null }
 
 const POLL_MS = 30_000
+const REFOCUS_MIN_AGE_MS = 15_000   // Rückkehr in den Tab: sofort prüfen, wenn die letzte Prüfung älter ist
+const STAFF_TTL_MS = 10 * 60_000    // Namensliste (list_staff) so lange wiederverwenden
+
+// Stand außerhalb der Komponente: Die alte Navigation baut sie auf jeder Seite
+// neu auf. So fragt nicht jeder Seitenwechsel neu ab (höchstens alle 30 s), und
+// ein gezeigter Hinweis bleibt nach dem Seitenwechsel stehen, bis er
+// geschlossen oder geöffnet wird (notified_at ist beim Anzeigen schon gesetzt).
+// Im Hintergrund-Tab ruht die Abfrage (kein Ton, keine System-Benachrichtigung,
+// gezeigt wird erst im sichtbaren Tab); bei Rückkehr wird sofort geprüft.
+interface Snapshot { user: string; accepts: AcceptPopup[]; msgs: MsgPopup[] }
+const store: { at: number; busy: boolean; snap: Snapshot } = { at: 0, busy: false, snap: { user: '', accepts: [], msgs: [] } }
+const listeners = new Set<() => void>()
+const subscribe = (l: () => void) => { listeners.add(l); return () => { listeners.delete(l) } }
+const getSnap = () => store.snap
+function setSnap(next: Snapshot): void { store.snap = next; listeners.forEach(l => l()) }
+
+let staffCache: { user: string; at: number; names: Map<string, string> } | null = null
+async function staffNames(myId: string): Promise<Map<string, string>> {
+  if (staffCache && staffCache.user === myId && Date.now() - staffCache.at < STAFF_TTL_MS) return staffCache.names
+  const { data: staff, error } = await supabase.rpc('list_staff')
+  const names = new Map(((staff ?? []) as { id: string; full_name: string }[]).map(s => [s.id, s.full_name]))
+  if (!error && staff) staffCache = { user: myId, at: Date.now(), names }
+  return names
+}
+
+async function pollTasks(myId: string): Promise<void> {
+  if (!myId || store.busy) return
+  store.busy = true
+  store.at = Date.now()
+  try {
+    const now = new Date().toISOString()
+    const [asgRes, msgRes] = await Promise.all([
+      // Noch nicht angenommene Zuständigkeiten (bleibt bis zur Annahme, auch nach Login).
+      supabase.from('crm_task_assignees').select('id, task:crm_tasks!inner(id, title, created_by, archived, status)')
+        .eq('profile_id', myId).is('accepted_at', null).limit(20),
+      // Neue Chat-Nachrichten an mich (einmalig).
+      // Mit Aufgabentitel: ein Popup "Rückfrage ..." ohne Bezug ist wertlos (15.9.).
+      supabase.from('crm_task_messages').select('id, task_id, body, sender_id, task:crm_tasks(title)')
+        .eq('recipient_id', myId).is('read_at', null).is('notified_at', null)
+        .order('created_at', { ascending: true }).limit(5),
+    ])
+    const asgs = ((asgRes.data ?? []) as unknown as AssigneeRow[]).filter(a => a.task && !a.task.archived && a.task.status !== 'erledigt' && a.task.created_by !== myId)
+    const newMsgs = (msgRes.data ?? []) as unknown as { id: string; task_id: string; body: string; sender_id: string; task: { title: string } | null }[]
+
+    // Namen braucht es nur, wenn es etwas zu zeigen gibt.
+    const nameById = asgs.length || newMsgs.length ? await staffNames(myId) : new Map<string, string>()
+    if (store.snap.user !== myId) return   // inzwischen abgemeldet oder anderer Nutzer
+
+    // Annehmen-Popups: den ganzen Satz ersetzen (verschwinden nach Annahme von selbst).
+    const accepts = asgs.flatMap(a => a.task ? [{
+      id: `asg-${a.id}`, task_id: a.task.id, title: a.task.title,
+      from: nameById.get(a.task.created_by) || '', creator: a.task.created_by,
+    }] : [])
+
+    // Nachrichten-Popups: anhängen, einmalig.
+    const known = new Set(store.snap.msgs.map(m => m.id))
+    const added = newMsgs.map(r => ({ id: `msg-${r.id}`, task_id: r.task_id, body: r.body, from: nameById.get(r.sender_id) || '', title: r.task?.title ?? '' }))
+      .filter(m => !known.has(m.id))
+    setSnap({ user: myId, accepts, msgs: added.length ? [...store.snap.msgs, ...added] : store.snap.msgs })
+    if (newMsgs.length) {
+      await supabase.from('crm_task_messages').update({ notified_at: now }).in('id', newMsgs.map(r => r.id))
+    }
+  } catch (e) { console.warn('[TaskNotifications] poll:', e) } finally { store.busy = false }
+}
 
 export default function TaskNotifications() {
   const { profile } = useAuth()
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [accepts, setAccepts] = useState<AcceptPopup[]>([])
-  const [msgs, setMsgs] = useState<MsgPopup[]>([])
+  const snap = useSyncExternalStore(subscribe, getSnap)
   const [accepting, setAccepting] = useState<string | null>(null)
-  const busy = useRef(false)
   const myId = profile?.id ?? ''
   const myName = profile?.full_name ?? ''
   const isStaff = ['admin', 'verwalter', 'mitarbeiter', 'funnel'].includes(profile?.role ?? '')
-
-  const poll = useCallback(async () => {
-    if (!myId || busy.current) return
-    busy.current = true
-    try {
-      const now = new Date().toISOString()
-      const [asgRes, msgRes] = await Promise.all([
-        // Noch nicht angenommene Zuständigkeiten (bleibt bis zur Annahme, auch nach Login).
-        supabase.from('crm_task_assignees').select('id, task:crm_tasks!inner(id, title, created_by, archived, status)')
-          .eq('profile_id', myId).is('accepted_at', null).limit(20),
-        // Neue Chat-Nachrichten an mich (einmalig).
-        // Mit Aufgabentitel: ein Popup "Rückfrage ..." ohne Bezug ist wertlos (15.9.).
-        supabase.from('crm_task_messages').select('id, task_id, body, sender_id, task:crm_tasks(title)')
-          .eq('recipient_id', myId).is('read_at', null).is('notified_at', null)
-          .order('created_at', { ascending: true }).limit(5),
-      ])
-      // deno-lint-ignore no-explicit-any
-      const asgs = ((asgRes.data ?? []) as any[]).filter(a => a.task && !a.task.archived && a.task.status !== 'erledigt' && a.task.created_by !== myId)
-      const newMsgs = (msgRes.data ?? []) as unknown as { id: string; task_id: string; body: string; sender_id: string; task: { title: string } | null }[]
-
-      const { data: staff } = await supabase.rpc('list_staff')
-      const nameById = new Map(((staff ?? []) as { id: string; full_name: string }[]).map(s => [s.id, s.full_name]))
-
-      // Annehmen-Popups: den ganzen Satz ersetzen (verschwinden nach Annahme von selbst).
-      setAccepts(asgs.map(a => ({
-        id: `asg-${a.id}`, task_id: a.task.id, title: a.task.title,
-        from: nameById.get(a.task.created_by) || '', creator: a.task.created_by,
-      })))
-
-      // Nachrichten-Popups: anhängen, einmalig.
-      if (newMsgs.length) {
-        setMsgs(prev => [...prev, ...newMsgs.map(r => ({ id: `msg-${r.id}`, task_id: r.task_id, body: r.body, from: nameById.get(r.sender_id) || '', title: r.task?.title ?? '' }))])
-        await supabase.from('crm_task_messages').update({ notified_at: now }).in('id', newMsgs.map(r => r.id))
-      }
-    } catch (e) { console.warn('[TaskNotifications] poll:', e) } finally { busy.current = false }
-  }, [myId])
+  const accepts = snap.user === myId ? snap.accepts : []
+  const msgs = snap.user === myId ? snap.msgs : []
 
   useEffect(() => {
-    if (!isStaff) return
-    void poll()
-    const iv = setInterval(() => { void poll() }, POLL_MS)
-    return () => clearInterval(iv)
-  }, [isStaff, poll])
+    if (!isStaff || !myId) return
+    if (store.snap.user !== myId) { store.at = 0; setSnap({ user: myId, accepts: [], msgs: [] }) }
+    let timer: ReturnType<typeof setTimeout> | null = null
+    // Prüft, sobald die letzte Prüfung minAge alt ist; sonst Termin für später.
+    const tick = (minAge = POLL_MS) => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      if (document.hidden) return   // Hintergrund-Tab: Pause bis zur Rückkehr
+      const age = Date.now() - store.at
+      if (age >= minAge) { void pollTasks(myId); timer = setTimeout(() => tick(), POLL_MS) }
+      else timer = setTimeout(() => tick(), POLL_MS - age)
+    }
+    const onVisibility = () => {
+      if (document.hidden) { if (timer) clearTimeout(timer); timer = null; return }
+      tick(REFOCUS_MIN_AGE_MS)
+    }
+    tick()
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [isStaff, myId])
 
   if (!isStaff || (accepts.length === 0 && msgs.length === 0)) return null
 
@@ -82,12 +129,12 @@ export default function TaskNotifications() {
     setAccepting(p.id)
     try {
       await acceptTask(p.task_id, myId, myName, p.creator)
-      setAccepts(prev => prev.filter(x => x.id !== p.id))   // Popup schließt sich
+      setSnap({ ...store.snap, accepts: store.snap.accepts.filter(x => x.id !== p.id) })   // Popup schließt sich
     } catch (e) { console.error('[TaskNotifications] accept:', e) } finally { setAccepting(null) }
   }
   // Direkt in die Aufgabe springen (Tasks.tsx liest ?task=), nicht nur zur Liste.
-  const openTask = (taskId?: string) => { setMsgs([]); navigate(taskId ? `/admin/crm/tasks?task=${taskId}` : '/admin/crm/tasks') }
-  const dismissMsg = (id: string) => setMsgs(p => p.filter(x => x.id !== id))
+  const openTask = (taskId?: string) => { setSnap({ ...store.snap, msgs: [] }); navigate(taskId ? `/admin/crm/tasks?task=${taskId}` : '/admin/crm/tasks') }
+  const dismissMsg = (id: string) => setSnap({ ...store.snap, msgs: store.snap.msgs.filter(x => x.id !== id) })
 
   return (
     <div className="fixed bottom-4 right-4 z-[60] space-y-2 w-80 max-w-[calc(100vw-2rem)]">
