@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -51,6 +51,14 @@ const STATUS_LABEL_KEYS: Record<string, { key: string; fallback: string }> = {
   archived: { key: 'allLeads.statusArchived', fallback: 'Archiviert' },
 }
 
+// Nur die Spalten, die Liste, Kacheln, Suche, Filter, Bewertung und der
+// Schnell-Versand (LeadQuickSend: Name, E-Mail, Telefon, WhatsApp) lesen.
+// Wer hier ein weiteres Lead-Feld anzeigt, muss es in diese Liste aufnehmen.
+const LEAD_LIST_COLUMNS = 'id, first_name, last_name, email, phone, whatsapp, source, utm_source, status, created_at, quality_rating, quality_rated_at'
+
+// Tab-Fokus lädt höchstens so oft neu (ms)
+const REFOCUS_MIN_MS = 60_000
+
 const getStatusLabel = (t: TFunction, status: string): string => {
   const entry = STATUS_LABEL_KEYS[status]
   return entry ? t(entry.key, entry.fallback) : status
@@ -96,8 +104,12 @@ export default function AllLeads() {
     setTimeout(() => setToast(''), 3000)
   }
 
+  // Zeitpunkt des letzten Ladens (für die Bremse beim Tab-Fokus)
+  const lastFetchRef = useRef(0)
+
   // silent=true: Hintergrund-Refresh (Tab-Fokus) ohne Vollbild-Spinner.
   const fetchLeads = useCallback(async (silent = false) => {
+    lastFetchRef.current = Date.now()
     if (!silent) setLoading(true)
     try {
       // Seitenweise laden: vorher .limit(500), und PostgREST deckelt ohnehin bei
@@ -111,7 +123,7 @@ export default function AllLeads() {
       for (let from = 0; from < PAGE * 50; from += PAGE) {
         const res = await supabase
           .from('leads')
-          .select('*, assignee:profiles!leads_assigned_to_fkey(full_name, email)')
+          .select(`${LEAD_LIST_COLUMNS}, assignee:profiles!leads_assigned_to_fkey(full_name, email)`)
           .order('created_at', { ascending: false })
           .order('id')
           .range(from, from + PAGE - 1)
@@ -155,10 +167,13 @@ export default function AllLeads() {
     fetchStaff()
   }, [fetchLeads, fetchStaff])
 
-  // Re-Fetch bei Tab-Fokus — STILL, ohne Vollbild-Spinner.
+  // Re-Fetch bei Tab-Fokus - STILL, ohne Vollbild-Spinner. Höchstens einmal
+  // pro Minute: schnelles Hin- und Herwechseln lädt nicht jedes Mal alle Leads.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === 'visible') fetchLeads(true)
+      if (document.visibilityState !== 'visible') return
+      if (Date.now() - lastFetchRef.current < REFOCUS_MIN_MS) return
+      fetchLeads(true)
     }
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
