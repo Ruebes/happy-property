@@ -1321,14 +1321,16 @@ export default function SocialStudio() {
       const [{ data: ps }, { data: ts }, prsRes] = await Promise.all([
         supabase.from('social_posts').select('*').order('created_at', { ascending: false }).limit(300),
         supabase.from('social_topics').select('*').order('sort'),
-        withStatic ? supabase.from('crm_projects').select('id, name, deck_assets').order('name') : null,
+        // Vom Bilder-Blob deck_assets braucht der Editor nur renders und gallery
+        withStatic ? supabase.from('crm_projects').select('id, name, renders:deck_assets->renders, gallery:deck_assets->gallery').order('name') : null,
       ])
       setPosts((ps as unknown as SocialPost[]) ?? [])
       const tps = (ts as unknown as Topic[]) ?? []
       setTopics(tps)
       setNewTopic(cur => cur || tps[0]?.key || '')
       if (!prsRes) return
-      setProjects((prsRes.data as unknown as ProjectOpt[]) ?? [])
+      const prs = (prsRes.data as unknown as Array<{ id: string; name: string; renders: string[] | null; gallery: string[] | null }> | null) ?? []
+      setProjects(prs.map(p => ({ id: p.id, name: p.name, deck_assets: { renders: p.renders ?? undefined, gallery: p.gallery ?? undefined } })))
       // Newsletter für den Redaktionsplan: Datum = frühester (geplanter) Versand.
       const { data: camps, error: campsErr } = await supabase.from('newsletter_campaigns').select('id, title, status, created_at').order('created_at', { ascending: false }).limit(20)
       const cs = (camps as unknown as Array<{ id: string; title: string; status: string; created_at: string }>) ?? []
