@@ -59,8 +59,8 @@ src/
                        #   Projects, ProjectDetail, CrmDashboard,
                        #   Settings, Statistics, Calendar, Archived
     admin/             # Admin-Bereich (sonstige)
-    investor/ feriengast/ eigentuemer/ verwalter/ verwaltung/
-    Dashboard.tsx Login.tsx SetPassword.tsx Sign.tsx Profile.tsx
+    feriengast/ eigentuemer/ verwalter/ verwaltung/
+    Login.tsx SetPassword.tsx Sign.tsx Profile.tsx
     Objekte.tsx PropertyDetail.tsx Kalender.tsx Dokumente.tsx
   lib/
     supabase.ts          # NORMALER Supabase-Client (anon key) — Default
