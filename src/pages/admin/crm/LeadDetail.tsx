@@ -228,9 +228,6 @@ export default function LeadDetail() {
   // Portal access (always accessible)
   // (Portalzugang-Modal entfernt — Versand läuft jetzt direkt per Klick, siehe openPortal)
 
-  // Unit picker project pre-filter (when activated from a deal_project card)
-  const [unitPickerProjectId, setUnitPickerProjectId] = useState<string | null>(null)
-
   // Unit edit: project context for CREATE mode (when no crm_project_unit exists yet)
   const [unitEditProjectId, setUnitEditProjectId] = useState<string | null>(null)
 
@@ -4521,8 +4518,8 @@ export default function LeadDetail() {
         <UnitPickerModal
           leadName={`${lead.first_name} ${lead.last_name}`}
           currentLeadId={lead.id}
-          preselectedProjectId={unitPickerProjectId}
-          onClose={() => { setShowUnitPicker(false); setUnitPickerProjectId(null) }}
+          preselectedProjectId={null}
+          onClose={() => setShowUnitPicker(false)}
           onSelect={handleUnitAssign}
         />
       )}
