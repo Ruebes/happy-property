@@ -73,6 +73,9 @@ interface DashboardState {
   systemActivity: SysActivity[]
   engagement: EngageEvent[]
   loading: boolean
+  // Die zwei langsamen Listen (offene Aufgaben, System-Aktivität) laden
+  // getrennt und halten Kennzahlen und übrige Widgets nicht auf.
+  listsLoading: boolean
 }
 
 export default function CrmDashboard() {
@@ -91,6 +94,7 @@ export default function CrmDashboard() {
     engagement: [],
     openTasksToday: [],
     loading: true,
+    listsLoading: true,
   })
 
   // ── Austauschbare Widgets: Reihenfolge + an/aus pro Nutzer (localStorage) ──
@@ -128,7 +132,7 @@ export default function CrmDashboard() {
   }
 
   const fetchData = useCallback(async () => {
-    setState(prev => ({ ...prev, loading: true }))
+    setState(prev => ({ ...prev, loading: true, listsLoading: true }))
 
     // Calculate time boundaries
     const now = new Date()
@@ -140,14 +144,44 @@ export default function CrmDashboard() {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
     const startOfYear = new Date(now.getFullYear(), 0, 1)
 
+    // Die zwei langsamen Listen laufen parallel, setzen ihren Stand aber selbst,
+    // damit Kennzahlen und übrige Widgets nicht auf sie warten.
+    const loadLists = async () => {
+      try {
+        const [openTasksRes, sysActivityRes] = await Promise.all([
+          supabase
+            .from('activities')
+            .select('id, subject, content, scheduled_at, lead:leads(id, first_name, last_name)')
+            .eq('type', 'task')
+            .is('completed_at', null)
+            .lte('scheduled_at', now.toISOString()),
+          // Widget 1: was das System automatisch verschickt hat
+          supabase
+            .from('scheduled_messages')
+            .select('id, type, event_type, sent_at, lead:leads(first_name, last_name)')
+            .eq('status', 'sent')
+            .order('sent_at', { ascending: false })
+            .limit(20),
+        ])
+        setState(prev => ({
+          ...prev,
+          openTasksToday: (openTasksRes.data ?? []) as unknown as TaskActivity[],
+          systemActivity: (sysActivityRes.data ?? []) as unknown as SysActivity[],
+          listsLoading: false,
+        }))
+      } catch (err) {
+        console.error('[CrmDashboard] fetchData (Listen):', err)
+        setState(prev => ({ ...prev, listsLoading: false }))
+      }
+    }
+    const listsDone = loadLists()   // läuft sofort los, wirft nie (eigenes catch)
+
     try {
       const [
         totalLeadsRes,
         newThisWeekRes,
         dealsPhaseRes,
         commissionsRes,
-        openTasksRes,
-        sysActivityRes,
         engagementRes,
       ] = await Promise.all([
         supabase.from('leads').select('id', { count: 'exact', head: true }),
@@ -162,19 +196,6 @@ export default function CrmDashboard() {
           .not('commission_paid_at', 'is', null)
           // Nur dieses Jahr laden – JS-seitige Filterung auf subset statt auf allen Deals
           .gte('commission_paid_at', startOfYear.toISOString()),
-        supabase
-          .from('activities')
-          .select('id, subject, content, scheduled_at, lead:leads(id, first_name, last_name)')
-          .eq('type', 'task')
-          .is('completed_at', null)
-          .lte('scheduled_at', now.toISOString()),
-        // Widget 1: was das System automatisch verschickt hat
-        supabase
-          .from('scheduled_messages')
-          .select('id, type, event_type, sent_at, lead:leads(first_name, last_name)')
-          .eq('status', 'sent')
-          .order('sent_at', { ascending: false })
-          .limit(20),
         // Widget 2: Kunden-Engagement (Deck/Berechnung angesehen, Mail geöffnet)
         supabase
           .from('engagement_events')
@@ -220,22 +241,22 @@ export default function CrmDashboard() {
         })
       }
 
-      setState({
+      setState(prev => ({
+        ...prev,
         totalLeads: totalLeadsRes.count ?? 0,
         newThisWeek: newThisWeekRes.count ?? 0,
         dealsPerPhase,
         commissionWeek,
         commissionMonth,
         commissionYear,
-        openTasksToday: (openTasksRes.data ?? []) as unknown as TaskActivity[],
-        systemActivity: (sysActivityRes.data ?? []) as unknown as SysActivity[],
         engagement,
         loading: false,
-      })
+      }))
     } catch (err) {
       console.error('[CrmDashboard] fetchData:', err)
       setState(prev => ({ ...prev, loading: false }))
     }
+    await listsDone
   }, [])
 
   useEffect(() => {
@@ -328,7 +349,7 @@ export default function CrmDashboard() {
           <div className="bg-white rounded-2xl shadow-sm p-5 h-full">
             <h2 className="text-lg font-semibold text-gray-800">🤖 {t('crm.dashboard.systemActivity', 'Was das System gemacht hat')}</h2>
             <p className="text-xs text-gray-400 mt-0.5 mb-4">{t('crm.dashboard.systemActivityHint', 'Automatisch versendete Mails & WhatsApp-Nachrichten')}</p>
-            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+            {state.listsLoading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
               : state.systemActivity.length === 0 ? <p className="text-gray-400 text-sm">{t('crm.dashboard.noSystemActivity', 'Noch nichts automatisch versendet.')}</p>
               : <ul className="space-y-2.5 max-h-80 overflow-y-auto">{state.systemActivity.map(a => (
                   <li key={a.id} className="flex items-start gap-2.5 text-sm">
@@ -375,7 +396,7 @@ export default function CrmDashboard() {
         return (
           <div className="bg-white rounded-2xl shadow-sm p-5">
             <h2 className="text-lg font-semibold text-gray-800 mb-4">{t('crm.dashboard.openTasksToday')}</h2>
-            {state.loading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
+            {state.listsLoading ? <p className="text-gray-400 text-sm">{t('common.loading')}</p>
               : state.openTasksToday.length === 0 ? <p className="text-gray-400 text-sm">{t('crm.dashboard.noOpenTasks')}</p>
               : <ul className="space-y-3">{state.openTasksToday.map(task => (
                   <li key={task.id} className="flex items-start justify-between gap-2 border-b border-gray-100 pb-3 last:border-0 last:pb-0">
