@@ -20,7 +20,32 @@ function hpBuildMeta(): Plugin {
   }
 }
 
+// Feste Vendor-Chunks: nur Bibliotheken, die ohnehin schon im Einstiegs-Chunk
+// stecken und auf jeder Seite gebraucht werden. Ihre Dateinamen ändern sich nur,
+// wenn sich die Bibliothek ändert, also lädt der Browser sie nach einem Deploy
+// nicht neu. Bewusst NICHT hier: App-Code, Übersetzungen (locales) und große
+// Bibliotheken einzelner Seiten (@xyflow, rrweb), die sonst jede Seite laden würde.
+const VENDOR_CHUNKS: ReadonlyArray<readonly [string, RegExp]> = [
+  ['vendor-react', /[\\/]node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom|@remix-run[\\/]router)[\\/]/],
+  ['vendor-supabase', /[\\/]node_modules[\\/]@supabase[\\/]/],
+  ['vendor-i18n', /[\\/]node_modules[\\/](i18next|react-i18next|i18next-browser-languagedetector)[\\/]/],
+]
+
+function vendorChunk(id: string): string | undefined {
+  for (const [name, pattern] of VENDOR_CHUNKS) {
+    if (pattern.test(id)) return name
+  }
+  return undefined
+}
+
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: vendorChunk,
+      },
+    },
+  },
   plugins: [
     react(),
     hpBuildMeta(),
