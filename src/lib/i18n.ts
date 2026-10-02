@@ -72,6 +72,12 @@ export function loadLanguage(lng: string): Promise<void> {
 // Übersetzer fest in der Empfängersprache, erst nachdem sie geladen ist.
 export async function fixedT(lng: string): Promise<TFunction> {
   await loadLanguage(lng)
+  // Chunk fehlgeschlagen: laut scheitern (der Aufrufer meldet es) statt still
+  // deutschen Text an einen englischen Empfänger zu schicken. i18next lädt eine
+  // gescheiterte Sprache in dieser Sitzung nicht erneut, erst ein Neuladen hilft.
+  if (hasLocale(lng) && !i18n.hasResourceBundle(lng, 'translation')) {
+    throw new Error(`Sprachdatei ${lng} nicht geladen`)
+  }
   return i18n.getFixedT(lng)
 }
 
