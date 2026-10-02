@@ -151,7 +151,6 @@ function Badge({ children, color = 'gray' }: { children: React.ReactNode; color?
     orange: 'bg-orange-50 text-orange-700',
     green:  'bg-green-50 text-green-700',
     purple: 'bg-purple-50 text-purple-700',
-    amber:  'bg-amber-50 text-amber-700',
   }
   return (
     <span className={`inline-block text-xs font-semibold font-body px-2.5 py-1 rounded-full ${cls[color] ?? cls.gray}`}>
@@ -1013,8 +1012,8 @@ export default function PropertyDetail() {
   //    Ausgaben aus den Rechnungen (documents.type='rechnung'). Nur lesend.
   interface IncomeBooking {
     id: string; source: string | null; check_in: string; check_out: string
-    total_price_net: number | null; total_price_gross: number | null; total_price: number | null
-    is_owner_stay: boolean | null; status: string | null; booking_number: string | null
+    total_price_net: number | null; total_price: number | null
+    is_owner_stay: boolean | null; status: string | null
   }
   const [incomeBookings,  setIncomeBookings]  = useState<IncomeBooking[]>([])
   const [incomeContracts, setIncomeContracts] = useState<ContractRecord[]>([])
@@ -1026,7 +1025,7 @@ export default function PropertyDetail() {
     try {
       const [bk, ct] = await Promise.all([
         supabase.from('bookings')
-          .select('id, source, check_in, check_out, total_price_net, total_price_gross, total_price, is_owner_stay, status, booking_number')
+          .select('id, source, check_in, check_out, total_price_net, total_price, is_owner_stay, status')
           .eq('property_id', id).order('check_in', { ascending: false }),
         supabase.from('contracts')
           .select('id, tenant_name, tenant_email, start_date, end_date, monthly_rent, status, signature_token, signed_at')
@@ -3347,7 +3346,7 @@ export default function PropertyDetail() {
   }
 
   // ── Eigentümer per E-Mail benachrichtigen ─────────────
-  async function notifyOwner(fileName: string, kind: 'Dokument' | 'Bild' | 'Baustellenfoto') {
+  async function notifyOwner(fileName: string, kind: 'Dokument' | 'Baustellenfoto') {
     // Empfaenger: der Eigentuemer UND alle eingeladenen Mit-Eigentuemer. Wer
     // selbst hochgeladen hat, bekommt keine Mail ueber die eigene Aktion.
     const owner = property?.owner
@@ -3370,7 +3369,7 @@ export default function PropertyDetail() {
             lang:    en ? 'en' : 'de',
             html: en
               ? `<p>Hello ${esc(firstName)},</p>
-<p>a new <strong>${kind === 'Dokument' ? 'document' : kind === 'Bild' ? 'image' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
+<p>a new <strong>${kind === 'Dokument' ? 'document' : 'construction photo'}</strong> has been uploaded for your property: <em>${esc(fileName)}</em></p>
 <p>You can view it in your personal portal at any time.</p>
 <p>Best regards<br>Your Happy Property team</p>`
               : `<p>Hallo ${esc(firstName)},</p>
