@@ -9,6 +9,8 @@ const LOCALES: Record<string, () => Promise<{ default: ResourceKey }>> = {
   de: () => import('../locales/de.json'),
   en: () => import('../locales/en.json'),
 }
+// Nur eigene Schlüssel, sonst träfe ein Code wie 'constructor' Object.prototype.
+const hasLocale = (lng: string): boolean => Object.prototype.hasOwnProperty.call(LOCALES, lng)
 
 // Kleines i18next-Backend ohne Zusatzpaket. Codes ohne eigene Datei (z.B.
 // 'de-DE' aus dem Browser) liefern bewusst nichts, genau wie bisher: die Suche
@@ -17,7 +19,7 @@ const localeBackend: BackendModule = {
   type: 'backend',
   init() { /* nichts zu konfigurieren */ },
   read(lng, _ns, callback) {
-    const load = LOCALES[lng]
+    const load = hasLocale(lng) ? LOCALES[lng] : undefined
     if (!load) { callback(null, null); return }
     load().then(
       // Bei Chunk-Fehler kann Vites vite:preloadError-Abfang (lazyWithReload)
@@ -41,6 +43,16 @@ export const i18nReady: Promise<unknown> = i18n
       escapeValue: false,
     },
     initImmediate: false,
+    // Mit Backend stürzt i18next selbst bei Codes wie 'constructor', 'toString_x'
+    // oder '__proto__' ab (Lade-Queue ist ein normales Objekt). Solche Codes
+    // kämen per ?lng= und würden in localStorage gemerkt: App bei jedem Start
+    // weiß. Geprüft werden der Code und sein Sprachteil (i18next macht aus dem
+    // ersten '_' ein '-'). '' lässt die Erkennung den Code überspringen, alle
+    // echten Codes bleiben unverändert.
+    detection: {
+      convertDetectedLanguage: (l: string) =>
+        (l in Object.prototype || l.replace('_', '-').split('-')[0] in Object.prototype ? '' : l),
+    },
   })
 
 // Lädt eine Sprache (samt Fallback 'de') nach, bevor fest in ihr übersetzt wird
