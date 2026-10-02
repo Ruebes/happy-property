@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Suspense, useState, useEffect, useCallback, useRef, type ComponentType, type LazyExoticComponent } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import DashboardLayout from '../../../components/DashboardLayout'
@@ -7,23 +7,50 @@ import { unitGross, unitNet } from '../../../lib/price'
 import { useAuth } from '../../../lib/auth'
 import type { Lead, Deal, Activity, EmailTemplate, DealPhase, DealProject, ScheduledMessage, CrmProject, CrmProjectUnit, CrmUnitDocument, UnitDocType, AiReplyExample, BusinessContact, DeveloperContact } from '../../../lib/crmTypes'
 import { PHASE_ICONS, SOURCE_BADGE_STYLE, PHASE_WEBHOOK_EVENTS, adChannelLabel } from '../../../lib/crmTypes'
-import ProjectSelectionModal from '../../../components/crm/ProjectSelectionModal'
-import UnitPickerModal from '../../../components/crm/UnitPickerModal'
-import RegistrationModal from '../../../components/crm/RegistrationModal'
 import { deleteGoogleEvent } from '../../../lib/googleCalendar'
-import AppointmentModal from '../../../components/crm/AppointmentModal'
-import DeckWizard from '../../../components/crm/DeckWizard'
 import { useMailAttachments, MailAttachmentField } from '../../../components/crm/MailAttachments'
-import RechnerWizard from '../../../components/crm/RechnerWizard'
-import StrategySimulator from '../../../components/crm/StrategySimulator'
-import PartnerShareModal from '../../../components/crm/PartnerShareModal'
 import LeadAngebote from '../../../components/crm/LeadAngebote'
 import LeadRegistrations from '../../../components/crm/LeadRegistrations'
 import { sendWhatsApp } from '../../../lib/whatsapp'
-import LeadQuickSend from '../../../components/crm/LeadQuickSend'
+import { lazyWithReload } from '../../../lib/lazyWithReload'
 import type { CrmAppointment } from '../../../lib/crmTypes'
 import { CustomSelect } from '../../../components/CustomSelect'
 import { detachPropertyFromOwner, detachConfirmText, dealInPortal, fetchUnitPropertyId, isForeignOwnedProperty, leadProfileIds } from '../../../lib/detachProperty'
+
+// ── Fenster, die erst auf Klick aufgehen ─────────────────────────────────────
+// Sie liegen in eigenen Chunks statt im Seiten-Chunk, damit die Kundenakte
+// schneller steht. lazyWithReload nimmt nur Komponenten ohne Pflicht-Props an;
+// lazyModal reicht die echten Prop-Typen an die Aufrufstellen durch.
+function lazyModal<P extends object>(load: () => Promise<{ default: ComponentType<P> }>): LazyExoticComponent<ComponentType<P>> {
+  return lazyWithReload(load as unknown as () => Promise<{ default: ComponentType<object> }>) as unknown as LazyExoticComponent<ComponentType<P>>
+}
+const loadProjectSelectionModal = () => import('../../../components/crm/ProjectSelectionModal')
+const loadUnitPickerModal       = () => import('../../../components/crm/UnitPickerModal')
+const loadRegistrationModal     = () => import('../../../components/crm/RegistrationModal')
+const loadAppointmentModal      = () => import('../../../components/crm/AppointmentModal')
+const loadDeckWizard            = () => import('../../../components/crm/DeckWizard')
+const loadRechnerWizard         = () => import('../../../components/crm/RechnerWizard')
+const loadStrategySimulator     = () => import('../../../components/crm/StrategySimulator')
+const loadPartnerShareModal     = () => import('../../../components/crm/PartnerShareModal')
+const loadLeadQuickSend         = () => import('../../../components/crm/LeadQuickSend')
+const ProjectSelectionModal = lazyModal(loadProjectSelectionModal)
+const UnitPickerModal       = lazyModal(loadUnitPickerModal)
+const RegistrationModal     = lazyModal(loadRegistrationModal)
+const AppointmentModal      = lazyModal(loadAppointmentModal)
+const DeckWizard            = lazyModal(loadDeckWizard)
+const RechnerWizard         = lazyModal(loadRechnerWizard)
+const StrategySimulator     = lazyModal(loadStrategySimulator)
+const PartnerShareModal     = lazyModal(loadPartnerShareModal)
+const LeadQuickSend         = lazyModal(loadLeadQuickSend)
+// Kurz nach dem Öffnen der Kundenakte werden alle Fenster-Chunks im Hintergrund
+// geholt (wie die Suche in der TopBar). Ein Klick öffnet dann ohne Wartezeit, und
+// in einem lange offenen Tab kann ein nach einem Deploy fehlender Chunk keinen
+// Neu-Ladevorgang mehr auslösen, der ungespeicherte Eingaben verwerfen würde.
+const MODAL_LOADERS = [
+  loadProjectSelectionModal, loadUnitPickerModal, loadRegistrationModal, loadAppointmentModal,
+  loadDeckWizard, loadRechnerWizard, loadStrategySimulator, loadPartnerShareModal, loadLeadQuickSend,
+]
+const MODAL_PRELOAD_MS = 1500
 
 type TabId = 'overview' | 'notes' | 'activities' | 'ai' | 'emails' | 'tasks' | 'documents' | 'appointments' | 'scheduled' | 'portal' | 'wohnung'
 
@@ -50,6 +77,11 @@ const AI_STATUS_CLS: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700',
 }
 
+// Provision und Projektpreis im gleichen Format wie die übrigen Preise der Seite
+// (1.234.567 €). Bis zu zwei Nachkommastellen bleiben sichtbar, damit Cent-Beträge
+// nicht still gerundet werden.
+const EUR_AMOUNT = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 2 })
+
 export default function LeadDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -58,6 +90,14 @@ export default function LeadDetail() {
 
   // Core data
   const [lead, setLead] = useState<Lead | null>(null)
+
+  // Fenster-Chunks im Hintergrund vorladen (siehe MODAL_LOADERS)
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const load of MODAL_LOADERS) void load().catch(() => { /* beim Öffnen lädt lazyWithReload erneut */ })
+    }, MODAL_PRELOAD_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
 
   // ── Sales-Deck-Wizard (personalisierte Decks → Postausgang) ──────────────────
   const [showWizard, setShowWizard] = useState(false)
@@ -94,6 +134,8 @@ export default function LeadDetail() {
   }>>([])
   const [activities, setActivities] = useState<Activity[]>([])
   const [leadTasks, setLeadTasks] = useState<LeadTaskRow[]>([])
+  // Erste Aufgaben-Ladung fertig? Bis dahin Spinner statt „Keine offenen Aufgaben".
+  const [tasksLoaded, setTasksLoaded] = useState(false)
   const [bizContacts, setBizContacts] = useState<BizContactRow[]>([])
   const [templates, setTemplates] = useState<EmailTemplate[]>([])
   const [staff, setStaff] = useState<{ id: string; full_name: string }[]>([])
@@ -149,6 +191,9 @@ export default function LeadDetail() {
     setTimeout(() => tabsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
   }
   const [loading, setLoading] = useState(true)
+  // Zweite Ladewelle (Termine, Geplant, Portal-Logins, Wohnungs-Dateien): blockiert
+  // die Seite nicht, ihre Reiter zeigen bis dahin einen Spinner statt leerer Listen.
+  const [secondaryLoading, setSecondaryLoading] = useState(true)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -227,9 +272,6 @@ export default function LeadDetail() {
 
   // Portal access (always accessible)
   // (Portalzugang-Modal entfernt — Versand läuft jetzt direkt per Klick, siehe openPortal)
-
-  // Unit picker project pre-filter (when activated from a deal_project card)
-  const [unitPickerProjectId, setUnitPickerProjectId] = useState<string | null>(null)
 
   // Unit edit: project context for CREATE mode (when no crm_project_unit exists yet)
   const [unitEditProjectId, setUnitEditProjectId] = useState<string | null>(null)
@@ -390,13 +432,16 @@ export default function LeadDetail() {
   // (z.B. Stella Demetriou von Paphosfinder) standen in KEINER Aufgaben-Auswahl,
   // obwohl sie laengst im System sind - Sven 17.8.: "auch diesen Partnern moechte
   // ich eine Aufgabe erstellen koennen".
+  // Die Geschäftskontakte werden nur hier geladen (alle Spalten): dieselbe Antwort
+  // füllt die Aufgaben-Auswahl (bizContacts) und die Empfänger im Nachrichten-
+  // Composer (businessContacts), damit beide Listen nie auseinanderlaufen.
   const loadBizContacts = useCallback(async () => {
     const [{ data }, { data: vw }] = await Promise.all([
-      supabase.from('crm_business_contacts')
-        .select('id, first_name, last_name, company, email, phone, whatsapp, language').order('first_name'),
+      supabase.from('crm_business_contacts').select('*').order('first_name'),
       supabase.from('verwaltungen')
         .select('id, name, ansprechpartner, ansprechpartner_phone, ansprechpartner_email, phone, email, language').order('name'),
     ])
+    if (data) setBusinessContacts(data as BusinessContact[])
     const rows = (data ?? []) as Array<{ id: string; first_name: string | null; last_name: string | null; company: string | null; email: string | null; phone: string | null; whatsapp: string | null; language: string | null }>
     const list: BizContactRow[] = rows.map(b => ({
       id: b.id,
@@ -447,7 +492,7 @@ export default function LeadDetail() {
 
   const fetchAll = useCallback(async (silent = false) => {
     if (!id) return
-    if (!silent) setLoading(true)
+    if (!silent) { setLoading(true); setSecondaryLoading(true) }
     try {
       const [
         { data: leadData },
@@ -488,7 +533,7 @@ export default function LeadDetail() {
       const dealResult = dealData as unknown as Deal | null
       setDeal(dealResult)
       setActivities((actData ?? []) as unknown as Activity[])
-      void loadLeadTasks()
+      void loadLeadTasks().finally(() => setTasksLoaded(true))
       setTemplates((tplData ?? []) as unknown as EmailTemplate[])
       setStaff((staffData ?? []) as { id: string; full_name: string }[])
 
@@ -504,15 +549,13 @@ export default function LeadDetail() {
       }
 
       // ── Batch 2: alle sekundären Queries parallel ─────────────────────────────
-      const [
-        { data: dpData },
-        { data: apptData },
-        { data: schedData },
-        { data: loginData },
-        { data: docsData },
-        { data: unitImgData },
-        { data: wonData },
-      ] = await Promise.all([
+      // Alle Abfragen starten wie bisher gleichzeitig. Der Seiten-Spinner wartet
+      // aber nur noch auf das, was Kopf und erster Reiter brauchen: die Projekte
+      // des Deals (Übersicht, Provisions-Nachricht, Platzhalter, Portal-Abgleich
+      // beim Speichern der Wohnung) bzw. ohne Deal die archivierten Käufe.
+      // Termine, Geplant, Portal-Logins und Wohnungs-Dateien kommen danach; ihre
+      // Reiter zeigen so lange einen eigenen Spinner (secondaryLoading).
+      const coreReq = Promise.all([
         // deal_projects
         dealResult?.id
           ? supabase.from('deal_projects')
@@ -520,6 +563,18 @@ export default function LeadDetail() {
               .eq('deal_id', dealResult.id)
               .order('created_at')
           : Promise.resolve({ data: [] }),
+        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
+        dealResult
+          ? Promise.resolve({ data: [] })
+          : supabase.from('deals')
+              .select('id, property:properties(id, project_name, unit_number)')
+              .eq('lead_id', id)
+              .eq('phase', 'archiviert')
+              .eq('archived_from_phase', 'provision_erhalten')
+              .not('unit_id', 'is', null)
+              .order('created_at', { ascending: false }),
+      ])
+      const restReq = Promise.all([
         // appointments
         supabase.from('crm_appointments')
           .select('*')
@@ -552,31 +607,32 @@ export default function LeadDetail() {
               .eq('id', dealResult.unit_id)
               .maybeSingle()
           : Promise.resolve({ data: null }),
-        // gewonnene, archivierte Käufe (nur wenn kein aktiver Deal da ist, nur lesen)
-        dealResult
-          ? Promise.resolve({ data: [] })
-          : supabase.from('deals')
-              .select('id, property:properties(id, project_name, unit_number)')
-              .eq('lead_id', id)
-              .eq('phase', 'archiviert')
-              .eq('archived_from_phase', 'provision_erhalten')
-              .not('unit_id', 'is', null)
-              .order('created_at', { ascending: false }),
       ])
 
+      const [{ data: dpData }, { data: wonData }] = await coreReq
       const dp = (dpData ?? []) as unknown as DealProject[]
       dealProjectsRef.current = dp
       setDealProjects(dp)
+      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
+      setLoading(false)   // Kern ist da: Seite zeigen, der Rest lädt weiter
+
+      const [
+        { data: apptData },
+        { data: schedData },
+        { data: loginData },
+        { data: docsData },
+        { data: unitImgData },
+      ] = await restReq
       setAppointments((apptData ?? []) as unknown as CrmAppointment[])
       setScheduledMessages((schedData ?? []) as unknown as ScheduledMessage[])
       setPortalLoginLog((loginData ?? []) as { id: string; created_at: string }[])
       setUnitDocs((docsData ?? []) as CrmUnitDocument[])
       setUnitImages((unitImgData as { images: string[] } | null)?.images ?? [])
-      setArchivedWonDeals((wonData ?? []) as unknown as typeof archivedWonDeals)
     } catch (err) {
       console.error('[LeadDetail] fetchAll:', err)
     } finally {
       setLoading(false)
+      setSecondaryLoading(false)
     }
   }, [id])
 
@@ -642,19 +698,18 @@ export default function LeadDetail() {
   }, [lead?.profile_id, deal?.unit_id, deal?.property_id])
 
   // ── Empfänger-Kontakte laden (einmalig) ──────────────────────────────────────
-  // Geschäftskontakte + Developer-Ansprechpartner als wählbare Empfänger im
-  // Nachrichten-Composer. Robust ohne FK-Embed: Developer-Namen separat mappen.
+  // Developer-Ansprechpartner als wählbare Empfänger im Nachrichten-Composer
+  // (die Geschäftskontakte lädt loadBizContacts mit). Robust ohne FK-Embed:
+  // Developer-Namen separat mappen.
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const [bcRes, dcRes, devRes] = await Promise.all([
-          supabase.from('crm_business_contacts').select('*').order('first_name'),
+        const [dcRes, devRes] = await Promise.all([
           supabase.from('crm_developer_contacts').select('*').order('name'),
           supabase.from('crm_developers').select('id, name'),
         ])
         if (cancelled) return
-        if (bcRes.data) setBusinessContacts(bcRes.data as BusinessContact[])
         if (dcRes.data) {
           const devMap = new Map(((devRes.data ?? []) as { id: string; name: string }[]).map(d => [d.id, d.name]))
           setDevContacts((dcRes.data as DeveloperContact[]).map(c => ({
@@ -2306,7 +2361,7 @@ export default function LeadDetail() {
                   {/* Phase badge */}
                   {deal && (
                     <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">
-                      {PHASE_ICONS[deal.phase]} {deal.phase}
+                      {PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}
                     </span>
                   )}
                   {/* Assignee */}
@@ -2395,10 +2450,13 @@ export default function LeadDetail() {
           {deal && (
             <div className="bg-white rounded-2xl shadow p-6">
               <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                {t('crm.phaseActions', 'Phasen-Aktionen')} — {PHASE_ICONS[deal.phase]} {deal.phase}
+                {t('crm.phaseActions', 'Phasen-Aktionen')} — {PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}
               </h2>
 
-              {/* Pipeline phase selector */}
+              {/* Pipeline phase selector. Bewusst nicht DEAL_PHASES: Reservierung, Hold und
+                  Kontakt übergeben brauchen die Dialoge der Pipeline (Wohnungsstatus,
+                  hold_contact, Übergabe-Notiz und Partner-Nachricht), ein einfacher
+                  Phasenwechsel von hier würde diese Schritte überspringen. */}
               <div className="flex flex-wrap gap-2 mb-4">
                 {(['erstkontakt','termin_gebucht','no_show','finanzierung_de','finanzierung_cy','registrierung','immobilienauswahl','kaufvertrag','anzahlung','provision_erhalten','deal_verloren'] as DealPhase[]).map((p) => (
                   <button
@@ -2411,7 +2469,7 @@ export default function LeadDetail() {
                         : 'border-gray-200 text-gray-500 hover:border-orange-300 hover:text-orange-500'
                     }`}
                   >
-                    {PHASE_ICONS[p]} {p}
+                    {PHASE_ICONS[p]} {t(`crm.phases.${p}`, p)}
                   </button>
                 ))}
               </div>
@@ -2910,6 +2968,16 @@ export default function LeadDetail() {
               ))}
             </div>
 
+            {/* Zweite Ladewelle läuft noch: Termine, Geplant, Portal und Wohnung zeigen bis
+                dahin einen Spinner statt leerer Listen. Sonst lädt z.B. „Manuell auslösen"
+                zu doppelten Nachrichten ein, oder ein Bild-Upload überschreibt die noch
+                nicht geladene Bilderliste der Wohnung. */}
+            {secondaryLoading && (activeTab === 'appointments' || activeTab === 'scheduled' || activeTab === 'portal' || (activeTab === 'wohnung' && !!deal?.unit_id)) && (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-6 h-6 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+
             {/* ── Tab: Overview ─────────────────────────────────── */}
             {activeTab === 'overview' && (
               <div className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -3166,7 +3234,7 @@ export default function LeadDetail() {
                       <dl className="space-y-2 text-sm">
                         <div className="flex gap-2">
                           <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.phase', 'Phase')}</dt>
-                          <dd className="text-gray-900">{PHASE_ICONS[deal.phase]} {deal.phase}</dd>
+                          <dd className="text-gray-900">{PHASE_ICONS[deal.phase]} {t(`crm.phases.${deal.phase}`, deal.phase)}</dd>
                         </div>
                         {deal.property && (
                           <div className="flex gap-2">
@@ -3199,7 +3267,7 @@ export default function LeadDetail() {
                         {deal.commission_amount != null && (
                           <div className="flex gap-2">
                             <dt className="text-gray-500 w-36 flex-shrink-0">{t('crm.commission', 'Provision')}</dt>
-                            <dd className="text-gray-900 font-medium">€ {deal.commission_amount.toLocaleString('de-AT')}</dd>
+                            <dd className="text-gray-900 font-medium">{EUR_AMOUNT.format(deal.commission_amount)}</dd>
                           </div>
                         )}
                         {deal.registration_sent_at && (
@@ -3301,7 +3369,7 @@ export default function LeadDetail() {
                                 {dp.price_net != null && (
                                   <div className="flex gap-2">
                                     <dt className="text-gray-400 w-16">{t('leadDetail.priceLabel', 'Preis')}</dt>
-                                    <dd className="font-medium">€ {dp.price_net.toLocaleString('de-AT')}</dd>
+                                    <dd className="font-medium">{EUR_AMOUNT.format(dp.price_net)}</dd>
                                   </div>
                                 )}
                                 {dp.notes && (
@@ -3851,8 +3919,12 @@ export default function LeadDetail() {
             {/* ── Tab: Aufgaben ─────────────────────────────────── */}
             {activeTab === 'tasks' && (
               <div className="p-6">
-                {/* Task list (echte crm_tasks) */}
-                {leadTasks.length === 0 ? (
+                {/* Task list (echte crm_tasks); bis zur ersten Ladung ein Spinner statt „Keine offenen Aufgaben" */}
+                {!tasksLoaded ? (
+                  <div className="flex items-center justify-center py-6">
+                    <div className="w-6 h-6 border-4 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                  </div>
+                ) : leadTasks.length === 0 ? (
                   <p className="text-sm text-gray-400 text-center py-6">
                     {t('crm.noTasks', 'Keine offenen Aufgaben')}
                   </p>
@@ -3966,7 +4038,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Termine ──────────────────────────────────── */}
-            {activeTab === 'appointments' && (
+            {activeTab === 'appointments' && !secondaryLoading && (
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-gray-900">
@@ -4125,7 +4197,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Geplante Nachrichten ─────────────────────────────── */}
-            {activeTab === 'scheduled' && (
+            {activeTab === 'scheduled' && !secondaryLoading && (
               <div className="p-6 space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -4232,7 +4304,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Wohnung (Dokumente & Bilder) ───────────────────────── */}
-            {activeTab === 'wohnung' && deal?.unit_id && (
+            {activeTab === 'wohnung' && deal?.unit_id && !secondaryLoading && (
               <div className="p-6 space-y-8">
 
                 {/* ── Wohnung-Kopf + Entfernen ── */}
@@ -4407,7 +4479,7 @@ export default function LeadDetail() {
             )}
 
             {/* ── Tab: Portal ──────────────────────────────────────────────── */}
-            {activeTab === 'portal' && (
+            {activeTab === 'portal' && !secondaryLoading && (
               <div className="p-6 space-y-6">
                 {/* Status-Karte */}
                 <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
@@ -4489,87 +4561,105 @@ export default function LeadDetail() {
 
       {/* Projekt-Auswahl Modal */}
       {showProjectModal && deal && lead && (
-        <ProjectSelectionModal
-          dealId={deal.id}
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          onClose={() => setShowProjectModal(false)}
-          onSaved={() => { setShowProjectModal(false); fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <ProjectSelectionModal
+            dealId={deal.id}
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            onClose={() => setShowProjectModal(false)}
+            onSaved={() => { setShowProjectModal(false); fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {showRegistrationModal && lead && (
-        <RegistrationModal
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          saving={savingReg}
-          onConfirm={handleRegistrationConfirm}
-          onCancel={() => setShowRegistrationModal(false)}
-        />
+        <Suspense fallback={null}>
+          <RegistrationModal
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            saving={savingReg}
+            onConfirm={handleRegistrationConfirm}
+            onCancel={() => setShowRegistrationModal(false)}
+          />
+        </Suspense>
       )}
 
       {showApptModal && lead && (
-        <AppointmentModal
-          leadId={lead.id}
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          leadPhone={lead.phone}
-          onClose={() => setShowApptModal(false)}
-          onCreated={() => { setShowApptModal(false); fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <AppointmentModal
+            leadId={lead.id}
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            leadPhone={lead.phone}
+            onClose={() => setShowApptModal(false)}
+            onCreated={() => { setShowApptModal(false); fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Wohnungs-Picker ─────────────────────────────────────────── */}
       {showUnitPicker && lead && (
-        <UnitPickerModal
-          leadName={`${lead.first_name} ${lead.last_name}`}
-          currentLeadId={lead.id}
-          preselectedProjectId={unitPickerProjectId}
-          onClose={() => { setShowUnitPicker(false); setUnitPickerProjectId(null) }}
-          onSelect={handleUnitAssign}
-        />
+        <Suspense fallback={null}>
+          <UnitPickerModal
+            leadName={`${lead.first_name} ${lead.last_name}`}
+            currentLeadId={lead.id}
+            preselectedProjectId={null}
+            onClose={() => setShowUnitPicker(false)}
+            onSelect={handleUnitAssign}
+          />
+        </Suspense>
       )}
 
       {/* ── Sales-Deck-Wizard ────────────────────────────────────────── */}
       {showWizard && lead && (
-        <DeckWizard
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, language: lead.language }}
-          onClose={() => setShowWizard(false)}
-          onDone={(msg) => { setShowWizard(false); showToast(msg) }}
-        />
+        <Suspense fallback={null}>
+          <DeckWizard
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name, email: lead.email, language: lead.language }}
+            onClose={() => setShowWizard(false)}
+            onDone={(msg) => { setShowWizard(false); showToast(msg) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Partner-Akte (z.B. Burkhard) ─────────────────────────────── */}
       {showPartnerShare && lead && (
-        <PartnerShareModal
-          leadId={lead.id}
-          leadName={`${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || lead.email || ''}
-          onClose={() => setShowPartnerShare(false)}
-        />
+        <Suspense fallback={null}>
+          <PartnerShareModal
+            leadId={lead.id}
+            leadName={`${lead.first_name ?? ''} ${lead.last_name ?? ''}`.trim() || lead.email || ''}
+            onClose={() => setShowPartnerShare(false)}
+          />
+        </Suspense>
       )}
 
       {/* ── Investitions-Fahrplan (Strategie) ─────────────────────────── */}
       {showStrategy && lead && (
-        <StrategySimulator
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
-          initialUnits={[]}
-          onClose={() => setShowStrategy(false)}
-        />
+        <Suspense fallback={null}>
+          <StrategySimulator
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+            initialUnits={[]}
+            onClose={() => setShowStrategy(false)}
+          />
+        </Suspense>
       )}
 
       {/* ── Rechner-/Vergleichs-Wizard ───────────────────────────────── */}
       {showRechner && lead && (
-        <RechnerWizard
-          lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
-          onClose={() => setShowRechner(false)}
-          onDone={(msg) => { setShowRechner(false); showToast(msg) }}
-        />
+        <Suspense fallback={null}>
+          <RechnerWizard
+            lead={{ id: lead.id, first_name: lead.first_name, last_name: lead.last_name }}
+            onClose={() => setShowRechner(false)}
+            onDone={(msg) => { setShowRechner(false); showToast(msg) }}
+          />
+        </Suspense>
       )}
 
       {showForward && lead && (
-        <LeadQuickSend
-          lead={lead}
-          mode="forward"
-          onClose={() => setShowForward(false)}
-          onSent={(msg) => { setShowForward(false); showToast(msg); void fetchAll(true) }}
-        />
+        <Suspense fallback={null}>
+          <LeadQuickSend
+            lead={lead}
+            mode="forward"
+            onClose={() => setShowForward(false)}
+            onSent={(msg) => { setShowForward(false); showToast(msg); void fetchAll(true) }}
+          />
+        </Suspense>
       )}
 
       {/* ── Portal-Zugang Dialog ─────────────────────────────────────── */}
