@@ -1,5 +1,5 @@
 // meta-builder: Entwurfs-Modi validate, create/resume (Schritt-Läufer),
-// activate_draft, preview, duplicate, discard.
+// activate_draft, preview, duplicate (mehrere Objekte, Ziel, Kopien), discard.
 //
 // Ablauf create/resume (Client ruft resume, solange next != null):
 //   Lease (5 min) -> applyHousing + Standardwerte + validateDraft + Lint serverseitig
@@ -15,8 +15,8 @@ import {
 } from '../_shared/metaGraph.ts'
 import {
   adByKey, adsetByKey, applyHousing, buildAdPayload, buildAdsetPayload, buildCampaignPayload, buildCreativePayload,
-  cleanName, effectiveAdvantageAudience, HEC_CATEGORIES, hasErrors, isHec, isRealEstateDraft, PREVIEW_FORMATS,
-  SPECIAL_AD_CATEGORIES, targetsEu, validateDraft, type SpecialCat,
+  cleanName, effectiveAdvantageAudience, HEC_CATEGORIES, hasErrors, isHec, isRealEstateDraft, LIMITS, PREVIEW_FORMATS,
+  SPECIAL_AD_CATEGORIES, targetsEu, validateDraft, type DuplicateZiel, type SpecialCat,
   type ActivateDraftRequest, type ActivateDraftResponse, type AdDraft, type AdsetDraft, type BuilderErrorBody,
   type CampaignDraft, type CreateRequest, type CreateResponse, type CreativeBuild, type DiscardRequest,
   type DiscardResponse, type DraftIssue, type DraftLastError, type DraftMetaIds, type DraftSpec, type DraftStatus,
@@ -801,7 +801,7 @@ async function modeCreateOrResume(ctx: Ctx, req: CreateRequest): Promise<CreateR
   const draft = await loadDraft(ctx, req.draft_id)
   if (draft.status === 'discarded') throw new BuilderError(409, 'invalid_request', 'Der Entwurf ist verworfen.')
   if (draft.kind === 'edit') {
-    throw new BuilderError(400, 'unsupported', 'Bestehende Objekte ändert der Assistent nicht.', 'Änderungen an laufenden Kampagnen über die Einstellungen in der Statistik.')
+    throw new BuilderError(400, 'unsupported', 'Ein Bearbeiten-Entwurf wird nicht angelegt, sondern übernommen.', 'Änderungen an laufenden Kampagnen mit „Das ändert sich bei Meta“ prüfen (edit_diff) und übernehmen (edit_apply).')
   }
   const ids: DraftMetaIds = draft.meta_ids ?? {}
   const campaignExisting = draft.spec?.campaign?.existing_id || draft.target_campaign_id || ''
@@ -1066,42 +1066,265 @@ export async function modePreview(ctx: Ctx, req: PreviewRequest): Promise<Previe
 // duplicate
 // ═══════════════════════════════════════════════════════════════════════════
 
+const DUP_CUTOFF_MS = 45_000
+/** Höchstens so viele Kopier-POSTs je Aufruf (Rate-Limit „Limited access“) */
+const DUP_MAX_POSTS = 40
+/** Meta kopiert synchron mit deep_copy höchstens 3 Anzeigen; darüber einzeln kopieren */
+const DUP_SYNC_MAX_ADS = 3
+/**
+ * Ab hier verlangt Meta (alle API-Versionen) bei Wohnen/Beschäftigung/Finanzen mit eingeschränkter
+ * Zielgruppe (Custom Audience, detailliertes Targeting) ein ausdrückliches advantage_audience, auch auf /copies.
+ */
+const AA_PFLICHT_AB = Date.parse('2026-10-27T00:00:00Z')
+
+interface DupQuelle { id: string; name: string; campaignId: string; adsetId: string; cats: string[]; objective: string; targeting: Raw | null }
+
+/** Eingeschränkte Zielgruppe ohne ausdrücklich gesetzte Advantage+ Zielgruppe (Meta-Regel ab 27.10.2026)? */
+function advantageAudienceFehlt(t: unknown): boolean {
+  const tt = obj(t)
+  const aa = obj(tt.targeting_automation).advantage_audience
+  const eingeschraenkt = arr(tt.custom_audiences).length > 0 || arr(tt.flexible_spec).length > 0
+  return eingeschraenkt && (aa === undefined || aa === null || aa === '')
+}
+
+/**
+ * Duplizieren wie im Werbeanzeigenmanager: Kampagne (immer als neue Kampagne), Anzeigengruppe
+ * (ursprüngliche / vorhandene / neue Kampagne) oder Anzeige (ursprüngliche / vorhandene / neue
+ * Anzeigengruppe), 1 bis 5 Kopien je Objekt. Kopien immer PAUSED, Name + " - Kopie" (ab der
+ * zweiten " - Kopie 2" ...), Unterobjekte behalten ihre Namen. Meta kopiert synchron nur bis
+ * 3 Anzeigen mit; größere Gruppen/Kampagnen werden Ebene für Ebene kopiert (gedeckelt).
+ * Kopie in einer Kampagne ohne Sonderkategorie Wohnen (Ziel oder Kampagne der Quelle): 409
+ * housing_required, außer Admin mit Begründung (wie beim Anlegen). Ziel „neu“: nur Objekte aus
+ * derselben Kampagne bzw. Anzeigengruppe.
+ */
 export async function modeDuplicate(ctx: Ctx, req: DuplicateRequest): Promise<DuplicateResponse> {
   const level = str(req.level) as Level
   if (level !== 'campaign' && level !== 'adset' && level !== 'ad') throw new BuilderError(400, 'invalid_request', 'level muss campaign, adset oder ad sein.')
-  const id = metaId(req.id, 'id')
-  try { await assertOwnAccount(id) } catch (err) {
-    if (err instanceof MetaApiError && err.kind === 'permission') throw new BuilderError(403, 'forbidden', 'Das Objekt gehört nicht zu unserem Werbekonto.')
-    throw err
+  const rawIds = arr<unknown>(req.ids).length ? arr<unknown>(req.ids) : (req.id !== undefined ? [req.id] : [])
+  const ids = uniq(rawIds.map(x => metaId(x, 'id')))
+  if (!ids.length) throw new BuilderError(400, 'invalid_request', 'Keine Objekte zum Duplizieren angegeben.')
+  const kopienRoh = req.kopien === undefined ? 1 : num(req.kopien)
+  if (kopienRoh === null || !Number.isInteger(kopienRoh) || kopienRoh < 1 || kopienRoh > LIMITS.duplicateMaxCopies) {
+    throw new BuilderError(400, 'invalid_request', `Anzahl Kopien: 1 bis ${LIMITS.duplicateMaxCopies}.`)
   }
-  let suffix = str(req.rename_suffix).replace(new RegExp(DASH_CHARS.source, 'g'), '-').replace(/\s+/g, ' ').trim().slice(0, 40)
-  if (!suffix) suffix = 'Kopie'
-  const body: Raw = { status_option: 'PAUSED' }
-  if (level === 'ad') body.rename_options = { rename_suffix: ` ${suffix}` }
-  else {
-    body.rename_options = { rename_suffix: ` ${suffix}`, rename_strategy: 'ONLY_TOP_LEVEL_RENAME' }
-    body.deep_copy = req.deep === true
+  const kopien = kopienRoh
+  if (ids.length * kopien > LIMITS.duplicateMaxTotal) {
+    throw new BuilderError(400, 'invalid_request', `Höchstens ${LIMITS.duplicateMaxTotal} Kopien auf einmal (Objekte x Kopien).`)
   }
-  let targetAdset: string | null = null
-  if (req.target_adset_id) {
-    if (level !== 'ad') throw new BuilderError(400, 'invalid_request', 'Eine Ziel-Anzeigengruppe gibt es nur beim Kopieren einer Anzeige.')
-    targetAdset = metaId(req.target_adset_id, 'target_adset_id')
-    const t = await graphGet<Raw>(targetAdset, { fields: 'account_id,campaign{special_ad_categories}' })
-    if (digits(t.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Die Ziel-Anzeigengruppe gehört nicht zu unserem Werbekonto.')
-    if (arr<unknown>(obj(t.campaign).special_ad_categories).map(str).indexOf('HOUSING') < 0) {
-      throw new BuilderError(409, 'invalid_request', 'Die Ziel-Anzeigengruppe liegt in einer Kampagne ohne Sonderkategorie Wohnen.', 'Immobilien-Anzeigen nur in Wohnen-Kampagnen kopieren.')
+  const zielIn: DuplicateZiel = req.ziel && typeof req.ziel === 'object'
+    ? req.ziel
+    : req.target_adset_id ? { art: 'vorhanden', adset_id: str(req.target_adset_id) } : { art: 'original' }
+  const art = zielIn.art
+  if (art !== 'original' && art !== 'vorhanden' && art !== 'neu') throw new BuilderError(400, 'invalid_request', 'ziel.art muss original, vorhanden oder neu sein.')
+  if (level === 'campaign' && art === 'vorhanden') throw new BuilderError(400, 'invalid_request', 'Eine Kampagne lässt sich nur als neue Kampagne duplizieren.')
+  const deep = req.deep !== false
+  let wort = str(req.rename_suffix).replace(new RegExp(DASH_CHARS.source, 'g'), '-').replace(/^[\s-]+/, '').replace(/\s+/g, ' ').trim().slice(0, 40)
+  if (!wort) wort = 'Kopie'
+  const suffix = (k: number) => ` - ${wort}${k > 1 ? ` ${k}` : ''}`
+  const start = Date.now()
+  let posts = 0
+  const warnings: string[] = []
+  const isAdmin = ctx.caller.role === 'admin'
+  const overrideGrund = str(req.housing_override_reason).trim()
+  let housingOverride: Raw | null = null
+  /** Kopie landet in einer Kampagne ohne Wohnen: wie beim Anlegen nur ein Admin mit Begründung */
+  const wohnenPflicht = (text: string): void => {
+    if (isAdmin && overrideGrund.length >= 10) {
+      if (!housingOverride) console.warn(`[meta-builder] Wohnen-Pflicht beim Duplizieren bewusst übergangen von ${ctx.caller.userId}: ${overrideGrund.slice(0, 200)}`)
+      housingOverride = { reason: overrideGrund.slice(0, 500), by: ctx.caller.userId, at: nowIso() }
+      warnings.push(`${text} Bewusst übergangen (Admin-Begründung).`)
+      return
     }
-    body.adset_id = targetAdset
+    throw new BuilderError(409, 'housing_required', text,
+      isAdmin
+        ? 'Immobilien-Anzeigen nur in Wohnen-Kampagnen kopieren oder als Admin mit Begründung (mindestens 10 Zeichen) bewusst übergehen.'
+        : 'Immobilien-Anzeigen nur in Wohnen-Kampagnen kopieren. Übergehen kann nur ein Admin mit Begründung.')
   }
-  const res = await metaPost<Raw>(ctx, `${id}/copies`, body, { level, entityId: id })
-  const copied = str(res.copied_ad_id) || str(res.copied_adset_id) || str(res.copied_campaign_id) || str(res.id)
-  if (!copied) throw new BuilderError(502, 'meta_error', 'Meta hat keine ID der Kopie zurückgegeben.', undefined, res)
-  await readback(ctx.sb, level === 'campaign'
-    ? { campaignId: copied, adsetIds: [], adIds: [] }
-    : level === 'adset'
-      ? { adsetIds: [copied], adIds: [] }
-      : { adsetIds: targetAdset ? [targetAdset] : [], adIds: [copied], prepare: true })
-  return { copied_id: copied, level }
+
+  const copy = async (srcId: string, lvl: Level, body: Raw): Promise<string> => {
+    if (posts >= DUP_MAX_POSTS) throw new BuilderError(429, 'rate_limited', 'Zu viele Kopien auf einmal. Den Rest bitte in einem zweiten Schritt duplizieren.')
+    posts++
+    const res = await metaPost<Raw>(ctx, `${srcId}/copies`, { status_option: 'PAUSED', ...body }, {
+      level: lvl, entityId: srcId, ...(housingOverride ? { logExtra: { housing_override: housingOverride } } : {}),
+    })
+    const id = str(res.copied_ad_id) || str(res.copied_adset_id) || str(res.copied_campaign_id) || str(res.id)
+    if (!id) throw new BuilderError(502, 'meta_error', 'Meta hat keine ID der Kopie zurückgegeben.', undefined, res)
+    return id
+  }
+  const rename = (k: number) => ({ rename_options: { rename_suffix: suffix(k), rename_strategy: 'ONLY_TOP_LEVEL_RENAME' } })
+  const quelle = async (id: string): Promise<DupQuelle> => {
+    const fields = level === 'campaign' ? 'account_id,name,objective,special_ad_categories'
+      : level === 'adset' ? 'account_id,name,campaign_id,targeting,campaign{objective,special_ad_categories}'
+        : 'account_id,name,adset_id,campaign_id,campaign{objective,special_ad_categories}'
+    const j = await graphGet<Raw>(id, { fields })
+    if (digits(j.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Das Objekt gehört nicht zu unserem Werbekonto.')
+    const camp = level === 'campaign' ? j : obj(j.campaign)
+    return {
+      id, name: str(j.name), campaignId: level === 'campaign' ? id : str(j.campaign_id), adsetId: level === 'ad' ? str(j.adset_id) : level === 'adset' ? id : '',
+      cats: arr<unknown>(camp.special_ad_categories).map(str), objective: str(camp.objective),
+      targeting: level === 'adset' ? obj(j.targeting) : null,
+    }
+  }
+  const wohnenKampagne = async (campaignId: string, label: string, objective?: string): Promise<void> => {
+    const t = await graphGet<Raw>(campaignId, { fields: 'account_id,objective,special_ad_categories' })
+    if (digits(t.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', `${label} gehört nicht zu unserem Werbekonto.`)
+    if (arr<unknown>(t.special_ad_categories).map(str).indexOf('HOUSING') < 0) wohnenPflicht(`${label} hat die Sonderkategorie Wohnen nicht.`)
+    if (objective && str(t.objective) && str(t.objective) !== objective) {
+      throw new BuilderError(409, 'invalid_request', `${label} hat ein anderes Kampagnenziel (${str(t.objective)}). Meta kopiert nur in Kampagnen mit gleichem Ziel.`)
+    }
+  }
+  /** Anzeigengruppe samt Anzeigen kopieren; über 3 Anzeigen Ebene für Ebene. */
+  const adsetTief = async (srcId: string, k: number, campaignId?: string, renameTop = true): Promise<string> => {
+    const base: Raw = { ...(campaignId ? { campaign_id: campaignId } : {}), ...(renameTop ? rename(k) : { rename_options: { rename_strategy: 'NO_RENAME' } }) }
+    if (!deep) return await copy(srcId, 'adset', { ...base, deep_copy: false })
+    const ads = await graphAll<Raw>(`${srcId}/ads`, { fields: 'id,effective_status', limit: 100 }, { maxPages: 1 })
+    const lebend = ads.filter(a => DEAD_STATUS.indexOf(str(a.effective_status)) < 0)
+    if (lebend.length <= DUP_SYNC_MAX_ADS) return await copy(srcId, 'adset', { ...base, deep_copy: true })
+    if (posts + 1 + lebend.length > DUP_MAX_POSTS) {
+      throw new BuilderError(429, 'rate_limited', `Die Anzeigengruppe hat ${lebend.length} Anzeigen, zu viele für ein sofortiges Kopieren.`, 'Weniger Kopien wählen oder im Werbeanzeigenmanager duplizieren.')
+    }
+    const neu = await copy(srcId, 'adset', { ...base, deep_copy: false })
+    for (const a of lebend) await copy(str(a.id), 'ad', { adset_id: neu, rename_options: { rename_strategy: 'NO_RENAME' } })
+    return neu
+  }
+
+  const quellen: DupQuelle[] = []
+  const failed: DuplicateResponse['failed'] = []
+  for (const id of ids) {
+    try { quellen.push(await quelle(id)) } catch (err) {
+      failed.push({ source_id: id, kopie: 0, error: err instanceof MetaApiError ? fromMetaError(err).message : err instanceof BuilderError ? err.message : errText(err) })
+    }
+  }
+  if (!quellen.length) throw new BuilderError(400, 'invalid_request', failed[0]?.error ?? 'Keine kopierbaren Objekte.', undefined, failed)
+
+  // Ziel „neu“: Meta kopiert das Elternobjekt der ERSTEN Quelle, also nur Objekte mit demselben Elternobjekt
+  if (art === 'neu' && level !== 'campaign') {
+    const eltern = uniq(quellen.map(q => (level === 'adset' ? q.campaignId : q.adsetId)))
+    if (eltern.length > 1) {
+      throw new BuilderError(400, 'invalid_request',
+        level === 'adset' ? 'Für „Neue Kampagne“ bitte nur Anzeigengruppen aus derselben Kampagne wählen.' : 'Für „Neue Anzeigengruppe“ bitte nur Anzeigen aus derselben Anzeigengruppe wählen.',
+        'Sonst landen alle Kopien in der Kopie der ersten. Je Kampagne bzw. Anzeigengruppe einzeln duplizieren.')
+    }
+  }
+  // Wohnen: Kopien, die in der Kampagne der Quelle (bzw. ihrer Kopie) landen, brauchen dort HOUSING
+  const inQuellKampagne = level === 'campaign' || art === 'original' || (level === 'adset' && art === 'neu') || (level === 'ad' && art === 'neu' && !zielIn.campaign_id)
+  if (inQuellKampagne) {
+    const ohne = quellen.filter(q => q.cats.indexOf('HOUSING') < 0)
+    if (ohne.length) {
+      wohnenPflicht(ohne.length === 1
+        ? `„${ohne[0].name}“ liegt in einer Kampagne ohne Sonderkategorie Wohnen; die Kopie hätte sie auch nicht.`
+        : `${ohne.length} Objekte (z. B. „${ohne[0].name}“) liegen in Kampagnen ohne Sonderkategorie Wohnen; die Kopien hätten sie auch nicht.`)
+    }
+  }
+  // Advantage+ Zielgruppe ausdrücklich (Meta-Pflicht ab 27.10.2026 bei Wohnen mit Custom Audience/Detail-Targeting)
+  const aaPflicht = Date.now() >= AA_PFLICHT_AB
+  const aaGesperrt = new Set<string>()
+  const aaLuecken = async (q: DupQuelle, i: number): Promise<string[]> => {
+    if (level === 'adset') return (isHec(q.cats) || art === 'vorhanden') && advantageAudienceFehlt(q.targeting) ? [q.name || q.id] : []
+    if (level === 'campaign') {
+      if (!deep || !isHec(q.cats)) return []
+      const gruppen = await graphAll<Raw>(`${q.id}/adsets`, { fields: 'id,name,effective_status,targeting', limit: 100 }, { maxPages: 2 })
+      return gruppen.filter(g => DEAD_STATUS.indexOf(str(g.effective_status)) < 0 && advantageAudienceFehlt(g.targeting)).map(g => str(g.name) || str(g.id))
+    }
+    // Anzeige in neue Anzeigengruppe: kopiert wird die Gruppe der ersten Quelle (einmal prüfen)
+    if (art !== 'neu' || i > 0 || !(isHec(q.cats) || zielIn.campaign_id)) return []
+    const g = await graphGet<Raw>(q.adsetId, { fields: 'name,targeting' })
+    return advantageAudienceFehlt(g.targeting) ? [str(g.name) || q.adsetId] : []
+  }
+  for (let i = 0; i < quellen.length; i++) {
+    const q = quellen[i]
+    let luecken: string[] = []
+    try { luecken = await aaLuecken(q, i) } catch (e) { console.warn('[meta-builder] duplicate Advantage-Prüfung:', errText(e).slice(0, 200)) }
+    if (!luecken.length) continue
+    const text = `„${luecken.slice(0, 3).join('“, „')}“${luecken.length > 3 ? ` und ${luecken.length - 3} weitere` : ''}: Wohnen-Anzeigengruppe mit Custom Audience oder detailliertem Targeting ohne ausdrücklich gesetzte Advantage+ Zielgruppe. `
+      + `Meta lehnt das Kopieren ${aaPflicht ? 'seit' : 'ab'} 27.10.2026 ab. Vorher die Advantage+ Zielgruppe der Anzeigengruppe ausdrücklich setzen (über „Bearbeiten“ ändern oder im Werbeanzeigenmanager speichern).`
+    if (!aaPflicht) { warnings.push(text); continue }
+    // Anzeigen in eine neue Gruppe: alle hängen an derselben Gruppe
+    for (const x of level === 'ad' ? quellen : [q]) { aaGesperrt.add(x.id); failed.push({ source_id: x.id, kopie: 0, error: text }) }
+  }
+  const kopierbar = quellen.filter(q => !aaGesperrt.has(q.id))
+  if (!kopierbar.length) throw new BuilderError(409, 'invalid_request', failed[0]?.error ?? 'Keine kopierbaren Objekte.', undefined, failed)
+
+  // Ziel auflösen (einmal je Aufruf)
+  let zielCampaign: string | undefined
+  let zielAdset: string | undefined
+  let neueKampagne: string | undefined
+  let neueGruppe: string | undefined
+  if (level === 'adset' && art === 'vorhanden') {
+    zielCampaign = metaId(zielIn.campaign_id, 'ziel.campaign_id')
+    await wohnenKampagne(zielCampaign, 'Die Ziel-Kampagne', quellen[0].objective)
+  } else if (level === 'adset' && art === 'neu') {
+    neueKampagne = await copy(quellen[0].campaignId, 'campaign', { deep_copy: false, ...rename(1) })
+    zielCampaign = neueKampagne
+  } else if (level === 'ad' && art === 'vorhanden') {
+    zielAdset = metaId(zielIn.adset_id, 'ziel.adset_id')
+    const t = await graphGet<Raw>(zielAdset, { fields: 'account_id,campaign_id' })
+    if (digits(t.account_id) !== ctx.env.account) throw new BuilderError(403, 'forbidden', 'Die Ziel-Anzeigengruppe gehört nicht zu unserem Werbekonto.')
+    await wohnenKampagne(metaId(t.campaign_id, 'campaign_id'), 'Die Kampagne der Ziel-Anzeigengruppe')
+  } else if (level === 'ad' && art === 'neu') {
+    const inKampagne = zielIn.campaign_id ? metaId(zielIn.campaign_id, 'ziel.campaign_id') : undefined
+    if (inKampagne) await wohnenKampagne(inKampagne, 'Die Ziel-Kampagne', quellen[0].objective)
+    neueGruppe = await copy(quellen[0].adsetId, 'adset', { deep_copy: false, ...(inKampagne ? { campaign_id: inKampagne } : {}), ...rename(1) })
+    zielAdset = neueGruppe
+  }
+
+  const copies: DuplicateResponse['copies'] = []
+  for (const q of kopierbar) {
+    for (let k = 1; k <= kopien; k++) {
+      if (Date.now() - start > DUP_CUTOFF_MS) { failed.push({ source_id: q.id, kopie: k, error: 'Zeitlimit erreicht. Diese Kopie bitte noch einmal anstoßen.' }); continue }
+      try {
+        let copied: string
+        if (level === 'campaign') {
+          if (!deep) copied = await copy(q.id, 'campaign', { deep_copy: false, ...rename(k) })
+          else {
+            const ads = await graphAll<Raw>(`${q.id}/ads`, { fields: 'id,effective_status', limit: 100 }, { maxPages: 2 })
+            const lebend = ads.filter(a => DEAD_STATUS.indexOf(str(a.effective_status)) < 0)
+            if (lebend.length <= DUP_SYNC_MAX_ADS) copied = await copy(q.id, 'campaign', { deep_copy: true, ...rename(k) })
+            else {
+              const gruppen = (await graphAll<Raw>(`${q.id}/adsets`, { fields: 'id,effective_status', limit: 100 }, { maxPages: 2 }))
+                .filter(a => DEAD_STATUS.indexOf(str(a.effective_status)) < 0)
+              if (posts + 1 + gruppen.length + lebend.length > DUP_MAX_POSTS) {
+                throw new BuilderError(429, 'rate_limited', `Die Kampagne hat ${gruppen.length} Anzeigengruppen und ${lebend.length} Anzeigen, zu viele für ein sofortiges Kopieren.`, 'Im Werbeanzeigenmanager duplizieren oder einzelne Anzeigengruppen kopieren.')
+              }
+              copied = await copy(q.id, 'campaign', { deep_copy: false, ...rename(k) })
+              for (const g of gruppen) await adsetTief(str(g.id), k, copied, false)
+            }
+          }
+        } else if (level === 'adset') {
+          copied = await adsetTief(q.id, k, zielCampaign)
+        } else {
+          copied = await copy(q.id, 'ad', { ...(zielAdset ? { adset_id: zielAdset } : {}), ...rename(k) })
+        }
+        copies.push({ source_id: q.id, copied_id: copied, kopie: k })
+      } catch (err) {
+        if (err instanceof MetaApiError && err.userMsg === 'META_WRITES_DISABLED') throw err
+        if (err instanceof BuilderError && err.code === 'writes_disabled') throw err
+        failed.push({ source_id: q.id, kopie: k, error: err instanceof MetaApiError ? fromMetaError(err).message : err instanceof BuilderError ? err.message : errText(err) })
+        if (err instanceof MetaApiError && err.kind === 'rate_limit') break
+      }
+    }
+  }
+
+  // Spiegel (nie fatal)
+  try {
+    const neu = copies.map(c => c.copied_id)
+    if (level === 'campaign') {
+      for (const c of neu) await readback(ctx.sb, { campaignId: c, adsetIds: [], adIds: [] })
+    } else if (level === 'adset') {
+      await readback(ctx.sb, { campaignId: neueKampagne ?? null, campaignCreated: false, adsetIds: neu, adIds: [] })
+    } else if (neu.length) {
+      const adsets = uniq([zielAdset ?? '', ...quellen.map(q => q.adsetId)].filter(Boolean))
+      await readback(ctx.sb, { adsetIds: adsets, adIds: neu, prepare: true })
+    }
+  } catch (e) { console.warn('[meta-builder] duplicate Rücklesen:', errText(e).slice(0, 200)) }
+
+  if (!copies.length) throw new BuilderError(502, 'meta_error', failed[0]?.error ?? 'Keine Kopie angelegt.', undefined, { failed })
+  return {
+    level, copies, failed, copied_id: copies[0]?.copied_id,
+    ...(neueKampagne ? { neue_kampagne_id: neueKampagne } : {}),
+    ...(neueGruppe ? { neue_anzeigengruppe_id: neueGruppe } : {}),
+    ...(warnings.length ? { warnings } : {}),
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -9,6 +9,10 @@
 //       → ändert ALLE bei Meta änderbaren Felder von Kampagne/Adset/Ad.
 //       Guard: Entität muss zu unserem Werbekonto gehören; je Ebene gilt eine
 //       Feld-Allowlist (siehe EDITABLE_FIELDS unten).
+//       Ausgabenlimit (spend_cap): 10.000 bis 10.000.000 Cent; Metas Wert
+//       922337203685478 entfernt das Limit. ROAS-Ziel: bid_strategy
+//       LOWEST_COST_WITH_MIN_ROAS mit bid_constraints.roas_average_floor (x10000,
+//       100 bis 10.000.000) und Performance-Ziel VALUE, ohne bid_amount.
 //       Leitplanke: vor status ACTIVE und vor jeder Budget-Erhöhung prüft
 //       budgetHeadroom die Summe aktiver Tagesbudgets gegen
 //       ad_settings.max_account_daily_budget; darüber Antwort 409
@@ -61,7 +65,7 @@ import {
   getLastUsage, budgetHeadroom, type BudgetHeadroom,
 } from '../_shared/metaGraph.ts'
 import {
-  applyHousing, isHec, SPECIAL_AD_CATEGORIES,
+  applyHousing, isHec, LIMITS, META_UNBEGRENZT, SPECIAL_AD_CATEGORIES,
   type DraftSpec, type SpecialCat, type TargetingSpec,
 } from '../_shared/metaSpec.ts'
 
@@ -97,7 +101,7 @@ interface AudienceCriteria {
 // scheinbar erfolgreich und das Feld bleibt trotzdem stehen.
 const EDITABLE_FIELDS: Record<string, string[]> = {
   campaign: ['name', 'status', 'daily_budget', 'lifetime_budget', 'spend_cap', 'bid_strategy', 'start_time', 'stop_time'],
-  adset:    ['name', 'status', 'daily_budget', 'lifetime_budget', 'bid_amount', 'bid_strategy', 'optimization_goal', 'start_time', 'end_time', 'targeting'],
+  adset:    ['name', 'status', 'daily_budget', 'lifetime_budget', 'bid_amount', 'bid_strategy', 'bid_constraints', 'optimization_goal', 'start_time', 'end_time', 'targeting'],
   ad:       ['name', 'status'],
 }
 
@@ -105,7 +109,7 @@ const EDITABLE_FIELDS: Record<string, string[]> = {
 // Protokoll (before) aus EINEM Aufruf.
 const ENTITY_FIELDS: Record<string, string> = {
   campaign: 'account_id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,spend_cap,bid_strategy,start_time,stop_time,special_ad_categories',
-  adset: 'account_id,campaign_id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,bid_amount,bid_strategy,optimization_goal,start_time,end_time,targeting,campaign{special_ad_categories}',
+  adset: 'account_id,campaign_id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,bid_amount,bid_strategy,bid_constraints,optimization_goal,start_time,end_time,targeting,campaign{special_ad_categories}',
   ad: 'account_id,campaign_id,adset_id,name,status,effective_status',
 }
 const TARGETING_FIELDS = 'account_id,campaign_id,name,targeting,campaign{special_ad_categories}'
@@ -126,6 +130,56 @@ function money(value: unknown, label: string): number {
     throw new Error(`${label} unplausibel (Cent, ${MONEY_MIN}-${MONEY_MAX})`)
   }
   return cents
+}
+
+/**
+ * Kampagnen-Ausgabenlimit: Meta verlangt mindestens ca. 100 USD; bis 100.000 USD
+ * (10.000.000 Cent) plausibel. 922337203685478 (Metas „unbegrenzt“) entfernt das Limit.
+ */
+function spendCap(value: unknown): number {
+  const cents = Math.round(Number(value))
+  if (cents === META_UNBEGRENZT) return META_UNBEGRENZT
+  if (!Number.isFinite(cents) || cents < LIMITS.spendCapMinCents || cents > LIMITS.spendCapMaxCents) {
+    throw new Error(`Ausgabenlimit unplausibel (Cent, ${LIMITS.spendCapMinCents}-${LIMITS.spendCapMaxCents}; Limit entfernen mit ${META_UNBEGRENZT})`)
+  }
+  return cents
+}
+
+/** ROAS-Ziel: bid_constraints.roas_average_floor (x10000, z. B. 15000 = ROAS 1,5). */
+function bidConstraints(value: unknown): Record<string, unknown> {
+  if (!isObj(value)) throw new Error('bid_constraints muss ein Objekt sein')
+  const floor = Math.round(Number(value.roas_average_floor))
+  if (!Number.isFinite(floor) || floor < LIMITS.roasFloorMin || floor > LIMITS.roasFloorMax) {
+    throw new Error(`ROAS-Ziel unplausibel (roas_average_floor x10000, ${LIMITS.roasFloorMin}-${LIMITS.roasFloorMax}, z. B. 15000 = 1,5)`)
+  }
+  return { roas_average_floor: floor }
+}
+
+/** Ungültige Eingabe: Antwort 400 statt 500. */
+class EingabeFehler extends Error {}
+
+/**
+ * ROAS-Ziel nur mit Performance-Ziel VALUE, mit Mindest-ROAS und ohne Gebot (Meta-Regel).
+ * Nur bei Gebots-Änderungen (Pausieren, Umbenennen, Budget bleiben ungeprüft). Ein bestehendes
+ * ROAS-Ziel lässt sich nach dem Anlegen nicht wechseln (wie editDiff in metaSpec).
+ */
+function roasPruefen(before: Row, patch: Row): void {
+  if (['bid_strategy', 'bid_constraints', 'bid_amount', 'optimization_goal'].every(k => patch[k] === undefined)) return
+  const vorher = String(before.bid_strategy ?? '')
+  if (vorher === 'LOWEST_COST_WITH_MIN_ROAS' && patch.bid_strategy !== undefined && patch.bid_strategy !== vorher) {
+    throw new EingabeFehler('Die Gebotsstrategie ROAS-Ziel lässt sich nach dem Anlegen nicht wechseln (Meta-Regel)')
+  }
+  const strat = String(patch.bid_strategy ?? before.bid_strategy ?? '')
+  if (strat !== 'LOWEST_COST_WITH_MIN_ROAS') {
+    if (patch.bid_constraints !== undefined) throw new EingabeFehler('bid_constraints nur mit Gebotsstrategie ROAS-Ziel (LOWEST_COST_WITH_MIN_ROAS)')
+    return
+  }
+  const goal = String(patch.optimization_goal ?? before.optimization_goal ?? '')
+  if (goal !== 'VALUE') throw new EingabeFehler('Gebotsstrategie ROAS-Ziel geht nur mit dem Performance-Ziel Wert (VALUE)')
+  const floor = isObj(patch.bid_constraints) ? patch.bid_constraints.roas_average_floor
+    : isObj(before.bid_constraints) ? before.bid_constraints.roas_average_floor : undefined
+  if (!floor) throw new EingabeFehler('ROAS-Ziel fehlt (bid_constraints.roas_average_floor)')
+  if (patch.bid_amount !== undefined) throw new EingabeFehler('Mit ROAS-Ziel gibt es kein Gebot (bid_amount)')
 }
 
 function isoTime(value: unknown, label: string): string {
@@ -160,7 +214,8 @@ function buildPatch(entityType: string, raw: Record<string, unknown>): Record<st
       }
       case 'daily_budget':    patch.daily_budget    = money(value, 'Tagesbudget');    break
       case 'lifetime_budget': patch.lifetime_budget = money(value, 'Laufzeitbudget'); break
-      case 'spend_cap':       patch.spend_cap       = money(value, 'Ausgabenlimit');  break
+      case 'spend_cap':       patch.spend_cap       = spendCap(value);                break
+      case 'bid_constraints': patch.bid_constraints = bidConstraints(value);          break
       case 'bid_amount':      patch.bid_amount      = money(value, 'Gebot');          break
       case 'bid_strategy': {
         const s = String(value)
@@ -479,6 +534,7 @@ Deno.serve(async (req) => {
       const patch = buildPatch(entityType, raw)
       // Guard: Entität muss zu unserem Konto gehören (liest gleich den Vorher-Zustand)
       const before = await ownEntity(ctx, entityId, ENTITY_FIELDS[entityType], 'Entität gehört nicht zu unserem Werbekonto')
+      if (entityType === 'adset') roasPruefen(before, patch)
 
       let targetingInfo: { kept: string[]; housing: HousingInfo } | null = null
       if (entityType === 'adset' && isObj(patch.targeting)) {
@@ -750,7 +806,7 @@ Antworte NUR mit einem JSON-Objekt (kein Markdown, keine Erklärung):
       })
     }
     let msg = err instanceof Error ? err.message : String(err)
-    const status = err instanceof AdsAuthError ? err.status : 500
+    const status = err instanceof AdsAuthError ? err.status : err instanceof EingabeFehler ? 400 : 500
     const extra: Record<string, unknown> = {}
     if (err instanceof MetaApiError) {
       if (err.userMsg === 'META_WRITES_DISABLED') {

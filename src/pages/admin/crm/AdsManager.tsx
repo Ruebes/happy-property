@@ -25,16 +25,20 @@ import type { AdCatalogRow, WerbeZeitraum } from '../../../lib/crmTypes'
 const WerbeStatistik = lazyWithReload(() => import('../../../components/crm/werbung/WerbeStatistik'))
 const KampagnenTab = lazyWithReload(() => import('../../../components/crm/werbung/KampagnenTab'))
 const WerbemittelTab = lazyWithReload(() => import('../../../components/crm/werbung/WerbemittelTab'))
+const ZielgruppenTab = lazyWithReload(() => import('../../../components/crm/werbung/ZielgruppenTab'))
+const FormulareTab = lazyWithReload(() => import('../../../components/crm/werbung/FormulareTab'))
 const QualitaetTab = lazyWithReload(() => import('../../../components/crm/werbung/QualitaetTab'))
 const AutopilotTab = lazyWithReload(() => import('../../../components/crm/werbung/AutopilotTab'))
 
-const REITER = ['stats', 'kampagnen', 'werbemittel', 'qualitaet', 'autopilot'] as const
+const REITER = ['stats', 'kampagnen', 'werbemittel', 'zielgruppen', 'formulare', 'qualitaet', 'autopilot'] as const
 type ReiterId = typeof REITER[number]
 
 const REITER_KOMPONENTE: Record<ReiterId, LazyExoticComponent<ComponentType<object>>> = {
   stats: WerbeStatistik,
   kampagnen: KampagnenTab,
   werbemittel: WerbemittelTab,
+  zielgruppen: ZielgruppenTab,
+  formulare: FormulareTab,
   qualitaet: QualitaetTab,
   autopilot: AutopilotTab,
 }
@@ -167,6 +171,8 @@ function Werbemanager() {
     { id: 'stats', label: t('crm.werbung.tabs.stats', 'Statistik') },
     { id: 'kampagnen', label: t('crm.werbung.tabs.kampagnen', 'Kampagnen') },
     { id: 'werbemittel', label: t('crm.werbung.tabs.werbemittel', 'Werbemittel') },
+    { id: 'zielgruppen', label: t('crm.werbung.tabs.zielgruppen', 'Zielgruppen') },
+    { id: 'formulare', label: t('crm.werbung.tabs.formulare', 'Sofortformulare') },
     { id: 'qualitaet', label: t('crm.werbung.tabs.qualitaet', 'Qualität') },
     { id: 'autopilot', label: t('crm.werbung.tabs.autopilot', 'Autopilot') },
   ]

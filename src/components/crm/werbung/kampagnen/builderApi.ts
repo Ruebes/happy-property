@@ -29,6 +29,8 @@ export class BuilderFehler extends Error {
 }
 
 const NETZ_FEHLER = /Failed to send|Failed to fetch|NetworkError|Load failed/i
+/** Schreibende Modi ohne automatischen zweiten Versuch (Meta könnte schon geändert haben) */
+const OHNE_WIEDERHOLUNG: ReadonlySet<string> = new Set(['edit_apply', 'bulk', 'duplicate'])
 const warte = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 /** Ein Modus von meta-builder. 200-Antworten mit { error: string } gelten als Fehler
@@ -36,11 +38,22 @@ const warte = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 export async function builderCall<M extends BuilderMode>(
   mode: M, req: BuilderRequestMap[M], retried = false,
 ): Promise<BuilderResponseMap[M]> {
+  return builderRohCall<BuilderResponseMap[M]>(mode, req as object, retried)
+}
+
+/**
+ * Wie builderCall, aber für Modi, deren Typen (noch) nicht in metaSpec stehen
+ * (edit_load, edit_diff, edit_apply, bulk, erweitertes duplicate; Typen in
+ * ./bearbeitenTypen.ts). Gleiche Fehlerbehandlung, gleicher zweiter Versuch.
+ * Schreib-Modi (edit_apply, bulk, duplicate) wiederholen bei Netzfehlern NICHT:
+ * ob der erste Aufruf bei Meta schon gewirkt hat, ist dann unklar.
+ */
+export async function builderRohCall<T>(mode: string, req: object, retried = false): Promise<T> {
   const { data, error } = await supabase.functions.invoke(FN, { body: { mode, ...req } })
   if (error) {
-    if (!retried && NETZ_FEHLER.test(error.message ?? '')) {
+    if (!retried && !OHNE_WIEDERHOLUNG.has(mode) && NETZ_FEHLER.test(error.message ?? '')) {
       await warte(1500)
-      return builderCall(mode, req, true)
+      return builderRohCall<T>(mode, req, true)
     }
     throw new BuilderFehler(await fnErrorDetail(error))
   }
@@ -53,7 +66,7 @@ export async function builderCall<M extends BuilderMode>(
       ...(d.data !== undefined ? { data: d.data } : {}),
     })
   }
-  return data as BuilderResponseMap[M]
+  return data as T
 }
 
 /** Fehlercode eines Aufrufs (BuilderFehler.code), sonst undefined */

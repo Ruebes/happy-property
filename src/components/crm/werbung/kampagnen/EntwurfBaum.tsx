@@ -12,7 +12,9 @@ import { anzeigeAngelegt, gruppeAngelegt, paarPartner, useAssistent } from './us
 // Bestätigung offen, grün = in Ordnung. Hinzufügen, Duplizieren, Entfernen
 // (bestehende Meta-Objekte werden nie gelöscht, nur aus dem Entwurf genommen).
 // Was schon bei Meta liegt (bestehend oder von diesem Entwurf angelegt), lässt
-// sich nicht entfernen.
+// sich nicht entfernen. Bearbeiten-Modus: kein Hinzufügen oder Entfernen
+// (Neues über „Bestehende Kampagne übernehmen“), Duplizieren öffnet den
+// Dialog für Meta; „geändert“ markiert Knoten mit Änderungen gegenüber Meta.
 
 export type Ampel = 'rot' | 'gelb' | 'gruen'
 
@@ -66,12 +68,16 @@ interface Props {
   onNeuesPaar: () => void
   onDuplizieren: (node: string) => void
   onEntfernen: (node: string) => void
+  /** Bearbeiten: Knoten mit Änderungen gegenüber dem Stand bei Meta */
+  geaendert?: ReadonlySet<string>
 }
 
-export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige, onNeuesPaar, onDuplizieren, onEntfernen }: Props) {
+export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige, onNeuesPaar, onDuplizieren, onEntfernen, geaendert }: Props) {
   const { t } = useTranslation()
-  const { e, gepaart } = useAssistent()
-  const { spec, issues, lint, nurLesen, metaIds } = e
+  const { e, gepaart, bearbeiten } = useAssistent()
+  const { spec, issues, lint, metaIds } = e
+  // Bearbeiten: Aufbau fest (nichts hinzufügen oder entfernen)
+  const nurLesen = e.nurLesen || bearbeiten
   const knoten = knotenListe(spec, t)
   const beiMeta = (k: Knoten): boolean =>
     k.bestehend || (k.ebene === 0 ? !!metaIds.campaign : k.ebene === 1 ? gruppeAngelegt(metaIds, k.node) : anzeigeAngelegt(metaIds, k.node))
@@ -103,7 +109,7 @@ export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige
           options={knoten.map(k => ({
             value: k.node,
             label: `${'  '.repeat(k.ebene)}${k.name}`,
-            hint: `${ebeneLabel(k)} · ${ampelText[ampelFuer(k.node, issues, lint)]}`,
+            hint: `${ebeneLabel(k)} · ${ampelText[ampelFuer(k.node, issues, lint)]}${geaendert?.has(k.node) ? ` · ${t('crm.werbung.bearbeiten.geaendert', 'geändert')}` : ''}`,
           }))} />
         {!nurLesen && (
           <div className="flex flex-wrap gap-2">
@@ -135,12 +141,22 @@ export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige
                       <span className={`block text-[9px] uppercase tracking-wide ${aktiv ? 'text-white/70' : 'text-gray-400'}`}>{ebeneLabel(k)}</span>
                       <span className={`block truncate ${k.ebene === 0 ? 'font-semibold' : ''}`}>{k.name}</span>
                     </span>
-                    {beiMeta(k) && (
+                    {geaendert?.has(k.node) ? (
+                      <span className={`ml-auto shrink-0 rounded px-1 text-[9px] ${aktiv ? 'bg-white/20' : 'bg-amber-50 text-amber-800'}`}>
+                        {t('crm.werbung.bearbeiten.geaendert', 'geändert')}
+                      </span>
+                    ) : beiMeta(k) && (
                       <span className={`ml-auto shrink-0 rounded px-1 text-[9px] ${aktiv ? 'bg-white/20' : 'bg-emerald-50 text-emerald-800'}`}>
                         {t('crm.werbung.builder.baum.beiMeta', 'bei Meta')}
                       </span>
                     )}
                   </button>
+                  {bearbeiten && !e.nurLesen && k.ebene > 0 && k.bestehend && (
+                    <span className={`flex shrink-0 pr-1 ${aktiv ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
+                      <button type="button" onClick={() => onDuplizieren(k.node)} className={`${knopf} ${aktiv ? 'text-white/80 hover:bg-white/10 hover:text-white' : ''}`}
+                        aria-label={t('crm.werbung.bearbeiten.baumDuplizieren', '{{name}} bei Meta duplizieren', { name: k.name })} title={t('crm.werbung.builder.baum.duplizierenKurz', 'Duplizieren')}>⧉</button>
+                    </span>
+                  )}
                   {!nurLesen && k.ebene > 0 && (
                     <span className={`flex shrink-0 pr-1 ${aktiv ? '' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'}`}>
                       <button type="button" onClick={() => onDuplizieren(k.node)} className={`${knopf} ${aktiv ? 'text-white/80 hover:bg-white/10 hover:text-white' : ''}`}
@@ -162,6 +178,11 @@ export default function EntwurfBaum({ sel, onSelect, onNeueGruppe, onNeueAnzeige
             )
           })}
         </ul>
+        {bearbeiten && (
+          <p className="mt-3 border-t border-gray-100 pt-3 text-[10px] leading-snug text-gray-500">
+            {t('crm.werbung.bearbeiten.baumHinweis', 'Beim Bearbeiten entsteht nichts Neues. Neue Anzeigengruppen oder Anzeigen über „Bestehende Kampagne ergänzen“ im Reiter Kampagnen.')}
+          </p>
+        )}
         {!nurLesen && (
           <div className="mt-3 flex flex-col gap-1.5 border-t border-gray-100 pt-3">
             <button type="button" onClick={onNeueGruppe} className="rounded px-2 py-1 text-left text-xs font-semibold text-hp-navy hover:bg-gray-100">

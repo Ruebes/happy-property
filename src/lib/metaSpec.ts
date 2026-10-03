@@ -74,7 +74,31 @@ export const LIMITS = {
   carouselMax: 10,
   roasFloorMin: 100,
   roasFloorMax: 10000000,
+  /** Kampagnen-Ausgabenlimit: Obergrenze gegen Tippfehler (100.000 USD) */
+  spendCapMaxCents: 10000000,
+  /** Plausibilität Tagesbudget beim Bearbeiten (5.000 USD pro Tag, wie meta-ads-tools) */
+  dailyBudgetMaxCents: 500000,
+  /** Plausibilität Laufzeitbudget beim Bearbeiten (100.000 USD) */
+  lifetimeBudgetMaxCents: 10000000,
+  /** Meta: Budget je Objekt höchstens 4x pro Stunde ändern (Fehler 613/1487632) */
+  budgetChangesPerHour: 4,
+  /** Massenbearbeitung: höchstens so viele Objekte je Aufruf */
+  bulkMaxItems: 50,
+  /** Duplizieren: Kopien je Objekt */
+  duplicateMaxCopies: 5,
+  /** Duplizieren: Kopien insgesamt je Aufruf (Objekte x Kopien) */
+  duplicateMaxTotal: 25,
+  /** Budgetplanung: Zeiträume je Kampagne/Anzeigengruppe */
+  budgetSchedulesMax: 50,
 } as const
+
+/**
+ * Metas Wert für „unbegrenzt“: entfernt das Kampagnen-Ausgabenlimit (spend_cap) und das
+ * Gruppen-Ausgabenlimit (daily_spend_cap). Nie als echtes Limit anzeigen.
+ */
+export const META_UNBEGRENZT = 922337203685478
+/** Ab diesem Wert gilt ein gelesenes Limit als „kein Limit“ (Meta liefert teils gerundet). */
+export const META_UNBEGRENZT_AB = 900000000000000
 
 /** EU-27 (ISO-2, Meta-Schreibweise). DSA-Pflicht bei Ausrichtung auf diese Länder. */
 export const EU_COUNTRIES = [
@@ -649,6 +673,51 @@ export interface ManualPlacements {
 }
 export type Placements = { mode: 'advantage' } | ManualPlacements
 
+/**
+ * Status bei Meta (configured status). Der Assistent setzt nur ACTIVE/PAUSED (Feld status);
+ * ARCHIVED/DELETED kommen nur beim Lesen vor (Feld meta_status, nie löschen, nie archivieren).
+ * Neue Objekte legt der Assistent immer PAUSED an, beide Felder gelten nur beim Bearbeiten.
+ */
+export type ObjectStatus = 'ACTIVE' | 'PAUSED' | 'ARCHIVED' | 'DELETED'
+export const OBJECT_STATUSES: readonly ObjectStatus[] = ['ACTIVE', 'PAUSED', 'ARCHIVED', 'DELETED']
+export type EditableStatus = 'ACTIVE' | 'PAUSED'
+export const STATUS_OPTIONS: readonly EnumOption<EditableStatus>[] = [opt('status', 'ACTIVE'), opt('status', 'PAUSED')]
+
+/**
+ * Budgetplanung („Budget für Zeiträume mit hoher Nachfrage planen“, budget_schedule_specs).
+ * time_start/time_end als ISO-Zeit (Formular, edit_load) oder Unix-Sekunden; an Meta gehen
+ * Unix-Sekunden. ABSOLUTE: Erhöhung in Cent der Kontowährung; MULTIPLIER: Erhöhung in Prozent
+ * (50 = +50 %; Meta-Doku knapp, per validate_only prüfen). Nur bei Tagesbudget; Meta-UI:
+ * höchstens 50 Zeiträume, mindestens 3 Stunden, höchstens 8x Budget.
+ */
+export interface BudgetScheduleSpec {
+  /** Meta-ID eines bestehenden Zeitraums (nur lesen) */
+  id?: string
+  time_start: string | number
+  time_end: string | number
+  budget_value: number
+  budget_value_type: 'ABSOLUTE' | 'MULTIPLIER'
+  recurrence_type?: 'ONE_TIME' | 'WEEKLY'
+  weekly_schedule?: Array<{ days: number[]; minute_start: number; minute_end: number; timezone_type?: string }>
+}
+/** „Anzeigen nach einem Zeitplan schalten“ (adset_schedule): volle Stunden, Tage 0 = Sonntag bis 6 = Samstag. Nur mit Laufzeitbudget. */
+export interface AdsetScheduleBlock {
+  start_minute: number
+  end_minute: number
+  days: number[]
+  timezone_type?: 'USER' | 'ADVERTISER'
+}
+/**
+ * Werbemittel einer laufenden Anzeige ändern: 'ersetzen' = neues Creative an die bestehende
+ * Anzeige (gleiche ID und Statistik, Meta prüft neu), 'neue_anzeige' = neue Anzeige mit dem
+ * neuen Creative, die alte wird pausiert (nie gelöscht). Beides startet die Lernphase neu.
+ */
+export type CreativeTausch = 'ersetzen' | 'neue_anzeige'
+export const CREATIVE_TAUSCH_OPTIONS: readonly EnumOption<CreativeTausch>[] = [
+  opt('creative_tausch', 'neue_anzeige', { recommended: true, hintKey: `${K}.creative_tausch_hint.neue_anzeige` }),
+  opt('creative_tausch', 'ersetzen', { hintKey: `${K}.creative_tausch_hint.ersetzen` }),
+]
+
 export interface CampaignDraft {
   existing_id?: string
   name: string
@@ -665,6 +734,12 @@ export interface CampaignDraft {
   spend_cap_cents?: number
   start_time?: string
   stop_time?: string
+  /** nur Bearbeiten: Ein/Aus bei Meta (gewünscht) */
+  status?: EditableStatus
+  /** nur Bearbeiten, nur lesen: configured status bei Meta (auch ARCHIVED/DELETED) */
+  meta_status?: ObjectStatus
+  /** nur Bearbeiten: Budgetplanung (nur mit Kampagnen-Tagesbudget) */
+  budget_schedule_specs?: BudgetScheduleSpec[]
 }
 
 export interface AdsetDraft {
@@ -692,6 +767,20 @@ export interface AdsetDraft {
   dsa_payor: string
   brand_safety?: BrandSafety
   excluded_publisher_categories?: PublisherCategory[]
+  /** nur Bearbeiten: Ein/Aus bei Meta (gewünscht) */
+  status?: EditableStatus
+  /** nur Bearbeiten, nur lesen: configured status bei Meta (auch ARCHIVED/DELETED) */
+  meta_status?: ObjectStatus
+  /** „Anzeigen nach einem Zeitplan schalten“ (nur mit Laufzeitbudget) */
+  adset_schedule?: AdsetScheduleBlock[]
+  /** Ausgabenlimits für Anzeigengruppen (nur mit Kampagnen-Tagesbudget), Cent */
+  daily_min_spend_target_cents?: number
+  daily_spend_cap_cents?: number
+  /** Ausgabenlimits für Anzeigengruppen (nur mit Kampagnen-Laufzeitbudget), Cent */
+  lifetime_min_spend_target_cents?: number
+  lifetime_spend_cap_cents?: number
+  /** nur Bearbeiten: Budgetplanung (nur mit Tagesbudget der Anzeigengruppe) */
+  budget_schedule_specs?: BudgetScheduleSpec[]
 }
 
 export interface MediaRef {
@@ -727,7 +816,19 @@ export interface AdDraft {
   media: { feed_4x5?: MediaRef; story_9x16?: MediaRef; square_1x1?: MediaRef; cards?: CardDraft[] }
   creative_features: Partial<Record<CreativeFeature, Enroll>>
   multi_advertiser: Enroll
-  source?: { catalog_ad_id?: string; studio?: boolean; pool_id?: string }
+  source?: {
+    catalog_ad_id?: string; studio?: boolean; pool_id?: string
+    /** nur Bearbeiten: Creative-ID bei Meta (Ausgangsstand) */
+    creative_id?: string
+    /** nur Bearbeiten: Creative aus einem bestehenden Beitrag, Texte/Medien nicht änderbar */
+    aus_beitrag?: boolean
+  }
+  /** nur Bearbeiten: Ein/Aus bei Meta (gewünscht) */
+  status?: EditableStatus
+  /** nur Bearbeiten, nur lesen: configured status bei Meta (auch ARCHIVED/DELETED) */
+  meta_status?: ObjectStatus
+  /** Tracking (Website-/App-/CRM-Events), Metas tracking_specs unverändert durchgereicht */
+  tracking_specs?: Array<Record<string, unknown>>
 }
 
 export interface DraftSpec {
@@ -736,7 +837,7 @@ export interface DraftSpec {
   adsets: AdsetDraft[]
   ads: AdDraft[]
   /** HP-Bedienhilfen (nicht an Meta) */
-  hp?: { budgets_synchron?: boolean }
+  hp?: { budgets_synchron?: boolean; creative_tausch?: CreativeTausch }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -812,7 +913,7 @@ const cleanTexts = (list: readonly string[] | undefined): string[] => {
 // 5. FieldSpec-Register
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type FieldKind = 'text' | 'money' | 'int' | 'enum' | 'multi' | 'bool' | 'datetime' | 'targeting' | 'media' | 'textlist'
+export type FieldKind = 'text' | 'money' | 'int' | 'enum' | 'multi' | 'bool' | 'datetime' | 'targeting' | 'media' | 'textlist' | 'schedule' | 'json'
 export interface FieldSpec {
   key: string
   level: Level
@@ -908,6 +1009,13 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   fld('campaign.start_time', 'campaign', 'start_time', 'datetime'),
   fld('campaign.stop_time', 'campaign', 'stop_time', 'datetime', {
     required: d => isCbo(d) && !!d.campaign?.lifetime_budget_cents,
+  }),
+  // nur Bearbeiten (bestehende Kampagne)
+  fld('campaign.status', 'campaign', 'status', 'enum', {
+    helpKey: help('status'), visible: d => !!d.campaign?.existing_id, options: () => [...STATUS_OPTIONS],
+  }),
+  fld('campaign.budget_schedule_specs', 'campaign', 'budget_schedule_specs', 'schedule', {
+    helpKey: help('budget_schedule'), visible: d => !!d.campaign?.existing_id && isCbo(d) && !!d.campaign?.daily_budget_cents,
   }),
 
   // ── Anzeigengruppe ──
@@ -1038,6 +1146,32 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
   fld('adset.excluded_publisher_categories', 'adset', 'targeting.excluded_publisher_categories', 'multi', {
     apiAliases: ['targeting.excluded_publisher_list_ids'], options: () => [...PUBLISHER_CATEGORY_OPTIONS],
   }),
+  // nur Bearbeiten (bestehende Anzeigengruppe): Zeitplan und Gruppen-Limits sendet das Anlegen nicht
+  // (validateDraft meldet sie an neuen Objekten serverseitig als 'edit_only')
+  fld('adset.adset_schedule', 'adset', 'adset_schedule', 'schedule', {
+    apiAliases: ['pacing_type'], helpKey: help('adset_schedule'),
+    visible: (d, node) => !!adsetOf(d, node)?.existing_id
+      && (isCbo(d) ? !!d.campaign?.lifetime_budget_cents : !!adsetOf(d, node)?.lifetime_budget_cents),
+  }),
+  fld('adset.daily_min_spend_target_cents', 'adset', 'daily_min_spend_target', 'money', {
+    helpKey: help('adset_spend_limits'), visible: (d, node) => !!adsetOf(d, node)?.existing_id && isCbo(d) && !!d.campaign?.daily_budget_cents,
+  }),
+  fld('adset.daily_spend_cap_cents', 'adset', 'daily_spend_cap', 'money', {
+    helpKey: help('adset_spend_limits'), visible: (d, node) => !!adsetOf(d, node)?.existing_id && isCbo(d) && !!d.campaign?.daily_budget_cents,
+  }),
+  fld('adset.lifetime_min_spend_target_cents', 'adset', 'lifetime_min_spend_target', 'money', {
+    helpKey: help('adset_spend_limits'), visible: (d, node) => !!adsetOf(d, node)?.existing_id && isCbo(d) && !!d.campaign?.lifetime_budget_cents,
+  }),
+  fld('adset.lifetime_spend_cap_cents', 'adset', 'lifetime_spend_cap', 'money', {
+    helpKey: help('adset_spend_limits'), visible: (d, node) => !!adsetOf(d, node)?.existing_id && isCbo(d) && !!d.campaign?.lifetime_budget_cents,
+  }),
+  fld('adset.status', 'adset', 'status', 'enum', {
+    helpKey: help('status'), visible: (d, node) => !!adsetOf(d, node)?.existing_id, options: () => [...STATUS_OPTIONS],
+  }),
+  fld('adset.budget_schedule_specs', 'adset', 'budget_schedule_specs', 'schedule', {
+    helpKey: help('budget_schedule'),
+    visible: (d, node) => !!adsetOf(d, node)?.existing_id && !isCbo(d) && !!adsetOf(d, node)?.daily_budget_cents,
+  }),
 
   // ── Anzeige (api = Pfad im Creative bzw. im Ad) ──
   fld('ad.name', 'ad', 'name', 'text', { maxLen: LIMITS.nameMax, required: () => true }),
@@ -1115,6 +1249,11 @@ export const FIELD_SPECS: readonly FieldSpec[] = [
     helpKey: help('ad_multi_advertiser'), options: () => [...ENROLL_OPTIONS],
   }),
   fld('ad.url_tags', 'ad', 'url_tags', 'text', { readOnly: true, helpKey: help('ad_url_tags') }),
+  fld('ad.tracking_specs', 'ad', 'tracking_specs', 'json', { helpKey: help('ad_tracking'), visible: (d, node) => !!adOf(d, node)?.existing_id }),
+  // nur Bearbeiten (bestehende Anzeige)
+  fld('ad.status', 'ad', 'status', 'enum', {
+    helpKey: help('status'), visible: (d, node) => !!adOf(d, node)?.existing_id, options: () => [...STATUS_OPTIONS],
+  }),
 ]
 
 export function fieldSpec(key: string): FieldSpec | undefined {
@@ -1143,6 +1282,10 @@ export const ISSUE_CODES = [
   'carousel_multi_text', 'cta_invalid', 'cta_lead_form', 'url_invalid', 'url_has_utm', 'form_missing',
   'destination_mismatch', 'destination_unsupported', 'media_missing', 'video_thumb_missing',
   'cards_count', 'feature_unknown',
+  // nur Bearbeiten (validateEditFields)
+  'schedule_invalid', 'budget_schedule_invalid', 'spend_limits_order', 'spend_cap_high', 'budget_high',
+  // nur serverseitig: Bearbeiten-Feld an einem neuen Objekt (würde beim Anlegen nicht gesendet)
+  'edit_only',
 ] as const
 export type IssueCode = typeof ISSUE_CODES[number]
 export type IssueSeverity = 'error' | 'warn'
@@ -1345,6 +1488,9 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
       cAdd('campaign.spend_cap_cents', 'spend_cap_low', 'error', { min: LIMITS.spendCapMinCents })
     if (c.start_time && c.stop_time && Date.parse(c.start_time) >= Date.parse(c.stop_time)) cAdd('campaign.stop_time', 'time_order')
     if (!adsets.length) cAdd('campaign.name', 'no_adsets')
+    // Bearbeiten-Felder sendet das Anlegen nicht: nie still verwerfen (nur serverseitig, der Browser
+    // prüft im Bearbeiten-Modus bestehende Objekte als Probelauf ohne existing_id)
+    if (opts.server && (c.budget_schedule_specs ?? []).length) cAdd('campaign.budget_schedule_specs', 'edit_only')
   }
   if (adsets.length > LIMITS.adsetsPerCampaign) cAdd('campaign.name', 'too_many_adsets', 'error', { max: LIMITS.adsetsPerCampaign })
   if (cbo) {
@@ -1361,6 +1507,14 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
     if (!a.key || seenAdset.indexOf(a.key) >= 0) add('adset.name', 'duplicate_key', 'error', { key: String(a.key) })
     seenAdset.push(a.key)
     if (a.existing_id) continue
+    if (opts.server) {
+      if ((a.adset_schedule ?? []).length) add('adset.adset_schedule', 'edit_only')
+      if ((a.budget_schedule_specs ?? []).length) add('adset.budget_schedule_specs', 'edit_only')
+      for (const [f, v] of [
+        ['adset.daily_min_spend_target_cents', a.daily_min_spend_target_cents], ['adset.daily_spend_cap_cents', a.daily_spend_cap_cents],
+        ['adset.lifetime_min_spend_target_cents', a.lifetime_min_spend_target_cents], ['adset.lifetime_spend_cap_cents', a.lifetime_spend_cap_cents],
+      ] as Array<[string, number | undefined]>) if ((v ?? 0) > 0) add(f, 'edit_only')
+    }
     if (!(a.name ?? '').trim()) add('adset.name', 'required')
     else if (a.name.length > LIMITS.nameMax) add('adset.name', 'too_long', 'error', { max: LIMITS.nameMax })
     const okObj = isIn(OBJECTIVES, c.objective)
@@ -1439,6 +1593,7 @@ export function validateDraft(d: DraftSpec, opts: ValidateDraftOptions = {}): Dr
     if (!a) add('ad.name', 'adset_ref_missing', 'error', { key: String(ad.adset_key) })
     perAdset[ad.adset_key] = (perAdset[ad.adset_key] ?? 0) + 1
     if (ad.existing_id) continue
+    if (opts.server && (ad.tracking_specs ?? []).length) add('ad.tracking_specs', 'edit_only')
     if (!(ad.name ?? '').trim()) add('ad.name', 'required')
     else if (ad.name.length > LIMITS.nameMax) add('ad.name', 'too_long', 'error', { max: LIMITS.nameMax })
     if (AD_FORMATS.indexOf(ad.format) < 0) add('ad.format', 'invalid_option', 'error', { value: String(ad.format) })
@@ -2141,6 +2296,684 @@ export function emptyAd(key: string, adsetKey: string, ctx: { page_id?: string; 
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 7b. Bearbeiten bestehender Objekte (meta-builder edit_load / edit_diff / edit_apply)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Ein Bearbeiten-Entwurf (meta_drafts.kind = 'edit') hält zwei Stände: den
+// Ausgangsstand bei Meta (meta_ids.edit.baseline, schreibt nur der Server) und
+// den gewünschten Stand (spec, schreibt die Oberfläche). editDiff vergleicht
+// beide Feld für Feld. Nur geänderte, bei Meta änderbare Felder gehen an Meta;
+// Gesperrtes kommt mit blocked zurück und wird nie gesendet.
+// Status des Entwurfs: 'draft' beim Bearbeiten, 'creating' während edit_apply
+// (Sperre), danach wieder 'draft' mit frischem Ausgangsstand.
+
+export type EditLearning = 'neu' | 'moeglich' | 'nein'
+export const EDIT_LEARNING_OPTIONS: readonly EnumOption<EditLearning>[] = [
+  opt('learning', 'neu'), opt('learning', 'moeglich'), opt('learning', 'nein'),
+]
+
+/** Felder, die Meta nach dem Anlegen nicht mehr ändert (im Formular grau, nie gesendet). */
+export const EDIT_LOCKS: Readonly<Record<Level, readonly string[]>> = {
+  campaign: [
+    'campaign.objective', 'campaign.buying_type', 'campaign.special_ad_categories',
+    'campaign.special_ad_category_country', 'campaign.budget_level',
+  ],
+  adset: [
+    'adset.destination', 'adset.billing_event', 'adset.promoted_object.page_id', 'adset.promoted_object.custom_conversion_id',
+  ],
+  ad: ['ad.identity.page_id'],
+}
+
+const isConversionGoal = (g: OptGoal | undefined): boolean => g === 'OFFSITE_CONVERSIONS' || g === 'VALUE'
+const isArchived = (s: string | undefined): boolean => s === 'ARCHIVED' || s === 'DELETED'
+
+/**
+ * Sperrliste für einen geladenen Stand (edit_load): feste Sperren plus solche, die vom
+ * Stand abhängen (Budgetart, Kampagnen- vs. Gruppenbudget, ROAS-Ziel, Conversion-Ereignis).
+ * Genaue Prüfung je Objekt macht editDiff (blocked).
+ */
+export function editLocks(spec: DraftSpec): string[] {
+  const out: string[] = []
+  const add = (k: string) => { if (out.indexOf(k) < 0) out.push(k) }
+  for (const l of LEVELS) for (const k of EDIT_LOCKS[l]) add(k)
+  const c = spec?.campaign
+  if (c) {
+    if (c.budget_level !== 'campaign') { add('campaign.daily_budget_cents'); add('campaign.lifetime_budget_cents'); add('campaign.bid_strategy') }
+    else if ((c.daily_budget_cents ?? 0) > 0) add('campaign.lifetime_budget_cents')
+    else if ((c.lifetime_budget_cents ?? 0) > 0) add('campaign.daily_budget_cents')
+    if (c.bid_strategy === 'LOWEST_COST_WITH_MIN_ROAS') add('campaign.bid_strategy')
+  }
+  const adsets = spec?.adsets ?? []
+  if (adsets.length) {
+    if (c?.budget_level === 'campaign') { add('adset.daily_budget_cents'); add('adset.lifetime_budget_cents'); add('adset.bid_strategy') }
+    else {
+      if (adsets.every(a => (a.daily_budget_cents ?? 0) > 0)) add('adset.lifetime_budget_cents')
+      if (adsets.every(a => (a.lifetime_budget_cents ?? 0) > 0)) add('adset.daily_budget_cents')
+    }
+    if (adsets.some(a => a.bid_strategy === 'LOWEST_COST_WITH_MIN_ROAS')) add('adset.bid_strategy')
+    if (adsets.every(a => !isConversionGoal(a.optimization_goal) || !!a.promoted_object?.custom_conversion_id)) {
+      add('adset.promoted_object.pixel_id'); add('adset.promoted_object.custom_event_type')
+    }
+  }
+  if ((spec?.ads ?? []).length && (spec.ads ?? []).every(a => !!a.source?.aus_beitrag)) {
+    for (const k of EDIT_CREATIVE_FIELDS) add(k)
+  }
+  return out
+}
+
+export interface EditChange {
+  level: Level
+  /** Meta-ID des Objekts */
+  id: string
+  /** 'campaign' bzw. key der Anzeigengruppe/Anzeige im Entwurf */
+  node: string
+  /** FieldSpec.key */
+  field: string
+  /** i18n-Schlüssel des Feldnamens (crm.werbung.meta.field.*) */
+  label_key: string
+  before: unknown
+  after: unknown
+  /** true = Meta startet die Lernphase neu (nur bei Änderungen, die wirklich gesendet werden) */
+  learning_reset: boolean
+  /** 'moeglich' = je nach Größe (Budget/Gebot über 20 %, Einschalten nach langer Pause) */
+  learning: EditLearning
+  /** Teil eines Werbemittel-Tauschs (neues Creative) */
+  creative?: boolean
+  /** gesetzt = wird NICHT an Meta geschickt; Grund auf Deutsch */
+  blocked?: string
+}
+export interface EditDiffResult { changes: EditChange[]; warnings: string[] }
+
+// ── Vergleichshilfen ────────────────────────────────────────────────────────
+
+type Rec = Record<string, unknown>
+const asRec = (v: unknown): Rec => (v && typeof v === 'object' && !Array.isArray(v) ? v as Rec : {})
+const leer = (v: unknown): boolean => {
+  if (v === undefined || v === null || v === '') return true
+  if (Array.isArray(v)) return v.length === 0
+  if (typeof v === 'object') { const o = v as Rec; return Object.keys(o).every(k => leer(o[k])) }
+  return false
+}
+/** Kanonische Form für Vergleiche: Schlüssel sortiert, leere Werte = null. */
+export function editCanon(v: unknown): string {
+  if (leer(v)) return 'null'
+  if (Array.isArray(v)) return `[${v.map(editCanon).join(',')}]`
+  if (typeof v === 'object') {
+    const o = v as Rec
+    return `{${Object.keys(o).filter(k => !leer(o[k])).sort().map(k => `${JSON.stringify(k)}:${editCanon(o[k])}`).join(',')}}`
+  }
+  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'null'
+  return JSON.stringify(v)
+}
+const sortedCanon = (list: unknown): string[] => (Array.isArray(list) ? list.map(editCanon).sort() : [])
+const centsOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null)
+/** Limit-Felder: Metas „unbegrenzt“ (922337203685478) = kein Limit. */
+const capOrNull = (v: unknown): number | null => { const c = centsOrNull(v); return c !== null && c >= META_UNBEGRENZT_AB ? null : c }
+const timeOrNull = (v: unknown): string | null => {
+  if (typeof v !== 'string' || !v.trim()) return null
+  const t = Date.parse(v.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))
+  return Number.isFinite(t) ? new Date(t).toISOString() : v.trim()
+}
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+const sortedStrings = (v: unknown): string[] => (Array.isArray(v) ? v.map(x => String(x)).filter(Boolean).sort() : [])
+const pickKeys = (o: unknown, keys: readonly string[]): Rec => {
+  const r = asRec(o)
+  const out: Rec = {}
+  for (const k of keys) if (r[k] !== undefined) out[k] = r[k]
+  return out
+}
+const idsOf = (list: unknown): string[] => (Array.isArray(list)
+  ? list.map(x => (x && typeof x === 'object' ? String(asRec(x).id ?? asRec(x).key ?? '') : String(x))).filter(Boolean).sort()
+  : [])
+
+const GEO_IDENT = ['key', 'radius', 'distance_unit', 'latitude', 'longitude', 'address_string', 'custom_type', 'min_population', 'max_population'] as const
+const geoOhneTypen = (v: unknown): Rec | null => {
+  const g = asRec(v)
+  const out: Rec = {}
+  for (const k of Object.keys(g)) if (k !== 'location_types') out[k] = g[k]
+  return Object.keys(out).length ? out : null
+}
+/** Orte nur über ihre Kennung vergleichen (Meta liefert Namen/Regionen dazu, das Formular nicht immer). */
+function geoNorm(v: unknown): unknown {
+  const g = asRec(v)
+  const out: Rec = {}
+  for (const k of Object.keys(g)) {
+    const val = g[k]
+    out[k] = Array.isArray(val)
+      ? val.map(x => (x && typeof x === 'object' ? editCanon(pickKeys(x, GEO_IDENT)) : editCanon(x))).sort()
+      : val
+  }
+  return out
+}
+function detailedNorm(v: unknown): unknown {
+  const t = asRec(v)
+  const grp = (g: unknown): string => {
+    const o: Rec = {}
+    const r = asRec(g)
+    for (const k of Object.keys(r)) o[k] = idsOf(r[k])
+    return editCanon(o)
+  }
+  return {
+    flexible_spec: Array.isArray(t.flexible_spec) ? t.flexible_spec.map(grp).sort() : null,
+    exclusions: t.exclusions ? grp(t.exclusions) : null,
+  }
+}
+function taNorm(v: unknown): unknown {
+  const t = asRec(v)
+  const rest: Rec = {}
+  for (const k of Object.keys(t)) if (k !== 'advantage_audience') rest[k] = t[k]
+  const aa = t.advantage_audience
+  return { aa: aa === undefined || aa === null ? null : effectiveAdvantageAudience(aa), rest }
+}
+function placementsNorm(v: unknown): unknown {
+  const p = v as Placements | undefined
+  if (!p || p.mode !== 'manual') return 'advantage'
+  const dev = sortedStrings(p.device_platforms)
+  const out: Rec = { publisher_platforms: sortedStrings(p.publisher_platforms), device_platforms: dev.length === DEVICE_PLATFORMS.length ? [] : dev }
+  for (const pl of PUBLISHER_PLATFORMS) {
+    const f = POSITION_FIELD_BY_PLATFORM[pl]
+    out[f] = sortedStrings(p[f])
+  }
+  return out
+}
+const SCHED_KEYS = ['time_start', 'time_end', 'budget_value', 'budget_value_type', 'recurrence_type', 'weekly_schedule'] as const
+/** Zeitpunkt der Budgetplanung als Unix-Sekunden (ISO-Zeit oder Zahl), null = ungültig. */
+export function unixSekunden(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return Math.round(v > 1e11 ? v / 1000 : v)
+  if (typeof v === 'string' && v.trim()) {
+    if (/^\d+$/.test(v.trim())) return unixSekunden(Number(v.trim()))
+    const t = Date.parse(v.trim().replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))
+    return Number.isFinite(t) ? Math.round(t / 1000) : null
+  }
+  return null
+}
+const schedKey = (x: unknown): string => {
+  const r = pickKeys(x, SCHED_KEYS)
+  r.time_start = unixSekunden(r.time_start)
+  r.time_end = unixSekunden(r.time_end)
+  return editCanon(r)
+}
+const schedNorm = (v: unknown): unknown => (Array.isArray(v) ? v.map(schedKey).sort() : [])
+const mediaNorm = (v: unknown): unknown => strOrNull(asRec(v).media_id)
+const cardsNorm = (v: unknown): unknown => (Array.isArray(v)
+  ? v.map(cd => {
+    const c = asRec(cd)
+    return { headline: strOrNull(c.headline), description: strOrNull(c.description), url: strOrNull(c.url), media: mediaNorm(c.media) }
+  })
+  : [])
+const featuresNorm = (v: unknown): unknown => {
+  const r = asRec(v)
+  const out: Rec = {}
+  for (const k of CREATIVE_FEATURES) out[k] = r[k] === 'OPT_IN' ? 'OPT_IN' : HP_CREATIVE_FEATURE_DEFAULT
+  return out
+}
+
+/** Targeting-Schlüssel, die ein Formularfeld bei Meta abdeckt (edit_apply führt nur diese zusammen). */
+export const EDIT_TARGETING_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'adset.targeting.geo_locations': ['geo_locations'],
+  'adset.targeting.location_types': ['geo_locations.location_types'],
+  'adset.targeting.excluded_geo_locations': ['excluded_geo_locations'],
+  'adset.targeting.age': ['age_min', 'age_max', 'age_range'],
+  'adset.targeting.genders': ['genders'],
+  'adset.targeting.locales': ['locales'],
+  'adset.targeting.detailed': ['flexible_spec', 'exclusions'],
+  'adset.targeting.custom_audiences': ['custom_audiences', 'targeting_relaxation_types'],
+  'adset.targeting.excluded_custom_audiences': ['excluded_custom_audiences'],
+  'adset.targeting.advantage_audience': ['targeting_automation'],
+  'adset.placements': PLACEMENT_TARGETING_KEYS,
+  'adset.brand_safety': ['brand_safety_content_filter_levels'],
+  'adset.excluded_publisher_categories': ['excluded_publisher_categories'],
+}
+/** Alle oben abgedeckten Schlüssel; der Rest des targeting-Objekts ist das Feld 'adset.targeting'. */
+export const EDIT_TARGETING_COVERED: readonly string[] = [
+  'geo_locations', 'excluded_geo_locations', 'age_min', 'age_max', 'age_range', 'genders', 'locales',
+  'flexible_spec', 'exclusions', 'custom_audiences', 'excluded_custom_audiences', 'targeting_relaxation_types',
+  'targeting_automation', 'brand_safety_content_filter_levels', 'excluded_publisher_categories', ...PLACEMENT_TARGETING_KEYS,
+]
+/** Übrige targeting-Felder (z. B. user_os, user_device), die das Formular nicht einzeln kennt. */
+export function targetingRest(t: TargetingSpec | undefined): Rec {
+  const r = asRec(t)
+  const out: Rec = {}
+  for (const k of Object.keys(r)) if (EDIT_TARGETING_COVERED.indexOf(k) < 0) out[k] = r[k]
+  return out
+}
+
+// ── Feld-Register fürs Bearbeiten ───────────────────────────────────────────
+
+interface EditDef<N> {
+  key: string
+  learning: EditLearning | ((before: unknown, after: unknown) => EditLearning)
+  get(n: N, d: DraftSpec): unknown
+  /** Vergleichsform (ohne Anzeigenamen u. ä.); Standard = get */
+  norm?(v: unknown): unknown
+  creative?: true
+}
+/** Budget/Gebot: über 20 % Änderung kann die Lernphase neu starten (keine offizielle Schwelle). */
+const sizeLearning = (b: unknown, a: unknown): EditLearning => {
+  const x = typeof b === 'number' ? b : 0
+  const y = typeof a === 'number' ? a : 0
+  if (!x || !y) return 'nein'
+  return Math.abs(y - x) / x > 0.2 ? 'moeglich' : 'nein'
+}
+const statusLearning = (b: unknown, a: unknown): EditLearning => (a === 'ACTIVE' && b !== 'ACTIVE' ? 'moeglich' : 'nein')
+
+const CAMPAIGN_EDIT: readonly EditDef<CampaignDraft>[] = [
+  { key: 'campaign.name', learning: 'nein', get: c => strOrNull(c.name) },
+  { key: 'campaign.status', learning: statusLearning, get: c => c.status ?? null },
+  { key: 'campaign.objective', learning: 'neu', get: c => c.objective ?? null },
+  { key: 'campaign.buying_type', learning: 'nein', get: c => c.buying_type ?? null },
+  { key: 'campaign.special_ad_categories', learning: 'neu', get: c => sortedStrings((c.special_ad_categories ?? []).filter(x => x !== 'NONE')) },
+  { key: 'campaign.special_ad_category_country', learning: 'nein', get: c => sortedStrings(c.special_ad_category_country) },
+  { key: 'campaign.budget_level', learning: 'neu', get: c => c.budget_level ?? null },
+  { key: 'campaign.daily_budget_cents', learning: sizeLearning, get: c => centsOrNull(c.daily_budget_cents) },
+  { key: 'campaign.lifetime_budget_cents', learning: sizeLearning, get: c => centsOrNull(c.lifetime_budget_cents) },
+  { key: 'campaign.bid_strategy', learning: 'neu', get: c => (c.budget_level === 'campaign' ? (c.bid_strategy ?? 'LOWEST_COST_WITHOUT_CAP') : (c.bid_strategy ?? null)) },
+  { key: 'campaign.is_adset_budget_sharing_enabled', learning: 'nein', get: c => (c.budget_level === 'campaign' ? null : c.is_adset_budget_sharing_enabled === true) },
+  { key: 'campaign.spend_cap_cents', learning: 'nein', get: c => capOrNull(c.spend_cap_cents) },
+  { key: 'campaign.start_time', learning: 'nein', get: c => timeOrNull(c.start_time) },
+  { key: 'campaign.stop_time', learning: 'nein', get: c => timeOrNull(c.stop_time) },
+  { key: 'campaign.budget_schedule_specs', learning: 'nein', get: c => c.budget_schedule_specs ?? [], norm: schedNorm },
+]
+
+const ADSET_EDIT: readonly EditDef<AdsetDraft>[] = [
+  { key: 'adset.name', learning: 'nein', get: a => strOrNull(a.name) },
+  { key: 'adset.status', learning: statusLearning, get: a => a.status ?? null },
+  { key: 'adset.destination', learning: 'neu', get: a => a.destination ?? null },
+  { key: 'adset.optimization_goal', learning: 'neu', get: a => a.optimization_goal ?? null },
+  { key: 'adset.billing_event', learning: 'neu', get: a => a.billing_event ?? null },
+  { key: 'adset.promoted_object.pixel_id', learning: 'neu', get: a => strOrNull(a.promoted_object?.pixel_id) },
+  { key: 'adset.promoted_object.custom_event_type', learning: 'neu', get: a => a.promoted_object?.custom_event_type ?? null },
+  { key: 'adset.promoted_object.custom_conversion_id', learning: 'neu', get: a => strOrNull(a.promoted_object?.custom_conversion_id) },
+  { key: 'adset.promoted_object.page_id', learning: 'neu', get: a => strOrNull(a.promoted_object?.page_id) },
+  { key: 'adset.attribution', learning: 'neu', get: a => a.attribution ?? null },
+  { key: 'adset.daily_budget_cents', learning: sizeLearning, get: a => centsOrNull(a.daily_budget_cents) },
+  { key: 'adset.lifetime_budget_cents', learning: sizeLearning, get: a => centsOrNull(a.lifetime_budget_cents) },
+  { key: 'adset.bid_strategy', learning: 'neu', get: (a, d) => (d.campaign?.budget_level === 'campaign' ? (a.bid_strategy ?? null) : (a.bid_strategy ?? 'LOWEST_COST_WITHOUT_CAP')) },
+  { key: 'adset.bid_amount_cents', learning: sizeLearning, get: a => centsOrNull(a.bid_amount_cents) },
+  { key: 'adset.roas_average_floor', learning: sizeLearning, get: a => centsOrNull(a.roas_average_floor) },
+  { key: 'adset.start_time', learning: 'nein', get: a => timeOrNull(a.start_time) },
+  { key: 'adset.end_time', learning: 'nein', get: a => timeOrNull(a.end_time) },
+  { key: 'adset.adset_schedule', learning: 'moeglich', get: a => a.adset_schedule ?? [], norm: sortedCanon },
+  { key: 'adset.daily_min_spend_target_cents', learning: 'nein', get: a => centsOrNull(a.daily_min_spend_target_cents) },
+  { key: 'adset.daily_spend_cap_cents', learning: 'nein', get: a => capOrNull(a.daily_spend_cap_cents) },
+  { key: 'adset.lifetime_min_spend_target_cents', learning: 'nein', get: a => centsOrNull(a.lifetime_min_spend_target_cents) },
+  { key: 'adset.lifetime_spend_cap_cents', learning: 'nein', get: a => capOrNull(a.lifetime_spend_cap_cents) },
+  { key: 'adset.budget_schedule_specs', learning: 'nein', get: a => a.budget_schedule_specs ?? [], norm: schedNorm },
+  { key: 'adset.dsa_beneficiary', learning: 'nein', get: a => strOrNull(a.dsa_beneficiary) },
+  { key: 'adset.dsa_payor', learning: 'nein', get: a => strOrNull(a.dsa_payor) },
+  // Zielgruppe und Platzierungen: jede Änderung ist für Meta „wesentlich“ (Lernphase neu)
+  { key: 'adset.targeting.geo_locations', learning: 'neu', get: a => geoOhneTypen(a.targeting?.geo_locations), norm: geoNorm },
+  { key: 'adset.targeting.location_types', learning: 'neu', get: a => sortedStrings(a.targeting?.geo_locations?.location_types) },
+  { key: 'adset.targeting.excluded_geo_locations', learning: 'neu', get: a => a.targeting?.excluded_geo_locations ?? null, norm: geoNorm },
+  {
+    key: 'adset.targeting.age', learning: 'neu',
+    get: a => ({ age_min: a.targeting?.age_min ?? null, age_max: a.targeting?.age_max ?? null, age_range: a.targeting?.age_range ?? null }),
+  },
+  { key: 'adset.targeting.genders', learning: 'neu', get: a => (a.targeting?.genders ?? []).filter(g => g !== 0).slice().sort((x, y) => x - y) },
+  { key: 'adset.targeting.locales', learning: 'neu', get: a => (a.targeting?.locales ?? []).slice().sort((x, y) => x - y) },
+  {
+    key: 'adset.targeting.detailed', learning: 'neu',
+    get: a => ({ flexible_spec: a.targeting?.flexible_spec ?? null, exclusions: a.targeting?.exclusions ?? null }), norm: detailedNorm,
+  },
+  {
+    key: 'adset.targeting.custom_audiences', learning: 'neu',
+    get: a => ({ custom_audiences: a.targeting?.custom_audiences ?? null, targeting_relaxation_types: a.targeting?.targeting_relaxation_types ?? null }),
+    norm: v => ({ ids: idsOf(asRec(v).custom_audiences), relax: asRec(v).targeting_relaxation_types }),
+  },
+  { key: 'adset.targeting.excluded_custom_audiences', learning: 'neu', get: a => a.targeting?.excluded_custom_audiences ?? null, norm: idsOf },
+  { key: 'adset.targeting.advantage_audience', learning: 'neu', get: a => a.targeting?.targeting_automation ?? null, norm: taNorm },
+  { key: 'adset.placements', learning: 'neu', get: a => a.placements ?? { mode: 'advantage' }, norm: placementsNorm },
+  { key: 'adset.brand_safety', learning: 'neu', get: a => a.brand_safety ?? null },
+  { key: 'adset.excluded_publisher_categories', learning: 'neu', get: a => (a.excluded_publisher_categories ?? []).slice().sort() },
+  { key: 'adset.targeting', learning: 'neu', get: a => targetingRest(a.targeting) },
+]
+
+const AD_EDIT: readonly EditDef<AdDraft>[] = [
+  { key: 'ad.name', learning: 'nein', get: a => strOrNull(a.name) },
+  { key: 'ad.status', learning: 'nein', get: a => a.status ?? null },
+  { key: 'ad.tracking_specs', learning: 'nein', get: a => a.tracking_specs ?? [], norm: sortedCanon },
+  // Werbemittel: Änderung = neues Creative (ersetzen oder neue Anzeige)
+  { key: 'ad.format', learning: 'neu', creative: true, get: a => a.format ?? null },
+  { key: 'ad.identity.page_id', learning: 'neu', creative: true, get: a => strOrNull(a.identity?.page_id) },
+  { key: 'ad.identity.instagram_user_id', learning: 'neu', creative: true, get: a => strOrNull(a.identity?.instagram_user_id) },
+  { key: 'ad.primary_texts', learning: 'neu', creative: true, get: a => cleanTexts(a.primary_texts) },
+  { key: 'ad.headlines', learning: 'neu', creative: true, get: a => cleanTexts(a.headlines) },
+  { key: 'ad.descriptions', learning: 'neu', creative: true, get: a => cleanTexts(a.descriptions) },
+  { key: 'ad.cta_type', learning: 'neu', creative: true, get: a => a.cta_type ?? null },
+  { key: 'ad.destination.kind', learning: 'neu', creative: true, get: a => a.destination?.kind ?? null },
+  { key: 'ad.destination.url', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'website' ? strOrNull(a.destination.url) : null) },
+  { key: 'ad.destination.display_link', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'website' ? strOrNull(a.destination.display_link) : null) },
+  { key: 'ad.destination.form_id', learning: 'neu', creative: true, get: a => (a.destination?.kind === 'lead_form' ? strOrNull(a.destination.form_id) : null) },
+  { key: 'ad.media.feed_4x5', learning: 'neu', creative: true, get: a => a.media?.feed_4x5 ?? null, norm: mediaNorm },
+  { key: 'ad.media.story_9x16', learning: 'neu', creative: true, get: a => a.media?.story_9x16 ?? null, norm: mediaNorm },
+  { key: 'ad.media.square_1x1', learning: 'neu', creative: true, get: a => a.media?.square_1x1 ?? null, norm: mediaNorm },
+  { key: 'ad.media.cards', learning: 'neu', creative: true, get: a => a.media?.cards ?? [], norm: cardsNorm },
+  { key: 'ad.creative_features', learning: 'neu', creative: true, get: a => a.creative_features ?? {}, norm: featuresNorm },
+  { key: 'ad.multi_advertiser', learning: 'neu', creative: true, get: a => (a.multi_advertiser === 'OPT_IN' ? 'OPT_IN' : 'OPT_OUT') },
+]
+
+/** Alle Feld-Schlüssel, die editDiff vergleicht (jeder hat einen FieldSpec). */
+export const EDIT_FIELD_KEYS: readonly string[] = [...CAMPAIGN_EDIT, ...ADSET_EDIT, ...AD_EDIT].map(d => d.key)
+/** Felder des Werbemittels (Änderung = neues Creative). */
+export const EDIT_CREATIVE_FIELDS: readonly string[] = AD_EDIT.filter(d => d.creative).map(d => d.key)
+
+function editDefOf(field: string): EditDef<CampaignDraft> | EditDef<AdsetDraft> | EditDef<AdDraft> | undefined {
+  return CAMPAIGN_EDIT.find(d => d.key === field) ?? ADSET_EDIT.find(d => d.key === field) ?? AD_EDIT.find(d => d.key === field)
+}
+
+/** Wert eines Feldes für das Objekt mit dieser Meta-ID (für den Abgleich mit dem Live-Stand). */
+export function editFieldValue(spec: DraftSpec, level: Level, id: string, field: string): unknown {
+  if (level === 'campaign') {
+    const def = CAMPAIGN_EDIT.find(d => d.key === field)
+    return def && spec?.campaign && spec.campaign.existing_id === id ? def.get(spec.campaign, spec) : undefined
+  }
+  if (level === 'adset') {
+    const def = ADSET_EDIT.find(d => d.key === field)
+    const n = (spec?.adsets ?? []).find(a => a.existing_id === id)
+    return def && n ? def.get(n, spec) : undefined
+  }
+  const def = AD_EDIT.find(d => d.key === field)
+  const n = (spec?.ads ?? []).find(a => a.existing_id === id)
+  return def && n ? def.get(n, spec) : undefined
+}
+/** Gleich im Sinne von editDiff (gleiche Vergleichsform)? */
+export function editSame(field: string, a: unknown, b: unknown): boolean {
+  const def = editDefOf(field)
+  const n = (v: unknown) => (def && def.norm ? def.norm(v) : v)
+  return editCanon(n(a)) === editCanon(n(b))
+}
+/** Neue Zeiträume der Budgetplanung (in after, nicht in before). */
+export function neueBudgetZeitraeume(before: readonly BudgetScheduleSpec[] | undefined, after: readonly BudgetScheduleSpec[] | undefined): BudgetScheduleSpec[] {
+  const alt = (before ?? []).map(schedKey)
+  return (after ?? []).filter(x => alt.indexOf(schedKey(x)) < 0)
+}
+/** Zeiträume, die aus der Liste entfernt wurden (geht hier nicht). */
+export function entfernteBudgetZeitraeume(before: readonly BudgetScheduleSpec[] | undefined, after: readonly BudgetScheduleSpec[] | undefined): BudgetScheduleSpec[] {
+  const neu = (after ?? []).map(schedKey)
+  return (before ?? []).filter(x => neu.indexOf(schedKey(x)) < 0)
+}
+
+// ── Gründe (deutsch, an der Oberfläche angezeigt) ───────────────────────────
+
+export const EDIT_BLOCK_TEXT = {
+  lock: 'Bei Meta nach dem Anlegen nicht mehr änderbar.',
+  archiviert: 'Archivierte oder gelöschte Objekte ändert der Assistent nicht.',
+  nieLoeschen: 'Löschen und Archivieren macht der Assistent nie. Zum Stoppen auf „Pausiert“ stellen.',
+  keinKampagnenbudget: 'Diese Kampagne hat kein Kampagnenbudget; das Budget steht in den Anzeigengruppen.',
+  budgetAufKampagne: 'Das Budget steht in der Kampagne (Advantage+ Kampagnenbudget).',
+  budgetEntfernen: 'Ein Budget lässt sich nicht entfernen, nur ändern.',
+  budgetart: 'Tages- und Laufzeitbudget lassen sich nach dem Anlegen nicht tauschen.',
+  roasFest: 'Die Gebotsstrategie „ROAS-Ziel“ lässt sich nach dem Anlegen nicht wechseln.',
+  gebotAufKampagne: 'Die Gebotsstrategie steht bei Kampagnenbudget in der Kampagne.',
+  teilenEin: 'Das Teilen des Anzeigengruppenbudgets lässt sich laufend nur ausschalten, nicht einschalten.',
+  conversionNurWebsite: 'Datensatz und Conversion-Event lassen sich nur bei Website-Conversions ändern.',
+  customConversion: 'Die Anzeigengruppe optimiert auf eine benutzerdefinierte Conversion, die bleibt fest.',
+  zielPasstNicht: 'Dieses Performance-Ziel passt nicht zu Kampagnenziel und Conversion-Ort.',
+  abrechnungPasstNicht: 'Dieses Performance-Ziel passt nicht zur Abrechnung der Anzeigengruppe.',
+  zeitplanLaufzeit: 'Anzeigen nach Zeitplan gehen nur mit Laufzeitbudget.',
+  gruppenLimitsCbo: 'Ausgabenlimits für Anzeigengruppen gibt es nur mit Kampagnen-Tagesbudget.',
+  gruppenLimitsCboLaufzeit: 'Laufzeit-Ausgabenlimits für Anzeigengruppen gibt es nur mit Kampagnen-Laufzeitbudget.',
+  laufzeitLimitEntfernen: 'Das maximale Laufzeit-Ausgabenlimit lässt sich hier noch nicht entfernen (bei Meta noch nicht geprüft), nur ändern.',
+  verschieben: 'Anzeigen lassen sich nicht in eine andere Anzeigengruppe verschieben. Anzeigengruppe zurückstellen oder „Duplizieren“ in die gewünschte Anzeigengruppe nutzen.',
+  budgetplanungTages: 'Budgetplanung geht nur mit Tagesbudget.',
+  budgetplanungEntfernen: 'Bestehende Zeiträume der Budgetplanung lassen sich hier nicht entfernen.',
+  beitrag: 'Diese Anzeige nutzt einen bestehenden Beitrag; Texte und Medien lassen sich hier nicht ändern.',
+  ersetzenModus: 'Beim Ersetzen erlaubt Meta keinen Wechsel zwischen Medien je Platzierung und Einzelmedium. Bitte „Neue Anzeige“ wählen.',
+} as const
+
+// ── Vergleich ───────────────────────────────────────────────────────────────
+
+const LEVEL_TEXT: Readonly<Record<Level, string>> = { campaign: 'Kampagne', adset: 'Anzeigengruppe', ad: 'Anzeige' }
+/** Felder je Ebene, die editDiff kennt; alles andere meldet es als „wird nicht gesendet“ (nie still verwerfen). */
+const EDIT_KNOWN_KEYS: Readonly<Record<Level, readonly string[]>> = {
+  campaign: [
+    'existing_id', 'name', 'objective', 'buying_type', 'special_ad_categories', 'special_ad_category_country', 'budget_level',
+    'daily_budget_cents', 'lifetime_budget_cents', 'bid_strategy', 'is_adset_budget_sharing_enabled', 'spend_cap_cents',
+    'start_time', 'stop_time', 'status', 'meta_status', 'budget_schedule_specs',
+  ],
+  adset: [
+    'key', 'existing_id', 'name', 'destination', 'optimization_goal', 'billing_event', 'promoted_object', 'attribution',
+    'daily_budget_cents', 'lifetime_budget_cents', 'bid_strategy', 'bid_amount_cents', 'roas_average_floor', 'start_time',
+    'end_time', 'targeting', 'placements', 'dsa_beneficiary', 'dsa_payor', 'brand_safety', 'excluded_publisher_categories',
+    'status', 'meta_status', 'adset_schedule', 'daily_min_spend_target_cents', 'daily_spend_cap_cents',
+    'lifetime_min_spend_target_cents', 'lifetime_spend_cap_cents', 'budget_schedule_specs',
+  ],
+  ad: [
+    'key', 'adset_key', 'existing_id', 'name', 'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type',
+    'destination', 'media', 'creative_features', 'multi_advertiser', 'source', 'status', 'meta_status', 'tracking_specs',
+  ],
+}
+
+/**
+ * Vergleicht Ausgangsstand (baseline, so wie bei Meta geladen) mit dem gewünschten Stand.
+ * Objekte werden über existing_id zugeordnet. Rein, ohne Meta-Aufruf: Oberfläche
+ * („Das ändert sich bei Meta“) und Server (edit_diff/edit_apply) rechnen gleich.
+ */
+export function editDiff(baseline: DraftSpec, spec: DraftSpec): EditDiffResult {
+  const changes: EditChange[] = []
+  const warnings: string[] = []
+  const bc = baseline?.campaign
+  const sc = spec?.campaign
+  if (!bc || !sc || !bc.existing_id) return { changes, warnings: ['Kein Ausgangsstand von Meta. Bitte neu laden.'] }
+  const tausch: CreativeTausch = spec.hp?.creative_tausch === 'ersetzen' ? 'ersetzen' : 'neue_anzeige'
+  const block = (ch: EditChange, why: string) => { if (!ch.blocked) { ch.blocked = why; ch.learning_reset = false } }
+  const name = (lvl: Level, n: { name?: string; existing_id?: string } | undefined, fallback: string) =>
+    `${LEVEL_TEXT[lvl]} „${(n?.name ?? '').trim() || n?.existing_id || fallback}“`
+
+  function compare<N>(level: Level, node: string, id: string, b: N, s: N, defs: readonly EditDef<N>[]): EditChange[] {
+    const out: EditChange[] = []
+    const sr = asRec(s), br = asRec(b)
+    for (const k of Object.keys(sr)) {
+      if (EDIT_KNOWN_KEYS[level].indexOf(k) >= 0 || editCanon(sr[k]) === editCanon(br[k])) continue
+      warnings.push(`${name(level, s as { name?: string; existing_id?: string }, node)}: „${k}“ kennt das Bearbeiten nicht, das wird nicht an Meta gesendet.`)
+    }
+    for (const def of defs) {
+      const before = def.get(b, baseline)
+      const after = def.get(s, spec)
+      const nb = def.norm ? def.norm(before) : before
+      const na = def.norm ? def.norm(after) : after
+      if (editCanon(nb) === editCanon(na)) continue
+      const learning = typeof def.learning === 'function' ? def.learning(before, after) : def.learning
+      const fs = fieldSpec(def.key)
+      out.push({
+        level, id, node, field: def.key, label_key: fs ? fs.labelKey : `${K}.field.${def.key.replace(/\./g, '_')}`,
+        before, after, learning, learning_reset: learning === 'neu', ...(def.creative ? { creative: true } : {}),
+      })
+    }
+    return out
+  }
+  const lockOrArchive = (level: Level, ch: EditChange, status: string | undefined): boolean => {
+    if (EDIT_LOCKS[level].indexOf(ch.field) >= 0) { block(ch, EDIT_BLOCK_TEXT.lock); return true }
+    if (isArchived(status)) { block(ch, EDIT_BLOCK_TEXT.archiviert); return true }
+    if (ch.field.slice(-'.status'.length) === '.status' && ch.after !== 'ACTIVE' && ch.after !== 'PAUSED') { block(ch, EDIT_BLOCK_TEXT.nieLoeschen); return true }
+    return false
+  }
+  const cbo = bc.budget_level === 'campaign'
+  const summary = (label: string, list: EditChange[]) => {
+    const live = list.filter(c => !c.blocked)
+    if (live.some(c => c.learning_reset)) warnings.push(`${label}: Die Lernphase startet neu.`)
+    else if (live.some(c => c.learning === 'moeglich' && /budget|bid_amount|roas/.test(c.field))) warnings.push(`${label}: Budget oder Gebot ändert sich um mehr als 20 %. Die Lernphase kann neu starten.`)
+    if (live.some(c => c.field.slice(-'.status'.length) === '.status' && c.after === 'ACTIVE')) warnings.push(`${label} wird eingeschaltet. War es 7 Tage oder länger pausiert, startet die Lernphase neu.`)
+  }
+
+  // ── Kampagne ──
+  if (sc.existing_id !== bc.existing_id) warnings.push('Der Entwurf gehört zu einer anderen Kampagne als der Ausgangsstand. Bitte neu laden.')
+  else {
+    const list = compare<CampaignDraft>('campaign', 'campaign', bc.existing_id, bc, sc, CAMPAIGN_EDIT)
+    for (const ch of list) {
+      if (lockOrArchive('campaign', ch, bc.meta_status)) continue
+      if (ch.field === 'campaign.daily_budget_cents' || ch.field === 'campaign.lifetime_budget_cents') {
+        const other = ch.field === 'campaign.daily_budget_cents' ? bc.lifetime_budget_cents : bc.daily_budget_cents
+        if (!cbo) block(ch, EDIT_BLOCK_TEXT.keinKampagnenbudget)
+        else if (ch.after === null) block(ch, EDIT_BLOCK_TEXT.budgetEntfernen)
+        else if ((other ?? 0) > 0) block(ch, EDIT_BLOCK_TEXT.budgetart)
+      } else if (ch.field === 'campaign.bid_strategy') {
+        if (!cbo) block(ch, EDIT_BLOCK_TEXT.keinKampagnenbudget)
+        else if (bc.bid_strategy === 'LOWEST_COST_WITH_MIN_ROAS') block(ch, EDIT_BLOCK_TEXT.roasFest)
+      } else if (ch.field === 'campaign.is_adset_budget_sharing_enabled') {
+        if (ch.after === true) block(ch, EDIT_BLOCK_TEXT.teilenEin)
+      } else if (ch.field === 'campaign.budget_schedule_specs') {
+        if (entfernteBudgetZeitraeume(bc.budget_schedule_specs, sc.budget_schedule_specs).length) block(ch, EDIT_BLOCK_TEXT.budgetplanungEntfernen)
+        else if (!(cbo && (bc.daily_budget_cents ?? 0) > 0)) block(ch, EDIT_BLOCK_TEXT.budgetplanungTages)
+      }
+    }
+    changes.push(...list)
+    summary(name('campaign', sc, bc.existing_id), list)
+  }
+
+  // ── Anzeigengruppen ──
+  const bAdsets = baseline.adsets ?? []
+  const sAdsets = spec.adsets ?? []
+  for (const s of sAdsets) {
+    if (!s.existing_id) { warnings.push(`Neue ${name('adset', s, s.key)} wird beim Bearbeiten nicht angelegt. Neues über „Hinzufügen“ im Assistenten anlegen.`); continue }
+    const b = bAdsets.find(x => x.existing_id === s.existing_id)
+    if (!b) { warnings.push(`${name('adset', s, s.key)} ist nicht im Ausgangsstand. Bitte neu laden.`); continue }
+    const list = compare<AdsetDraft>('adset', s.key, s.existing_id, b, s, ADSET_EDIT)
+    for (const ch of list) {
+      if (lockOrArchive('adset', ch, b.meta_status)) continue
+      switch (ch.field) {
+        case 'adset.daily_budget_cents':
+        case 'adset.lifetime_budget_cents': {
+          const other = ch.field === 'adset.daily_budget_cents' ? b.lifetime_budget_cents : b.daily_budget_cents
+          if (cbo) block(ch, EDIT_BLOCK_TEXT.budgetAufKampagne)
+          else if (ch.after === null) block(ch, EDIT_BLOCK_TEXT.budgetEntfernen)
+          else if ((other ?? 0) > 0) block(ch, EDIT_BLOCK_TEXT.budgetart)
+          break
+        }
+        case 'adset.bid_strategy':
+          if (cbo) block(ch, EDIT_BLOCK_TEXT.gebotAufKampagne)
+          else if (b.bid_strategy === 'LOWEST_COST_WITH_MIN_ROAS') block(ch, EDIT_BLOCK_TEXT.roasFest)
+          break
+        case 'adset.promoted_object.pixel_id':
+        case 'adset.promoted_object.custom_event_type':
+          if (b.promoted_object?.custom_conversion_id) block(ch, EDIT_BLOCK_TEXT.customConversion)
+          else if (!isConversionGoal(s.optimization_goal)) block(ch, EDIT_BLOCK_TEXT.conversionNurWebsite)
+          break
+        case 'adset.optimization_goal': {
+          const goal = ch.after as OptGoal
+          if (goalsFor(sc.objective, b.destination).indexOf(goal) < 0) block(ch, EDIT_BLOCK_TEXT.zielPasstNicht)
+          else if (billingFor(goal).indexOf(b.billing_event) < 0) block(ch, EDIT_BLOCK_TEXT.abrechnungPasstNicht)
+          else warnings.push(`${name('adset', s, s.key)}: Das Performance-Ziel lässt Meta nach der ersten Auslieferung oft nicht mehr ändern.`)
+          break
+        }
+        case 'adset.adset_schedule':
+          if ((s.adset_schedule ?? []).length && !(cbo ? (bc.lifetime_budget_cents ?? 0) > 0 : (s.lifetime_budget_cents ?? 0) > 0)) block(ch, EDIT_BLOCK_TEXT.zeitplanLaufzeit)
+          break
+        case 'adset.daily_min_spend_target_cents':
+        case 'adset.daily_spend_cap_cents':
+          if (ch.after !== null && !(cbo && (bc.daily_budget_cents ?? 0) > 0)) block(ch, EDIT_BLOCK_TEXT.gruppenLimitsCbo)
+          break
+        case 'adset.lifetime_min_spend_target_cents':
+        case 'adset.lifetime_spend_cap_cents':
+          if (ch.after !== null && !(cbo && (bc.lifetime_budget_cents ?? 0) > 0)) block(ch, EDIT_BLOCK_TEXT.gruppenLimitsCboLaufzeit)
+          // Entfernen (Metas „unbegrenzt“) ist nur für das Tageslimit dokumentiert
+          else if (ch.after === null && ch.field === 'adset.lifetime_spend_cap_cents') block(ch, EDIT_BLOCK_TEXT.laufzeitLimitEntfernen)
+          break
+        case 'adset.budget_schedule_specs':
+          if (entfernteBudgetZeitraeume(b.budget_schedule_specs, s.budget_schedule_specs).length) block(ch, EDIT_BLOCK_TEXT.budgetplanungEntfernen)
+          else if (cbo || !((b.daily_budget_cents ?? 0) > 0)) block(ch, EDIT_BLOCK_TEXT.budgetplanungTages)
+          break
+      }
+    }
+    changes.push(...list)
+    summary(name('adset', s, s.key), list)
+  }
+  for (const b of bAdsets) {
+    if (!sAdsets.some(x => x.existing_id === b.existing_id)) {
+      warnings.push(`${name('adset', b, b.key)} fehlt im Entwurf. Bei Meta bleibt sie unverändert (nie löschen); zum Stoppen auf „Pausiert“ stellen.`)
+    }
+  }
+
+  // ── Anzeigen ──
+  const bAds = baseline.ads ?? []
+  const sAds = spec.ads ?? []
+  for (const s of sAds) {
+    if (!s.existing_id) { warnings.push(`Neue ${name('ad', s, s.key)} wird beim Bearbeiten nicht angelegt. Neue Anzeigen über „Anzeigen hinzufügen“ anlegen.`); continue }
+    const b = bAds.find(x => x.existing_id === s.existing_id)
+    if (!b) { warnings.push(`${name('ad', s, s.key)} ist nicht im Ausgangsstand. Bitte neu laden.`); continue }
+    const bSet = adsetByKey(baseline, b.adset_key)
+    const sSet = adsetByKey(spec, s.adset_key)
+    // Verschieben geht bei Meta nicht: dann nichts an dieser Anzeige senden (nicht in der alten Gruppe ändern)
+    const verschoben = !!bSet && (!sSet || bSet.existing_id !== sSet.existing_id)
+    if (verschoben) {
+      warnings.push(`${name('ad', s, s.key)}: Anzeigen lassen sich nicht in eine andere Anzeigengruppe verschieben. Dafür „Duplizieren“ in eine vorhandene Anzeigengruppe nutzen.`)
+    }
+    const list = compare<AdDraft>('ad', s.key, s.existing_id, b, s, AD_EDIT)
+    const creative = list.filter(c => c.creative)
+    for (const ch of list) {
+      if (verschoben) { block(ch, EDIT_BLOCK_TEXT.verschieben); continue }
+      if (lockOrArchive('ad', ch, b.meta_status)) continue
+      if (!ch.creative) continue
+      if (b.source?.aus_beitrag) block(ch, EDIT_BLOCK_TEXT.beitrag)
+    }
+    if (tausch === 'ersetzen' && creative.some(c => !c.blocked)) {
+      const mb = creativeMode(b, bSet?.placements) === 'asset_feed'
+      const ms = creativeMode(s, sSet?.placements ?? bSet?.placements) === 'asset_feed'
+      if (mb !== ms) for (const ch of creative) block(ch, EDIT_BLOCK_TEXT.ersetzenModus)
+    }
+    changes.push(...list)
+    const label = name('ad', s, s.key)
+    if (creative.some(c => !c.blocked)) {
+      warnings.push(tausch === 'ersetzen'
+        ? `${label}: Das Werbemittel wird in der bestehenden Anzeige ersetzt. Meta prüft die Anzeige neu, die Lernphase der Anzeigengruppe startet neu.`
+        : `${label}: Es entsteht eine neue Anzeige mit dem geänderten Werbemittel, die alte wird pausiert (nie gelöscht). Die Lernphase der Anzeigengruppe startet neu.`)
+    } else summary(label, list)
+  }
+  for (const b of bAds) {
+    if (!sAds.some(x => x.existing_id === b.existing_id)) {
+      warnings.push(`${name('ad', b, b.key)} fehlt im Entwurf. Bei Meta bleibt sie unverändert (nie löschen); zum Stoppen auf „Pausiert“ stellen.`)
+    }
+  }
+  return { changes, warnings }
+}
+
+/** Zusätzliche Prüfungen der Bearbeiten-Felder, die validateDraft (nur neue Knoten) nicht kennt. */
+export function validateEditFields(spec: DraftSpec): DraftIssue[] {
+  const out: DraftIssue[] = []
+  const push = (level: Level, node: string, field: string, code: IssueCode, params?: Record<string, string | number>) =>
+    out.push({ level, node, field, severity: 'error', code, messageKey: issueMessageKey(code), ...(params ? { params } : {}) })
+  const c = spec?.campaign
+  if (!c) return out
+  const schedCheck = (level: Level, node: string, field: string, list: BudgetScheduleSpec[] | undefined) => {
+    if ((list ?? []).length > LIMITS.budgetSchedulesMax) { push(level, node, field, 'budget_schedule_invalid', { max: LIMITS.budgetSchedulesMax }); return }
+    for (const z of list ?? []) {
+      const ts = unixSekunden(z?.time_start), te = unixSekunden(z?.time_end)
+      const ok = ts !== null && te !== null && te - ts >= 3 * 3600
+        && (z.budget_value_type === 'ABSOLUTE' || z.budget_value_type === 'MULTIPLIER') && typeof z.budget_value === 'number' && z.budget_value > 0
+      if (!ok) { push(level, node, field, 'budget_schedule_invalid', { max: LIMITS.budgetSchedulesMax }); return }
+    }
+  }
+  const money = (level: Level, node: string, field: string, v: number | undefined, max: number) => {
+    if (typeof v === 'number' && v > max && v < META_UNBEGRENZT_AB) push(level, node, field, 'budget_high', { max })
+  }
+  money('campaign', 'campaign', 'campaign.daily_budget_cents', c.daily_budget_cents, LIMITS.dailyBudgetMaxCents)
+  money('campaign', 'campaign', 'campaign.lifetime_budget_cents', c.lifetime_budget_cents, LIMITS.lifetimeBudgetMaxCents)
+  const cap = c.spend_cap_cents
+  if (typeof cap === 'number' && cap > 0 && cap < META_UNBEGRENZT_AB) {
+    if (cap < LIMITS.spendCapMinCents) push('campaign', 'campaign', 'campaign.spend_cap_cents', 'spend_cap_low', { min: LIMITS.spendCapMinCents })
+    else if (cap > LIMITS.spendCapMaxCents) push('campaign', 'campaign', 'campaign.spend_cap_cents', 'spend_cap_high', { max: LIMITS.spendCapMaxCents })
+  }
+  schedCheck('campaign', 'campaign', 'campaign.budget_schedule_specs', c.budget_schedule_specs)
+  for (const a of spec.adsets ?? []) {
+    money('adset', a.key, 'adset.daily_budget_cents', a.daily_budget_cents, LIMITS.dailyBudgetMaxCents)
+    money('adset', a.key, 'adset.lifetime_budget_cents', a.lifetime_budget_cents, LIMITS.lifetimeBudgetMaxCents)
+    for (const blk of a.adset_schedule ?? []) {
+      const s = blk?.start_minute, e = blk?.end_minute
+      const ok = typeof s === 'number' && typeof e === 'number' && s >= 0 && e <= 1440 && s % 60 === 0 && e % 60 === 0 && e - s >= 60
+        && Array.isArray(blk.days) && blk.days.length > 0 && blk.days.every(d => d >= 0 && d <= 6)
+      if (!ok) { push('adset', a.key, 'adset.adset_schedule', 'schedule_invalid'); break }
+    }
+    const order = (min: number | undefined, max: number | undefined, field: string) => {
+      if (typeof min === 'number' && typeof max === 'number' && min > 0 && max > 0 && max < META_UNBEGRENZT_AB && min > max) push('adset', a.key, field, 'spend_limits_order')
+    }
+    order(a.daily_min_spend_target_cents, a.daily_spend_cap_cents, 'adset.daily_spend_cap_cents')
+    order(a.lifetime_min_spend_target_cents, a.lifetime_spend_cap_cents, 'adset.lifetime_spend_cap_cents')
+    schedCheck('adset', a.key, 'adset.budget_schedule_specs', a.budget_schedule_specs)
+  }
+  return out
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 8. meta-builder: Anfrage-/Antwort-Typen
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2161,6 +2994,18 @@ export interface DraftMetaIds {
    * Knoten im Entwurf seitdem geändert hat.
    */
   hashes?: Record<string, string>
+  /** Bearbeiten-Entwurf (kind 'edit'): Ausgangsstand bei Meta, schreibt nur meta-builder */
+  edit?: EditBaseline
+}
+/** Ausgangsstand eines Bearbeiten-Entwurfs (edit_load; nach edit_apply frisch von Meta). */
+export interface EditBaseline {
+  /** geladen über diese Ebene/ID (Anzeigengruppe/Anzeige: Kampagne und Gruppe kommen mit) */
+  level: Level
+  id: string
+  baseline: DraftSpec
+  loaded_at: string
+  graph_version?: string
+  applied_at?: string
 }
 export interface DraftLastError { step: string; key?: string; code?: number | string; subcode?: number; user_msg?: string }
 
@@ -2289,14 +3134,17 @@ export const BUILDER_MODES = [
   'catalog', 'audience_eligibility', 'estimate', 'creative_details', 'pixel_status', 'leadgen_lookup',
   'usage', 'validate', 'import', 'media_status', 'discard',
   'preview', 'media_upload', 'create', 'resume', 'activate_draft', 'duplicate', 'leadform_create',
+  'edit_load', 'edit_diff', 'edit_apply', 'bulk',
 ] as const
 export type BuilderMode = typeof BUILDER_MODES[number]
 /** Brauchen ad_settings.builder_enabled + META_WRITES_DISABLED != '1' (+ Schreibrecht). */
-export const BUILDER_WRITE_MODES: readonly BuilderMode[] = ['preview', 'media_upload', 'create', 'resume', 'activate_draft', 'duplicate', 'leadform_create']
+export const BUILDER_WRITE_MODES: readonly BuilderMode[] = [
+  'preview', 'media_upload', 'create', 'resume', 'activate_draft', 'duplicate', 'leadform_create', 'edit_apply', 'bulk',
+]
 export const BUILDER_ERROR_CODES = [
   'builder_disabled', 'writes_disabled', 'forbidden', 'not_found', 'invalid_request', 'validation_failed',
   'lint_blocked', 'guardrail_exceeded', 'app_dev_mode', 'rate_limited', 'meta_error', 'stale_validation',
-  'lease_busy', 'unsupported', 'media_not_ready', 'housing_required', 'created_changed',
+  'lease_busy', 'unsupported', 'media_not_ready', 'housing_required', 'created_changed', 'edit_conflict',
 ] as const
 export type BuilderErrorCode = typeof BUILDER_ERROR_CODES[number]
 export interface BuilderErrorBody { error: string; hint?: string; code?: BuilderErrorCode | string; data?: unknown }
@@ -2402,8 +3250,124 @@ export interface ActivateDraftResponse {
   /** Von diesem Entwurf angelegt, aber nicht mehr im Entwurf: bleibt pausiert */
   skipped?: Array<{ level: Level; key: string; id: string }>
 }
-export interface DuplicateRequest { level: Level; id: string; target_adset_id?: string; deep?: boolean; rename_suffix?: string }
-export interface DuplicateResponse { copied_id: string; level: Level }
+/**
+ * Duplizieren wie im Werbeanzeigenmanager: in die ursprüngliche, eine vorhandene oder eine neue
+ * Kampagne (Anzeigengruppen) bzw. Anzeigengruppe (Anzeigen). Kopien immer PAUSED, Name + " - Kopie".
+ * Kampagne: art 'original' oder 'neu' (beides = neue Kampagne). Anzeigengruppe: 'vorhanden' braucht
+ * campaign_id, 'neu' legt eine Kopie der Kampagne ohne Inhalt an. Anzeige: 'vorhanden' braucht
+ * adset_id, 'neu' legt eine leere Kopie der Anzeigengruppe an (in campaign_id oder der eigenen Kampagne).
+ * 'neu' bei Anzeigengruppen/Anzeigen: alle Objekte aus derselben Kampagne bzw. Anzeigengruppe (sonst 400).
+ * Kopie, die in einer Kampagne ohne Sonderkategorie Wohnen landet: 409 housing_required (Admin mit Begründung).
+ */
+export type DuplicateZielArt = 'original' | 'vorhanden' | 'neu'
+export interface DuplicateZiel { art: DuplicateZielArt; campaign_id?: string; adset_id?: string }
+export interface DuplicateRequest {
+  level: Level
+  ids?: string[]
+  ziel?: DuplicateZiel
+  /** 1 bis 5 Kopien je Objekt (Standard 1) */
+  kopien?: number
+  /** Kampagne/Anzeigengruppe mit Inhalt kopieren (Standard true) */
+  deep?: boolean
+  rename_suffix?: string
+  /** Nur Admin, mindestens 10 Zeichen: bewusst in bzw. aus einer Kampagne ohne Sonderkategorie Wohnen kopieren */
+  housing_override_reason?: string
+  /** alt: ein Objekt */
+  id?: string
+  /** alt: Anzeige in diese Anzeigengruppe */
+  target_adset_id?: string
+}
+export interface DuplicateResponse {
+  level: Level
+  copies: Array<{ source_id: string; copied_id: string; kopie: number }>
+  failed: Array<{ source_id: string; kopie: number; error: string }>
+  /** erste Kopie (alt) */
+  copied_id?: string
+  /** bei ziel.art 'neu': neu angelegte Kampagne bzw. Anzeigengruppe */
+  neue_kampagne_id?: string
+  neue_anzeigengruppe_id?: string
+  warnings?: string[]
+}
+
+// ── Bearbeiten (edit_load / edit_diff / edit_apply) ─────────────────────────
+export interface EditLoadRequest {
+  level: Level
+  id: string
+  /** true = offene Änderungen verwerfen und frisch von Meta laden */
+  neu_laden?: boolean
+}
+export interface EditLoadResponse {
+  draft_id: string
+  /** Entwurf (kind 'edit'): alle Knoten mit existing_id, hp.creative_tausch gesetzt */
+  spec: DraftSpec
+  /** Feld-Schlüssel, die Meta nach dem Anlegen nicht mehr ändert (editLocks) */
+  locks: string[]
+  warnings: string[]
+  /** Zeitpunkt des Ausgangsstands */
+  baseline_at: string
+  /** true = bestehender Bearbeiten-Entwurf wiederverwendet */
+  reused: boolean
+}
+export interface EditDiffRequest { draft_id: string }
+export interface EditDiffResponse {
+  changes: EditChange[]
+  warnings: string[]
+  /** Budget-Leitplanke nach allen Änderungen (null = keine Budget-Erhöhung/Aktivierung oder nicht lesbar) */
+  guardrail: GuardrailInfo | null
+  creative_tausch: CreativeTausch
+  /** Fehler in geänderten Feldern (validateDraft/validateEditFields), blockieren edit_apply */
+  issues: DraftIssue[]
+  /** Text-Regeln für geänderte Werbemittel */
+  lint: BuilderLintIssue[]
+  /** Felder, die bei Meta seit dem Laden geändert wurden (edit_apply überspringt sie) */
+  conflicts: Array<{ level: Level; id: string; field: string; live: unknown }>
+}
+export interface EditApplyRequest {
+  draft_id: string
+  confirm: true
+  /** nur Admin, mindestens 10 Zeichen: Lint-Blocker im neuen Werbemittel bewusst übergehen */
+  force_lint_reason?: string
+  /** nur Admin, mindestens 10 Zeichen: neue Anzeige in Kampagne ohne Sonderkategorie Wohnen */
+  housing_override_reason?: string
+}
+export interface EditApplyResponse {
+  applied: EditChange[]
+  failed: Array<EditChange & { error: string }>
+  readback: {
+    /** frischer Stand von Meta (neuer Ausgangsstand des Entwurfs) */
+    spec: DraftSpec
+    warnings: string[]
+    guardrail: GuardrailInfo | null
+    /** Werbemittel-Tausch „neue Anzeige“: alt -> neu */
+    neue_anzeigen: Array<{ alt_id: string; neu_id: string; aktiv: boolean }>
+  }
+}
+
+// ── Massenbearbeitung (bulk) ────────────────────────────────────────────────
+export interface BulkItem { level: Level; id: string }
+export interface BulkPatch {
+  status?: EditableStatus
+  /** neues Tagesbudget (nur Objekte mit eigenem Tagesbudget) */
+  daily_budget_cents?: number
+  /** Budget um Prozent ändern, z. B. 10 oder -20 (Tages- oder Laufzeitbudget) */
+  budget_prozent?: number
+  /** Ende (Anzeigengruppe end_time, Kampagne stop_time), ISO */
+  end_time?: string
+  /** an den Namen anhängen */
+  name_suffix?: string
+}
+export interface BulkRequest { items: BulkItem[]; patch: BulkPatch; confirm: true }
+export interface BulkResult {
+  level: Level
+  id: string
+  ok: boolean
+  error?: string
+  /** Hinweis, z. B. Lernphase bei Budget über 20 % */
+  hinweis?: string
+  before: Record<string, unknown>
+  after: Record<string, unknown>
+}
+export interface BulkResponse { results: BulkResult[]; guardrail: GuardrailInfo | null }
 export interface LeadformCreateRequest { page_id?: string; spec: LeadFormSpec }
 export interface LeadformCreateResponse { form_id: string }
 export interface DiscardRequest { draft_id: string }
@@ -2428,6 +3392,10 @@ export interface BuilderRequestMap {
   activate_draft: ActivateDraftRequest
   duplicate: DuplicateRequest
   leadform_create: LeadformCreateRequest
+  edit_load: EditLoadRequest
+  edit_diff: EditDiffRequest
+  edit_apply: EditApplyRequest
+  bulk: BulkRequest
 }
 export interface BuilderResponseMap {
   catalog: CatalogResponse
@@ -2448,6 +3416,10 @@ export interface BuilderResponseMap {
   activate_draft: ActivateDraftResponse
   duplicate: DuplicateResponse
   leadform_create: LeadformCreateResponse
+  edit_load: EditLoadResponse
+  edit_diff: EditDiffResponse
+  edit_apply: EditApplyResponse
+  bulk: BulkResponse
 }
 export type BuilderRequest<M extends BuilderMode = BuilderMode> = M extends BuilderMode ? { mode: M } & BuilderRequestMap[M] : never
 export type BuilderResponse<M extends BuilderMode> = BuilderResponseMap[M]
@@ -2469,6 +3441,7 @@ export function allLabelKeys(): string[] {
   addOpts(BRAND_SAFETY_OPTIONS); addOpts(PUBLISHER_CATEGORY_OPTIONS); addOpts(CTA_OPTIONS)
   addOpts(AD_DESTINATION_KIND_OPTIONS); addOpts(AD_FORMAT_OPTIONS); addOpts(CREATIVE_FEATURE_OPTIONS)
   addOpts(ENROLL_OPTIONS); addOpts(PREVIEW_FORMAT_OPTIONS); addOpts(CREATIVE_MODE_OPTIONS)
+  addOpts(STATUS_OPTIONS); addOpts(CREATIVE_TAUSCH_OPTIONS); addOpts(EDIT_LEARNING_OPTIONS)
   for (const f of FIELD_SPECS) { add(f.labelKey); add(f.helpKey); add(f.housing?.noteKey) }
   for (const c of ISSUE_CODES) add(issueMessageKey(c))
   for (const c of HOUSING_CHANGE_CODES) add(housingChangeKey(c))

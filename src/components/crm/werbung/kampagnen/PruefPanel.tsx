@@ -13,6 +13,8 @@ import { useAssistent, type Leitplanke } from './useEntwurf'
 // live, „Prüfen bei Meta" (meta-builder validate, Fehler je Formularfeld) und
 // die Leitplanke „heute aktiv + diese Kampagne <= Limit". FeldHinweise zeigt
 // dieselben Meldungen direkt unter dem betroffenen Formularfeld.
+// Bearbeiten-Modus: statt Leitplanke und „Prüfen bei Meta" der Kasten
+// „Änderungen bei Meta" (Zahl aus dem lokalen Vergleich, Knopf zum Prüfen).
 
 export interface MetaFeldFehler { node: string; field: string | null; text: string }
 
@@ -91,12 +93,16 @@ interface Props {
   istAdmin: boolean
   forceGrund: string
   setForceGrund: (s: string) => void
+  /** Bearbeiten: Änderungen prüfen (edit_diff) */
+  onAenderungenPruefen?: () => void
+  /** Bearbeiten: Änderungen laut lokalem Vergleich, null = noch kein Ausgangsstand */
+  anzahlAenderungen?: number | null
 }
 
-export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmin, forceGrund, setForceGrund }: Props) {
+export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmin, forceGrund, setForceGrund, onAenderungenPruefen, anzahlAenderungen }: Props) {
   const { t } = useTranslation()
   const fmt = useWerbeFormat()
-  const { e, springeZu } = useAssistent()
+  const { e, springeZu, bearbeiten } = useAssistent()
   const { spec, issues, lint, validation } = e
 
   const fehler = issues.filter(i => i.severity === 'error')
@@ -136,8 +142,26 @@ export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmi
         )}
       </div>
 
+      {bearbeiten && (
+        <div className="rounded-lg border border-gray-200 p-3 text-xs">
+          <p className="font-semibold text-hp-navy">{t('crm.werbung.bearbeiten.panelTitel', 'Änderungen bei Meta')}</p>
+          <p className="mt-0.5 text-gray-600">
+            {anzahlAenderungen === null || anzahlAenderungen === undefined
+              ? t('crm.werbung.bearbeiten.panelUnbekannt', 'Der Vergleich mit dem Stand bei Meta kommt beim Prüfen.')
+              : anzahlAenderungen === 0
+                ? t('crm.werbung.bearbeiten.panelKeine', 'Noch nichts geändert.')
+                : t('crm.werbung.bearbeiten.panelAnzahl', '{{n}} Änderungen warten auf deine Bestätigung.', { n: anzahlAenderungen })}
+          </p>
+          <button type="button" onClick={onAenderungenPruefen} disabled={e.nurLesen || !onAenderungenPruefen}
+            className="hp-btn hp-btn-accent mt-2 min-h-0 px-3 py-1.5 text-xs disabled:opacity-50">
+            {t('crm.werbung.bearbeiten.pruefen', 'Änderungen prüfen')}
+          </button>
+          <p className="mt-1 text-[10px] text-gray-500">{t('crm.werbung.bearbeiten.panelLeitplanke', 'Die Leitplanke für Budget-Erhöhungen und Einschalten rechnet der Server beim Prüfen.')}</p>
+        </div>
+      )}
+
       {/* Leitplanke */}
-      <div className={`rounded-lg border px-3 py-2 text-xs ${lp.ok === false ? 'border-red-200 bg-red-50 text-red-800' : lp.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
+      {!bearbeiten && <div className={`rounded-lg border px-3 py-2 text-xs ${lp.ok === false ? 'border-red-200 bg-red-50 text-red-800' : lp.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-gray-200 bg-gray-50 text-gray-700'}`}>
         <p className="font-semibold">{t('crm.werbung.builder.pruef.leitplanke', 'Leitplanke Tagesbudget')}</p>
         <p className="mt-0.5 tabular-nums">
           {t('crm.werbung.builder.pruef.leitplankeZeile', 'heute aktiv {{aktiv}} + diese Kampagne {{diese}} ≤ Limit {{limit}}', {
@@ -152,10 +176,10 @@ export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmi
               : t('crm.werbung.builder.pruef.leitplankeSchaetzung', 'Schätzung aus dem letzten Abgleich, Kurs 1 € = {{kurs}} $.', { kurs: lp.kurs.toLocaleString(fmt.locale, { maximumFractionDigits: 3 }) })}
           {lp.ok === false && ` ${t('crm.werbung.builder.pruef.leitplankeZuViel', 'Aktivieren wäre über dem Limit.')}`}
         </p>
-      </div>
+      </div>}
 
       {/* Prüfen bei Meta */}
-      <div className="rounded-lg border border-gray-200 p-3">
+      {!bearbeiten && <div className="rounded-lg border border-gray-200 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={onPruefen} disabled={pruefLaeuft || e.nurLesen}
             className="hp-btn hp-btn-accent min-h-0 px-3 py-1.5 text-xs disabled:opacity-50">
@@ -194,7 +218,7 @@ export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmi
             {meta.map((m, n) => eintrag(`m${n}`, m.node, m.field, m.text, 'text-red-700'))}
           </ul>
         )}
-      </div>
+      </div>}
 
       {/* Lokale Fehler und Hinweise */}
       {(fehler.length > 0 || warnungen.length > 0) && (
@@ -219,7 +243,7 @@ export default function PruefPanel({ leitplanke, onPruefen, pruefLaeuft, istAdmi
       )}
 
       {/* Admin: Blocker mit Begründung übergehen (wird protokolliert) */}
-      {istAdmin && lc.blocker > 0 && !e.nurLesen && (
+      {istAdmin && lc.blocker > 0 && !e.nurLesen && !bearbeiten && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <label className="block text-[11px] font-semibold text-amber-900" htmlFor="force-grund">
             {t('crm.werbung.builder.pruef.forceLabel', 'Trotz Compliance-Blockern anlegen (nur Admin)')}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import DataTable, { type DataTableColumn } from '../../ui/DataTable'
 import type { ActionItem } from '../../ui/ActionMenu'
 import EmptyState from '../../ui/EmptyState'
@@ -13,16 +14,22 @@ import { INPUT_CLS } from './felder'
 import { AD_STATUS_BADGE, useWerbeFormat } from './format'
 import { useWerbeKontext } from './useWerbeDaten'
 import KampagnenAssistent from './kampagnen/KampagnenAssistent'
+import DuplizierenDialog from './kampagnen/DuplizierenDialog'
 import { StatusBadge } from './kampagnen/EntwurfBaum'
 import { builderCall, fehlerText, ladeBuilderEinstellungen, ladeKatalog, vorgabenAus } from './kampagnen/builderApi'
+import { zielAusParam, type EditZiel } from './kampagnen/bearbeitenTypen'
 import { leererEntwurf, type AssistentStart } from './kampagnen/useEntwurf'
 
 // ── Reiter „Kampagnen" des Werbemanagers ─────────────────────────────────────
 // Entwürfe des Kampagnen-Assistenten (meta_drafts, ohne spec, höchstens 50,
 // zuletzt geändert zuerst) und die Einstiege: neue Kampagne, Vorlage Plan B,
-// bestehende Kampagne übernehmen (Import über meta-builder). Der Assistent
-// selbst liegt in ./kampagnen/. Lädt erst, wenn der Reiter offen ist, seriell
-// (Micro-Instanz): Entwürfe, dann Autorennamen, dann ad_settings.
+// bestehende Kampagne bearbeiten (edit_load), ergänzen (Import über
+// meta-builder) oder bei Meta duplizieren. Der Assistent selbst liegt in
+// ./kampagnen/. Lädt erst, wenn der Reiter offen ist, seriell (Micro-Instanz):
+// Entwürfe, dann Autorennamen, dann ad_settings.
+// Von überall bearbeiten: ?tab=kampagnen&bearbeiten=<campaign|adset|ad>:<id>
+// öffnet den Assistenten im Bearbeiten-Modus (nach dem Laden der Liste);
+// beim Schließen verschwindet der Parameter wieder.
 
 interface EntwurfZeile {
   id: string
@@ -38,6 +45,9 @@ interface EntwurfZeile {
 }
 
 interface KampagneWahl { id: string; name: string; anzeigen: number; aktiv: number }
+
+/** Warnung von edit_load (meta-builder edit.ts), wenn offene Änderungen wieder aufgenommen wurden */
+const WIEDER_GELADEN = /noch nicht übernommene Änderungen wieder geladen/
 
 export default function KampagnenTab() {
   const { t } = useTranslation()
@@ -56,6 +66,11 @@ export default function KampagnenTab() {
   const [importOffen, setImportOffen] = useState(false)
   const [importLaeuft, setImportLaeuft] = useState<string | null>(null)
   const [suche, setSuche] = useState('')
+  const [bearbeitenLaeuft, setBearbeitenLaeuft] = useState<string | null>(null)
+  const [assistentNr, setAssistentNr] = useState(0)
+  const [dupItems, setDupItems] = useState<Array<{ level: 'campaign' | 'adset' | 'ad'; id: string; name: string }>>([])
+  const [search, setSearch] = useSearchParams()
+  const bearbeitenParam = search.get('bearbeiten')
 
   const ladeListe = useCallback(async () => {
     setLaden(true)
@@ -161,6 +176,53 @@ export default function KampagnenTab() {
       .sort((a, b) => b.aktiv - a.aktiv || a.name.localeCompare(b.name))
   }, [catalog, suche])
 
+  // ── Bearbeiten (edit_load) ────────────────────────────────────────────────
+  const entferneParam = useCallback(() => {
+    const next = new URLSearchParams(window.location.search)
+    if (!next.has('bearbeiten')) return
+    next.delete('bearbeiten')
+    setSearch(next, { replace: true })
+  }, [setSearch])
+
+  /** edit_load und Assistent öffnen; true = geladen */
+  const oeffneBearbeiten = useCallback(async (ziel: EditZiel, neuLaden = false): Promise<boolean> => {
+    setBearbeitenLaeuft(`${ziel.level}:${ziel.id}`)
+    try {
+      const r = await builderCall('edit_load', { level: ziel.level, id: ziel.id, ...(neuLaden ? { neu_laden: true } : {}) })
+      setImportOffen(false)
+      setAssistentNr(n => n + 1)
+      setOffen({ art: 'bearbeiten', id: r.draft_id, spec: r.spec, locks: r.locks ?? [], ziel, hinweise: r.warnings ?? [] })
+      // reused heißt nur „Zeile wiederverwendet“; offene Änderungen meldet der Server als Warnung
+      if (!neuLaden && (r.warnings ?? []).some(w => WIEDER_GELADEN.test(w))) {
+        toast.info(t('crm.werbung.bearbeiten.wiederverwendet', 'Offene Änderungen von vorher sind wieder geladen. „Neu laden“ holt den frischen Stand von Meta.'))
+      }
+      return true
+    } catch (err) {
+      toast.error(t('crm.werbung.bearbeiten.ladeFehler', 'Bearbeiten nicht möglich: {{fehler}}', { fehler: fehlerText(err, t) }))
+      entferneParam()
+      return false
+    } finally {
+      setBearbeitenLaeuft(null)
+    }
+  }, [entferneParam, t, toast])
+
+  // ?bearbeiten=<level>:<id> aus der Adresse (z. B. aus der Übersicht oder dem Einstellungsfenster)
+  const behandelt = useRef<string | null>(null)
+  useEffect(() => {
+    if (!bearbeitenParam) { behandelt.current = null; return }
+    // erst nach den Seitendaten und der Entwurfsliste (nie parallel, Micro-Instanz)
+    if (seiteLaedt || laden) return
+    if (behandelt.current === bearbeitenParam) return
+    behandelt.current = bearbeitenParam
+    const ziel = zielAusParam(bearbeitenParam)
+    if (!ziel) {
+      toast.error(t('crm.werbung.bearbeiten.paramUngueltig', 'Der Bearbeiten-Link ist ungültig.'))
+      entferneParam()
+      return
+    }
+    void oeffneBearbeiten(ziel)
+  }, [bearbeitenParam, seiteLaedt, laden, oeffneBearbeiten, entferneParam, toast, t])
+
   const uebernehmen = async (k: KampagneWahl) => {
     setImportLaeuft(k.id)
     try {
@@ -214,6 +276,7 @@ export default function KampagnenTab() {
 
   const schliessen = () => {
     setOffen(null)
+    entferneParam()
     void ladeListe()
   }
 
@@ -269,8 +332,9 @@ export default function KampagnenTab() {
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-          <button type="button" onClick={() => setImportOffen(true)} disabled={!!startLaeuft} className="hp-btn hp-btn-ghost">
-            {t('crm.werbung.builder.tab.uebernehmen', 'Bestehende Kampagne übernehmen')}
+          <button type="button" onClick={() => setImportOffen(true)} disabled={!!startLaeuft || !!bearbeitenLaeuft} className="hp-btn hp-btn-ghost">
+            {bearbeitenLaeuft && <Spinner size="sm" />}
+            {t('crm.werbung.bearbeiten.bestehende', 'Bestehende Kampagne bearbeiten oder ergänzen')}
           </button>
           <button type="button" onClick={() => void planB()} disabled={!!startLaeuft} className="hp-btn hp-btn-accent">
             {startLaeuft === 'plan_b' && <Spinner size="sm" />}
@@ -306,7 +370,7 @@ export default function KampagnenTab() {
           rowActionsLabel={z => t('crm.werbung.builder.tab.aktionenFuer', 'Aktionen für {{name}}', { name: z.name })}
           rowActions={(z): ActionItem[] => [
             { id: 'open', label: t('crm.werbung.builder.tab.oeffnen', 'Öffnen'), icon: 'edit', onClick: () => setOffen({ art: 'laden', id: z.id }) },
-            { id: 'dup', label: t('crm.werbung.builder.tab.duplizieren', 'Duplizieren'), icon: 'plus', onClick: () => void duplizieren(z) },
+            { id: 'dup', label: t('crm.werbung.builder.tab.duplizieren', 'Duplizieren'), icon: 'plus', hidden: z.kind === 'edit', onClick: () => void duplizieren(z) },
             {
               id: 'discard', label: t('crm.werbung.builder.verwerfen', 'Verwerfen'), icon: 'trash', tone: 'danger',
               hidden: z.status === 'created' || z.status === 'creating', onClick: () => void verwerfen(z),
@@ -321,10 +385,12 @@ export default function KampagnenTab() {
 
       {/* Bestehende Kampagne übernehmen */}
       <Modal open={importOffen} onClose={() => setImportOffen(false)} size="lg"
-        title={t('crm.werbung.builder.tab.uebernehmen', 'Bestehende Kampagne übernehmen')}>
-        <p className="text-xs text-gray-600">
-          {t('crm.werbung.builder.tab.importText', 'Die Kampagne wird mit ihren Anzeigengruppen und Anzeigen in einen Entwurf geladen. Dort kommen neue Anzeigengruppen oder Anzeigen dazu, Bestehendes bleibt bei Meta unverändert.')}
-        </p>
+        title={t('crm.werbung.bearbeiten.bestehende', 'Bestehende Kampagne bearbeiten oder ergänzen')}>
+        <ul className="space-y-1 text-xs text-gray-600">
+          <li><span className="font-semibold text-hp-navy">{t('crm.werbung.bearbeiten.knopfBearbeiten', 'Bearbeiten')}:</span> {t('crm.werbung.bearbeiten.bearbeitenText', 'laufende Einstellungen ändern (Budget, Zielgruppe, Texte …). Vor dem Schreiben zeigt der Assistent, was sich bei Meta ändert.')}</li>
+          <li><span className="font-semibold text-hp-navy">{t('crm.werbung.bearbeiten.knopfErgaenzen', 'Ergänzen')}:</span> {t('crm.werbung.builder.tab.importText', 'Die Kampagne wird mit ihren Anzeigengruppen und Anzeigen in einen Entwurf geladen. Dort kommen neue Anzeigengruppen oder Anzeigen dazu, Bestehendes bleibt bei Meta unverändert.')}</li>
+          <li><span className="font-semibold text-hp-navy">{t('crm.werbung.bearbeiten.knopfDuplizieren', 'Duplizieren')}:</span> {t('crm.werbung.bearbeiten.duplizierenText', 'pausierte Kopie bei Meta anlegen.')}</li>
+        </ul>
         <input value={suche} onChange={ev => setSuche(ev.target.value)} placeholder={t('crm.werbung.builder.wahl.suche', 'Suchen …')}
           aria-label={t('crm.werbung.builder.wahl.suche', 'Suchen …')} className={`${INPUT_CLS} mt-3`} />
         <ul className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-200">
@@ -333,26 +399,38 @@ export default function KampagnenTab() {
           )}
           {kampagnen.map(k => {
             const badge = AD_STATUS_BADGE(k.aktiv > 0 ? 'ACTIVE' : 'PAUSED')
+            const laeuftHier = importLaeuft === k.id || bearbeitenLaeuft === `campaign:${k.id}`
             return (
-              <li key={k.id}>
-                <button type="button" onClick={() => void uebernehmen(k)} disabled={!!importLaeuft}
-                  className="flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-hp-cream/70 disabled:opacity-60">
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-semibold text-hp-navy">{k.name}</span>
-                    <span className="block text-[11px] text-gray-500">
-                      {t('crm.werbung.builder.tab.anzeigenZahl', '{{n}} Anzeigen, {{aktiv}} aktiv', { n: k.anzeigen, aktiv: k.aktiv })} · {k.id}
-                    </span>
+              <li key={k.id} className="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center">
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-hp-navy">{k.name}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.cls}`}>{badge.k ? t(badge.k, badge.d) : badge.d}</span>
+                    {laeuftHier && <Spinner size="sm" />}
                   </span>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${badge.cls}`}>{badge.k ? t(badge.k, badge.d) : badge.d}</span>
-                  {importLaeuft === k.id && <Spinner size="sm" />}
-                </button>
+                  <span className="block text-[11px] text-gray-500">
+                    {t('crm.werbung.builder.tab.anzeigenZahl', '{{n}} Anzeigen, {{aktiv}} aktiv', { n: k.anzeigen, aktiv: k.aktiv })} · {k.id}
+                  </span>
+                </span>
+                <span className="flex shrink-0 flex-wrap gap-1.5">
+                  <button type="button" onClick={() => void oeffneBearbeiten({ level: 'campaign', id: k.id })} disabled={!!importLaeuft || !!bearbeitenLaeuft}
+                    className="hp-btn hp-btn-primary min-h-0 px-3 py-1 text-xs disabled:opacity-60">{t('crm.werbung.bearbeiten.knopfBearbeiten', 'Bearbeiten')}</button>
+                  <button type="button" onClick={() => void uebernehmen(k)} disabled={!!importLaeuft || !!bearbeitenLaeuft}
+                    className="hp-btn hp-btn-ghost min-h-0 px-3 py-1 text-xs disabled:opacity-60">{t('crm.werbung.bearbeiten.knopfErgaenzen', 'Ergänzen')}</button>
+                  <button type="button" onClick={() => { setImportOffen(false); setDupItems([{ level: 'campaign', id: k.id, name: k.name }]) }} disabled={!!importLaeuft || !!bearbeitenLaeuft}
+                    className="hp-btn hp-btn-ghost min-h-0 px-3 py-1 text-xs disabled:opacity-60">{t('crm.werbung.bearbeiten.knopfDuplizieren', 'Duplizieren')}</button>
+                </span>
               </li>
             )
           })}
         </ul>
       </Modal>
 
-      {offen && <KampagnenAssistent key={offen.art === 'laden' ? offen.id : 'neu'} start={offen} einstellungen={einstellungen} onClose={schliessen} />}
+      {offen && (
+        <KampagnenAssistent key={offen.art === 'neu' ? `neu-${assistentNr}` : `${offen.id}-${assistentNr}`} start={offen} einstellungen={einstellungen}
+          onClose={schliessen} onNeuVonMeta={ziel => oeffneBearbeiten(ziel, true)} />
+      )}
+      <DuplizierenDialog offen={dupItems.length > 0} items={dupItems} onClose={() => setDupItems([])} />
     </div>
   )
 }

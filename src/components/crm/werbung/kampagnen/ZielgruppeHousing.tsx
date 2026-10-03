@@ -6,7 +6,7 @@ import {
   type AdsetDraft, type HousingChange, type ManualPlacements, type Placements, type PublisherPlatform, type TargetingSpec,
 } from '../../../../lib/metaSpec'
 import { FeldHinweise } from './PruefPanel'
-import { Schalter, SperrBanner, feldId, feldLabel } from './KampagnenFormular'
+import { GesperrteEinstellung, Schalter, SperrBanner, feldId, feldLabel } from './Bausteine'
 import { setzeAnzeigengruppe, useAssistent } from './useEntwurf'
 
 // ── Zielgruppe einer Anzeigengruppe mit Sonderkategorie Wohnen ───────────────
@@ -14,8 +14,10 @@ import { setzeAnzeigengruppe, useAssistent } from './useEntwurf'
 // Alter 18 bis 65+ und Geschlecht fest), erzwingt sie nach jeder Änderung über
 // applyHousing und meldet, was dabei entfernt wurde. Plattform-Haken des
 // Editors landen in placements (der Entwurf führt Platzierungen getrennt vom
-// targeting). housing/onLocks reicht die Hülle an den Editor weiter, sobald
-// er sie kennt (Adapter per Spread, kompiliert auch ohne die neuen Props).
+// targeting). Der Editor läuft immer im Wohnen-Modus, wenn die Kampagne
+// Wohnen ist, auch beim Bearbeiten laufender Anzeigengruppen: nichts wird mehr
+// still verworfen, was Wohnen verbietet, steht grau mit Grund da
+// (WohnenSperren) statt zu verschwinden.
 
 const PLATZ_KEYS = [
   'publisher_platforms', 'facebook_positions', 'instagram_positions', 'threads_positions',
@@ -73,21 +75,14 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
       placements = { mode: 'advantage' }
     }
 
-    // Was würde Wohnen entfernen? (gleiche Regel wie beim Speichern)
+    // Was würde Wohnen entfernen? (gleiche Regel wie beim Speichern; bestehende
+    // Anzeigengruppen prüft der Server beim Übernehmen genauso, darum hier ohne existing_id)
     if (hec) {
-      const probe = applyHousing({ ...e.spec, adsets: [{ ...adset, targeting }], ads: [] })
+      const probe = applyHousing({ ...e.spec, adsets: [{ ...adset, existing_id: undefined, targeting }], ads: [] })
       const laut = probe.changes.filter(ch => LAUTE_AENDERUNGEN.indexOf(ch.code) >= 0)
       setEntfernt(laut)
     }
     e.update(d => setzeAnzeigengruppe(d, node, { targeting, placements }, e.metaIds))
-  }
-
-  const ortTypen = adset.targeting?.geo_locations?.location_types ?? []
-  const setzeOrtTyp = (typ: string, an: boolean) => {
-    const neu = an ? [...ortTypen.filter(x => x !== typ), typ] : ortTypen.filter(x => x !== typ)
-    e.update(d => setzeAnzeigengruppe(d, node, {
-      targeting: { ...adset.targeting, geo_locations: { ...(adset.targeting?.geo_locations ?? {}), location_types: neu.length ? neu : ['home', 'recent'] } },
-    }, e.metaIds))
   }
 
   // Adapter: neue Props des TargetingEditors (housing, onLocks) per Spread
@@ -117,7 +112,7 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
       )}
 
       {/* Alter und Geschlecht zeigt der Editor im Wohnen-Modus gesperrt an; die Ids sind Sprungziele der Prüfliste */}
-      <div id={feldId('adset.targeting.age')}>
+      <div id={feldId('adset.targeting.age')} data-einstellung={feldLabel(t, 'adset.targeting', 'Zielgruppe')}>
         <div id={feldId('adset.targeting.genders')}>
           <div id={feldId('adset.targeting.geo_locations')}>
             <TargetingEditor value={wert} onChange={aendern} disabled={disabled} {...editorZusatz} />
@@ -125,22 +120,61 @@ export default function ZielgruppeHousing({ adset, disabled }: { adset: AdsetDra
         </div>
       </div>
 
-      <div id={feldId('adset.targeting.location_types')}>
-        <p className="mb-1 text-[11px] text-gray-500">{feldLabel(t, 'adset.targeting.location_types', 'Standort-Typ')}</p>
-        <div className="flex flex-wrap gap-4">
-          {LOCATION_TYPE_OPTIONS.map(o => (
-            <Schalter key={o.value} checked={ortTypen.indexOf(o.value) >= 0} disabled={disabled}
-              onChange={v => setzeOrtTyp(o.value, v)} label={t(o.labelKey, o.value)} />
-          ))}
-        </div>
-      </div>
-
       <FeldHinweise node={node} felder={[
         'adset.targeting', 'adset.targeting.geo_locations', 'adset.targeting.age', 'adset.targeting.genders',
         'adset.targeting.locales', 'adset.targeting.detailed', 'adset.targeting.custom_audiences',
         'adset.targeting.excluded_custom_audiences', 'adset.targeting.excluded_geo_locations',
-        'adset.targeting.advantage_audience', 'adset.targeting.location_types',
+        'adset.targeting.advantage_audience',
       ]} />
+    </div>
+  )
+}
+
+/** Standort-Typ (wohnhaft oder kürzlich dort) */
+export function OrtTypen({ adset, disabled }: { adset: AdsetDraft; disabled: boolean }) {
+  const { t } = useTranslation()
+  const { e } = useAssistent()
+  const node = adset.key
+  const ortTypen = adset.targeting?.geo_locations?.location_types ?? []
+  const setzeOrtTyp = (typ: string, an: boolean) => {
+    const neu = an ? [...ortTypen.filter(x => x !== typ), typ] : ortTypen.filter(x => x !== typ)
+    e.update(d => setzeAnzeigengruppe(d, node, {
+      targeting: { ...adset.targeting, geo_locations: { ...(adset.targeting?.geo_locations ?? {}), location_types: neu.length ? neu : ['home', 'recent'] } },
+    }, e.metaIds))
+  }
+  return (
+    <div id={feldId('adset.targeting.location_types')} data-einstellung={feldLabel(t, 'adset.targeting.location_types', 'Standort-Typ')}>
+      <p className="mb-1 text-[11px] text-gray-500">{feldLabel(t, 'adset.targeting.location_types', 'Standort-Typ')}</p>
+      <div className="flex flex-wrap gap-4">
+        {LOCATION_TYPE_OPTIONS.map(o => (
+          <Schalter key={o.value} checked={ortTypen.indexOf(o.value) >= 0} disabled={disabled}
+            onChange={v => setzeOrtTyp(o.value, v)} label={t(o.labelKey, o.value)} />
+        ))}
+      </div>
+      <p className="mt-0.5 text-[10px] leading-snug text-gray-500">
+        {t('crm.werbung.bearbeiten.hilfe.ortTyp', 'Beides an (empfohlen): Personen, die dort wohnen oder sich kürzlich dort aufgehalten haben.')}
+      </p>
+      <FeldHinweise node={node} felder="adset.targeting.location_types" />
+    </div>
+  )
+}
+
+/** Was die Sonderkategorie Wohnen verbietet: grau mit Grund, nicht versteckt */
+export function WohnenSperren() {
+  const { t } = useTranslation()
+  const grund = t('crm.werbung.bearbeiten.grund.wohnen', 'Unter der Sonderkategorie Wohnen von Meta nicht erlaubt.')
+  const eintraege: Array<[string, string, string]> = [
+    ['alter', t('crm.werbung.bearbeiten.wohnen.alter', 'Alter eingrenzen'), t('crm.werbung.bearbeiten.wohnen.alterGrund', 'Fest 18 bis 65+.')],
+    ['geschlecht', t('crm.werbung.bearbeiten.wohnen.geschlecht', 'Geschlecht'), t('crm.werbung.bearbeiten.wohnen.geschlechtGrund', 'Immer alle Geschlechter.')],
+    ['plz', t('crm.werbung.bearbeiten.wohnen.plz', 'Postleitzahlen und Stadtteile'), grund],
+    ['ausschluss', t('crm.werbung.bearbeiten.wohnen.ausschluss', 'Orte ausschließen'), grund],
+    ['umkreis', t('crm.werbung.bearbeiten.wohnen.umkreis', 'Umkreis unter 15 km'), t('crm.werbung.bearbeiten.wohnen.umkreisGrund', 'Mindestens 15 km, um Städte mindestens 17 km.')],
+    ['lookalike', t('crm.werbung.bearbeiten.wohnen.lookalike', 'Lookalike-Zielgruppen'), grund],
+    ['detail', t('crm.werbung.bearbeiten.wohnen.detail', 'Verhalten, Jobtitel, Arbeitgeber, Detail-Ausschlüsse'), grund],
+  ]
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      {eintraege.map(([k, l, g]) => <GesperrteEinstellung key={k} label={l} grund={g} />)}
     </div>
   )
 }

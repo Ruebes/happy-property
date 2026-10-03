@@ -10,6 +10,8 @@
 //   4. applyHousing idempotent und entfernt alles Verbotene
 //   5. Plan-B-Payload: PAUSED, HOUSING, url_tags, contextual_multi_ads OPT_OUT,
 //      advantage_audience explizit, Medien je Platzierung
+//   5c. Bearbeiten: editDiff (Lernphase, Sperren, Budgetart, Werbemittel-Tausch,
+//      Vergleich ohne Anzeigenamen), validateEditFields, Budgetplanung
 //   6. Lint-Fälle (Gedankenstriche, Rendite-%, Finanzierung, ae/oe/ue, Längen,
 //      Projektnamen, sauberer Text) + adCopy.ts nutzt dieselben Regex
 //
@@ -67,17 +69,19 @@ const L = await bundle('supabase/functions/_shared/metaLint.ts', 'metaLint.mjs')
 const A = await bundle('supabase/functions/_shared/adCopy.ts', 'adCopy.mjs')
 
 // ── 2. i18n ──────────────────────────────────────────────────────────────────
-// Fragment-Verzeichnis des Build-Workflows (Übergang bis die Fragmente in
-// src/locales gemergt sind). Überschreibbar mit META_I18N_DIR.
-const FRAGMENT_DIR = process.env.META_I18N_DIR
-  ?? '/private/tmp/claude-502/-Users-ArPritsch-Downloads/5da4d416-b511-4540-bf49-56b4aeb8fc5c/scratchpad/ads/build/i18n'
+// Fragment-Verzeichnisse des Build-Workflows (Übergang bis die Fragmente in
+// src/locales gemergt sind; Runde 1 = i18n, Runde 2 = i18n2). Überschreibbar mit
+// META_I18N_DIR (mehrere mit Komma getrennt).
+const BUILD_DIR = '/private/tmp/claude-502/-Users-ArPritsch-Downloads/5da4d416-b511-4540-bf49-56b4aeb8fc5c/scratchpad/ads/build'
+const FRAGMENT_DIRS = (process.env.META_I18N_DIR ?? `${BUILD_DIR}/i18n,${BUILD_DIR}/i18n2`).split(',').map(x => x.trim()).filter(Boolean)
 const lookup = (obj, key) => key.split('.').reduce((o, k) => (o && typeof o === 'object' ? o[k] : undefined), obj)
 const sources = { de: [], en: [] }
 for (const lang of ['de', 'en']) {
   sources[lang].push({ name: `src/locales/${lang}.json`, data: JSON.parse(readFileSync(`src/locales/${lang}.json`, 'utf8')) })
-  if (existsSync(FRAGMENT_DIR)) {
-    for (const f of readdirSync(FRAGMENT_DIR).filter(x => x.endsWith(`.${lang}.json`))) {
-      try { sources[lang].push({ name: f, data: JSON.parse(readFileSync(join(FRAGMENT_DIR, f), 'utf8')) }) }
+  for (const dirF of FRAGMENT_DIRS) {
+    if (!existsSync(dirF)) continue
+    for (const f of readdirSync(dirF).filter(x => x.endsWith(`.${lang}.json`))) {
+      try { sources[lang].push({ name: f, data: JSON.parse(readFileSync(join(dirF, f), 'utf8')) }) }
       catch (e) { fails.push(`i18n-Fragment unlesbar: ${f} (${e.message})`) }
     }
   }
@@ -379,6 +383,140 @@ eq(S.CITY_MIN_RADIUS_KM, 17, 'CITY_MIN_RADIUS_KM')
 const vid = JSON.parse(JSON.stringify(hb.spec)); vid.ads[0].format = 'single_video'; vid.ads[0].media = { feed_4x5: { media_id: 'm-v', video_id: 'V1' } }
 ok(S.validateDraft(vid, { server: true }).some(i => i.code === 'video_thumb_missing' && i.severity === 'error'), 'Video ohne Vorschaubild serverseitig nicht als Fehler erkannt')
 ok(S.validateDraft(vid).some(i => i.code === 'video_thumb_missing' && i.severity === 'warn'), 'Video ohne Vorschaubild im Browser nicht als Warnung erkannt')
+
+// ── 5c. Bearbeiten: editDiff-Klassifizierung ────────────────────────────────
+for (const k of S.EDIT_FIELD_KEYS) ok(!!S.fieldSpec(k), `Bearbeiten-Feld ohne FieldSpec: ${k}`)
+for (const l of ['campaign', 'adset', 'ad']) for (const k of S.EDIT_LOCKS[l]) ok(!!S.fieldSpec(k), `Sperre ohne FieldSpec: ${k}`)
+const ebase = JSON.parse(JSON.stringify(hb.spec))
+ebase.campaign.existing_id = PLANB_CAMP; ebase.campaign.status = 'ACTIVE'; ebase.campaign.meta_status = 'ACTIVE'
+ebase.campaign.start_time = '2026-09-01T08:00:00.000Z'
+ebase.adsets.forEach((a, i) => {
+  a.existing_id = `12024867845270${i}`; a.status = 'ACTIVE'; a.meta_status = 'ACTIVE'
+  a.targeting.geo_locations.cities = [{ key: '1', name: 'Berlin', region: 'Berlin', country: 'DE', radius: 20, distance_unit: 'kilometer' }]
+})
+ebase.ads.forEach((a, i) => { a.existing_id = `12024900000000${i}`; a.status = 'ACTIVE'; a.meta_status = 'ACTIVE'; a.source = { creative_id: `CR${i}` } })
+ebase.hp = { creative_tausch: 'neue_anzeige' }
+const ed = (mut, base = ebase) => { const s2 = JSON.parse(JSON.stringify(base)); mut(s2); return S.editDiff(base, s2) }
+const ch = (r, field, node) => r.changes.find(c => c.field === field && (!node || c.node === node))
+eq(ed(() => {}).changes, [], 'editDiff: unveränderter Entwurf ohne Änderungen')
+// Vergleich ohne Anzeigenamen, Zeit in anderer Schreibweise, Reihenfolge der Länder
+eq(ed(s2 => {
+  s2.adsets[0].targeting.geo_locations.cities = [{ key: '1', radius: 20, distance_unit: 'kilometer' }]
+  s2.campaign.start_time = '2026-09-01T10:00:00+02:00'
+  s2.adsets[1].targeting.geo_locations.countries = ['DE']
+}).changes.map(c => c.field), [], 'editDiff: Stadt ohne Namen, Zeit mit Zeitzone = keine Änderung')
+let er = ed(s2 => { s2.adsets[0].name = 'Kalt · Lang 2' })
+ok(ch(er, 'adset.name') && !ch(er, 'adset.name').learning_reset && !ch(er, 'adset.name').blocked, 'editDiff: Name ohne Lernphase')
+er = ed(s2 => { s2.adsets[0].daily_budget_cents = 7590 })
+eq([ch(er, 'adset.daily_budget_cents')?.learning, ch(er, 'adset.daily_budget_cents')?.learning_reset], ['nein', false], 'editDiff: Budget +10 %')
+er = ed(s2 => { s2.adsets[0].daily_budget_cents = 9000 })
+ok(ch(er, 'adset.daily_budget_cents')?.learning === 'moeglich' && er.warnings.some(w => /20 %/.test(w)), 'editDiff: Budget +30 % = Lernphase möglich + Hinweis')
+er = ed(s2 => { s2.adsets[0].targeting.geo_locations.countries = ['DE', 'AT'] })
+ok(ch(er, 'adset.targeting.geo_locations')?.learning_reset === true, 'editDiff: Standort = Lernphase neu')
+er = ed(s2 => { s2.adsets[0].placements = { mode: 'manual', publisher_platforms: ['facebook', 'instagram'] } })
+ok(ch(er, 'adset.placements')?.learning_reset === true, 'editDiff: Platzierungen = Lernphase neu')
+er = ed(s2 => { s2.adsets[0].targeting.targeting_automation = { advantage_audience: 0 } })
+ok(ch(er, 'adset.targeting.advantage_audience')?.learning_reset === true, 'editDiff: Advantage+ Zielgruppe = Lernphase neu')
+er = ed(s2 => { s2.adsets[0].user_os = ['iOS'] })
+ok(er.changes.length === 0 && er.warnings.some(w => /„user_os“/.test(w)), 'editDiff: unbekanntes Feld = Hinweis statt still verwerfen')
+er = ed(s2 => { s2.adsets[0].targeting.user_os = ['iOS'] })
+ok(ch(er, 'adset.targeting')?.learning_reset === true, 'editDiff: übrige Targeting-Felder (user_os)')
+er = ed(s2 => { s2.adsets[0].optimization_goal = 'LANDING_PAGE_VIEWS' })
+ok(ch(er, 'adset.optimization_goal')?.learning_reset === true && !ch(er, 'adset.optimization_goal').blocked && er.warnings.some(w => /Performance-Ziel/.test(w)), 'editDiff: Performance-Ziel = Lernphase + Hinweis')
+er = ed(s2 => { s2.adsets[0].optimization_goal = 'LEAD_GENERATION' })
+ok(!!ch(er, 'adset.optimization_goal')?.blocked && !ch(er, 'adset.optimization_goal').learning_reset, 'editDiff: Performance-Ziel passt nicht zum Ort = gesperrt')
+er = ed(s2 => { s2.adsets[0].promoted_object.custom_event_type = 'LEAD' })
+ok(ch(er, 'adset.promoted_object.custom_event_type')?.learning_reset === true && !ch(er, 'adset.promoted_object.custom_event_type').blocked, 'editDiff: Conversion-Event bei Website-Conversions änderbar')
+er = ed(s2 => { s2.adsets[0].optimization_goal = 'LANDING_PAGE_VIEWS'; s2.adsets[0].promoted_object.custom_event_type = 'LEAD' })
+ok(!!ch(er, 'adset.promoted_object.custom_event_type')?.blocked, 'editDiff: Conversion-Event ohne Website-Conversions gesperrt')
+er = ed(s2 => { s2.adsets[0].attribution = 'click_1d' })
+ok(ch(er, 'adset.attribution')?.learning_reset === true, 'editDiff: Attribution = Lernphase neu')
+for (const [f, mut] of [
+  ['campaign.objective', s2 => { s2.campaign.objective = 'OUTCOME_SALES' }],
+  ['campaign.special_ad_categories', s2 => { s2.campaign.special_ad_categories = [] }],
+  ['adset.destination', s2 => { s2.adsets[0].destination = 'ON_AD' }],
+  ['adset.billing_event', s2 => { s2.adsets[0].billing_event = 'LINK_CLICKS' }],
+  ['ad.identity.page_id', s2 => { s2.ads[0].identity.page_id = '123456789' }],
+]) {
+  const x = ch(ed(mut), f)
+  ok(!!x && x.blocked === S.EDIT_BLOCK_TEXT.lock && x.learning_reset === false, `editDiff: ${f} gesperrt`)
+}
+er = ed(s2 => { s2.ads[0].status = 'PAUSED'; s2.adsets[1].status = 'PAUSED' })
+ok(ch(er, 'ad.status') && !ch(er, 'ad.status').blocked && !ch(er, 'ad.status').learning_reset && ch(er, 'adset.status')?.learning === 'nein', 'editDiff: Pausieren ohne Lernphase')
+er = ed(s2 => { s2.ads[0].status = 'ARCHIVED' })
+ok(ch(er, 'ad.status')?.blocked === S.EDIT_BLOCK_TEXT.nieLoeschen, 'editDiff: Archivieren gesperrt')
+const pausiert = JSON.parse(JSON.stringify(ebase)); pausiert.adsets[0].status = 'PAUSED'
+er = ed(s2 => { s2.adsets[0].status = 'ACTIVE' }, pausiert)
+ok(ch(er, 'adset.status')?.learning === 'moeglich' && er.warnings.some(w => /eingeschaltet/.test(w)), 'editDiff: Einschalten = Hinweis Lernphase nach Pause')
+const archiv = JSON.parse(JSON.stringify(ebase)); archiv.adsets[0].meta_status = 'ARCHIVED'; delete archiv.adsets[0].status
+ok(ch(ed(s2 => { s2.adsets[0].name = 'x' }, archiv), 'adset.name')?.blocked === S.EDIT_BLOCK_TEXT.archiviert, 'editDiff: archivierte Gruppe gesperrt')
+ok(ch(ed(s2 => { delete s2.adsets[0].daily_budget_cents; s2.adsets[0].lifetime_budget_cents = 100000 }), 'adset.lifetime_budget_cents')?.blocked === S.EDIT_BLOCK_TEXT.budgetart, 'editDiff: Budgetart tauschen gesperrt')
+// Kampagnenbudget (CBO)
+const cboBase = JSON.parse(JSON.stringify(ebase))
+cboBase.campaign.budget_level = 'campaign'; cboBase.campaign.daily_budget_cents = 13800; cboBase.campaign.spend_cap_cents = 500000
+cboBase.campaign.is_adset_budget_sharing_enabled = undefined
+cboBase.adsets.forEach(a => { delete a.daily_budget_cents; delete a.bid_strategy })
+eq(ed(() => {}, cboBase).changes, [], 'editDiff CBO: unverändert')
+ok(ch(ed(s2 => { s2.adsets[0].daily_budget_cents = 5000 }, cboBase), 'adset.daily_budget_cents')?.blocked === S.EDIT_BLOCK_TEXT.budgetAufKampagne, 'editDiff CBO: Gruppenbudget gesperrt')
+er = ed(s2 => { delete s2.campaign.spend_cap_cents }, cboBase)
+ok(ch(er, 'campaign.spend_cap_cents')?.after === null && !ch(er, 'campaign.spend_cap_cents').blocked, 'editDiff: Ausgabenlimit entfernen erlaubt')
+er = ed(s2 => { s2.campaign.spend_cap_cents = S.META_UNBEGRENZT }, cboBase)
+ok(ch(er, 'campaign.spend_cap_cents')?.after === null, 'editDiff: Metas „unbegrenzt“ = kein Limit')
+er = ed(s2 => { s2.adsets[0].daily_spend_cap_cents = 4000 }, cboBase)
+ok(ch(er, 'adset.daily_spend_cap_cents') && !ch(er, 'adset.daily_spend_cap_cents').blocked, 'editDiff CBO: Gruppen-Ausgabenlimit erlaubt')
+ok(!!ch(ed(s2 => { s2.adsets[0].daily_spend_cap_cents = 4000 }), 'adset.daily_spend_cap_cents')?.blocked, 'editDiff ohne CBO: Gruppen-Ausgabenlimit gesperrt')
+ok(!!ch(ed(s2 => { s2.campaign.is_adset_budget_sharing_enabled = true }), 'campaign.is_adset_budget_sharing_enabled')?.blocked, 'editDiff: Budget teilen einschalten gesperrt')
+ok(ch(ed(s2 => { s2.adsets[0].adset_schedule = [{ start_minute: 480, end_minute: 1200, days: [1, 2, 3, 4, 5] }] }), 'adset.adset_schedule')?.blocked === S.EDIT_BLOCK_TEXT.zeitplanLaufzeit, 'editDiff: Zeitplan ohne Laufzeitbudget gesperrt')
+// Werbemittel
+er = ed(s2 => { s2.ads[0].primary_texts = ['Immobilien auf Zypern, EU-Mitglied. Neuer Text.'] })
+ok(ch(er, 'ad.primary_texts')?.creative === true && ch(er, 'ad.primary_texts').learning_reset === true && er.warnings.some(w => /neue Anzeige/.test(w)), 'editDiff: Text = Werbemittel-Tausch (neue Anzeige)')
+er = ed(s2 => { s2.hp = { creative_tausch: 'ersetzen' }; delete s2.ads[0].media.story_9x16 })
+ok(ch(er, 'ad.media.story_9x16')?.blocked === S.EDIT_BLOCK_TEXT.ersetzenModus, 'editDiff: Ersetzen mit Wechsel Medien je Platzierung -> Einzelmedium gesperrt')
+er = ed(s2 => { delete s2.ads[0].media.story_9x16 })
+ok(ch(er, 'ad.media.story_9x16') && !ch(er, 'ad.media.story_9x16').blocked, 'editDiff: neue Anzeige darf das Format wechseln')
+er = ed(s2 => { s2.ads[0].media.feed_4x5 = { media_id: 'm-neu', image_hash: 'h-neu' } })
+ok(ch(er, 'ad.media.feed_4x5')?.creative === true, 'editDiff: neues Bild = Werbemittel-Tausch')
+er = ed(s2 => { s2.ads[0].media.feed_4x5 = { media_id: 'm-feed' } })
+eq(er.changes.map(c => c.field), [], 'editDiff: Medium nur über media_id verglichen')
+const beitrag = JSON.parse(JSON.stringify(ebase)); beitrag.ads[0].source = { aus_beitrag: true }
+ok(ch(ed(s2 => { s2.ads[0].headlines = ['Neu'] }, beitrag), 'ad.headlines')?.blocked === S.EDIT_BLOCK_TEXT.beitrag, 'editDiff: Anzeige aus Beitrag nicht änderbar')
+er = ed(s2 => { s2.ads.pop() })
+ok(er.changes.length === 0 && er.warnings.some(w => /nie löschen/.test(w)), 'editDiff: entfernte Anzeige = nur Hinweis')
+er = ed(s2 => { const n = JSON.parse(JSON.stringify(s2.ads[0])); delete n.existing_id; n.key = 'neu'; s2.ads.push(n) })
+ok(er.changes.length === 0 && er.warnings.some(w => /Anzeigen hinzufügen/.test(w)), 'editDiff: neue Anzeige = nur Hinweis')
+// Sperrliste, Prüfungen, Budgetplanung
+const locks = S.editLocks(ebase)
+ok(['campaign.objective', 'adset.billing_event', 'adset.destination', 'campaign.daily_budget_cents', 'adset.lifetime_budget_cents'].every(k => locks.includes(k)), `editLocks unvollständig: ${locks.join(', ')}`)
+ok(!locks.includes('adset.daily_budget_cents') && !locks.includes('adset.promoted_object.custom_event_type'), 'editLocks sperrt zu viel')
+const vf = JSON.parse(JSON.stringify(cboBase))
+vf.adsets[0].adset_schedule = [{ start_minute: 30, end_minute: 60, days: [1] }]
+vf.adsets[1].daily_min_spend_target_cents = 5000; vf.adsets[1].daily_spend_cap_cents = 4000
+vf.campaign.spend_cap_cents = 20000000
+vf.campaign.budget_schedule_specs = [{ time_start: '2026-11-01T10:00:00Z', time_end: '2026-11-01T11:00:00Z', budget_value: 100, budget_value_type: 'ABSOLUTE' }]
+eq(S.validateEditFields(vf).map(i => i.code).sort(), ['budget_schedule_invalid', 'schedule_invalid', 'spend_cap_high', 'spend_limits_order'], 'validateEditFields')
+const z1 = { time_start: '2026-11-01T10:00:00Z', time_end: '2026-11-01T16:00:00Z', budget_value: 50, budget_value_type: 'MULTIPLIER' }
+const z1unix = { ...z1, time_start: Date.parse(z1.time_start) / 1000, time_end: Date.parse(z1.time_end) / 1000, id: '77' }
+eq(S.neueBudgetZeitraeume([z1unix], [z1]).length, 0, 'Budgetplanung: ISO und Unix-Sekunden gleich')
+eq(S.neueBudgetZeitraeume([], [z1]).length, 1, 'Budgetplanung: neuer Zeitraum erkannt')
+ok(!!ch(ed(s2 => { s2.campaign.budget_schedule_specs = [] }, { ...JSON.parse(JSON.stringify(cboBase)), campaign: { ...cboBase.campaign, budget_schedule_specs: [z1unix] } }), 'campaign.budget_schedule_specs')?.blocked, 'Budgetplanung: Entfernen gesperrt')
+// Verschieben in eine andere Anzeigengruppe: nichts an dieser Anzeige senden
+er = ed(s2 => { s2.ads[0].adset_key = s2.adsets[1].key; s2.ads[0].headlines = ['Neu'] })
+ok(!!ch(er, 'ad.headlines') && er.changes.filter(c => c.level === 'ad' && c.node === ebase.ads[0].key).every(c => c.blocked === S.EDIT_BLOCK_TEXT.verschieben) && er.warnings.some(w => /verschieben/.test(w)), 'editDiff: verschobene Anzeige gesperrt')
+// Laufzeit-Ausgabenlimit entfernen (bei Meta ungeprüft) gesperrt, ändern erlaubt
+const cboLz = JSON.parse(JSON.stringify(cboBase)); delete cboLz.campaign.daily_budget_cents; cboLz.campaign.lifetime_budget_cents = 300000
+cboLz.campaign.stop_time = '2026-12-31T23:00:00.000Z'; cboLz.adsets[0].lifetime_spend_cap_cents = 50000
+ok(ch(ed(s2 => { delete s2.adsets[0].lifetime_spend_cap_cents }, cboLz), 'adset.lifetime_spend_cap_cents')?.blocked === S.EDIT_BLOCK_TEXT.laufzeitLimitEntfernen, 'editDiff: Laufzeit-Ausgabenlimit entfernen gesperrt')
+ok(!ch(ed(s2 => { s2.adsets[0].lifetime_spend_cap_cents = 60000 }, cboLz), 'adset.lifetime_spend_cap_cents')?.blocked, 'editDiff: Laufzeit-Ausgabenlimit ändern erlaubt')
+// Bearbeiten-Felder an neuen Objekten: serverseitig Fehler (nie still verwerfen), im Browser und an Bestehendem nicht
+const neuEdit = JSON.parse(JSON.stringify(hb.spec))
+neuEdit.adsets[0].adset_schedule = [{ start_minute: 480, end_minute: 1200, days: [1] }]; neuEdit.adsets[0].daily_spend_cap_cents = 4000
+neuEdit.ads[0].tracking_specs = [{ 'action.type': ['offsite_conversion'] }]
+const eo = S.validateDraft(neuEdit, { server: true }).filter(i => i.code === 'edit_only').map(i => i.field).sort()
+eq(eo, ['ad.tracking_specs', 'adset.adset_schedule', 'adset.daily_spend_cap_cents'], 'validateDraft: Bearbeiten-Felder an neuen Objekten (edit_only)')
+ok(!S.validateDraft(neuEdit).some(i => i.code === 'edit_only'), 'validateDraft: edit_only nur serverseitig')
+ok(!S.validateDraft(cboLz, { server: true }).some(i => i.code === 'edit_only'), 'validateDraft: edit_only nicht an bestehenden Objekten')
+ok(S.BUILDER_MODES.includes('edit_load') && S.BUILDER_WRITE_MODES.includes('edit_apply') && S.BUILDER_WRITE_MODES.includes('bulk') && !S.BUILDER_WRITE_MODES.includes('edit_diff'), 'Bearbeiten-Modi registriert')
+ok(!/[‒-―]/.test(JSON.stringify(Object.values(S.EDIT_BLOCK_TEXT))), 'EDIT_BLOCK_TEXT mit Gedankenstrich')
 
 // ── 6. Lint ──────────────────────────────────────────────────────────────────
 const ctx = {

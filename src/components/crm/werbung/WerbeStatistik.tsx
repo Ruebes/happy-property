@@ -1,19 +1,22 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
-import { emptyAdAgg, type AdAction, type AdCatalogRow } from '../../../lib/crmTypes'
+import type { AdAction, AdCatalogRow } from '../../../lib/crmTypes'
 import { useWerbeKontext } from './useWerbeDaten'
-import { AD_STATUS_BADGE, AKTION_SICHTBAR, CHART_COLORS, aktionErledigt, aktionIcon, colorFor, useWerbeFormat } from './format'
+import { AKTION_SICHTBAR, CHART_COLORS, aktionErledigt, aktionIcon, colorFor, useWerbeFormat } from './format'
 import { berechneEmpfehlungen } from './empfehlungen'
 import { BTN_KLEIN } from './felder'
 import { dbFehlerText } from './autopilot/werbeTexte'
+import KampagnenZentrale from './zentrale/KampagnenZentrale'
 
 // ── Reiter „Statistik" des Werbemanagers ──────────────────────────────────────
-// KPI-Kacheln, Budget-Wächter, Leitplanken, Empfehlungen + Aktions-Warteschlange,
-// Diagramme und die Tabelle Kampagnen -> Anzeigen. Unverändert aus
-// AdsManager.tsx übernommen (gleiche Zahlen, gleiche Knöpfe, gleiche Abfragen).
+// KPI-Kacheln, Budget-Wächter, Leitplanken, Empfehlungen + Aktions-Warteschlange
+// und Diagramme (unverändert aus AdsManager.tsx), darunter die
+// Kampagnen-Zentrale (zentrale/KampagnenZentrale.tsx) statt der alten Tabelle
+// Kampagnen -> Anzeigen. Anzeigen schaltet sie über dieselbe Warteschlange
+// (ad_actions), Kampagnen/Anzeigengruppen über meta-builder bulk.
 
 // ── KPI-Kachel ────────────────────────────────────────────────────────────────
 function KpiTile({ label, value, sub, accent }: { label: string; value: string; sub?: string; accent?: boolean }) {
@@ -101,11 +104,6 @@ function TrendChart({ points, fmt }: { points: { day: string; value: number }[];
   )
 }
 
-// React.Fragment mit key-Unterstützung für Tabellen-Zeilengruppen
-function FragmentRows({ children }: { children: ReactNode }) {
-  return <>{children}</>
-}
-
 // Standard-Export ohne Props (lazyWithReload): Daten kommen aus dem WerbeKontext
 export default function WerbeStatistik() {
   const { t } = useTranslation()
@@ -115,10 +113,9 @@ export default function WerbeStatistik() {
   const { eur, int, pct, per, locale } = fmt
   const {
     segment, catalog, insights, actions, setActions, settings, setSettings, crmVisible,
-    byAd, campaignsSorted, total, trend, campaignName, fetchAll, openPreview, openSettings, showToast,
+    byAd, campaignsSorted, total, trend, campaignName, fetchAll, showToast,
   } = useWerbeKontext()
 
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [editSettings, setEditSettings] = useState(false)
   const [settingsForm, setSettingsForm] = useState({ target_cpl: '60', max_budget: '180' })
 
@@ -223,10 +220,6 @@ export default function WerbeStatistik() {
   const leadBasis = total.crmLeads > 0 ? t('crm.ads.basisCrm', 'CRM-zugeordnet') : t('crm.ads.basisMeta', 'laut Meta')
   const qualityRated = total.gut + total.schlecht
   const roas = total.spendEur > 0 ? total.revenue / total.spendEur : 0
-
-  const toggleExpand = (cid: string) => setExpanded(prev => {
-    const s = new Set(prev); if (s.has(cid)) s.delete(cid); else s.add(cid); return s
-  })
 
   // Aktionsliste: nur Zeilen mit bekanntem Status (Autopilot-Vorschläge mit
   // status null erscheinen im Autopilot-Reiter, nicht hier)
@@ -382,152 +375,8 @@ export default function WerbeStatistik() {
         </div>
       </div>
 
-      {/* Kampagnen -> Anzeigen */}
-      <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-gray-700">{t('crm.ads.tableTitle', 'Kampagnen & Anzeigen')}</h2>
-          <span className="text-[11px] text-gray-400">
-            <span className="font-semibold text-orange-500">{t('crm.ads.clickHint', '👆 Kampagne anklicken = einzelne Anzeigen (Bildchen) aufklappen')}</span>
-            {' · '}{t('crm.ads.tableHint', 'Frequenz = wie oft dieselbe Person die Werbung im Zeitraum gesehen hat (Ø)')}
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-gray-500 border-b border-gray-100">
-                <th className="px-4 py-2 font-semibold">{t('crm.ads.colName', 'Kampagne / Anzeige')}</th>
-                <th className="px-2 py-2 font-semibold">{t('crm.ads.colStatus', 'Status')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.kpiSpend', 'Ausgaben')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colImpressions', 'Impressionen')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colFrequency', 'Frequenz')}</th>
-                <th className="px-2 py-2 font-semibold text-right">CTR</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colLeads', 'Leads')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.kpiCpl', 'Leadpreis')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colTermine', 'Termine')}</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.colHeld', 'Stattgef.')}</th>
-                <th className="px-2 py-2 font-semibold text-right">No-Show</th>
-                <th className="px-2 py-2 font-semibold text-right">👍/👎</th>
-                <th className="px-2 py-2 font-semibold text-right">Sales</th>
-                <th className="px-2 py-2 font-semibold text-right">{t('crm.ads.revenue', 'Umsatz')}</th>
-                <th className="px-4 py-2 font-semibold text-right">{t('crm.ads.colAction', 'Aktion')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaignsSorted.map(([cid, a]) => {
-                const isOpen = expanded.has(cid)
-                const adsOfCampaign = catalog.filter(c => c.campaign_id === cid)
-                  .sort((x, y) => (byAd.get(y.ad_id)?.spendEur ?? 0) - (byAd.get(x.ad_id)?.spendEur ?? 0))
-                const leadsC = a.crmLeads > 0 ? a.crmLeads : a.platformLeads
-                return (
-                  <FragmentRows key={cid}>
-                    <tr className="border-b border-gray-50 hover:bg-orange-50/40 cursor-pointer" onClick={() => toggleExpand(cid)}>
-                      <td className="px-4 py-2.5 font-semibold text-gray-900">
-                        <span className="inline-flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ backgroundColor: campaignColor.get(cid) }} />
-                          <span className="text-gray-400">{isOpen ? '▾' : '▸'}</span>
-                          <span className="truncate max-w-[260px]" title={campaignName(cid)}>{campaignName(cid)}</span>
-                          <span className="text-[10px] font-normal text-gray-400">({adsOfCampaign.length} Ads)</span>
-                          <button onClick={e => { e.stopPropagation(); openSettings(cid) }}
-                            title={t('crm.ads.settingsBtnTitle', 'Alle Meta-Einstellungen ansehen & ändern')}
-                            className="px-1.5 py-0.5 rounded border border-gray-200 text-[11px] font-normal text-gray-500 hover:border-orange-400 hover:text-orange-600 shrink-0">
-                            ⚙ {t('crm.ads.settingsBtn', 'Einstellungen')}
-                          </button>
-                        </span>
-                      </td>
-                      <td className="px-2 py-2.5 whitespace-nowrap">
-                        {(() => {
-                          const act = adsOfCampaign.filter(ad => (ad.status ?? '').toUpperCase() === 'ACTIVE').length
-                          const off = adsOfCampaign.length - act
-                          return (
-                            <span className="inline-flex items-center gap-1">
-                              {act > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">{act} {t('crm.ads.stActive', 'Aktiv')}</span>}
-                              {off > 0 && <span className="text-[11px] px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 font-medium">{off} {t('crm.ads.stOffline', 'Offline')}</span>}
-                            </span>
-                          )
-                        })()}
-                      </td>
-                      <td className="px-2 py-2.5 text-right tabular-nums font-semibold">{eur(a.spendEur)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(a.impressions)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{a.reach > 0 ? (a.impressions / a.reach).toLocaleString(locale, { maximumFractionDigits: 1 }) : '-'}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{a.impressions > 0 ? pct(a.clicks / a.impressions) : '-'}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(leadsC)}{a.crmLeads === 0 && a.platformLeads > 0 && <span className="text-gray-400" title={t('crm.ads.basisMeta', 'laut Meta')}>*</span>}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{per(a.spendEur, leadsC)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(a.termine)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(a.stattgefunden)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(a.noShows)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{a.gut + a.schlecht > 0 ? `${a.gut}/${a.schlecht}` : '-'}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{int(a.sales)}</td>
-                      <td className="px-2 py-2.5 text-right tabular-nums">{a.revenue > 0 ? eur(a.revenue) : '-'}</td>
-                      <td className="px-4 py-2.5" />
-                    </tr>
-                    {isOpen && adsOfCampaign.map(ad => {
-                      const x = byAd.get(ad.ad_id) ?? emptyAdAgg()
-                      const leadsA = x.crmLeads > 0 ? x.crmLeads : x.platformLeads
-                      const pending = pendingByAd.get(ad.ad_id)
-                      return (
-                        <tr key={ad.ad_id} className="border-b border-gray-50 bg-gray-50/50 text-gray-700">
-                          <td className="pl-12 pr-4 py-2">
-                            <span className="inline-flex items-center gap-2 min-w-0">
-                              {ad.thumbnail_url
-                                ? <img src={ad.thumbnail_url} alt="" className="w-7 h-7 rounded object-cover shrink-0" loading="lazy" />
-                                : <span className="w-7 h-7 rounded bg-gray-200 text-gray-500 text-[10px] flex items-center justify-center shrink-0">Ad</span>}
-                              <span className="truncate max-w-[240px]" title={ad.ad_name ?? ad.ad_id}>{ad.ad_name ?? ad.ad_id}</span>
-                              <button onClick={e => { e.stopPropagation(); openPreview(ad) }}
-                                title={t('crm.ads.previewTitle', 'Vorschau ansehen (Facebook & Instagram)')}
-                                className="px-1.5 py-0.5 rounded border border-gray-200 text-[11px] text-gray-500 hover:border-blue-400 hover:text-blue-600 shrink-0">
-                                👁 {t('crm.ads.previewBtn', 'Vorschau')}
-                              </button>
-                            </span>
-                          </td>
-                          <td className="px-2 py-2 whitespace-nowrap">
-                            {(() => { const b = AD_STATUS_BADGE(ad.status); return (
-                              <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${b.cls}`}>{b.k ? t(b.k, b.d) : b.d}</span>
-                            ) })()}
-                          </td>
-                          <td className="px-2 py-2 text-right tabular-nums">{eur(x.spendEur)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(x.impressions)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{x.reach > 0 ? (x.impressions / x.reach).toLocaleString(locale, { maximumFractionDigits: 1 }) : '-'}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{x.impressions > 0 ? pct(x.clicks / x.impressions) : '-'}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(leadsA)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{per(x.spendEur, leadsA)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(x.termine)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(x.stattgefunden)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(x.noShows)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{x.gut + x.schlecht > 0 ? `${x.gut}/${x.schlecht}` : '-'}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{int(x.sales)}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">{x.revenue > 0 ? eur(x.revenue) : '-'}</td>
-                          <td className="px-4 py-2 text-right">
-                            {pending ? (
-                              <span className="text-[10px] px-2 py-1 rounded-full bg-orange-100 text-orange-700 whitespace-nowrap">
-                                {aktionIcon(pending.action)} {t('crm.ads.actQueued', 'vorgemerkt')}
-                              </span>
-                            ) : ad.status === 'ACTIVE' ? (
-                              <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'pause', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
-                                title={t('crm.ads.actPauseTitle', 'Anzeige sofort bei Meta pausieren')}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-orange-400 hover:text-orange-600 whitespace-nowrap">
-                                ⏸ {t('crm.ads.actPause', 'Pausieren')}
-                              </button>
-                            ) : (
-                              <button onClick={e => { e.stopPropagation(); void queueAction(ad, 'activate', t('crm.ads.reasonManual', 'Manuell im Werbemanager')) }}
-                                title={t('crm.ads.actActivateTitle', 'Anzeige sofort bei Meta aktivieren')}
-                                className="px-2 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-600 hover:border-green-400 hover:text-green-600 whitespace-nowrap">
-                                ▶ {t('crm.ads.actActivate', 'Aktivieren')}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </FragmentRows>
-                )
-              })}
-              {campaignsSorted.length === 0 && (
-                <tr><td colSpan={15} className="px-4 py-10 text-center text-gray-400">{t('crm.ads.empty', 'Keine Werbedaten im gewählten Zeitraum.')}</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* Kampagnen-Zentrale: Kampagne > Anzeigengruppe > Werbeanzeige (zentrale/) */}
+      <KampagnenZentrale pendingByAd={pendingByAd} />
 
       <p className="mt-3 text-[11px] text-gray-400">
         {t('crm.ads.footnote', 'Datenstand: automatischer Sync jeden Morgen direkt aus dem Meta-Werbekonto (Sveru Marketing LLC, USD -> EUR umgerechnet) - oder sofort über „Aktualisieren". * = Lead-Zahl laut Meta, solange die CRM-Zuordnung über die Anzeigen-URL-Parameter noch nicht aktiv ist.')}

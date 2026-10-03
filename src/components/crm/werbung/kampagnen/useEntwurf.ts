@@ -3,9 +3,9 @@ import { supabase } from '../../../../lib/supabase'
 import {
   DESTINATION_OPTIONS, HP_DEFAULT_LINK, HP_PAGE_ID, HP_PIXEL_ID, HOUSING_AGE_MAX, HOUSING_AGE_MIN, LIMITS, META_SPEC_VERSION,
   PLAN_B_LP_KURZ, PLAN_B_LP_LANG,
-  adsetByKey, applyHousing, attributionFor, billingFor, cleanName, destinationsFor, emptyAd, goalsFor,
-  promotedAllowed, promotedRuleFor, validateDraft,
-  type ActivateDraftResponse, type AdDraft, type AdsetDraft, type CatalogResponse, type CreateResponse, type Destination,
+  adsetByKey, applyHousing, attributionFor, billingFor, cleanName, destinationsFor, editDiff, editLocks, emptyAd, goalsFor,
+  promotedAllowed, promotedRuleFor, validateDraft, validateEditFields,
+  type ActivateDraftResponse, type AdDraft, type EditApplyResponse, type EditDiffResponse, type EditDiffResult, type AdsetDraft, type CatalogResponse, type CreateResponse, type Destination,
   type DraftIssue, type DraftKind, type DraftLastError, type DraftMetaIds, type DraftSpec, type DraftStatus,
   type DraftValidation, type HousingResult, type MediaRef, type MetaMediaRow, type Objective, type PromotedObject,
 } from '../../../../lib/metaSpec'
@@ -13,6 +13,7 @@ import { lintDraft, type LintIssue, type LintMediaInfo } from '../../../../lib/m
 import { ladeUsdProEur } from '../useWerbeDaten'
 import { USD_PRO_EUR_FALLBACK } from '../felder'
 import { builderCall, type BuilderVorgaben } from './builderApi'
+import { hpVon, istGesperrt, mitHp, oberflaechenSperren, zielAusMetaIds, type EditZiel } from './bearbeitenTypen'
 
 // ── Ein Entwurf des Kampagnen-Assistenten (meta_drafts) ──────────────────────
 // Lädt bzw. legt den Entwurf an, speichert 1,5 s nach der letzten Änderung
@@ -21,10 +22,17 @@ import { builderCall, type BuilderVorgaben } from './builderApi'
 // (Schleife mit Fortschritt), activate_draft, discard.
 // Sonderkategorie Wohnen wird bei jeder Änderung über applyHousing erzwungen
 // (idempotent), Plan B hält Paare (_lang/_kurz) und Budgets synchron.
+// Bearbeiten-Modus (kind 'edit', aus meta-builder edit_load): bestehende
+// Objekte sind änderbar, gesperrte Felder kommen als locks; gespeichert
+// werden nur name und spec; edit_diff zeigt, was sich bei Meta ändert,
+// edit_apply schreibt es (nur nach Bestätigung).
 
 export type AssistentStart =
   | { art: 'laden'; id: string }
   | { art: 'neu'; spec: DraftSpec; templateKey: string | null; hinweise?: string[] }
+  | { art: 'bearbeiten'; id: string; spec: DraftSpec; locks: string[]; ziel: EditZiel; hinweise?: string[] }
+
+export type AssistentModus = 'neu' | 'bearbeiten'
 
 export type SpeicherStand = 'ruhig' | 'wartet' | 'laeuft' | 'gespeichert' | 'fehler'
 
@@ -236,6 +244,21 @@ export function setzeAnzeigengruppe(d: DraftSpec, key: string, patch: Partial<Ad
   return { ...d, adsets }
 }
 
+/** Werbemittel-Felder einer Anzeige (Änderung = neues Creative bei Meta) */
+const CREATIVE_FELDER: ReadonlyArray<keyof AdDraft> = [
+  'format', 'identity', 'primary_texts', 'headlines', 'descriptions', 'cta_type', 'destination', 'media',
+  'creative_features', 'multi_advertiser',
+]
+
+/** Hat sich das Werbemittel einer Anzeige gegenüber dem Stand beim Öffnen geändert? null = unbekannt */
+export function creativeGeaendert(original: DraftSpec | null, d: DraftSpec, key: string): boolean | null {
+  if (!original) return null
+  const vorher = original.ads.find(a => a.key === key)
+  const jetzt = d.ads.find(a => a.key === key)
+  if (!vorher || !jetzt) return null
+  return CREATIVE_FELDER.some(f => JSON.stringify(vorher[f] ?? null) !== JSON.stringify(jetzt[f] ?? null))
+}
+
 /** Alle Medien-IDs eines Entwurfs */
 export function medienIds(d: DraftSpec): string[] {
   const out: string[] = []
@@ -274,6 +297,16 @@ export function entwurfTagesbudgetCents(d: DraftSpec): number {
 // ── der Hook ──────────────────────────────────────────────────────────────────
 
 export interface EntwurfApi {
+  /** 'bearbeiten': laufende Objekte bei Meta ändern (kind 'edit') */
+  modus: AssistentModus
+  /** Bearbeiten: gesperrte Feldschlüssel (edit_load bzw. editLocks, dazu Sperren der Oberfläche) */
+  locks: string[]
+  /** Bearbeiten: Ausgangsstand bei Meta (meta_ids.edit.baseline), sonst der Stand beim Öffnen; null wenn unbekannt */
+  original: DraftSpec | null
+  /** Bearbeiten: lokaler Vergleich Ausgangsstand gegen Entwurf (editDiff), null ohne Ausgangsstand */
+  lokalDiff: EditDiffResult | null
+  /** Bearbeiten: was geöffnet wurde */
+  ziel: EditZiel | null
   laden: boolean
   ladeFehler: string | null
   id: string | null
@@ -301,6 +334,24 @@ export interface EntwurfApi {
   aktivieren: () => Promise<ActivateDraftResponse>
   verwerfen: () => Promise<void>
   neuLadenMeta: () => Promise<void>
+  /** Bearbeiten: speichern, dann edit_diff (schreibt nichts bei Meta) */
+  aenderungenLaden: () => Promise<EditDiffResponse>
+  /** Bearbeiten: edit_apply mit confirm (schreibt bei Meta); Admin kann Lint-Blocker bzw. fehlendes Wohnen begründet übergehen */
+  aenderungenUebernehmen: (gruende?: UebernehmenGruende) => Promise<EditApplyResponse>
+  /** Bearbeiten: Entwurf und Ausgangsstand neu aus meta_drafts lesen (nach edit_apply); false = nicht lesbar */
+  neuLaden: () => Promise<boolean>
+  /**
+   * Vor „Neu von Meta laden“: Speichern stoppen, laufende Speicherung abwarten und den
+   * Entwurf schreibgeschützt machen, damit der alte Stand die frisch geladene Zeile nicht
+   * überschreibt. Gibt eine Funktion zurück, die das rückgängig macht (Laden fehlgeschlagen).
+   */
+  einfrieren: () => Promise<() => void>
+}
+
+/** Admin-Begründungen für edit_apply (je mindestens 10 Zeichen, sonst lehnt der Server ab) */
+export interface UebernehmenGruende {
+  force_lint_reason?: string
+  housing_override_reason?: string
 }
 
 interface Optionen {
@@ -313,11 +364,21 @@ interface Optionen {
 }
 
 export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
-  const [anfangsSpec] = useState<DraftSpec>(() => (start.art === 'neu' ? normalisiere(start.spec) : opt.leer))
+  const [anfangsSpec] = useState<DraftSpec>(() => (
+    start.art === 'neu' ? normalisiere(start.spec)
+      : start.art === 'bearbeiten'
+        ? normalisiere(mitHp(start.spec, { creative_tausch: hpVon(start.spec).creative_tausch ?? 'neue_anzeige' }))
+        : opt.leer))
+  const [modus, setModus] = useState<AssistentModus>(start.art === 'bearbeiten' ? 'bearbeiten' : 'neu')
+  const modusRef = useRef<AssistentModus>(modus)
+  modusRef.current = modus
+  const [serverLocks, setServerLocks] = useState<string[] | null>(() => (start.art === 'bearbeiten' ? start.locks.slice() : null))
+  const [stand] = useState<DraftSpec | null>(() => (start.art === 'bearbeiten' ? anfangsSpec : null))
+  const [ziel, setZiel] = useState<EditZiel | null>(start.art === 'bearbeiten' ? start.ziel : null)
   const [laden, setLaden] = useState(start.art === 'laden')
   const [ladeFehler, setLadeFehler] = useState<string | null>(null)
-  const [id, setId] = useState<string | null>(start.art === 'laden' ? start.id : null)
-  const [status, setStatus] = useState<DraftStatus | null>(null)
+  const [id, setId] = useState<string | null>(start.art === 'neu' ? null : start.id)
+  const [status, setStatus] = useState<DraftStatus | null>(start.art === 'bearbeiten' ? 'draft' : null)
   const [templateKey, setTemplateKey] = useState<string | null>(start.art === 'neu' ? start.templateKey : null)
   const [spec, setSpec] = useState<DraftSpec>(anfangsSpec)
   const [metaIds, setMetaIds] = useState<DraftMetaIds>({})
@@ -338,12 +399,16 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   const specRef = useRef<DraftSpec>(anfangsSpec)
   const templateRef = useRef<string | null>(templateKey)
   // Vorlage/Import sofort speichern (Inhalt da), leere neue Kampagne erst bei der ersten Änderung
+  // Bearbeiten: die Zeile hat der Server mit dieser spec angelegt, erst die erste Änderung speichert
   const dirtyRef = useRef(start.art === 'neu' && (start.templateKey !== null || !!start.spec.campaign.existing_id))
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ketteRef = useRef<Promise<string | null>>(Promise.resolve(id))
   const angefragtRef = useRef<Set<string>>(new Set())
   const ersatzNameRef = useRef(opt.ersatzName)
   ersatzNameRef.current = opt.ersatzName
+  // „Neu von Meta laden“ läuft: nichts mehr speichern (sonst überschriebe der alte Stand die frische Zeile)
+  const eingefrorenRef = useRef(false)
+  const [eingefroren, setEingefroren] = useState(false)
 
   // Uhr für „älter als 30 Minuten"
   useEffect(() => {
@@ -353,18 +418,21 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
 
   // ── Speichern ─────────────────────────────────────────────────────────────
   const speichereEinmal = useCallback(async (): Promise<string | null> => {
-    if (!dirtyRef.current) return idRef.current
+    if (!dirtyRef.current || eingefrorenRef.current) return idRef.current
     dirtyRef.current = false
     const d = specRef.current
     const art = artFuer(d)
-    const zeile = {
-      name: entwurfName(d, ersatzNameRef.current),
-      kind: art.kind,
-      template_key: templateRef.current,
-      spec: d,
-      target_campaign_id: art.target_campaign_id,
-      target_adset_id: art.target_adset_id,
-    }
+    // Bearbeiten: Art und Ziel-IDs setzt der Server (edit_load), hier nur Name und Inhalt
+    const zeile = modusRef.current === 'bearbeiten'
+      ? { name: entwurfName(d, ersatzNameRef.current), spec: d }
+      : {
+        name: entwurfName(d, ersatzNameRef.current),
+        kind: art.kind,
+        template_key: templateRef.current,
+        spec: d,
+        target_campaign_id: art.target_campaign_id,
+        target_adset_id: art.target_adset_id,
+      }
     setSpeichern('laeuft')
     try {
       if (!idRef.current) {
@@ -415,6 +483,9 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   const uebernehmeMeta = useCallback((r: Record<string, unknown>) => {
     if (typeof r.status === 'string') setStatus(r.status as DraftStatus)
     setMetaIds((r.meta_ids as DraftMetaIds | null) ?? {})
+    // Bearbeiten-Ziel steht in meta_ids.edit (schreibt meta-builder bei edit_load und edit_apply)
+    const z = zielAusMetaIds(r.meta_ids as DraftMetaIds | null)
+    if (z) setZiel(prev => prev ?? z)
     setValidation((r.validation as DraftValidation | null) ?? null)
     setLastError((r.last_error as DraftLastError | null) ?? null)
   }, [])
@@ -422,6 +493,8 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   useEffect(() => {
     if (start.art !== 'laden') {
       if (dirtyRef.current) void sichern()
+      // Bearbeiten: Ausgangsstand (meta_ids.edit.baseline) für den lokalen Vergleich holen
+      if (start.art === 'bearbeiten') void neuLadenMetaRef.current()
       return
     }
     let abbruch = false
@@ -434,6 +507,13 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
         if (abbruch) return
         const r = data as Record<string, unknown>
         const s = specAus(r.spec, opt.leer)
+        if (r.kind === 'edit') {
+          modusRef.current = 'bearbeiten'
+          setModus('bearbeiten')
+          // Sperren ohne edit_load: aus dem Ausgangsstand (oder dem Entwurf) ableiten
+          const basis = (r.meta_ids as DraftMetaIds | null)?.edit?.baseline
+          setServerLocks(editLocks(basis ?? s))
+        }
         specRef.current = s
         setSpec(s)
         const tk = typeof r.template_key === 'string' ? r.template_key : null
@@ -461,12 +541,43 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
     if (error) { console.warn('[Kampagnen] Status laden:', error); return }
     if (data) uebernehmeMeta(data as Record<string, unknown>)
   }, [uebernehmeMeta])
+  const neuLadenMetaRef = useRef(neuLadenMeta)
+  neuLadenMetaRef.current = neuLadenMeta
+
+  /** Bearbeiten: Entwurf und Ausgangsstand neu lesen (offene lokale Änderungen gehen verloren) */
+  const neuLaden = useCallback(async (): Promise<boolean> => {
+    const eid = idRef.current
+    if (!eid) return false
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    await ketteRef.current.catch(() => null)
+    const { data, error } = await supabase.from('meta_drafts')
+      .select('spec, status, validation, meta_ids, last_error, updated_at').eq('id', eid).maybeSingle()
+    if (error || !data) {
+      console.warn('[Kampagnen] Entwurf neu laden:', error)
+      // edit_apply ist fertig (der Server hat seine Sperre gelöst): nicht schreibgeschützt hängen bleiben
+      setStatus(s => (s === 'creating' ? 'draft' : s))
+      return false
+    }
+    const r = data as Record<string, unknown>
+    const s = specAus(r.spec, specRef.current)
+    dirtyRef.current = false
+    specRef.current = s
+    setSpec(s)
+    uebernehmeMeta(r)
+    const basis = (r.meta_ids as DraftMetaIds | null)?.edit?.baseline
+    setServerLocks(editLocks(basis ?? s))
+    setSpeichern('ruhig')
+    return true
+  }, [uebernehmeMeta])
 
   // ── Ändern ────────────────────────────────────────────────────────────────
-  const nurLesen = !!status && NUR_LESEN.indexOf(status) >= 0
+  // Bearbeiten: gesperrt nur, solange edit_apply läuft oder wenn verworfen
+  const nurLesen = eingefroren || (modus === 'bearbeiten'
+    ? status === 'discarded' || status === 'creating'
+    : !!status && NUR_LESEN.indexOf(status) >= 0)
 
   const update = useCallback((fn: (d: DraftSpec) => DraftSpec) => {
-    if (nurLesen) return
+    if (nurLesen || eingefrorenRef.current) return
     const next = normalisiere(fn(specRef.current), metaIdsRef.current)
     specRef.current = next
     setSpec(next)
@@ -499,7 +610,31 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   }, [])
 
   // ── Prüfen (lokal, sofort) ─────────────────────────────────────────────────
-  const issues = useMemo(() => validateDraft(spec), [spec])
+  // Bearbeiten: validateDraft prüft bestehende Objekte nicht. Darum ein Probelauf
+  // ohne existing_id, ohne gesperrte Felder, alles nur als Hinweis (entscheiden
+  // tut edit_diff auf dem Server).
+  const baseline = metaIds.edit?.baseline ?? null
+  const original = baseline ?? stand
+  const locks = useMemo(() => {
+    if (modus !== 'bearbeiten') return []
+    const out = (serverLocks ?? editLocks(baseline ?? spec)).slice()
+    for (const l of oberflaechenSperren(baseline, spec)) if (out.indexOf(l) < 0) out.push(l)
+    return out
+  }, [modus, serverLocks, baseline, spec])
+  const issues = useMemo(() => {
+    if (modus !== 'bearbeiten') return validateDraft(spec)
+    const probe: DraftSpec = {
+      ...spec,
+      campaign: { ...spec.campaign, existing_id: undefined },
+      adsets: spec.adsets.map(a => ({ ...a, existing_id: undefined })),
+      ads: spec.ads.map(a => ({ ...a, existing_id: undefined })),
+    }
+    const hinweise = validateDraft(probe)
+      .filter(i => !istGesperrt(locks, i.node, i.field) && i.code !== 'unsupported' && i.code !== 'legacy_objective')
+      .map(i => ({ ...i, severity: 'warn' as const }))
+    return [...validateEditFields(spec), ...hinweise]
+  }, [spec, modus, locks])
+  const lokalDiff = useMemo(() => (modus === 'bearbeiten' && baseline ? editDiff(baseline, spec) : null), [modus, baseline, spec])
   const lintMedien = useMemo(() => {
     const m: Record<string, LintMediaInfo> = {}
     for (const k of Object.keys(medien)) m[k] = medien[k]
@@ -570,6 +705,42 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
     }
   }
 
+  const aenderungenLaden = async (): Promise<EditDiffResponse> => {
+    const eid = await brauchtId()
+    // Speichern fehlgeschlagen: sonst verglich der Server einen alten Stand
+    if (dirtyRef.current) throw new Error('nicht_gespeichert')
+    return builderCall('edit_diff', { draft_id: eid })
+  }
+
+  const aenderungenUebernehmen = async (gruende: UebernehmenGruende = {}): Promise<EditApplyResponse> => {
+    const eid = await brauchtId()
+    if (dirtyRef.current) throw new Error('nicht_gespeichert')
+    setStatus('creating')
+    try {
+      return await builderCall('edit_apply', {
+        draft_id: eid, confirm: true,
+        ...(gruende.force_lint_reason ? { force_lint_reason: gruende.force_lint_reason } : {}),
+        ...(gruende.housing_override_reason ? { housing_override_reason: gruende.housing_override_reason } : {}),
+      })
+    } finally {
+      await neuLaden()
+    }
+  }
+
+  const einfrieren = async (): Promise<() => void> => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    const warOffen = dirtyRef.current
+    dirtyRef.current = false
+    eingefrorenRef.current = true
+    setEingefroren(true)
+    await ketteRef.current.catch(() => null)
+    return () => {
+      eingefrorenRef.current = false
+      setEingefroren(false)
+      if (warOffen) { dirtyRef.current = true; planeSpeichern() }
+    }
+  }
+
   const verwerfen = async (): Promise<void> => {
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
     dirtyRef.current = false
@@ -581,9 +752,11 @@ export function useEntwurf(start: AssistentStart, opt: Optionen): EntwurfApi {
   }
 
   return {
+    modus, locks, original, ziel, lokalDiff,
     laden, ladeFehler, id, status, templateKey, spec, metaIds, validation, lastError, speichern, speicherFehler,
     nurLesen, pruefungVeraltet, issues, lint, housing, medien, fortschritt,
     update, setzeMedium, sichern, pruefen, anlegen, aktivieren, verwerfen, neuLadenMeta,
+    aenderungenLaden, aenderungenUebernehmen, neuLaden, einfrieren,
   }
 }
 
@@ -666,9 +839,10 @@ export function useLeitplanke(spec: DraftSpec, validation: DraftValidation | nul
 // ── Abhängigkeiten Ziel -> Conversion-Ort -> Leistungsziel -> Abrechnung ─────
 
 /** Anzeigengruppe an das Kampagnenziel anpassen (ungültige Werte auf den ersten erlaubten).
- *  zielStandard: beim Wechsel des Kampagnenziels das Standard-Leistungsziel nehmen (wie Meta). */
-export function passeAnzeigengruppeAn(a: AdsetDraft, objective: Objective, pixelStandard: string, zielStandard = false): AdsetDraft {
-  if (a.existing_id) return a
+ *  zielStandard: beim Wechsel des Kampagnenziels das Standard-Leistungsziel nehmen (wie Meta).
+ *  auchBestehend: im Bearbeiten-Modus auch bestehende Anzeigengruppen anpassen. */
+export function passeAnzeigengruppeAn(a: AdsetDraft, objective: Objective, pixelStandard: string, zielStandard = false, auchBestehend = false): AdsetDraft {
+  if (a.existing_id && !auchBestehend) return a
   const erlaubt = (v: Destination) => !DESTINATION_OPTIONS.some(o => o.value === v && o.unsupported)
   const orte = destinationsFor(objective).filter(erlaubt)
   const destination = orte.indexOf(a.destination) >= 0 ? a.destination : (orte[0] ?? a.destination)
@@ -714,6 +888,10 @@ export interface AssistentWerte {
   gepaart: boolean
   /** Formularfeld anspringen (Prüfliste) */
   springeZu: (node: string, field?: string) => void
+  /** Bearbeiten-Modus: bestehende Objekte sind änderbar */
+  bearbeiten: boolean
+  /** Sperrgrund (Text) eines Feldes im Bearbeiten-Modus, sonst undefined */
+  sperre: (node: string, feld: string) => string | undefined
 }
 
 export const AssistentKontext = createContext<AssistentWerte | null>(null)

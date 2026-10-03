@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import Modal from '../../../ui/Modal'
 import Badge from '../../../ui/Badge'
@@ -9,6 +9,7 @@ import { useAuth } from '../../../../lib/auth'
 import {
   HP_PIXEL_ID, TEMPLATES, hasErrors,
   type AdDraft, type AdsetDraft, type BuilderSettings, type CatalogResponse, type DraftSpec,
+  type EditApplyResponse, type EditDiffResponse, type Level,
 } from '../../../../lib/metaSpec'
 import { lintHasBlockers } from '../../../../lib/metaLint'
 import { USD_PRO_EUR_FALLBACK } from '../felder'
@@ -17,14 +18,18 @@ import { ladeUsdProEur, useWerbeKontext } from '../useWerbeDaten'
 import AnzeigengruppenFormular from './AnzeigengruppenFormular'
 import AnzeigenFormular from './AnzeigenFormular'
 import EntwurfBaum, { StatusBadge, knotenListe } from './EntwurfBaum'
-import KampagnenFormular, { feldId } from './KampagnenFormular'
+import KampagnenFormular from './KampagnenFormular'
+import { feldId } from './Bausteine'
 import PruefPanel from './PruefPanel'
 import VorschauPanel from './VorschauPanel'
+import AenderungenDialog from './AenderungenDialog'
+import DuplizierenDialog from './DuplizierenDialog'
 import { fehlerCode, fehlerText, ladeKatalog, vorgabenAus } from './builderApi'
+import { sperrGrund, type EditZiel } from './bearbeitenTypen'
 import {
   AssistentKontext, anzeigeAngelegt, belegteKeys, gruppeAngelegt, leererEntwurf, neueAnzeige, neueAnzeigengruppe,
   neueKennung, neuerKey, paarPartner, passeAnzeigengruppeAn, useEntwurf, useLeitplanke,
-  type AssistentStart, type AssistentWerte,
+  type AssistentStart, type AssistentWerte, type UebernehmenGruende,
 } from './useEntwurf'
 
 // ── Kampagnen-Assistent (Vollbild) ───────────────────────────────────────────
@@ -34,14 +39,21 @@ import {
 // (pausiert, Schleife create/resume mit Fortschritt) und Aktivieren (mit
 // Rückfrage und Leitplanke). Ohne Freischaltung (ad_settings.builder_enabled)
 // bleiben die Schreib-Knöpfe gesperrt, mit Erklärung.
+// Bearbeiten-Modus (laufende Kampagne, Anzeigengruppe oder Anzeige aus
+// edit_load): gleiche Oberfläche, gesperrte Felder grau mit Grund, unten
+// „Änderungen prüfen" -> Zusammenfassung „Das ändert sich bei Meta" (edit_diff)
+// -> „Bei Meta übernehmen" (edit_apply). Neues wird hier nicht angelegt,
+// Duplizieren geht über den Dialog.
 
 interface Props {
   start: AssistentStart
   einstellungen: BuilderSettings | null
   onClose: () => void
+  /** Bearbeiten: Entwurf verwerfen und frisch von Meta laden (edit_load neu_laden); true = geladen */
+  onNeuVonMeta?: (ziel: EditZiel) => Promise<boolean>
 }
 
-export default function KampagnenAssistent({ start, einstellungen, onClose }: Props) {
+export default function KampagnenAssistent({ start, einstellungen, onClose, onNeuVonMeta }: Props) {
   const { t } = useTranslation()
   const toast = useToast()
   const confirm = useConfirm()
@@ -58,6 +70,16 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
   const [forceGrund, setForceGrund] = useState('')
   const [schliesst, setSchliesst] = useState(false)
   const mitteRef = useRef<HTMLDivElement>(null)
+  // Bearbeiten: Änderungsdialog (edit_diff / edit_apply)
+  const [diffOffen, setDiffOffen] = useState(false)
+  const [diffLaedt, setDiffLaedt] = useState(false)
+  const [diff, setDiff] = useState<EditDiffResponse | null>(null)
+  const [diffFehler, setDiffFehler] = useState<string | null>(null)
+  const [ergebnis, setErgebnis] = useState<EditApplyResponse | null>(null)
+  const [uebernimmt, setUebernimmt] = useState(false)
+  const [housingVerlangt, setHousingVerlangt] = useState(false)
+  const [dupItems, setDupItems] = useState<Array<{ level: Level; id: string; name: string }>>([])
+  const [suche, setSuche] = useState('')
 
   useEffect(() => {
     let abbruch = false
@@ -84,14 +106,35 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
   const limitEur = vorgaben.limitEur ?? seitenSettings.max_account_daily_budget
   const leitplanke = useLeitplanke(e.spec, e.validation, limitEur)
 
+  /** Element sichtbar machen: umgebende „Alle Einstellungen" öffnen, hinscrollen, kurz markieren */
+  const zeige = (el: HTMLElement | null) => {
+    if (!el) return
+    let p: HTMLElement | null = el.parentElement
+    while (p) {
+      if (p instanceof HTMLDetailsElement && !p.open) p.open = true
+      p = p.parentElement
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.classList.add('ring-2', 'ring-hp-highlight', 'rounded-lg')
+    setTimeout(() => el.classList.remove('ring-2', 'ring-hp-highlight', 'rounded-lg'), 1600)
+  }
+
   const springeZu = (node: string, field?: string) => {
     setSel(node)
     if (!field) return
-    setTimeout(() => {
-      const el = document.getElementById(feldId(field))
-      el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }, 80)
+    setTimeout(() => zeige(document.getElementById(feldId(field))), 80)
   }
+
+  // „Einstellung finden": erstes Feld im aktuellen Formular, dessen Name den Suchtext enthält
+  const finde = () => {
+    const q = suche.trim().toLowerCase()
+    if (!q || !mitteRef.current) return
+    const treffer = Array.from(mitteRef.current.querySelectorAll<HTMLElement>('[data-einstellung]'))
+      .find(el => (el.dataset.einstellung ?? '').toLowerCase().indexOf(q) >= 0)
+    if (treffer) zeige(treffer)
+    else toast.info(t('crm.werbung.bearbeiten.sucheNichts', 'Keine Einstellung „{{q}}“ in diesem Formular. Andere Ebene im Aufbau wählen.', { q: suche.trim() }))
+  }
+  const sucheTaste = (ev: KeyboardEvent<HTMLInputElement>) => { if (ev.key === 'Enter') { ev.preventDefault(); finde() } }
 
   // Beim Knotenwechsel die Mitte nach oben (Desktop: eigene Scroll-Spalte)
   useEffect(() => { mitteRef.current?.scrollTo?.({ top: 0 }) }, [sel])
@@ -103,7 +146,33 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
     if (knotenKey.split('|').indexOf(sel) < 0) setSel('campaign')
   }, [knotenKey, sel])
 
-  const werte: AssistentWerte = { e, katalog, vorgaben, kurs, schreibSperre, gepaart, springeZu }
+  const bearbeiten = e.modus === 'bearbeiten'
+  const sperre = (node: string, feld: string): string | undefined => {
+    if (!bearbeiten) return undefined
+    const g = sperrGrund(e.locks, node, feld)
+    return g ? t(g[0], g[1]) : undefined
+  }
+  const werte: AssistentWerte = { e, katalog, vorgaben, kurs, schreibSperre, gepaart, springeZu, bearbeiten, sperre }
+
+  // Bearbeiten: gleich die geöffnete Ebene zeigen (Anzeigengruppe oder Anzeige)
+  const zielGewaehlt = useRef(false)
+  useEffect(() => {
+    const z = e.ziel
+    if (zielGewaehlt.current || !bearbeiten || !z || e.laden) return
+    zielGewaehlt.current = true
+    const node = z.level === 'campaign' ? 'campaign'
+      : z.level === 'adset' ? e.spec.adsets.find(a => a.existing_id === z.id)?.key
+        : e.spec.ads.find(a => a.existing_id === z.id)?.key
+    if (node) setSel(node)
+  }, [bearbeiten, e.ziel, e.laden, e.spec])
+
+  // Knoten mit Änderungen gegenüber dem Stand bei Meta (lokaler Vergleich)
+  const geaenderteKnoten = useMemo(() => {
+    const out = new Set<string>()
+    for (const c of e.lokalDiff?.changes ?? []) if (!c.blocked) out.add(c.node)
+    return out
+  }, [e.lokalDiff])
+  const anzahlAenderungen = (e.lokalDiff?.changes ?? []).filter(c => !c.blocked).length
 
   // ── Aufbau ändern ─────────────────────────────────────────────────────────
   const entwurfVorgaben = {
@@ -153,6 +222,15 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
 
   const duplizieren = (node: string) => {
     const d0 = e.spec
+    if (bearbeiten) {
+      const as0 = d0.adsets.find(a => a.key === node)
+      const ad0 = d0.ads.find(a => a.key === node)
+      const ziel = as0?.existing_id
+        ? { level: 'adset' as const, id: as0.existing_id, name: as0.name }
+        : ad0?.existing_id ? { level: 'ad' as const, id: ad0.existing_id, name: ad0.name } : null
+      if (ziel) setDupItems([ziel])
+      return
+    }
     const as = d0.adsets.find(a => a.key === node)
     if (as) {
       const key = neuerKey('as', belegteKeys(d0, e.metaIds, 'adsets'))
@@ -164,8 +242,13 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
         void _a
         kopien.push({ ...JSON.parse(JSON.stringify(rest)) as AdDraft, key: k, adset_key: key })
       }
-      const { existing_id: _b, ...restAs } = as
-      void _b
+      // Felder, die nur edit_apply schreibt (beim Anlegen nicht gesendet), nicht mitkopieren
+      const {
+        existing_id: _b, status: _s, meta_status: _m, adset_schedule: _z, budget_schedule_specs: _p,
+        daily_min_spend_target_cents: _l1, daily_spend_cap_cents: _l2, lifetime_min_spend_target_cents: _l3, lifetime_spend_cap_cents: _l4,
+        ...restAs
+      } = as
+      void _b; void _s; void _m; void _z; void _p; void _l1; void _l2; void _l3; void _l4
       const neu: AdsetDraft = { ...JSON.parse(JSON.stringify(restAs)) as AdsetDraft, key, name: `${as.name} ${t('crm.werbung.builder.baum.kopie', 'Kopie')}` }
       e.update(d => ({ ...d, adsets: [...d.adsets, passeAnzeigengruppeAn(neu, d.campaign.objective, entwurfVorgaben.pixelId)], ads: [...d.ads, ...kopien] }))
       setSel(key)
@@ -308,6 +391,64 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
     }
   }
 
+  // ── Bearbeiten: Änderungen prüfen und übernehmen ─────────────────────────
+  const aenderungenPruefen = async () => {
+    setDiffOffen(true)
+    setDiffLaedt(true)
+    setDiff(null)
+    setDiffFehler(null)
+    setErgebnis(null)
+    setHousingVerlangt(false)
+    try {
+      setDiff(await e.aenderungenLaden())
+    } catch (err) {
+      setDiffFehler(err instanceof Error && err.message === 'nicht_gespeichert'
+        ? t('crm.werbung.bearbeiten.nichtGespeichert', 'Der Entwurf ließ sich nicht speichern. Bitte Verbindung prüfen und noch einmal.')
+        : fehlerText(err, t))
+    } finally {
+      setDiffLaedt(false)
+    }
+  }
+
+  const aenderungenUebernehmen = async (gruende: UebernehmenGruende) => {
+    setUebernimmt(true)
+    try {
+      const r = await e.aenderungenUebernehmen(gruende)
+      setErgebnis(r)
+      if (r.failed.length) toast.info(t('crm.werbung.bearbeiten.teilweiseUebernommen', '{{n}} Änderungen übernommen, {{f}} fehlgeschlagen.', { n: r.applied.length, f: r.failed.length }))
+      else toast.success(t('crm.werbung.bearbeiten.uebernommen', '{{n}} Änderungen bei Meta übernommen.', { n: r.applied.length }))
+    } catch (err) {
+      // Kampagne ohne Wohnen: Zusammenfassung stehen lassen, Admin kann begründen
+      if (fehlerCode(err) === 'housing_required') {
+        setHousingVerlangt(true)
+        toast.error(fehlerText(err, t))
+        return
+      }
+      if (fehlerCode(err) === 'guardrail_exceeded') setDiffFehler(t('crm.werbung.builder.fehler.guardrail_exceeded', 'Das Tageslimit des Werbekontos würde überschritten.'))
+      else setDiffFehler(err instanceof Error && err.message === 'nicht_gespeichert'
+        ? t('crm.werbung.bearbeiten.nichtGespeichert', 'Der Entwurf ließ sich nicht speichern. Bitte Verbindung prüfen und noch einmal.')
+        : fehlerText(err, t))
+      setDiff(null)
+    } finally {
+      setUebernimmt(false)
+    }
+  }
+
+  const neuVonMeta = async () => {
+    const ziel = e.ziel
+    if (!onNeuVonMeta || !ziel) return
+    const ok = await confirm({
+      title: t('crm.werbung.bearbeiten.neuLadenTitel', 'Neu von Meta laden?'),
+      message: t('crm.werbung.bearbeiten.neuLadenText', 'Deine noch nicht übernommenen Änderungen gehen verloren. Bei Meta ändert sich nichts.'),
+      confirmLabel: t('crm.werbung.bearbeiten.neuLaden', 'Neu von Meta laden'),
+    })
+    if (!ok) return
+    // Erst Speichern stoppen und abwarten, sonst überschriebe dieser alte Stand die frisch geladene Zeile
+    const freigeben = await e.einfrieren()
+    const geladen = await onNeuVonMeta(ziel)
+    if (!geladen) freigeben()
+  }
+
   const schliessen = async () => {
     if (schliesst) return
     setSchliesst(true)
@@ -335,10 +476,38 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
 
   const titel = (
     <span className="flex flex-wrap items-center gap-2">
+      {bearbeiten && <Badge tone="info">{t('crm.werbung.bearbeiten.badge', 'Bearbeiten')}</Badge>}
       <span className="min-w-0 truncate">{e.spec.campaign.name || ersatzName}</span>
-      {e.status && <StatusBadge status={e.status} />}
+      {e.status && !bearbeiten && <StatusBadge status={e.status} />}
       {gepaart && <Badge tone="info">{t('crm.werbung.builder.planB', 'Plan B')}</Badge>}
     </span>
+  )
+
+  const footerBearbeiten = (
+    <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center">
+      <div className="min-w-0 text-[11px] text-gray-500 sm:mr-auto">
+        <span className={e.speichern === 'fehler' ? 'font-semibold text-red-700' : ''} title={e.speicherFehler ?? undefined}>{speicherText}</span>
+        {' '}
+        <span>{e.lokalDiff
+          ? t('crm.werbung.bearbeiten.anzahlLokal', '{{n}} Änderungen gegenüber Meta', { n: anzahlAenderungen })
+          : t('crm.werbung.bearbeiten.vergleichFehlt', 'Vergleich mit Meta beim Prüfen.')}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
+        <button type="button" onClick={() => void schliessen()} className="hp-btn hp-btn-ghost px-2 text-sm">{t('crm.werbung.builder.schliessen', 'Schließen')}</button>
+        {e.id && e.status !== 'discarded' ? (
+          <button type="button" onClick={() => void verwerfen()} className="hp-btn hp-btn-ghost px-2 text-sm text-red-700">{t('crm.werbung.builder.verwerfen', 'Verwerfen')}</button>
+        ) : <span className="sm:hidden" />}
+        {naechster ? (
+          <button type="button" onClick={() => setSel(naechster.node)} className="hp-btn hp-btn-ghost px-2 text-sm">{t('crm.werbung.builder.weiter', 'Weiter')}</button>
+        ) : <span className="sm:hidden" />}
+      </div>
+      <button type="button" onClick={() => void aenderungenPruefen()} disabled={e.nurLesen || diffLaedt}
+        className="hp-btn hp-btn-primary disabled:opacity-50">
+        {diffLaedt && <Spinner size="sm" />}
+        {t('crm.werbung.bearbeiten.pruefen', 'Änderungen prüfen')}
+        {e.lokalDiff && anzahlAenderungen > 0 && <span className="ml-1 rounded-full bg-white/20 px-1.5 text-xs tabular-nums">{anzahlAenderungen}</span>}
+      </button>
+    </div>
   )
 
   const footer = (
@@ -387,7 +556,7 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
 
   return (
     <AssistentKontext.Provider value={werte}>
-      <Modal open onClose={() => void schliessen()} size="full" title={titel} footer={footer} closeOnBackdrop={false} bodyClassName="p-0">
+      <Modal open onClose={() => void schliessen()} size="full" title={titel} footer={bearbeiten ? footerBearbeiten : footer} closeOnBackdrop={false} bodyClassName="p-0">
         {e.laden ? (
           <div className="flex justify-center py-24"><Spinner size="lg" /></div>
         ) : e.ladeFehler ? (
@@ -396,10 +565,30 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
           <div className="flex flex-col lg:grid lg:h-full lg:grid-cols-[15rem_minmax(0,1fr)_22rem]">
             <aside className="border-b border-gray-100 p-3 lg:min-h-0 lg:overflow-y-auto lg:border-b-0 lg:border-r">
               <EntwurfBaum sel={sel} onSelect={setSel} onNeueGruppe={neueGruppe} onNeueAnzeige={neueAnz}
-                onNeuesPaar={neuesPaar} onDuplizieren={duplizieren} onEntfernen={n => void entfernen(n)} />
+                onNeuesPaar={neuesPaar} onDuplizieren={duplizieren} onEntfernen={n => void entfernen(n)}
+                geaendert={geaenderteKnoten} />
             </aside>
 
             <div ref={mitteRef} className="min-w-0 space-y-3 bg-hp-cream/40 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto">
+              <div className="flex items-center gap-2">
+                <input type="search" value={suche} onChange={ev => setSuche(ev.target.value)} onKeyDown={sucheTaste}
+                  placeholder={t('crm.werbung.bearbeiten.suche', 'Einstellung finden …')} aria-label={t('crm.werbung.bearbeiten.suche', 'Einstellung finden …')}
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-orange-200" />
+                <button type="button" onClick={finde} disabled={!suche.trim()} className="hp-btn hp-btn-ghost min-h-0 px-3 py-1.5 text-xs disabled:opacity-50">
+                  {t('crm.werbung.bearbeiten.finden', 'Finden')}
+                </button>
+              </div>
+              {bearbeiten && (
+                <div role="note" className="rounded-lg border border-hp-navy/15 bg-white px-3 py-2 text-xs text-hp-navy">
+                  <span className="font-semibold">{t('crm.werbung.bearbeiten.bannerTitel', 'Du bearbeitest laufende Werbung bei Meta.')}</span>{' '}
+                  {t('crm.werbung.bearbeiten.bannerText', 'Gespeichert wird nur hier. Erst „Änderungen prüfen“ zeigt, was sich bei Meta ändert, und erst deine Bestätigung schreibt es. 🔒-Felder lässt Meta nicht mehr ändern.')}
+                  {onNeuVonMeta && e.ziel && (
+                    <button type="button" onClick={() => void neuVonMeta()} className="ml-1 font-semibold underline">
+                      {t('crm.werbung.bearbeiten.neuLaden', 'Neu von Meta laden')}
+                    </button>
+                  )}
+                </div>
+              )}
               {schreibSperre && (
                 <div role="note" className="rounded-lg border border-hp-navy/15 bg-white px-3 py-2 text-xs text-hp-navy">
                   <span className="font-semibold">{schreibSperre}.</span>{' '}
@@ -411,13 +600,13 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
                   {t('crm.werbung.builder.katalogFehler', 'Seiten, Pixel und Formulare von Meta konnten nicht geladen werden ({{fehler}}). IDs lassen sich trotzdem von Hand eintragen.', { fehler: katalogFehler })}
                 </div>
               )}
-              {start.art === 'neu' && (start.hinweise ?? []).length > 0 && sel === 'campaign' && (
+              {start.art !== 'laden' && (start.hinweise ?? []).length > 0 && (sel === 'campaign' || bearbeiten) && (
                 <div role="note" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                   <p className="font-semibold">{t('crm.werbung.builder.importHinweise', 'Hinweise zur Übernahme:')}</p>
                   <ul className="mt-0.5 list-disc pl-4">{(start.hinweise ?? []).map((h, i) => <li key={i}>{h}</li>)}</ul>
                 </div>
               )}
-              {e.nurLesen && e.status !== 'discarded' && (
+              {e.nurLesen && e.status !== 'discarded' && !bearbeiten && (
                 <div role="note" className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
                   {e.status === 'created'
                     ? t('crm.werbung.builder.nurLesenAngelegt', 'Bei Meta angelegt (pausiert). Der Entwurf ist jetzt schreibgeschützt; Änderungen bitte als neuen Entwurf.')
@@ -454,11 +643,23 @@ export default function KampagnenAssistent({ start, einstellungen, onClose }: Pr
             <aside className="space-y-5 border-t border-gray-100 p-3 sm:p-4 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
               <VorschauPanel ad={selAd} />
               <PruefPanel leitplanke={leitplanke} onPruefen={() => void pruefen()} pruefLaeuft={pruefLaeuft}
-                istAdmin={istAdmin} forceGrund={forceGrund} setForceGrund={setForceGrund} />
+                istAdmin={istAdmin} forceGrund={forceGrund} setForceGrund={setForceGrund}
+                onAenderungenPruefen={() => void aenderungenPruefen()} anzahlAenderungen={e.lokalDiff ? anzahlAenderungen : null} />
             </aside>
           </div>
         )}
       </Modal>
+
+      {bearbeiten && (
+        <AenderungenDialog offen={diffOffen} laedt={diffLaedt} diff={diff} fehler={diffFehler} ergebnis={ergebnis} uebernimmt={uebernimmt}
+          spec={e.spec} kurs={kurs} istAdmin={istAdmin} schreibSperre={schreibSperre} housingVerlangt={housingVerlangt}
+          onClose={() => setDiffOffen(false)}
+          onUebernehmen={g => void aenderungenUebernehmen(g)}
+          onWeiter={() => { setDiffOffen(false); setErgebnis(null) }}
+          onFertig={() => { setDiffOffen(false); onClose() }}
+          onSpringe={(node, field) => { setDiffOffen(false); springeZu(node, field) }} />
+      )}
+      <DuplizierenDialog offen={dupItems.length > 0} items={dupItems} onClose={() => setDupItems([])} />
     </AssistentKontext.Provider>
   )
 }

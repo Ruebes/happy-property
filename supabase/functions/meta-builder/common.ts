@@ -268,6 +268,8 @@ export interface PostOpts {
   timeoutMs?: number
   /** zusätzliche Felder fürs Protokoll (z. B. Lint-Übersteuerung) */
   logExtra?: Raw
+  /** Vorher-Stand fürs Protokoll (Bearbeiten, Massenbearbeitung) */
+  before?: unknown
 }
 
 export function actorFields(ctx: Ctx): { actor: string | null; actor_kind: 'user' | 'system' } {
@@ -286,6 +288,7 @@ export async function metaPost<T = Raw>(ctx: Ctx, path: string, body: Raw, o: Po
     path,
     validate_only: o.validateOnly === true,
     request: o.logExtra ? { ...body, _hp: o.logExtra } : body,
+    ...(o.before !== undefined ? { before: o.before } : {}),
   }
   try {
     const res = await graphPost<T>(path, body, {

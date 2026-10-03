@@ -185,6 +185,16 @@ verify_jwt = false
 [functions.werbe-autopilot]
 verify_jwt = false
 
+# Werbe-Werkzeuge (Zielgruppen, Sofortformulare, Conversions, Pixel-Diagnose): Guard
+# requireAdsAccess im Code; Schreib-Modi zusätzlich builder_enabled + META_WRITES_DISABLED.
+[functions.meta-werkzeuge]
+verify_jwt = false
+
+# Berichte der Kampagnen-Zentrale (Insights, Aktivitäten, Status, Empfehlungen), nur
+# lesend bei Meta; Guard requireAdsAccess im Code.
+[functions.meta-berichte]
+verify_jwt = false
+
 # Deck-/Projekt-Functions (Sicherheitspaket S3, Befund E4-4): Guard per
 # gateCaller im Code, verify_jwt wie live.
 [functions.generate-deck]

@@ -32,6 +32,10 @@
     "werbe-autopilot/index.ts",
     "_types/resvg.d.ts",
     "studio/index.ts",
-    "meta-builder/index.ts"
+    "meta-builder/index.ts",
+    "meta-builder/edit.ts",
+    "meta-builder/bulk.ts",
+    "meta-werkzeuge/index.ts",
+    "meta-berichte/index.ts"
   ]
 }

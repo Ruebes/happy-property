@@ -25,6 +25,11 @@
 //       höchstens 15 Meta-Aufrufe, Abbruch über 70 % Auslastung) -> meta_drafts.validation
 //   { mode: 'media_status', id }                              Video-Verarbeitung bei Meta
 //   { mode: 'discard', draft_id }                             Entwurf verwerfen (nur CRM)
+//   { mode: 'edit_load', level, id, neu_laden? }              bestehendes Objekt zum Bearbeiten laden:
+//       Entwurf kind 'edit' anlegen bzw. offenen wieder aufnehmen (Ausgangsstand in meta_ids.edit),
+//       Antwort { draft_id, spec, locks, warnings, baseline_at, reused }
+//   { mode: 'edit_diff', draft_id }                           „Das ändert sich bei Meta“: Änderungen je Feld
+//       (Lernphase, gesperrt, Konflikt mit dem Live-Stand), Prüfung, Lint, Leitplanke. Schreibt nichts.
 //
 // ── Schreib-Modi (zusätzlich: admin/verwalter oder Recht „werbung“,
 //    ad_settings.builder_enabled = true, Secret META_WRITES_DISABLED != 1) ──
@@ -44,7 +49,17 @@
 //   { mode: 'activate_draft', draft_id, levels[], confirm: true }
 //       nur Personen, nur Status created; Anzeigen -> Gruppen -> Kampagne, vorher budgetHeadroom;
 //       nur Knoten, die noch im Entwurf stehen (Rest in skipped, bleibt pausiert)
-//   { mode: 'duplicate', level, id, target_adset_id?, deep?, rename_suffix? }  POST /{id}/copies, PAUSED
+//   { mode: 'duplicate', level, ids[], ziel: { art: original|vorhanden|neu, campaign_id?, adset_id? }, kopien 1-5, deep?,
+//       housing_override_reason? }
+//       POST /{id}/copies, alles PAUSED, Name + " - Kopie"; über 3 Anzeigen Ebene für Ebene (gedeckelt);
+//       Kopie in Kampagne ohne HOUSING = 409 (Admin mit Begründung); Ziel neu nur aus einem Elternobjekt
+//   { mode: 'edit_apply', draft_id, confirm: true, force_lint_reason?, housing_override_reason? }
+//       nur Personen; nur geänderte, änderbare Felder an Meta (Targeting zusammengeführt + Wohnen-Regeln,
+//       Werbemittel: hp.creative_tausch 'ersetzen' = neues Creative an die Anzeige, 'neue_anzeige' = neue
+//       Anzeige + alte pausieren; ohne HOUSING nur Admin mit Begründung), Leitplanke einmal für alle
+//       Erhöhungen, Budget max. 4x/Stunde je Objekt; nicht Übernommenes bleibt im Entwurf
+//   { mode: 'bulk', items[{level,id}] (max. 50), patch: { status?, daily_budget_cents?, budget_prozent?,
+//       end_time?, name_suffix? }, confirm: true }  Massenbearbeitung, Leitplanke einmal für alles
 //   { mode: 'leadform_create', page_id?, spec }               Sofortformular (Seiten-Token, Höhere Absicht)
 //
 // Jeder Meta-POST (auch validate_only) landet in meta_write_log. Der Token steht
@@ -68,8 +83,9 @@ import { createClient } from 'jsr:@supabase/supabase-js@2'
 import { requireAdsAccess } from '../_shared/adsAuth.ts'
 import {
   BUILDER_MODES, BUILDER_WRITE_MODES,
-  type ActivateDraftRequest, type AudienceEligibilityRequest, type BuilderMode, type CatalogRequest,
-  type CreateRequest, type CreativeDetailsRequest, type DiscardRequest, type DuplicateRequest, type EstimateRequest,
+  type ActivateDraftRequest, type AudienceEligibilityRequest, type BuilderMode, type BulkRequest, type CatalogRequest,
+  type CreateRequest, type CreativeDetailsRequest, type DiscardRequest, type DuplicateRequest, type EditApplyRequest,
+  type EditDiffRequest, type EditLoadRequest, type EstimateRequest,
   type ImportRequest, type LeadformCreateRequest, type LeadgenLookupRequest, type MediaStatusRequest,
   type MediaUploadRequest, type PixelStatusRequest, type PreviewRequest, type UsageRequest, type ValidateRequest,
 } from '../_shared/metaSpec.ts'
@@ -77,6 +93,8 @@ import { BuilderError, makeCtx, toErrorResponse, writeGate, type Ctx } from './c
 import {
   modeAudienceEligibility, modeCatalog, modeCreativeDetails, modeEstimate, modeLeadgenLookup, modePixelStatus, modeUsage,
 } from './catalog.ts'
+import { modeBulk } from './bulk.ts'
+import { modeEditApply, modeEditDiff, modeEditLoad } from './edit.ts'
 import { modeImport } from './importer.ts'
 import { modeMediaStatus, modeMediaUpload } from './media.ts'
 import { modeLeadformCreate } from './pages.ts'
@@ -116,6 +134,10 @@ async function dispatch(ctx: Ctx, mode: BuilderMode, body: Record<string, unknow
     case 'activate_draft': return await modeActivateDraft(ctx, b as ActivateDraftRequest)
     case 'duplicate': return await modeDuplicate(ctx, b as DuplicateRequest)
     case 'leadform_create': return await modeLeadformCreate(ctx, b as LeadformCreateRequest)
+    case 'edit_load': return await modeEditLoad(ctx, b as EditLoadRequest)
+    case 'edit_diff': return await modeEditDiff(ctx, b as EditDiffRequest)
+    case 'edit_apply': return await modeEditApply(ctx, b as EditApplyRequest)
+    case 'bulk': return await modeBulk(ctx, b as BulkRequest)
   }
   throw new BuilderError(400, 'invalid_request', `Unbekannter Modus "${String(mode)}".`)
 }
