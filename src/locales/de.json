@@ -320,7 +320,10 @@
       "loadError": "Konnte nicht geladen werden. Bitte Seite neu laden.",
       "empty": "Noch keine Inhalte - sobald etwas Neues für dich bereitliegt, sagt Lotte dir Bescheid.",
       "mine": "Zu deinen Wohnungen",
-      "general": "Für alle Eigentümer"
+      "general": "Für alle Eigentümer",
+      "new": "Neu",
+      "allFolders": "Alle Ordner",
+      "count": "{{n}} Einträge"
     },
     "drive": {
       "title": "Meine Dateien",
@@ -4575,7 +4578,8 @@
       "composeBtn": "Nachricht von Lotte entwerfen",
       "msgDe": "Nachricht (Deutsch, editierbar)",
       "msgEn": "Nachricht (Englisch, editierbar)",
-      "composeFail": "Entwurf fehlgeschlagen"
+      "composeFail": "Entwurf fehlgeschlagen",
+      "folder": "Ordner"
     },
     "devmails": {
       "title": "Developer-Mails",

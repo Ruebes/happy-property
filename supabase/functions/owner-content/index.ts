@@ -219,9 +219,9 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
     const customEn = (custom.message_en ?? '').trim() || customDe
 
     const { data: docRow, error: de } = await sb.from('owner_documents')
-      .select('id, title, kind, property_id, file_url').eq('id', body.doc_id).maybeSingle()
+      .select('id, title, kind, property_id, file_url, category').eq('id', body.doc_id).maybeSingle()
     if (de || !docRow) return json({ error: 'Dokument nicht gefunden' }, 404)
-    const doc = docRow as { id: string; title: string; kind: string; property_id: string | null; file_url: string }
+    const doc = docRow as { id: string; title: string; kind: string; property_id: string | null; file_url: string; category: string | null }
 
     // Betroffene Eigentümer bestimmen
     let unitLabel = ''
@@ -262,7 +262,8 @@ Antworte NUR als JSON: {"de": "...", "en": "..."}`
       })
     }
 
-    const portal = `${SITE}/eigentuemer/dashboard`
+    // Link führt direkt in den Ordner des Dokuments im Downloadbereich
+    const portal = `${SITE}/eigentuemer/downloads?ordner=${encodeURIComponent(doc.category || 'sonstiges')}`
     const results: Array<{ name: string; mail: boolean; whatsapp: boolean; error?: string }> = []
     for (const r of recipients) {
       const isVideo = doc.kind === 'video'

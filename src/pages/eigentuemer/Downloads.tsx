@@ -1,14 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import DashboardLayout from '../../components/DashboardLayout'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../lib/auth'
+import { OWNER_DOC_FOLDERS, folderOf } from '../../lib/ownerDocFolders'
 
 // ── Downloadportal ────────────────────────────────────────────────────────────
 // Alles, was Sven über den Upload-Button fürs Eigentümerportal bereitstellt
 // (Steuer-Guides, Videos, Leitfäden): allgemeine Inhalte + Inhalte zu den
 // eigenen Wohnungen. Sichtbarkeit regelt die Datenbank (RLS od_read):
 // property_id NULL = für alle, sonst nur der Eigentümer der Wohnung.
+// Gegliedert in Ordner (owner_documents.category, Liste in lib/ownerDocFolders).
+// ?ordner=<key> öffnet direkt einen Ordner (Link in Lottes Nachricht).
 
 interface DownloadDoc {
   id: string
@@ -17,8 +21,10 @@ interface DownloadDoc {
   kind: string           // 'video' | 'document'
   file_url: string
   property_id: string | null
+  category: string | null
   created_at: string
 }
+const NEW_MS = 14 * 86400000
 const isVideoUrl = (d: DownloadDoc) =>
   d.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(d.file_url)
 
@@ -30,6 +36,15 @@ export default function EigentuemerDownloads() {
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
   const [playing, setPlaying] = useState<string | null>(null)
+  const [params, setParams] = useSearchParams()
+  const openKey = params.get('ordner')
+  const en = i18n.language === 'en'
+  const openFolder = (key: string | null) => {
+    const next = new URLSearchParams(params)
+    if (key) next.set('ordner', key); else next.delete('ordner')
+    setParams(next)
+    window.scrollTo({ top: 0 })
+  }
 
   useEffect(() => {
     if (!profile?.id) return
@@ -38,7 +53,7 @@ export default function EigentuemerDownloads() {
     void (async () => {
       try {
         const { data, error } = await supabase.from('owner_documents')
-          .select('id, title, description, kind, file_url, property_id, created_at')
+          .select('id, title, description, kind, file_url, property_id, category, created_at')
           .order('created_at', { ascending: false })
         if (error) throw error
         const rows = (data as DownloadDoc[]) ?? []
@@ -66,8 +81,11 @@ export default function EigentuemerDownloads() {
     return () => { cancelled = true; clearTimeout(safety) }
   }, [profile?.id])
 
-  const general = docs.filter(d => !d.property_id)
-  const mine = docs.filter(d => d.property_id)
+  const isNew = (d: DownloadDoc) => Date.now() - Date.parse(d.created_at) < NEW_MS
+  const folders = OWNER_DOC_FOLDERS
+    .map(f => ({ ...f, docs: docs.filter(d => folderOf(d.category).key === f.key) }))
+    .filter(f => f.docs.length > 0)
+  const current = openKey ? folders.find(f => f.key === openKey) ?? null : null
 
   const card = (d: DownloadDoc) => {
     const video = isVideoUrl(d)
@@ -76,7 +94,10 @@ export default function EigentuemerDownloads() {
         <div className="flex items-start gap-3">
           <span className="text-3xl shrink-0">{video ? '🎬' : '📄'}</span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-gray-900">{d.title}</p>
+            <p className="font-semibold text-gray-900">
+              {d.title}
+              {isNew(d) && <span className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-white px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ff795d' }}>{t('eigentuemer.downloads.new', 'Neu')}</span>}
+            </p>
             <p className="text-xs text-gray-400 mt-0.5">
               {d.property_id
                 ? `🏠 ${propLabels[d.property_id] ?? t('eigentuemer.downloads.yourUnit', 'Deine Wohnung')}`
@@ -131,21 +152,40 @@ export default function EigentuemerDownloads() {
             <p className="text-3xl mb-2">🐾</p>
             <p className="text-sm text-gray-500">{t('eigentuemer.downloads.empty', 'Noch keine Inhalte - sobald etwas Neues für dich bereitliegt, sagt Lotte dir Bescheid.')}</p>
           </div>
+        ) : current ? (
+          <div className="space-y-3">
+            <button onClick={() => openFolder(null)} className="text-sm font-medium text-gray-500 hover:text-gray-800">
+              ← {t('eigentuemer.downloads.allFolders', 'Alle Ordner')}
+            </button>
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">{current.icon}</span>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">{en ? current.en : current.de}</h2>
+                <p className="text-xs text-gray-400">{en ? current.hintEn : current.hintDe}</p>
+              </div>
+            </div>
+            {current.docs.map(card)}
+          </div>
         ) : (
-          <>
-            {mine.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('eigentuemer.downloads.mine', 'Zu deinen Wohnungen')}</h2>
-                {mine.map(card)}
-              </div>
-            )}
-            {general.length > 0 && (
-              <div className="space-y-3">
-                <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('eigentuemer.downloads.general', 'Für alle Eigentümer')}</h2>
-                {general.map(card)}
-              </div>
-            )}
-          </>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {folders.map(f => {
+              const fresh = f.docs.filter(isNew).length
+              return (
+                <button key={f.key} onClick={() => openFolder(f.key)}
+                  className="text-left bg-white rounded-2xl border border-gray-100 shadow-sm p-4 hover:border-orange-200 hover:shadow transition flex items-start gap-3">
+                  <span className="text-3xl shrink-0">{f.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold text-gray-900">
+                      {en ? f.en : f.de}
+                      {fresh > 0 && <span className="ml-2 align-middle text-[10px] font-bold uppercase tracking-wide text-white px-1.5 py-0.5 rounded" style={{ backgroundColor: '#ff795d' }}>{fresh} {t('eigentuemer.downloads.new', 'Neu')}</span>}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">{en ? f.hintEn : f.hintDe}</p>
+                    <p className="text-xs text-gray-500 mt-1.5">{t('eigentuemer.downloads.count', '{{n}} Einträge', { n: f.docs.length })}</p>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
         )}
       </div>
     </DashboardLayout>

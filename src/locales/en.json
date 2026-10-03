@@ -320,7 +320,10 @@
       "loadError": "Could not load. Please reload the page.",
       "empty": "Nothing here yet - as soon as something new is ready for you, Lotte will let you know.",
       "mine": "For your apartments",
-      "general": "For all owners"
+      "general": "For all owners",
+      "new": "New",
+      "allFolders": "All folders",
+      "count": "{{n}} items"
     },
     "drive": {
       "title": "My files",
@@ -4693,7 +4696,8 @@
       "composeBtn": "Let Lotte draft the message",
       "msgDe": "Message (German, editable)",
       "msgEn": "Message (English, editable)",
-      "composeFail": "Draft failed"
+      "composeFail": "Draft failed",
+      "folder": "Folder"
     },
     "devmails": {
       "title": "Developer mails",

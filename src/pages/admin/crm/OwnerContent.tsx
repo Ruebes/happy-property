@@ -4,18 +4,23 @@ import DashboardLayout from '../../../components/DashboardLayout'
 import { supabase } from '../../../lib/supabase'
 import { useAuth } from '../../../lib/auth'
 import { CustomSelect } from '../../../components/CustomSelect'
+import { OWNER_DOC_FOLDERS, folderOf } from '../../../lib/ownerDocFolders'
 
 // ── Eigentümer-Inhalte ────────────────────────────────────────────────────────
 // Sven lädt Videos (Botschaften) oder Dokumente (z.B. Steuer-Leitfaden) für das
 // Eigentümerportal hoch — mit eigenem Titel, für ALLE Eigentümer oder gezielt
 // für eine Wohnung. Auf Wunsch benachrichtigt Lotte die betroffenen Eigentümer
 // per Mail + WhatsApp (Edge owner-content, action notify).
+// Jeder Eintrag liegt in einem Ordner (category); der Zypern-Report wird
+// jeden Monat automatisch in „Monatsberichte" abgelegt (Edge zypern-report).
 
 interface OwnerDoc {
   id: string; title: string; description: string; kind: string
   file_url: string; storage_path: string; property_id: string | null
   notified_at: string | null; created_at: string
+  category: string | null; report_month: string | null
 }
+const FOLDER_OPTS = OWNER_DOC_FOLDERS.map(f => ({ value: f.key, label: `${f.icon} ${f.de}` }))
 interface PropOpt { id: string; label: string }
 
 export default function OwnerContent() {
@@ -26,6 +31,9 @@ export default function OwnerContent() {
   const [loading, setLoading] = useState(true)
   const [title, setTitle] = useState('')
   const [target, setTarget] = useState('all')
+  // Ordner: ohne eigene Wahl „Deine Wohnung" bei Wohnungs-Uploads, sonst „Sonstiges"
+  const [folderPick, setFolderPick] = useState<string | null>(null)
+  const folder = folderPick ?? (target === 'all' ? 'sonstiges' : 'wohnung')
   const [file, setFile] = useState<File | null>(null)
   const [notify, setNotify] = useState(true)
   // Stichpunkte → KI formuliert Lottes Nachricht (editierbar, DE + EN)
@@ -73,6 +81,7 @@ export default function OwnerContent() {
         title: title.trim(), kind: isVideo ? 'video' : 'document',
         file_url: url, storage_path: path,
         property_id: target === 'all' ? null : target,
+        category: folder,
         created_by: profile?.id ?? null,
       }).select('id').single()
       if (error) throw error
@@ -86,7 +95,7 @@ export default function OwnerContent() {
         msg += ne || n.error ? ` — ❌ ${t('crm.ownerContent.notifyFail', 'Benachrichtigung fehlgeschlagen')}: ${n.error ?? ne?.message}` : ` — 🐾 ${t('crm.ownerContent.notified', '{{n}} Eigentümer benachrichtigt', { n: n.recipients ?? 0 })}`
       }
       showToast(msg)
-      setTitle(''); setFile(null); setBullets(''); setMsgDe(''); setMsgEn('')
+      setTitle(''); setFile(null); setBullets(''); setMsgDe(''); setMsgEn(''); setFolderPick(null)
       if (fileRef.current) fileRef.current.value = ''
       await fetchAll()
     } catch (err) {
@@ -100,11 +109,18 @@ export default function OwnerContent() {
     if (error) showToast(`❌ ${error.message}`)
     setRenameId(null); await fetchAll()
   }
+  const moveTo = async (d: OwnerDoc, category: string) => {
+    if (category === folderOf(d.category).key) return
+    const { data, error } = await supabase.from('owner_documents').update({ category }).eq('id', d.id).select('id')
+    if (error || !data?.length) { showToast(`❌ ${error?.message ?? 'Keine Berechtigung'}`); return }
+    setDocs(arr => arr.map(x => x.id === d.id ? { ...x, category } : x))
+  }
   const remove = async (d: OwnerDoc) => {
     if (!window.confirm(t('crm.ownerContent.delConfirm', '„{{t}}" für die Eigentümer löschen?', { t: d.title }) as string)) return
-    await supabase.storage.from('owner-docs').remove([d.storage_path]).catch(() => null)
-    const { error } = await supabase.from('owner_documents').delete().eq('id', d.id)
-    if (error) { showToast(`❌ ${error.message}`); return }
+    // Zypern-Report-Einträge zeigen auf web-reports, dort nichts löschen (storage_path leer)
+    if (d.storage_path) await supabase.storage.from('owner-docs').remove([d.storage_path]).catch(() => null)
+    const { data: gone, error } = await supabase.from('owner_documents').delete().eq('id', d.id).select('id')
+    if (error || !gone?.length) { showToast(`❌ ${error?.message ?? 'Keine Berechtigung'}`); return }
     setDocs(arr => arr.filter(x => x.id !== d.id))
   }
   // Stichpunkte → Lotte-Nachricht entwerfen lassen (DE + EN, danach editierbar)
@@ -158,6 +174,12 @@ export default function OwnerContent() {
               className="text-sm text-gray-600 file:mr-3 file:px-4 file:py-2 file:rounded-xl file:border-0 file:bg-gray-100 file:text-gray-700 file:font-medium file:cursor-pointer" />
             <div className="min-w-[260px] flex-1">
               <CustomSelect value={target} onChange={v => setTarget(v)} options={[{ value: 'all', label: `👥 ${t('crm.ownerContent.allOwners', 'ALLE Eigentümer')}` }, ...props.map(p => ({ value: p.id, label: `🏠 ${p.label}` }))]} />
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-gray-500 shrink-0">📂 {t('crm.ownerContent.folder', 'Ordner')}</span>
+            <div className="min-w-[220px] flex-1">
+              <CustomSelect value={folder} onChange={v => setFolderPick(v)} options={FOLDER_OPTS} />
             </div>
           </div>
           {/* Stichpunkte → Lotte formuliert die Nachricht */}
@@ -219,6 +241,9 @@ export default function OwnerContent() {
                     {' · '}{new Date(d.created_at).toLocaleDateString('de-DE')}
                     {d.notified_at && <span className="ml-1 text-green-600">· 🐾 {t('crm.ownerContent.notifiedBadge', 'benachrichtigt')}</span>}
                   </p>
+                  <div className="mt-1.5 max-w-[240px]">
+                    <CustomSelect value={folderOf(d.category).key} onChange={v => void moveTo(d, v)} options={FOLDER_OPTS} />
+                  </div>
                 </div>
                 <div className="flex gap-1 shrink-0 flex-wrap justify-end">
                   <a href={d.file_url} target="_blank" rel="noreferrer" className="text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">👁</a>

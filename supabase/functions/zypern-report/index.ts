@@ -24,6 +24,13 @@
 //   POST {action:'rerender', month}  rendert eine Ausgabe mit gespeichertem Inhalt
 //                            neu und lädt sie hoch (z.B. nach Textänderung der
 //                            festen Seiten), ohne neue Recherche.
+//   POST {action:'to_owners', month, notify?, test?}  legt eine live Ausgabe im
+//                            Downloadbereich der Eigentümer ab (Ordner
+//                            „Monatsberichte"). notify: Lotte schreibt allen
+//                            Eigentümern (test: nur an Sven). Passiert nach jeder
+//                            ERSTEN Veröffentlichung automatisch mit notify.
+//                            Abschalten: crm_settings owner_report_auto = 'off'
+//                            (oder 'silent' = ablegen ohne Nachricht).
 // Schutz (alles außer GET): Service-Role-Key ODER Header x-cron-secret =
 // connector_secrets CRON_SECRET_SOCIAL ODER eingeloggter Nutzer mit Rolle
 // admin/verwalter bzw. permissions.funnel = true.
@@ -1019,6 +1026,7 @@ const BUILD_DEADLINE_MS = 330_000
 const STALE_BUILD_MS = 15 * 60_000
 const CRON_LAST_DAY = 3
 const FAIL_TASK_TITLE = '📄 Zypern-Report konnte nicht erstellt werden'
+const OWNER_FAIL_TITLE = '📄 Zypern-Report fehlt im Eigentümerportal'
 const isStale = (r: Pick<ReportRow, 'status' | 'started_at'>) =>
   r.status === 'building' && (!r.started_at || Date.now() - Date.parse(r.started_at) >= STALE_BUILD_MS)
 
@@ -1050,6 +1058,73 @@ async function buildEdition(sb: SupabaseClient, month: string, signal: AbortSign
   if (error) throw new Error(`DB: ${error.message}`)
 }
 
+// ── Ablage im Eigentümerportal ──────────────────────────────────────────────
+// Neue Ausgabe → owner_documents (Ordner monatsbericht, für alle Eigentümer) und
+// Lotte-Nachricht über owner-content (compose + notify). report_month ist unique,
+// jede Ausgabe landet also höchstens einmal im Portal und wird nur einmal gemeldet.
+async function toOwners(sb: SupabaseClient, month: string, opts: { notify: boolean; test?: boolean }): Promise<Record<string, unknown>> {
+  const { data: rep } = await sb.from('zypern_reports').select('status, pdf_url, content').eq('month', month).maybeSingle()
+  const r = rep as { status?: string; pdf_url?: string | null; content?: ReportContent | null } | null
+  if (r?.status !== 'live' || !r.pdf_url) return { ok: false, error: 'Ausgabe ist nicht live.' }
+  const title = `Zypern-Report ${monthLabel(month)}`
+  const { data: existing } = await sb.from('owner_documents').select('id, notified_at').eq('report_month', month).maybeSingle()
+  let doc = existing as { id: string; notified_at: string | null } | null
+  let created = false
+  if (!doc) {
+    const { data: ins, error } = await sb.from('owner_documents').insert({
+      title, kind: 'document', file_url: r.pdf_url, storage_path: null, property_id: null,
+      category: 'monatsbericht', report_month: month,
+      description: r.content?.subtitle ?? '',
+    }).select('id, notified_at').single()
+    if (error) {
+      if (error.code === '23505') return { ok: true, month, skipped: 'schon_im_portal' }
+      return { ok: false, error: `Portal: ${error.message}` }
+    }
+    doc = ins as { id: string; notified_at: string | null }
+    created = true
+  }
+  if (!opts.notify) return { ok: true, month, doc_id: doc.id, created, notified: false }
+  if (doc.notified_at && !opts.test) return { ok: true, month, doc_id: doc.id, created, notified: false, skipped: 'schon_gemeldet' }
+
+  const fn = (body: Record<string, unknown>) => fetch(`${SUPABASE_URL}/functions/v1/owner-content`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${SERVICE_KEY}`, apikey: SERVICE_KEY },
+    body: JSON.stringify(body),
+  }).then(async x => (await x.json().catch(() => ({}))) as Record<string, unknown>)
+
+  // Lottes Text aus dem Inhalt der Ausgabe; scheitert das, nimmt owner-content den Standardsatz.
+  const c = r.content
+  const bullets = [
+    `Neue Ausgabe des monatlichen Zypern-Reports (${monthLabel(month)}), liegt im Ordner Monatsberichte`,
+    c?.subtitle ? `Thema: ${c.subtitle}` : '',
+    ...(c?.news ?? []).slice(0, 4).map(n => `Meldung: ${n.heading}`),
+    'Kurz und verständlich zusammengefasst, was sich auf Zypern gerade tut, mit Quellen',
+  ].filter(Boolean).join('\n')
+  let message_de: string | undefined, message_en: string | undefined
+  try {
+    const comp = await fn({ action: 'compose', title, kind: 'document', bullets })
+    if (typeof comp.de === 'string' && comp.de.trim()) { message_de = comp.de; message_en = typeof comp.en === 'string' ? comp.en : undefined }
+    else console.warn('[zypern-report] Lotte-Text:', comp.error)
+  } catch (e) { console.warn('[zypern-report] Lotte-Text:', e instanceof Error ? e.message : String(e)) }
+  const res = await fn({ action: 'notify', doc_id: doc.id, test: opts.test === true, message_de, message_en })
+  if (res.error) return { ok: false, month, doc_id: doc.id, created, error: `Lotte: ${res.error}` }
+  return { ok: true, month, doc_id: doc.id, created, notified: true, test: opts.test === true, recipients: res.recipients }
+}
+async function autoToOwners(sb: SupabaseClient, month: string, log: (m: string) => void): Promise<void> {
+  try {
+    const { data } = await sb.from('crm_settings').select('value').eq('key', 'owner_report_auto').maybeSingle()
+    const mode = String((data as { value?: string } | null)?.value ?? 'on').trim().toLowerCase()
+    if (mode === 'off') { log('Eigentümerportal: aus'); return }
+    // Nur die neueste Ausgabe wird gemeldet (Nachbau eines alten Monats nicht).
+    const notify = mode !== 'silent' && month === cyMonth()
+    const out = await toOwners(sb, month, { notify })
+    log(`Eigentümerportal: ${JSON.stringify(out)}`)
+    if (out.ok === false) await failTask(sb, month, `Report ist fertig, aber nicht im Eigentümerportal angekommen: ${out.error}`, OWNER_FAIL_TITLE)
+  } catch (e) {
+    console.error('[zypern-report] Eigentümerportal:', e instanceof Error ? e.message : String(e))
+  }
+}
+
 // wasLive: Die Ausgabe war schon veröffentlicht, ihr PDF bleibt bei einem Fehler online.
 // finalAttempt: Kein weiterer Cron-Versuch folgt, ein Fehler wird zur Aufgabe für den Admin.
 async function runBuild(sb: SupabaseClient, month: string, wasLive: boolean, finalAttempt: boolean) {
@@ -1064,6 +1139,7 @@ async function runBuild(sb: SupabaseClient, month: string, wasLive: boolean, fin
     work.catch(() => {}) // verliert sie das Rennen, darf ihr späterer Fehler nicht unbehandelt bleiben
     await Promise.race([work, deadline])
     log('live')
+    if (!wasLive) await autoToOwners(sb, month, log)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error(`[zypern-report ${month}] fehlgeschlagen:`, msg)
@@ -1083,14 +1159,16 @@ async function runBuild(sb: SupabaseClient, month: string, wasLive: boolean, fin
 
 // Eine Aufgabe für den Admin (Muster taskForSven in social-agent), dedupliziert über
 // den Titel: solange eine offen ist, kommt keine zweite dazu.
-async function failTask(sb: SupabaseClient, month: string, msg: string): Promise<void> {
+async function failTask(sb: SupabaseClient, month: string, msg: string, title = FAIL_TASK_TITLE): Promise<void> {
   try {
-    const { data: dup } = await sb.from('crm_tasks').select('id').ilike('title', '%Zypern-Report konnte nicht erstellt werden%').neq('status', 'erledigt').eq('archived', false).limit(1)
+    const { data: dup } = await sb.from('crm_tasks').select('id').eq('title', title).neq('status', 'erledigt').eq('archived', false).limit(1)
     if (dup && dup.length) return
     const { data: admin } = await sb.from('profiles').select('id').eq('role', 'admin').order('created_at').limit(1).maybeSingle()
     const adminId = (admin as { id: string } | null)?.id ?? null
-    const description = `Die Ausgabe ${monthLabel(month)} konnte nicht erstellt werden. Der Link zum Report funktioniert weiter, er zeigt die letzte fertige Ausgabe.\n\nFehler: ${msg.slice(0, 500)}\n\nNeuer Versuch: Social Studio, Bereich Zypern-Report, „Neu erstellen" klicken. Klappt es wieder nicht, bitte an den Entwickler weitergeben.`
-    const { data: task, error } = await sb.from('crm_tasks').insert({ title: FAIL_TASK_TITLE, description, created_by: adminId, status: 'offen' }).select('id').single()
+    const description = title === FAIL_TASK_TITLE
+      ? `Die Ausgabe ${monthLabel(month)} konnte nicht erstellt werden. Der Link zum Report funktioniert weiter, er zeigt die letzte fertige Ausgabe.\n\nFehler: ${msg.slice(0, 500)}\n\nNeuer Versuch: Social Studio, Bereich Zypern-Report, „Neu erstellen" klicken. Klappt es wieder nicht, bitte an den Entwickler weitergeben.`
+      : `${msg.slice(0, 600)}\n\nDie Ausgabe ${monthLabel(month)} ist online, liegt aber nicht im Downloadbereich der Eigentümer oder Lotte konnte nicht Bescheid geben. Bitte an den Entwickler weitergeben.`
+    const { data: task, error } = await sb.from('crm_tasks').insert({ title, description, created_by: adminId, status: 'offen' }).select('id').single()
     if (error) { console.error('[zypern-report] Aufgabe:', error.message); return }
     const taskId = (task as { id: string } | null)?.id
     if (taskId && adminId) await sb.from('crm_task_assignees').insert({ task_id: taskId, profile_id: adminId, channel: 'system' })
@@ -1216,6 +1294,10 @@ Deno.serve(async (req) => {
       const pdf_url = await publishFiles(sb, month, pdf)
       await sb.from('zypern_reports').update({ pdf_url }).eq('month', month)
       return json({ ok: true, month, pdf_url, bytes: pdf.length })
+    }
+    if (action === 'to_owners') {
+      if (!monthArg) return json({ ok: false, error: 'month (YYYY-MM) nötig' }, 400)
+      return json(await toOwners(sb, monthArg, { notify: body.notify === true, test: body.test === true }))
     }
     return json({ ok: false, error: `Unbekannte Aktion: ${action}` }, 400)
   } catch (e) {
