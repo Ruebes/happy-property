@@ -117,7 +117,7 @@ export default function OwnerContent() {
   }
   const remove = async (d: OwnerDoc) => {
     if (!window.confirm(t('crm.ownerContent.delConfirm', '„{{t}}" für die Eigentümer löschen?', { t: d.title }) as string)) return
-    // Zypern-Report-Einträge zeigen auf web-reports, dort nichts löschen (storage_path leer)
+    // Zypern-Report-Einträge zeigen auf web-reports, dort nichts löschen (storage_path '')
     if (d.storage_path) await supabase.storage.from('owner-docs').remove([d.storage_path]).catch(() => null)
     const { data: gone, error } = await supabase.from('owner_documents').delete().eq('id', d.id).select('id')
     if (error || !gone?.length) { showToast(`❌ ${error?.message ?? 'Keine Berechtigung'}`); return }

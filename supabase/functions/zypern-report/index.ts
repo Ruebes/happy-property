@@ -1072,7 +1072,7 @@ async function toOwners(sb: SupabaseClient, month: string, opts: { notify: boole
   let created = false
   if (!doc) {
     const { data: ins, error } = await sb.from('owner_documents').insert({
-      title, kind: 'document', file_url: r.pdf_url, storage_path: null, property_id: null,
+      title, kind: 'document', file_url: r.pdf_url, storage_path: '', property_id: null,
       category: 'monatsbericht', report_month: month,
       description: r.content?.subtitle ?? '',
     }).select('id, notified_at').single()
